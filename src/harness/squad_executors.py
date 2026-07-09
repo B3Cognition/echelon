@@ -177,6 +177,67 @@ def _workspace_source_roots_context(project_root: Path) -> str:
     return "\n".join(lines)
 
 
+def _render_re_execution_context(state: dict) -> str:
+    """Render source-scoped RE plan details for agent prompts."""
+    if "re_execution_plan" not in state and "re_artifacts" not in state:
+        return ""
+
+    artifacts = state.get("re_artifacts")
+    artifact_lines: list[str] = []
+    if isinstance(artifacts, dict):
+        for key in (
+            "manifest",
+            "source_index",
+            "execution_plan",
+            "analysis",
+            "cross_repo",
+        ):
+            value = artifacts.get(key)
+            if isinstance(value, str) and value:
+                artifact_lines.append(f"- {key}: {value}")
+        per_repo = artifacts.get("per_repo")
+        if isinstance(per_repo, list) and per_repo:
+            artifact_lines.append("- per_repo:")
+            artifact_lines.extend(f"  - {item}" for item in per_repo if isinstance(item, str))
+        re_contexts = artifacts.get("re_contexts")
+        if isinstance(re_contexts, list) and re_contexts:
+            artifact_lines.append("- re_contexts:")
+            artifact_lines.extend(f"  - {item}" for item in re_contexts if isinstance(item, str))
+
+    refresh_sources = [
+        str(item)
+        for item in (state.get("re_refresh_sources") or [])
+        if str(item).strip()
+    ]
+    missing_sources = [
+        str(item)
+        for item in (state.get("re_missing_sources") or [])
+        if str(item).strip()
+    ]
+    forbidden_roots = [
+        str(item)
+        for item in (state.get("re_forbidden_source_roots") or [])
+        if str(item).strip()
+    ]
+
+    lines = [
+        "## Reverse Engineering Execution Plan",
+        f"RE_POLICY={state.get('re_policy') or ''}",
+        f"RE_TARGET_SOURCE={state.get('target_source') or ''}",
+        "RE_REFRESH_SOURCES=" + (", ".join(refresh_sources) if refresh_sources else "(none)"),
+        "RE_MISSING_SOURCES=" + (", ".join(missing_sources) if missing_sources else "(none)"),
+    ]
+    if forbidden_roots:
+        lines.append("FORBIDDEN_SOURCE_ROOTS:")
+        lines.extend(f"- {root}" for root in forbidden_roots)
+        lines.append("Do not read, search, or summarize forbidden source roots for this run.")
+    if artifact_lines:
+        lines.append("RE_ARTIFACTS:")
+        lines.extend(artifact_lines)
+    lines.append("")
+    return "\n".join(lines)
+
+
 _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
     "phase3-how": ("plan.md", "research.md", "data-model.md", "contracts"),
     "phase3-sentinel": ("test-strategy.md", "test-architecture.md", "coverage-map.md"),
@@ -555,6 +616,7 @@ class PhaseExecutor(ABC):
             f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n"
             f"{_workspace_source_roots_context(self._project_root)}"
+            f"{_render_re_execution_context(state)}"
             f"{self._extension_path_context()}"
         )
         if spec_dir_ref:
@@ -628,6 +690,9 @@ class PhaseExecutor(ABC):
                 if result is not None and result.blocked:
                     return result
                 continue
+            if entry.get("id") == "golddigger_mode1" and self._golddigger_mode1_cache_hit(state):
+                self._apply_golddigger_mode1_cache_hit(state_store)
+                continue
             pre_agent = entry.get("agent", "").split(" ")[0]
             if not pre_agent:
                 continue
@@ -655,6 +720,37 @@ class PhaseExecutor(ABC):
                         s[k] = v
                         state_store.save(s)
         return None
+
+    def _golddigger_mode1_cache_hit(self, state: dict) -> bool:
+        """Return True when the RE plan says Mode 1 has no refresh work."""
+        if "re_refresh_sources" not in state:
+            return False
+        refresh_sources = state.get("re_refresh_sources")
+        return isinstance(refresh_sources, list) and not refresh_sources
+
+    def _apply_golddigger_mode1_cache_hit(self, state_store: "SquadStateStore") -> None:
+        state = state_store.load()
+        artifacts = state.get("re_artifacts") if isinstance(state.get("re_artifacts"), dict) else {}
+        missing_sources = [
+            str(item)
+            for item in (state.get("re_missing_sources") or [])
+            if str(item).strip()
+        ]
+        state["golddigger_artifacts"] = artifacts
+        state["golddigger_status"] = "partial" if missing_sources else "complete"
+        state["golddigger_mode"] = "cached-re"
+        notes = state.get("golddigger_notes")
+        if not isinstance(notes, list):
+            notes = []
+        if missing_sources:
+            notes.append(
+                "GOLDDIGGER Mode 1 skipped by RE policy; missing cached sources: "
+                + ", ".join(missing_sources)
+            )
+        else:
+            notes.append("GOLDDIGGER Mode 1 skipped; run-local RE artifacts reused from cache.")
+        state["golddigger_notes"] = notes
+        state_store.save(state)
 
     def _downgrade_golddigger_complete_without_re_specs(
         self, result: "SquadAgentResult"
@@ -902,6 +998,7 @@ class PhaseExecutor(ABC):
                 + f"CONTEXT_DIR={context_dir_str}\n"
                 + f"PROJECT_ROOT={self._project_root}\n"
                 + _workspace_source_roots_context(self._project_root)
+                + _render_re_execution_context(state)
                 + self._extension_path_context()
                 + "<context>\n"
                 + f"project_root: {self._project_root}\n"
@@ -927,6 +1024,7 @@ class PhaseExecutor(ABC):
             + f"CONTEXT_DIR={context_dir_str}\n"
             + f"PROJECT_ROOT={self._project_root}\n"
             + _workspace_source_roots_context(self._project_root)
+            + _render_re_execution_context(state)
             + self._extension_path_context()
             + _allowed_state_updates_contract(allowed_state_updates)
             + _canonical_echelon_result_contract(self._ext_dir)

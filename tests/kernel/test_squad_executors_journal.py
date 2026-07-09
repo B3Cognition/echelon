@@ -727,6 +727,98 @@ def test_pre_dispatch_prompt_includes_parent_allowed_state_updates(tmp_path):
     assert "NEVER resolve it as `${EXTENSION_DIR}/extension/templates/foo.md`" in prompt
 
 
+def test_pre_dispatch_prompt_includes_re_execution_context(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    agent_path = tmp_path / "golddigger.md"
+    agent_path.write_text("# GOLDDIGGER\n")
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    state = {
+        "squad_dir": str(squad_dir),
+        "staging_dir": str(squad_dir / "staging"),
+        "re_policy": "target-only",
+        "target_source": "prosaic",
+        "re_refresh_sources": ["prosaic"],
+        "re_missing_sources": [],
+        "re_forbidden_source_roots": [str(tmp_path / "sources" / "original-a")],
+        "re_artifacts": {
+            "source_index": str(squad_dir / "re" / "re-source-index.json"),
+            "analysis": str(squad_dir / "re" / "analysis.json"),
+        },
+    }
+
+    prompt = ex._assemble_pre_dispatch_prompt(
+        agent_path,
+        {"id": "golddigger_mode1", "mode": 1},
+        state,
+        ["golddigger_status"],
+    )
+
+    assert "## Reverse Engineering Execution Plan" in prompt
+    assert "RE_POLICY=target-only" in prompt
+    assert "RE_REFRESH_SOURCES=prosaic" in prompt
+    assert "FORBIDDEN_SOURCE_ROOTS:" in prompt
+    assert str(tmp_path / "sources" / "original-a") in prompt
+
+
+def test_golddigger_mode1_skips_when_re_plan_has_no_refresh_sources(tmp_path):
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nPre-dispatch agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase1-discover")
+    state = state_store.load()
+    state.update(
+        {
+            "re_policy": "changed",
+            "re_refresh_sources": [],
+            "re_missing_sources": [],
+            "re_artifacts": {
+                "analysis": str(squad_dir / "re" / "analysis.json"),
+                "source_index": str(squad_dir / "re" / "re-source-index.json"),
+                "per_repo": [str(squad_dir / "re" / "original-a")],
+            },
+        }
+    )
+    state_store.save(state)
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[
+            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+        ],
+        allowed_state_updates=[
+            "golddigger_artifacts",
+            "golddigger_status",
+            "golddigger_mode",
+            "golddigger_notes",
+        ],
+    )
+
+    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+
+    provider.exec_agent.assert_not_called()
+    assert result is None
+    updated = state_store.load()
+    assert updated["golddigger_status"] == "complete"
+    assert updated["golddigger_mode"] == "cached-re"
+    assert updated["golddigger_artifacts"]["source_index"] == str(
+        squad_dir / "re" / "re-source-index.json"
+    )
+
+
 def test_pre_dispatch_blocks_unallowed_state_updates_before_mutation(tmp_path):
     """Pre-dispatch agents must obey the phase state_update allowlist."""
     from harness.phase_graph import PhaseNode
