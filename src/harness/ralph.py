@@ -2465,6 +2465,9 @@ class RalphController:
             lines.extend(
                 ["## Spec-Adjacent Artifact Excerpts", *adjacent_artifacts, ""]
             )
+        quality_commands = self._build_slice_quality_commands()
+        if quality_commands:
+            lines.extend(["## Quality Commands", *quality_commands, ""])
         if dirty_verify_block:
             lines.extend(["## Dirty Verify Artifacts", dirty_verify_block.strip(), ""])
         if progress_ledger_block:
@@ -2479,6 +2482,15 @@ class RalphController:
         )
         context_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
         return context_file
+
+    def _build_slice_quality_commands(self) -> list[str]:
+        verify_command = str(self._config.verify_command or "").strip()
+        if not verify_command:
+            return []
+        return [
+            f"- verify_command: `{verify_command}`",
+            "- Run this from `worktree` before reporting completed_task_ids when feasible.",
+        ]
 
     def _build_slice_spec_adjacent_artifacts(
         self, spec_dir: Path | None, *, contracts_limit: int = 5

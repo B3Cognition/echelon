@@ -843,6 +843,37 @@ class TestOuterLoopConvergence:
         assert f"- contracts/cli.md: `{contracts_dir / 'cli.md'}`" in context
         assert "  - `prosaic deploy --dry-run` reports planned writes." in context
 
+    def test_build_slice_context_includes_quality_commands(
+        self, tmp_path: Path
+    ) -> None:
+        """Prepared context should name the deterministic verification command."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "sources" / "prosaic"
+        spec_dir = workspace / "specs" / "001-prosaic"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-002 complexity=standard phase=base req=FR-002 depends=none\n",
+            encoding="utf-8",
+        )
+        controller._config.verify_command = "npm test && npm run build"
+
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(worktree)
+        state["target_path"] = str(worktree)
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+
+        controller._with_harness_context("body", str(worktree))
+
+        context_file = state_store.state_dir.parent / "context" / "default-build-slice-context.md"
+        context = context_file.read_text(encoding="utf-8")
+        assert "## Quality Commands" in context
+        assert "- verify_command: `npm test && npm run build`" in context
+        assert "Run this from `worktree` before reporting completed_task_ids" in context
+
     def test_fulfillment_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
         """Passing tests are not enough when verify-spec found blocking gaps."""
         controller, provider, gitops, state_store = _make_controller(
