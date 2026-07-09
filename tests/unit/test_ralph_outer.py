@@ -767,6 +767,18 @@ class TestOuterLoopConvergence:
             "Referenced Requirement Excerpts",
             "Build Rules",
         ]
+        implementer_context_file = (
+            state_store.state_dir.parent / "context" / "default-implementer-context.md"
+        )
+        assert context_index["agent_context_files"]["IMPLEMENTER"] == str(
+            implementer_context_file
+        )
+        implementer_context = implementer_context_file.read_text(encoding="utf-8")
+        assert "# IMPLEMENTER Context Pack" in implementer_context
+        assert "## Current Build Slice" in implementer_context
+        assert "- current_task_ids: T-002" in implementer_context
+        assert "## Current Requirement Excerpts" in implementer_context
+        assert "## Build Rules" in implementer_context
         assert "Do not search for the application repo" in prompt
 
     def test_build_slice_context_includes_bounded_open_task_rows(

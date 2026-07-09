@@ -131,7 +131,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   inputs, strategy, generated section list, and structured section blocks so
   future per-agent build context packs can consume Python-owned context without
   parsing prompt prose. It also includes an `agent_sections` selector map starting
-  with IMPLEMENTER, and Ralph names the sidecar as `build_slice_context_index_file`
+  with IMPLEMENTER, materializes `context/<strategy>-implementer-context.md` from
+  that selector map, and Ralph names the sidecar as `build_slice_context_index_file`
   in harness context.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
