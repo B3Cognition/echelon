@@ -75,6 +75,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   consistently recommend canonical `echelon workspace ...`,
   `echelon spec ...`, and `echelon delivery ...` commands instead of legacy
   top-level or `harness` aliases.
+- Nested CLI help now matches the canonical command surface: `echelon spec
+  --help` lists current Phase A source-target/cache options and `spec target
+  --init`, while `echelon delivery land --help` exposes the supported land
+  flags instead of only `--help`.
 - **EGR-124 / #138 result repair** — squad agent dispatch now performs one
   no-edit repair invocation after a clean provider exit when the final
   `echelon_result` control payload is missing or schema-invalid. Timeout and

@@ -128,6 +128,30 @@ def _merge_resume_args(
     ]
 
 
+def _merge_land_args(
+    spec_id: str,
+    legacy_args: list[str] | None,
+    *,
+    continue_: bool,
+    prepare_only: bool,
+    no_autoresolve: bool,
+    allow_fulfillment_gaps: bool,
+    strategy: str | None,
+) -> list[str]:
+    args = [spec_id, *(legacy_args or [])]
+    if continue_:
+        args.append("--continue")
+    if prepare_only:
+        args.append("--prepare-only")
+    if no_autoresolve:
+        args.append("--no-autoresolve")
+    if allow_fulfillment_gaps:
+        args.append("--allow-fulfillment-gaps")
+    if strategy is not None:
+        args.extend(["--strategy", strategy])
+    return args
+
+
 @delivery_app.command(
     "init",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
@@ -370,20 +394,94 @@ def harness_continue(
     "land",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
-def harness_land(ctx: typer.Context, spec_id: str) -> None:
+def harness_land(
+    ctx: typer.Context,
+    spec_id: str,
+    continue_: bool = typer.Option(
+        False,
+        "--continue",
+        help="Continue an interrupted land operation.",
+    ),
+    prepare_only: bool = typer.Option(
+        False,
+        "--prepare-only",
+        help="Prepare the feature branch but do not merge it.",
+    ),
+    no_autoresolve: bool = typer.Option(
+        False,
+        "--no-autoresolve",
+        help="Disable deterministic conflict autoresolution.",
+    ),
+    allow_fulfillment_gaps: bool = typer.Option(
+        False,
+        "--allow-fulfillment-gaps",
+        help="Allow landing despite unresolved fulfillment gaps.",
+    ),
+    strategy: Optional[str] = typer.Option(
+        None,
+        "--strategy",
+        help="Landing strategy: merge or rebase.",
+    ),
+) -> None:
     """Compatibility alias for delivery land."""
-    delivery_land(ctx, spec_id)
+    delivery_land(
+        ctx,
+        spec_id,
+        continue_=continue_,
+        prepare_only=prepare_only,
+        no_autoresolve=no_autoresolve,
+        allow_fulfillment_gaps=allow_fulfillment_gaps,
+        strategy=strategy,
+    )
 
 
 @delivery_app.command(
     "land",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
-def delivery_land(ctx: typer.Context, spec_id: str) -> None:
+def delivery_land(
+    ctx: typer.Context,
+    spec_id: str,
+    continue_: bool = typer.Option(
+        False,
+        "--continue",
+        help="Continue an interrupted land operation.",
+    ),
+    prepare_only: bool = typer.Option(
+        False,
+        "--prepare-only",
+        help="Prepare the feature branch but do not merge it.",
+    ),
+    no_autoresolve: bool = typer.Option(
+        False,
+        "--no-autoresolve",
+        help="Disable deterministic conflict autoresolution.",
+    ),
+    allow_fulfillment_gaps: bool = typer.Option(
+        False,
+        "--allow-fulfillment-gaps",
+        help="Allow landing despite unresolved fulfillment gaps.",
+    ),
+    strategy: Optional[str] = typer.Option(
+        None,
+        "--strategy",
+        help="Landing strategy: merge or rebase.",
+    ),
+) -> None:
     """Land a spec by merging PR/branch and cleaning up."""
     from echelon import cli as legacy_cli
 
-    legacy_cli._cmd_land([spec_id, *ctx.args])
+    legacy_cli._cmd_land(
+        _merge_land_args(
+            spec_id,
+            list(ctx.args),
+            continue_=continue_,
+            prepare_only=prepare_only,
+            no_autoresolve=no_autoresolve,
+            allow_fulfillment_gaps=allow_fulfillment_gaps,
+            strategy=strategy,
+        )
+    )
 
 
 @delivery_checkpoint_app.command(

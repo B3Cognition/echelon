@@ -6078,21 +6078,25 @@ def _cmd_spec(args: list[str]) -> None:
             "Usage: echelon spec <subcommand> [args...]\n\n"
             "  run <description> [--mode semi|banzai|guided] [--reset]\n"
             "                    [--message <text>] [--next-phase <id>]\n"
+            "                    [--target <source-id-or-path>]\n"
+            "                    [--re-policy none|cached-only|changed|target-changed|target-only|refresh-all]\n"
             "                                      Run Phase A squad spec authoring\n"
             "  status                              Show current run state and next action\n"
             "  continue [--mode semi|banzai|guided]\n"
             "                                      Run the next no-input Phase A recovery action\n"
             "  resume <answers>                    Answer escalation questions from a blocked run\n"
             "  rewind <phase-id>                   Rewind the active squad run to a checkpoint\n"
-            "  checkpoint list|accept|commit       Manage Phase A/spec checkpoints\n"
-            "  target <spec_id> <repo> [repo...]   Set targets: in spec frontmatter\n"
+            "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
+            "                                      Manage Phase A/spec checkpoints\n"
+            "  target <spec_id> <repo> [repo...] [--init]\n"
+            "                                      Set targets: in spec frontmatter\n"
+            "                                      With --init, create/prepare target Git repo(s).\n"
             "  artifacts <spec_id>                 Generate specs/<id>/ARTIFACTS.md\n"
             "  verify <spec_id> [--reconcile] [--dry-run]\n"
             "                                      Audit implementation against spec\n"
             "  reopen <spec_id> [from=<report>]    Reopen spec from fulfillment gaps\n"
             "  bugfix <spec_id> <description>      Diagnose and plan a bugfix\n"
             "  change <spec_id> <description>      Plan a scope change\n",
-            file=sys.stderr,
         )
         sys.exit(0)
     subcmd = args[0]

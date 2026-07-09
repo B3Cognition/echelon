@@ -133,3 +133,64 @@ def test_delivery_run_declares_canonical_flags():
     assert "--mode" in declared_options
     assert "--strategy" in declared_options
     assert "--max-outer" in declared_options
+
+
+@pytest.mark.unit
+def test_delivery_land_declares_canonical_flags():
+    from echelon.cli_app import app
+    from typer.main import get_command
+
+    result = CliRunner().invoke(
+        app,
+        ["delivery", "land", "--help"],
+    )
+
+    assert result.exit_code == 0
+    assert "--continue" in result.output
+    assert "--prepare-only" in result.output
+    assert "--no-autoresolve" in result.output
+    assert "--allow-fulfillment-gaps" in result.output
+    assert "--strategy" in result.output
+    command = get_command(app)
+    delivery_command = command.commands["delivery"]
+    land_command = delivery_command.commands["land"]
+    declared_options = {
+        opt
+        for param in land_command.params
+        for opt in getattr(param, "opts", [])
+    }
+    assert "--continue" in declared_options
+    assert "--prepare-only" in declared_options
+    assert "--no-autoresolve" in declared_options
+    assert "--allow-fulfillment-gaps" in declared_options
+    assert "--strategy" in declared_options
+
+
+@pytest.mark.unit
+def test_delivery_land_canonical_flags_route_to_land(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_land", lambda args: calls.append(args))
+
+    run([
+        "delivery",
+        "land",
+        "001",
+        "--continue",
+        "--prepare-only",
+        "--no-autoresolve",
+        "--allow-fulfillment-gaps",
+        "--strategy",
+        "rebase",
+    ])
+
+    assert calls == [[
+        "001",
+        "--continue",
+        "--prepare-only",
+        "--no-autoresolve",
+        "--allow-fulfillment-gaps",
+        "--strategy",
+        "rebase",
+    ]]
