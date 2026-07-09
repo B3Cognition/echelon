@@ -27,6 +27,7 @@ from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_
 from harness.config import HarnessConfig
 from harness.errors import GitOpsError, GitOpsEscalation, SelfTargetError
 from harness.paths import build_dir as _build_dir_fn, mirror_path as _mirror_path_fn, runs_dir as _runs_dir_fn
+from harness.provider_scaffolding import provider_runtime_scaffolder
 from harness.secret_scan import scan_git_staged
 
 logger = logging.getLogger(__name__)
@@ -50,48 +51,6 @@ RUNTIME_EXTENSION_EXCLUDED_NAMES = (
     ".pytest_cache",
     "node_modules",
 )
-RUNTIME_CLAUDE_AGENT_DIRS = (
-    Path("control"),
-    Path("build"),
-)
-
-
-def _claude_skill_from_command(command_file: Path, skill_name: str) -> str:
-    """Create a Claude/Codex skill wrapper from a synced Echelon command file."""
-    raw = command_file.read_text(encoding="utf-8")
-    metadata, body = _split_frontmatter(raw)
-    description = _frontmatter_value(metadata, "description") or f"Run {command_file.stem}"
-    body = _prefix_runtime_paths(body)
-    return (
-        "---\n"
-        f"name: {skill_name}\n"
-        f"description: {description}\n"
-        "compatibility: Requires spec-kit project structure with .specify/ directory\n"
-        "metadata:\n"
-        "  author: github-spec-kit\n"
-        f"  source: echelon:commands/{command_file.name}\n"
-        "disable-model-invocation: true\n"
-        "---\n\n"
-        f"{body.rstrip()}\n"
-    )
-
-
-def _claude_agent_from_runtime_agent(agent_file: Path, agent_name: str) -> str:
-    """Create a Claude custom-agent file from a synced Echelon agent prompt."""
-    raw = agent_file.read_text(encoding="utf-8")
-    metadata, _body = _split_frontmatter(raw)
-    if _frontmatter_value(metadata, "name"):
-        return raw
-    description = _first_heading(raw) or f"Echelon runtime agent {agent_name}"
-    return (
-        "---\n"
-        f"name: {agent_name}\n"
-        f"description: {description}\n"
-        "---\n\n"
-        f"{raw.rstrip()}\n"
-    )
-
-
 def runtime_extension_copy_ignore(source_root: Path):
     """Return a copytree ignore callable for target-visible runtime extension sync."""
     source_root = source_root.resolve()
@@ -114,53 +73,6 @@ def runtime_extension_copy_ignore(source_root: Path):
         return ignored
 
     return ignore
-
-
-def _first_heading(markdown: str) -> str | None:
-    for line in markdown.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("# "):
-            return stripped.removeprefix("# ").strip()
-    return None
-
-
-def _split_frontmatter(raw: str) -> tuple[str, str]:
-    if not raw.startswith("---\n"):
-        return "", raw
-    end = raw.find("\n---", 4)
-    if end == -1:
-        return "", raw
-    body_start = raw.find("\n", end + 4)
-    if body_start == -1:
-        return raw[4:end], ""
-    return raw[4:end], raw[body_start + 1 :]
-
-
-def _frontmatter_value(metadata: str, key: str) -> str | None:
-    match = re.search(rf"^{re.escape(key)}:\s*(.+?)\s*$", metadata, flags=re.MULTILINE)
-    if not match:
-        return None
-    value = match.group(1).strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-        value = value[1:-1]
-    return value
-
-
-def _prefix_runtime_paths(body: str) -> str:
-    prefix = ".specify/extensions/echelon/"
-    for name in (
-        "agents/",
-        "workflow/",
-        "commands/",
-        "scripts/",
-        "templates/",
-        "config/",
-        "presets/",
-        "extension.yml",
-        "echelon-config.yml",
-    ):
-        body = body.replace(f"`{name}", f"`{prefix}{name}")
-    return body
 
 
 def _run_git(
@@ -663,10 +575,12 @@ class GitOpsManager:
 
     def _sync_provider_runtime_shims(self, extension_root: Path, worktree: Path) -> None:
         """Materialize AI-CLI-specific helper files only for their provider."""
-        if self._config.llm.cli != "claude":
-            return
-        self._sync_claude_command_skills(extension_root, worktree)
-        self._sync_claude_agents(extension_root, worktree)
+        scaffolder = provider_runtime_scaffolder(self._config.llm.cli)
+        scaffolder.sync(
+            extension_root=extension_root,
+            worktree=worktree,
+            exclude_line=lambda line: self._exclude_provider_scaffold_line(worktree, line),
+        )
 
     @staticmethod
     def _sync_codegraph_node_modules(source: Path, dest: Path) -> None:
@@ -684,44 +598,6 @@ class GitOpsManager:
                 ".bin",
             ),
         )
-
-    def _sync_claude_command_skills(self, extension_root: Path, worktree: Path) -> None:
-        """Materialize ignored Claude skill wrappers from runtime command files."""
-        commands_dir = extension_root / "commands"
-        if not commands_dir.exists():
-            return
-
-        for command_file in sorted(commands_dir.glob("echelon.*.md")):
-            command_name = command_file.stem
-            skill_name = "speckit-" + command_name.replace(".", "-")
-            skill_dir = worktree / ".claude" / "skills" / skill_name
-            skill_dir.mkdir(parents=True, exist_ok=True)
-            (skill_dir / "SKILL.md").write_text(
-                _claude_skill_from_command(command_file, skill_name),
-                encoding="utf-8",
-            )
-            self._exclude_claude_skill(worktree, skill_name)
-
-    def _sync_claude_agents(self, extension_root: Path, worktree: Path) -> None:
-        """Materialize ignored Claude agent registry files from runtime agents."""
-        agents_dir = extension_root / "agents"
-        if not agents_dir.exists():
-            return
-
-        target = worktree / ".claude" / "agents"
-        target.mkdir(parents=True, exist_ok=True)
-        agent_files: list[Path] = []
-        for relative_dir in RUNTIME_CLAUDE_AGENT_DIRS:
-            source_dir = agents_dir / relative_dir
-            if source_dir.exists():
-                agent_files.extend(source_dir.rglob("*.md"))
-        for agent_file in sorted(agent_files):
-            agent_name = f"speckit-echelon-{agent_file.stem}"
-            (target / f"{agent_name}.md").write_text(
-                _claude_agent_from_runtime_agent(agent_file, agent_name),
-                encoding="utf-8",
-            )
-        self._exclude_claude_agents(worktree)
 
     @staticmethod
     def _runtime_extension_ready(path: Path) -> bool:
@@ -753,24 +629,11 @@ class GitOpsManager:
         except GitOpsError as e:
             logger.warning("Could not exclude runtime extension from git status: %s", e)
 
-    def _exclude_claude_skill(self, worktree: Path, skill_name: str) -> None:
+    def _exclude_provider_scaffold_line(self, worktree: Path, line: str) -> None:
         try:
-            self._append_unique_line(
-                self._git_exclude_path(worktree),
-                f".claude/skills/{skill_name}/",
-            )
+            self._append_unique_line(self._git_exclude_path(worktree), line)
         except GitOpsError as e:
-            logger.warning(
-                "Could not exclude generated Claude skill %s from git status: %s",
-                skill_name,
-                e,
-            )
-
-    def _exclude_claude_agents(self, worktree: Path) -> None:
-        try:
-            self._append_unique_line(self._git_exclude_path(worktree), ".claude/agents/")
-        except GitOpsError as e:
-            logger.warning("Could not exclude generated Claude agents from git status: %s", e)
+            logger.warning("Could not exclude generated provider scaffold from git status: %s", e)
 
     def destroy_worktree(
         self,
