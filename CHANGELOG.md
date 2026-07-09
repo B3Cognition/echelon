@@ -113,10 +113,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   feedback turns. The initial context includes deterministic roots, spec input
   paths, bounded open task rows, referenced requirement excerpts, bounded
   spec-adjacent artifact excerpts, dirty verify artifact notes, the progress
-  ledger, configured quality commands, last verifier failures, target package
-  manifest excerpts for `package.json` and `pyproject.toml`, package entry-point
-  hints, package dependency hints, package-manager lockfile hints, Python
-  package-manager hints, Python dependency hints, Python project script hints,
+  ledger, current build slice task/phase hints, configured quality commands,
+  last verifier failures, target package manifest excerpts for `package.json`
+  and `pyproject.toml`, package entry-point hints, package dependency hints,
+  package-manager lockfile hints, Python package-manager hints, Python
+  dependency hints, Python project script hints,
   target layout excerpts with representative source/test files, target
   source/test file-count hints, target config-file hints, documentation artifact
   hints, target git branch/HEAD/recent-commit/dirty-state hints, and build

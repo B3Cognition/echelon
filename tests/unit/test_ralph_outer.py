@@ -701,6 +701,8 @@ class TestOuterLoopConvergence:
         state["build"] = {
             "total_tasks": 2,
             "completed_tasks": 1,
+            "current_task": "T-002",
+            "current_phase_group": "phase-ui",
             "task_results": {"T-001": {"status": "DONE"}},
         }
         state_store.write(state)
@@ -712,6 +714,9 @@ class TestOuterLoopConvergence:
         assert "Read `build_slice_context_file` before implementation" in prompt
         context = context_file.read_text(encoding="utf-8")
         assert "# Build Slice Context" in context
+        assert "## Current Build Slice" in context
+        assert "- current_task_ids: T-002" in context
+        assert "- current_phase_group: phase-ui" in context
         assert f"- worktree: `{worktree}`" in context
         assert f"- spec_dir: `{spec_dir}`" in context
         assert "completed_tasks: 1/2" in context

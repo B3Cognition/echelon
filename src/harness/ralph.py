@@ -2482,6 +2482,9 @@ class RalphController:
         target_git_state = self._build_slice_target_git_state(Path(worktree_path))
         if target_git_state:
             lines.extend(["## Target Git State", *target_git_state, ""])
+        current_slice = self._build_slice_current_slice()
+        if current_slice:
+            lines.extend(["## Current Build Slice", *current_slice, ""])
         open_task_rows = self._build_slice_open_task_rows(tasks_path)
         if open_task_rows:
             lines.extend(["## Candidate Open Task Rows", *open_task_rows, ""])
@@ -2761,6 +2764,27 @@ class RalphController:
                 lines.append(f"  - {entry.strip()}")
             if count > dirty_limit:
                 lines.append(f"  - ... {count - dirty_limit} more")
+        return lines
+
+    def _build_slice_current_slice(self) -> list[str]:
+        try:
+            build = self._state_store.read().get("build")
+        except Exception:
+            return []
+        if not isinstance(build, dict):
+            return []
+
+        task_ids = _clean_task_ids(build.get("current_task_ids"))
+        current_task = str(build.get("current_task") or "").strip()
+        if current_task and current_task not in task_ids:
+            task_ids.append(current_task)
+        phase_group = str(build.get("current_phase_group") or "").strip()
+
+        lines: list[str] = []
+        if task_ids:
+            lines.append("- current_task_ids: " + ", ".join(task_ids))
+        if phase_group:
+            lines.append(f"- current_phase_group: {phase_group}")
         return lines
 
     def _build_slice_last_verify_failures(self, *, limit: int = 5) -> list[str]:
