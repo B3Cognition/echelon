@@ -80,6 +80,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `echelon_result` control payload is missing or schema-invalid. Timeout and
   nonzero exits remain blocking, and repaired payloads still pass through the
   existing schema validator before state can advance.
+- **EGR-117 / #141 runtime surface** — delivery runtime extension sync now
+  filters `workflow/phases` to delivery-safe contracts, keeping build,
+  verify-spec, bugfix, codegen, and appendices while excluding Phase A,
+  standalone reverse-engineering, and experimental artifact-quality phase docs
+  from target-visible worktrees.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest

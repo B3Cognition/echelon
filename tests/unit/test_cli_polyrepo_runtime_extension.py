@@ -125,3 +125,53 @@ def test_polyrepo_runtime_extension_excludes_non_delivery_command_docs(
     assert (commands / "echelon.verify-spec.md").exists()
     assert not (commands / "echelon.run.md").exists()
     assert not (commands / "echelon.re-extract.md").exists()
+
+
+def test_polyrepo_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(
+    tmp_path: Path,
+) -> None:
+    """Target-specific harness roots should expose only delivery phase contracts."""
+    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow" / "phases" / "appendices").mkdir(parents=True)
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    for name in [
+        "build-1-init.md",
+        "verify-spec-1-init.md",
+        "bugfix-1-init.md",
+        "codegen-0-preflight.md",
+        "phase1-what.md",
+        "phase3-plan.md",
+        "phase4-document.md",
+        "re-extract-0-preflight.md",
+        "re-planning-1-plan.md",
+        "phase-exp-tasks-quality.md",
+        "init.md",
+    ]:
+        (source / "workflow" / "phases" / name).write_text(
+            f"# {name}\n", encoding="utf-8"
+        )
+    (source / "workflow" / "phases" / "appendices" / "build-8-verify-gates.md").write_text(
+        "# appendix\n", encoding="utf-8"
+    )
+
+    harness_base = tmp_path / "workspace" / "runs" / "targets" / "prosaic"
+
+    _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
+
+    phases = harness_base / ".specify" / "extensions" / "echelon" / "workflow" / "phases"
+    assert (phases / "build-1-init.md").exists()
+    assert (phases / "verify-spec-1-init.md").exists()
+    assert (phases / "bugfix-1-init.md").exists()
+    assert (phases / "codegen-0-preflight.md").exists()
+    assert (phases / "appendices" / "build-8-verify-gates.md").exists()
+    assert not (phases / "phase1-what.md").exists()
+    assert not (phases / "phase3-plan.md").exists()
+    assert not (phases / "phase4-document.md").exists()
+    assert not (phases / "re-extract-0-preflight.md").exists()
+    assert not (phases / "re-planning-1-plan.md").exists()
+    assert not (phases / "phase-exp-tasks-quality.md").exists()
+    assert not (phases / "init.md").exists()

@@ -28,7 +28,10 @@ from harness.config import HarnessConfig
 from harness.errors import GitOpsError, GitOpsEscalation, SelfTargetError
 from harness.paths import build_dir as _build_dir_fn, mirror_path as _mirror_path_fn, runs_dir as _runs_dir_fn
 from harness.provider_scaffolding import provider_runtime_scaffolder
-from harness.runtime_surface import DELIVERY_COMMAND_FILES
+from harness.runtime_surface import (
+    DELIVERY_COMMAND_FILES,
+    is_delivery_workflow_phase_path,
+)
 from harness.secret_scan import scan_git_staged
 
 logger = logging.getLogger(__name__)
@@ -75,6 +78,8 @@ def runtime_extension_copy_ignore(source_root: Path):
                 relative.parent == Path("commands")
                 and name not in DELIVERY_COMMAND_FILES
             ):
+                ignored.add(name)
+            if not is_delivery_workflow_phase_path(relative):
                 ignored.add(name)
         return ignored
 

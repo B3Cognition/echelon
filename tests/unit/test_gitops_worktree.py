@@ -310,6 +310,60 @@ def test_sync_runtime_extension_excludes_non_delivery_command_docs(tmp_path):
     assert not (commands / "echelon.re-extract.md").exists()
 
 
+def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_path):
+    """Delivery worktrees should expose only delivery workflow phase contracts."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow" / "phases" / "appendices").mkdir(parents=True)
+    (source / "commands").mkdir()
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    for name in [
+        "build-1-init.md",
+        "verify-spec-1-init.md",
+        "bugfix-1-init.md",
+        "codegen-0-preflight.md",
+        "phase1-what.md",
+        "phase3-plan.md",
+        "phase4-document.md",
+        "re-extract-0-preflight.md",
+        "re-planning-1-plan.md",
+        "phase-exp-tasks-quality.md",
+        "init.md",
+    ]:
+        (source / "workflow" / "phases" / name).write_text(
+            f"# {name}\n", encoding="utf-8"
+        )
+    (source / "workflow" / "phases" / "appendices" / "build-8-verify-gates.md").write_text(
+        "# appendix\n", encoding="utf-8"
+    )
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    phases = worktree / ".specify" / "extensions" / "echelon" / "workflow" / "phases"
+    assert (phases / "build-1-init.md").exists()
+    assert (phases / "verify-spec-1-init.md").exists()
+    assert (phases / "bugfix-1-init.md").exists()
+    assert (phases / "codegen-0-preflight.md").exists()
+    assert (phases / "appendices" / "build-8-verify-gates.md").exists()
+    assert not (phases / "phase1-what.md").exists()
+    assert not (phases / "phase3-plan.md").exists()
+    assert not (phases / "phase4-document.md").exists()
+    assert not (phases / "re-extract-0-preflight.md").exists()
+    assert not (phases / "re-planning-1-plan.md").exists()
+    assert not (phases / "phase-exp-tasks-quality.md").exists()
+    assert not (phases / "init.md").exists()
+
+
 def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
     """Harness worktrees get ignored Claude skill wrappers from runtime commands."""
     source = tmp_path / ".specify" / "extensions" / "echelon"
