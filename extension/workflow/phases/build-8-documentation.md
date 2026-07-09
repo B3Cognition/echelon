@@ -6,18 +6,14 @@
 
 After all implementation phase groups complete and before `build-8-finalize`, dispatch speckit-echelon-tech-writer (TECH WRITER).
 
-Context pack:
+Use the Ralph-owned context pack:
 
-- `{spec_dir}/spec.md`
-- `{spec_dir}/tasks.md`
-- `{spec_dir}/verification-summary.md` if present
-- `{spec_dir}/gap-report.md` if present
-- `{spec_dir}/progress-report.md` if present
-- `{spec_dir}/traceability-matrix.md` if present
-- `{spec_dir}/docs-verification-report.md` if returning from documentation verification failure
-- repo-root `README.md` if present
-- repo-root `CHANGELOG.md` if present
-- changed files from the build worktree
+- Read `build_slice_context_index_file` and use
+  `agent_context_files.TECH_WRITER` as the prepared TECH WRITER context pack.
+- Use explicit documentation verifier output already provided by Ralph when
+  returning from documentation verification failure.
+- Do not compile a separate context pack by searching spec reports, README,
+  CHANGELOG, or changed files.
 
 Use the Agent tool:
 
@@ -26,7 +22,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include spec.md, tasks.md, verification summary/gap/progress/traceability reports when present, docs-verification-report.md when present, README.md when present, CHANGELOG.md when present, and changed-file summary]
+  [include agent_context_files.TECH_WRITER from build_slice_context_index_file]
   </context>
 
   <instructions>

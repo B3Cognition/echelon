@@ -6,16 +6,14 @@
 
 After speckit-echelon-tech-writer (TECH WRITER) writes README.md, CHANGELOG.md, and `{spec_dir}/documentation-impact-report.md`, dispatch speckit-echelon-docs-verifier (DOCS VERIFIER).
 
-Context pack:
+Use the Ralph-owned context pack:
 
-- `{spec_dir}/spec.md`
-- `{spec_dir}/tasks.md`
-- `{spec_dir}/documentation-impact-report.md`
-- repo-root `README.md`
-- repo-root `CHANGELOG.md`
-- package/app metadata when present
-- safe harness smoke evidence when present
-- changed files from the build worktree
+- Read `build_slice_context_index_file` and use
+  `agent_context_files.DOCS_VERIFIER` as the prepared DOCS VERIFIER context pack.
+- Use explicit TECH WRITER outputs already provided by Ralph as verification
+  inputs.
+- Do not compile a separate context pack by searching spec files, README,
+  CHANGELOG, package metadata, smoke evidence, or changed files.
 
 Use the Agent tool:
 
@@ -24,7 +22,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include spec.md, tasks.md, documentation-impact-report.md, README.md, CHANGELOG.md, package/app metadata, safe harness smoke evidence when present, and changed-file summary]
+  [include agent_context_files.DOCS_VERIFIER from build_slice_context_index_file]
   </context>
 
   <instructions>
