@@ -781,6 +781,20 @@ class TestOuterLoopConvergence:
         assert "- current_task_ids: T-002" in implementer_context
         assert "## Current Requirement Excerpts" in implementer_context
         assert "## Build Rules" in implementer_context
+        for agent_name, filename in (
+            ("SPEC_GUARD", "default-spec-guard-context.md"),
+            ("CODE_REVIEWER", "default-code-reviewer-context.md"),
+            ("TEST_GUARDIAN", "default-test-guardian-context.md"),
+        ):
+            agent_context_file = state_store.state_dir.parent / "context" / filename
+            assert context_index["agent_context_files"][agent_name] == str(
+                agent_context_file
+            )
+            agent_context = agent_context_file.read_text(encoding="utf-8")
+            assert f"# {agent_name} Context Pack" in agent_context
+            assert "## Current Build Slice" in agent_context
+            assert "## Current Requirement Excerpts" in agent_context
+            assert "## Build Rules" in agent_context
         assert "Do not search for the application repo" in prompt
 
     def test_build_slice_context_includes_bounded_open_task_rows(

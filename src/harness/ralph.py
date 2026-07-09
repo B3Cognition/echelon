@@ -5159,25 +5159,55 @@ def _markdown_section_blocks(text: str) -> dict[str, list[str]]:
 
 def _build_context_agent_sections(sections: list[str]) -> dict[str, list[str]]:
     available = set(sections)
-    implementer_sections = [
-        "Roots",
-        "Spec Inputs",
-        "Current Build Slice",
-        "Current Requirement Excerpts",
-        "Candidate Open Task Rows",
-        "Referenced Requirement Excerpts",
-        "Spec-Adjacent Artifact Excerpts",
-        "Target Manifest Excerpts",
-        "Target Layout Excerpts",
-        "Quality Commands",
-        "Last Verify Failures",
-        "Dirty Verify Artifacts",
-        "Build Rules",
-    ]
-    return {
+    profiles = {
         "IMPLEMENTER": [
-            section for section in implementer_sections if section in available
-        ]
+            "Roots",
+            "Spec Inputs",
+            "Current Build Slice",
+            "Current Requirement Excerpts",
+            "Candidate Open Task Rows",
+            "Referenced Requirement Excerpts",
+            "Spec-Adjacent Artifact Excerpts",
+            "Target Manifest Excerpts",
+            "Target Layout Excerpts",
+            "Quality Commands",
+            "Last Verify Failures",
+            "Dirty Verify Artifacts",
+            "Build Rules",
+        ],
+        "SPEC_GUARD": [
+            "Spec Inputs",
+            "Current Build Slice",
+            "Current Requirement Excerpts",
+            "Candidate Open Task Rows",
+            "Referenced Requirement Excerpts",
+            "Spec-Adjacent Artifact Excerpts",
+            "Last Verify Failures",
+            "Build Rules",
+        ],
+        "CODE_REVIEWER": [
+            "Roots",
+            "Current Build Slice",
+            "Current Requirement Excerpts",
+            "Target Manifest Excerpts",
+            "Target Layout Excerpts",
+            "Last Verify Failures",
+            "Build Rules",
+        ],
+        "TEST_GUARDIAN": [
+            "Roots",
+            "Current Build Slice",
+            "Current Requirement Excerpts",
+            "Target Manifest Excerpts",
+            "Target Layout Excerpts",
+            "Quality Commands",
+            "Last Verify Failures",
+            "Build Rules",
+        ],
+    }
+    return {
+        agent_name: [section for section in profile if section in available]
+        for agent_name, profile in profiles.items()
     }
 
 

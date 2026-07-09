@@ -130,9 +130,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the Markdown build-slice context. The sidecar records the Markdown path, spec
   inputs, strategy, generated section list, and structured section blocks so
   future per-agent build context packs can consume Python-owned context without
-  parsing prompt prose. It also includes an `agent_sections` selector map starting
-  with IMPLEMENTER, materializes `context/<strategy>-implementer-context.md` from
-  that selector map, and Ralph names both `build_slice_context_index_file` and
+  parsing prompt prose. It also includes `agent_sections` selector maps and
+  materialized context packs for IMPLEMENTER, SPEC_GUARD, CODE_REVIEWER, and
+  TEST_GUARDIAN, and Ralph names both `build_slice_context_index_file` and
   `build_implementer_context_file` in harness context.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
