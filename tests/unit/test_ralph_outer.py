@@ -3559,8 +3559,10 @@ class TestLlmProviderDispatch:
         assert "build this" in build_runner.exec_build.call_args.args[1]
         assert result["passed"] is True
 
-    def test_exec_build_injects_deterministic_harness_context(self, tmp_path: Path) -> None:
-        """LLM build prompts receive the exact state file instead of discovering it."""
+    def test_exec_build_hides_mutable_harness_state_from_build_prompt(
+        self, tmp_path: Path
+    ) -> None:
+        """LLM build prompts receive bounded facts, not Ralph's mutable state path."""
         from harness.llm_build_runner import LlmBuildRunner
         from harness.build_result import BuildResult
 
@@ -3584,8 +3586,9 @@ class TestLlmProviderDispatch:
         )
 
         sent_prompt = build_runner.exec_build.call_args.args[1]
-        assert f"state_file: {state_store.state_file}" in sent_prompt
-        assert f"state_dir: {state_store.state_dir}" in sent_prompt
+        assert f"state_file: {state_store.state_file}" not in sent_prompt
+        assert f"state_dir: {state_store.state_dir}" not in sent_prompt
+        assert "Ralph state is not a build input" in sent_prompt
         assert "Do not search for state.json" in sent_prompt
         assert "build this" in sent_prompt
 

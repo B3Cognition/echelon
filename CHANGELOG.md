@@ -100,6 +100,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `python -m harness write-fallback-fulfillment-template` to create a bounded
   fallback report for SPEC-GUARD. The LLM fills only TODO cells for unresolved
   IDs, and Python still assembles the final canonical fulfillment report.
+- **EGR-115 / #140 Ralph-owned delivery state** — build prompts no longer expose
+  Ralph's mutable `state/default.json` path. Agents receive bounded progress
+  facts in the prompt and must report progress through the build status marker,
+  leaving harness state reads/writes owned by Ralph.
 - **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
   option errors now point at canonical `echelon delivery land`, while legacy
   harness compatibility command docs and status output suggest
