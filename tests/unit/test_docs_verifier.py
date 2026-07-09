@@ -8,6 +8,27 @@ import yaml
 from harness.docs_verifier import write_docs_verification_report
 
 
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "docs_verifier"
+
+PROSAIC_PACKAGE_JSON = """{
+  "name": "prosaic",
+  "version": "0.1.0",
+  "bin": {
+    "prosaic": "dist/cli/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "test": "jest",
+    "lint": "eslint 'src/**/*.ts' 'tests/**/*.ts'",
+    "prosaic": "node dist/cli/index.js"
+  }
+}
+"""
+
 FIRST_RUN_README = """# Demo
 
 Demo distributes project artifacts to local tools.
@@ -115,6 +136,31 @@ def _frontmatter(path: Path) -> dict:
     return data
 
 
+def _write_required_docs(spec_dir: Path) -> None:
+    (spec_dir / "documentation-impact-report.md").write_text(
+        "---\n"
+        "docs_required: true\n"
+        "readme_updated: true\n"
+        "changelog_updated: true\n"
+        "changelog_format: keep_a_changelog\n"
+        'not_applicable_reason: ""\n'
+        "---\n"
+        "# Documentation Impact Report\n",
+        encoding="utf-8",
+    )
+
+
+def _write_keepachangelog(worktree: Path) -> None:
+    (worktree / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n\n"
+        "### Added\n"
+        "- Documented first-run Prosaic usage.\n",
+        encoding="utf-8",
+    )
+
+
 def test_write_docs_verification_report_passes_first_run_docs(
     tmp_path: Path,
 ) -> None:
@@ -170,6 +216,74 @@ def test_write_docs_verification_report_passes_first_run_docs(
     report = result.report_path.read_text(encoding="utf-8")
     assert "- package.json" in report
     assert "- README.md" in report
+
+
+def test_prosaic_generated_readme_fixture_fails_first_run_manual(
+    tmp_path: Path,
+) -> None:
+    _git_repo(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-prosaic"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "package.json").write_text(PROSAIC_PACKAGE_JSON, encoding="utf-8")
+    (tmp_path / "README.md").write_text("# Prosaic\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n",
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+
+    poor_readme = FIXTURES / "prosaic-generated-poor-readme.md"
+    (tmp_path / "README.md").write_text(
+        poor_readme.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    _write_keepachangelog(tmp_path)
+    _write_required_docs(spec_dir)
+
+    result = write_docs_verification_report(tmp_path, spec_dir)
+
+    assert result.verdict == "FAIL"
+    assert result.readme_first_run_manual is False
+    report = result.report_path.read_text(encoding="utf-8")
+    assert "README.md is not a first-run manual" in report
+    assert "minimal working input" in report
+    assert "expected dry-run output" in report
+    assert "npm run test:benchmark" in report
+
+
+def test_prosaic_first_run_manual_fixture_passes_docs_verifier(
+    tmp_path: Path,
+) -> None:
+    _git_repo(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-prosaic"
+    spec_dir.mkdir(parents=True)
+    (tmp_path / "package.json").write_text(PROSAIC_PACKAGE_JSON, encoding="utf-8")
+    (tmp_path / "README.md").write_text("# Prosaic\n", encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n"
+        "Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).\n\n"
+        "## [Unreleased]\n",
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+
+    good_readme = FIXTURES / "prosaic-first-run-manual-readme.md"
+    (tmp_path / "README.md").write_text(
+        good_readme.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    _write_keepachangelog(tmp_path)
+    _write_required_docs(spec_dir)
+
+    result = write_docs_verification_report(tmp_path, spec_dir)
+
+    assert result.verdict == "PASS"
+    assert result.readme_first_run_manual is True
+    assert result.blocking_findings == 0
+    metadata = _frontmatter(result.report_path)
+    assert metadata["verdict"] == "PASS"
 
 
 def test_write_docs_verification_report_fails_with_structured_findings(
