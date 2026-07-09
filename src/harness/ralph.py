@@ -2545,6 +2545,7 @@ class RalphController:
         context_text = "\n".join(lines).rstrip() + "\n"
         context_file.write_text(context_text, encoding="utf-8")
         context_index_file = context_file.with_suffix(".json")
+        sections = _markdown_section_headings(context_text)
         context_index_file.write_text(
             json.dumps(
                 {
@@ -2554,7 +2555,8 @@ class RalphController:
                     "spec_dir": spec_dir_text,
                     "spec_file": spec_file_text,
                     "tasks_file": tasks_file_text,
-                    "sections": _markdown_section_headings(context_text),
+                    "sections": sections,
+                    "agent_sections": _build_context_agent_sections(sections),
                     "section_blocks": _markdown_section_blocks(context_text),
                 },
                 indent=2,
@@ -5139,6 +5141,30 @@ def _markdown_section_blocks(text: str) -> dict[str, list[str]]:
             continue
         blocks.setdefault(current_heading, []).append(line)
     return blocks
+
+
+def _build_context_agent_sections(sections: list[str]) -> dict[str, list[str]]:
+    available = set(sections)
+    implementer_sections = [
+        "Roots",
+        "Spec Inputs",
+        "Current Build Slice",
+        "Current Requirement Excerpts",
+        "Candidate Open Task Rows",
+        "Referenced Requirement Excerpts",
+        "Spec-Adjacent Artifact Excerpts",
+        "Target Manifest Excerpts",
+        "Target Layout Excerpts",
+        "Quality Commands",
+        "Last Verify Failures",
+        "Dirty Verify Artifacts",
+        "Build Rules",
+    ]
+    return {
+        "IMPLEMENTER": [
+            section for section in implementer_sections if section in available
+        ]
+    }
 
 
 def _target_doc_artifacts(root: Path) -> list[str]:

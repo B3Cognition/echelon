@@ -758,6 +758,15 @@ class TestOuterLoopConvergence:
             "- FR-002 (spec.md:4): - **FR-002**: Render the deployment preview."
             in context_index["section_blocks"]["Current Requirement Excerpts"]
         )
+        assert context_index["agent_sections"]["IMPLEMENTER"] == [
+            "Roots",
+            "Spec Inputs",
+            "Current Build Slice",
+            "Current Requirement Excerpts",
+            "Candidate Open Task Rows",
+            "Referenced Requirement Excerpts",
+            "Build Rules",
+        ]
         assert "Do not search for the application repo" in prompt
 
     def test_build_slice_context_includes_bounded_open_task_rows(
