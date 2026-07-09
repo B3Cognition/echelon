@@ -45,6 +45,31 @@ def test_harness_command_docs_do_not_expose_harness_source_dir() -> None:
 
 
 @pytest.mark.unit
+def test_harness_compatibility_docs_point_to_delivery_commands() -> None:
+    docs = {
+        "run": (ROOT / "extension/commands/echelon.harness-run.md").read_text(
+            encoding="utf-8"
+        ),
+        "resume": (ROOT / "extension/commands/echelon.harness-resume.md").read_text(
+            encoding="utf-8"
+        ),
+        "status": (ROOT / "extension/commands/echelon.harness-status.md").read_text(
+            encoding="utf-8"
+        ),
+    }
+
+    assert "echelon delivery init" in docs["run"]
+    assert "echelon delivery run <spec_id>" in docs["run"]
+    assert "echelon delivery resume <spec_id>" in docs["resume"]
+    assert "echelon delivery status" in docs["status"]
+    for text in docs.values():
+        assert "speckit.echelon.harness-init" not in text
+        assert "speckit.echelon.harness-run" not in text
+        assert "speckit.echelon.harness-resume" not in text
+        assert "speckit.echelon.harness-status" not in text
+
+
+@pytest.mark.unit
 def test_workspace_model_docs_define_single_repo_as_one_source_root() -> None:
     text = (ROOT / "docs/workspace-model.md").read_text(encoding="utf-8")
 

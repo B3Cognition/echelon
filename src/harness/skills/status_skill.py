@@ -72,7 +72,7 @@ def show_status(base_dir: str = ".") -> Dict[str, Any]:
     fields: list[tuple[str, str]] = []
     for sid, info in strategies.items():
         if info.get("status") == "corrupted":
-            fields.append((sid, "STATE CORRUPTED — run speckit.echelon.harness-resume to recover"))
+            fields.append((sid, "STATE CORRUPTED — run echelon delivery resume <spec_id> \"<answer>\" to recover"))
             continue
 
         budget_str = ""

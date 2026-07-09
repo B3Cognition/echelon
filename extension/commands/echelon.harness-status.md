@@ -19,6 +19,7 @@ $ARGUMENTS
 ## Overview
 
 Read-only command. Displays per-strategy status for all running, blocked, or recently completed loops. Modifies nothing.
+Canonical CLI equivalent: `echelon delivery status`.
 
 ---
 
@@ -26,7 +27,7 @@ Read-only command. Displays per-strategy status for all running, blocked, or rec
 
 If neither `.echelon/config.yml` nor the legacy `.specify/extensions/echelon/echelon-config.yml` exists, report:
 
-**"Harness not initialized. Run `speckit.echelon.harness-init` first."** and stop.
+**"Delivery not initialized. Run `echelon delivery init` first."** and stop.
 
 ---
 
@@ -63,7 +64,7 @@ Active loops found:
 
 Corrupted state file:
 ```
-  {strategy_id}: STATE CORRUPTED -- run speckit.echelon.harness-resume to recover
+  {strategy_id}: STATE CORRUPTED -- run echelon delivery resume <spec_id> "<answer>" to recover
 ```
 
 ---
@@ -74,8 +75,8 @@ Based on the status output:
 
 | Observed state | Suggest |
 |----------------|---------|
-| `blocked` | `speckit.echelon.harness-resume <spec_id> <your answer>` |
+| `blocked` | `echelon delivery resume <spec_id> "<your answer>"` |
 | `converged` with PR shown | Review the PR; merge when satisfied — that closes the feature branch into `main` |
 | `converged` with no PR | Review `.specify/harness/state/{spec_id}/` for output; push manually if needed |
-| `failed` | Check error details, then re-run with `speckit.echelon.harness-run` |
-| No active loops | `speckit.echelon.harness-run <spec_id>` to start one |
+| `failed` | Check error details, then re-run with `echelon delivery run <spec_id>` |
+| No active loops | `echelon delivery run <spec_id>` to start one |

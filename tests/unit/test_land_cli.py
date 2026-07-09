@@ -31,6 +31,46 @@ class TestCmdLand:
         assert "--allow-fulfillment-gaps" in help_text
         assert "--strategy merge|rebase" in help_text
 
+    def test_top_level_land_help_points_to_delivery_land(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from echelon.cli import _cmd_land
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_land(["--help"])
+
+        assert exc_info.value.code == 0
+        output = capsys.readouterr().out
+        assert "Usage: echelon delivery land <spec_id>" in output
+        assert "Compatibility alias: echelon land" in output
+        assert "Usage: echelon land <spec_id>" not in output
+
+    def test_land_option_errors_use_delivery_namespace(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from echelon.cli import _cmd_land
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_land(["001", "--wat"])
+
+        assert exc_info.value.code == 1
+        err = capsys.readouterr().err
+        assert "unknown option for echelon delivery land" in err
+        assert "unknown option for echelon land" not in err
+
+    def test_land_unexpected_argument_errors_use_delivery_namespace(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from echelon.cli import _cmd_land
+
+        with pytest.raises(SystemExit) as exc_info:
+            _cmd_land(["001", "extra"])
+
+        assert exc_info.value.code == 1
+        err = capsys.readouterr().err
+        assert "unexpected argument for echelon delivery land" in err
+        assert "unexpected argument for echelon land" not in err
+
     @patch("harness.land.land")
     @patch("harness.gitops.GitOpsManager")
     @patch("harness.config.load_config")

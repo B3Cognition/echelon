@@ -6,7 +6,7 @@ behavior:
 
 ## Role
 
-You are ORCHESTRATOR resuming a blocked harness loop. Incorporate the user's escalation answer and continue from the current iteration — not from scratch.
+You are ORCHESTRATOR resuming a blocked delivery loop. Incorporate the user's escalation answer and continue from the current iteration — not from scratch.
 
 ---
 
@@ -31,7 +31,7 @@ commit instead of asking the user to salvage it from the polyrepo wrapper.
 
 If neither `.echelon/config.yml` nor the legacy `.specify/extensions/echelon/echelon-config.yml` exists, report:
 
-**"Harness not initialized. Run `speckit.echelon.harness-init` first."** and stop.
+**"Delivery not initialized. Run `echelon delivery init` first."** and stop.
 
 ---
 
@@ -53,7 +53,7 @@ If `answer` is empty, ask: **"Please provide your answer to the escalation quest
 Read `.specify/harness/state/{spec_id}/{strategy_id}.json`.
 
 - If file does not exist: report **"No state found for spec `{spec_id}`, strategy `{strategy_id}`."** and stop.
-- If `status` is not `blocked`: report **"Loop is not blocked. Current status: `{status}`."** Suggest `speckit.echelon.harness-status` and stop.
+- If `status` is not `blocked`: report **"Loop is not blocked. Current status: `{status}`."** Suggest `echelon delivery status` and stop.
 - If `escalation_file` is set: read it and display the escalation question to confirm the answer is relevant.
 
 ---
@@ -78,4 +78,4 @@ Resume complete: {CONVERGED|status}
   PR: {pr_url}    ← only if present
 ```
 
-If the loop blocked again on a new escalation, display the new question and prompt the user to run `speckit.echelon.harness-resume` again.
+If the loop blocked again on a new escalation, display the new question and prompt the user to run `echelon delivery resume <spec_id> "<answer>"` again.

@@ -75,6 +75,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   consistently recommend canonical `echelon workspace ...`,
   `echelon spec ...`, and `echelon delivery ...` commands instead of legacy
   top-level or `harness` aliases.
+- **EGR-095 / #125 active delivery UX** — top-level `echelon land` help and
+  option errors now point at canonical `echelon delivery land`, while legacy
+  harness compatibility command docs and status output suggest
+  `echelon delivery init|run|resume|status`.
 
 ### Fixed
 

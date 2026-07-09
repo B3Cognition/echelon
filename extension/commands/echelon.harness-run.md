@@ -26,7 +26,7 @@ Runs the harness loop for a spec. Architecture:
 
 The harness works **on the echelon feature branch** (e.g., `001-weather-dashboard`), not on a separate `harness/*` branch. This keeps all implementation history on the same branch that echelon created, so the PR to `main` is a single coherent branch.
 
-Requires `harness.init` to have been run first in the implementation repo.
+Requires `echelon delivery init` to have been run first in the implementation repo.
 
 In a workspace/polyrepo root, the spec frontmatter `targets:` is authoritative.
 Normal implementation specs use exactly one source root. If `targets:` is
@@ -62,9 +62,9 @@ test -f .echelon/config.yml || test -f .specify/extensions/echelon/echelon-confi
 
 If the output is `missing`, report:
 
-**"Harness not initialized. Run `speckit.echelon.harness-init` first."** and stop immediately.
+**"Delivery not initialized. Run `echelon delivery init` first."** and stop immediately.
 
-**ABSOLUTE RULE: Always stop with the message above when config is absent.** Do NOT create, recreate, or bootstrap `.echelon/config.yml` (harness: section) yourself. Do NOT create `.specify/extensions/echelon/` or any subdirectory. Do NOT work around the missing config in any way. The config is owned by `harness.init` — any other path corrupts harness state.
+**ABSOLUTE RULE: Always stop with the message above when config is absent.** Do NOT create, recreate, or bootstrap `.echelon/config.yml` (harness: section) yourself. Do NOT create `.specify/extensions/echelon/` or any subdirectory. Do NOT work around the missing config in any way. The config is owned by `echelon delivery init` — any other path corrupts delivery state.
 
 ---
 
@@ -455,7 +455,7 @@ Print a single formatted block:
 
   What's next
     Run a new feature:  speckit.echelon.run <description>
-    Then build it:      speckit.echelon.harness-run <spec_id>
+    Then build it:      echelon delivery run <spec_id>
 ════════════════════════════════════════════════
 ```
 

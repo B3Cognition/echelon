@@ -716,9 +716,10 @@ def _cmd_land(args: list[str]) -> None:
 
     if not args or args[0] in ("-h", "--help"):
         print(
-            "Usage: echelon land <spec_id> [--continue] [--prepare-only] "
+            "Usage: echelon delivery land <spec_id> [--continue] [--prepare-only] "
             "[--no-autoresolve] [--allow-fulfillment-gaps] "
             "[--strategy merge|rebase]\n\n"
+            "  Compatibility alias: echelon land <spec_id> [options...]\n"
             "  Merge PR, delete branch, clean worktrees, mark spec as landed.\n",
         )
         sys.exit(0)
@@ -753,10 +754,10 @@ def _cmd_land(args: list[str]) -> None:
             strategy = remaining[idx + 1]
             idx += 1
         elif arg.startswith("-"):
-            print(f"✗ unknown option for echelon land: {arg}", file=sys.stderr)
+            print(f"✗ unknown option for echelon delivery land: {arg}", file=sys.stderr)
             sys.exit(1)
         else:
-            print(f"✗ unexpected argument for echelon land: {arg}", file=sys.stderr)
+            print(f"✗ unexpected argument for echelon delivery land: {arg}", file=sys.stderr)
             sys.exit(1)
         idx += 1
 

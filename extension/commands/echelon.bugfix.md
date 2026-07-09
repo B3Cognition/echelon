@@ -1,6 +1,6 @@
 ---
 name: speckit.echelon.bugfix
-description: "Diagnostic squad for a bug or enhancement on a delivered spec — speckit-echelon-debugger (DEBUGGER) → speckit-echelon-sentinel (SENTINEL) → speckit-echelon-spec-guard (SPEC GUARD) → writes bugfix plan + tasks → hand off to harness.run."
+description: "Diagnostic squad for a bug or enhancement on a delivered spec — speckit-echelon-debugger (DEBUGGER) → speckit-echelon-sentinel (SENTINEL) → speckit-echelon-spec-guard (SPEC GUARD) → writes bugfix plan + tasks → hand off to delivery run."
 behavior:
   invocation: automatic
 ---
@@ -26,7 +26,7 @@ Always produce diagnosis, plan, and task updates only. NEVER write, modify, or
 delete application source files. NEVER run tests, builds, or linters on target
 project code. NEVER fix bugs or implement features directly.
 The output of this command is `bugfix-{n}.md` + updated `tasks.md`, ready for
-`speckit.echelon.harness-run`.
+`echelon delivery run <spec_id>`.
 
 ---
 
