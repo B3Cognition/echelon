@@ -2460,6 +2460,11 @@ class RalphController:
         )
         if requirement_excerpts:
             lines.extend(["## Referenced Requirement Excerpts", *requirement_excerpts, ""])
+        adjacent_artifacts = self._build_slice_spec_adjacent_artifacts(spec_dir)
+        if adjacent_artifacts:
+            lines.extend(
+                ["## Spec-Adjacent Artifact Excerpts", *adjacent_artifacts, ""]
+            )
         if dirty_verify_block:
             lines.extend(["## Dirty Verify Artifacts", dirty_verify_block.strip(), ""])
         if progress_ledger_block:
@@ -2474,6 +2479,36 @@ class RalphController:
         )
         context_file.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
         return context_file
+
+    def _build_slice_spec_adjacent_artifacts(
+        self, spec_dir: Path | None, *, contracts_limit: int = 5
+    ) -> list[str]:
+        if spec_dir is None or not spec_dir.is_dir():
+            return []
+        candidates: list[tuple[str, Path]] = []
+        for name in (
+            "plan.md",
+            "test-strategy.md",
+            "data-model.md",
+            "research.md",
+            "constitution.md",
+        ):
+            path = spec_dir / name
+            if path.is_file():
+                candidates.append((name, path))
+        contracts_dir = spec_dir / "contracts"
+        if contracts_dir.is_dir():
+            for path in sorted(contracts_dir.glob("*.md"))[:contracts_limit]:
+                candidates.append((f"contracts/{path.name}", path))
+
+        lines: list[str] = []
+        for label, path in candidates:
+            excerpt = _first_meaningful_markdown_line(path)
+            if not excerpt:
+                continue
+            lines.append(f"- {label}: `{path}`")
+            lines.append(f"  - {excerpt}")
+        return lines
 
     def _build_slice_requirement_excerpts(
         self,
@@ -4404,6 +4439,21 @@ def _render_canonical_task_row(task: TaskRow) -> str:
         f"- [ ] {task.task_id}{parallel} complexity={task.complexity} "
         f"phase={task.phase} req={requirements} depends={dependencies}"
     )
+
+
+def _first_meaningful_markdown_line(path: Path, *, max_chars: int = 220) -> str:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return ""
+    for line in lines:
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        if len(text) > max_chars:
+            return text[: max_chars - 3].rstrip() + "..."
+        return text
+    return ""
 
 
 def _estimate_tokens(result: ExecResult) -> int:

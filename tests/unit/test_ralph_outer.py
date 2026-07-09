@@ -790,6 +790,59 @@ class TestOuterLoopConvergence:
         assert "- FR-003 (spec.md:5): - **FR-003**: Rewrite frontmatter for target tools." in context
         assert "FR-001 (spec.md" not in context
 
+    def test_build_slice_context_includes_spec_adjacent_artifact_excerpts(
+        self, tmp_path: Path
+    ) -> None:
+        """Prepared context should list bounded spec-adjacent artifacts to read."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "sources" / "prosaic"
+        spec_dir = workspace / "specs" / "001-prosaic"
+        contracts_dir = spec_dir / "contracts"
+        worktree.mkdir(parents=True)
+        contracts_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-002 complexity=standard phase=base req=FR-002 depends=none\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "plan.md").write_text(
+            "# Plan\n\nUse a TypeScript CLI with file-system adapters.\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "test-strategy.md").write_text(
+            "# Testing Strategy\n\nRun unit tests before package builds.\n",
+            encoding="utf-8",
+        )
+        (spec_dir / "data-model.md").write_text(
+            "# Data Model\n\nArtifactMapping stores source and target paths.\n",
+            encoding="utf-8",
+        )
+        (contracts_dir / "cli.md").write_text(
+            "# CLI Contract\n\n`prosaic deploy --dry-run` reports planned writes.\n",
+            encoding="utf-8",
+        )
+
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(worktree)
+        state["target_path"] = str(worktree)
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+
+        controller._with_harness_context("body", str(worktree))
+
+        context_file = state_store.state_dir.parent / "context" / "default-build-slice-context.md"
+        context = context_file.read_text(encoding="utf-8")
+        assert "## Spec-Adjacent Artifact Excerpts" in context
+        assert f"- plan.md: `{spec_dir / 'plan.md'}`" in context
+        assert "  - Use a TypeScript CLI with file-system adapters." in context
+        assert f"- test-strategy.md: `{spec_dir / 'test-strategy.md'}`" in context
+        assert "  - Run unit tests before package builds." in context
+        assert f"- data-model.md: `{spec_dir / 'data-model.md'}`" in context
+        assert "  - ArtifactMapping stores source and target paths." in context
+        assert f"- contracts/cli.md: `{contracts_dir / 'cli.md'}`" in context
+        assert "  - `prosaic deploy --dry-run` reports planned writes." in context
+
     def test_fulfillment_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
         """Passing tests are not enough when verify-spec found blocking gaps."""
         controller, provider, gitops, state_store = _make_controller(
