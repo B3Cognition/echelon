@@ -243,7 +243,7 @@ Implement in slices:
 5. Move ordinary feature-run RE docs out of canonical `specs/NNN-re-*`.
 6. Update docs, changelog, and EGR register.
 
-## Resolved Decisions And Remaining Question
+## Resolved Decisions
 
 - Materialization copies cache artifacts into `runs/<run-id>/re/` instead of
   symlinking them. Runs must be self-contained so they can be archived after work
@@ -251,7 +251,7 @@ Implement in slices:
 - `cross-repo.json` is recomputed cheaply during materialization from the
   selected per-source metadata. It is not cached by workspace fingerprint in the
   first implementation because its contents depend on the selected source set.
-- Remaining question: when `--re-policy target-only` excludes sibling source
-  context, should prompts still list excluded sibling source IDs as forbidden
-  roots for containment? This would not expose their RE content; it would only
-  tell agents which workspace siblings they must not inspect.
+- When `--re-policy target-only` excludes sibling source context, prompts still
+  list excluded sibling source roots as forbidden roots for containment. This
+  does not expose their RE content; it only tells agents which workspace siblings
+  they must not inspect, list, grep, search, or read.
