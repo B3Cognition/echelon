@@ -74,6 +74,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- `echelon delivery land <spec_id>` now dispatches through the spec-declared
+  workspace target before landing, so polyrepo delivery lands the selected
+  source repository instead of using the orchestration workspace mirror. The
+  legacy `echelon harness land` alias is wired through the same path.
 - **EGR-115 / #140 deterministic Ralph recovery boundary** — Ralph now
   continues to verification when a clean markerless build has all canonical
   tasks already marked done, instead of paying for another LLM turn only to

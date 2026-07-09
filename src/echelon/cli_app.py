@@ -366,6 +366,15 @@ def harness_continue(
     delivery_continue(ctx, spec_id, mode=mode, strategy=strategy)
 
 
+@harness_app.command(
+    "land",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def harness_land(ctx: typer.Context, spec_id: str) -> None:
+    """Compatibility alias for delivery land."""
+    delivery_land(ctx, spec_id)
+
+
 @delivery_app.command(
     "land",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},

@@ -65,6 +65,98 @@ class TestCmdLand:
         assert options.strategy == "merge"
         assert options.allow_fulfillment_gaps is False
 
+    def test_workspace_land_dispatches_to_spec_target(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from echelon.cli import HarnessWorkspaceTarget, _cmd_land
+
+        root = tmp_path
+        spec_dir = root / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\ntargets:\n- sources/prosaic\nstatus: ready_to_land\n---\n# Demo\n",
+            encoding="utf-8",
+        )
+        target = root / "sources" / "prosaic"
+        (target / ".git").mkdir(parents=True)
+
+        def fake_resolve(project_root, explicit_target, **kwargs):
+            assert project_root == root
+            assert explicit_target == "sources/prosaic"
+            return HarnessWorkspaceTarget(
+                workspace_root=root.resolve(),
+                workspace_git_role="orchestration",
+                source_root=target.resolve(),
+                source_id="prosaic",
+                source_git_role="source",
+            )
+
+        monkeypatch.chdir(root)
+        monkeypatch.setattr("echelon.cli._resolve_harness_workspace_target", fake_resolve)
+        with patch("echelon.orchestrator.run_multi_target", return_value=0) as run_multi:
+            with pytest.raises(SystemExit) as exc_info:
+                _cmd_land(["001", "--continue"])
+
+        assert exc_info.value.code == 0
+        run_multi.assert_called_once()
+        assert run_multi.call_args.args[:3] == (
+            "001-demo",
+            [target.resolve()],
+            ["--continue"],
+        )
+        assert run_multi.call_args.kwargs["command"] == "land"
+        assert run_multi.call_args.kwargs["workspace_root"] == root.resolve()
+
+    @patch("harness.land.land")
+    @patch("harness.gitops.GitOpsManager")
+    @patch("harness.config.load_config")
+    def test_target_env_land_uses_workspace_root_and_target_gitops_base(
+        self,
+        mock_load_config,
+        mock_gitops_cls,
+        mock_land,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from echelon.cli import _cmd_land
+
+        workspace = tmp_path / "workspace"
+        target = workspace / "sources" / "prosaic"
+        target.mkdir(parents=True)
+        harness_base = workspace / "runs" / "targets" / "prosaic"
+        mock_config = MagicMock()
+        mock_load_config.return_value = mock_config
+        mock_gitops = MagicMock()
+        mock_gitops_cls.return_value = mock_gitops
+        mock_land.return_value = True
+
+        monkeypatch.chdir(target)
+        monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(workspace))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+        monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "prosaic")
+
+        with (
+            patch("echelon.cli._sync_polyrepo_runtime_extension") as sync_ext,
+            patch("harness.paths.mirror_path", return_value=harness_base / "runs" / "mirror.git"),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            _cmd_land(["001"])
+
+        assert exc_info.value.code == 0
+        mock_load_config.assert_called_once_with(project_root=workspace, squad_only=True)
+        sync_ext.assert_called_once_with(workspace, harness_base)
+        mock_gitops_cls.assert_called_once_with(mock_config, base_dir=str(harness_base))
+        assert mock_config.target_repo == str(target.resolve())
+        mock_gitops.clone_mirror.assert_called_once_with(str(target.resolve()))
+        mock_land.assert_called_once_with(
+            "001",
+            project_dir=workspace,
+            gitops=mock_gitops,
+            options=mock_land.call_args.kwargs["options"],
+        )
+
     @patch("harness.land.land")
     @patch("harness.gitops.GitOpsManager")
     @patch("harness.config.load_config")

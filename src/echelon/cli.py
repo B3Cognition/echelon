@@ -762,9 +762,33 @@ def _cmd_land(args: list[str]) -> None:
         print("✗ --strategy must be 'merge' or 'rebase'", file=sys.stderr)
         sys.exit(1)
 
+    project_dir = Path.cwd()
+    target_env = os.environ.get("ECHELON_TARGET_REPO_PATH")
+    polyrepo_env = os.environ.get("ECHELON_POLYREPO_ROOT")
+    target_name_env = os.environ.get("ECHELON_TARGET_REPO_NAME")
+    config_root = Path(polyrepo_env).resolve() if target_env and polyrepo_env else project_dir
+    harness_base_dir = project_dir
+    if target_env and polyrepo_env:
+        harness_base_dir = (
+            config_root
+            / "runs"
+            / "targets"
+            / (target_name_env or Path(target_env).resolve().name)
+        )
+        _sync_polyrepo_runtime_extension(config_root, harness_base_dir)
+        project_dir = config_root
+    elif _dispatch_land_to_spec_targets(
+        spec_id,
+        args[1:],
+        project_root=project_dir,
+        rerun_command=_command_display("echelon delivery land", args),
+    ):
+        return
+
     from harness.config import load_config, ValidationError as HarnessValidationError
     from harness.gitops import GitOpsManager
     from harness.land import LandOptions, land
+    from harness.paths import mirror_path as _mirror_path_fn
     options = LandOptions(
         autoresolve=autoresolve,
         prepare_only=prepare_only,
@@ -772,14 +796,30 @@ def _cmd_land(args: list[str]) -> None:
         strategy=strategy,
         allow_fulfillment_gaps=allow_fulfillment_gaps,
     )
-    project_dir = Path.cwd()
 
     try:
-        config = load_config()
+        config = (
+            load_config(project_root=config_root, squad_only=True)
+            if target_env
+            else load_config()
+        )
     except HarnessValidationError as e:
         _print_harness_config_error(e)
         sys.exit(1)
-    gitops = GitOpsManager(config)
+    if target_env:
+        target_repo_path = Path(target_env).resolve()
+        config.target_repo = str(target_repo_path)
+        if not getattr(config, "target_default_branch", None):
+            config.target_default_branch = "main"
+        if getattr(config, "provider", None) not in {"docker", "e2b", "modal", "daytona"}:
+            config.provider = "docker"
+    gitops = (
+        GitOpsManager(config, base_dir=str(harness_base_dir))
+        if target_env
+        else GitOpsManager(config)
+    )
+    if target_env and not _mirror_path_fn(harness_base_dir).exists():
+        gitops.clone_mirror(config.target_repo)
 
     success = land(spec_id, project_dir=project_dir, gitops=gitops, options=options)
     if success:
@@ -792,6 +832,77 @@ def _cmd_land(args: list[str]) -> None:
     else:
         _banner("LAND", [("spec", spec_id), ("status", "could not be landed (PR merge blocked?)")], file=sys.stderr)
         sys.exit(1)
+
+
+def _dispatch_land_to_spec_targets(
+    spec_id: str,
+    extra_args: list[str],
+    *,
+    project_root: Path,
+    rerun_command: str,
+) -> bool:
+    """Dispatch workspace-level land to target repos declared by the spec."""
+    from harness.spec_frontmatter import find_spec_dir, read_targets, write_targets
+    from echelon.orchestrator import run_multi_target, validate_single_target, validate_targets
+
+    spec_dir = find_spec_dir(spec_id, project_root)
+    if spec_dir is None:
+        return False
+    targets_rel = read_targets(spec_dir)
+    if not targets_rel:
+        return False
+
+    resolved_spec_id = spec_dir.name
+    polyrepo_root = spec_dir.parent.parent
+    if len(targets_rel) == 1:
+        workspace_target = _resolve_harness_workspace_target(
+            polyrepo_root,
+            targets_rel[0],
+            spec_dir=spec_dir,
+            spec_id=resolved_spec_id,
+            rerun_command=rerun_command,
+        )
+        if workspace_target.source_root == workspace_target.workspace_root:
+            return False
+        target_rel = workspace_target.source_root.relative_to(
+            workspace_target.workspace_root
+        ).as_posix()
+        if target_rel != targets_rel[0]:
+            write_targets(spec_dir, [target_rel])
+        target = validate_single_target([target_rel], polyrepo_root)
+        sys.exit(
+            run_multi_target(
+                resolved_spec_id,
+                [target],
+                extra_args,
+                command="land",
+                **_workspace_target_dispatch_metadata(workspace_target),
+            )
+        )
+
+    targets = validate_targets(targets_rel, polyrepo_root)
+    source_ids: dict[str, str] = {}
+    source_git_roles: dict[str, str] = {}
+    for target in targets:
+        target_metadata = _source_dispatch_metadata(
+            target=target,
+            polyrepo_root=polyrepo_root,
+            source_id=None,
+        )
+        source_ids.update(target_metadata["source_ids"])
+        source_git_roles.update(target_metadata["source_git_roles"])
+    sys.exit(
+        run_multi_target(
+            resolved_spec_id,
+            targets,
+            extra_args,
+            command="land",
+            workspace_root=polyrepo_root.resolve(),
+            workspace_git_role="orchestration",
+            source_ids=source_ids,
+            source_git_roles=source_git_roles,
+        )
+    )
 
 
 # ── harness subcommands (pure Python, no LLM) ────────────────────────────
@@ -811,7 +922,8 @@ def _cmd_harness(args: list[str]) -> None:
             "  resume <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
             "                                     Resume a blocked run with a human answer\n"
             "  continue <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>]\n"
-            "                                     Continue a blocked/checkpointed run without a new answer\n\n"
+            "                                     Continue a blocked/checkpointed run without a new answer\n"
+            "  land   <spec_id> [options...]      Merge PR/branch, clean up, mark spec landed\n\n"
             "Examples:\n"
             "  echelon delivery init\n"
             "  echelon delivery init https://github.com/org/repo\n"
@@ -832,6 +944,8 @@ def _cmd_harness(args: list[str]) -> None:
         _cmd_harness_resume(args[1:])
     elif subcmd == "continue":
         _cmd_harness_continue(args[1:])
+    elif subcmd == "land":
+        _cmd_land(args[1:])
     else:
         print(f"echelon harness: unknown subcommand '{subcmd}'\n", file=sys.stderr)
         sys.exit(1)

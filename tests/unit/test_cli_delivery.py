@@ -353,6 +353,18 @@ def test_delivery_land_routes_to_land(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.unit
+def test_harness_land_remains_compatibility_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    from echelon.cli import main
+
+    monkeypatch.setattr("sys.argv", ["echelon", "harness", "land", "001", "--continue"])
+
+    with patch("echelon.cli._cmd_land") as mock_land:
+        main()
+
+    mock_land.assert_called_once_with(["001", "--continue"])
+
+
+@pytest.mark.unit
 def test_harness_namespace_remains_compatibility_alias(monkeypatch: pytest.MonkeyPatch) -> None:
     from echelon.cli import main
 
