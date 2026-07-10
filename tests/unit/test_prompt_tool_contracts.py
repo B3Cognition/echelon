@@ -109,10 +109,26 @@ def test_flags_harness_function_implementation_discovery(tmp_path: Path) -> None
     assert findings[0].reason == "harness_internal_discovery"
 
 
+def test_flags_harness_function_discovery_synonyms(tmp_path: Path) -> None:
+    prompt = tmp_path / "agent.md"
+    prompt.write_text(
+        "Locate fulfillment_report_is_current provenance handling.\n"
+        "Discover latest_fulfillment_report implementation.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert [finding.reason for finding in findings] == [
+        "harness_internal_discovery",
+        "harness_internal_discovery",
+    ]
+
+
 def test_accepts_negative_harness_source_boundary(tmp_path: Path) -> None:
     prompt = tmp_path / "agent.md"
     prompt.write_text(
-        "Do not inspect, read, or search for harness source, Ralph code, "
+        "Do not locate, discover, inspect, read, or search for harness source, Ralph code, "
         "ralph.py, fulfillment_runner.py, fulfillment_report_is_current, "
         "or Echelon implementation internals.\n",
         encoding="utf-8",

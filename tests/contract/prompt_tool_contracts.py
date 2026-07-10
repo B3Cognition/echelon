@@ -75,7 +75,7 @@ FENCED_COMMAND_RE = re.compile(
 )
 
 HARNESS_INTERNAL_DISCOVERY_RE = re.compile(
-    r"\b(?:find|search|read|inspect|open|grep|list)\b"
+    r"\b(?:find|locate|discover|search|read|inspect|open|grep|list)\b"
     r".{0,160}\b(?:"
     r"harness (?:source|files?|internals?)|"
     r"Ralph code|"
@@ -167,7 +167,7 @@ def _is_negative_boundary(line: str) -> bool:
     return bool(
         re.search(
             r"\b(?:do not|never|must not)\b.{0,120}\b"
-            r"(?:find|search|read|inspect|open|grep|list)\b",
+            r"(?:find|locate|discover|search|read|inspect|open|grep|list)\b",
             lowered,
         )
     )
