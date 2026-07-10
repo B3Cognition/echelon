@@ -98,6 +98,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   such as `commander.md`; generated Claude delivery skill wrappers also strip
   obsolete bootstrap prose that tells agents to read
   `agents/control/commander.md` or `workflow/definition.yaml`.
+- **EGR-116 / #142 prompt tool contracts** — static prompt scanning now treats
+  shell file-reader commands such as `cat`, `sed`, `less`, `tail`, and `head`
+  against `src/harness/*`, `ralph.py`, or fulfillment internals as harness
+  internal discovery instructions.
 - **EGR-127 CLI help contract UX** — Typer now declares documented
   arguments/options across the visible command tree instead of leaving
   workspace, phase, benchmark, stack, spec checkpoint/target/artifacts, delivery

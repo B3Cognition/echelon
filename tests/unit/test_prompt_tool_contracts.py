@@ -157,6 +157,22 @@ def test_flags_review_harness_source_discovery_phrasing(tmp_path: Path) -> None:
     ]
 
 
+def test_flags_shell_harness_source_read_phrasing(tmp_path: Path) -> None:
+    prompt = tmp_path / "agent.md"
+    prompt.write_text(
+        "Run `cat src/harness/ralph.py` to inspect the resume flow.\n"
+        "Use `sed -n '1,80p' src/harness/fulfillment_runner.py` for the format.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert [finding.reason for finding in findings] == [
+        "harness_internal_discovery",
+        "harness_internal_discovery",
+    ]
+
+
 def test_accepts_negative_harness_source_boundary(tmp_path: Path) -> None:
     prompt = tmp_path / "agent.md"
     prompt.write_text(
