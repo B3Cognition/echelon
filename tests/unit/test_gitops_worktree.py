@@ -534,10 +534,10 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
     phases = worktree / ".specify" / "extensions" / "echelon" / "workflow" / "phases"
     assert (phases / "build-1-init.md").exists()
     assert (phases / "verify-spec-1-init.md").exists()
-    assert (phases / "bugfix-1-init.md").exists()
     assert (phases / "codegen-0-preflight.md").exists()
     assert (phases / "appendices" / "build-8-verify-gates.md").exists()
     assert not (phases / "appendices" / "phase1-what-reference.md").exists()
+    assert not (phases / "bugfix-1-init.md").exists()
     assert not (phases / "phase1-what.md").exists()
     assert not (phases / "phase3-plan.md").exists()
     assert not (phases / "phase4-document.md").exists()

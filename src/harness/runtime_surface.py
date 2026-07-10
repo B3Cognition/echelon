@@ -55,7 +55,6 @@ DELIVERY_BASH_FILES = frozenset(
 
 DELIVERY_WORKFLOW_PHASE_PREFIXES = (
     "build-",
-    "bugfix-",
     "codegen-",
     "codegenlight-",
     "verify-spec-",
