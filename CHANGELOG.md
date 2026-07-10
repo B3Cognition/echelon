@@ -93,7 +93,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   absolute sibling roots, sharing the same alias logic used by Ralph's transcript
   scanner so provider-side enforcement can consume the deterministic boundary
   without rediscovering paths. Ralph's transcript scanner now also treats
-  Claude-style `LS` tool lines as filesystem access for source-root containment.
+  Claude-style `LS` and `NotebookEdit` tool lines as filesystem access for
+  source-root containment.
 - **EGR-117 / #141 delivery runtime surface** — delivery worktrees and
   workspace-target harness roots no longer copy raw `agents/control` prompts
   such as `commander.md`; generated Claude delivery skill wrappers also strip
