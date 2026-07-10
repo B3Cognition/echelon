@@ -103,7 +103,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   against `src/harness/*`, `ralph.py`, or fulfillment internals as harness
   internal discovery instructions. The legacy harness-run command wrapper now
   blocks when Python did not provide a resolved `spec_dir` instead of telling
-  the model to locate or glob `specs/{spec_id}-*/`.
+  the model to locate or glob `specs/{spec_id}-*/`. Manual specialist command
+  wrappers for INNOVATE and GROUND now also require `state.json.spec_dir` and
+  fail fast instead of rediscovering spec directories.
 - **EGR-062 / #84 verify-spec provider-session UX** — fulfillment refresh
   provider-limit reasons now extract the concise session-limit/reset line from
   provider output instead of surfacing the full LLM transcript in the blocked

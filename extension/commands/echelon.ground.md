@@ -41,7 +41,7 @@ Read `${SQUAD_DIR}/state.json`.
 
 Extract `spec_id` and `spec_dir` from `state.json`.
 
-If `state.json.spec_dir` is present, treat it as authoritative and do not locate or glob `specs/{spec_id}-*/`. If `state.json.spec_dir` is absent, locate the spec directory: `specs/{spec_id}-*/`.
+Treat `state.json.spec_dir` as authoritative. Do not locate, glob, search, list, or infer `specs/{spec_id}-*/`. If `state.json.spec_dir` is absent, report **"Active squad state is missing spec_dir; continue through the Echelon CLI so Python refreshes the run state."** and stop.
 
 ---
 

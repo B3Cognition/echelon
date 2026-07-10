@@ -51,16 +51,20 @@ class TestManualCommandContracts:
         assert "`{spec_dir}/spec.md`" in text
         assert "`{spec_dir}/adrs/`" in text
 
-    def test_active_run_commands_locate_specs_from_workspace_specs_dir(self) -> None:
-        for filename in [
-            "echelon.innovate.md",
-            "echelon.ground.md",
-            "echelon.status.md",
-        ]:
+    def test_status_command_locates_specs_from_workspace_specs_dir(self) -> None:
+        text = (COMMAND_DIR / "echelon.status.md").read_text(encoding="utf-8")
+
+        assert ".specify/specs/{spec_id}-*/" not in text
+        assert "specs/{spec_id}-*/" in text
+
+    def test_manual_specialist_commands_require_state_spec_dir(self) -> None:
+        for filename in ["echelon.innovate.md", "echelon.ground.md"]:
             text = (COMMAND_DIR / filename).read_text(encoding="utf-8")
 
-            assert ".specify/specs/{spec_id}-*/" not in text
-            assert "specs/{spec_id}-*/" in text
+            assert "Treat `state.json.spec_dir` as authoritative" in text
+            assert "Do not locate, glob, search, list, or infer `specs/{spec_id}-*/`" in text
+            assert "Active squad state is missing spec_dir" in text
+            assert "If `state.json.spec_dir` is absent, locate" not in text
 
     def test_status_command_prefers_state_spec_dir_for_artifact_inventory(self) -> None:
         text = (COMMAND_DIR / "echelon.status.md").read_text(encoding="utf-8")
