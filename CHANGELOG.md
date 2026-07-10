@@ -149,7 +149,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   CodeGraph evidence generation itself now checks the init-owned state file
   before invoking CodeGraph or writing analysis artifacts. Canonical requirement
   inventory and requirement-audit writers now also require init-owned state
-  before writing their artifacts.
+  before writing their artifacts. Progress-integrity writing now reports the
+  same state-boundary error instead of surfacing raw missing-file exceptions.
 - **EGR-115 / #140 Ralph-owned delivery state** — build prompts no longer expose
   Ralph's mutable `state/default.json` path. Agents receive bounded progress
   facts in the prompt and must report progress through the build status marker,

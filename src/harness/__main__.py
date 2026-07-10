@@ -226,6 +226,7 @@ def _write_progress_integrity() -> None:
     out_json = Path(sys.argv[4])
     out_md = Path(sys.argv[5])
 
+    _require_verify_spec_state(state_path.parent)
     state = json.loads(state_path.read_text(encoding="utf-8"))
     build_state = state.get("build") if isinstance(state.get("build"), dict) else {}
     summary = summarize_task_progress(

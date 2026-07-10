@@ -204,3 +204,35 @@ class TestHarnessMainWriteProgressIntegrity:
             "state completed_tasks=1 but tasks.md has 0 checked task rows"
         ]
         assert "invalid task progress" in capsys.readouterr().err
+
+    def test_write_progress_integrity_exits_before_outputs_when_state_missing(
+        self, tmp_path, capsys
+    ) -> None:
+        tasks = tmp_path / "tasks.md"
+        tasks.write_text(
+            "- [x] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
+            encoding="utf-8",
+        )
+        state = tmp_path / "state.json"
+        out_json = tmp_path / "progress-integrity.json"
+        out_md = tmp_path / "progress-integrity.md"
+
+        from harness.__main__ import main
+
+        with patch(
+            "sys.argv",
+            [
+                "python -m harness",
+                "write-progress-integrity",
+                str(tasks),
+                str(state),
+                str(out_json),
+                str(out_md),
+            ],
+        ), pytest.raises(SystemExit) as exc:
+            main()
+
+        assert exc.value.code == 1
+        assert "state.json missing for verify-spec run:" in capsys.readouterr().err
+        assert not out_json.exists()
+        assert not out_md.exists()
