@@ -102,6 +102,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   shell file-reader commands such as `cat`, `sed`, `less`, `tail`, and `head`
   against `src/harness/*`, `ralph.py`, or fulfillment internals as harness
   internal discovery instructions.
+- **EGR-062 / #84 verify-spec provider-session UX** — fulfillment refresh
+  provider-limit reasons now extract the concise session-limit/reset line from
+  provider output instead of surfacing the full LLM transcript in the blocked
+  reason.
 - **EGR-127 CLI help contract UX** — Typer now declares documented
   arguments/options across the visible command tree instead of leaving
   workspace, phase, benchmark, stack, spec checkpoint/target/artifacts, delivery

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 from typing import Mapping, Protocol
@@ -599,7 +600,10 @@ def _provider_session_limit_reason(
     if not _is_provider_session_limit_text(text):
         return ""
 
-    reason = text or "LLM provider session limit reached during verify-spec"
+    reason = (
+        _provider_session_limit_summary(text)
+        or "LLM provider session limit reached during verify-spec"
+    )
     stale_detail = _existing_report_stale_detail(
         existing_report=existing_report,
         current_commit=current_commit,
@@ -615,6 +619,33 @@ def _provider_limit_text(prompt_executor: PromptExecutor) -> str:
         str(getattr(prompt_executor, "last_stderr", "") or ""),
     ]
     return "\n".join(part for part in parts if part).strip()
+
+
+def _provider_session_limit_summary(text: str) -> str:
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if line and _is_provider_session_limit_text(line):
+            return _truncate_provider_reason(line)
+
+    patterns = (
+        r"you(?:'|\u2019)ve hit your [^.:\n;]*?limit[^.\n;]*"
+        r"(?:resets? [^.\n;]*)?",
+        r"(?:session|usage|rate) limit[^.\n;]*(?:resets? [^.\n;]*)?",
+        r"quota exceeded[^.\n;]*(?:resets? [^.\n;]*)?",
+    )
+    for pattern in patterns:
+        matches = list(re.finditer(pattern, text, flags=re.IGNORECASE))
+        if matches:
+            return _truncate_provider_reason(matches[-1].group(0).strip())
+
+    return _truncate_provider_reason(text.strip())
+
+
+def _truncate_provider_reason(text: str, limit: int = 240) -> str:
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: limit - 3].rstrip() + "..."
 
 
 def _is_provider_session_limit_text(text: str) -> bool:

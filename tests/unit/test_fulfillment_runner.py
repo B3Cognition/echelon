@@ -122,6 +122,43 @@ class TestFulfillmentRunner:
         assert "new456" in result.reason
         assert read_fulfillment_metadata(report)["verified_commit"] == "old123"
 
+    def test_refresh_trims_provider_session_limit_transcript(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text(
+            "---\n"
+            "verify_scope: full\n"
+            "verified_commit: old123\n"
+            "---\n"
+            "| ID | Status | Evidence |\n"
+            "| --- | --- | --- |\n"
+            "| FR-001 | IMPLEMENTED | stale evidence |\n",
+            encoding="utf-8",
+        )
+
+        provider = MagicMock()
+        provider.cli = "claude"
+        provider.exec_prompt.return_value = 1
+        provider.last_stdout = (
+            "I'll start by exploring the spec directory.\n"
+            "Now dispatching mapper agents and reading source files.\n"
+            "You've hit your session limit · resets 4:40pm (Europe/Prague)\n"
+        )
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="new456"):
+            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+
+        assert result.status == "provider_session_limit"
+        assert result.reason.startswith(
+            "You've hit your session limit · resets 4:40pm (Europe/Prague)"
+        )
+        assert "I'll start by exploring" not in result.reason
+        assert "mapper agents" not in result.reason
+        assert "old123" in result.reason
+        assert "new456" in result.reason
+
     def test_refresh_stamps_latest_fulfillment_report_on_success(self, tmp_path):
         _write_verify_skill(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"
