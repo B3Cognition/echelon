@@ -331,6 +331,20 @@ def test_flags_delivery_command_runtime_discovery_synonyms(tmp_path: Path) -> No
     ]
 
 
+def test_flags_build_phase_workflow_definition_routing(tmp_path: Path) -> None:
+    prompt = tmp_path / "extension" / "workflow" / "phases" / "build-2-implement.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "Follow `workflow/definition.yaml` transitions after each quality gate.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "build_workflow_definition_routing"
+
+
 def test_flags_command_appendix_runtime_discovery(tmp_path: Path) -> None:
     prompt = (
         tmp_path

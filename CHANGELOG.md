@@ -100,6 +100,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   explicit invocation guard, so the LLM does not need to search `.claude/skills`,
   `SKILL.md`, workflow phase files, or workflow definitions before executing the
   Python-owned verify-spec commands.
+- **EGR-116 / #142 build phase routing** — build phase prompts now reject and
+  avoid quality-gate routing instructions that tell delivery agents to follow
+  `workflow/definition.yaml`; agents use Ralph-provided gate order and the
+  current phase contract instead.
 - **EGR-117 / #141 delivery runtime surface** — delivery worktrees and
   workspace-target harness roots no longer copy raw `agents/control` prompts
   such as `commander.md`; generated Claude delivery skill wrappers also strip

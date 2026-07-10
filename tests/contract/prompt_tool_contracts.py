@@ -125,6 +125,12 @@ DELIVERY_COMMAND_RUNTIME_DISCOVERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+BUILD_WORKFLOW_DEFINITION_ROUTING_RE = re.compile(
+    r"\b(?:follow|following|use|consult|read|inspect|open|check)\b"
+    r".{0,260}\bworkflow/definition\.yaml\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class PromptToolContractFinding:
@@ -339,6 +345,21 @@ def scan_prompt_tool_contracts(
                         path=path,
                         line=index + 1,
                         reason="build_spec_artifact_discovery",
+                        text=stripped,
+                    )
+                )
+                continue
+            if (
+                _is_build_prompt(path)
+                and BUILD_WORKFLOW_DEFINITION_ROUTING_RE.search(stripped)
+            ):
+                if _is_negative_boundary(stripped):
+                    continue
+                findings.append(
+                    PromptToolContractFinding(
+                        path=path,
+                        line=index + 1,
+                        reason="build_workflow_definition_routing",
                         text=stripped,
                     )
                 )
