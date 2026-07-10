@@ -54,7 +54,7 @@ def validate_commander_loading_contract(root: Path) -> list[str]:
     return _run_checks(
         [
             PatternCheck("run delegates to Python squad harness", run, r"squad.py|squad harness"),
-            PatternCheck("build references commander.md", build, r"commander\.md"),
+            PatternCheck("build avoids commander.md", build, r"commander\.md", should_match=False),
             PatternCheck("commander contains Evidence Hierarchy", commander, r"Evidence Hierarchy"),
             PatternCheck("commander contains EVOI", commander, r"EVOI"),
             PatternCheck("commander contains Toulmin", commander, r"Toulmin"),
@@ -62,7 +62,12 @@ def validate_commander_loading_contract(root: Path) -> list[str]:
             PatternCheck("commander contains Meta-Cognition", commander, r"Meta-Cognition"),
             PatternCheck("why2 contains token budget stop condition", why2, r"token_budget_k|token_budget_exhausted"),
             PatternCheck("run mentions COMMANDER judgment role", run, r"COMMANDER"),
-            PatternCheck("build references commander path", build, r"agents/control/commander\.md"),
+            PatternCheck(
+                "build avoids workflow definition routing",
+                build,
+                r"workflow/definition\.yaml",
+                should_match=False,
+            ),
             PatternCheck("commander has no SCIENTIST references", commander, r"SCIENTIST", should_match=False),
             PatternCheck("commander uses INVESTIGATOR", commander, r"INVESTIGATOR"),
         ]

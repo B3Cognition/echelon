@@ -163,6 +163,20 @@ def test_flags_build_prompt_spec_artifact_discovery(tmp_path: Path) -> None:
     assert findings[0].reason == "build_spec_artifact_discovery"
 
 
+def test_flags_delivery_command_runtime_discovery(tmp_path: Path) -> None:
+    prompt = tmp_path / "extension" / "commands" / "echelon.build.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "Read `agents/control/commander.md` and `workflow/definition.yaml` before build.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "delivery_command_runtime_discovery"
+
+
 def test_build_phase_prompts_use_ralph_owned_context_packs() -> None:
     root = Path(__file__).resolve().parents[2]
     phase_files = [

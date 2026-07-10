@@ -7,6 +7,8 @@ from pathlib import Path
 
 PROMPT_GLOBS = (
     "extension/agents/**/*.md",
+    "extension/commands/echelon.build.md",
+    "extension/commands/echelon.verify-spec.md",
     "extension/workflow/phases/**/*.md",
 )
 
@@ -106,6 +108,11 @@ VERIFY_SPEC_RUN_DISCOVERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+DELIVERY_COMMAND_RUNTIME_DISCOVERY_RE = re.compile(
+    r"\bread\b.{0,120}\b(?:agents/control/commander\.md|workflow/definition\.yaml)\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class PromptToolContractFinding:
@@ -177,6 +184,13 @@ def _is_verify_spec_phase(path: Path) -> bool:
     return (
         "/extension/workflow/phases/verify-spec-" in normalized
         or normalized.startswith("extension/workflow/phases/verify-spec-")
+    )
+
+
+def _is_delivery_command(path: Path) -> bool:
+    normalized = path.as_posix()
+    return normalized.endswith(
+        ("extension/commands/echelon.build.md", "extension/commands/echelon.verify-spec.md")
     )
 
 
@@ -267,6 +281,21 @@ def scan_prompt_tool_contracts(
                         path=path,
                         line=index + 1,
                         reason="build_spec_artifact_discovery",
+                        text=stripped,
+                    )
+                )
+                continue
+            if (
+                _is_delivery_command(path)
+                and DELIVERY_COMMAND_RUNTIME_DISCOVERY_RE.search(stripped)
+            ):
+                if _is_negative_boundary(stripped):
+                    continue
+                findings.append(
+                    PromptToolContractFinding(
+                        path=path,
+                        line=index + 1,
+                        reason="delivery_command_runtime_discovery",
                         text=stripped,
                     )
                 )

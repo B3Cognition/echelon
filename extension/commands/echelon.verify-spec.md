@@ -7,10 +7,13 @@ behavior:
 
 ## Role
 
-You are COMMANDER executing a spec fulfillment audit.
+You are COMMANDER executing a bounded spec fulfillment audit.
 
-Read `agents/control/commander.md` first. Then read `workflow/definition.yaml`
-`verify_spec:` section. Start at `verify-spec-1-init`.
+Ralph/Python owns verify-spec run directory selection, state initialization,
+structural evidence commands, row-set validation, reconciliation helpers, and
+report freshness checks. Follow the current phase prompt's exact Python-owned
+harness invocations; do not inspect Echelon orchestration internals to infer
+routing or provenance formats.
 
 ALWAYS treat this command as read-only by default.
 ALWAYS remember: source code is always read-only, including when `--reconcile`

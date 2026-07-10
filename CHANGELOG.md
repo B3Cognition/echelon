@@ -130,7 +130,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   infer the latest verification run. It also rejects build prompts that ask
   agents to discover Ralph-owned state/spec artifacts such as `state.json`,
   `runs/`, `tasks.md`, `spec.md`, or `specs/`. Negative boundary wording
-  remains allowed.
+  remains allowed. Delivery-visible `echelon.build` and `echelon.verify-spec`
+  command wrappers now start from Ralph/Python-owned context and exact phase
+  invocations instead of instructing agents to read `commander.md` or
+  `workflow/definition.yaml`.
 - **EGR-125 / #149 build-slice context** — Ralph now writes a Python-owned
   `context/<strategy>-build-slice-context.md` artifact for delivery build and
   feedback turns. The initial context includes deterministic roots, spec input

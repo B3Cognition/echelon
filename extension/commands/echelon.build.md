@@ -8,20 +8,13 @@ scripts:
 
 ## Role
 
-You are MANAGER executing the build phase.
+You are MANAGER executing one Ralph-bounded delivery build slice.
 
-**Read `agents/control/commander.md` first** — it contains your complete behavioral
-framework: role separation, governance constraints, dispatch protocols, convergence
-rules, error handling, and all NEVER rules.
-
-Then read `workflow/definition.yaml` `phases[]`. Start at phase `build-1-init`,
-before each dispatch read the phase node's `spec_file` for context pack assembly,
-dispatch prompt, and expected outputs.
-
-Also read `workflow/definition.yaml` `build:` for the task loop routing config:
-wave lane ordering, per-agent verdict routing, state field names, and
-force-complete conditions. speckit-echelon-commander (COMMANDER) consults this section throughout the build
-loop — it is not replaced by the phase nodes above.
+Ralph owns phase routing, task selection, progress bookkeeping, verification
+refreshes, commits, and delivery state. Use only the Ralph-owned context pack,
+the current command arguments, and the delivery phase contracts already exposed
+to this invocation. Do not discover or read Echelon orchestration internals to
+infer build routing.
 
 **This command always implements. It never produces ADR/SPEC/PLAN/TASKS artifacts.**
 
@@ -83,8 +76,8 @@ only after CODE REVIEWER approves, run TEST GUARDIAN.
 
 NEVER dispatch SPEC GUARD, CODE REVIEWER, and TEST GUARDIAN in one parallel batch.
 NEVER skip CODE REVIEWER or TEST GUARDIAN by vacuity. A gate may be skipped only
-when `workflow/definition.yaml` or a phase spec declares an explicit
-workflow-approved skip condition, and the skip rationale must be recorded in
+when a Ralph-provided phase contract declares an explicit workflow-approved skip
+condition, and the skip rationale must be recorded in
 `echelon_result.journal_entries`.
 
 ---
