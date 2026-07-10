@@ -110,8 +110,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   fail fast instead of rediscovering spec directories. RE single-phase command
   wrappers now carry explicit phase routing metadata and no longer tell agents
   to read `agents/control/commander.md` or `workflow/definition.yaml`; the
-  multi-phase `re-extract` and `re-plan-all` commands now carry their phase
-  sequences directly for the same reason.
+  multi-phase `re-extract`, `re-plan-all`, and `re-retarget` commands now carry
+  their phase sequences directly for the same reason.
 - **EGR-062 / #84 verify-spec provider-session UX** — fulfillment refresh
   provider-limit reasons now extract the concise session-limit/reset line from
   provider output instead of surfacing the full LLM transcript in the blocked
