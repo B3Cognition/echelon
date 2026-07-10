@@ -3074,6 +3074,10 @@ class RalphController:
         """Write machine-readable delivery root boundaries for provider enforcement."""
         policy_file = self._state_store.state_dir / "delivery-containment-policy.json"
         spec_inputs = [str(spec_dir)] if spec_dir is not None else []
+        forbidden_source_root_aliases = _forbidden_source_root_aliases(
+            forbidden_source_roots,
+            workspace_root=str(workspace_root),
+        )
         policy = {
             "schema_version": 1,
             "worktree": str(worktree_path),
@@ -3091,6 +3095,7 @@ class RalphController:
                 "orchestration": [],
             },
             "forbidden_source_roots": forbidden_source_roots,
+            "forbidden_source_root_aliases": forbidden_source_root_aliases,
             "rules": [
                 "implementation reads, searches, edits, and tests must stay in worktree",
                 "spec_inputs are read-only",
@@ -4614,20 +4619,14 @@ def _find_forbidden_source_root_in_tool_transcript(
     *,
     workspace_root: str,
 ) -> tuple[str, str] | None:
+    aliases = _forbidden_source_root_aliases(
+        forbidden_roots,
+        workspace_root=workspace_root,
+        include_absolute=True,
+    )
     aliases_by_root: list[tuple[str, list[str]]] = []
-    workspace = Path(workspace_root).expanduser() if workspace_root else None
-    for root in forbidden_roots:
-        if not root:
-            continue
-        aliases = [root]
-        if workspace is not None:
-            try:
-                relative = Path(root).expanduser().relative_to(workspace)
-            except ValueError:
-                relative = None
-            if relative is not None and str(relative):
-                aliases.append(str(relative))
-        aliases_by_root.append((root, aliases))
+    for root, root_aliases in aliases.items():
+        aliases_by_root.append((root, root_aliases))
     if not aliases_by_root:
         return None
     for line in _iter_tool_transcript_lines(text):
@@ -4635,6 +4634,29 @@ def _find_forbidden_source_root_in_tool_transcript(
             if any(_line_contains_path_alias(line, alias) for alias in aliases):
                 return root, line
     return None
+
+
+def _forbidden_source_root_aliases(
+    forbidden_roots: Iterable[str],
+    *,
+    workspace_root: str,
+    include_absolute: bool = False,
+) -> dict[str, list[str]]:
+    workspace = Path(workspace_root).expanduser() if workspace_root else None
+    aliases_by_root: dict[str, list[str]] = {}
+    for root in forbidden_roots:
+        if not root:
+            continue
+        aliases: list[str] = [root] if include_absolute else []
+        if workspace is not None:
+            try:
+                relative = Path(root).expanduser().relative_to(workspace)
+            except ValueError:
+                relative = None
+            if relative is not None and str(relative):
+                aliases.append(str(relative))
+        aliases_by_root[root] = aliases
+    return aliases_by_root
 
 
 def _line_contains_path_alias(line: str, alias: str) -> bool:
