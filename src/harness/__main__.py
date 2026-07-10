@@ -576,7 +576,7 @@ def _apply_progress_reconciliation() -> None:
         dry_run=dry_run,
     )
     if state_path is not None:
-        _stamp_json_state_file(
+        _stamp_existing_json_state_file(
             state_path,
             {
                 "progress_reconciliation": "dry_run" if dry_run else "applied",
@@ -613,7 +613,7 @@ def _write_progress_reconciliation_candidates() -> None:
         out_path=Path(sys.argv[5]),
     )
     if len(sys.argv) == 7:
-        _stamp_json_state_file(
+        _stamp_existing_json_state_file(
             Path(sys.argv[6]),
             {
                 "progress_reconciliation_candidates": "ready",
@@ -663,7 +663,7 @@ def _apply_task_requirement_mapping() -> None:
         dry_run=dry_run,
     )
     if state_path is not None:
-        _stamp_json_state_file(
+        _stamp_existing_json_state_file(
             state_path,
             {
                 "task_requirement_mapping": "dry_run" if dry_run else "applied",
@@ -700,7 +700,7 @@ def _write_task_requirement_mapping_candidates() -> None:
         out_path=Path(sys.argv[3]),
     )
     if len(sys.argv) == 5:
-        _stamp_json_state_file(
+        _stamp_existing_json_state_file(
             Path(sys.argv[4]),
             {
                 "task_requirement_mapping_candidates": "ready",
@@ -783,6 +783,10 @@ def _write_codegraph_evidence() -> None:
 
 def _stamp_verify_spec_state(verify_run_dir: "Path", updates: dict[str, object]) -> None:
     state_path = verify_run_dir / "state.json"
+    _stamp_existing_json_state_file(state_path, updates)
+
+
+def _stamp_existing_json_state_file(state_path: "Path", updates: dict[str, object]) -> None:
     if not state_path.is_file():
         print(
             f"state.json missing for verify-spec run: {state_path}",

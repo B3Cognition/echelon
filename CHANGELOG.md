@@ -77,7 +77,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **EGR-119 / #143 verify-spec state ownership** — verify-spec phase commands
   that stamp run state now fail when the init-created `state.json` is missing
-  instead of silently creating a replacement file in the wrong run directory.
+  instead of silently creating a replacement file in the wrong run directory;
+  Stage 6 reconciliation commands now apply the same rule when a state path is
+  supplied.
 - **EGR-118 / #144 containment policy** — `delivery-containment-policy.json`
   now records workspace-relative forbidden source-root aliases alongside
   absolute sibling roots, sharing the same alias logic used by Ralph's transcript

@@ -30,6 +30,9 @@ ALWAYS use the deterministic harness commands `python -m harness write-task-requ
 NEVER edit task checkboxes or `**Status:**` lines directly.
 NEVER edit task `req=` metadata directly.
 NEVER modify application source code, `spec.md`, or `plan.md`.
+If `{verify_run_dir}/state.json` is missing, hard stop with BLOCKED and report
+the command stderr. Do not create a replacement state file by hand; verify-spec
+init owns state creation.
 
 The metadata harness command applies only task-row `req=` changes:
 

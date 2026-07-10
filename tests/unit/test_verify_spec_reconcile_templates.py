@@ -56,6 +56,7 @@ def test_reconcile_phase_requires_harness_apply_command() -> None:
 def test_reconcile_phase_candidate_commands_stamp_state() -> None:
     text = VERIFY_RECONCILE.read_text(encoding="utf-8")
 
+    assert "If `{verify_run_dir}/state.json` is missing, hard stop with BLOCKED" in text
     assert (
         '  "{verify_run_dir}/task-requirement-map.candidates.json" \\\n'
         '  "{verify_run_dir}/state.json"'
