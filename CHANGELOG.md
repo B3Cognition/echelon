@@ -120,7 +120,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **EGR-115 / #140 Ralph-owned delivery state** — build prompts no longer expose
   Ralph's mutable `state/default.json` path. Agents receive bounded progress
   facts in the prompt and must report progress through the build status marker,
-  leaving harness state reads/writes owned by Ralph.
+  leaving harness state reads/writes owned by Ralph. `verify-spec-1-init` now
+  hard-stops when `spec_dir=` is absent instead of asking COMMANDER to locate
+  or glob `specs/{spec_id}-*/`; callers must pass the authoritative spec
+  directory.
 - **EGR-125 / #149 build-slice context** — Ralph now writes a Python-owned
   `context/<strategy>-build-slice-context.md` artifact for delivery build and
   feedback turns. The initial context includes deterministic roots, spec input

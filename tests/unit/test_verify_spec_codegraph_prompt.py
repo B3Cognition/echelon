@@ -22,6 +22,14 @@ def test_verify_spec_init_accepts_authoritative_spec_dir_argument() -> None:
     assert "do not locate or\nglob `specs/{spec_id}-*/`" in text
 
 
+def test_verify_spec_init_blocks_when_spec_dir_is_absent() -> None:
+    text = (PHASE_DIR / "verify-spec-1-init.md").read_text(encoding="utf-8")
+
+    assert "If `spec_dir=` is absent, hard stop with BLOCKED" in text
+    assert "When `spec_dir=` is absent, locate" not in text
+    assert "locate\n`specs/{spec_id}-*/`" not in text
+
+
 def test_verify_spec_init_accepts_scoped_verify_arguments() -> None:
     text = (PHASE_DIR / "verify-spec-1-init.md").read_text(encoding="utf-8")
 

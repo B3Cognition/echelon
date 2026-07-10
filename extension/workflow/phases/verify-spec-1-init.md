@@ -9,8 +9,9 @@ optional `scope=scoped`, optional `scoped_ids=<comma-separated requirement IDs>`
 optional `base_full_verify_commit=<git-sha>`, optional `strict=true`,
 optional `--reconcile`, and optional `--dry-run`.
 When `spec_dir=` is present, treat it as authoritative and do not locate or
-glob `specs/{spec_id}-*/`. When `spec_dir=` is absent, locate
-`specs/{spec_id}-*/` from the current project root.
+glob `specs/{spec_id}-*/`. If `spec_dir=` is absent, hard stop with BLOCKED and
+report that the caller must pass the authoritative spec directory. Do not locate,
+glob, list, or search `specs/` from the current project root.
 
 Set `project_root` to the absolute current project root.
 
