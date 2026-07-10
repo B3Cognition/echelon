@@ -752,6 +752,7 @@ def _plan_reopen_gaps() -> None:
     out_dir = Path(sys.argv[4])
     existing_reopen_paths = [Path(arg) for arg in sys.argv[5:]]
 
+    _require_inputs([gaps_path, tasks_path])
     result = plan_reopen_gaps(
         gaps_path=gaps_path,
         tasks_path=tasks_path,

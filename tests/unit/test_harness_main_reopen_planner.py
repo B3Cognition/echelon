@@ -41,3 +41,35 @@ def test_plan_reopen_gaps_cli_writes_plan(tmp_path: Path) -> None:
     assert "reopen gap plan wrote" in result.stdout
     assert (out_dir / "reopen-plan.json").exists()
     assert (out_dir / "reopen-plan.md").exists()
+
+
+def test_plan_reopen_gaps_cli_reports_missing_input_without_traceback(
+    tmp_path: Path,
+) -> None:
+    gaps = tmp_path / "missing-fulfillment-gaps.md"
+    tasks = tmp_path / "tasks.md"
+    out_dir = tmp_path / "out"
+    tasks.write_text(
+        "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "harness",
+            "plan-reopen-gaps",
+            str(gaps),
+            str(tasks),
+            str(out_dir),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert f"missing required input: {gaps}" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert not out_dir.exists()

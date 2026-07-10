@@ -283,6 +283,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and `write-fallback-fulfillment-template` stamps fallback queue readiness when
   called with a verify-spec state file. `assemble-fulfillment-report` now stamps
   final fulfillment report readiness and the report path after successful
+  assembly. `plan-reopen-gaps` now preflights required inputs and reports
+  missing files without a traceback before writing reopen plan artifacts.
   assembly. `validate-fulfillment-artifacts` now accepts the verify-spec
   `state.json` path and stamps row-set validation counts on success or the
   missing/extra row IDs on failure. Stage 6 reconciliation candidate commands
