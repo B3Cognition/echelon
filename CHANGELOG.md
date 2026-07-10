@@ -93,8 +93,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   absolute sibling roots, sharing the same alias logic used by Ralph's transcript
   scanner so provider-side enforcement can consume the deterministic boundary
   without rediscovering paths. Ralph's transcript scanner now also treats
-  Claude-style `LS`, `NotebookEdit`, and `NotebookWrite` tool lines as
-  filesystem access for source-root containment.
+  Claude-style `LS`, `BashOutput`, `NotebookEdit`, and `NotebookWrite` tool
+  lines as filesystem access for source-root containment.
 - **EGR-115 / #140 direct fulfillment refresh** — direct verify-spec fulfillment
   refresh prompts now embed the copied verify-spec phase contracts and an
   explicit invocation guard, so the LLM does not need to search `.claude/skills`,
