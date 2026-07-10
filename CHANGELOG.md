@@ -95,6 +95,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   without rediscovering paths. Ralph's transcript scanner now also treats
   Claude-style `LS`, `NotebookEdit`, and `NotebookWrite` tool lines as
   filesystem access for source-root containment.
+- **EGR-115 / #140 direct fulfillment refresh** — direct verify-spec fulfillment
+  refresh prompts now embed the copied verify-spec phase contracts and an
+  explicit invocation guard, so the LLM does not need to search `.claude/skills`,
+  `SKILL.md`, workflow phase files, or workflow definitions before executing the
+  Python-owned verify-spec commands.
 - **EGR-117 / #141 delivery runtime surface** — delivery worktrees and
   workspace-target harness roots no longer copy raw `agents/control` prompts
   such as `commander.md`; generated Claude delivery skill wrappers also strip
