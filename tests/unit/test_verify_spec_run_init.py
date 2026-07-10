@@ -61,6 +61,64 @@ def test_init_verify_spec_run_uses_orchestration_current_pointer(
     assert state["structural_evidence"] == "pending"
 
 
+def test_init_verify_spec_run_rejects_path_like_current_pointer(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    source = workspace / "sources" / "prosaic"
+    spec_dir = workspace / "specs" / "001-demo"
+    outside_run = workspace / "outside-run"
+    for path in (source, spec_dir, outside_run):
+        path.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (workspace / "runs").mkdir()
+    (workspace / "runs" / ".current").write_text(
+        "../outside-run\n", encoding="utf-8"
+    )
+
+    with pytest.raises(VerifySpecRunInitError, match="unsafe current run id"):
+        init_verify_spec_run(
+            project_root=source,
+            spec_id="001-demo",
+            spec_dir=spec_dir,
+            timestamp="20260709-171000",
+        )
+
+    assert not (outside_run / "verify-spec").exists()
+
+
+def test_init_verify_spec_run_cli_rejects_path_like_current_pointer_cleanly(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    source = workspace / "sources" / "prosaic"
+    spec_dir = workspace / "specs" / "001-demo"
+    outside_run = workspace / "outside-run"
+    for path in (source, spec_dir, outside_run):
+        path.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (workspace / "runs").mkdir()
+    (workspace / "runs" / ".current").write_text(
+        "../outside-run\n", encoding="utf-8"
+    )
+
+    completed = _run_harness(
+        [
+            "init-verify-spec-run",
+            str(source),
+            "001-demo",
+            str(spec_dir),
+            "--timestamp",
+            "20260709-171000",
+        ]
+    )
+
+    assert completed.returncode == 2
+    assert "unsafe current run id:" in completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert not (outside_run / "verify-spec").exists()
+
+
 def test_init_verify_spec_run_creates_timestamped_scoped_run_without_current(
     tmp_path: Path,
 ) -> None:

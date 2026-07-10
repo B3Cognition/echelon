@@ -119,6 +119,8 @@ def _resolve_verify_run_dir(
     current_path = runs_dir / ".current"
     if current_path.is_file():
         run_id = current_path.read_text(encoding="utf-8", errors="replace").strip()
+        if run_id:
+            _require_safe_label("current run id", run_id)
         active_run = runs_dir / run_id if run_id else None
         if active_run is not None and active_run.is_dir():
             return active_run / "verify-spec" / spec_id
