@@ -90,6 +90,12 @@ BUILD_GIT_STATE_DISCOVERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+BUILD_SPEC_ARTIFACT_DISCOVERY_RE = re.compile(
+    r"\b(?:find|locate|glob|list|search|scan)\b"
+    r".{0,160}\b(?:state\.json|runs/|tasks\.md|spec\.md|specs/)\b",
+    re.IGNORECASE,
+)
+
 VERIFY_SPEC_DIR_DISCOVERY_RE = re.compile(
     r"\b(?:find|locate|glob|list|search)\b.{0,120}\bspecs/",
     re.IGNORECASE,
@@ -246,6 +252,21 @@ def scan_prompt_tool_contracts(
                         path=path,
                         line=index + 1,
                         reason="build_git_state_discovery",
+                        text=stripped,
+                    )
+                )
+                continue
+            if (
+                _is_build_prompt(path)
+                and BUILD_SPEC_ARTIFACT_DISCOVERY_RE.search(stripped)
+            ):
+                if _is_negative_boundary(stripped):
+                    continue
+                findings.append(
+                    PromptToolContractFinding(
+                        path=path,
+                        line=index + 1,
+                        reason="build_spec_artifact_discovery",
                         text=stripped,
                     )
                 )
