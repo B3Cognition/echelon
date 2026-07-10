@@ -104,6 +104,7 @@ def test_verify_spec_stage3_audit_commands_stamp_state() -> None:
     assert "stamps `requirement_audit: ready`" in text
     assert "`requirement_audit_count`" in text
     assert "`{verify_run_dir}/state.json`" in text
+    assert "If `{verify_run_dir}/state.json` is missing, hard stop with BLOCKED" in text
 
 
 def test_verify_spec_preserves_runtime_evidence_semantics() -> None:

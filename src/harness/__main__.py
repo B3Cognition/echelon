@@ -782,7 +782,14 @@ def _write_codegraph_evidence() -> None:
 
 
 def _stamp_verify_spec_state(verify_run_dir: "Path", updates: dict[str, object]) -> None:
-    _stamp_json_state_file(verify_run_dir / "state.json", updates)
+    state_path = verify_run_dir / "state.json"
+    if not state_path.is_file():
+        print(
+            f"state.json missing for verify-spec run: {state_path}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    _stamp_json_state_file(state_path, updates)
 
 
 def _stamp_json_state_file(state_path: "Path", updates: dict[str, object]) -> None:

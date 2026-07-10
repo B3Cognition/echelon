@@ -80,6 +80,14 @@ def _prepend_path(monkeypatch, bin_dir: Path) -> None:
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
 
 
+def _write_verify_state(verify_run_dir: Path) -> None:
+    verify_run_dir.mkdir(parents=True, exist_ok=True)
+    (verify_run_dir / "state.json").write_text(
+        json.dumps({"structural_evidence": "pending"}),
+        encoding="utf-8",
+    )
+
+
 def _write_fake_codegraph_cli(bin_dir: Path, *, success: bool) -> Path:
     if success:
         script = """
@@ -145,11 +153,7 @@ def test_write_codegraph_evidence_cli_writes_analysis_and_summary(
     project_root.mkdir()
     _write_fake_bridge(project_root)
     verify_run_dir = tmp_path / "runs" / "verify-spec-001"
-    verify_run_dir.mkdir(parents=True)
-    (verify_run_dir / "state.json").write_text(
-        json.dumps({"structural_evidence": "pending"}),
-        encoding="utf-8",
-    )
+    _write_verify_state(verify_run_dir)
     spec_dir = project_root / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
 
@@ -184,7 +188,7 @@ def test_write_codegraph_evidence_prefers_codegraph_cli_when_available(
     _prepend_path(monkeypatch, tmp_path / "bin")
     verify_run_dir = tmp_path / "runs" / "verify-spec-001"
     error_path = verify_run_dir / "codegraph-error.txt"
-    error_path.parent.mkdir(parents=True)
+    _write_verify_state(verify_run_dir)
     error_path.write_text("stale", encoding="utf-8")
     spec_dir = project_root / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
@@ -217,6 +221,7 @@ def test_write_codegraph_evidence_rejects_stale_cli_repo_path_and_regenerates(
     _write_fake_stale_codegraph_cli(tmp_path / "bin", stale_repo)
     _prepend_path(monkeypatch, tmp_path / "bin")
     verify_run_dir = tmp_path / "runs" / "verify-spec-001"
+    _write_verify_state(verify_run_dir)
     spec_dir = project_root / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
 
@@ -245,11 +250,7 @@ def test_write_codegraph_evidence_falls_back_to_bridge_when_cli_fails(
     _write_fake_codegraph_cli(tmp_path / "bin", success=False)
     _prepend_path(monkeypatch, tmp_path / "bin")
     verify_run_dir = tmp_path / "runs" / "verify-spec-001"
-    verify_run_dir.mkdir(parents=True)
-    (verify_run_dir / "state.json").write_text(
-        json.dumps({"structural_evidence": "pending"}),
-        encoding="utf-8",
-    )
+    _write_verify_state(verify_run_dir)
     spec_dir = project_root / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
 
@@ -283,6 +284,7 @@ def test_write_codegraph_evidence_cli_preserves_existing_codegraph_dir(
     marker = codegraph_dir / "keep.txt"
     marker.write_text("existing", encoding="utf-8")
     verify_run_dir = tmp_path / "runs" / "verify-spec-001"
+    _write_verify_state(verify_run_dir)
     spec_dir = project_root / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
 
@@ -307,6 +309,7 @@ def test_write_codegraph_evidence_cli_uses_fixed_installed_bridge_path(
     _write_fake_codegraph_cli(tmp_path / "bin", success=False)
     _prepend_path(monkeypatch, tmp_path / "bin")
     verify_run_dir = tmp_path / "runs" / "verify-spec-001"
+    _write_verify_state(verify_run_dir)
     spec_dir = project_root / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
 

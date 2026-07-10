@@ -15,6 +15,9 @@ This writes `{verify_run_dir}/canonical-requirements.json` and
 canonical requirement inventory for this verify-spec run. The command also
 stamps `canonical_requirements: ready` and `canonical_requirements_count` in
 `{verify_run_dir}/state.json`.
+If `{verify_run_dir}/state.json` is missing, hard stop with BLOCKED and report
+the command stderr. Do not create a replacement state file by hand; verify-spec
+init owns state creation.
 
 Then run:
 
@@ -25,6 +28,8 @@ python -m harness write-requirement-audit "{verify_run_dir}"
 This writes `{verify_run_dir}/requirement-audit.md` from the canonical inventory
 and stamps `requirement_audit: ready` and `requirement_audit_count` in
 `{verify_run_dir}/state.json`.
+If `{verify_run_dir}/state.json` is missing, hard stop with BLOCKED and report
+the command stderr.
 Do not dispatch SPEC-FULFILLMENT-AUDITOR for row-set extraction, do not hand-edit
 `requirement-audit.md`, and do not ask an LLM to infer or repair the audit table.
 Python owns the canonical audit row set.
