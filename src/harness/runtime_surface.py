@@ -53,6 +53,17 @@ DELIVERY_BASH_FILES = frozenset(
     }
 )
 
+DELIVERY_TEMPLATE_FILES = frozenset(
+    {
+        "fulfillment-gap-task-fragment.md",
+        "review-fix-task-fragment.md",
+        "schema-consolidation-template.md",
+        "task-checkpoint-fragment.md",
+        "task-entry-fragment.md",
+        "tasks-template.md",
+    }
+)
+
 DELIVERY_WORKFLOW_PHASE_PREFIXES = (
     "build-",
     "codegen-",
@@ -98,6 +109,16 @@ def is_delivery_bash_path(relative_path: Path) -> bool:
         return True
     if len(parts) == 3:
         return parts[2] in DELIVERY_BASH_FILES
+    return False
+
+
+def is_delivery_template_path(relative_path: Path) -> bool:
+    """Return True when a template file is safe to expose to delivery agents."""
+    parts = tuple(relative_path.parts)
+    if len(parts) < 2 or parts[0] != "templates":
+        return True
+    if len(parts) == 2:
+        return parts[1] in DELIVERY_TEMPLATE_FILES
     return False
 
 

@@ -229,6 +229,38 @@ def test_polyrepo_runtime_extension_excludes_stack_playbooks(
     assert not (runtime / "stacks").exists()
 
 
+def test_polyrepo_runtime_extension_exposes_only_delivery_safe_templates(
+    tmp_path: Path,
+) -> None:
+    """Target-specific harness roots should not expose Phase A templates."""
+    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "templates").mkdir()
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (source / "templates" / "tasks-template.md").write_text(
+        "# runtime task template\n", encoding="utf-8"
+    )
+    (source / "templates" / "schema-consolidation-template.md").write_text(
+        "# build finalize template\n", encoding="utf-8"
+    )
+    (source / "templates" / "strategic-overview-template.md").write_text(
+        "# phase a template\n", encoding="utf-8"
+    )
+
+    harness_base = tmp_path / "workspace" / "runs" / "targets" / "prosaic"
+
+    _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
+
+    templates = harness_base / ".specify" / "extensions" / "echelon" / "templates"
+    assert (templates / "tasks-template.md").exists()
+    assert (templates / "schema-consolidation-template.md").exists()
+    assert not (templates / "strategic-overview-template.md").exists()
+
+
 def test_polyrepo_runtime_extension_excludes_non_delivery_agent_prompts(
     tmp_path: Path,
 ) -> None:

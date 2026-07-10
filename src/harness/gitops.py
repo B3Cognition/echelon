@@ -33,6 +33,7 @@ from harness.runtime_surface import (
     DELIVERY_EXCLUDED_BASH_FILES,
     is_delivery_agent_path,
     is_delivery_bash_path,
+    is_delivery_template_path,
     is_delivery_workflow_phase_path,
     prune_delivery_workflow_definition,
 )
@@ -96,6 +97,8 @@ def runtime_extension_copy_ignore(source_root: Path):
             if not is_delivery_agent_path(relative):
                 ignored.add(name)
             if not is_delivery_bash_path(relative):
+                ignored.add(name)
+            if not is_delivery_template_path(relative):
                 ignored.add(name)
             if not is_delivery_workflow_phase_path(relative):
                 ignored.add(name)

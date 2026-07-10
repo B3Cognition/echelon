@@ -139,7 +139,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   target-visible phase set aligned to build, verify-spec, and codegen delivery
   dispatch only. Node helper source under `scripts/node` is no longer copied
   into delivery worktrees; Ralph still syncs the vendored CodeGraph
-  `node_modules` runtime deps explicitly.
+  `node_modules` runtime deps explicitly. Runtime template sync is now
+  allowlisted to delivery-safe task/review/fulfillment fragments and the
+  build-finalize schema consolidation template instead of copying all Phase A
+  planning templates.
 - **EGR-116 / #142 prompt tool contracts** — static prompt scanning now treats
   shell file-reader commands such as `cat`, `sed`, `less`, `tail`, and `head`
   against `src/harness/*`, `ralph.py`, or fulfillment internals as harness

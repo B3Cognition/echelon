@@ -462,6 +462,41 @@ def test_sync_runtime_extension_excludes_stack_playbooks(tmp_path):
     assert not (runtime / "stacks").exists()
 
 
+def test_sync_runtime_extension_exposes_only_delivery_safe_templates(tmp_path):
+    """Delivery worktrees should not expose Phase A planning templates."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "templates").mkdir()
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (source / "templates" / "tasks-template.md").write_text(
+        "# runtime task template\n", encoding="utf-8"
+    )
+    (source / "templates" / "schema-consolidation-template.md").write_text(
+        "# build finalize template\n", encoding="utf-8"
+    )
+    (source / "templates" / "strategic-overview-template.md").write_text(
+        "# phase a template\n", encoding="utf-8"
+    )
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    templates = worktree / ".specify" / "extensions" / "echelon" / "templates"
+    assert (templates / "tasks-template.md").exists()
+    assert (templates / "schema-consolidation-template.md").exists()
+    assert not (templates / "strategic-overview-template.md").exists()
+
+
 def test_sync_runtime_extension_excludes_non_delivery_agent_prompts(tmp_path):
     """Delivery worktrees should expose only delivery-safe raw agent prompts."""
     source = tmp_path / ".specify" / "extensions" / "echelon"
