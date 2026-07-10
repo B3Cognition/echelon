@@ -43,6 +43,17 @@ DELIVERY_AGENT_DIRS = frozenset(
     }
 )
 
+DELIVERY_BASH_FILES = frozenset(
+    {
+        "echelon-config-get.sh",
+        "endocrine.sh",
+        "fix-spa-base.sh",
+        "setup-worktree.sh",
+        "startup-banner.sh",
+        "validate-deploy.sh",
+    }
+)
+
 DELIVERY_WORKFLOW_PHASE_PREFIXES = (
     "build-",
     "bugfix-",
@@ -80,6 +91,16 @@ def is_delivery_agent_path(relative_path: Path) -> bool:
     if len(parts) < 2 or parts[0] != "agents":
         return True
     return parts[1] in DELIVERY_AGENT_DIRS
+
+
+def is_delivery_bash_path(relative_path: Path) -> bool:
+    """Return True when a top-level bash helper is safe to expose to delivery."""
+    parts = tuple(relative_path.parts)
+    if len(parts) < 3 or parts[:2] != ("scripts", "bash"):
+        return True
+    if len(parts) == 3:
+        return parts[2] in DELIVERY_BASH_FILES
+    return False
 
 
 def is_delivery_workflow_phase_path(relative_path) -> bool:

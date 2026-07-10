@@ -112,6 +112,59 @@ def test_polyrepo_runtime_extension_excludes_learning_and_journal_bash_helpers(
     assert not (bash_dir / "state-backup.sh").exists()
 
 
+def test_polyrepo_runtime_extension_exposes_only_delivery_safe_bash_helpers(
+    tmp_path: Path,
+) -> None:
+    """Target-specific harness roots should expose only delivery bash helpers."""
+    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "scripts" / "bash").mkdir(parents=True)
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    for name in [
+        "build-light-gates.sh",
+        "cicd-fingerprint.sh",
+        "context7-docs.sh",
+        "deploy.sh",
+        "detect-project.sh",
+        "echelon-config-get.sh",
+        "endocrine.sh",
+        "fix-spa-base.sh",
+        "preflight-speckit.sh",
+        "python-detect.sh",
+        "setup-worktree.sh",
+        "startup-banner.sh",
+        "state-lock.sh",
+        "validate-deploy.sh",
+    ]:
+        (source / "scripts" / "bash" / name).write_text(
+            "#!/usr/bin/env bash\n", encoding="utf-8"
+        )
+
+    harness_base = tmp_path / "workspace" / "runs" / "targets" / "prosaic"
+
+    _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
+
+    bash_dir = harness_base / ".specify" / "extensions" / "echelon" / "scripts" / "bash"
+    assert (bash_dir / "echelon-config-get.sh").exists()
+    assert (bash_dir / "endocrine.sh").exists()
+    assert (bash_dir / "fix-spa-base.sh").exists()
+    assert (bash_dir / "setup-worktree.sh").exists()
+    assert (bash_dir / "startup-banner.sh").exists()
+    assert (bash_dir / "validate-deploy.sh").exists()
+    assert not (bash_dir / "build-light-gates.sh").exists()
+    assert not (bash_dir / "cicd-fingerprint.sh").exists()
+    assert not (bash_dir / "context7-docs.sh").exists()
+    assert not (bash_dir / "deploy.sh").exists()
+    assert not (bash_dir / "detect-project.sh").exists()
+    assert not (bash_dir / "preflight-speckit.sh").exists()
+    assert not (bash_dir / "python-detect.sh").exists()
+    assert not (bash_dir / "state-lock.sh").exists()
+
+
 def test_polyrepo_runtime_extension_excludes_phase_a_presets(
     tmp_path: Path,
 ) -> None:
