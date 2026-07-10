@@ -115,6 +115,8 @@ def write_judgment_prepass(
     }
     json_path = verify_run_dir / "judgment-prepass.json"
     markdown_path = verify_run_dir / "judgment-prepass.md"
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -204,6 +206,7 @@ def assemble_fulfillment_report(
         fallback_rows=fallback_rows,
         task_progress_row=task_progress_row,
     )
+    output_report_path.parent.mkdir(parents=True, exist_ok=True)
     output_report_path.write_text(report, encoding="utf-8")
 
 
@@ -234,6 +237,7 @@ def write_fallback_fulfillment_template(
     ]
     for item_id in fallback_ids:
         lines.append(f"| {item_id} | TODO_STATUS | TODO_EVIDENCE |")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return fallback_ids
 

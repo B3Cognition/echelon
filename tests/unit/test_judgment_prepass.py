@@ -160,6 +160,82 @@ def test_assemble_full_report_preserves_canonical_order():
     assert "| TASK-PROGRESS | PARTIAL | mismatch |" in report
 
 
+def test_assemble_fulfillment_report_creates_output_parent(tmp_path: Path):
+    canonical_inventory = tmp_path / "canonical-requirements.json"
+    canonical_inventory.write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}]}),
+        encoding="utf-8",
+    )
+    prepass = tmp_path / "judgment-prepass.json"
+    prepass.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "id": "FR-001",
+                        "mechanical": True,
+                        "proposed_status": "IMPLEMENTED",
+                        "reason_code": "source_and_test",
+                        "fallback_reason": None,
+                        "report_row": "| FR-001 | IMPLEMENTED | source_and_test |",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    fallback = tmp_path / "fulfillment-report.fallback.md"
+    fallback.write_text(
+        "# Fallback Fulfillment Judgment\n\n"
+        "| ID | Status | Evidence |\n"
+        "| --- | --- | --- |\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "nested" / "fulfillment-report.md"
+
+    assemble_fulfillment_report(
+        canonical_inventory_path=canonical_inventory,
+        judgment_prepass_path=prepass,
+        fallback_report_path=fallback,
+        output_report_path=output,
+    )
+
+    assert output.is_file()
+    assert "| FR-001 | IMPLEMENTED | source_and_test |" in output.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_write_fallback_fulfillment_template_creates_output_parent(tmp_path: Path):
+    prepass = tmp_path / "judgment-prepass.json"
+    prepass.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "id": "FR-001",
+                        "mechanical": False,
+                        "proposed_status": None,
+                        "reason_code": None,
+                        "fallback_reason": "needs_judgment",
+                        "report_row": None,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "nested" / "fulfillment-report.fallback.md"
+
+    fallback_ids = write_fallback_fulfillment_template(
+        judgment_prepass_path=prepass,
+        output_path=output,
+    )
+
+    assert fallback_ids == ["FR-001"]
+    assert output.is_file()
+
+
 def test_large_map_produces_small_fallback_queue(tmp_path: Path):
     spec_dir = tmp_path / "specs" / "001-demo"
     verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
