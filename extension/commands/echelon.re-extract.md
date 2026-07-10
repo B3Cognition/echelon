@@ -9,16 +9,31 @@ scripts:
 
 You are COMMANDER executing the brownfield extraction pipeline.
 
-**Read `agents/control/commander.md` first** — it contains your complete behavioral
-framework: role separation, governance constraints, dispatch protocols, and all NEVER rules.
+Use this command's declared `re_extraction` phase sequence as the authoritative
+routing contract. Do not read `agents/control/commander.md` or
+`workflow/definition.yaml` to rediscover governance, routing, or outputs.
 
-Then read `workflow/definition.yaml` `re_extraction:` section. Start at phase
-`re-extract-0-preflight`, read each phase node's `spec_file` before dispatching,
-and write all state to the resolved RE output directory:
+Start at phase `re-extract-0-preflight`, read each named phase contract before
+dispatching, and write all state to the resolved RE output directory:
 - active `echelon spec run`: `runs/<run-id>/re/state.json`
 - standalone `re-*`: `.specify/echelon/re/state.json`
 
 **This command always extracts and specifies. It never writes implementation code.**
+
+## Phase Sequence
+
+1. `re-extract-0-preflight` — `workflow/phases/re-extract-0-preflight.md`
+2. `re-extract-1-analyze` — `workflow/phases/re-extract-1-analyze.md`
+3. `re-extract-2-specify` — `workflow/phases/re-extract-2-specify.md`
+4. `re-extract-3-verify` — `workflow/phases/re-extract-3-verify.md`
+5. If coverage is below threshold and expansion iterations remain, run
+   `re-extract-4-expand`, then return to `re-extract-3-verify`.
+6. `re-extract-5-validate` — `workflow/phases/re-extract-5-validate.md`
+7. If resolution remains below threshold and validation iterations remain,
+   repeat `re-extract-5-validate`.
+8. `re-extract-6-checklist` — `workflow/phases/re-extract-6-checklist.md`
+9. `re-extract-7-constitute` — `workflow/phases/re-extract-7-constitute.md`
+10. DONE
 
 ---
 

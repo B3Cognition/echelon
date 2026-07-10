@@ -107,7 +107,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   wrappers for INNOVATE and GROUND now also require `state.json.spec_dir` and
   fail fast instead of rediscovering spec directories. RE single-phase command
   wrappers now carry explicit phase routing metadata and no longer tell agents
-  to read `agents/control/commander.md` or `workflow/definition.yaml`.
+  to read `agents/control/commander.md` or `workflow/definition.yaml`; the
+  multi-phase `re-extract` command now carries its phase sequence directly for
+  the same reason.
 - **EGR-062 / #84 verify-spec provider-session UX** — fulfillment refresh
   provider-limit reasons now extract the concise session-limit/reset line from
   provider output instead of surfacing the full LLM transcript in the blocked
