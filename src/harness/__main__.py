@@ -480,6 +480,18 @@ def _validate_fulfillment_artifacts() -> None:
             f"(audit={result.audit_count}, report={result.report_count})"
         )
         return
+    if len(sys.argv) == 6:
+        state_path = Path(sys.argv[5]).resolve()
+        _stamp_verify_spec_state(
+            state_path.parent,
+            {
+                "fulfillment_artifacts": "invalid",
+                "fulfillment_artifacts_audit_count": result.audit_count,
+                "fulfillment_artifacts_report_count": result.report_count,
+                "fulfillment_artifacts_missing_in_report": list(result.missing_in_report),
+                "fulfillment_artifacts_extra_in_report": list(result.extra_in_report),
+            },
+        )
     if result.missing_in_report:
         print(
             "missing_in_report: " + ", ".join(result.missing_in_report),
