@@ -19,7 +19,7 @@ def test_verify_spec_init_accepts_authoritative_spec_dir_argument() -> None:
 
     assert "optional `spec_dir=<absolute-or-repo-relative-path>`" in text
     assert "When `spec_dir=` is present, treat it as authoritative" in text
-    assert "do not locate or\nglob `specs/{spec_id}-*/`" in text
+    assert "Do not locate, glob, list, or search `specs/`" in text
 
 
 def test_verify_spec_init_blocks_when_spec_dir_is_absent() -> None:

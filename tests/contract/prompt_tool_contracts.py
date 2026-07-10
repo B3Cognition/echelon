@@ -90,6 +90,11 @@ BUILD_GIT_STATE_DISCOVERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+VERIFY_SPEC_DIR_DISCOVERY_RE = re.compile(
+    r"\b(?:find|locate|glob|list|search)\b.{0,120}\bspecs/",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class PromptToolContractFinding:
@@ -156,6 +161,14 @@ def _is_build_prompt(path: Path) -> bool:
     )
 
 
+def _is_verify_spec_phase(path: Path) -> bool:
+    normalized = path.as_posix()
+    return (
+        "/extension/workflow/phases/verify-spec-" in normalized
+        or normalized.startswith("extension/workflow/phases/verify-spec-")
+    )
+
+
 def scan_prompt_tool_contracts(
     root: Path,
     paths: list[Path] | None = None,
@@ -186,6 +199,21 @@ def scan_prompt_tool_contracts(
                         path=path,
                         line=index + 1,
                         reason="harness_internal_discovery",
+                        text=stripped,
+                    )
+                )
+                continue
+            if (
+                _is_verify_spec_phase(path)
+                and VERIFY_SPEC_DIR_DISCOVERY_RE.search(stripped)
+            ):
+                if _is_negative_boundary(stripped):
+                    continue
+                findings.append(
+                    PromptToolContractFinding(
+                        path=path,
+                        line=index + 1,
+                        reason="verify_spec_dir_discovery",
                         text=stripped,
                     )
                 )
