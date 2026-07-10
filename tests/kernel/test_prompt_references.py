@@ -125,7 +125,7 @@ def test_verify_spec_map_runs_deterministic_codegraph_evidence_map_first():
     assert "{verify_run_dir}/codegraph-evidence-map.json" in text
     assert "{verify_run_dir}/codegraph-evidence-map.md" in text
     assert "fallback_requirement_ids" in text
-    assert "`low`, `none`, or `ambiguous`" in text
+    assert "`Confidence` must be `high`, `medium`, `low`, or `none`" in text
 
 
 def test_verify_spec_uses_python_owned_canonical_requirement_inventory():
@@ -156,7 +156,7 @@ def test_verify_spec_judge_requires_artifact_row_set_validation():
     assert "fulfillment-report.md" in text
     assert "row-set integrity" in text
     assert "validate-fulfillment-artifacts" in text
-    assert "Do not validate\nrow sets by hand" in text
+    assert "Do not validate row sets by\nhand" in text
     assert "hard stop" in text.lower()
     assert "Do not render summary counts as a markdown table" in text
     assert "status labels in the first column" in text
@@ -253,11 +253,20 @@ def test_spec_glob_fallbacks_are_guarded_by_authoritative_spec_dir_contract():
         "state.json.spec_dir` is absent",
         "spec_dir=` is absent",
     )
+    positive_fallback_patterns = (
+        "Only fall back to `specs/{spec_id}-*/`",
+        "fall back to `specs/{spec_id}-*/`",
+        "locate `specs/{spec_id}-*/`",
+        "locate or glob `specs/{spec_id}-*/`",
+        "locate the spec directory",
+    )
 
     for root in roots:
         for prompt in root.rglob("*.md"):
             text = prompt.read_text()
             if "specs/{spec_id}-*/" not in text:
+                continue
+            if not any(pattern in text for pattern in positive_fallback_patterns):
                 continue
             if not any(pattern in text for pattern in guarded_patterns):
                 violations.append(
@@ -498,15 +507,17 @@ def test_manual_specialist_commands_route_state_and_journal_through_echelon_resu
         assert "journal_entries:" in text
 
 
-def test_active_run_specialist_commands_reuse_state_spec_dir_when_present():
+def test_active_run_specialist_commands_require_state_spec_dir():
     for prompt in [
         EXTENSION_ROOT / "commands" / "echelon.innovate.md",
         EXTENSION_ROOT / "commands" / "echelon.ground.md",
     ]:
         text = prompt.read_text()
 
-        assert "If `state.json.spec_dir` is present, treat it as authoritative" in text
-        assert "do not locate or glob `specs/{spec_id}-*/`" in text
+        assert "Treat `state.json.spec_dir` as authoritative" in text
+        assert "Do not locate, glob, search, list, or infer `specs/{spec_id}-*/`" in text
+        assert "Active squad state is missing spec_dir" in text
+        assert "If `state.json.spec_dir` is absent, locate" not in text
 
 
 def test_bugfix_and_reopen_phases_accept_authoritative_spec_dir():
