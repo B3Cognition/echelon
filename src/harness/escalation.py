@@ -250,6 +250,11 @@ def _default_question(category: str, context: str) -> str:
             "An infrastructure failure occurred (Docker, git, network). "
             "How should the loop recover?"
         ),
+        "no_progress": (
+            "The build loop stopped after repeated iterations without file changes. "
+            "Continue if the next slice should be retried without new instructions, "
+            "or resume with an answer to clarify the task."
+        ),
     }
     return questions.get(category, f"Escalation in category '{category}': {context}")
 
@@ -332,10 +337,20 @@ def _render_escalation_file(
 
     lines.append("---")
     lines.append("")
-    lines.append(
-        f"*To resume with an answer, run `{_resume_answer_command(spec_id)}`. "
-        f"The CLI will record the answer in this file.*"
-    )
+    if category == "no_progress":
+        lines.append(
+            f"*To continue without an answer, run `{_continue_command(spec_id)}`.*"
+        )
+        lines.append("")
+        lines.append(
+            f"*To resume with an answer, run `{_resume_answer_command(spec_id)}`. "
+            f"The CLI will record the answer in this file.*"
+        )
+    else:
+        lines.append(
+            f"*To resume with an answer, run `{_resume_answer_command(spec_id)}`. "
+            f"The CLI will record the answer in this file.*"
+        )
     lines.append("")
 
     return "\n".join(lines)

@@ -109,6 +109,22 @@ class TestEscalationFileCreation:
         assert metadata["options_considered"] == ["Retry after 30s", "Abort and notify"]
         assert metadata["recommended_answer"] == "Retry after 30s"
 
+    def test_no_progress_file_prefers_continue_without_answer(
+        self, handler: EscalationHandler
+    ) -> None:
+        filepath = handler.escalate(
+            spec_id="012",
+            strategy_id="default",
+            category="no_progress",
+            context="No file changes after repeated build iterations.",
+        )
+        content = Path(filepath).read_text(encoding="utf-8")
+
+        assert "continue without an answer" in content
+        assert "echelon delivery continue 012" in content
+        assert "resume with an answer" in content
+        assert 'echelon delivery resume 012 "<answer>"' in content
+
     def test_banner_printed_to_stderr(
         self, handler: EscalationHandler, capsys: pytest.CaptureFixture
     ) -> None:

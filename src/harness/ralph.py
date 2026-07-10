@@ -932,9 +932,11 @@ class RalphController:
                                     "This usually means the LLM is stuck or the build "
                                     "instructions are unclear.\n\n"
                                     "Please review the build output above and either:\n"
-                                    f"1. Run echelon delivery resume {self._spec_id} "
-                                    '"<clarification>"\n'
-                                    "2. Reset and restart with --reset flag"
+                                    f"1. Run echelon delivery continue {self._spec_id} "
+                                    "to retry without new instructions\n"
+                                    f"2. Run echelon delivery resume {self._spec_id} "
+                                    '"<clarification>" if the task needs guidance\n'
+                                    "3. Reset and restart with --reset flag"
                                 ),
                                 last_verify_result=_verify_to_dict(
                                     inner_result["final_verify"]

@@ -113,8 +113,9 @@ class StrategyCoordinator:
                     print_escalation_sticky_banner(intent.spec_id, sid, str(existing["escalation_file"]))
                     raise RuntimeError(
                         f"[{sid}] blocked — escalation pending. "
-                        f"Append ## Answer to {existing['escalation_file']}, then run "
-                        f"echelon delivery resume {intent.spec_id}; or pass --reset to discard."
+                        f"Run echelon delivery continue {intent.spec_id} if no answer is needed, "
+                        f"or run echelon delivery resume {intent.spec_id} \"<answer>\" "
+                        "to clarify; pass --reset to discard."
                     )
 
         # Load strategy specs (build_command + context per strategy)
