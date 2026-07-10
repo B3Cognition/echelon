@@ -63,6 +63,8 @@ def init_verify_spec_run(
         raise VerifySpecRunInitError(
             "base full verify commit requires --scope scoped"
         )
+    if timestamp is not None:
+        _require_safe_label("timestamp", timestamp)
     orchestration_root = _derive_orchestration_root(project_root, spec_dir)
     verify_run_dir = _resolve_verify_run_dir(
         orchestration_root=orchestration_root,
@@ -125,3 +127,15 @@ def _resolve_verify_run_dir(
 
 def _stable_unique(values: Iterable[str]) -> list[str]:
     return sorted({str(value).strip() for value in values if str(value).strip()})
+
+
+def _require_safe_label(name: str, value: str) -> None:
+    stripped = str(value).strip()
+    if (
+        not stripped
+        or "/" in stripped
+        or "\\" in stripped
+        or stripped in {".", ".."}
+        or ".." in Path(stripped).parts
+    ):
+        raise VerifySpecRunInitError(f"unsafe {name}: {value}")

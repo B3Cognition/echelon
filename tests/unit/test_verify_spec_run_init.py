@@ -408,3 +408,49 @@ def test_init_verify_spec_run_cli_rejects_base_commit_for_full_scope_cleanly(
     assert "base full verify commit requires --scope scoped" in completed.stderr
     assert "Traceback" not in completed.stderr
     assert not (project / "runs").exists()
+
+
+def test_init_verify_spec_run_rejects_path_like_timestamp_before_state(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+    with pytest.raises(VerifySpecRunInitError, match="unsafe timestamp"):
+        init_verify_spec_run(
+            project_root=project,
+            spec_id="001-demo",
+            spec_dir=spec_dir,
+            timestamp="../escape",
+        )
+
+    assert not (project / "runs").exists()
+    assert not (tmp_path / "escape").exists()
+
+
+def test_init_verify_spec_run_cli_rejects_path_like_timestamp_cleanly(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+    completed = _run_harness(
+        [
+            "init-verify-spec-run",
+            str(project),
+            "001-demo",
+            str(spec_dir),
+            "--timestamp",
+            "../escape",
+        ]
+    )
+
+    assert completed.returncode == 2
+    assert "unsafe timestamp:" in completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert not (project / "runs").exists()
+    assert not (tmp_path / "escape").exists()
