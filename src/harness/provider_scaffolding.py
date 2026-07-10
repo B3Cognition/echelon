@@ -115,6 +115,7 @@ def _claude_skill_from_command(command_file: Path, skill_name: str) -> str:
     raw = command_file.read_text(encoding="utf-8")
     metadata, body = _split_frontmatter(raw)
     description = _frontmatter_value(metadata, "description") or f"Run {command_file.stem}"
+    body = _drop_internal_bootstrap_lines(body)
     body = _prefix_runtime_paths(body)
     return (
         "---\n"
@@ -191,3 +192,17 @@ def _prefix_runtime_paths(body: str) -> str:
     ):
         body = body.replace(f"`{name}", f"`{prefix}{name}")
     return body
+
+
+def _drop_internal_bootstrap_lines(body: str) -> str:
+    """Remove obsolete command-wrapper prose that tells agents to inspect internals."""
+    forbidden = (
+        "agents/control/commander.md",
+        "workflow/definition.yaml",
+    )
+    lines = [
+        line
+        for line in body.splitlines()
+        if not any(marker in line for marker in forbidden)
+    ]
+    return "\n".join(lines)

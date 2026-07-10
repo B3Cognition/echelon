@@ -29,8 +29,8 @@ def test_polyrepo_runtime_extension_excludes_python_migration_helpers(
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
     runtime = harness_base / ".specify" / "extensions" / "echelon"
-    assert (runtime / "agents" / "control" / "commander.md").exists()
     assert (runtime / "workflow" / "definition.yaml").exists()
+    assert not (runtime / "agents" / "control" / "commander.md").exists()
     assert not (runtime / "scripts" / "python").exists()
 
 
@@ -259,7 +259,7 @@ def test_polyrepo_runtime_extension_excludes_non_delivery_agent_prompts(
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
     agents = harness_base / ".specify" / "extensions" / "echelon" / "agents"
-    assert (agents / "control" / "commander.md").exists()
+    assert not (agents / "control" / "commander.md").exists()
     assert (agents / "build" / "build.md").exists()
     assert not (agents / "exploration").exists()
     assert not (agents / "solution").exists()

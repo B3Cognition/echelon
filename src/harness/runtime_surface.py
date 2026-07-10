@@ -39,7 +39,6 @@ DELIVERY_EXCLUDED_BASH_FILES = frozenset(
 DELIVERY_AGENT_DIRS = frozenset(
     {
         "build",
-        "control",
     }
 )
 

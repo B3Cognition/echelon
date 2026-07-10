@@ -71,15 +71,9 @@ def test_sync_runtime_extension_copies_untracked_project_extension(tmp_path):
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    assert (
-        worktree
-        / ".specify"
-        / "extensions"
-        / "echelon"
-        / "agents"
-        / "control"
-        / "commander.md"
-    ).read_text(encoding="utf-8") == "commander\n"
+    runtime = worktree / ".specify" / "extensions" / "echelon"
+    assert (runtime / "workflow" / "definition.yaml").read_text(encoding="utf-8") == "workflow\n"
+    assert not (runtime / "agents" / "control" / "commander.md").exists()
     assert ".specify/extensions/echelon/" in exclude.read_text(encoding="utf-8")
 
 
@@ -203,8 +197,8 @@ def test_sync_runtime_extension_excludes_python_migration_helpers(tmp_path):
         gitops.sync_runtime_extension(worktree)
 
     runtime = worktree / ".specify" / "extensions" / "echelon"
-    assert (runtime / "agents" / "control" / "commander.md").exists()
     assert (runtime / "workflow" / "definition.yaml").exists()
+    assert not (runtime / "agents" / "control" / "commander.md").exists()
     assert not (runtime / "scripts" / "python").exists()
 
 
@@ -451,7 +445,7 @@ def test_sync_runtime_extension_excludes_non_delivery_agent_prompts(tmp_path):
         gitops.sync_runtime_extension(worktree)
 
     agents = worktree / ".specify" / "extensions" / "echelon" / "agents"
-    assert (agents / "control" / "commander.md").exists()
+    assert not (agents / "control" / "commander.md").exists()
     assert (agents / "build" / "build.md").exists()
     assert not (agents / "exploration").exists()
     assert not (agents / "solution").exists()
@@ -640,8 +634,8 @@ def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
     skill = worktree / ".claude" / "skills" / "speckit-echelon-verify-spec" / "SKILL.md"
     text = skill.read_text(encoding="utf-8")
     assert "name: speckit-echelon-verify-spec" in text
-    assert "Read `.specify/extensions/echelon/agents/control/commander.md`" in text
-    assert "`.specify/extensions/echelon/workflow/definition.yaml`" in text
+    assert "agents/control/commander.md" not in text
+    assert "workflow/definition.yaml" not in text
     assert "$ARGUMENTS" in text
     assert ".claude/skills/speckit-echelon-verify-spec/" in exclude.read_text(encoding="utf-8")
 

@@ -75,6 +75,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **EGR-117 / #141 delivery runtime surface** — delivery worktrees and
+  workspace-target harness roots no longer copy raw `agents/control` prompts
+  such as `commander.md`; generated Claude delivery skill wrappers also strip
+  obsolete bootstrap prose that tells agents to read
+  `agents/control/commander.md` or `workflow/definition.yaml`.
 - **EGR-127 CLI help contract UX** — Typer now declares documented
   arguments/options across the visible command tree instead of leaving
   workspace, phase, benchmark, stack, spec checkpoint/target/artifacts, delivery

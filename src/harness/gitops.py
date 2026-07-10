@@ -43,8 +43,11 @@ logger = logging.getLogger(__name__)
 # Command timeout for git operations (seconds)
 GIT_CMD_TIMEOUT = 120
 RUNTIME_EXTENSION_REL = Path(".specify") / "extensions" / "echelon"
-RUNTIME_EXTENSION_REQUIRED = (
+RUNTIME_EXTENSION_SOURCE_REQUIRED = (
     Path("agents") / "control" / "commander.md",
+    Path("workflow") / "definition.yaml",
+)
+RUNTIME_EXTENSION_READY_REQUIRED = (
     Path("workflow") / "definition.yaml",
 )
 RUNTIME_EXTENSION_EXCLUDE = ".specify/extensions/echelon/"
@@ -578,7 +581,7 @@ class GitOpsManager:
             self._exclude_runtime_extension(worktree)
             return
 
-        if not source.exists() or not self._runtime_extension_ready(source):
+        if not source.exists() or not self._runtime_extension_source_ready(source):
             raise GitOpsError(
                 "Harness runtime extension is missing. Expected "
                 f"{source / 'agents' / 'control' / 'commander.md'} and "
@@ -628,7 +631,11 @@ class GitOpsManager:
 
     @staticmethod
     def _runtime_extension_ready(path: Path) -> bool:
-        return all((path / required).exists() for required in RUNTIME_EXTENSION_REQUIRED)
+        return all((path / required).exists() for required in RUNTIME_EXTENSION_READY_REQUIRED)
+
+    @staticmethod
+    def _runtime_extension_source_ready(path: Path) -> bool:
+        return all((path / required).exists() for required in RUNTIME_EXTENSION_SOURCE_REQUIRED)
 
     @staticmethod
     def _append_unique_line(path: Path, line: str) -> None:
