@@ -81,7 +81,11 @@ HARNESS_INTERNAL_DISCOVERY_RE = re.compile(
     r"Ralph code|"
     r"src/harness|"
     r"ralph\.py|"
-    r"fulfillment_runner\.py"
+    r"fulfillment_runner\.py|"
+    r"fulfillment_report_is_current|"
+    r"latest_fulfillment_report|"
+    r"read_fulfillment_metadata|"
+    r"stamp_fulfillment_report"
     r")\b",
     re.IGNORECASE,
 )

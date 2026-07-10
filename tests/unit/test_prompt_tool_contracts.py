@@ -96,11 +96,25 @@ def test_flags_direct_harness_source_read_instruction(tmp_path: Path) -> None:
     assert findings[0].reason == "harness_internal_discovery"
 
 
+def test_flags_harness_function_implementation_discovery(tmp_path: Path) -> None:
+    prompt = tmp_path / "agent.md"
+    prompt.write_text(
+        "Find fulfillment_report_is_current implementation.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "harness_internal_discovery"
+
+
 def test_accepts_negative_harness_source_boundary(tmp_path: Path) -> None:
     prompt = tmp_path / "agent.md"
     prompt.write_text(
         "Do not inspect, read, or search for harness source, Ralph code, "
-        "ralph.py, fulfillment_runner.py, or Echelon implementation internals.\n",
+        "ralph.py, fulfillment_runner.py, fulfillment_report_is_current, "
+        "or Echelon implementation internals.\n",
         encoding="utf-8",
     )
 
