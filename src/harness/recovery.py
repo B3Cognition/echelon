@@ -276,7 +276,7 @@ def _branch_exists(repo: Path, branch: str) -> bool:
 def _find_branch_without_fetch(repo: Path, spec_id: str) -> Optional[str]:
     if not repo.exists():
         return None
-    for pattern in (spec_id, f"{spec_id}-*"):
+    for pattern in (spec_id, f"{spec_id}-*", f"harness/{spec_id}/*"):
         result = _run_git(["branch", "--list", pattern], cwd=str(repo), check=False)
         branches = [_clean_branch_listing(b) for b in result.stdout.splitlines() if b.strip()]
         if branches:
