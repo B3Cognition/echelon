@@ -106,3 +106,26 @@ def test_validate_fulfillment_artifacts_cli_stamps_invalid_state(tmp_path: Path)
     assert payload["fulfillment_artifacts"] == "invalid"
     assert payload["fulfillment_artifacts_missing_in_report"] == ["FR-001"]
     assert payload["fulfillment_artifacts_extra_in_report"] == ["FR-999"]
+
+
+def test_validate_fulfillment_artifacts_cli_requires_state_before_validation(
+    tmp_path: Path,
+) -> None:
+    audit = tmp_path / "requirement-audit.md"
+    report = tmp_path / "fulfillment-report.md"
+    canonical = tmp_path / "canonical-requirements.json"
+    state = tmp_path / "state.json"
+
+    completed = _run_harness(
+        [
+            "validate-fulfillment-artifacts",
+            str(audit),
+            str(report),
+            str(canonical),
+            str(state),
+        ]
+    )
+
+    assert completed.returncode == 1
+    assert "state.json missing for verify-spec run:" in completed.stderr
+    assert "Traceback" not in completed.stderr

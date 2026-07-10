@@ -479,6 +479,10 @@ def _validate_fulfillment_artifacts() -> None:
 
     from pathlib import Path
 
+    state_path = Path(sys.argv[5]).resolve() if len(sys.argv) == 6 else None
+    if state_path is not None:
+        _require_existing_json_state_file(state_path)
+
     from kernel.fulfillment import validate_fulfillment_artifacts
 
     result = validate_fulfillment_artifacts(
@@ -487,8 +491,7 @@ def _validate_fulfillment_artifacts() -> None:
         canonical_inventory_path=Path(sys.argv[4]) if len(sys.argv) >= 5 else None,
     )
     if result.ok:
-        if len(sys.argv) == 6:
-            state_path = Path(sys.argv[5]).resolve()
+        if state_path is not None:
             _stamp_verify_spec_state(
                 state_path.parent,
                 {
@@ -502,8 +505,7 @@ def _validate_fulfillment_artifacts() -> None:
             f"(audit={result.audit_count}, report={result.report_count})"
         )
         return
-    if len(sys.argv) == 6:
-        state_path = Path(sys.argv[5]).resolve()
+    if state_path is not None:
         _stamp_verify_spec_state(
             state_path.parent,
             {

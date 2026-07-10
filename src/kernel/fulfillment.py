@@ -8,8 +8,6 @@ from pathlib import Path
 import re
 from typing import Any
 
-import yaml
-
 NON_STRICT_BLOCKING = {"MISSING", "PARTIAL", "DEVIATED"}
 STRICT_BLOCKING = NON_STRICT_BLOCKING | {"UNVERIFIED"}
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---(?:\n|$)", re.DOTALL)
@@ -107,6 +105,10 @@ def read_fulfillment_metadata(report_path: Path) -> dict[str, Any]:
     if match is None:
         return {}
     try:
+        import yaml
+    except ImportError:
+        return {}
+    try:
         data = yaml.safe_load(match.group(1))
     except yaml.YAMLError:
         return {}
@@ -137,6 +139,8 @@ def stamp_fulfillment_report(
         metadata.update(extra_metadata)
     if run_id:
         metadata["verify_run_id"] = run_id
+    import yaml
+
     frontmatter = yaml.dump(
         metadata,
         default_flow_style=False,
