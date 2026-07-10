@@ -198,11 +198,11 @@ When a threshold is breached, append an alert to the progress report AND return 
 
 ## Token Tracking Aggregation
 
-speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) aggregates token usage data from `state.json.token_ledger` alongside effort tracking to provide a unified cost/effort view.
+speckit-echelon-progress-tracker (PROGRESS speckit-echelon-tracker (TRACKER)) aggregates Ralph-provided token usage facts alongside effort tracking to provide a unified cost/effort view.
 
 ### Token Metrics Per Task
 
-After each task completion, read `state.json.token_ledger.dispatches[]` and compute:
+After each task completion, use the bounded token usage facts supplied in the build-slice context/progress ledger and compute:
 
 - **Task token cost**: Sum of `estimated_tokens` for all dispatches associated with this task (match by task_id in dispatch context)
 - **Task token efficiency**: `task_token_cost / estimated_tokens_for_task` (ratio — 1.0 = on budget)

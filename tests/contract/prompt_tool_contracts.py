@@ -97,7 +97,7 @@ BUILD_GIT_STATE_DISCOVERY_RE = re.compile(
 )
 
 BUILD_SPEC_ARTIFACT_DISCOVERY_RE = re.compile(
-    r"\b(?:find|locate|glob|list|search|scan)\b"
+    r"\b(?:find|get|query|read|locate|glob|list|search|scan)\b"
     r".{0,160}\b(?:state\.json|runs/|tasks\.md|spec\.md|specs/)\b",
     re.IGNORECASE,
 )

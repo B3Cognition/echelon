@@ -108,9 +108,14 @@ If `constitution.md`, `tasks.md`, or `spec.md` is missing, or if
 `[PROJECT_NAME]`, `[PRINCIPLE_1_NAME]`, or `[CONSTITUTION_VERSION]`, STOP with
 error: "Phase A artifacts are not build-ready. Run `echelon spec continue` first."
 
-### 1.2 Parse Tasks
+### 1.2 Load Task Facts
 
-Read `tasks.md` and parse all tasks into a structured list:
+Use the Ralph-owned build-slice context pack for task facts. Do not read or
+parse `{spec_dir}/tasks.md` directly in harness delivery; Ralph has already
+resolved the current build slice, open task rows, dependency hints, referenced
+requirements, and progress ledger facts.
+
+From the prepared context, consume the structured task list:
 
 - Canonical task row (e.g., `- [ ] T-001 [P] complexity=standard phase=foundation req=FR-001 depends=none`; spike/user-decision rows may use `T-S01b`)
 - Task ID (`T-###` for normal tasks; `T-S##` / `T-S##x` for spike/user-decision tasks)
