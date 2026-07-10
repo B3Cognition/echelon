@@ -107,6 +107,33 @@ def test_write_judgment_prepass_cli_stamps_success_state(tmp_path: Path):
     assert state["judgment_prepass_fallback_count"] == 1
 
 
+def test_write_judgment_prepass_cli_requires_state_before_writing(tmp_path: Path):
+    spec_dir = tmp_path / "specs" / "001-demo"
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
+    spec_dir.mkdir(parents=True)
+    verify_run_dir.mkdir(parents=True)
+
+    (verify_run_dir / "canonical-requirements.json").write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}]}),
+        encoding="utf-8",
+    )
+    (verify_run_dir / "implementation-map.md").write_text(
+        "# Implementation Map\n\n"
+        "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        "| FR-001 | app.py:start | tests/test_app.py::test_start | app.start | source_and_test | strong | false | high | |\n",
+        encoding="utf-8",
+    )
+
+    completed = _run_harness(
+        ["write-judgment-prepass", str(spec_dir), str(verify_run_dir)]
+    )
+
+    assert completed.returncode == 1
+    assert "state.json missing for verify-spec run:" in completed.stderr
+    assert not (verify_run_dir / "judgment-prepass.json").exists()
+
+
 def test_write_judgment_prepass_cli_reports_missing_map_without_traceback(
     tmp_path: Path,
 ):
@@ -286,6 +313,56 @@ def test_assemble_fulfillment_report_cli_stamps_state(tmp_path: Path):
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["fulfillment_report"] == "ready"
     assert state["fulfillment_report_path"] == str(output.resolve())
+
+
+def test_assemble_fulfillment_report_cli_requires_state_before_writing(tmp_path: Path):
+    canonical_inventory = tmp_path / "canonical-requirements.json"
+    canonical_inventory.write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}]}),
+        encoding="utf-8",
+    )
+    prepass = tmp_path / "judgment-prepass.json"
+    prepass.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "id": "FR-001",
+                        "mechanical": True,
+                        "proposed_status": "IMPLEMENTED",
+                        "reason_code": "source_and_test",
+                        "fallback_reason": None,
+                        "report_row": "| FR-001 | IMPLEMENTED | source_and_test |",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    fallback = tmp_path / "fulfillment-report.fallback.md"
+    fallback.write_text(
+        "# Fallback Fulfillment Judgment\n\n"
+        "| ID | Status | Evidence |\n"
+        "| --- | --- | --- |\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "fulfillment-report.md"
+    state_path = tmp_path / "state.json"
+
+    completed = _run_harness(
+        [
+            "assemble-fulfillment-report",
+            str(canonical_inventory),
+            str(prepass),
+            str(fallback),
+            str(output),
+            str(state_path),
+        ]
+    )
+
+    assert completed.returncode == 1
+    assert "state.json missing for verify-spec run:" in completed.stderr
+    assert not output.exists()
 
 
 def test_write_fallback_fulfillment_template_creates_output_parent(tmp_path: Path):
@@ -847,6 +924,49 @@ def test_write_fallback_fulfillment_template_cli_stamps_state(tmp_path: Path):
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["fallback_fulfillment_template"] == "ready"
     assert state["fallback_fulfillment_count"] == 1
+
+
+def test_write_fallback_fulfillment_template_cli_requires_state_before_writing(
+    tmp_path: Path,
+):
+    prepass = tmp_path / "judgment-prepass.json"
+    prepass.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "id": "FR-010",
+                        "mechanical": False,
+                        "proposed_status": None,
+                        "reason_code": None,
+                        "fallback_reason": "needs_judgment",
+                        "report_row": None,
+                    }
+                ],
+                "summary": {
+                    "mechanical_count": 0,
+                    "fallback_count": 1,
+                    "fallback_ids": ["FR-010"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "state.json"
+    output = tmp_path / "fulfillment-report.fallback.md"
+
+    completed = _run_harness(
+        [
+            "write-fallback-fulfillment-template",
+            str(prepass),
+            str(output),
+            str(state_path),
+        ]
+    )
+
+    assert completed.returncode == 1
+    assert "state.json missing for verify-spec run:" in completed.stderr
+    assert not output.exists()
 
 
 def _audit_markdown(ids: list[str]) -> str:

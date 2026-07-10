@@ -369,6 +369,7 @@ def _write_judgment_prepass() -> None:
             verify_run_dir / "implementation-map.md",
         ]
     )
+    _require_verify_spec_state(verify_run_dir)
     result = write_judgment_prepass(
         spec_dir=Path(sys.argv[2]).resolve(),
         verify_run_dir=verify_run_dir,
@@ -409,6 +410,8 @@ def _assemble_fulfillment_report() -> None:
             Path(sys.argv[4]).resolve(),
         ]
     )
+    if state_path is not None:
+        _require_existing_json_state_file(state_path)
     assemble_fulfillment_report(
         canonical_inventory_path=Path(sys.argv[2]).resolve(),
         judgment_prepass_path=Path(sys.argv[3]).resolve(),
@@ -443,6 +446,8 @@ def _write_fallback_fulfillment_template() -> None:
     state_path = Path(sys.argv[4]).resolve() if len(sys.argv) == 5 else None
     prepass_path = Path(sys.argv[2]).resolve()
     _require_inputs([prepass_path])
+    if state_path is not None:
+        _require_existing_json_state_file(state_path)
     fallback_ids = write_fallback_fulfillment_template(
         judgment_prepass_path=prepass_path,
         output_path=Path(sys.argv[3]).resolve(),
@@ -790,6 +795,10 @@ def _stamp_verify_spec_state(verify_run_dir: "Path", updates: dict[str, object])
 
 def _require_verify_spec_state(verify_run_dir: "Path") -> None:
     state_path = verify_run_dir / "state.json"
+    _require_existing_json_state_file(state_path)
+
+
+def _require_existing_json_state_file(state_path: "Path") -> None:
     if not state_path.is_file():
         print(
             f"state.json missing for verify-spec run: {state_path}",
