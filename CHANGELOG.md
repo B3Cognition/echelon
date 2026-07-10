@@ -127,7 +127,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **EGR-116 / #142 build phase routing** — build phase prompts now reject and
   avoid quality-gate routing instructions that tell delivery agents to follow
   `workflow/definition.yaml`; agents use Ralph-provided gate order and the
-  current phase contract instead.
+  current phase contract instead. Prompt-contract scanning now also rejects
+  softer harness-script/function discovery phrasing such as "check the harness
+  verify script" and "inspect harness functions".
 - **EGR-117 / #141 delivery runtime surface** — delivery worktrees and
   workspace-target harness roots no longer copy raw `agents/control` prompts
   such as `commander.md`; generated Claude delivery skill wrappers also strip

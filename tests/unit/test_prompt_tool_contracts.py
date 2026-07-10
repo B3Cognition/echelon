@@ -125,6 +125,22 @@ def test_flags_harness_function_discovery_synonyms(tmp_path: Path) -> None:
     ]
 
 
+def test_flags_harness_script_and_function_discovery_phrasing(tmp_path: Path) -> None:
+    prompt = tmp_path / "agent.md"
+    prompt.write_text(
+        "Check the harness verify script to understand stale report handling.\n"
+        "Inspect harness functions before deciding how to update fulfillment state.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert [finding.reason for finding in findings] == [
+        "harness_internal_discovery",
+        "harness_internal_discovery",
+    ]
+
+
 def test_flags_soft_harness_source_discovery_phrasing(tmp_path: Path) -> None:
     prompt = tmp_path / "agent.md"
     prompt.write_text(
