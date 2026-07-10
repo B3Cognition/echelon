@@ -111,7 +111,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   wrappers now carry explicit phase routing metadata and no longer tell agents
   to read `agents/control/commander.md` or `workflow/definition.yaml`; the
   multi-phase `re-extract`, `re-plan-all`, and `re-retarget` commands now carry
-  their phase sequences directly for the same reason.
+  their phase sequences directly for the same reason, and `reopen` now points
+  directly at its single apply-gaps phase.
 - **EGR-062 / #84 verify-spec provider-session UX** — fulfillment refresh
   provider-limit reasons now extract the concise session-limit/reset line from
   provider output instead of surfacing the full LLM transcript in the blocked

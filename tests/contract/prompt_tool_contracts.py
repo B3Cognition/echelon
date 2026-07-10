@@ -13,6 +13,7 @@ PROMPT_GLOBS = (
     "extension/commands/echelon.re-extract.md",
     "extension/commands/echelon.re-plan-all.md",
     "extension/commands/echelon.re-retarget.md",
+    "extension/commands/echelon.reopen.md",
     "extension/commands/echelon.verify-spec.md",
     "extension/workflow/phases/**/*.md",
 )
@@ -224,6 +225,7 @@ def _is_re_extract_command(path: Path) -> bool:
             "extension/commands/echelon.re-extract.md",
             "extension/commands/echelon.re-plan-all.md",
             "extension/commands/echelon.re-retarget.md",
+            "extension/commands/echelon.reopen.md",
         )
     )
 

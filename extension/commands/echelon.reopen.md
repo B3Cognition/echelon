@@ -9,8 +9,10 @@ behavior:
 
 You are COMMANDER reopening a spec from verified fulfillment gaps.
 
-Read `agents/control/commander.md` first. Then read `workflow/definition.yaml`
-`reopen:` section. Start at `reopen-1-apply-gaps`.
+Use this command's declared `reopen` phase sequence as the authoritative routing
+contract. Do not read `agents/control/commander.md` or `workflow/definition.yaml`
+to rediscover governance, routing, or outputs. Execute only
+`reopen-1-apply-gaps` using `workflow/phases/reopen-1-apply-gaps.md`, then stop.
 
 ALWAYS mutate only the spec artifacts needed to resume implementation.
 NEVER modify application source code.

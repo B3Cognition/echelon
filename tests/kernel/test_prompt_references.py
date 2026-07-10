@@ -331,6 +331,16 @@ def test_re_retarget_command_uses_declared_phase_sequence():
     assert "Then read `workflow/definition.yaml`" not in text
 
 
+def test_reopen_command_uses_declared_phase_sequence():
+    text = (EXTENSION_ROOT / "commands" / "echelon.reopen.md").read_text()
+
+    assert "Use this command's declared `reopen` phase sequence" in text
+    assert "Do not read `agents/control/commander.md` or `workflow/definition.yaml`" in text
+    assert "`reopen-1-apply-gaps`" in text
+    assert "`workflow/phases/reopen-1-apply-gaps.md`" in text
+    assert "Then read `workflow/definition.yaml`" not in text
+
+
 def test_primary_agent_prompts_have_paired_always_never_rules():
     violations = []
 
