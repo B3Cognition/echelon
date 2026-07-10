@@ -8,6 +8,7 @@ from pathlib import Path
 PROMPT_GLOBS = (
     "extension/agents/**/*.md",
     "extension/commands/echelon.build.md",
+    "extension/commands/echelon.harness-run.md",
     "extension/commands/echelon.verify-spec.md",
     "extension/workflow/phases/**/*.md",
 )
@@ -165,6 +166,12 @@ def _is_non_executable_reference(line: str) -> bool:
 
 def _is_negative_boundary(line: str) -> bool:
     lowered = line.strip().lower()
+    if re.search(
+        r"\bif\b.{0,80}\b(?:absent|missing|not provided)\b.{0,120}\b"
+        r"(?:find|locate|discover|search|read|inspect|open|grep|list|glob)\b",
+        lowered,
+    ):
+        return False
     return bool(
         re.search(
             r"\b(?:do not|never|must not)\b.{0,120}\b"
@@ -197,6 +204,11 @@ def _is_delivery_command(path: Path) -> bool:
     return normalized.endswith(
         ("extension/commands/echelon.build.md", "extension/commands/echelon.verify-spec.md")
     )
+
+
+def _is_harness_run_command(path: Path) -> bool:
+    normalized = path.as_posix()
+    return normalized.endswith("extension/commands/echelon.harness-run.md")
 
 
 def scan_prompt_tool_contracts(
@@ -244,6 +256,21 @@ def scan_prompt_tool_contracts(
                         path=path,
                         line=index + 1,
                         reason="verify_spec_dir_discovery",
+                        text=stripped,
+                    )
+                )
+                continue
+            if (
+                _is_harness_run_command(path)
+                and VERIFY_SPEC_DIR_DISCOVERY_RE.search(stripped)
+            ):
+                if _is_negative_boundary(stripped):
+                    continue
+                findings.append(
+                    PromptToolContractFinding(
+                        path=path,
+                        line=index + 1,
+                        reason="harness_spec_dir_discovery",
                         text=stripped,
                     )
                 )

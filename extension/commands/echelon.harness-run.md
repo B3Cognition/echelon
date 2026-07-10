@@ -85,7 +85,11 @@ If `spec_id` is missing, ask: **"Which spec? Provide a spec ID (e.g., `001`)."**
 
 Recognised `strategy` patterns in `$ARGUMENTS`: `strategy=codegen`, `strategy=default`. Anything not recognised defaults to `default`.
 
-When `spec_dir` is provided, treat it as authoritative and do not locate or glob `specs/{spec_id}-*/`. If `spec_dir` is absent, locate the spec directory: find `specs/{spec_id}-*/` (e.g., `specs/001-weather-dashboard/`). If not found, report: **"Spec `{spec_id}` not found in `specs/`."** and stop.
+Treat `spec_dir` as authoritative. The Python CLI/harness must resolve and
+provide it before this command runs. Do not locate, glob, search, list, or infer
+`specs/{spec_id}-*/`. If `spec_dir` is absent, report:
+**"Harness run missing resolved spec_dir; rerun via `echelon delivery run {spec_id}`."**
+and stop.
 
 Extract `{spec_name}` from the directory name (e.g., `weather-dashboard` from `001-weather-dashboard`).
 

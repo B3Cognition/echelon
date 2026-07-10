@@ -101,7 +101,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **EGR-116 / #142 prompt tool contracts** — static prompt scanning now treats
   shell file-reader commands such as `cat`, `sed`, `less`, `tail`, and `head`
   against `src/harness/*`, `ralph.py`, or fulfillment internals as harness
-  internal discovery instructions.
+  internal discovery instructions. The legacy harness-run command wrapper now
+  blocks when Python did not provide a resolved `spec_dir` instead of telling
+  the model to locate or glob `specs/{spec_id}-*/`.
 - **EGR-062 / #84 verify-spec provider-session UX** — fulfillment refresh
   provider-limit reasons now extract the concise session-limit/reset line from
   provider output instead of surfacing the full LLM transcript in the blocked

@@ -91,8 +91,9 @@ class TestManualCommandContracts:
         text = (COMMAND_DIR / "echelon.harness-run.md").read_text(encoding="utf-8")
 
         assert "| `spec_dir` |" in text
-        assert "When `spec_dir` is provided, treat it as authoritative" in text
-        assert "do not locate or glob `specs/{spec_id}-*/`" in text
+        assert "Treat `spec_dir` as authoritative" in text
+        assert "Do not locate, glob, search, list, or infer" in text
+        assert "Harness run missing resolved spec_dir" in text
         assert "`{spec_dir}/spec.md`" in text
         assert "`{spec_dir}/tasks.md`" in text
         assert "`{spec_dir}/coverage-map.md`" in text

@@ -199,6 +199,37 @@ def test_flags_verify_spec_prompt_side_spec_dir_discovery(tmp_path: Path) -> Non
     assert findings[0].reason == "verify_spec_dir_discovery"
 
 
+def test_flags_harness_run_prompt_side_spec_dir_discovery(tmp_path: Path) -> None:
+    prompt = tmp_path / "extension" / "commands" / "echelon.harness-run.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "If `spec_dir` is absent, locate the spec directory: find `specs/{spec_id}-*/`.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "harness_spec_dir_discovery"
+
+
+def test_flags_harness_run_mixed_negative_and_positive_spec_discovery(
+    tmp_path: Path,
+) -> None:
+    prompt = tmp_path / "extension" / "commands" / "echelon.harness-run.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "When `spec_dir` is provided, do not locate `specs/{spec_id}-*/`. "
+        "If `spec_dir` is absent, locate `specs/{spec_id}-*/`.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "harness_spec_dir_discovery"
+
+
 def test_flags_verify_spec_prompt_side_latest_run_discovery(tmp_path: Path) -> None:
     prompt = tmp_path / "extension" / "workflow" / "phases" / "verify-spec-1-init.md"
     prompt.parent.mkdir(parents=True)
