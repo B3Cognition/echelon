@@ -108,6 +108,54 @@ def test_validate_fulfillment_artifacts_cli_stamps_invalid_state(tmp_path: Path)
     assert payload["fulfillment_artifacts_extra_in_report"] == ["FR-999"]
 
 
+def test_validate_fulfillment_artifacts_cli_reports_summary_mismatch(
+    tmp_path: Path,
+) -> None:
+    audit = tmp_path / "requirement-audit.md"
+    audit.write_text(
+        "# Requirement Audit\n\n"
+        "| ID | Category | Source | Requirement | Acceptance Signal |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| FR-001 | functional | spec.md | Do thing | Signal |\n"
+        "| FR-002 | functional | spec.md | Do other thing | Signal |\n",
+        encoding="utf-8",
+    )
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text(
+        "# Fulfillment Report\n\n"
+        "- IMPLEMENTED=1, PARTIAL=3\n\n"
+        "| ID | Status | Evidence |\n"
+        "| --- | --- | --- |\n"
+        "| FR-001 | IMPLEMENTED | source_and_test |\n"
+        "| FR-002 | PARTIAL | partial |\n",
+        encoding="utf-8",
+    )
+    canonical = tmp_path / "canonical-requirements.json"
+    canonical.write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}, {"id": "FR-002"}]}),
+        encoding="utf-8",
+    )
+    state = tmp_path / "state.json"
+    state.write_text("{}", encoding="utf-8")
+
+    completed = _run_harness(
+        [
+            "validate-fulfillment-artifacts",
+            str(audit),
+            str(report),
+            str(canonical),
+            str(state),
+        ]
+    )
+
+    assert completed.returncode == 1
+    assert "summary_count_mismatch: PARTIAL reported 3 but requirement rows contain 1" in completed.stderr
+    payload = json.loads(state.read_text(encoding="utf-8"))
+    assert payload["fulfillment_artifacts_summary_count_mismatches"] == [
+        "PARTIAL reported 3 but requirement rows contain 1"
+    ]
+
+
 def test_validate_fulfillment_artifacts_cli_requires_state_before_validation(
     tmp_path: Path,
 ) -> None:

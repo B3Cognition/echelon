@@ -519,6 +519,9 @@ def _validate_fulfillment_artifacts() -> None:
                 "fulfillment_artifacts_report_count": result.report_count,
                 "fulfillment_artifacts_missing_in_report": list(result.missing_in_report),
                 "fulfillment_artifacts_extra_in_report": list(result.extra_in_report),
+                "fulfillment_artifacts_summary_count_mismatches": list(
+                    result.summary_count_mismatches
+                ),
             },
         )
     if result.missing_in_report:
@@ -531,6 +534,8 @@ def _validate_fulfillment_artifacts() -> None:
             "extra_in_report: " + ", ".join(result.extra_in_report),
             file=sys.stderr,
         )
+    for mismatch in result.summary_count_mismatches:
+        print(f"summary_count_mismatch: {mismatch}", file=sys.stderr)
     sys.exit(1)
 
 

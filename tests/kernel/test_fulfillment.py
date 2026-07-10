@@ -327,6 +327,43 @@ def test_validate_fulfillment_artifacts_accepts_python_assembled_report(tmp_path
     assert result.ok is True
 
 
+def test_validate_fulfillment_artifacts_rejects_summary_count_mismatch(tmp_path):
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text(
+        "# Fulfillment Report\n\n"
+        "**Fulfillment verdict**: IMPLEMENTED=1, PARTIAL=3, UNVERIFIED=0\n\n"
+        "| ID | Status | Evidence |\n"
+        "| --- | --- | --- |\n"
+        "| FR-001 | IMPLEMENTED | source_and_test |\n"
+        "| FR-002 | PARTIAL | partial |\n",
+        encoding="utf-8",
+    )
+    inventory = tmp_path / "canonical-requirements.json"
+    inventory.write_text(
+        '{"requirements":[{"id":"FR-001"},{"id":"FR-002"}]}',
+        encoding="utf-8",
+    )
+    audit = tmp_path / "requirement-audit.md"
+    audit.write_text(
+        "| ID | Category |\n"
+        "| --- | --- |\n"
+        "| FR-001 | functional |\n"
+        "| FR-002 | functional |\n",
+        encoding="utf-8",
+    )
+
+    result = validate_fulfillment_artifacts(
+        requirement_audit_path=audit,
+        fulfillment_report_path=report,
+        canonical_inventory_path=inventory,
+    )
+
+    assert result.ok is False
+    assert result.summary_count_mismatches == (
+        "PARTIAL reported 3 but requirement rows contain 1",
+    )
+
+
 def test_validate_fulfillment_artifacts_cli_reports_missing_rows(tmp_path):
     inventory = tmp_path / "canonical-requirements.json"
     inventory.write_text(

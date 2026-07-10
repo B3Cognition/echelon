@@ -87,6 +87,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   escalations now put `echelon delivery continue <spec_id>` first when no
   answer is required, while preserving `delivery resume <spec_id> "<answer>"`
   for clarification-bearing recovery.
+- **EGR-130 / #153 fulfillment summary validation** — verify-spec fulfillment
+  artifact validation now fails when explicit summary/status counts disagree
+  with the parsed per-requirement verdict rows, and reports the exact mismatch
+  in CLI output and verify-spec state.
 - **EGR-119 / #143 verify-spec init preflight** — `python -m harness
   init-verify-spec-run` now rejects missing `project_root` or `spec_dir`
   before creating run state, returning a clean input error instead of letting

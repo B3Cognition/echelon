@@ -12,6 +12,7 @@ NON_STRICT_BLOCKING = {"MISSING", "PARTIAL", "DEVIATED"}
 STRICT_BLOCKING = NON_STRICT_BLOCKING | {"UNVERIFIED"}
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---(?:\n|$)", re.DOTALL)
 _TABLE_ITEM_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:-[A-Z0-9_.:]+)*$")
+_KNOWN_STATUSES = STRICT_BLOCKING | {"IMPLEMENTED", "OBSOLETE_SPEC"}
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class FulfillmentArtifactValidation:
     report_count: int
     missing_in_report: tuple[str, ...]
     extra_in_report: tuple[str, ...]
+    summary_count_mismatches: tuple[str, ...] = ()
 
 
 def blocking_statuses(strict: bool = False) -> set[str]:
@@ -61,7 +63,6 @@ def latest_fulfillment_report(spec_dir: Path) -> Path | None:
 def _statuses_in_report(report_path: Path) -> set[str]:
     text = report_path.read_text()
     statuses: set[str] = set()
-    known = STRICT_BLOCKING | {"IMPLEMENTED", "OBSOLETE_SPEC"}
     requirement_id = re.compile(
         r"^(?:FR|AC|US|NFR|REQ|EDGE|SC|CONSTRAINT)[A-Za-z0-9_.:-]*$"
     )
@@ -83,7 +84,7 @@ def _statuses_in_report(report_path: Path) -> set[str]:
                 statuses.add(cells[0])
         if len(cells) >= 2 and requirement_id.match(cells[0]):
             for cell in cells[1:3]:
-                if cell in known:
+                if cell in _KNOWN_STATUSES:
                     statuses.add(cell)
 
     return statuses
@@ -185,6 +186,75 @@ def fulfillment_table_ids(markdown: str) -> set[str]:
     return ids
 
 
+def _summary_status_counts(markdown: str) -> dict[str, set[int]]:
+    counts: dict[str, set[int]] = {status: set() for status in _KNOWN_STATUSES}
+    inline_count = re.compile(
+        r"\b(?P<status>IMPLEMENTED|PARTIAL|UNVERIFIED|MISSING|DEVIATED|OBSOLETE_SPEC)"
+        r"\s*(?::|=)?\s*(?P<count>\d+)\b"
+    )
+
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("|"):
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if len(cells) >= 2 and cells[0] in _KNOWN_STATUSES:
+                count_match = re.search(r"\d+", cells[1])
+                if count_match:
+                    counts[cells[0]].add(int(count_match.group(0)))
+            continue
+        for match in inline_count.finditer(stripped):
+            counts[match.group("status")].add(int(match.group("count")))
+
+    return {status: values for status, values in counts.items() if values}
+
+
+def _requirement_status_counts(markdown: str) -> dict[str, int]:
+    counts = {status: 0 for status in _KNOWN_STATUSES}
+    table_contains_item_ids = False
+    for line in markdown.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            table_contains_item_ids = False
+            continue
+        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+        if not cells:
+            continue
+        if set(cells[0]) <= {"-", ":"}:
+            continue
+        if cells[0] in {"ID", "Requirement"}:
+            table_contains_item_ids = True
+            continue
+        if cells[0] in {"Status", "Category", "Metric"}:
+            table_contains_item_ids = False
+            continue
+        if not table_contains_item_ids:
+            continue
+        item_id = cells[0]
+        if item_id == "TASK-PROGRESS" or not _TABLE_ITEM_ID_RE.match(item_id):
+            continue
+        for cell in cells[1:4]:
+            if cell in _KNOWN_STATUSES:
+                counts[cell] += 1
+                break
+    return counts
+
+
+def _summary_count_mismatches(markdown: str) -> tuple[str, ...]:
+    reported = _summary_status_counts(markdown)
+    observed = _requirement_status_counts(markdown)
+    mismatches: list[str] = []
+    for status in sorted(reported):
+        row_count = observed.get(status, 0)
+        for count in sorted(reported[status]):
+            if count != row_count:
+                mismatches.append(
+                    f"{status} reported {count} but requirement rows contain {row_count}"
+                )
+    return tuple(mismatches)
+
+
 def validate_fulfillment_artifacts(
     *,
     requirement_audit_path: Path,
@@ -202,16 +272,19 @@ def validate_fulfillment_artifacts(
     report_ids = fulfillment_table_ids(
         fulfillment_report_path.read_text(encoding="utf-8", errors="replace")
     )
+    report_text = fulfillment_report_path.read_text(encoding="utf-8", errors="replace")
+    summary_mismatches = _summary_count_mismatches(report_text)
     comparable_report_ids = set(report_ids)
     comparable_report_ids.discard("TASK-PROGRESS")
     missing = tuple(sorted(audit_ids - comparable_report_ids))
     extra = tuple(sorted(comparable_report_ids - audit_ids))
     return FulfillmentArtifactValidation(
-        ok=not missing and not extra,
+        ok=not missing and not extra and not summary_mismatches,
         audit_count=len(audit_ids),
         report_count=len(comparable_report_ids),
         missing_in_report=missing,
         extra_in_report=extra,
+        summary_count_mismatches=summary_mismatches,
     )
 
 
