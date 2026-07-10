@@ -13,7 +13,6 @@ from harness.runtime_surface import DELIVERY_COMMAND_FILES
 ExcludeLine = Callable[[str], None]
 
 RUNTIME_CLAUDE_AGENT_DIRS = (
-    Path("control"),
     Path("build"),
 )
 class ProviderRuntimeScaffolder(Protocol):

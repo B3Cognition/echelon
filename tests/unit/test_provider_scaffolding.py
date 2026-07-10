@@ -69,7 +69,7 @@ def test_claude_provider_scaffolder_materializes_claude_runtime_wrappers(tmp_pat
     assert (worktree / ".claude" / "skills" / "speckit-echelon-build" / "SKILL.md").exists()
     assert not (worktree / ".claude" / "skills" / "speckit-echelon-run").exists()
     assert not (worktree / ".claude" / "skills" / "speckit-echelon-re-extract").exists()
-    assert (worktree / ".claude" / "agents" / "speckit-echelon-commander.md").exists()
+    assert not (worktree / ".claude" / "agents" / "speckit-echelon-commander.md").exists()
     assert (worktree / ".claude" / "agents" / "speckit-echelon-spec-guard.md").exists()
     assert ".claude/skills/speckit-echelon-verify-spec/" in excluded
     assert ".claude/skills/speckit-echelon-build/" in excluded

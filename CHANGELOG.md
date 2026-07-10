@@ -184,8 +184,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   workspace-target harness roots. It also omits Phase A preset seed material
   under `.specify/extensions/echelon/presets`.
 - **EGR-117 / #141 delivery agent wrapper scope** — generated
-  `.claude/agents` files in delivery worktrees are now limited to control and
-  build agents instead of exposing exploration, solution, reverse-engineering,
+  `.claude/agents` files in delivery worktrees are now limited to build agents
+  instead of exposing control, exploration, solution, reverse-engineering,
   learning, feasibility, and specialist agents. Claude-specific `.claude`
   wrapper materialization now runs only when `harness.llm.cli: claude`, through
   a provider runtime scaffolder boundary rather than GitOps-owned Claude logic.

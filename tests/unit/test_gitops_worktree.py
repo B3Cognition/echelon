@@ -712,9 +712,7 @@ def test_sync_runtime_extension_materializes_claude_agents(tmp_path):
     spec_guard = worktree / ".claude" / "agents" / "speckit-echelon-spec-guard.md"
     scout = worktree / ".claude" / "agents" / "speckit-echelon-scout.md"
     architect = worktree / ".claude" / "agents" / "speckit-echelon-architect.md"
-    commander_text = commander.read_text(encoding="utf-8")
-    assert commander_text.startswith("---\nname: speckit-echelon-commander\n")
-    assert "\ncommander\n" in commander_text
+    assert not commander.exists()
     spec_guard_text = spec_guard.read_text(encoding="utf-8")
     assert spec_guard_text.startswith("---\nname: speckit-echelon-spec-guard\n")
     assert "description: SPEC GUARD" in spec_guard_text
