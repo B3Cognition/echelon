@@ -177,11 +177,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **EGR-117 / #141 host harness-source containment** — Ralph now blocks build
   turns whose LLM transcript shows tool access to host Echelon implementation
-  source such as `src/harness/ralph.py` or `fulfillment_runner.py`, while still
-  allowing target-worktree reads when Echelon itself is the project under
-  delivery. Relative transcript paths are covered too, so `src/harness/ralph.py`
-  no longer slips past the guard unless that file exists inside the target
-  worktree.
+  source such as `src/harness/ralph.py`, `fulfillment_runner.py`, or
+  `src/kernel/fulfillment.py`, while still allowing target-worktree reads when
+  Echelon itself is the project under delivery. Relative transcript paths are
+  covered too, so these known harness/kernel files no longer slip past the
+  guard unless the referenced file exists inside the target worktree.
 - **EGR-119 / #143 verify-spec state ownership** — successful
   `python -m harness write-progress-integrity ...` runs now stamp
   `progress_integrity: valid` and progress counts in `state.json`; invalid

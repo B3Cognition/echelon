@@ -4558,6 +4558,7 @@ _HOST_HARNESS_SOURCE_MARKERS = (
     "/src/harness/fulfillment_runner.py",
     "/src/harness/llm_build_runner.py",
     "/src/harness/gitops.py",
+    "/src/kernel/fulfillment.py",
 )
 
 
