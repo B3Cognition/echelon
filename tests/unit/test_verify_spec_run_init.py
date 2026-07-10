@@ -260,3 +260,51 @@ def test_init_verify_spec_run_cli_rejects_unknown_scope_without_traceback(
     assert "unsupported verify scope:" in completed.stderr
     assert "Traceback" not in completed.stderr
     assert not (project / "runs").exists()
+
+
+def test_init_verify_spec_run_rejects_scoped_without_ids_before_state(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+    with pytest.raises(VerifySpecRunInitError, match="scoped verify requires"):
+        init_verify_spec_run(
+            project_root=project,
+            spec_id="001-demo",
+            spec_dir=spec_dir,
+            verify_scope="scoped",
+            scoped_ids=[],
+            timestamp="20260709-153000",
+        )
+
+    assert not (project / "runs").exists()
+
+
+def test_init_verify_spec_run_cli_rejects_scoped_without_ids_cleanly(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+    completed = _run_harness(
+        [
+            "init-verify-spec-run",
+            str(project),
+            "001-demo",
+            str(spec_dir),
+            "--scope",
+            "scoped",
+            "--timestamp",
+            "20260709-153000",
+        ]
+    )
+
+    assert completed.returncode == 2
+    assert "scoped verify requires at least one scoped id" in completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert not (project / "runs").exists()
