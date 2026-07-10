@@ -123,6 +123,11 @@ def _resolve_verify_run_dir(
             _require_safe_label("current run id", run_id)
         active_run = runs_dir / run_id if run_id else None
         if active_run is not None and active_run.is_dir():
+            _require_child_path(
+                "current run path",
+                child=active_run.resolve(),
+                parent=runs_dir.resolve(),
+            )
             return active_run / "verify-spec" / spec_id
     stamp = timestamp or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     return runs_dir / f"verify-spec-{spec_id}-{stamp}"
@@ -142,3 +147,10 @@ def _require_safe_label(name: str, value: str) -> None:
         or ".." in Path(stripped).parts
     ):
         raise VerifySpecRunInitError(f"unsafe {name}: {value}")
+
+
+def _require_child_path(name: str, *, child: Path, parent: Path) -> None:
+    try:
+        child.relative_to(parent)
+    except ValueError as exc:
+        raise VerifySpecRunInitError(f"unsafe {name}: {child}") from exc

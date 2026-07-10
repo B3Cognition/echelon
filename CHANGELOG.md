@@ -88,7 +88,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   requirement ID, and full runs reject scoped ID or base full-verify commit
   arguments; explicit timestamps and spec IDs are validated as path-safe labels
   before run directories are created; `runs/.current` pointers are also
-  validated before verify init follows them.
+  validated before verify init follows them, and current-run paths must resolve
+  under the canonical `runs/` directory.
 - **Workspace source discovery** — configured orchestration workspaces with
   `sources: []` now still auto-discover child projects under the canonical
   `sources/` directory. Empty configured workspaces without a `sources/`
