@@ -284,6 +284,7 @@ def _init_verify_spec_run() -> None:
     from pathlib import Path
 
     from harness.verify_spec_run import init_verify_spec_run
+    from harness.verify_spec_run import VerifySpecRunInitError
 
     project_root = Path(sys.argv[2])
     spec_id = sys.argv[3]
@@ -335,18 +336,22 @@ def _init_verify_spec_run() -> None:
             sys.exit(1)
         index += 1
 
-    result = init_verify_spec_run(
-        project_root=project_root,
-        spec_id=spec_id,
-        spec_dir=spec_dir,
-        verify_scope=verify_scope,
-        scoped_ids=scoped_ids,
-        base_full_verify_commit=base_full_verify_commit,
-        strict=strict,
-        reconcile=reconcile,
-        dry_run=dry_run,
-        timestamp=timestamp,
-    )
+    try:
+        result = init_verify_spec_run(
+            project_root=project_root,
+            spec_id=spec_id,
+            spec_dir=spec_dir,
+            verify_scope=verify_scope,
+            scoped_ids=scoped_ids,
+            base_full_verify_commit=base_full_verify_commit,
+            strict=strict,
+            reconcile=reconcile,
+            dry_run=dry_run,
+            timestamp=timestamp,
+        )
+    except VerifySpecRunInitError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(2)
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
 
 

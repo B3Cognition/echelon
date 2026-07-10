@@ -27,6 +27,10 @@ class VerifySpecRunInitResult:
         }
 
 
+class VerifySpecRunInitError(ValueError):
+    """Raised when verify-spec run initialization inputs are invalid."""
+
+
 def init_verify_spec_run(
     *,
     project_root: Path,
@@ -42,6 +46,10 @@ def init_verify_spec_run(
 ) -> VerifySpecRunInitResult:
     project_root = project_root.resolve()
     spec_dir = spec_dir.resolve()
+    if not project_root.is_dir():
+        raise VerifySpecRunInitError(f"project_root does not exist: {project_root}")
+    if not spec_dir.is_dir():
+        raise VerifySpecRunInitError(f"spec_dir does not exist: {spec_dir}")
     orchestration_root = _derive_orchestration_root(project_root, spec_dir)
     verify_scope = "scoped" if verify_scope == "scoped" else "full"
     verify_run_dir = _resolve_verify_run_dir(

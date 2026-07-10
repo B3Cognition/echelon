@@ -6,7 +6,10 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from harness.verify_spec_run import init_verify_spec_run
+from harness.verify_spec_run import VerifySpecRunInitError
 
 
 def _run_harness(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -123,3 +126,45 @@ def test_init_verify_spec_run_cli_writes_state_and_prints_json(tmp_path: Path) -
     assert state["verify_scope"] == "scoped"
     assert state["scoped_ids"] == ["FR-001", "FR-002"]
     assert state["base_full_verify_commit"] == "abc123"
+
+
+def test_init_verify_spec_run_rejects_missing_spec_dir_before_writing_state(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    spec_dir = project / "specs" / "001-demo"
+
+    with pytest.raises(VerifySpecRunInitError, match="spec_dir does not exist"):
+        init_verify_spec_run(
+            project_root=project,
+            spec_id="001-demo",
+            spec_dir=spec_dir,
+            timestamp="20260709-140000",
+        )
+
+    assert not (project / "runs").exists()
+
+
+def test_init_verify_spec_run_cli_rejects_missing_spec_dir_without_traceback(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    spec_dir = project / "specs" / "001-demo"
+
+    completed = _run_harness(
+        [
+            "init-verify-spec-run",
+            str(project),
+            "001-demo",
+            str(spec_dir),
+            "--timestamp",
+            "20260709-140000",
+        ]
+    )
+
+    assert completed.returncode == 2
+    assert "spec_dir does not exist:" in completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert not (project / "runs").exists()
