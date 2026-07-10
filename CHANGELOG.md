@@ -91,7 +91,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   validated before verify init follows them, and current-run paths must resolve
   under the canonical `runs/` directory. Stale `.current` pointers now fail
   fast instead of falling back to unrelated timestamped verify runs, and empty
-  `.current` pointers are reported as corrupted run state.
+  `.current` pointers are reported as corrupted run state. Existing verify-run
+  paths must resolve under the canonical `runs/` directory before state is
+  written.
 - **Workspace source discovery** — configured orchestration workspaces with
   `sources: []` now still auto-discover child projects under the canonical
   `sources/` directory. Empty configured workspaces without a `sources/`

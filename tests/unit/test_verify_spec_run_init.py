@@ -227,6 +227,66 @@ def test_init_verify_spec_run_cli_rejects_empty_current_pointer_cleanly(
     assert not (workspace / "runs" / "verify-spec-001-demo-20260709-173000").exists()
 
 
+def test_init_verify_spec_run_rejects_symlinked_timestamped_verify_run(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    outside_run = tmp_path / "outside-verify-run"
+    spec_dir.mkdir(parents=True)
+    outside_run.mkdir()
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    runs_dir = project / "runs"
+    runs_dir.mkdir()
+    (runs_dir / "verify-spec-001-demo-20260709-173500").symlink_to(
+        outside_run,
+        target_is_directory=True,
+    )
+
+    with pytest.raises(VerifySpecRunInitError, match="unsafe verify run path"):
+        init_verify_spec_run(
+            project_root=project,
+            spec_id="001-demo",
+            spec_dir=spec_dir,
+            timestamp="20260709-173500",
+        )
+
+    assert not (outside_run / "state.json").exists()
+
+
+def test_init_verify_spec_run_cli_rejects_symlinked_timestamped_verify_run_cleanly(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    outside_run = tmp_path / "outside-verify-run"
+    spec_dir.mkdir(parents=True)
+    outside_run.mkdir()
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    runs_dir = project / "runs"
+    runs_dir.mkdir()
+    (runs_dir / "verify-spec-001-demo-20260709-173500").symlink_to(
+        outside_run,
+        target_is_directory=True,
+    )
+
+    completed = _run_harness(
+        [
+            "init-verify-spec-run",
+            str(project),
+            "001-demo",
+            str(spec_dir),
+            "--timestamp",
+            "20260709-173500",
+        ]
+    )
+
+    assert completed.returncode == 2
+    assert "unsafe verify run path:" in completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert not (outside_run / "state.json").exists()
+
+
 def test_init_verify_spec_run_rejects_symlinked_current_run_outside_runs(
     tmp_path: Path,
 ) -> None:

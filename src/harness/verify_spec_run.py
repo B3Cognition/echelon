@@ -72,6 +72,7 @@ def init_verify_spec_run(
         spec_id=spec_id,
         timestamp=timestamp,
     )
+    _require_verify_run_contained(verify_run_dir, orchestration_root=orchestration_root)
     verify_run_dir.mkdir(parents=True, exist_ok=True)
 
     state = {
@@ -160,3 +161,12 @@ def _require_child_path(name: str, *, child: Path, parent: Path) -> None:
         child.relative_to(parent)
     except ValueError as exc:
         raise VerifySpecRunInitError(f"unsafe {name}: {child}") from exc
+
+
+def _require_verify_run_contained(
+    verify_run_dir: Path, *, orchestration_root: Path
+) -> None:
+    runs_dir = (orchestration_root / "runs").resolve()
+    if verify_run_dir.exists():
+        resolved = verify_run_dir.resolve()
+        _require_child_path("verify run path", child=resolved, parent=runs_dir)
