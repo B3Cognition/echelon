@@ -85,7 +85,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   later verify phases fail against fabricated paths; `spec_dir` must contain
   `spec.md`, and unsupported `--scope` values are rejected instead of silently
   falling back to `full`; scoped runs now require at least one scoped
-  requirement ID, and full runs reject scoped ID arguments.
+  requirement ID, and full runs reject scoped ID or base full-verify commit
+  arguments.
 - **Workspace source discovery** — configured orchestration workspaces with
   `sources: []` now still auto-discover child projects under the canonical
   `sources/` directory. Empty configured workspaces without a `sources/`

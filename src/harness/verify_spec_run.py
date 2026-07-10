@@ -59,6 +59,10 @@ def init_verify_spec_run(
         raise VerifySpecRunInitError("scoped verify requires at least one scoped id")
     if verify_scope == "full" and scoped_ids:
         raise VerifySpecRunInitError("scoped ids require --scope scoped")
+    if verify_scope == "full" and base_full_verify_commit:
+        raise VerifySpecRunInitError(
+            "base full verify commit requires --scope scoped"
+        )
     orchestration_root = _derive_orchestration_root(project_root, spec_dir)
     verify_run_dir = _resolve_verify_run_dir(
         orchestration_root=orchestration_root,
