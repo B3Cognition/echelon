@@ -784,6 +784,10 @@ def _write_codegraph_evidence_map() -> None:
         out_md_path=out_md_path,
         coverage_map_path=Path(sys.argv[7]) if len(sys.argv) >= 8 else None,
     )
+    _stamp_verify_spec_state(
+        verify_run_dir,
+        {"codegraph_evidence_map": "ready"},
+    )
     print(
         "OK: wrote CodeGraph evidence map to "
         f"{result.out_json_path} and {result.out_md_path} "

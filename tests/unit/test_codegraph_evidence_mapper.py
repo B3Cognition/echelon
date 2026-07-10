@@ -476,6 +476,41 @@ def test_write_codegraph_evidence_map_cli(tmp_path: Path):
     assert out_md.is_file()
 
 
+def test_write_codegraph_evidence_map_cli_stamps_success_state(tmp_path: Path):
+    audit, analysis, tasks = _write_fixture(
+        tmp_path,
+        [
+            {
+                "kind": "method",
+                "qualified_name": "RouteResolver::resolve",
+                "name": "resolve",
+                "file_path": "Packages/Engine/Sources/RouteResolver.swift",
+            }
+        ],
+    )
+    (tmp_path / "state.json").write_text(
+        '{"structural_evidence":"ready"}\n',
+        encoding="utf-8",
+    )
+    out_json = tmp_path / "codegraph-evidence-map.json"
+    out_md = tmp_path / "codegraph-evidence-map.md"
+
+    completed = _run_harness(
+        [
+            "write-codegraph-evidence-map",
+            str(audit),
+            str(analysis),
+            str(tasks),
+            str(out_json),
+            str(out_md),
+        ]
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert state["codegraph_evidence_map"] == "ready"
+
+
 def test_write_codegraph_evidence_map_cli_reports_missing_audit_without_traceback(
     tmp_path: Path,
 ):
