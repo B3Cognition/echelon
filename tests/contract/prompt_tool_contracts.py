@@ -75,9 +75,9 @@ FENCED_COMMAND_RE = re.compile(
 )
 
 HARNESS_INTERNAL_DISCOVERY_RE = re.compile(
-    r"\b(?:find|locate|discover|search|read|inspect|open|grep|list)\b"
+    r"\b(?:find|locate|discover|search|read|inspect|open|grep|list|check|look at)\b"
     r".{0,160}\b(?:"
-    r"harness (?:source|files?|internals?)|"
+    r"harness (?:source|code|files?|internals?)|"
     r"Ralph code|"
     r"src/harness|"
     r"ralph\.py|"
