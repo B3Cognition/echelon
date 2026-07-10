@@ -119,6 +119,56 @@ def test_sync_runtime_extension_copies_codegraph_node_runtime_deps(tmp_path):
     assert copied.read_text(encoding="utf-8") == '{"name":"picomatch"}\n'
 
 
+def test_sync_runtime_extension_excludes_node_runtime_sources_but_keeps_deps(tmp_path):
+    """Delivery worktrees should expose CodeGraph deps, not Node bridge source."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "scripts" / "node" / "re" / "node_modules" / "picomatch").mkdir(
+        parents=True
+    )
+    (source / "scripts" / "node" / "context7").mkdir(parents=True)
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (source / "scripts" / "node" / "re" / "codegraph-bridge.js").write_text(
+        "console.log('bridge')\n", encoding="utf-8"
+    )
+    (source / "scripts" / "node" / "re" / "package.json").write_text(
+        '{"name":"re"}\n', encoding="utf-8"
+    )
+    (source / "scripts" / "node" / "context7" / "package.json").write_text(
+        '{"name":"context7"}\n', encoding="utf-8"
+    )
+    (
+        source
+        / "scripts"
+        / "node"
+        / "re"
+        / "node_modules"
+        / "picomatch"
+        / "package.json"
+    ).write_text('{"name":"picomatch"}\n', encoding="utf-8")
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    runtime_node = worktree / ".specify" / "extensions" / "echelon" / "scripts" / "node"
+    assert not (runtime_node / "re" / "codegraph-bridge.js").exists()
+    assert not (runtime_node / "re" / "package.json").exists()
+    assert not (runtime_node / "context7").exists()
+    assert (
+        runtime_node / "re" / "node_modules" / "picomatch" / "package.json"
+    ).exists()
+
+
 def test_sync_runtime_extension_repairs_missing_codegraph_deps_when_runtime_ready(tmp_path):
     """Stale ready worktrees still get CodeGraph Node deps refreshed."""
     source = tmp_path / ".specify" / "extensions" / "echelon"

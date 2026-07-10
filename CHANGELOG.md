@@ -137,7 +137,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `agents/control/commander.md` or `workflow/definition.yaml`. Delivery runtime
   workflow phase sync also excludes `bugfix-*` phase contracts, keeping the
   target-visible phase set aligned to build, verify-spec, and codegen delivery
-  dispatch only.
+  dispatch only. Node helper source under `scripts/node` is no longer copied
+  into delivery worktrees; Ralph still syncs the vendored CodeGraph
+  `node_modules` runtime deps explicitly.
 - **EGR-116 / #142 prompt tool contracts** — static prompt scanning now treats
   shell file-reader commands such as `cat`, `sed`, `less`, `tail`, and `head`
   against `src/harness/*`, `ralph.py`, or fulfillment internals as harness
