@@ -181,6 +181,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   no longer slips past the guard unless that file exists inside the target
   worktree.
 - **EGR-119 / #143 verify-spec state ownership** — successful
+  `python -m harness write-progress-integrity ...` runs now stamp
+  `progress_integrity: valid` and progress counts in `state.json`; invalid
+  progress writes `progress_integrity: invalid` with validation errors before
+  exiting non-zero.
   `python -m harness write-canonical-requirements ...` and
   `python -m harness write-requirement-audit ...` runs now stamp Stage 3
   inventory/audit readiness and counts in `state.json`.

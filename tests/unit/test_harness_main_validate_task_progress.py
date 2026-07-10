@@ -161,6 +161,10 @@ class TestHarnessMainWriteProgressIntegrity:
         assert data["valid"] is True
         assert data["completed_tasks"] == 1
         assert data["task_statuses"] == {"T-001": "DONE"}
+        state_data = json.loads(state.read_text(encoding="utf-8"))
+        assert state_data["progress_integrity"] == "valid"
+        assert state_data["progress_integrity_total_tasks"] == 1
+        assert state_data["progress_integrity_completed_tasks"] == 1
         markdown = out_md.read_text(encoding="utf-8")
         assert "# Progress Integrity" in markdown
         assert "| T-001 | DONE |" in markdown
@@ -194,4 +198,9 @@ class TestHarnessMainWriteProgressIntegrity:
             main()
 
         assert exc.value.code == 1
+        state_data = json.loads(state.read_text(encoding="utf-8"))
+        assert state_data["progress_integrity"] == "invalid"
+        assert state_data["progress_integrity_errors"] == [
+            "state completed_tasks=1 but tasks.md has 0 checked task rows"
+        ]
         assert "invalid task progress" in capsys.readouterr().err

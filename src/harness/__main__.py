@@ -233,6 +233,13 @@ def _write_progress_integrity() -> None:
         build_state,
     )
     if not summary.valid:
+        _stamp_json_state_file(
+            state_path,
+            {
+                "progress_integrity": "invalid",
+                "progress_integrity_errors": summary.errors,
+            },
+        )
         print(f"invalid task progress: {'; '.join(summary.errors)}", file=sys.stderr)
         sys.exit(1)
 
@@ -248,6 +255,15 @@ def _write_progress_integrity() -> None:
     }
     out_json.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     out_md.write_text(_progress_integrity_markdown(payload), encoding="utf-8")
+    _stamp_json_state_file(
+        state_path,
+        {
+            "progress_integrity": "valid",
+            "progress_integrity_total_tasks": summary.total_tasks,
+            "progress_integrity_completed_tasks": summary.completed_tasks,
+            "progress_integrity_tasks_completed_pct": summary.tasks_completed_pct,
+        },
+    )
     print(f"OK: wrote progress integrity to {out_json} and {out_md}")
 
 
@@ -720,9 +736,12 @@ def _write_codegraph_evidence() -> None:
 
 
 def _stamp_verify_spec_state(verify_run_dir: "Path", updates: dict[str, object]) -> None:
+    _stamp_json_state_file(verify_run_dir / "state.json", updates)
+
+
+def _stamp_json_state_file(state_path: "Path", updates: dict[str, object]) -> None:
     import json
 
-    state_path = verify_run_dir / "state.json"
     state_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         state = json.loads(state_path.read_text(encoding="utf-8"))

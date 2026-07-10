@@ -87,6 +87,15 @@ def test_verify_spec_progress_integrity_does_not_override_fulfillment_status() -
     assert "source and executable test evidence satisfy" in judge_text
 
 
+def test_verify_spec_progress_integrity_stamps_state() -> None:
+    text = (PHASE_DIR / "verify-spec-2-progress-integrity.md").read_text(encoding="utf-8")
+
+    assert "writes `progress_integrity: valid`" in text
+    assert "writes\n`progress_integrity: invalid`" in text
+    assert "{verify_run_dir}/state.json" in text
+    assert "Do not ask an LLM to infer or\nrepair progress integrity" in text
+
+
 def test_verify_spec_stage3_audit_commands_stamp_state() -> None:
     text = (PHASE_DIR / "verify-spec-3-audit.md").read_text(encoding="utf-8")
 
