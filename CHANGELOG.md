@@ -75,6 +75,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Workspace source discovery** — configured orchestration workspaces with
+  `sources: []` now still auto-discover child projects under the canonical
+  `sources/` directory. Empty configured workspaces without a `sources/`
+  directory remain planning-only.
 - **EGR-119 / #143 verify-spec state ownership** — verify-spec phase commands
   that stamp run state now fail when the init-created `state.json` is missing
   instead of silently creating a replacement file in the wrong run directory;
