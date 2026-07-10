@@ -87,6 +87,16 @@ def test_verify_spec_progress_integrity_does_not_override_fulfillment_status() -
     assert "source and executable test evidence satisfy" in judge_text
 
 
+def test_verify_spec_stage3_audit_commands_stamp_state() -> None:
+    text = (PHASE_DIR / "verify-spec-3-audit.md").read_text(encoding="utf-8")
+
+    assert "stamps `canonical_requirements: ready`" in text
+    assert "`canonical_requirements_count`" in text
+    assert "stamps `requirement_audit: ready`" in text
+    assert "`requirement_audit_count`" in text
+    assert "`{verify_run_dir}/state.json`" in text
+
+
 def test_verify_spec_preserves_runtime_evidence_semantics() -> None:
     map_phase = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
     judge_phase = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")

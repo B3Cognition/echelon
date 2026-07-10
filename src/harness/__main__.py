@@ -753,6 +753,13 @@ def _write_canonical_requirements() -> None:
         spec_dir=Path(sys.argv[2]),
         verify_run_dir=Path(sys.argv[3]),
     )
+    _stamp_verify_spec_state(
+        Path(sys.argv[3]),
+        {
+            "canonical_requirements": "ready",
+            "canonical_requirements_count": result.count,
+        },
+    )
     print(
         "OK: wrote canonical requirements to "
         f"{result.json_path} and {result.markdown_path} "
@@ -773,6 +780,13 @@ def _write_requirement_audit() -> None:
     from harness.canonical_requirements import write_requirement_audit
 
     result = write_requirement_audit(verify_run_dir=Path(sys.argv[2]))
+    _stamp_verify_spec_state(
+        Path(sys.argv[2]),
+        {
+            "requirement_audit": "ready",
+            "requirement_audit_count": result.count,
+        },
+    )
     print(
         "OK: wrote requirement audit to "
         f"{result.audit_path} ({result.count} requirements)"

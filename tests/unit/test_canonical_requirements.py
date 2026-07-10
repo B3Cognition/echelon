@@ -143,3 +143,53 @@ def test_write_requirement_audit_cli_uses_canonical_inventory(tmp_path):
     assert "OK: wrote requirement audit" in completed.stdout
     audit = (verify_run_dir / "requirement-audit.md").read_text(encoding="utf-8")
     assert "| FR-001 | functional | spec.md:3 | Users can start a mission. |" in audit
+
+
+def test_write_canonical_requirements_cli_stamps_state(tmp_path):
+    spec_dir = tmp_path / "specs" / "001-demo"
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
+    spec_dir.mkdir(parents=True)
+    verify_run_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "- **FR-001**: Users can start a mission.\n",
+        encoding="utf-8",
+    )
+    (verify_run_dir / "state.json").write_text("{}", encoding="utf-8")
+
+    completed = _run_harness(
+        ["write-canonical-requirements", str(spec_dir), str(verify_run_dir)]
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    state = json.loads((verify_run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["canonical_requirements"] == "ready"
+    assert state["canonical_requirements_count"] == 1
+
+
+def test_write_requirement_audit_cli_stamps_state(tmp_path):
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
+    verify_run_dir.mkdir(parents=True)
+    (verify_run_dir / "canonical-requirements.json").write_text(
+        json.dumps(
+            {
+                "requirements": [
+                    {
+                        "id": "FR-001",
+                        "source_kind": "spec",
+                        "source_file": "spec.md",
+                        "source_line": 3,
+                        "source_text": "- **FR-001**: Users can start a mission.",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (verify_run_dir / "state.json").write_text("{}", encoding="utf-8")
+
+    completed = _run_harness(["write-requirement-audit", str(verify_run_dir)])
+
+    assert completed.returncode == 0, completed.stderr
+    state = json.loads((verify_run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["requirement_audit"] == "ready"
+    assert state["requirement_audit_count"] == 1

@@ -181,6 +181,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   no longer slips past the guard unless that file exists inside the target
   worktree.
 - **EGR-119 / #143 verify-spec state ownership** — successful
+  `python -m harness write-canonical-requirements ...` and
+  `python -m harness write-requirement-audit ...` runs now stamp Stage 3
+  inventory/audit readiness and counts in `state.json`.
+  Successful
   `python -m harness write-codegraph-evidence-map ...` runs now stamp
   `codegraph_evidence_map: ready` in the Python-owned verify-spec `state.json`,
   matching the existing degraded-path stamp and reducing later prompt-side state
