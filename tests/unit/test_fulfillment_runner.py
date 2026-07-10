@@ -76,6 +76,48 @@ class TestFulfillmentRunner:
         assert "You are COMMANDER" in prompt
         assert "verify spec-001" in prompt
 
+    def test_refresh_embeds_verify_spec_phase_context_without_discovery(
+        self, tmp_path
+    ):
+        _write_verify_skill(tmp_path)
+        phase_dir = (
+            tmp_path
+            / ".specify"
+            / "extensions"
+            / "echelon"
+            / "workflow"
+            / "phases"
+        )
+        phase_dir.mkdir(parents=True)
+        (phase_dir / "verify-spec-1-init.md").write_text(
+            "python -m harness init-verify-spec-run \"{project_root}\" "
+            "\"{spec_id}\" \"{spec_dir}\"\n",
+            encoding="utf-8",
+        )
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            report.write_text("# Fulfillment\n", encoding="utf-8")
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+
+        assert result.status == "refreshed"
+        _worktree_path, prompt = provider.exec_prompt.call_args.args
+        assert "Direct verify-spec invocation guard" in prompt
+        assert "Do not search for or read `.claude/skills`" in prompt
+        assert "workflow phase\nfiles" in prompt
+        assert "## Embedded Verify-Spec Phase Context" in prompt
+        assert "### verify-spec-1-init.md" in prompt
+        assert "python -m harness init-verify-spec-run" in prompt
+
     def test_refresh_returns_127_when_verify_spec_skill_missing(self, tmp_path):
         provider = MagicMock()
         provider.cli = "claude"

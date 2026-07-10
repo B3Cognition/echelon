@@ -191,7 +191,7 @@ class FulfillmentRunner:
         if resolved_spec_dir is not None:
             arguments = f"{spec_id} spec_dir={resolved_spec_dir}"
 
-        prompt = build_skill_prompt(skill_path, arguments)
+        prompt = _build_verify_spec_prompt(worktree, skill_path, arguments)
         exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
         provider_limit_reason = _provider_session_limit_reason(
             self._prompt_executor,
@@ -346,7 +346,7 @@ class FulfillmentRunner:
         if plan.base_full_verify_commit:
             arguments += f" base_full_verify_commit={plan.base_full_verify_commit}"
 
-        prompt = build_skill_prompt(skill_path, arguments)
+        prompt = _build_verify_spec_prompt(worktree, skill_path, arguments)
         with tempfile.TemporaryDirectory() as temp_dir:
             base_snapshot = Path(temp_dir) / "base-full-fulfillment-report.md"
             base_snapshot.write_text(
@@ -419,6 +419,46 @@ def _resolve_spec_dir(
         if spec_dir is not None:
             return spec_dir
     return find_spec_dir(spec_id, worktree)
+
+
+def _build_verify_spec_prompt(worktree: Path, skill_path: Path, arguments: str) -> str:
+    prompt = build_skill_prompt(skill_path, arguments)
+    phase_context = _verify_spec_phase_context(worktree)
+    if not phase_context:
+        return prompt
+    return f"{prompt}\n\n{_VERIFY_SPEC_DIRECT_INVOCATION_GUARD}\n\n{phase_context}"
+
+
+_VERIFY_SPEC_DIRECT_INVOCATION_GUARD = """\
+## Direct verify-spec invocation guard
+
+This prompt is the complete verify-spec instruction set for this direct
+fulfillment refresh. Treat the embedded phase context below as the current phase
+prompt. Do not search for or read `.claude/skills`, `SKILL.md`, workflow phase
+files, or workflow definition files. Use the provided spec_dir argument and the
+embedded Python-owned commands.
+"""
+
+
+def _verify_spec_phase_context(worktree: Path) -> str:
+    phase_dir = (
+        worktree
+        / ".specify"
+        / "extensions"
+        / "echelon"
+        / "workflow"
+        / "phases"
+    )
+    if not phase_dir.is_dir():
+        return ""
+    phase_files = sorted(phase_dir.glob("verify-spec-*.md"))
+    if not phase_files:
+        return ""
+    sections = ["## Embedded Verify-Spec Phase Context"]
+    for path in phase_files:
+        sections.append(f"### {path.name}")
+        sections.append(path.read_text(encoding="utf-8", errors="replace").strip())
+    return "\n\n".join(sections).strip()
 
 
 def _stamp_latest_report(
