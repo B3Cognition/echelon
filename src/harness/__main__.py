@@ -922,8 +922,8 @@ def _write_codegraph_evidence_map() -> None:
     out_json_path = Path(sys.argv[5])
     out_md_path = Path(sys.argv[6])
     verify_run_dir = out_json_path.parent
+    _require_verify_spec_state(verify_run_dir)
     if not analysis_path.is_file():
-        _require_verify_spec_state(verify_run_dir)
         if _verify_spec_state_value(verify_run_dir, "structural_evidence") == "degraded":
             _write_skipped_codegraph_evidence_map(
                 out_json_path=out_json_path,

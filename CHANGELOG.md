@@ -83,6 +83,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Stage 5 judgment/report commands also require that state before writing
   prepass, fallback, or assembled fulfillment artifacts, and fulfillment artifact
   row-set validation checks state before importing or validating report inputs.
+  CodeGraph evidence-map generation now applies the same state-before-write rule
+  on both normal and degraded paths.
 - **EGR-118 / #144 containment policy** — `delivery-containment-policy.json`
   now records workspace-relative forbidden source-root aliases alongside
   absolute sibling roots, sharing the same alias logic used by Ralph's transcript

@@ -454,11 +454,8 @@ def test_write_codegraph_evidence_map_cli(tmp_path: Path):
     out_md = tmp_path / "codegraph-evidence-map.md"
     (tmp_path / "state.json").write_text("{}\n", encoding="utf-8")
 
-    completed = subprocess.run(
+    completed = _run_harness(
         [
-            sys.executable,
-            "-m",
-            "harness",
             "write-codegraph-evidence-map",
             str(audit),
             str(analysis),
@@ -466,9 +463,6 @@ def test_write_codegraph_evidence_map_cli(tmp_path: Path):
             str(out_json),
             str(out_md),
         ],
-        text=True,
-        capture_output=True,
-        check=False,
     )
 
     assert completed.returncode == 0, completed.stderr
@@ -512,6 +506,40 @@ def test_write_codegraph_evidence_map_cli_stamps_success_state(tmp_path: Path):
     assert state["codegraph_evidence_map"] == "ready"
 
 
+def test_write_codegraph_evidence_map_cli_requires_state_before_writing(
+    tmp_path: Path,
+):
+    audit, analysis, tasks = _write_fixture(
+        tmp_path,
+        [
+            {
+                "kind": "method",
+                "qualified_name": "RouteResolver::resolve",
+                "name": "resolve",
+                "file_path": "Packages/Engine/Sources/RouteResolver.swift",
+            }
+        ],
+    )
+    out_json = tmp_path / "codegraph-evidence-map.json"
+    out_md = tmp_path / "codegraph-evidence-map.md"
+
+    completed = _run_harness(
+        [
+            "write-codegraph-evidence-map",
+            str(audit),
+            str(analysis),
+            str(tasks),
+            str(out_json),
+            str(out_md),
+        ]
+    )
+
+    assert completed.returncode == 1
+    assert "state.json missing for verify-spec run:" in completed.stderr
+    assert not out_json.exists()
+    assert not out_md.exists()
+
+
 def test_write_codegraph_evidence_map_cli_reports_missing_audit_without_traceback(
     tmp_path: Path,
 ):
@@ -519,6 +547,7 @@ def test_write_codegraph_evidence_map_cli_reports_missing_audit_without_tracebac
     analysis.write_text('{"symbols":[],"call_graph":[]}\n', encoding="utf-8")
     tasks = tmp_path / "tasks.md"
     tasks.write_text("# Tasks\n", encoding="utf-8")
+    (tmp_path / "state.json").write_text("{}\n", encoding="utf-8")
 
     completed = _run_harness(
         [
