@@ -584,7 +584,10 @@ class TestOuterLoopConvergence:
             1,
         )[0]
         assert str(target) not in forbidden_block
-        assert "Do not inspect, read, list, grep, or search sibling source roots" in prompt
+        assert (
+            "Do not inspect, read, list, grep, search, check, or look at sibling source roots"
+            in prompt
+        )
 
     def test_harness_context_writes_delivery_containment_policy(
         self, tmp_path: Path
@@ -635,6 +638,10 @@ class TestOuterLoopConvergence:
         assert policy["forbidden_source_root_aliases"] == {
             str(sibling): ["sources/ruler"]
         }
+        assert (
+            "forbidden_source_roots must not be inspected, listed, searched, read, "
+            "checked, looked at, or edited"
+        ) in policy["rules"]
 
     def test_harness_context_includes_delivery_progress_ledger(
         self, tmp_path: Path

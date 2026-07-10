@@ -2364,7 +2364,7 @@ class RalphController:
                 + "".join(f"- {path}\n" for path in forbidden_source_roots)
             )
             forbidden_source_roots_instruction = (
-                "Do not inspect, read, list, grep, or search sibling source roots "
+                "Do not inspect, read, list, grep, search, check, or look at sibling source roots "
                 "listed under `forbidden_source_roots`; they are "
                 "reverse-engineering context only and not part of the targeted "
                 "build slice.\n"
@@ -3100,7 +3100,7 @@ class RalphController:
                 "implementation reads, searches, edits, and tests must stay in worktree",
                 "spec_inputs are read-only",
                 "harness_state is Ralph-owned",
-                "forbidden_source_roots must not be inspected, listed, searched, read, or edited",
+                "forbidden_source_roots must not be inspected, listed, searched, read, checked, looked at, or edited",
             ],
         }
         policy_file.write_text(

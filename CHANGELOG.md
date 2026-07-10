@@ -128,7 +128,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and forbidden sibling source roots for future provider-level enforcement,
   without granting the entire orchestration workspace as an allowed root. LLM
   build/feedback runners receive its path through
-  `ECHELON_CONTAINMENT_POLICY_FILE`.
+  `ECHELON_CONTAINMENT_POLICY_FILE`. Prompt and policy wording now also forbids
+  softer sibling-source probes such as checking or looking at forbidden roots.
 - **EGR-119 / #143 verify-spec orchestration** — verify-spec stage 5 now uses
   `python -m harness write-fallback-fulfillment-template` to create a bounded
   fallback report for SPEC-GUARD. The LLM fills only TODO cells for unresolved
