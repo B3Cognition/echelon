@@ -122,7 +122,11 @@ def _resolve_verify_run_dir(
         if run_id:
             _require_safe_label("current run id", run_id)
         active_run = runs_dir / run_id if run_id else None
-        if active_run is not None and active_run.is_dir():
+        if active_run is not None and not active_run.exists():
+            raise VerifySpecRunInitError(f"current run directory missing: {active_run}")
+        if active_run is not None and not active_run.is_dir():
+            raise VerifySpecRunInitError(f"current run path is not a directory: {active_run}")
+        if active_run is not None:
             _require_child_path(
                 "current run path",
                 child=active_run.resolve(),

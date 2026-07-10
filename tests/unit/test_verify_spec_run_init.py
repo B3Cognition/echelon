@@ -119,6 +119,62 @@ def test_init_verify_spec_run_cli_rejects_path_like_current_pointer_cleanly(
     assert not (outside_run / "verify-spec").exists()
 
 
+def test_init_verify_spec_run_rejects_missing_current_run_directory(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    source = workspace / "sources" / "prosaic"
+    spec_dir = workspace / "specs" / "001-demo"
+    source.mkdir(parents=True)
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (workspace / "runs").mkdir()
+    (workspace / "runs" / ".current").write_text(
+        "spec-20260709-missing\n", encoding="utf-8"
+    )
+
+    with pytest.raises(VerifySpecRunInitError, match="current run directory missing"):
+        init_verify_spec_run(
+            project_root=source,
+            spec_id="001-demo",
+            spec_dir=spec_dir,
+            timestamp="20260709-172500",
+        )
+
+    assert not (workspace / "runs" / "verify-spec-001-demo-20260709-172500").exists()
+
+
+def test_init_verify_spec_run_cli_rejects_missing_current_run_directory_cleanly(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    source = workspace / "sources" / "prosaic"
+    spec_dir = workspace / "specs" / "001-demo"
+    source.mkdir(parents=True)
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (workspace / "runs").mkdir()
+    (workspace / "runs" / ".current").write_text(
+        "spec-20260709-missing\n", encoding="utf-8"
+    )
+
+    completed = _run_harness(
+        [
+            "init-verify-spec-run",
+            str(source),
+            "001-demo",
+            str(spec_dir),
+            "--timestamp",
+            "20260709-172500",
+        ]
+    )
+
+    assert completed.returncode == 2
+    assert "current run directory missing:" in completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert not (workspace / "runs" / "verify-spec-001-demo-20260709-172500").exists()
+
+
 def test_init_verify_spec_run_rejects_symlinked_current_run_outside_runs(
     tmp_path: Path,
 ) -> None:
