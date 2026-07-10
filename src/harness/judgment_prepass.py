@@ -344,6 +344,10 @@ def _fallback_report_rows(path: Path, *, allowed_ids: set[str]) -> dict[str, str
             continue
         item_id = cells[0]
         if item_id in allowed_ids:
+            if len(cells) >= 3 and (
+                cells[1] == "TODO_STATUS" or cells[2] == "TODO_EVIDENCE"
+            ):
+                raise ValueError(f"unfilled fallback fulfillment row for {item_id}")
             rows[item_id] = line
     return rows
 

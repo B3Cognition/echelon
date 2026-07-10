@@ -262,6 +262,59 @@ def test_assemble_fulfillment_report_filters_scoped_ids(tmp_path: Path):
     assert "| FR-002 | PARTIAL | fallback |" in text
 
 
+def test_assemble_fulfillment_report_rejects_unfilled_fallback_template(
+    tmp_path: Path,
+):
+    canonical = tmp_path / "canonical-requirements.json"
+    canonical.write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}]}),
+        encoding="utf-8",
+    )
+    prepass = tmp_path / "judgment-prepass.json"
+    prepass.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "id": "FR-001",
+                        "mechanical": False,
+                        "proposed_status": None,
+                        "reason_code": None,
+                        "fallback_reason": "needs_judgment",
+                        "report_row": None,
+                    },
+                ],
+                "summary": {
+                    "mechanical_count": 0,
+                    "fallback_count": 1,
+                    "fallback_ids": ["FR-001"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    fallback = tmp_path / "fulfillment-report.fallback.md"
+    fallback.write_text(
+        "# Fallback Fulfillment Judgment\n\n"
+        "| ID | Status | Evidence |\n"
+        "| --- | --- | --- |\n"
+        "| FR-001 | TODO_STATUS | TODO_EVIDENCE |\n",
+        encoding="utf-8",
+    )
+
+    try:
+        assemble_fulfillment_report(
+            canonical_inventory_path=canonical,
+            judgment_prepass_path=prepass,
+            fallback_report_path=fallback,
+            output_report_path=tmp_path / "fulfillment-report.md",
+        )
+    except ValueError as exc:
+        assert "unfilled fallback fulfillment row for FR-001" in str(exc)
+    else:
+        raise AssertionError("expected unfilled fallback row to fail")
+
+
 def test_write_fallback_fulfillment_template_limits_rows_to_scoped_fallback_ids(
     tmp_path: Path,
 ):
