@@ -636,7 +636,7 @@ class TestOuterLoopConvergence:
         assert policy["allowed_roots"]["orchestration"] == []
         assert policy["forbidden_source_roots"] == [str(sibling)]
         assert policy["forbidden_source_root_aliases"] == {
-            str(sibling): ["sources/ruler"]
+            str(sibling): ["sources/ruler", "./sources/ruler"]
         }
         assert (
             "forbidden_source_roots must not be inspected, listed, searched, read, "
@@ -3388,6 +3388,65 @@ class TestOuterLoopConvergence:
         violation = state["source_root_containment_violation"]
         assert violation["forbidden_root"] == str(sibling)
         assert "sources/spec-kit-skills-agents/package.json" in violation["matched_line"]
+        gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
+    def test_llm_build_blocks_when_tool_output_contains_dot_relative_forbidden_source_root(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Harness detects sibling source-root access reported as ./workspace-relative paths."""
+        from harness.build_result import BuildResult
+
+        workspace = tmp_path / "workspace"
+        target = workspace / "sources" / "prosaic"
+        sibling = workspace / "sources" / "ruler"
+        worktree = tmp_path / "worktree"
+        for path in (target, sibling, worktree):
+            path.mkdir(parents=True)
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout=(
+                "  ▷ Bash: Inspect sources directory\n"
+                "  ⎿  ./sources/prosaic\n"
+                "     ./sources/ruler/package.json\n"
+            ),
+            stderr="",
+            duration_ms=1000,
+        )
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = target
+        gitops.create_worktree.return_value = str(worktree)
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["workspace_git_role"] = "workspace"
+        state["source_root"] = str(target)
+        state["source_id"] = "prosaic"
+        state["source_git_role"] = "source"
+        state_store.write(state)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "containment_violation"
+        captured = capsys.readouterr()
+        assert "SOURCE ROOT CONTAINMENT VIOLATION" in captured.err
+        state = state_store.read()
+        violation = state["source_root_containment_violation"]
+        assert violation["forbidden_root"] == str(sibling)
+        assert "./sources/ruler/package.json" in violation["matched_line"]
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 

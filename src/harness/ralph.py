@@ -4671,7 +4671,9 @@ def _forbidden_source_root_aliases(
             except ValueError:
                 relative = None
             if relative is not None and str(relative):
-                aliases.append(str(relative))
+                relative_alias = str(relative)
+                aliases.append(relative_alias)
+                aliases.append(f"./{relative_alias}")
         aliases_by_root[root] = aliases
     return aliases_by_root
 
