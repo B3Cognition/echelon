@@ -7,6 +7,7 @@ from pathlib import Path
 
 PROMPT_GLOBS = (
     "extension/agents/**/*.md",
+    "extension/commands/appendices/*.md",
     "extension/commands/echelon.build.md",
     "extension/commands/echelon.harness-run.md",
     "extension/commands/echelon.verify-spec.md",
@@ -206,6 +207,13 @@ def _is_delivery_command(path: Path) -> bool:
     )
 
 
+def _is_command_appendix(path: Path) -> bool:
+    normalized = path.as_posix()
+    return "/extension/commands/appendices/" in normalized or normalized.startswith(
+        "extension/commands/appendices/"
+    )
+
+
 def _is_harness_run_command(path: Path) -> bool:
     normalized = path.as_posix()
     return normalized.endswith("extension/commands/echelon.harness-run.md")
@@ -318,7 +326,7 @@ def scan_prompt_tool_contracts(
                 )
                 continue
             if (
-                _is_delivery_command(path)
+                (_is_delivery_command(path) or _is_command_appendix(path))
                 and DELIVERY_COMMAND_RUNTIME_DISCOVERY_RE.search(stripped)
             ):
                 if _is_negative_boundary(stripped):
@@ -327,7 +335,7 @@ def scan_prompt_tool_contracts(
                     PromptToolContractFinding(
                         path=path,
                         line=index + 1,
-                        reason="delivery_command_runtime_discovery",
+                        reason="command_runtime_discovery",
                         text=stripped,
                     )
                 )

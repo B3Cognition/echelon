@@ -311,7 +311,7 @@ def test_flags_delivery_command_runtime_discovery(tmp_path: Path) -> None:
     findings = scan_prompt_tool_contracts(tmp_path, [prompt])
 
     assert len(findings) == 1
-    assert findings[0].reason == "delivery_command_runtime_discovery"
+    assert findings[0].reason == "command_runtime_discovery"
 
 
 def test_flags_delivery_command_runtime_discovery_synonyms(tmp_path: Path) -> None:
@@ -326,9 +326,29 @@ def test_flags_delivery_command_runtime_discovery_synonyms(tmp_path: Path) -> No
     findings = scan_prompt_tool_contracts(tmp_path, [prompt])
 
     assert [finding.reason for finding in findings] == [
-        "delivery_command_runtime_discovery",
-        "delivery_command_runtime_discovery",
+        "command_runtime_discovery",
+        "command_runtime_discovery",
     ]
+
+
+def test_flags_command_appendix_runtime_discovery(tmp_path: Path) -> None:
+    prompt = (
+        tmp_path
+        / "extension"
+        / "commands"
+        / "appendices"
+        / "re-single-phase-command.md"
+    )
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "ALWAYS read `agents/control/commander.md` first.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "command_runtime_discovery"
 
 
 def test_build_phase_prompts_use_ralph_owned_context_packs() -> None:

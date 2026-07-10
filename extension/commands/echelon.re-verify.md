@@ -11,8 +11,9 @@ You are COMMANDER running a single brownfield phase.
 
 Load `commands/appendices/re-single-phase-command.md`.
 
-Use `workflow/definition.yaml` `re_extraction:` section. Execute **only** phase
-`re-extract-3-verify`.
+Use the declared workflow section `re_extraction` and execute **only** phase
+`re-extract-3-verify`. Do not read `workflow/definition.yaml` to rediscover
+routing.
 
 ---
 

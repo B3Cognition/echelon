@@ -4,10 +4,13 @@ Shared contract for `speckit.echelon.re-*` commands that execute exactly one bro
 
 ## Required Context
 
-ALWAYS read `agents/control/commander.md` first.
-NEVER dispatch before loading the COMMANDER governance and role-separation rules.
+ALWAYS use the invoking command's declared workflow section and phase id as the
+authoritative routing contract.
+NEVER read `agents/control/commander.md` or `workflow/definition.yaml` to infer
+governance, routing, or outputs for these single-phase commands.
 
-ALWAYS read the calling command's named `workflow/definition.yaml` section before dispatch.
+ALWAYS use the resolved RE state path and output directory provided by the
+invoking Echelon command context.
 NEVER infer phase routing or outputs from memory.
 
 ## Execution

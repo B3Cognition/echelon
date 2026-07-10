@@ -11,8 +11,9 @@ You are COMMANDER running a single brownfield phase.
 
 Load `commands/appendices/re-single-phase-command.md`.
 
-Use `workflow/definition.yaml` `re_planning:` section. Execute **only** phase
-`re-planning-1-plan`.
+Use the declared workflow section `re_planning` and execute **only** phase
+`re-planning-1-plan`. Do not read `workflow/definition.yaml` to rediscover
+routing.
 
 ---
 

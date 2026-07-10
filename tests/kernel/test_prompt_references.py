@@ -297,6 +297,8 @@ def test_re_single_phase_commands_use_shared_contract():
         text = (EXTENSION_ROOT / "commands" / command_name).read_text()
         assert "commands/appendices/re-single-phase-command.md" in text
         assert "then stop. Always execute only this phase" not in text
+        assert "Use `workflow/definition.yaml`" not in text
+        assert "Do not read `workflow/definition.yaml` to rediscover\nrouting." in text
 
 
 def test_primary_agent_prompts_have_paired_always_never_rules():
