@@ -52,6 +52,7 @@ RUNTIME_EXTENSION_EXCLUDED_PATHS = (
     Path("presets"),
     Path("scripts") / "python",
     Path("scripts") / "bash" / "re",
+    Path("stacks"),
 )
 RUNTIME_EXTENSION_EXCLUDED_NAMES = (
     ".git",

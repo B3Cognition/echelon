@@ -386,6 +386,38 @@ def test_sync_runtime_extension_excludes_phase_a_presets(tmp_path):
     assert not (runtime / "presets").exists()
 
 
+def test_sync_runtime_extension_excludes_stack_playbooks(tmp_path):
+    """Delivery worktrees should not expose Phase A stack playbook context."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "stacks" / "example-stack").mkdir(parents=True)
+    (source / "templates").mkdir()
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (source / "stacks" / "example-stack" / "context.md").write_text(
+        "# stack context\n", encoding="utf-8"
+    )
+    (source / "templates" / "tasks-template.md").write_text(
+        "# runtime task template\n", encoding="utf-8"
+    )
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    runtime = worktree / ".specify" / "extensions" / "echelon"
+    assert (runtime / "templates" / "tasks-template.md").exists()
+    assert not (runtime / "stacks").exists()
+
+
 def test_sync_runtime_extension_excludes_non_delivery_agent_prompts(tmp_path):
     """Delivery worktrees should expose only delivery-safe raw agent prompts."""
     source = tmp_path / ".specify" / "extensions" / "echelon"

@@ -200,6 +200,35 @@ def test_polyrepo_runtime_extension_excludes_phase_a_presets(
     assert not (runtime / "presets").exists()
 
 
+def test_polyrepo_runtime_extension_excludes_stack_playbooks(
+    tmp_path: Path,
+) -> None:
+    """Target-specific harness roots should not expose stack playbook context."""
+    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "stacks" / "example-stack").mkdir(parents=True)
+    (source / "templates").mkdir()
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (source / "stacks" / "example-stack" / "context.md").write_text(
+        "# stack context\n", encoding="utf-8"
+    )
+    (source / "templates" / "tasks-template.md").write_text(
+        "# runtime task template\n", encoding="utf-8"
+    )
+
+    harness_base = tmp_path / "workspace" / "runs" / "targets" / "prosaic"
+
+    _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
+
+    runtime = harness_base / ".specify" / "extensions" / "echelon"
+    assert (runtime / "templates" / "tasks-template.md").exists()
+    assert not (runtime / "stacks").exists()
+
+
 def test_polyrepo_runtime_extension_excludes_non_delivery_agent_prompts(
     tmp_path: Path,
 ) -> None:
