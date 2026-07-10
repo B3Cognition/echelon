@@ -454,3 +454,49 @@ def test_init_verify_spec_run_cli_rejects_path_like_timestamp_cleanly(
     assert "Traceback" not in completed.stderr
     assert not (project / "runs").exists()
     assert not (tmp_path / "escape").exists()
+
+
+def test_init_verify_spec_run_rejects_path_like_spec_id_before_state(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+    with pytest.raises(VerifySpecRunInitError, match="unsafe spec_id"):
+        init_verify_spec_run(
+            project_root=project,
+            spec_id="../escape",
+            spec_dir=spec_dir,
+            timestamp="20260709-170000",
+        )
+
+    assert not (project / "runs").exists()
+    assert not (tmp_path / "escape-20260709-170000").exists()
+
+
+def test_init_verify_spec_run_cli_rejects_path_like_spec_id_cleanly(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+
+    completed = _run_harness(
+        [
+            "init-verify-spec-run",
+            str(project),
+            "../escape",
+            str(spec_dir),
+            "--timestamp",
+            "20260709-170000",
+        ]
+    )
+
+    assert completed.returncode == 2
+    assert "unsafe spec_id:" in completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert not (project / "runs").exists()
+    assert not (tmp_path / "escape-20260709-170000").exists()

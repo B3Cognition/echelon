@@ -52,6 +52,7 @@ def init_verify_spec_run(
         raise VerifySpecRunInitError(f"spec_dir does not exist: {spec_dir}")
     if not (spec_dir / "spec.md").is_file():
         raise VerifySpecRunInitError(f"spec.md missing in spec_dir: {spec_dir}")
+    _require_safe_label("spec_id", spec_id)
     if verify_scope not in {"full", "scoped"}:
         raise VerifySpecRunInitError(f"unsupported verify scope: {verify_scope}")
     scoped_ids = _stable_unique(scoped_ids or [])
