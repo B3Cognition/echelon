@@ -129,7 +129,9 @@ def test_configured_sources_override_auto_discovery(tmp_path: Path) -> None:
     assert "pyproject.toml" in manifest.sources[0].project_markers
 
 
-def test_configured_empty_sources_means_planning_only(tmp_path: Path) -> None:
+def test_configured_empty_sources_without_sources_directory_means_planning_only(
+    tmp_path: Path,
+) -> None:
     _git_dir(tmp_path)
     (tmp_path / ".echelon").mkdir()
     (tmp_path / ".echelon" / "config.yml").write_text(
@@ -146,6 +148,28 @@ def test_configured_empty_sources_means_planning_only(tmp_path: Path) -> None:
 
     assert manifest.workspace.git_role == "orchestration"
     assert manifest.sources == ()
+
+
+def test_configured_empty_sources_discovers_sources_directory_children(
+    tmp_path: Path,
+) -> None:
+    _git_dir(tmp_path)
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon" / "config.yml").write_text(
+        "workspace:\n"
+        "  git_role: orchestration\n"
+        "sources: []\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "sources" / "optasearch-pro"
+    source.mkdir(parents=True)
+    (source / "package.json").write_text("{}\n", encoding="utf-8")
+
+    manifest = discover_workspace(tmp_path)
+
+    assert manifest.workspace.git_role == "orchestration"
+    assert [source.id for source in manifest.sources] == ["optasearch-pro"]
+    assert [source.path for source in manifest.sources] == ["sources/optasearch-pro"]
 
 
 def test_planning_only_workspace_has_no_sources(tmp_path: Path) -> None:
