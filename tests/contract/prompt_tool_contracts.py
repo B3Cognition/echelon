@@ -11,6 +11,7 @@ PROMPT_GLOBS = (
     "extension/commands/echelon.build.md",
     "extension/commands/echelon.harness-run.md",
     "extension/commands/echelon.re-extract.md",
+    "extension/commands/echelon.re-plan-all.md",
     "extension/commands/echelon.verify-spec.md",
     "extension/workflow/phases/**/*.md",
 )
@@ -217,7 +218,12 @@ def _is_command_appendix(path: Path) -> bool:
 
 def _is_re_extract_command(path: Path) -> bool:
     normalized = path.as_posix()
-    return normalized.endswith("extension/commands/echelon.re-extract.md")
+    return normalized.endswith(
+        (
+            "extension/commands/echelon.re-extract.md",
+            "extension/commands/echelon.re-plan-all.md",
+        )
+    )
 
 
 def _is_harness_run_command(path: Path) -> bool:

@@ -311,6 +311,16 @@ def test_re_extract_command_uses_declared_phase_sequence():
     assert "Then read `workflow/definition.yaml`" not in text
 
 
+def test_re_plan_all_command_uses_declared_phase_sequence():
+    text = (EXTENSION_ROOT / "commands" / "echelon.re-plan-all.md").read_text()
+
+    assert "Use this command's declared `re_planning` phase sequence" in text
+    assert "Do not read `agents/control/commander.md` or\n`workflow/definition.yaml`" in text
+    assert "`re-planning-0-preflight`" in text
+    assert "`re-planning-2-tasks`" in text
+    assert "Then read `workflow/definition.yaml`" not in text
+
+
 def test_primary_agent_prompts_have_paired_always_never_rules():
     violations = []
 
