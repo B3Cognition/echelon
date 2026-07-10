@@ -330,6 +330,49 @@ def test_sync_runtime_extension_excludes_phase_a_presets(tmp_path):
     assert not (runtime / "presets").exists()
 
 
+def test_sync_runtime_extension_excludes_non_delivery_agent_prompts(tmp_path):
+    """Delivery worktrees should expose only delivery-safe raw agent prompts."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    for agent_dir in [
+        "control",
+        "build",
+        "exploration",
+        "solution",
+        "re",
+        "learning",
+        "feasibility",
+        "specialists",
+    ]:
+        (source / "agents" / agent_dir).mkdir(parents=True)
+        (source / "agents" / agent_dir / f"{agent_dir}.md").write_text(
+            f"# {agent_dir}\n", encoding="utf-8"
+        )
+    (source / "workflow").mkdir()
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    agents = worktree / ".specify" / "extensions" / "echelon" / "agents"
+    assert (agents / "control" / "commander.md").exists()
+    assert (agents / "build" / "build.md").exists()
+    assert not (agents / "exploration").exists()
+    assert not (agents / "solution").exists()
+    assert not (agents / "re").exists()
+    assert not (agents / "learning").exists()
+    assert not (agents / "feasibility").exists()
+    assert not (agents / "specialists").exists()
+
+
 def test_sync_runtime_extension_excludes_non_delivery_command_docs(tmp_path):
     """Delivery worktrees should expose only delivery-safe command contracts."""
     source = tmp_path / ".specify" / "extensions" / "echelon"

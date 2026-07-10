@@ -96,7 +96,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   pruned to delivery-safe sections and phase nodes. Delivery runtime copies now
   also exclude Phase A learning, journal, and meta-control shell helpers such
   as `kb-*.sh`, `journal-append.sh`, `phase-timing.sh`, `state-backup.sh`, and
-  `validate-journal-entry.sh`.
+  `validate-journal-entry.sh`. Raw runtime agent prompts are now limited to
+  `agents/control` and `agents/build`; Phase A, RE, learning, feasibility, and
+  specialist agent prompt directories are not copied into delivery worktrees.
 - **EGR-118 / #144 source-root containment** — Ralph now writes a
   machine-readable `delivery-containment-policy.json` beside harness state for
   build prompts. The policy records implementation, spec-input, harness-state,

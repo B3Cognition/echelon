@@ -36,6 +36,13 @@ DELIVERY_EXCLUDED_BASH_FILES = frozenset(
     }
 )
 
+DELIVERY_AGENT_DIRS = frozenset(
+    {
+        "build",
+        "control",
+    }
+)
+
 DELIVERY_WORKFLOW_PHASE_PREFIXES = (
     "build-",
     "bugfix-",
@@ -65,6 +72,14 @@ DELIVERY_WORKFLOW_DEFINITION_KEYS = frozenset(
         "reopen",
     }
 )
+
+
+def is_delivery_agent_path(relative_path: Path) -> bool:
+    """Return True when an agent prompt path is safe to expose to delivery agents."""
+    parts = tuple(relative_path.parts)
+    if len(parts) < 2 or parts[0] != "agents":
+        return True
+    return parts[1] in DELIVERY_AGENT_DIRS
 
 
 def is_delivery_workflow_phase_path(relative_path) -> bool:
