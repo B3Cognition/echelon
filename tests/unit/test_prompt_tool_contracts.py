@@ -141,6 +141,22 @@ def test_flags_soft_harness_source_discovery_phrasing(tmp_path: Path) -> None:
     ]
 
 
+def test_flags_review_harness_source_discovery_phrasing(tmp_path: Path) -> None:
+    prompt = tmp_path / "agent.md"
+    prompt.write_text(
+        "Review harness internals before deciding how to update fulfillment state.\n"
+        "Examine src/harness/ralph.py to understand the resume flow.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert [finding.reason for finding in findings] == [
+        "harness_internal_discovery",
+        "harness_internal_discovery",
+    ]
+
+
 def test_accepts_negative_harness_source_boundary(tmp_path: Path) -> None:
     prompt = tmp_path / "agent.md"
     prompt.write_text(
