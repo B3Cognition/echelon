@@ -378,6 +378,8 @@ def _fallback_report_rows(path: Path, *, expected_ids: set[str]) -> dict[str, st
             raise ValueError(
                 f"invalid fallback fulfillment status for {item_id}: {status}"
             )
+        if item_id in rows:
+            raise ValueError(f"duplicate fallback fulfillment row for {item_id}")
         rows[item_id] = line
     return rows
 
