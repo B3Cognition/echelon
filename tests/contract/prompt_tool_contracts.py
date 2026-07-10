@@ -113,7 +113,8 @@ VERIFY_SPEC_RUN_DISCOVERY_RE = re.compile(
 )
 
 DELIVERY_COMMAND_RUNTIME_DISCOVERY_RE = re.compile(
-    r"\bread\b.{0,120}\b(?:agents/control/commander\.md|workflow/definition\.yaml)\b",
+    r"\b(?:read|inspect|open|locate|discover|search)\b"
+    r".{0,120}\b(?:agents/control/commander\.md|workflow/definition\.yaml)\b",
     re.IGNORECASE,
 )
 

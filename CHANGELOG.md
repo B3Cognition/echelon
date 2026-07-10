@@ -135,10 +135,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   remains allowed. Delivery-visible `echelon.build` and `echelon.verify-spec`
   command wrappers now start from Ralph/Python-owned context and exact phase
   invocations instead of instructing agents to read `commander.md` or
-  `workflow/definition.yaml`. The scanner also treats known fulfillment-report
-  helper names such as `fulfillment_report_is_current` as harness internals
-  when prompts ask agents to find, locate, discover, or inspect their
-  implementation.
+  `workflow/definition.yaml`; static scanning rejects equivalent
+  `inspect`/`open`/discovery phrasing too. The scanner also treats known
+  fulfillment-report helper names such as `fulfillment_report_is_current` as
+  harness internals when prompts ask agents to find, locate, discover, or
+  inspect their implementation.
 - **EGR-125 / #149 build-slice context** — Ralph now writes a Python-owned
   `context/<strategy>-build-slice-context.md` artifact for delivery build and
   feedback turns. The initial context includes deterministic roots, spec input

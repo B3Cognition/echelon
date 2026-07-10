@@ -207,6 +207,23 @@ def test_flags_delivery_command_runtime_discovery(tmp_path: Path) -> None:
     assert findings[0].reason == "delivery_command_runtime_discovery"
 
 
+def test_flags_delivery_command_runtime_discovery_synonyms(tmp_path: Path) -> None:
+    prompt = tmp_path / "extension" / "commands" / "echelon.build.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "Inspect `workflow/definition.yaml` before build.\n"
+        "Open `agents/control/commander.md` before build.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert [finding.reason for finding in findings] == [
+        "delivery_command_runtime_discovery",
+        "delivery_command_runtime_discovery",
+    ]
+
+
 def test_build_phase_prompts_use_ralph_owned_context_packs() -> None:
     root = Path(__file__).resolve().parents[2]
     phase_files = [
