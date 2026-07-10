@@ -356,6 +356,14 @@ def _write_judgment_prepass() -> None:
         spec_dir=Path(sys.argv[2]).resolve(),
         verify_run_dir=verify_run_dir,
     )
+    _stamp_verify_spec_state(
+        verify_run_dir,
+        {
+            "judgment_prepass": "ready",
+            "judgment_prepass_mechanical_count": result.mechanical_count,
+            "judgment_prepass_fallback_count": result.fallback_count,
+        },
+    )
     print(
         f"OK: wrote judgment pre-pass to {result.json_path} "
         f"(mechanical={result.mechanical_count}, fallback={result.fallback_count})"

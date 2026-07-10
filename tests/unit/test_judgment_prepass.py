@@ -77,6 +77,36 @@ def test_write_judgment_prepass_emits_rows_and_fallback_summary(tmp_path: Path):
     assert by_id["NFR-002"]["proposed_status"] == "UNVERIFIED"
 
 
+def test_write_judgment_prepass_cli_stamps_success_state(tmp_path: Path):
+    spec_dir = tmp_path / "specs" / "001-demo"
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
+    spec_dir.mkdir(parents=True)
+    verify_run_dir.mkdir(parents=True)
+
+    (verify_run_dir / "canonical-requirements.json").write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}, {"id": "FR-002"}]}),
+        encoding="utf-8",
+    )
+    (verify_run_dir / "implementation-map.md").write_text(
+        "# Implementation Map\n\n"
+        "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        "| FR-001 | app.py:start | tests/test_app.py::test_start | app.start | source_and_test | strong | false | high | |\n",
+        encoding="utf-8",
+    )
+    (verify_run_dir / "state.json").write_text("{}", encoding="utf-8")
+
+    completed = _run_harness(
+        ["write-judgment-prepass", str(spec_dir), str(verify_run_dir)]
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    state = json.loads((verify_run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["judgment_prepass"] == "ready"
+    assert state["judgment_prepass_mechanical_count"] == 1
+    assert state["judgment_prepass_fallback_count"] == 1
+
+
 def test_write_judgment_prepass_cli_reports_missing_map_without_traceback(
     tmp_path: Path,
 ):
