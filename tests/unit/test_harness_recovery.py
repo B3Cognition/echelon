@@ -177,6 +177,45 @@ def test_recover_blocked_run_reports_existing_ordinary_delivery_branch_head(
 
 
 @pytest.mark.unit
+def test_recover_blocked_run_uses_state_harness_branch_when_no_feature_branch(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    harness_branch = "harness/905-import-prose/default/iter-0"
+    _git(project, "checkout", "-b", harness_branch)
+    recovered = _commit_file(
+        project,
+        "src/import.ts",
+        "export const importDone = true;\n",
+        "harness: 905-import-prose/default iter-0",
+    )
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+    _git(project, "checkout", "main")
+
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="905-import-prose",
+        strategy_id="default",
+        state={
+            "termination_reason": "publish_failed",
+            "branch": harness_branch,
+        },
+        gitops=_make_gitops(project),
+    )
+
+    assert result.source == "mirror"
+    assert result.commit == recovered
+    assert result.target_branch == harness_branch
+    assert result.applied is False
+    assert _git(project, "branch", "--show-current") == "main"
+
+
+@pytest.mark.unit
 def test_recover_blocked_run_prefers_preserved_worktree(
     tmp_path: Path,
 ) -> None:

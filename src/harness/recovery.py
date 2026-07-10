@@ -239,6 +239,11 @@ def _resolve_target_branch(
         return state_branch
 
     mirror_path = Path(getattr(gitops, "mirror_path", project_dir / "runs" / "mirror.git"))
+    if state_branch and _branch_exists(mirror_path, state_branch):
+        return state_branch
+    if state_branch and _branch_exists(project_dir, state_branch):
+        return state_branch
+
     branch = _find_branch_without_fetch(mirror_path, spec_id)
     if branch:
         return branch
@@ -248,6 +253,24 @@ def _resolve_target_branch(
         return branch
 
     raise HarnessRecoveryError(f"No feature branch found for spec {spec_id!r}")
+
+
+def _branch_exists(repo: Path, branch: str) -> bool:
+    if not repo.exists():
+        return False
+    local = _run_git(
+        ["rev-parse", "--verify", "--quiet", branch],
+        cwd=str(repo),
+        check=False,
+    )
+    if local.returncode == 0:
+        return True
+    remote = _run_git(
+        ["rev-parse", "--verify", "--quiet", f"origin/{branch}"],
+        cwd=str(repo),
+        check=False,
+    )
+    return remote.returncode == 0
 
 
 def _find_branch_without_fetch(repo: Path, spec_id: str) -> Optional[str]:
