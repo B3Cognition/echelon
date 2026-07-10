@@ -4636,13 +4636,17 @@ def _find_forbidden_source_root_in_tool_transcript(
 
 def _forbidden_harness_source_marker(line: str, worktree: Path) -> str | None:
     try:
-        worktree_text = str(worktree.resolve())
+        resolved_worktree = worktree.resolve()
     except OSError:
-        worktree_text = str(worktree.absolute())
+        resolved_worktree = worktree.absolute()
+    worktree_text = str(resolved_worktree)
     if worktree_text and worktree_text in line:
         return None
     for marker in _HOST_HARNESS_SOURCE_MARKERS:
-        if marker in line:
+        relative_marker = marker.lstrip("/")
+        if marker in line or relative_marker in line:
+            if relative_marker and (resolved_worktree / relative_marker).exists():
+                return None
             return f"host Echelon source outside worktree ({marker})"
     return None
 

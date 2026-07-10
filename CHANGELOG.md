@@ -177,7 +177,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   turns whose LLM transcript shows tool access to host Echelon implementation
   source such as `src/harness/ralph.py` or `fulfillment_runner.py`, while still
   allowing target-worktree reads when Echelon itself is the project under
-  delivery.
+  delivery. Relative transcript paths are covered too, so `src/harness/ralph.py`
+  no longer slips past the guard unless that file exists inside the target
+  worktree.
 - **EGR-117 / #141 runtime surface reduction** — delivery runtime sync now
   omits reverse-engineering shell helpers under
   `.specify/extensions/echelon/scripts/bash/re` from target worktrees and
