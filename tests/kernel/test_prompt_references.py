@@ -341,6 +341,17 @@ def test_reopen_command_uses_declared_phase_sequence():
     assert "Then read `workflow/definition.yaml`" not in text
 
 
+def test_bugfix_command_uses_declared_phase_sequence():
+    text = (EXTENSION_ROOT / "commands" / "echelon.bugfix.md").read_text()
+
+    assert "Use this command's declared bugfix phase sequence" in text
+    assert "Do not read `agents/control/commander.md` or `workflow/definition.yaml`" in text
+    assert "`bugfix-1-init`" in text
+    assert "`bugfix-5-finalize`" in text
+    assert "`bugfix-done`" in text
+    assert "Then read `workflow/definition.yaml`" not in text
+
+
 def test_primary_agent_prompts_have_paired_always_never_rules():
     violations = []
 

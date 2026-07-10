@@ -8,6 +8,7 @@ from pathlib import Path
 PROMPT_GLOBS = (
     "extension/agents/**/*.md",
     "extension/commands/appendices/*.md",
+    "extension/commands/echelon.bugfix.md",
     "extension/commands/echelon.build.md",
     "extension/commands/echelon.harness-run.md",
     "extension/commands/echelon.re-extract.md",
@@ -226,6 +227,7 @@ def _is_re_extract_command(path: Path) -> bool:
             "extension/commands/echelon.re-plan-all.md",
             "extension/commands/echelon.re-retarget.md",
             "extension/commands/echelon.reopen.md",
+            "extension/commands/echelon.bugfix.md",
         )
     )
 

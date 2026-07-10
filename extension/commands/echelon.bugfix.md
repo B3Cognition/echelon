@@ -9,14 +9,23 @@ behavior:
 
 You are MANAGER executing a diagnostic triage for a delivered spec.
 
-**Read `agents/control/commander.md` first** — it contains your complete behavioral
-framework: role separation, governance constraints, dispatch protocols, and all NEVER rules.
+Use this command's declared bugfix phase sequence as the authoritative routing
+contract. Do not read `agents/control/commander.md` or `workflow/definition.yaml`
+to rediscover governance, routing, or outputs.
 
-Then read `workflow/definition.yaml` `phases[]`. Start at phase `bugfix-1-init`,
-before each dispatch read the phase node's `spec_file` for context pack assembly,
-dispatch prompt, and expected outputs.
+Start at phase `bugfix-1-init`, read each named phase contract before dispatch
+or internal execution, and stop after `bugfix-done`.
 
 **This command always diagnoses and plans only. It never implements.**
+
+## Phase Sequence
+
+1. `bugfix-1-init` — `workflow/phases/bugfix-1-init.md`
+2. `bugfix-2-diagnose` — `workflow/phases/bugfix-2-diagnose.md`
+3. `bugfix-3-test-strategy` — `workflow/phases/bugfix-3-test-strategy.md`
+4. `bugfix-4-spec-compliance` — `workflow/phases/bugfix-4-spec-compliance.md`
+5. `bugfix-5-finalize` — `workflow/phases/bugfix-5-finalize.md`
+6. `bugfix-done`
 
 ---
 
