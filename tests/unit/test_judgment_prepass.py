@@ -236,6 +236,58 @@ def test_assemble_fulfillment_report_creates_output_parent(tmp_path: Path):
     )
 
 
+def test_assemble_fulfillment_report_cli_stamps_state(tmp_path: Path):
+    canonical_inventory = tmp_path / "canonical-requirements.json"
+    canonical_inventory.write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}]}),
+        encoding="utf-8",
+    )
+    prepass = tmp_path / "judgment-prepass.json"
+    prepass.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "id": "FR-001",
+                        "mechanical": True,
+                        "proposed_status": "IMPLEMENTED",
+                        "reason_code": "source_and_test",
+                        "fallback_reason": None,
+                        "report_row": "| FR-001 | IMPLEMENTED | source_and_test |",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    fallback = tmp_path / "fulfillment-report.fallback.md"
+    fallback.write_text(
+        "# Fallback Fulfillment Judgment\n\n"
+        "| ID | Status | Evidence |\n"
+        "| --- | --- | --- |\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "fulfillment-report.md"
+    state_path = tmp_path / "state.json"
+    state_path.write_text("{}", encoding="utf-8")
+
+    completed = _run_harness(
+        [
+            "assemble-fulfillment-report",
+            str(canonical_inventory),
+            str(prepass),
+            str(fallback),
+            str(output),
+            str(state_path),
+        ]
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["fulfillment_report"] == "ready"
+    assert state["fulfillment_report_path"] == str(output.resolve())
+
+
 def test_write_fallback_fulfillment_template_creates_output_parent(tmp_path: Path):
     prepass = tmp_path / "judgment-prepass.json"
     prepass.write_text(

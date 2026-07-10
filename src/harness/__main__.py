@@ -399,6 +399,14 @@ def _assemble_fulfillment_report() -> None:
         output_report_path=Path(sys.argv[5]).resolve(),
         state_path=state_path,
     )
+    if state_path is not None:
+        _stamp_verify_spec_state(
+            state_path.parent,
+            {
+                "fulfillment_report": "ready",
+                "fulfillment_report_path": str(Path(sys.argv[5]).resolve()),
+            },
+        )
     print(f"OK: assembled fulfillment report at {Path(sys.argv[5]).resolve()}")
 
 
