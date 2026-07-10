@@ -175,6 +175,58 @@ def test_init_verify_spec_run_cli_rejects_missing_current_run_directory_cleanly(
     assert not (workspace / "runs" / "verify-spec-001-demo-20260709-172500").exists()
 
 
+def test_init_verify_spec_run_rejects_empty_current_pointer(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    source = workspace / "sources" / "prosaic"
+    spec_dir = workspace / "specs" / "001-demo"
+    source.mkdir(parents=True)
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (workspace / "runs").mkdir()
+    (workspace / "runs" / ".current").write_text("\n", encoding="utf-8")
+
+    with pytest.raises(VerifySpecRunInitError, match="empty current run id"):
+        init_verify_spec_run(
+            project_root=source,
+            spec_id="001-demo",
+            spec_dir=spec_dir,
+            timestamp="20260709-173000",
+        )
+
+    assert not (workspace / "runs" / "verify-spec-001-demo-20260709-173000").exists()
+
+
+def test_init_verify_spec_run_cli_rejects_empty_current_pointer_cleanly(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    source = workspace / "sources" / "prosaic"
+    spec_dir = workspace / "specs" / "001-demo"
+    source.mkdir(parents=True)
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (workspace / "runs").mkdir()
+    (workspace / "runs" / ".current").write_text("\n", encoding="utf-8")
+
+    completed = _run_harness(
+        [
+            "init-verify-spec-run",
+            str(source),
+            "001-demo",
+            str(spec_dir),
+            "--timestamp",
+            "20260709-173000",
+        ]
+    )
+
+    assert completed.returncode == 2
+    assert "empty current run id:" in completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert not (workspace / "runs" / "verify-spec-001-demo-20260709-173000").exists()
+
+
 def test_init_verify_spec_run_rejects_symlinked_current_run_outside_runs(
     tmp_path: Path,
 ) -> None:

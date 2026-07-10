@@ -119,6 +119,8 @@ def _resolve_verify_run_dir(
     current_path = runs_dir / ".current"
     if current_path.is_file():
         run_id = current_path.read_text(encoding="utf-8", errors="replace").strip()
+        if not run_id:
+            raise VerifySpecRunInitError(f"empty current run id: {current_path}")
         if run_id:
             _require_safe_label("current run id", run_id)
         active_run = runs_dir / run_id if run_id else None
