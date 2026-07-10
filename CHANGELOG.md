@@ -147,7 +147,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   mapping now also requires the init-owned verify-spec `state.json` before
   treating an absent `codegraph-analysis.json` as a degraded-CodeGraph skip.
   CodeGraph evidence generation itself now checks the init-owned state file
-  before invoking CodeGraph or writing analysis artifacts.
+  before invoking CodeGraph or writing analysis artifacts. Canonical requirement
+  inventory and requirement-audit writers now also require init-owned state
+  before writing their artifacts.
 - **EGR-115 / #140 Ralph-owned delivery state** — build prompts no longer expose
   Ralph's mutable `state/default.json` path. Agents receive bounded progress
   facts in the prompt and must report progress through the build status marker,

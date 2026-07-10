@@ -836,12 +836,14 @@ def _write_canonical_requirements() -> None:
 
     from harness.canonical_requirements import write_canonical_requirements
 
+    verify_run_dir = Path(sys.argv[3])
+    _require_verify_spec_state(verify_run_dir)
     result = write_canonical_requirements(
         spec_dir=Path(sys.argv[2]),
-        verify_run_dir=Path(sys.argv[3]),
+        verify_run_dir=verify_run_dir,
     )
     _stamp_verify_spec_state(
-        Path(sys.argv[3]),
+        verify_run_dir,
         {
             "canonical_requirements": "ready",
             "canonical_requirements_count": result.count,
@@ -866,9 +868,11 @@ def _write_requirement_audit() -> None:
 
     from harness.canonical_requirements import write_requirement_audit
 
-    result = write_requirement_audit(verify_run_dir=Path(sys.argv[2]))
+    verify_run_dir = Path(sys.argv[2])
+    _require_verify_spec_state(verify_run_dir)
+    result = write_requirement_audit(verify_run_dir=verify_run_dir)
     _stamp_verify_spec_state(
-        Path(sys.argv[2]),
+        verify_run_dir,
         {
             "requirement_audit": "ready",
             "requirement_audit_count": result.count,

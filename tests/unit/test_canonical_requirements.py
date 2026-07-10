@@ -184,6 +184,8 @@ def test_write_canonical_requirements_cli_fails_when_verify_state_missing(tmp_pa
     assert completed.returncode == 1
     assert "state.json missing" in completed.stderr
     assert not (verify_run_dir / "state.json").exists()
+    assert not (verify_run_dir / "canonical-requirements.json").exists()
+    assert not (verify_run_dir / "canonical-requirements.md").exists()
 
 
 def test_write_requirement_audit_cli_stamps_state(tmp_path):
@@ -213,3 +215,30 @@ def test_write_requirement_audit_cli_stamps_state(tmp_path):
     state = json.loads((verify_run_dir / "state.json").read_text(encoding="utf-8"))
     assert state["requirement_audit"] == "ready"
     assert state["requirement_audit_count"] == 1
+
+
+def test_write_requirement_audit_cli_fails_before_writing_when_state_missing(tmp_path):
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
+    verify_run_dir.mkdir(parents=True)
+    (verify_run_dir / "canonical-requirements.json").write_text(
+        json.dumps(
+            {
+                "requirements": [
+                    {
+                        "id": "FR-001",
+                        "source_kind": "spec",
+                        "source_file": "spec.md",
+                        "source_line": 3,
+                        "source_text": "- **FR-001**: Users can start a mission.",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    completed = _run_harness(["write-requirement-audit", str(verify_run_dir)])
+
+    assert completed.returncode == 1
+    assert "state.json missing" in completed.stderr
+    assert not (verify_run_dir / "requirement-audit.md").exists()
