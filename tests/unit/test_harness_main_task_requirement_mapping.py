@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -36,11 +37,19 @@ def _write_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[2] / "src")
+    env["PYTHONPATH"] = (
+        src_path
+        if not env.get("PYTHONPATH")
+        else f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+    )
     return subprocess.run(
         [sys.executable, "-m", "harness", *args],
         text=True,
         capture_output=True,
         check=False,
+        env=env,
     )
 
 
@@ -104,6 +113,29 @@ def test_apply_task_requirement_mapping_cli_stamps_state(tmp_path: Path) -> None
     assert state["task_requirement_mapping"] == "applied"
     assert state["task_requirement_mapping_safe_count"] == 1
     assert state["task_requirement_mapping_applied_count"] == 1
+
+
+def test_apply_task_requirement_mapping_cli_requires_state_before_writing(
+    tmp_path: Path,
+) -> None:
+    tasks_path, candidate_path, out_dir = _write_inputs(tmp_path)
+    state_path = tmp_path / "state.json"
+
+    result = _run(
+        [
+            "apply-task-requirement-mapping",
+            str(tasks_path),
+            str(candidate_path),
+            str(out_dir),
+            str(state_path),
+        ]
+    )
+
+    assert result.returncode == 1
+    assert "state.json missing" in result.stderr
+    assert "req=UNMAPPED" in tasks_path.read_text(encoding="utf-8")
+    assert not (out_dir / "task-requirement-map-plan.md").exists()
+    assert not (out_dir / "task-requirement-map-applied.md").exists()
 
 
 def test_write_task_requirement_mapping_candidates_cli_maps_explicit_ids(
@@ -180,3 +212,30 @@ def test_write_task_requirement_mapping_candidates_cli_stamps_state(
     assert state["task_requirement_mapping_candidates"] == "ready"
     assert state["task_requirement_mapping_safe_count"] == 1
     assert state["task_requirement_mapping_ambiguous_count"] == 1
+
+
+def test_write_task_requirement_mapping_candidates_cli_requires_state_before_writing(
+    tmp_path: Path,
+) -> None:
+    tasks_path = tmp_path / "tasks.md"
+    out_path = tmp_path / "task-requirement-map.candidates.json"
+    state_path = tmp_path / "state.json"
+    tasks_path.write_text(
+        "# Tasks\n\n"
+        "- [ ] T-001 complexity=standard phase=engine req=UNMAPPED depends=none\n"
+        "  **Title:** Implement FR-001 course formula\n",
+        encoding="utf-8",
+    )
+
+    result = _run(
+        [
+            "write-task-requirement-mapping-candidates",
+            str(tasks_path),
+            str(out_path),
+            str(state_path),
+        ]
+    )
+
+    assert result.returncode == 1
+    assert "state.json missing" in result.stderr
+    assert not out_path.exists()

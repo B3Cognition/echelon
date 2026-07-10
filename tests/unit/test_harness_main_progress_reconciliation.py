@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -42,11 +43,19 @@ def _write_inputs(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    src_path = str(Path(__file__).resolve().parents[2] / "src")
+    env["PYTHONPATH"] = (
+        src_path
+        if not env.get("PYTHONPATH")
+        else f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+    )
     return subprocess.run(
         [sys.executable, "-m", "harness", *args],
         text=True,
         capture_output=True,
         check=False,
+        env=env,
     )
 
 
@@ -110,6 +119,29 @@ def test_apply_progress_reconciliation_cli_stamps_state(tmp_path: Path) -> None:
     assert state["progress_reconciliation"] == "applied"
     assert state["progress_reconciliation_safe_count"] == 1
     assert state["progress_reconciliation_applied_count"] == 1
+
+
+def test_apply_progress_reconciliation_cli_requires_state_before_writing(
+    tmp_path: Path,
+) -> None:
+    tasks_path, candidate_path, out_dir = _write_inputs(tmp_path)
+    state_path = tmp_path / "state.json"
+
+    result = _run(
+        [
+            "apply-progress-reconciliation",
+            str(tasks_path),
+            str(candidate_path),
+            str(out_dir),
+            str(state_path),
+        ]
+    )
+
+    assert result.returncode == 1
+    assert "state.json missing" in result.stderr
+    assert "- [ ] T-001" in tasks_path.read_text(encoding="utf-8")
+    assert not (out_dir / "progress-reconciliation-plan.md").exists()
+    assert not (out_dir / "progress-reconciliation-applied.md").exists()
 
 
 def test_write_progress_reconciliation_candidates_cli_uses_fulfillment_statuses(
@@ -243,3 +275,4 @@ def test_write_progress_reconciliation_candidates_cli_fails_when_state_missing(
     assert result.returncode == 1
     assert "state.json missing" in result.stderr
     assert not state_path.exists()
+    assert not out_path.exists()

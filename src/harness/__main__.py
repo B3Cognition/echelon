@@ -569,6 +569,8 @@ def _apply_progress_reconciliation() -> None:
     if unknown:
         print(f"Unknown apply-progress-reconciliation option: {unknown[0]!r}", file=sys.stderr)
         sys.exit(1)
+    if state_path is not None:
+        _require_existing_json_state_file(state_path)
 
     result = reconcile_progress(
         tasks_path=tasks_path,
@@ -614,6 +616,8 @@ def _write_progress_reconciliation_candidates() -> None:
 
     from harness.progress_reconciliation import write_progress_reconciliation_candidates
 
+    if len(sys.argv) == 7:
+        _require_existing_json_state_file(Path(sys.argv[6]))
     payload = write_progress_reconciliation_candidates(
         tasks_path=Path(sys.argv[2]),
         fulfillment_report_path=Path(sys.argv[3]),
@@ -660,6 +664,8 @@ def _apply_task_requirement_mapping() -> None:
     if unknown:
         print(f"Unknown apply-task-requirement-mapping option: {unknown[0]!r}", file=sys.stderr)
         sys.exit(1)
+    if state_path is not None:
+        _require_existing_json_state_file(state_path)
 
     result = apply_task_requirement_mapping(
         tasks_path=tasks_path,
@@ -703,6 +709,8 @@ def _write_task_requirement_mapping_candidates() -> None:
         write_task_requirement_mapping_candidates,
     )
 
+    if len(sys.argv) == 5:
+        _require_existing_json_state_file(Path(sys.argv[4]))
     payload = write_task_requirement_mapping_candidates(
         tasks_path=Path(sys.argv[2]),
         out_path=Path(sys.argv[3]),
