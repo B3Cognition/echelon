@@ -4632,9 +4632,21 @@ def _find_forbidden_source_root_in_tool_transcript(
         return None
     for line in _iter_tool_transcript_lines(text):
         for root, aliases in aliases_by_root:
-            if any(alias in line for alias in aliases):
+            if any(_line_contains_path_alias(line, alias) for alias in aliases):
                 return root, line
     return None
+
+
+def _line_contains_path_alias(line: str, alias: str) -> bool:
+    start = line.find(alias)
+    while start != -1:
+        end = start + len(alias)
+        before_ok = start == 0 or line[start - 1] in " \t`'\"([{<"
+        after_ok = end == len(line) or line[end] in "/\\ \t`'\".,:;)]}>"
+        if before_ok and after_ok:
+            return True
+        start = line.find(alias, start + 1)
+    return False
 
 
 def _forbidden_harness_source_marker(line: str, worktree: Path) -> str | None:

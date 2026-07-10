@@ -234,8 +234,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   violations, not only paths shown on the same `Read`/`Bash` invocation line.
   It also treats `Write`/`Edit`/`MultiEdit` transcript lines as filesystem
   access, and detects workspace-relative sibling source paths such as
-  `sources/spec-kit-skills-agents/package.json`. Prompt echoes of
-  `forbidden_source_roots` remain ignored.
+  `sources/spec-kit-skills-agents/package.json` with path-boundary matching so
+  similarly named roots like `sources/ruler2` do not falsely match
+  `sources/ruler`. Prompt echoes of `forbidden_source_roots` remain ignored.
 - **EGR-119 / #143 verify-spec run initialization** — added
   `python -m harness init-verify-spec-run` to create the verify-spec runtime
   directory and stamp `state.json` from Python-owned logic. The
