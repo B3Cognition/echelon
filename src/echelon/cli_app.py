@@ -45,6 +45,7 @@ delivery_app = typer.Typer(
         "Common forms:\n"
         "  init\n"
         "  target <spec_id>\n"
+        "  status [<spec_id>] [--strategy <s>]\n"
         "  run <spec_id> [--target <source-id-or-path>] [--mode <m>] [--strategy <s>]\n"
         "  continue <spec_id> [--mode <m>] [--strategy <s>]\n"
         "  resume <spec_id> \"<answer>\" [--mode <m>] [--strategy <s>]\n"
@@ -90,7 +91,7 @@ app.add_typer(phase_app, name="phase")
 app.add_typer(benchmark_app, name="benchmark")
 app.add_typer(stack_app, name="stack")
 app.add_typer(delivery_app, name="delivery")
-app.add_typer(harness_app, name="harness")
+app.add_typer(harness_app, name="harness", hidden=True)
 spec_app.add_typer(spec_checkpoint_app, name="checkpoint")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
 
@@ -160,7 +161,11 @@ def version_command() -> None:
     typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
 
 
-@app.command("init", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "init",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_init() -> None:
     """Initialize the current workspace."""
     legacy_cli = _legacy_cli()
@@ -168,7 +173,11 @@ def root_init() -> None:
     legacy_cli._cmd_init(Path.cwd())
 
 
-@app.command("cicd", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "cicd",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_cicd(ctx: typer.Context) -> None:
     """Retired CI/CD compatibility command."""
     legacy_cli = _legacy_cli()
@@ -176,7 +185,11 @@ def root_cicd(ctx: typer.Context) -> None:
     legacy_cli._cmd_cicd(_ctx_args(ctx))
 
 
-@app.command("artifacts", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "artifacts",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_artifacts(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to index."),
@@ -187,7 +200,11 @@ def root_artifacts(
     legacy_cli._cmd_artifacts([spec_id, *_ctx_args(ctx)])
 
 
-@app.command("land", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "land",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_land(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to land."),
@@ -233,7 +250,7 @@ def root_land(
     )
 
 
-@app.command("status")
+@app.command("status", hidden=True)
 def root_status() -> None:
     """Compatibility alias for spec status."""
     legacy_cli = _legacy_cli()
@@ -241,7 +258,11 @@ def root_status() -> None:
     legacy_cli._cmd_status(Path.cwd())
 
 
-@app.command("continue", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "continue",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_continue(
     ctx: typer.Context,
     mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode override."),
@@ -254,7 +275,11 @@ def root_continue(
     legacy_cli._cmd_spec_continue(args)
 
 
-@app.command("rewind", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "rewind",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_rewind(
     ctx: typer.Context,
     phase_id: str = typer.Argument(..., help="Safe phase id to rewind to."),
@@ -269,7 +294,11 @@ def root_rewind(
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())
 
 
-@app.command("resume", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "resume",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_resume(
     ctx: typer.Context,
     answer: Optional[str] = typer.Argument(None, help="Answer for the blocked Phase A run."),
@@ -284,7 +313,11 @@ def root_resume(
     legacy_cli._cmd_spec_resume(args)
 
 
-@app.command("run", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "run",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_run(
     ctx: typer.Context,
     description: Optional[str] = typer.Argument(None, help="Spec request or task description."),
@@ -319,7 +352,11 @@ def _dispatch_skill(command: str, args: list[str]) -> None:
     legacy_cli._dispatch_skill_command(command, args)
 
 
-@app.command("build", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "build",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_build(
     ctx: typer.Context,
     spec_id: Optional[str] = typer.Argument(None, help="Spec id to build."),
@@ -339,7 +376,11 @@ def root_build(
     _dispatch_skill("build", args)
 
 
-@app.command("review", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "review",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_review(
     ctx: typer.Context,
     spec_id: Optional[str] = typer.Argument(None, help="Spec id to review."),
@@ -354,7 +395,11 @@ def root_review(
     _dispatch_skill("review", args)
 
 
-@app.command("codegen", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "codegen",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_codegen(
     ctx: typer.Context,
     spec_id: Optional[str] = typer.Argument(None, help="Spec id to build with SOAR codegen."),
@@ -367,7 +412,11 @@ def root_codegen(
     _dispatch_skill("codegen", args)
 
 
-@app.command("verify-spec", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "verify-spec",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_verify_spec(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to audit."),
@@ -383,7 +432,11 @@ def root_verify_spec(
     _dispatch_skill("verify-spec", args)
 
 
-@app.command("reopen", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "reopen",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_reopen(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to reopen."),
@@ -397,7 +450,11 @@ def root_reopen(
     _dispatch_skill("reopen", args)
 
 
-@app.command("bugfix", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "bugfix",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_bugfix(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to update."),
@@ -407,7 +464,11 @@ def root_bugfix(
     _dispatch_skill("bugfix", [spec_id, description, *_ctx_args(ctx)])
 
 
-@app.command("change", context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+@app.command(
+    "change",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
+)
 def root_change(
     ctx: typer.Context,
     spec_id: str = typer.Argument(..., help="Spec id to update."),
@@ -1047,6 +1108,25 @@ def delivery_target(spec_id: str) -> None:
     from echelon import cli as legacy_cli
 
     legacy_cli._cmd_delivery_target([spec_id])
+
+
+@delivery_app.command("status")
+def delivery_status(
+    spec_id: Optional[str] = typer.Argument(None, help="Spec id to inspect."),
+    strategy: Optional[str] = typer.Option(None, "--strategy", help="Delivery strategy id."),
+    json_output: bool = typer.Option(False, "--json", help="Print machine-readable JSON."),
+) -> None:
+    """Show current Phase B delivery/Ralph state."""
+    from echelon import cli as legacy_cli
+
+    args: list[str] = []
+    if spec_id is not None:
+        args.append(spec_id)
+    if strategy is not None:
+        args.extend(["--strategy", strategy])
+    if json_output:
+        args.append("--json")
+    legacy_cli._cmd_delivery_status(args)
 
 
 @harness_app.command(

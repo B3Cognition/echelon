@@ -114,6 +114,7 @@ Commands:
 
   delivery init                              Initialize delivery environment: sandbox, mirror, verify.
   delivery target <spec_id>                  Prepare target-scoped delivery metadata from spec targets.
+  delivery status [spec_id] [--strategy <s>] Show current Phase B delivery/Ralph state.
   delivery run <spec_id> [--mode <m>] [--strategy <s>] [--max-outer <n>] [--max-inner <n>]
                     [--token-budget <n>] [--auto-merge|--no-auto-merge] [--kill-losers] [--reset]
                                             Run build→verify→PR loop.
@@ -963,6 +964,7 @@ def _cmd_delivery(args: list[str]) -> None:
             "Subcommands:\n"
             "  init                              Initialize delivery environment — sandbox, mirror, verify\n"
             "  target <spec_id>                  Prepare target-scoped delivery metadata\n"
+            "  status [spec_id] [--strategy <s>] Show current Phase B delivery/Ralph state\n"
             "  run    <spec_id> [mode=<m>] [strategy=<s>] [max_outer=<n>] [max_inner=<n>]\n"
             "                     [token_budget=<n>] [auto_merge=<bool>] [kill_losers=<bool>] [--reset]\n"
             "                                     Run build→verify→PR loop\n"
@@ -978,6 +980,7 @@ def _cmd_delivery(args: list[str]) -> None:
             "Examples:\n"
             "  echelon delivery init\n"
             "  echelon delivery target 001\n"
+            "  echelon delivery status 001\n"
             "  echelon delivery run 001\n"
             "  echelon delivery run 001 strategy=codegen\n"
             "  echelon delivery run 001 mode=banzai max_outer=3\n"
@@ -992,6 +995,8 @@ def _cmd_delivery(args: list[str]) -> None:
         _cmd_harness_init(args[1:], command_prefix="echelon delivery init")
     elif subcmd == "target":
         _cmd_delivery_target(args[1:])
+    elif subcmd == "status":
+        _cmd_delivery_status(args[1:])
     elif subcmd == "run":
         _cmd_harness_run(args[1:], command_prefix="echelon delivery run")
     elif subcmd == "resume":
@@ -3168,8 +3173,225 @@ def _iter_harness_build_states(project_root: Path) -> list[dict]:
             if isinstance(data, dict):
                 data.setdefault("build_id", build.name)
                 data.setdefault("strategy_id", state_file.stem)
+                data.setdefault("state_file", str(state_file))
                 states.append(data)
     return states
+
+
+def _parse_delivery_status_args(args: list[str]) -> tuple[str, str, bool]:
+    spec_id = ""
+    strategy = ""
+    json_output = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg in {"-h", "--help"}:
+            print(
+                "Usage: echelon delivery status [spec_id] [--strategy <id>] [--json]\n\n"
+                "Show Phase B delivery/Ralph status. Without spec_id, shows the latest "
+                "delivery state across specs."
+            )
+            raise SystemExit(0)
+        if arg == "--json":
+            json_output = True
+        elif arg == "--strategy":
+            index += 1
+            if index >= len(args):
+                print("echelon delivery status: --strategy requires a value", file=sys.stderr)
+                raise SystemExit(1)
+            strategy = args[index].strip()
+        elif arg.startswith("--strategy="):
+            strategy = arg.split("=", 1)[1].strip()
+        elif arg.startswith("strategy="):
+            strategy = arg.split("=", 1)[1].strip()
+        elif arg.startswith("-"):
+            print(f"echelon delivery status: unknown option '{arg}'", file=sys.stderr)
+            raise SystemExit(1)
+        elif not spec_id:
+            spec_id = arg.strip()
+        else:
+            print(
+                "echelon delivery status: expected at most one spec_id",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        index += 1
+    return spec_id, strategy, json_output
+
+
+def _delivery_status_next_step(state: dict, spec_id: str) -> str:
+    status = str(state.get("status") or "unknown")
+    termination_reason = str(state.get("termination_reason") or "")
+    effective_spec = spec_id or str(state.get("spec_id") or "<spec_id>")
+    if status == "converged":
+        return f"echelon delivery land {effective_spec}"
+    if status == "blocked":
+        if str(state.get("escalation_file") or ""):
+            return f'echelon delivery resume {effective_spec} "<answer>"'
+        if termination_reason == "verify_command_needed":
+            return "set delivery.verify_command, then echelon delivery continue " + effective_spec
+        return f"echelon delivery continue {effective_spec}"
+    if status in {"initialized", "running", "interrupted"}:
+        return f"echelon delivery continue {effective_spec}"
+    if status in {"failed", "cancelled_by_coordinator"}:
+        return f"inspect state, then echelon delivery run {effective_spec} --reset if needed"
+    return f"echelon delivery run {effective_spec}"
+
+
+def _delivery_status_summary(
+    state: dict,
+    *,
+    project_root: Path,
+) -> dict:
+    spec_id = str(state.get("spec_id") or "")
+    strategy = str(state.get("strategy_id") or "default")
+    status = str(state.get("status") or "unknown")
+    checkpoints = state.get("checkpoint_commits")
+    checkpoint_count = len(checkpoints) if isinstance(checkpoints, list) else 0
+    summary = {
+        "spec_id": spec_id,
+        "strategy": strategy,
+        "build_id": str(state.get("build_id") or ""),
+        "status": status,
+        "mode": str(state.get("mode") or ""),
+        "outer_iter": int(state.get("outer_iter") or 0),
+        "inner_iter": int(state.get("inner_iter") or 0),
+        "tokens_used": int(state.get("tokens_used") or 0),
+        "token_budget": state.get("token_budget"),
+        "termination_reason": str(state.get("termination_reason") or ""),
+        "build_status": str(state.get("build_status") or ""),
+        "build_reason": str(state.get("build_reason") or ""),
+        "pr_url": str(state.get("pr_url") or ""),
+        "target_branch": str(state.get("target_branch") or ""),
+        "target_commit": str(state.get("target_commit") or ""),
+        "salvage_branch": str(state.get("salvage_branch") or ""),
+        "salvage_commit": str(state.get("salvage_commit") or ""),
+        "checkpoint_count": checkpoint_count,
+        "state_file": str(state.get("state_file") or ""),
+        "next": _delivery_status_next_step(state, spec_id),
+    }
+    try:
+        from harness.spec_frontmatter import find_spec_dir, read_frontmatter
+
+        spec_dir = find_spec_dir(spec_id, project_root) if spec_id else None
+        if spec_dir is not None:
+            summary["spec_dir"] = str(spec_dir)
+            frontmatter = read_frontmatter(spec_dir)
+            if frontmatter.get("status"):
+                summary["spec_status"] = str(frontmatter.get("status"))
+            try:
+                from harness.harness_run_history import summarize_history
+
+                history = summarize_history(spec_dir, limit=1)
+                summary["history_count"] = int(history.get("count") or 0)
+                recent = history.get("recent")
+                if isinstance(recent, list) and recent:
+                    latest = recent[-1]
+                    if isinstance(latest, dict):
+                        summary["last_finished_at"] = str(latest.get("finished_at") or "")
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return summary
+
+
+def _delivery_status_fields(summary: dict) -> list[tuple[str, str]]:
+    status_icon = {
+        "converged": "ok",
+        "blocked": "blocked",
+        "running": "running",
+        "initialized": "initialized",
+        "failed": "failed",
+        "interrupted": "interrupted",
+    }.get(str(summary.get("status") or ""), "status")
+    fields: list[tuple[str, str]] = [
+        ("spec", str(summary.get("spec_id") or "-")),
+        ("strategy", str(summary.get("strategy") or "default")),
+        ("build", str(summary.get("build_id") or "-")),
+        ("status", f"{status_icon}: {summary.get('status') or 'unknown'}"),
+    ]
+    if summary.get("spec_status"):
+        fields.append(("spec status", str(summary["spec_status"])))
+    if summary.get("mode"):
+        fields.append(("mode", str(summary["mode"])))
+    fields.append(("iteration", f"{summary.get('outer_iter', 0)}.{summary.get('inner_iter', 0)}"))
+    tokens = int(summary.get("tokens_used") or 0)
+    budget = summary.get("token_budget")
+    if budget:
+        try:
+            budget_int = int(budget)
+            pct = (tokens / budget_int) * 100 if budget_int else 0
+            fields.append(("tokens", f"{tokens:,} / {budget_int:,} ({pct:.0f}%)"))
+        except (TypeError, ValueError):
+            fields.append(("tokens", f"{tokens:,}"))
+    else:
+        fields.append(("tokens", f"{tokens:,}"))
+    for key, label in (
+        ("termination_reason", "reason"),
+        ("build_status", "build status"),
+        ("build_reason", "build reason"),
+        ("pr_url", "PR"),
+        ("target_branch", "target branch"),
+        ("target_commit", "target commit"),
+        ("salvage_branch", "salvage branch"),
+        ("salvage_commit", "salvage commit"),
+    ):
+        value = str(summary.get(key) or "").strip()
+        if value:
+            fields.append((label, value[:12] if key.endswith("_commit") else value))
+    checkpoint_count = int(summary.get("checkpoint_count") or 0)
+    if checkpoint_count:
+        fields.append(("checkpoints", str(checkpoint_count)))
+    history_count = summary.get("history_count")
+    if history_count is not None:
+        fields.append(("history", f"{history_count} delivery run(s) recorded"))
+    if summary.get("state_file"):
+        fields.append(("state", str(summary["state_file"])))
+    fields.append(("next", str(summary.get("next") or "")))
+    return fields
+
+
+def _cmd_delivery_status(args: list[str], *, project_root: Path | None = None) -> None:
+    import json as _json
+
+    root = project_root or Path.cwd()
+    spec_id, strategy, json_output = _parse_delivery_status_args(args)
+    states = _iter_harness_build_states(root)
+    if spec_id:
+        states = [state for state in states if str(state.get("spec_id") or "") == spec_id]
+    if strategy:
+        states = [state for state in states if str(state.get("strategy_id") or "") == strategy]
+
+    summaries = [_delivery_status_summary(state, project_root=root) for state in states]
+    if json_output:
+        payload = {
+            "status": summaries[0]["status"] if summaries else "none",
+            "spec_id": spec_id or (summaries[0].get("spec_id") if summaries else ""),
+            "strategy": strategy,
+            "latest": summaries[0] if summaries else None,
+            "states": summaries[:10],
+        }
+        print(_json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+
+    if not summaries:
+        next_step = f"echelon delivery run {spec_id}" if spec_id else "echelon delivery run <spec_id>"
+        _banner(
+            "DELIVERY STATUS",
+            [
+                ("status", "No delivery runs found"),
+                ("next", next_step),
+            ],
+            subtitle="Phase B delivery",
+        )
+        return
+
+    latest = summaries[0]
+    subtitle = "Phase B delivery"
+    if len(summaries) > 1:
+        subtitle += f" - {len(summaries)} matching state files"
+    _banner("DELIVERY STATUS", _delivery_status_fields(latest), subtitle=subtitle)
 
 
 def _find_harness_checkpoint_state(

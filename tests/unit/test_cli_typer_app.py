@@ -255,6 +255,52 @@ def test_typer_front_door_declares_all_top_level_commands():
 
 
 @pytest.mark.unit
+def test_root_help_hides_compatibility_aliases():
+    from echelon.cli_app import app
+    from typer.main import get_command
+
+    result = CliRunner().invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "workspace" in result.output
+    assert "spec" in result.output
+    assert "delivery" in result.output
+    assert "stack" in result.output
+    assert "benchmark" in result.output
+    assert "harness" not in result.output
+    command = get_command(app)
+    for alias in (
+        "artifacts",
+        "land",
+        "continue",
+        "rewind",
+        "resume",
+        "run",
+        "build",
+        "review",
+        "codegen",
+        "verify-spec",
+        "reopen",
+        "bugfix",
+        "change",
+        "cicd",
+    ):
+        assert command.commands[alias].hidden
+
+
+@pytest.mark.unit
+def test_hidden_top_level_alias_still_routes(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_harness_run", lambda args, **_kwargs: calls.append(args))
+
+    run(["harness", "run", "001", "--target", "api"])
+
+    assert calls == [["001", "target=api"]]
+
+
+@pytest.mark.unit
 def test_typer_run_prints_version_without_subcommand(capsys):
     from echelon.cli_app import run
 
@@ -289,8 +335,28 @@ def test_delivery_help_uses_phase_b_common_forms():
     assert "Usage: root delivery [OPTIONS] COMMAND [ARGS]..." in result.output
     assert "Phase B/delivery commands" in result.output
     assert "Common forms:" in result.output
+    assert "status [<spec_id>] [--strategy <s>]" in result.output
     assert "run <spec_id> [--target <source-id-or-path>] [--mode <m>]" in result.output
     assert "land <spec_id> [--continue] [--prepare-only]" in result.output
+
+
+@pytest.mark.unit
+def test_delivery_status_declares_options_and_routes(monkeypatch):
+    from echelon.cli_app import run
+
+    help_result = invoke_help("delivery", "status")
+
+    assert help_result.exit_code == 0
+    assert "SPEC_ID" in help_result.output
+    assert "--strategy" in help_result.output
+    assert "--json" in help_result.output
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_delivery_status", lambda args: calls.append(args))
+
+    run(["delivery", "status", "001", "--strategy", "codegen", "--json"])
+
+    assert calls == [["001", "--strategy", "codegen", "--json"]]
 
 
 @pytest.mark.unit

@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-128 / #151 delivery status UX** — added `echelon delivery status [spec_id]`
+  with `--strategy` and `--json` so Phase B has a canonical status sibling to
+  `echelon spec status`, summarizing Ralph delivery state, checkpoint/salvage
+  facts, spec delivery history, and the next canonical command.
 - **EGR-123 / #148 source-scoped RE cache** — Phase A `echelon spec run`
   now accepts `--target`/`--target-source` and `--re-policy`, fingerprints
   workspace source roots, materializes run-local RE artifacts from cache, and
@@ -75,6 +79,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   arguments/options across the visible command tree instead of leaving
   workspace, phase, benchmark, stack, spec checkpoint/target/artifacts, delivery
   resume, and top-level skill aliases as opaque legacy passthrough help pages.
+  Root `echelon --help` now hides compatibility aliases so the canonical
+  workspace/spec/delivery surface is not buried.
 - Operator-facing hints, recovery banners, prompts, README, and setup docs now
   consistently recommend canonical `echelon workspace ...`,
   `echelon spec ...`, and `echelon delivery ...` commands instead of legacy
