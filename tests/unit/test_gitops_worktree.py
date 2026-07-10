@@ -895,6 +895,55 @@ def test_create_worktree_removes_stale_runs_checkout_before_retry(tmp_path):
     sync_runtime.assert_called_once_with(expected)
 
 
+def test_create_worktree_removes_stale_legacy_runs_checkout_before_retry(tmp_path):
+    """Legacy harness/* branches must not be blocked by stale prior worktrees."""
+    mirror = tmp_path / "runs" / "mirror.git"
+    mirror.mkdir(parents=True)
+    stale = tmp_path / "runs" / "build-old" / "worktrees" / "default" / "iter-1"
+    stale.mkdir(parents=True)
+
+    gitops = _make_gitops(tmp_path)
+    branch_name = "harness/905-import-prose/default/iter-1"
+    add_error = GitOpsError(
+        f"fatal: '{branch_name}' is already used by worktree at '{stale}'",
+        command="git worktree add",
+    )
+
+    calls: list[tuple[list[str], str | None]] = []
+
+    def fake_run_git(args, cwd=None, **_kwargs):
+        calls.append((args, cwd))
+        if args[:2] == ["rev-parse", "--abbrev-ref"]:
+            return SimpleNamespace(stdout="main\n", returncode=0)
+        if args[:2] == ["rev-parse", "--verify"]:
+            return SimpleNamespace(stdout="", returncode=0)
+        if args[:2] == ["worktree", "add"] and len(
+            [call for call in calls if call[0][:2] == ["worktree", "add"]]
+        ) == 1:
+            raise add_error
+        return SimpleNamespace(stdout="", returncode=0)
+
+    with patch("harness.gitops._run_git", side_effect=fake_run_git), patch.object(
+        gitops, "sync_runtime_extension"
+    ) as sync_runtime:
+        result = gitops.create_worktree(
+            "905-import-prose",
+            "default",
+            1,
+            base_branch=None,
+            build_id="build-new",
+        )
+
+    expected = tmp_path / "runs" / "build-new" / "worktrees" / "default" / "iter-1"
+    assert result == str(expected)
+    assert (
+        ["worktree", "remove", "--force", str(stale)],
+        str(mirror),
+    ) in calls
+    assert calls.count((["worktree", "add", str(expected), branch_name], str(mirror))) == 2
+    sync_runtime.assert_called_once_with(expected)
+
+
 def test_clean_branch_listing_strips_git_worktree_marker():
     """`git branch --list` prefixes branches checked out in worktrees with `+`."""
     assert _clean_branch_listing("+ 001-feature") == "001-feature"

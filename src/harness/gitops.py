@@ -491,9 +491,9 @@ class GitOpsManager:
                         worktree_dir, branch_name,
                     )
             if not worktree_created:
-                _run_git(
-                    ["worktree", "add", str(worktree_dir), branch_name],
-                    cwd=str(self._mirror_path),
+                self._add_worktree_removing_stale_harness_checkout(
+                    worktree_dir=worktree_dir,
+                    branch_name=branch_name,
                 )
                 logger.info(
                     "Created worktree at %s on branch %s (base: %s)",
@@ -563,6 +563,35 @@ class GitOpsManager:
                 shutil.rmtree(str(path))
                 logger.info("Force-removed stale worktree directory %s from disk", path)
         _run_git(["worktree", "prune"], cwd=str(self._mirror_path))
+
+    def _add_worktree_removing_stale_harness_checkout(
+        self,
+        *,
+        worktree_dir: Path,
+        branch_name: str,
+    ) -> None:
+        try:
+            _run_git(
+                ["worktree", "add", str(worktree_dir), branch_name],
+                cwd=str(self._mirror_path),
+            )
+        except GitOpsError as e:
+            match = re.search(r"already used by worktree at '([^']+)'", str(e))
+            if not match:
+                raise
+            existing_path = match.group(1)
+            if not self._is_harness_runs_worktree(existing_path):
+                raise
+            logger.warning(
+                "Branch %s already checked out in stale harness worktree %s — removing and retrying",
+                branch_name,
+                existing_path,
+            )
+            self._remove_registered_worktree(existing_path)
+            _run_git(
+                ["worktree", "add", str(worktree_dir), branch_name],
+                cwd=str(self._mirror_path),
+            )
 
     def sync_runtime_extension(self, worktree_dir: str | Path) -> None:
         """Make Echelon's local runtime prompts available inside a harness worktree.
