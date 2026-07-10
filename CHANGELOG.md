@@ -139,7 +139,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `inspect`/`open`/discovery phrasing too. The scanner also treats known
   fulfillment-report helper names such as `fulfillment_report_is_current` as
   harness internals when prompts ask agents to find, locate, discover, or
-  inspect their implementation.
+  inspect their implementation. Build prompt scanning now also rejects `get` or
+  `query` phrasing for exploratory git-state discovery.
 - **EGR-125 / #149 build-slice context** — Ralph now writes a Python-owned
   `context/<strategy>-build-slice-context.md` artifact for delivery build and
   feedback turns. The initial context includes deterministic roots, spec input

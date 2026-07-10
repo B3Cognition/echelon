@@ -91,7 +91,7 @@ HARNESS_INTERNAL_DISCOVERY_RE = re.compile(
 )
 
 BUILD_GIT_STATE_DISCOVERY_RE = re.compile(
-    r"\b(?:check|inspect|read|run|use)\b"
+    r"\b(?:check|get|query|inspect|read|run|use)\b"
     r".{0,120}\b(?:git\s+status|git\s+log|git\s+rev-parse|rev-parse)\b",
     re.IGNORECASE,
 )

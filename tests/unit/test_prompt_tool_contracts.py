@@ -179,6 +179,20 @@ def test_flags_build_prompt_git_state_discovery(tmp_path: Path) -> None:
     assert findings[0].reason == "build_git_state_discovery"
 
 
+def test_flags_build_prompt_git_state_discovery_synonyms(tmp_path: Path) -> None:
+    prompt = tmp_path / "extension" / "agents" / "build" / "implementer.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "Get git status and rev-parse before implementing.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "build_git_state_discovery"
+
+
 def test_flags_build_prompt_spec_artifact_discovery(tmp_path: Path) -> None:
     prompt = tmp_path / "extension" / "workflow" / "phases" / "build-1-init.md"
     prompt.parent.mkdir(parents=True)
