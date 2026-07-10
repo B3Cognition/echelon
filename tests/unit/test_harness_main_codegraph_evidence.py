@@ -330,3 +330,30 @@ def test_write_codegraph_evidence_cli_uses_fixed_installed_bridge_path(
     assert "fixed installed extension path" in error
     state = json.loads((verify_run_dir / "state.json").read_text())
     assert state["structural_evidence"] == "degraded"
+
+
+def test_write_codegraph_evidence_cli_requires_init_owned_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    _write_fake_bridge(project_root)
+    _write_fake_codegraph_cli(tmp_path / "bin", success=True)
+    _prepend_path(monkeypatch, tmp_path / "bin")
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001"
+    spec_dir = project_root / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    result = _run(
+        [
+            "write-codegraph-evidence",
+            str(project_root),
+            str(verify_run_dir),
+            str(spec_dir),
+        ]
+    )
+
+    assert result.returncode == 1
+    assert "state.json missing for verify-spec run:" in result.stderr
+    assert not (verify_run_dir / "codegraph-analysis.json").exists()
+    assert not (verify_run_dir / "codegraph-summary.json").exists()

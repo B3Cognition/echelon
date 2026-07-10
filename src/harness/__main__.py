@@ -766,6 +766,7 @@ def _write_codegraph_evidence() -> None:
     )
 
     verify_run_dir = Path(sys.argv[3])
+    _require_verify_spec_state(verify_run_dir)
     try:
         result = write_codegraph_evidence(
             project_root=Path(sys.argv[2]),
