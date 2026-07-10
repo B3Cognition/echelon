@@ -68,6 +68,19 @@ def test_reconcile_phase_candidate_commands_stamp_state() -> None:
     assert "progress_reconciliation_candidates: ready" in text
 
 
+def test_reconcile_phase_apply_commands_stamp_state() -> None:
+    text = VERIFY_RECONCILE.read_text(encoding="utf-8")
+
+    assert (
+        '  "{verify_run_dir}" \\\n'
+        '  "{verify_run_dir}/state.json"'
+    ) in text
+    assert "task_requirement_mapping: applied" in text
+    assert "progress_reconciliation: applied" in text
+    assert "dry_run" in text
+    assert "safe/applied counts" in text
+
+
 def test_reconcile_phase_maps_unmapped_task_requirements_before_done_updates() -> None:
     text = VERIFY_RECONCILE.read_text(encoding="utf-8")
 

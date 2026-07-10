@@ -90,6 +90,28 @@ def test_apply_progress_reconciliation_cli_marks_done(tmp_path: Path) -> None:
     assert (out_dir / "progress-reconciliation-applied.md").exists()
 
 
+def test_apply_progress_reconciliation_cli_stamps_state(tmp_path: Path) -> None:
+    tasks_path, candidate_path, out_dir = _write_inputs(tmp_path)
+    state_path = tmp_path / "state.json"
+    state_path.write_text("{}", encoding="utf-8")
+
+    result = _run(
+        [
+            "apply-progress-reconciliation",
+            str(tasks_path),
+            str(candidate_path),
+            str(out_dir),
+            str(state_path),
+        ]
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["progress_reconciliation"] == "applied"
+    assert state["progress_reconciliation_safe_count"] == 1
+    assert state["progress_reconciliation_applied_count"] == 1
+
+
 def test_write_progress_reconciliation_candidates_cli_uses_fulfillment_statuses(
     tmp_path: Path,
 ) -> None:

@@ -542,7 +542,7 @@ def _progress_integrity_markdown(payload: dict[str, object]) -> str:
 def _apply_progress_reconciliation() -> None:
     if len(sys.argv) < 5:
         print(
-            "Usage: python -m harness apply-progress-reconciliation <tasks.md> <candidate.json> <out-dir> [--dry-run]",
+            "Usage: python -m harness apply-progress-reconciliation <tasks.md> <candidate.json> <out-dir> [state.json] [--dry-run]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -555,7 +555,9 @@ def _apply_progress_reconciliation() -> None:
     candidate_path = Path(sys.argv[3])
     out_dir = Path(sys.argv[4])
     dry_run = "--dry-run" in sys.argv[5:]
-    unknown = [arg for arg in sys.argv[5:] if arg != "--dry-run"]
+    positional = [arg for arg in sys.argv[5:] if arg != "--dry-run"]
+    state_path = Path(positional[0]) if positional else None
+    unknown = positional[1:]
     if unknown:
         print(f"Unknown apply-progress-reconciliation option: {unknown[0]!r}", file=sys.stderr)
         sys.exit(1)
@@ -573,6 +575,15 @@ def _apply_progress_reconciliation() -> None:
         else out_dir / "progress-reconciliation-applied.md",
         dry_run=dry_run,
     )
+    if state_path is not None:
+        _stamp_json_state_file(
+            state_path,
+            {
+                "progress_reconciliation": "dry_run" if dry_run else "applied",
+                "progress_reconciliation_safe_count": result.safe_count,
+                "progress_reconciliation_applied_count": result.applied_count,
+            },
+        )
     if dry_run:
         print(
             "OK: progress reconciliation dry-run wrote "
@@ -622,7 +633,7 @@ def _write_progress_reconciliation_candidates() -> None:
 def _apply_task_requirement_mapping() -> None:
     if len(sys.argv) < 5:
         print(
-            "Usage: python -m harness apply-task-requirement-mapping <tasks.md> <candidate.json> <out-dir> [--dry-run]",
+            "Usage: python -m harness apply-task-requirement-mapping <tasks.md> <candidate.json> <out-dir> [state.json] [--dry-run]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -635,7 +646,9 @@ def _apply_task_requirement_mapping() -> None:
     candidate_path = Path(sys.argv[3])
     out_dir = Path(sys.argv[4])
     dry_run = "--dry-run" in sys.argv[5:]
-    unknown = [arg for arg in sys.argv[5:] if arg != "--dry-run"]
+    positional = [arg for arg in sys.argv[5:] if arg != "--dry-run"]
+    state_path = Path(positional[0]) if positional else None
+    unknown = positional[1:]
     if unknown:
         print(f"Unknown apply-task-requirement-mapping option: {unknown[0]!r}", file=sys.stderr)
         sys.exit(1)
@@ -649,6 +662,15 @@ def _apply_task_requirement_mapping() -> None:
         out_applied_md=None if dry_run else out_dir / "task-requirement-map-applied.md",
         dry_run=dry_run,
     )
+    if state_path is not None:
+        _stamp_json_state_file(
+            state_path,
+            {
+                "task_requirement_mapping": "dry_run" if dry_run else "applied",
+                "task_requirement_mapping_safe_count": result.safe_count,
+                "task_requirement_mapping_applied_count": result.applied_count,
+            },
+        )
     if dry_run:
         print(
             "OK: task requirement mapping dry-run wrote "

@@ -84,6 +84,28 @@ def test_apply_task_requirement_mapping_cli_updates_req_metadata(tmp_path: Path)
     assert (out_dir / "task-requirement-map-applied.md").exists()
 
 
+def test_apply_task_requirement_mapping_cli_stamps_state(tmp_path: Path) -> None:
+    tasks_path, candidate_path, out_dir = _write_inputs(tmp_path)
+    state_path = tmp_path / "state.json"
+    state_path.write_text("{}", encoding="utf-8")
+
+    result = _run(
+        [
+            "apply-task-requirement-mapping",
+            str(tasks_path),
+            str(candidate_path),
+            str(out_dir),
+            str(state_path),
+        ]
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["task_requirement_mapping"] == "applied"
+    assert state["task_requirement_mapping_safe_count"] == 1
+    assert state["task_requirement_mapping_applied_count"] == 1
+
+
 def test_write_task_requirement_mapping_candidates_cli_maps_explicit_ids(
     tmp_path: Path,
 ) -> None:

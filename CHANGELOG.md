@@ -203,7 +203,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `state.json` path and stamps row-set validation counts on success or the
   missing/extra row IDs on failure. Stage 6 reconciliation candidate commands
   now also accept the verify-spec `state.json` path and stamp safe/ambiguous
-  mapping and progress candidate counts.
+  mapping and progress candidate counts. The paired Stage 6 apply commands now
+  stamp dry-run/applied status plus safe/applied counts in the same state file.
 - **EGR-117 / #141 runtime surface reduction** — delivery runtime sync now
   omits reverse-engineering shell helpers under
   `.specify/extensions/echelon/scripts/bash/re` from target worktrees and

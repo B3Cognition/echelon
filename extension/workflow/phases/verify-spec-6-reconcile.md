@@ -74,7 +74,8 @@ Run task requirement mapping before progress reconciliation:
 python -m harness apply-task-requirement-mapping \
   "{spec_dir}/tasks.md" \
   "{verify_run_dir}/task-requirement-map.candidates.json" \
-  "{verify_run_dir}"
+  "{verify_run_dir}" \
+  "{verify_run_dir}/state.json"
 ```
 
 When `state.json.dry_run == true`, append `--dry-run`.
@@ -85,6 +86,10 @@ The harness writes:
 - `{verify_run_dir}/task-requirement-map-plan.md`
 - `{verify_run_dir}/task-requirement-map-applied.json` in apply mode
 - `{verify_run_dir}/task-requirement-map-applied.md` in apply mode
+
+The command stamps `task_requirement_mapping: applied` in apply mode,
+`task_requirement_mapping: dry_run` in dry-run mode, and safe/applied counts in
+`{verify_run_dir}/state.json`.
 
 ## Candidate Plan
 
@@ -117,7 +122,8 @@ Run:
 python -m harness apply-progress-reconciliation \
   "{spec_dir}/tasks.md" \
   "{verify_run_dir}/progress-reconciliation-candidates.json" \
-  "{verify_run_dir}"
+  "{verify_run_dir}" \
+  "{verify_run_dir}/state.json"
 ```
 
 When `state.json.dry_run == true`, append `--dry-run`:
@@ -127,6 +133,7 @@ python -m harness apply-progress-reconciliation \
   "{spec_dir}/tasks.md" \
   "{verify_run_dir}/progress-reconciliation-candidates.json" \
   "{verify_run_dir}" \
+  "{verify_run_dir}/state.json" \
   --dry-run
 ```
 
@@ -136,6 +143,10 @@ The harness writes:
 - `{verify_run_dir}/progress-reconciliation-plan.md`
 - `{verify_run_dir}/progress-reconciliation-applied.json` in apply mode
 - `{verify_run_dir}/progress-reconciliation-applied.md` in apply mode
+
+The command stamps `progress_reconciliation: applied` in apply mode,
+`progress_reconciliation: dry_run` in dry-run mode, and safe/applied counts in
+`{verify_run_dir}/state.json`.
 
 ## Output Summary
 
