@@ -38,6 +38,7 @@ def test_init_verify_spec_run_uses_orchestration_current_pointer(
     active_run = workspace / "runs" / "spec-20260707-175124-167707"
     for path in (source, spec_dir, active_run):
         path.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
     (workspace / "runs" / ".current").write_text(
         "spec-20260707-175124-167707\n", encoding="utf-8"
     )
@@ -66,6 +67,7 @@ def test_init_verify_spec_run_creates_timestamped_scoped_run_without_current(
     project = tmp_path / "project"
     spec_dir = project / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
 
     result = init_verify_spec_run(
         project_root=project,
@@ -97,6 +99,7 @@ def test_init_verify_spec_run_cli_writes_state_and_prints_json(tmp_path: Path) -
     project = tmp_path / "project"
     spec_dir = project / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
 
     completed = _run_harness(
         [
@@ -170,12 +173,55 @@ def test_init_verify_spec_run_cli_rejects_missing_spec_dir_without_traceback(
     assert not (project / "runs").exists()
 
 
+def test_init_verify_spec_run_rejects_spec_dir_without_spec_md_before_state(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    with pytest.raises(VerifySpecRunInitError, match="spec.md missing"):
+        init_verify_spec_run(
+            project_root=project,
+            spec_id="001-demo",
+            spec_dir=spec_dir,
+            timestamp="20260709-143000",
+        )
+
+    assert not (project / "runs").exists()
+
+
+def test_init_verify_spec_run_cli_rejects_spec_dir_without_spec_md_cleanly(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    completed = _run_harness(
+        [
+            "init-verify-spec-run",
+            str(project),
+            "001-demo",
+            str(spec_dir),
+            "--timestamp",
+            "20260709-143000",
+        ]
+    )
+
+    assert completed.returncode == 2
+    assert "spec.md missing in spec_dir:" in completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert not (project / "runs").exists()
+
+
 def test_init_verify_spec_run_rejects_unknown_scope_before_writing_state(
     tmp_path: Path,
 ) -> None:
     project = tmp_path / "project"
     spec_dir = project / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
 
     with pytest.raises(VerifySpecRunInitError, match="unsupported verify scope"):
         init_verify_spec_run(
@@ -195,6 +241,7 @@ def test_init_verify_spec_run_cli_rejects_unknown_scope_without_traceback(
     project = tmp_path / "project"
     spec_dir = project / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
 
     completed = _run_harness(
         [

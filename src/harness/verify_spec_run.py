@@ -50,6 +50,8 @@ def init_verify_spec_run(
         raise VerifySpecRunInitError(f"project_root does not exist: {project_root}")
     if not spec_dir.is_dir():
         raise VerifySpecRunInitError(f"spec_dir does not exist: {spec_dir}")
+    if not (spec_dir / "spec.md").is_file():
+        raise VerifySpecRunInitError(f"spec.md missing in spec_dir: {spec_dir}")
     if verify_scope not in {"full", "scoped"}:
         raise VerifySpecRunInitError(f"unsupported verify scope: {verify_scope}")
     orchestration_root = _derive_orchestration_root(project_root, spec_dir)
