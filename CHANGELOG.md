@@ -6,6 +6,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Workspace source sync** — added `echelon workspace sources sync [--write]`
+  to reconcile `.echelon/config.yml` source entries from canonical
+  `sources/*` child repositories while preserving explicitly configured
+  external roots.
 - **EGR-128 / #151 delivery status UX** — added `echelon delivery status [spec_id]`
   with `--strategy` and `--json` so Phase B has a canonical status sibling to
   `echelon spec status`, summarizing Ralph delivery state, checkpoint/salvage

@@ -454,6 +454,18 @@ def test_workspace_init_typed_options_route_to_legacy_workspace(monkeypatch):
 
 
 @pytest.mark.unit
+def test_workspace_sources_sync_typed_options_route_to_legacy_workspace(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_workspace", lambda args: calls.append(args))
+
+    run(["workspace", "sources", "sync", "--write"])
+
+    assert calls == [["sources", "sync", "--write"]]
+
+
+@pytest.mark.unit
 def test_spec_target_typed_args_route_to_legacy_spec_target(monkeypatch):
     from echelon.cli_app import run
 

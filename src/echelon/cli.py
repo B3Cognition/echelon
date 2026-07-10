@@ -71,6 +71,7 @@ Commands:
                     [--allow-unsafe-host-execution|--no-unsafe-host-execution]
                                             One-time project setup (no LLM)
   workspace doctor                          Check workspace/source/runtime contract
+  workspace sources sync [--write]          Sync discovered sources/* roots into config
   workspace migrate [--write] [--commit] [--message <msg>]
                                             Migrate legacy workspace layout
 
@@ -6615,6 +6616,7 @@ def _cmd_workspace(args: list[str]) -> None:
             "                            One-time project setup (no LLM)\n"
             "                            Prompts on an interactive TTY; use the flag to opt in non-interactively\n"
             "  doctor                    Validate workspace/source/runtime contract\n"
+            "  sources sync [--write]    Sync discovered sources/* roots into config\n"
             "  migrate [--write]         Copy legacy config, ignore runtime state, stage fixes\n"
             "          [--commit] [--message <msg>]\n"
             "                            Apply and commit migration changes\n",
@@ -6707,6 +6709,50 @@ def _cmd_workspace(args: list[str]) -> None:
                 print(f"  {finding.severity.upper()} {finding.code}{path}: {finding.message}")
         if result.has_errors:
             sys.exit(1)
+        return
+
+    if subcmd == "sources":
+        sources_args = args[1:]
+        if not sources_args or sources_args[0] in {"-h", "--help"}:
+            print(
+                "Usage: echelon workspace sources sync [--write]\n\n"
+                "  Discover implementation roots under sources/ and sync them into "
+                ".echelon/config.yml.\n"
+                "  Dry-run by default; pass --write to add missing roots and remove stale "
+                "sources/* entries.",
+                file=sys.stderr,
+            )
+            sys.exit(0)
+        if sources_args[0] != "sync":
+            print(
+                f"echelon workspace sources: unknown subcommand '{sources_args[0]}'\n",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        write = False
+        for arg in sources_args[1:]:
+            if arg == "--write":
+                write = True
+            else:
+                print(f"echelon workspace sources sync: unknown option '{arg}'", file=sys.stderr)
+                sys.exit(1)
+        from echelon.workspace_sources import sync_sources_config
+
+        result = sync_sources_config(Path.cwd(), write=write)
+
+        def label(values: tuple[str, ...]) -> str:
+            return ", ".join(values) if values else "none"
+
+        print(f"Config: {result.config_path}")
+        print(f"Dry run: {'yes' if result.dry_run else 'no'}")
+        print(f"discovered: {label(result.discovered)}")
+        print(f"added: {label(result.added)}")
+        print(f"removed: {label(result.removed)}")
+        print(f"unchanged: {label(result.unchanged)}")
+        if result.dry_run:
+            print("Next: echelon workspace sources sync --write")
+        else:
+            print(f"updated: {'yes' if result.changed else 'no changes'}")
         return
 
     if subcmd == "migrate":

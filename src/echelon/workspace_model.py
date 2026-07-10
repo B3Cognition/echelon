@@ -179,6 +179,11 @@ def _sources_directory_child_roots(root: Path) -> tuple[SourceRoot, ...]:
     return _source_roots_under(sources_container, root)
 
 
+def discover_sources_directory_roots(root: Path) -> tuple[SourceRoot, ...]:
+    """Discover implementation roots under the canonical sources/ directory."""
+    return _sources_directory_child_roots(root.resolve())
+
+
 def _child_source_roots(root: Path) -> tuple[SourceRoot, ...]:
     return _source_roots_under(root, root) + _sources_directory_child_roots(root)
 
