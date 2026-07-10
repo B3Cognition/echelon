@@ -168,3 +168,48 @@ def test_init_verify_spec_run_cli_rejects_missing_spec_dir_without_traceback(
     assert "spec_dir does not exist:" in completed.stderr
     assert "Traceback" not in completed.stderr
     assert not (project / "runs").exists()
+
+
+def test_init_verify_spec_run_rejects_unknown_scope_before_writing_state(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    with pytest.raises(VerifySpecRunInitError, match="unsupported verify scope"):
+        init_verify_spec_run(
+            project_root=project,
+            spec_id="001-demo",
+            spec_dir=spec_dir,
+            verify_scope="bananas",
+            timestamp="20260709-150000",
+        )
+
+    assert not (project / "runs").exists()
+
+
+def test_init_verify_spec_run_cli_rejects_unknown_scope_without_traceback(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    spec_dir = project / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    completed = _run_harness(
+        [
+            "init-verify-spec-run",
+            str(project),
+            "001-demo",
+            str(spec_dir),
+            "--scope",
+            "bananas",
+            "--timestamp",
+            "20260709-150000",
+        ]
+    )
+
+    assert completed.returncode == 2
+    assert "unsupported verify scope:" in completed.stderr
+    assert "Traceback" not in completed.stderr
+    assert not (project / "runs").exists()

@@ -82,7 +82,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **EGR-119 / #143 verify-spec init preflight** — `python -m harness
   init-verify-spec-run` now rejects missing `project_root` or `spec_dir`
   before creating run state, returning a clean input error instead of letting
-  later verify phases fail against fabricated paths.
+  later verify phases fail against fabricated paths; unsupported `--scope`
+  values are rejected instead of silently falling back to `full`.
 - **Workspace source discovery** — configured orchestration workspaces with
   `sources: []` now still auto-discover child projects under the canonical
   `sources/` directory. Empty configured workspaces without a `sources/`
