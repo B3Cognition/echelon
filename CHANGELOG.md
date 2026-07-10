@@ -189,7 +189,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and `write-fallback-fulfillment-template` stamps fallback queue readiness when
   called with a verify-spec state file. `assemble-fulfillment-report` now stamps
   final fulfillment report readiness and the report path after successful
-  assembly.
+  assembly. `validate-fulfillment-artifacts` now accepts the verify-spec
+  `state.json` path and stamps row-set validation counts on success.
 - **EGR-117 / #141 runtime surface reduction** — delivery runtime sync now
   omits reverse-engineering shell helpers under
   `.specify/extensions/echelon/scripts/bash/re` from target worktrees and

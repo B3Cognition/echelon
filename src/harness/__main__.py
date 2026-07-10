@@ -446,11 +446,11 @@ def _write_fallback_fulfillment_template() -> None:
 
 
 def _validate_fulfillment_artifacts() -> None:
-    if len(sys.argv) not in {4, 5}:
+    if len(sys.argv) not in {4, 5, 6}:
         print(
             "Usage: python -m harness validate-fulfillment-artifacts "
             "<requirement-audit.md> <fulfillment-report.md> "
-            "[canonical-requirements.json]",
+            "[canonical-requirements.json] [state.json]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -462,9 +462,19 @@ def _validate_fulfillment_artifacts() -> None:
     result = validate_fulfillment_artifacts(
         requirement_audit_path=Path(sys.argv[2]),
         fulfillment_report_path=Path(sys.argv[3]),
-        canonical_inventory_path=Path(sys.argv[4]) if len(sys.argv) == 5 else None,
+        canonical_inventory_path=Path(sys.argv[4]) if len(sys.argv) >= 5 else None,
     )
     if result.ok:
+        if len(sys.argv) == 6:
+            state_path = Path(sys.argv[5]).resolve()
+            _stamp_verify_spec_state(
+                state_path.parent,
+                {
+                    "fulfillment_artifacts": "valid",
+                    "fulfillment_artifacts_audit_count": result.audit_count,
+                    "fulfillment_artifacts_report_count": result.report_count,
+                },
+            )
         print(
             "OK: fulfillment artifact row set is valid "
             f"(audit={result.audit_count}, report={result.report_count})"

@@ -169,6 +169,19 @@ def test_verify_spec_stage5_forbids_llm_provenance_discovery() -> None:
     assert "python -m harness inspect-fulfillment-report" in text
 
 
+def test_verify_spec_stage5_validation_stamps_state() -> None:
+    text = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")
+
+    assert (
+        'python -m harness validate-fulfillment-artifacts \\\n'
+        '  "{verify_run_dir}/requirement-audit.md" \\\n'
+        '  "{spec_dir}/fulfillment-report.md" \\\n'
+        '  "{verify_run_dir}/canonical-requirements.json" \\\n'
+        '  "{verify_run_dir}/state.json"'
+    ) in text
+    assert "stamps `fulfillment_artifacts: valid` in `state.json`" in text
+
+
 def test_spec_guard_prompt_forbids_restatement_of_mechanical_rows() -> None:
     agent_dir = ROOT / "extension" / "agents" / "build"
     text = (agent_dir / "spec-guard.md").read_text(encoding="utf-8")

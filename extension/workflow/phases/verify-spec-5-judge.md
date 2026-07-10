@@ -141,14 +141,16 @@ Before returning DONE, run deterministic row-set integrity validation:
 python -m harness validate-fulfillment-artifacts \
   "{verify_run_dir}/requirement-audit.md" \
   "{spec_dir}/fulfillment-report.md" \
-  "{verify_run_dir}/canonical-requirements.json"
+  "{verify_run_dir}/canonical-requirements.json" \
+  "{verify_run_dir}/state.json"
 ```
 
 The command validates that every required item ID appears exactly once in
 `{spec_dir}/fulfillment-report.md` and that the report does not invent extra item
-IDs. `TASK-PROGRESS` is the only permitted synthetic report row. If validation
-fails, hard stop with BLOCKED and report the command's stderr. Do not validate
-row sets by hand.
+IDs. `TASK-PROGRESS` is the only permitted synthetic report row. On success, it
+stamps `fulfillment_artifacts: valid` in `state.json`. If validation fails, hard
+stop with BLOCKED and report the command's stderr. Do not validate row sets by
+hand.
 
 Do not render summary counts as a markdown table with status labels in the first column.
 Use bullets or prose for summary counts. The first column of any report
