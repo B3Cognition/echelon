@@ -8,6 +8,16 @@ from pathlib import Path
 from typing import Any
 
 
+FULFILLMENT_STATUSES = {
+    "IMPLEMENTED",
+    "PARTIAL",
+    "UNVERIFIED",
+    "MISSING",
+    "DEVIATED",
+    "OBSOLETE_SPEC",
+}
+
+
 @dataclass(frozen=True)
 class JudgmentRow:
     id: str
@@ -205,6 +215,9 @@ def write_fallback_fulfillment_template(
         "# Fallback Fulfillment Judgment",
         "",
         "Fill only `TODO_STATUS` and `TODO_EVIDENCE` cells for the listed IDs.",
+        "Allowed status values: "
+        + ", ".join(sorted(FULFILLMENT_STATUSES, key=_status_sort_key))
+        + ".",
         "Do not add, remove, or reorder rows.",
         "",
         "| ID | Status | Evidence |",
@@ -348,6 +361,11 @@ def _fallback_report_rows(path: Path, *, allowed_ids: set[str]) -> dict[str, str
                 cells[1] == "TODO_STATUS" or cells[2] == "TODO_EVIDENCE"
             ):
                 raise ValueError(f"unfilled fallback fulfillment row for {item_id}")
+            if len(cells) < 3 or cells[1] not in FULFILLMENT_STATUSES:
+                status = cells[1] if len(cells) > 1 else ""
+                raise ValueError(
+                    f"invalid fallback fulfillment status for {item_id}: {status}"
+                )
             rows[item_id] = line
     return rows
 
@@ -379,3 +397,15 @@ def _scoped_ids(path: Path | None) -> set[str] | None:
 
 def _mechanical_report_row(item_id: str, status: str, reason_code: str) -> str:
     return f"| {item_id} | {status} | prepass:{reason_code} |"
+
+
+def _status_sort_key(status: str) -> tuple[int, str]:
+    order = {
+        "IMPLEMENTED": 0,
+        "PARTIAL": 1,
+        "UNVERIFIED": 2,
+        "MISSING": 3,
+        "DEVIATED": 4,
+        "OBSOLETE_SPEC": 5,
+    }
+    return (order.get(status, 99), status)
