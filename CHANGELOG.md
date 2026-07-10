@@ -126,8 +126,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   directory.
 - **EGR-116 / #142 prompt tool contracts** — static prompt scanning now rejects
   verify-spec phase prompts that ask COMMANDER to find, locate, glob, list, or
-  search `specs/` for a spec directory. Negative boundary wording remains
-  allowed.
+  search `specs/` for a spec directory, or to find/list/sort/search `runs/` to
+  infer the latest verification run. Negative boundary wording remains allowed.
 - **EGR-125 / #149 build-slice context** — Ralph now writes a Python-owned
   `context/<strategy>-build-slice-context.md` artifact for delivery build and
   feedback turns. The initial context includes deterministic roots, spec input

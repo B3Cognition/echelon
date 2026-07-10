@@ -95,6 +95,11 @@ VERIFY_SPEC_DIR_DISCOVERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+VERIFY_SPEC_RUN_DISCOVERY_RE = re.compile(
+    r"\b(?:find|locate|glob|list|search|sort|infer)\b.{0,120}\bruns/",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class PromptToolContractFinding:
@@ -214,6 +219,21 @@ def scan_prompt_tool_contracts(
                         path=path,
                         line=index + 1,
                         reason="verify_spec_dir_discovery",
+                        text=stripped,
+                    )
+                )
+                continue
+            if (
+                _is_verify_spec_phase(path)
+                and VERIFY_SPEC_RUN_DISCOVERY_RE.search(stripped)
+            ):
+                if _is_negative_boundary(stripped):
+                    continue
+                findings.append(
+                    PromptToolContractFinding(
+                        path=path,
+                        line=index + 1,
+                        reason="verify_spec_run_discovery",
                         text=stripped,
                     )
                 )

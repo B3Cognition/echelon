@@ -121,6 +121,20 @@ def test_flags_verify_spec_prompt_side_spec_dir_discovery(tmp_path: Path) -> Non
     assert findings[0].reason == "verify_spec_dir_discovery"
 
 
+def test_flags_verify_spec_prompt_side_latest_run_discovery(tmp_path: Path) -> None:
+    prompt = tmp_path / "extension" / "workflow" / "phases" / "verify-spec-1-init.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "List and sort `runs/` to infer the latest verification run directory.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "verify_spec_run_discovery"
+
+
 def test_flags_build_prompt_git_state_discovery(tmp_path: Path) -> None:
     prompt = tmp_path / "extension" / "agents" / "build" / "implementer.md"
     prompt.parent.mkdir(parents=True)
