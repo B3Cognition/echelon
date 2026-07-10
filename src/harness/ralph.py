@@ -3088,7 +3088,7 @@ class RalphController:
                 "implementation": [str(worktree_path)],
                 "spec_inputs": spec_inputs,
                 "harness_state": [str(self._state_store.state_dir)],
-                "orchestration": [str(workspace_root)],
+                "orchestration": [],
             },
             "forbidden_source_roots": forbidden_source_roots,
             "rules": [

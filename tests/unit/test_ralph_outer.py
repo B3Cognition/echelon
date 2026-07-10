@@ -630,6 +630,7 @@ class TestOuterLoopConvergence:
         assert policy["allowed_roots"]["implementation"] == [str(worktree)]
         assert str(spec_dir) in policy["allowed_roots"]["spec_inputs"]
         assert str(state_store.state_dir) in policy["allowed_roots"]["harness_state"]
+        assert policy["allowed_roots"]["orchestration"] == []
         assert policy["forbidden_source_roots"] == [str(sibling)]
 
     def test_harness_context_includes_delivery_progress_ledger(
