@@ -185,7 +185,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `codegraph_evidence_map: ready` in the Python-owned verify-spec `state.json`,
   matching the existing degraded-path stamp and reducing later prompt-side state
   inference. `python -m harness write-judgment-prepass ...` now likewise stamps
-  `judgment_prepass: ready` plus deterministic mechanical/fallback row counts.
+  `judgment_prepass: ready` plus deterministic mechanical/fallback row counts,
+  and `write-fallback-fulfillment-template` stamps fallback queue readiness when
+  called with a verify-spec state file.
 - **EGR-117 / #141 runtime surface reduction** — delivery runtime sync now
   omits reverse-engineering shell helpers under
   `.specify/extensions/echelon/scripts/bash/re` from target worktrees and

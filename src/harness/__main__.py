@@ -423,6 +423,14 @@ def _write_fallback_fulfillment_template() -> None:
         output_path=Path(sys.argv[3]).resolve(),
         state_path=state_path,
     )
+    if state_path is not None:
+        _stamp_verify_spec_state(
+            state_path.parent,
+            {
+                "fallback_fulfillment_template": "ready",
+                "fallback_fulfillment_count": len(fallback_ids),
+            },
+        )
     print(
         "OK: wrote fallback fulfillment template "
         f"({len(fallback_ids)} rows) at {Path(sys.argv[3]).resolve()}"

@@ -754,6 +754,49 @@ def test_write_fallback_fulfillment_template_cli(tmp_path: Path):
     )
 
 
+def test_write_fallback_fulfillment_template_cli_stamps_state(tmp_path: Path):
+    prepass = tmp_path / "judgment-prepass.json"
+    prepass.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "id": "FR-010",
+                        "mechanical": False,
+                        "proposed_status": None,
+                        "reason_code": None,
+                        "fallback_reason": "needs_judgment",
+                        "report_row": None,
+                    }
+                ],
+                "summary": {
+                    "mechanical_count": 0,
+                    "fallback_count": 1,
+                    "fallback_ids": ["FR-010"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "state.json"
+    state_path.write_text("{}", encoding="utf-8")
+    output = tmp_path / "fulfillment-report.fallback.md"
+
+    completed = _run_harness(
+        [
+            "write-fallback-fulfillment-template",
+            str(prepass),
+            str(output),
+            str(state_path),
+        ]
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["fallback_fulfillment_template"] == "ready"
+    assert state["fallback_fulfillment_count"] == 1
+
+
 def _audit_markdown(ids: list[str]) -> str:
     lines = [
         "# Requirement Audit",
