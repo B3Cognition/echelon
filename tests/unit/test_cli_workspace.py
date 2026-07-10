@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 def test_workspace_doctor_exits_clean_for_valid_workspace(
@@ -76,3 +77,65 @@ def test_workspace_migrate_command_applies_legacy_config_copy(
     )
     out = capsys.readouterr().out
     assert "canonical_config_copied: True" in out
+
+
+def test_workspace_sources_sync_write_updates_config_from_sources_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon" / "config.yml").write_text(
+        "workspace:\n"
+        "  git_role: orchestration\n"
+        "sources:\n"
+        "  - id: stale\n"
+        "    path: sources/stale\n"
+        "  - id: external\n"
+        "    path: vendor/external\n",
+        encoding="utf-8",
+    )
+    for source_id in ("api", "web"):
+        source = tmp_path / "sources" / source_id
+        source.mkdir(parents=True)
+        (source / "package.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    from echelon.cli import _cmd_workspace
+
+    _cmd_workspace(["sources", "sync", "--write"])
+
+    out = capsys.readouterr().out
+    assert "added: api, web" in out
+    assert "removed: stale" in out
+    config = yaml.safe_load((tmp_path / ".echelon" / "config.yml").read_text(encoding="utf-8"))
+    assert config["sources"] == [
+        {"id": "external", "path": "vendor/external"},
+        {"id": "api", "path": "sources/api"},
+        {"id": "web", "path": "sources/web"},
+    ]
+
+
+def test_workspace_sources_sync_dry_run_leaves_config_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    config_path = tmp_path / ".echelon" / "config.yml"
+    original_config = "workspace:\n  git_role: orchestration\nsources: []\n"
+    config_path.write_text(original_config, encoding="utf-8")
+    source = tmp_path / "sources" / "optasearch-pro"
+    source.mkdir(parents=True)
+    (source / "package.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    from echelon.cli import _cmd_workspace
+
+    _cmd_workspace(["sources", "sync"])
+
+    out = capsys.readouterr().out
+    assert "Dry run: yes" in out
+    assert "added: optasearch-pro" in out
+    assert config_path.read_text(encoding="utf-8") == original_config

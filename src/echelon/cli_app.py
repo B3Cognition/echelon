@@ -23,6 +23,11 @@ workspace_app = typer.Typer(
     help="Workspace setup, doctor, and migration commands.",
     no_args_is_help=True,
 )
+workspace_sources_app = typer.Typer(
+    add_completion=False,
+    help="Workspace source root discovery and config sync commands.",
+    no_args_is_help=True,
+)
 phase_app = typer.Typer(
     add_completion=False,
     help="Workflow phase inspection and manual replay commands.",
@@ -92,6 +97,7 @@ app.add_typer(benchmark_app, name="benchmark")
 app.add_typer(stack_app, name="stack")
 app.add_typer(delivery_app, name="delivery")
 app.add_typer(harness_app, name="harness", hidden=True)
+workspace_app.add_typer(workspace_sources_app, name="sources")
 spec_app.add_typer(spec_checkpoint_app, name="checkpoint")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
 
@@ -530,6 +536,24 @@ def workspace_migrate(
     if commit:
         args.append("--commit")
     _extend_option(args, "--message", message)
+    args.extend(_ctx_args(ctx))
+    legacy_cli._cmd_workspace(args)
+
+
+@workspace_sources_app.command(
+    "sync",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def workspace_sources_sync(
+    ctx: typer.Context,
+    write: bool = typer.Option(False, "--write", help="Write sources to workspace config."),
+) -> None:
+    """Sync configured source roots from the canonical sources/ directory."""
+    legacy_cli = _legacy_cli()
+
+    args = ["sources", "sync"]
+    if write:
+        args.append("--write")
     args.extend(_ctx_args(ctx))
     legacy_cli._cmd_workspace(args)
 
