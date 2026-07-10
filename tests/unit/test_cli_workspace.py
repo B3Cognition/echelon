@@ -139,3 +139,34 @@ def test_workspace_sources_sync_dry_run_leaves_config_unchanged(
     assert "Dry run: yes" in out
     assert "added: optasearch-pro" in out
     assert config_path.read_text(encoding="utf-8") == original_config
+
+
+def test_workspace_sources_sync_normalizes_path_only_sources_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    (tmp_path / ".echelon").mkdir()
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config_path.write_text(
+        "workspace:\n"
+        "  git_role: orchestration\n"
+        "sources:\n"
+        "  - path: sources/api\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "sources" / "api"
+    source.mkdir(parents=True)
+    (source / "package.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    from echelon.cli import _cmd_workspace
+
+    _cmd_workspace(["sources", "sync", "--write"])
+
+    out = capsys.readouterr().out
+    assert "added: none" in out
+    assert "removed: none" in out
+    assert "unchanged: api" in out
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert config["sources"] == [{"id": "api", "path": "sources/api"}]

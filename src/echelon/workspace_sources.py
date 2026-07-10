@@ -93,10 +93,11 @@ def _read_config(config_path: Path) -> dict[str, Any]:
 
 def _source_id(item: Any) -> str:
     if isinstance(item, str):
-        return item
+        return _source_id_from_path(item)
     if isinstance(item, dict):
         path = str(item.get("path") or item.get("repo") or "").strip()
-        return str(item.get("id") or path).strip()
+        explicit_id = str(item.get("id") or "").strip()
+        return explicit_id or _source_id_from_path(path)
     return ""
 
 
@@ -111,3 +112,10 @@ def _source_path(item: Any) -> str:
 def _is_canonical_sources_path(path: str) -> bool:
     stripped = path.strip().strip("/")
     return stripped.startswith("sources/")
+
+
+def _source_id_from_path(path: str) -> str:
+    stripped = path.strip()
+    if _is_canonical_sources_path(stripped):
+        return Path(stripped).name
+    return stripped
