@@ -3619,8 +3619,9 @@ class RalphController:
         COMMANDER sometimes exits 0 after producing valid code and test output
         but forgets `.harness-build-status.json`. That marker is still required
         for explicit failure/timeout/impasse handling; this recovery path only
-        applies when the process exited cleanly and git shows deterministic
-        evidence that work happened in the harness worktree.
+        applies when Ralph has deterministic progress metadata. A dirty worktree
+        alone is not enough because agents can write non-authoritative report
+        files such as echelon_result.json.
         """
         build_status = str(build_result.get("build_status") or "unknown")
         if build_status != "unknown":
@@ -3715,7 +3716,7 @@ class RalphController:
             logger.warning("Could not persist cleanup warning: %s", state_exc)
 
     def _has_confirmed_file_changes(self, worktree_path: str) -> bool:
-        """Return True only when git confirms the worktree has changes."""
+        """Return True only when git confirms authoritative worktree changes."""
         try:
             result = subprocess.run(
                 ["git", "status", "--porcelain"],
@@ -3728,7 +3729,14 @@ class RalphController:
             return False
         if result.returncode != 0:
             return False
-        return bool(result.stdout.strip())
+        for line in result.stdout.splitlines():
+            if len(line) < 4:
+                continue
+            path = line[3:].strip()
+            if _is_markerless_recovery_ignored_artifact(path):
+                continue
+            return True
+        return False
 
     @staticmethod
     def _current_head(worktree_path: str) -> Optional[str]:
@@ -4542,6 +4550,15 @@ def _is_verify_owned_artifact(path: str) -> bool:
         return False
     name = PurePosixPath(posix).name
     return name in {"fulfillment-report.md", "fulfillment-gaps.md"}
+
+
+def _is_markerless_recovery_ignored_artifact(path: str) -> bool:
+    posix = path.replace("\\", "/")
+    if posix == BUILD_STATUS_FILENAME:
+        return True
+    if PurePosixPath(posix).name == "echelon_result.json":
+        return True
+    return _is_verify_owned_artifact(posix)
 
 
 def _status_delta(before: List[str], after: List[str]) -> List[str]:

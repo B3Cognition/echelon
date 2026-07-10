@@ -2577,6 +2577,82 @@ class TestOuterLoopConvergence:
         llm_build_runner.exec_build.assert_called_once()
         gitops.commit.assert_called()
 
+    def test_llm_build_missing_marker_with_only_agent_marker_blocks(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A markerless build cannot continue from an agent-owned report file."""
+        from harness.build_result import BuildResult
+
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=worktree,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=worktree,
+            check=True,
+        )
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
+            encoding="utf-8",
+        )
+        _write_no_impact_documentation_report(spec_dir)
+        (worktree / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+
+        def markerless_agent_report(_worktree_path: str, _prompt: str, **_kwargs):
+            (worktree / "echelon_result.json").write_text(
+                '{"completed_task_ids":["T-001"]}\n',
+                encoding="utf-8",
+            )
+            return BuildResult(
+                exit_code=0,
+                status="unknown",
+                impasse_file=None,
+                stdout="wrote echelon_result.json instead of harness status",
+                stderr="",
+                duration_ms=1000,
+            )
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.side_effect = markerless_agent_report
+        fulfillment_runner = MagicMock()
+        fulfillment_runner.refresh.return_value = FulfillmentRefreshResult(
+            status="refreshed",
+            exit_code=0,
+            reason="full verify-spec completed",
+        )
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+            fulfillment_runner=fulfillment_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = worktree
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement T-001",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "build_incomplete"
+        captured = capsys.readouterr()
+        assert "missing build status marker" in captured.err
+        assert "missing_marker_recoveries" not in state_store.read()
+        fulfillment_runner.refresh.assert_not_called()
+        gitops.push.assert_not_called()
+
     def test_llm_build_recovers_completed_task_ids_from_final_output(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

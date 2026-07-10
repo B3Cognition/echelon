@@ -146,7 +146,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   leaving harness state reads/writes owned by Ralph. `verify-spec-1-init` now
   hard-stops when `spec_dir=` is absent instead of asking COMMANDER to locate
   or glob `specs/{spec_id}-*/`; callers must pass the authoritative spec
-  directory.
+  directory. Markerless clean-exit recovery now ignores agent-owned report
+  files such as `echelon_result.json` when deciding whether authoritative
+  delivery progress exists.
 - **EGR-116 / #142 prompt tool contracts** — static prompt scanning now rejects
   verify-spec phase prompts that ask COMMANDER to find, locate, glob, list, or
   search `specs/` for a spec directory, or to find/list/sort/search `runs/` to
