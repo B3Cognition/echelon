@@ -147,35 +147,40 @@ def count_source_files(path: Path) -> int:
     return count
 
 
-def _child_source_roots(root: Path) -> tuple[SourceRoot, ...]:
+def _source_roots_under(candidate_root: Path, workspace_root: Path) -> tuple[SourceRoot, ...]:
     sources: list[SourceRoot] = []
-    candidate_roots = [root]
-    sources_container = root / "sources"
-    if sources_container.is_dir():
-        candidate_roots.append(sources_container)
-
-    for candidate_root in candidate_roots:
-        for child in sorted(candidate_root.iterdir(), key=lambda item: item.name):
-            if not child.is_dir() or child.name in IGNORED_SOURCE_DIRS:
-                continue
-            markers = project_markers(child)
-            git_present = has_git_marker(child)
-            if not markers and not git_present:
-                continue
-            try:
-                rel_path = child.relative_to(root).as_posix()
-            except ValueError:
-                rel_path = child.name
-            sources.append(
-                SourceRoot(
-                    id=child.name,
-                    path=rel_path,
-                    git_present=git_present,
-                    project_markers=markers,
-                    source_file_count=count_source_files(child),
-                )
+    for child in sorted(candidate_root.iterdir(), key=lambda item: item.name):
+        if not child.is_dir() or child.name in IGNORED_SOURCE_DIRS:
+            continue
+        markers = project_markers(child)
+        git_present = has_git_marker(child)
+        if not markers and not git_present:
+            continue
+        try:
+            rel_path = child.relative_to(workspace_root).as_posix()
+        except ValueError:
+            rel_path = child.name
+        sources.append(
+            SourceRoot(
+                id=child.name,
+                path=rel_path,
+                git_present=git_present,
+                project_markers=markers,
+                source_file_count=count_source_files(child),
             )
+        )
     return tuple(sources)
+
+
+def _sources_directory_child_roots(root: Path) -> tuple[SourceRoot, ...]:
+    sources_container = root / "sources"
+    if not sources_container.is_dir():
+        return ()
+    return _source_roots_under(sources_container, root)
+
+
+def _child_source_roots(root: Path) -> tuple[SourceRoot, ...]:
+    return _source_roots_under(root, root) + _sources_directory_child_roots(root)
 
 
 def _configured_workspace(root: Path) -> WorkspaceManifest | None:
@@ -205,6 +210,19 @@ def _configured_workspace(root: Path) -> WorkspaceManifest | None:
     git_role = str(workspace_raw.get("git_role") or "orchestration")
     if git_role not in ("orchestration", "source"):
         git_role = "orchestration"
+
+    if not sources_raw:
+        discovered_sources = _sources_directory_child_roots(root)
+        if discovered_sources:
+            return WorkspaceManifest(
+                schema_version=1,
+                workspace=WorkspaceInfo(
+                    root=root,
+                    git_role=git_role,  # type: ignore[arg-type]
+                    git_present=has_git_marker(root),
+                ),
+                sources=discovered_sources,
+            )
 
     sources: list[SourceRoot] = []
     for index, item in enumerate(sources_raw):
