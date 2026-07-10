@@ -107,7 +107,7 @@ def is_delivery_workflow_phase_path(relative_path) -> bool:
     parts = tuple(relative_path.parts)
     if len(parts) < 3 or parts[:2] != ("workflow", "phases"):
         return True
-    if parts[2] == "appendices":
+    if parts[2] == "appendices" and len(parts) == 3:
         return True
     name = parts[-1]
     return name in DELIVERY_WORKFLOW_PHASE_FILES or name.startswith(

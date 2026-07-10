@@ -330,6 +330,9 @@ def test_polyrepo_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(
     (source / "workflow" / "phases" / "appendices" / "build-8-verify-gates.md").write_text(
         "# appendix\n", encoding="utf-8"
     )
+    (source / "workflow" / "phases" / "appendices" / "phase1-what-reference.md").write_text(
+        "# phase-a appendix\n", encoding="utf-8"
+    )
 
     harness_base = tmp_path / "workspace" / "runs" / "targets" / "prosaic"
 
@@ -341,6 +344,7 @@ def test_polyrepo_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(
     assert (phases / "bugfix-1-init.md").exists()
     assert (phases / "codegen-0-preflight.md").exists()
     assert (phases / "appendices" / "build-8-verify-gates.md").exists()
+    assert not (phases / "appendices" / "phase1-what-reference.md").exists()
     assert not (phases / "phase1-what.md").exists()
     assert not (phases / "phase3-plan.md").exists()
     assert not (phases / "phase4-document.md").exists()

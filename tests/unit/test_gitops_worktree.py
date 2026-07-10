@@ -518,6 +518,9 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
     (source / "workflow" / "phases" / "appendices" / "build-8-verify-gates.md").write_text(
         "# appendix\n", encoding="utf-8"
     )
+    (source / "workflow" / "phases" / "appendices" / "phase1-what-reference.md").write_text(
+        "# phase-a appendix\n", encoding="utf-8"
+    )
 
     worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
     worktree.mkdir(parents=True)
@@ -534,6 +537,7 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
     assert (phases / "bugfix-1-init.md").exists()
     assert (phases / "codegen-0-preflight.md").exists()
     assert (phases / "appendices" / "build-8-verify-gates.md").exists()
+    assert not (phases / "appendices" / "phase1-what-reference.md").exists()
     assert not (phases / "phase1-what.md").exists()
     assert not (phases / "phase3-plan.md").exists()
     assert not (phases / "phase4-document.md").exists()
