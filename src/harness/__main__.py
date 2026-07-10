@@ -786,6 +786,16 @@ def _stamp_verify_spec_state(verify_run_dir: "Path", updates: dict[str, object])
     _stamp_existing_json_state_file(state_path, updates)
 
 
+def _require_verify_spec_state(verify_run_dir: "Path") -> None:
+    state_path = verify_run_dir / "state.json"
+    if not state_path.is_file():
+        print(
+            f"state.json missing for verify-spec run: {state_path}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def _stamp_existing_json_state_file(state_path: "Path", updates: dict[str, object]) -> None:
     if not state_path.is_file():
         print(
@@ -887,23 +897,23 @@ def _write_codegraph_evidence_map() -> None:
     out_json_path = Path(sys.argv[5])
     out_md_path = Path(sys.argv[6])
     verify_run_dir = out_json_path.parent
-    if not analysis_path.is_file() and _verify_spec_state_value(
-        verify_run_dir, "structural_evidence"
-    ) == "degraded":
-        _write_skipped_codegraph_evidence_map(
-            out_json_path=out_json_path,
-            out_md_path=out_md_path,
-            analysis_path=analysis_path,
-        )
-        _stamp_verify_spec_state(
-            verify_run_dir,
-            {"codegraph_evidence_map": "skipped_degraded_codegraph"},
-        )
-        print(
-            "OK: skipped degraded CodeGraph evidence map "
-            f"({out_json_path} and {out_md_path})"
-        )
-        return
+    if not analysis_path.is_file():
+        _require_verify_spec_state(verify_run_dir)
+        if _verify_spec_state_value(verify_run_dir, "structural_evidence") == "degraded":
+            _write_skipped_codegraph_evidence_map(
+                out_json_path=out_json_path,
+                out_md_path=out_md_path,
+                analysis_path=analysis_path,
+            )
+            _stamp_verify_spec_state(
+                verify_run_dir,
+                {"codegraph_evidence_map": "skipped_degraded_codegraph"},
+            )
+            print(
+                "OK: skipped degraded CodeGraph evidence map "
+                f"({out_json_path} and {out_md_path})"
+            )
+            return
 
     _require_inputs(
         [

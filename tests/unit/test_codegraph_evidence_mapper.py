@@ -452,6 +452,7 @@ def test_write_codegraph_evidence_map_cli(tmp_path: Path):
     )
     out_json = tmp_path / "codegraph-evidence-map.json"
     out_md = tmp_path / "codegraph-evidence-map.md"
+    (tmp_path / "state.json").write_text("{}\n", encoding="utf-8")
 
     completed = subprocess.run(
         [
@@ -573,3 +574,32 @@ def test_write_codegraph_evidence_map_cli_skips_when_codegraph_degraded(
     assert "CodeGraph evidence was degraded" in out_md.read_text(encoding="utf-8")
     state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     assert state["codegraph_evidence_map"] == "skipped_degraded_codegraph"
+
+
+def test_write_codegraph_evidence_map_cli_requires_state_when_analysis_absent(
+    tmp_path: Path,
+):
+    audit = tmp_path / "requirement-audit.md"
+    audit.write_text(
+        "| ID | Category | Source | Requirement | Acceptance Signal |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| FR-001 | functional | spec.md:1 | Build one thing | Observe one thing |\n",
+        encoding="utf-8",
+    )
+    tasks = tmp_path / "tasks.md"
+    tasks.write_text("- [ ] T-001 req=FR-001\n", encoding="utf-8")
+
+    completed = _run_harness(
+        [
+            "write-codegraph-evidence-map",
+            str(audit),
+            str(tmp_path / "codegraph-analysis.json"),
+            str(tasks),
+            str(tmp_path / "codegraph-evidence-map.json"),
+            str(tmp_path / "codegraph-evidence-map.md"),
+        ]
+    )
+
+    assert completed.returncode == 1
+    assert "state.json missing for verify-spec run:" in completed.stderr
+    assert "Traceback" not in completed.stderr

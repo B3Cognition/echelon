@@ -140,7 +140,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   the exact prepass fallback ID set, duplicate fallback rows, and missing
   expected fallback rows. Verify-spec fallback/report writers now create output
   parent directories before writing, avoiding raw `FileNotFoundError` crashes
-  when run artifacts target a not-yet-created subdirectory.
+  when run artifacts target a not-yet-created subdirectory. CodeGraph evidence
+  mapping now also requires the init-owned verify-spec `state.json` before
+  treating an absent `codegraph-analysis.json` as a degraded-CodeGraph skip.
 - **EGR-115 / #140 Ralph-owned delivery state** — build prompts no longer expose
   Ralph's mutable `state/default.json` path. Agents receive bounded progress
   facts in the prompt and must report progress through the build status marker,
