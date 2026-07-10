@@ -203,8 +203,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   harness-source discovery.
 - **EGR-118 / #144 source-root transcript containment** — Ralph now treats
   forbidden sibling source roots found in tool output blocks as containment
-  violations, not only paths shown on the same `Read`/`Bash` invocation line.
-  Prompt echoes of `forbidden_source_roots` remain ignored.
+  violations, not only paths shown on the same `Read`/`Bash` invocation line,
+  and detects workspace-relative sibling source paths such as
+  `sources/spec-kit-skills-agents/package.json`. Prompt echoes of
+  `forbidden_source_roots` remain ignored.
 - **EGR-119 / #143 verify-spec run initialization** — added
   `python -m harness init-verify-spec-run` to create the verify-spec runtime
   directory and stamp `state.json` from Python-owned logic. The

@@ -3147,7 +3147,11 @@ class RalphController:
         )
         if not text.strip():
             return None
-        match = _find_forbidden_root_in_tool_transcript(text, forbidden_roots)
+        match = _find_forbidden_source_root_in_tool_transcript(
+            text,
+            forbidden_roots,
+            workspace_root=str(state.get("workspace_root") or ""),
+        )
         if match is not None:
             root, line = match
             return {
@@ -4597,6 +4601,35 @@ def _find_forbidden_root_in_tool_transcript(
     for line in _iter_tool_transcript_lines(text):
         for root in roots:
             if root in line:
+                return root, line
+    return None
+
+
+def _find_forbidden_source_root_in_tool_transcript(
+    text: str,
+    forbidden_roots: Iterable[str],
+    *,
+    workspace_root: str,
+) -> tuple[str, str] | None:
+    aliases_by_root: list[tuple[str, list[str]]] = []
+    workspace = Path(workspace_root).expanduser() if workspace_root else None
+    for root in forbidden_roots:
+        if not root:
+            continue
+        aliases = [root]
+        if workspace is not None:
+            try:
+                relative = Path(root).expanduser().relative_to(workspace)
+            except ValueError:
+                relative = None
+            if relative is not None and str(relative):
+                aliases.append(str(relative))
+        aliases_by_root.append((root, aliases))
+    if not aliases_by_root:
+        return None
+    for line in _iter_tool_transcript_lines(text):
+        for root, aliases in aliases_by_root:
+            if any(alias in line for alias in aliases):
                 return root, line
     return None
 
