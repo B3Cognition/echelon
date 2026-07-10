@@ -4561,6 +4561,8 @@ _HOST_HARNESS_SOURCE_MARKERS = (
     "/src/kernel/fulfillment.py",
 )
 
+_HOST_HARNESS_SOURCE_PATH_RE = re.compile(r"\bsrc/harness/[\w.-]+\.py\b")
+
 
 def _looks_like_tool_access_line(line: str) -> bool:
     return bool(_TOOL_ACCESS_LINE_RE.search(line))
@@ -4643,6 +4645,12 @@ def _forbidden_harness_source_marker(line: str, worktree: Path) -> str | None:
     worktree_text = str(resolved_worktree)
     if worktree_text and worktree_text in line:
         return None
+    harness_path_match = _HOST_HARNESS_SOURCE_PATH_RE.search(line)
+    if harness_path_match:
+        relative_marker = harness_path_match.group(0)
+        if (resolved_worktree / relative_marker).exists():
+            return None
+        return f"host Echelon source outside worktree (/{relative_marker})"
     for marker in _HOST_HARNESS_SOURCE_MARKERS:
         relative_marker = marker.lstrip("/")
         if marker in line or relative_marker in line:
