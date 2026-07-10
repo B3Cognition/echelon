@@ -187,7 +187,16 @@ def assemble_fulfillment_report(
         for row in prepass_rows
         if row.mechanical and row.report_row and row.id in canonical_ids
     }
-    fallback_rows = _fallback_report_rows(fallback_report_path, allowed_ids=set(canonical_ids))
+    expected_fallback_ids = {
+        row.id for row in prepass_rows if not row.mechanical and row.id in canonical_ids
+    }
+    fallback_rows = (
+        _fallback_report_rows(
+            fallback_report_path, expected_ids=expected_fallback_ids
+        )
+        if expected_fallback_ids
+        else {}
+    )
     task_progress_row = None if scoped_ids is not None else _task_progress_row(fallback_report_path)
     report = assemble_full_report(
         canonical_ids=canonical_ids,
@@ -344,7 +353,7 @@ def _implementation_rows(path: Path) -> list[_ImplementationRow]:
     return rows
 
 
-def _fallback_report_rows(path: Path, *, allowed_ids: set[str]) -> dict[str, str]:
+def _fallback_report_rows(path: Path, *, expected_ids: set[str]) -> dict[str, str]:
     if not path.exists():
         return {}
     rows: dict[str, str] = {}
@@ -356,17 +365,20 @@ def _fallback_report_rows(path: Path, *, allowed_ids: set[str]) -> dict[str, str
         if not cells or cells[0] in {"ID", "---", "Status"}:
             continue
         item_id = cells[0]
-        if item_id in allowed_ids:
-            if len(cells) >= 3 and (
-                cells[1] == "TODO_STATUS" or cells[2] == "TODO_EVIDENCE"
-            ):
-                raise ValueError(f"unfilled fallback fulfillment row for {item_id}")
-            if len(cells) < 3 or cells[1] not in FULFILLMENT_STATUSES:
-                status = cells[1] if len(cells) > 1 else ""
-                raise ValueError(
-                    f"invalid fallback fulfillment status for {item_id}: {status}"
-                )
-            rows[item_id] = line
+        if item_id == "TASK-PROGRESS":
+            continue
+        if item_id not in expected_ids:
+            raise ValueError(f"unexpected fallback fulfillment row for {item_id}")
+        if len(cells) >= 3 and (
+            cells[1] == "TODO_STATUS" or cells[2] == "TODO_EVIDENCE"
+        ):
+            raise ValueError(f"unfilled fallback fulfillment row for {item_id}")
+        if len(cells) < 3 or cells[1] not in FULFILLMENT_STATUSES:
+            status = cells[1] if len(cells) > 1 else ""
+            raise ValueError(
+                f"invalid fallback fulfillment status for {item_id}: {status}"
+            )
+        rows[item_id] = line
     return rows
 
 

@@ -368,6 +368,68 @@ def test_assemble_fulfillment_report_rejects_invalid_fallback_status(
         raise AssertionError("expected invalid fallback status to fail")
 
 
+def test_assemble_fulfillment_report_rejects_unexpected_fallback_row(
+    tmp_path: Path,
+):
+    canonical = tmp_path / "canonical-requirements.json"
+    canonical.write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}, {"id": "FR-002"}]}),
+        encoding="utf-8",
+    )
+    prepass = tmp_path / "judgment-prepass.json"
+    prepass.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "id": "FR-001",
+                        "mechanical": True,
+                        "proposed_status": "IMPLEMENTED",
+                        "reason_code": "source_and_test_strong",
+                        "fallback_reason": None,
+                        "report_row": "| FR-001 | IMPLEMENTED | prepass:source_and_test_strong |",
+                    },
+                    {
+                        "id": "FR-002",
+                        "mechanical": False,
+                        "proposed_status": None,
+                        "reason_code": None,
+                        "fallback_reason": "needs_judgment",
+                        "report_row": None,
+                    },
+                ],
+                "summary": {
+                    "mechanical_count": 1,
+                    "fallback_count": 1,
+                    "fallback_ids": ["FR-002"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    fallback = tmp_path / "fulfillment-report.fallback.md"
+    fallback.write_text(
+        "# Fallback Fulfillment Judgment\n\n"
+        "| ID | Status | Evidence |\n"
+        "| --- | --- | --- |\n"
+        "| FR-001 | IMPLEMENTED | duplicate mechanical row |\n"
+        "| FR-002 | PARTIAL | evidence |\n",
+        encoding="utf-8",
+    )
+
+    try:
+        assemble_fulfillment_report(
+            canonical_inventory_path=canonical,
+            judgment_prepass_path=prepass,
+            fallback_report_path=fallback,
+            output_report_path=tmp_path / "fulfillment-report.md",
+        )
+    except ValueError as exc:
+        assert "unexpected fallback fulfillment row for FR-001" in str(exc)
+    else:
+        raise AssertionError("expected unexpected fallback row to fail")
+
+
 def test_write_fallback_fulfillment_template_limits_rows_to_scoped_fallback_ids(
     tmp_path: Path,
 ):
