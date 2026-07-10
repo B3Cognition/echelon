@@ -150,6 +150,17 @@ def test_verify_spec_stage4_states_parser_conformant_map_schema() -> None:
         assert "moderate" not in text
 
 
+def test_verify_spec_stage4_forbids_broad_source_exploration() -> None:
+    phase_text = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
+    lowered = phase_text.lower()
+
+    assert "broad llm/source exploration" not in lowered
+    assert "broad source" not in lowered
+    assert "summary.fallback_requirement_ids" in phase_text
+    assert "bounded fallback queue" in lowered
+    assert "do not inspect outside that queue" in lowered
+
+
 def test_verify_spec_stage5_references_judgment_prepass() -> None:
     text = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")
 

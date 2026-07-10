@@ -59,12 +59,11 @@ Preserve deterministic rows only together with their `evidence_kind`,
 `evidence_kind=assertion_only` is not full implementation evidence for runtime
 threshold requirements even when source and tests exist; keep it in the fallback
 queue for SPEC-GUARD review. Preserve `high` and `medium` deterministic rows
-unless direct source inspection contradicts them. Only perform broad LLM/source
-exploration for rows with `confidence` of `low`, `none`, or `ambiguous`, plus
-any row whose deterministic evidence is contradicted by source inspection. Treat
-`summary.fallback_requirement_ids` as the bounded fallback queue; do not inspect
-outside that queue except to validate a cited high/medium row that appears
-contradictory.
+unless the cited source/test evidence is directly contradictory. Treat
+`summary.fallback_requirement_ids` as the bounded fallback queue for manual
+inspection. Inspect source/tests only for IDs in that queue, plus the cited
+files/symbols/tests of a `high` or `medium` deterministic row that appears
+contradictory. Do not inspect outside that queue or cited evidence set.
 
 Distinguish source evidence from executable test evidence and measured
 CI/runtime artifacts. Do not rewrite assertion-gate functions or synthetic

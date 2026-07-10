@@ -84,7 +84,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   prepass, fallback, or assembled fulfillment artifacts, and fulfillment artifact
   row-set validation checks state before importing or validating report inputs.
   CodeGraph evidence-map generation now applies the same state-before-write rule
-  on both normal and degraded paths.
+  on both normal and degraded paths. Stage 4 mapping instructions now forbid
+  broad source exploration and bound manual inspection to
+  `summary.fallback_requirement_ids` plus cited contradictory high/medium
+  evidence.
 - **EGR-118 / #144 containment policy** — `delivery-containment-policy.json`
   now records workspace-relative forbidden source-root aliases alongside
   absolute sibling roots, sharing the same alias logic used by Ralph's transcript
