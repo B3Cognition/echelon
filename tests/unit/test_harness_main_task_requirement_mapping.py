@@ -126,3 +126,35 @@ def test_write_task_requirement_mapping_candidates_cli_maps_explicit_ids(
             "reason": "task has req=UNMAPPED and no explicit requirement IDs in task text",
         }
     ]
+
+
+def test_write_task_requirement_mapping_candidates_cli_stamps_state(
+    tmp_path: Path,
+) -> None:
+    tasks_path = tmp_path / "tasks.md"
+    out_path = tmp_path / "task-requirement-map.candidates.json"
+    state_path = tmp_path / "state.json"
+    state_path.write_text("{}", encoding="utf-8")
+    tasks_path.write_text(
+        "# Tasks\n\n"
+        "- [ ] T-001 complexity=standard phase=engine req=UNMAPPED depends=none\n"
+        "  **Title:** Implement FR-001 course formula\n\n"
+        "- [ ] T-002 complexity=standard phase=engine req=UNMAPPED depends=none\n"
+        "  **Title:** Build grid behavior\n",
+        encoding="utf-8",
+    )
+
+    result = _run(
+        [
+            "write-task-requirement-mapping-candidates",
+            str(tasks_path),
+            str(out_path),
+            str(state_path),
+        ]
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["task_requirement_mapping_candidates"] == "ready"
+    assert state["task_requirement_mapping_safe_count"] == 1
+    assert state["task_requirement_mapping_ambiguous_count"] == 1

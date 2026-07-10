@@ -53,6 +53,21 @@ def test_reconcile_phase_requires_harness_apply_command() -> None:
     assert "progress-reconciliation-applied.md" in text
 
 
+def test_reconcile_phase_candidate_commands_stamp_state() -> None:
+    text = VERIFY_RECONCILE.read_text(encoding="utf-8")
+
+    assert (
+        '  "{verify_run_dir}/task-requirement-map.candidates.json" \\\n'
+        '  "{verify_run_dir}/state.json"'
+    ) in text
+    assert "task_requirement_mapping_candidates: ready" in text
+    assert (
+        '  "{verify_run_dir}/progress-reconciliation-candidates.json" \\\n'
+        '  "{verify_run_dir}/state.json"'
+    ) in text
+    assert "progress_reconciliation_candidates: ready" in text
+
+
 def test_reconcile_phase_maps_unmapped_task_requirements_before_done_updates() -> None:
     text = VERIFY_RECONCILE.read_text(encoding="utf-8")
 

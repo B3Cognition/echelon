@@ -583,10 +583,10 @@ def _apply_progress_reconciliation() -> None:
 
 
 def _write_progress_reconciliation_candidates() -> None:
-    if len(sys.argv) != 6:
+    if len(sys.argv) not in {6, 7}:
         print(
             "Usage: python -m harness write-progress-reconciliation-candidates "
-            "<tasks.md> <fulfillment-report.md> <fulfillment-gaps.md> <out.json>",
+            "<tasks.md> <fulfillment-report.md> <fulfillment-gaps.md> <out.json> [state.json]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -601,6 +601,17 @@ def _write_progress_reconciliation_candidates() -> None:
         fulfillment_gaps_path=Path(sys.argv[4]),
         out_path=Path(sys.argv[5]),
     )
+    if len(sys.argv) == 7:
+        _stamp_json_state_file(
+            Path(sys.argv[6]),
+            {
+                "progress_reconciliation_candidates": "ready",
+                "progress_reconciliation_safe_count": len(payload["safe_task_updates"]),
+                "progress_reconciliation_ambiguous_count": len(
+                    payload["ambiguous_task_matches"]
+                ),
+            },
+        )
     print(
         "OK: wrote progress reconciliation candidates "
         f"({len(payload['safe_task_updates'])} safe, "
@@ -648,10 +659,10 @@ def _apply_task_requirement_mapping() -> None:
 
 
 def _write_task_requirement_mapping_candidates() -> None:
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in {4, 5}:
         print(
             "Usage: python -m harness write-task-requirement-mapping-candidates "
-            "<tasks.md> <out.json>",
+            "<tasks.md> <out.json> [state.json]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -666,6 +677,19 @@ def _write_task_requirement_mapping_candidates() -> None:
         tasks_path=Path(sys.argv[2]),
         out_path=Path(sys.argv[3]),
     )
+    if len(sys.argv) == 5:
+        _stamp_json_state_file(
+            Path(sys.argv[4]),
+            {
+                "task_requirement_mapping_candidates": "ready",
+                "task_requirement_mapping_safe_count": len(
+                    payload["task_requirement_mappings"]
+                ),
+                "task_requirement_mapping_ambiguous_count": len(
+                    payload["ambiguous_task_requirement_mappings"]
+                ),
+            },
+        )
     print(
         "OK: wrote task requirement mapping candidates "
         f"({len(payload['task_requirement_mappings'])} safe, "

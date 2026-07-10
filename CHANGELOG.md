@@ -201,7 +201,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   final fulfillment report readiness and the report path after successful
   assembly. `validate-fulfillment-artifacts` now accepts the verify-spec
   `state.json` path and stamps row-set validation counts on success or the
-  missing/extra row IDs on failure.
+  missing/extra row IDs on failure. Stage 6 reconciliation candidate commands
+  now also accept the verify-spec `state.json` path and stamp safe/ambiguous
+  mapping and progress candidate counts.
 - **EGR-117 / #141 runtime surface reduction** — delivery runtime sync now
   omits reverse-engineering shell helpers under
   `.specify/extensions/echelon/scripts/bash/re` from target worktrees and

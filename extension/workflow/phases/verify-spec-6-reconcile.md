@@ -56,14 +56,17 @@ harness command:
 ```bash
 python -m harness write-task-requirement-mapping-candidates \
   "{spec_dir}/tasks.md" \
-  "{verify_run_dir}/task-requirement-map.candidates.json"
+  "{verify_run_dir}/task-requirement-map.candidates.json" \
+  "{verify_run_dir}/state.json"
 ```
 
 The command only includes mappings in `task_requirement_mappings` when an
 unmapped task's own text explicitly names canonical requirement IDs such as
 `FR-001`, `NFR-004`, or `EDGE-009`. Tasks without explicit requirement IDs
 remain in `ambiguous_task_requirement_mappings`. Do not hand-write
-`task-requirement-map.candidates.json`.
+`task-requirement-map.candidates.json`. The command stamps
+`task_requirement_mapping_candidates: ready` and safe/ambiguous mapping counts
+in `{verify_run_dir}/state.json`.
 
 Run task requirement mapping before progress reconciliation:
 
@@ -93,7 +96,8 @@ python -m harness write-progress-reconciliation-candidates \
   "{spec_dir}/tasks.md" \
   "{spec_dir}/fulfillment-report.md" \
   "{spec_dir}/fulfillment-gaps.md" \
-  "{verify_run_dir}/progress-reconciliation-candidates.json"
+  "{verify_run_dir}/progress-reconciliation-candidates.json" \
+  "{verify_run_dir}/state.json"
 ```
 
 The command includes a task in `safe_task_updates` only when the task is pending,
@@ -101,7 +105,9 @@ has mapped requirement metadata, and every mapped requirement is `IMPLEMENTED`
 in `fulfillment-report.md`. Tasks with `req=UNMAPPED`, partial/deviated/missing/
 unverified/unknown fulfillment status, or insufficient evidence are emitted as
 `ambiguous_task_matches`. Do not hand-write
-`progress-reconciliation-candidates.json`.
+`progress-reconciliation-candidates.json`. The command stamps
+`progress_reconciliation_candidates: ready` and safe/ambiguous task counts in
+`{verify_run_dir}/state.json`.
 
 ## Deterministic Apply
 

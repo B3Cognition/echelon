@@ -140,3 +140,46 @@ def test_write_progress_reconciliation_candidates_cli_uses_fulfillment_statuses(
     }
     assert ambiguous_ids == {"T-002", "T-003"}
     assert payload["fulfillment_gap_tasks"]["details"] == str(gaps_path)
+
+
+def test_write_progress_reconciliation_candidates_cli_stamps_state(
+    tmp_path: Path,
+) -> None:
+    tasks_path = tmp_path / "tasks.md"
+    tasks_path.write_text(
+        "# Tasks\n\n"
+        "- [ ] T-001 complexity=standard phase=engine req=FR-001 depends=none\n"
+        "- [ ] T-002 complexity=standard phase=engine req=FR-002 depends=none\n",
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "fulfillment-report.md"
+    report_path.write_text(
+        "# Fulfillment Report\n\n"
+        "| ID | Status | Evidence |\n"
+        "| --- | --- | --- |\n"
+        "| FR-001 | IMPLEMENTED | source and tests |\n"
+        "| FR-002 | PARTIAL | needs more work |\n",
+        encoding="utf-8",
+    )
+    gaps_path = tmp_path / "fulfillment-gaps.md"
+    gaps_path.write_text("# Gaps\n", encoding="utf-8")
+    out_path = tmp_path / "progress-reconciliation-candidates.json"
+    state_path = tmp_path / "state.json"
+    state_path.write_text("{}", encoding="utf-8")
+
+    result = _run(
+        [
+            "write-progress-reconciliation-candidates",
+            str(tasks_path),
+            str(report_path),
+            str(gaps_path),
+            str(out_path),
+            str(state_path),
+        ]
+    )
+
+    assert result.returncode == 0, result.stderr
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["progress_reconciliation_candidates"] == "ready"
+    assert state["progress_reconciliation_safe_count"] == 1
+    assert state["progress_reconciliation_ambiguous_count"] == 1
