@@ -115,7 +115,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Assembly now rejects fallback rows that still contain `TODO_STATUS` or
   `TODO_EVIDENCE`, and rejects fallback statuses outside the canonical
   fulfillment status set. Fallback report assembly now also rejects rows outside
-  the exact prepass fallback ID set and duplicate fallback rows.
+  the exact prepass fallback ID set, duplicate fallback rows, and missing
+  expected fallback rows.
 - **EGR-115 / #140 Ralph-owned delivery state** — build prompts no longer expose
   Ralph's mutable `state/default.json` path. Agents receive bounded progress
   facts in the prompt and must report progress through the build status marker,
