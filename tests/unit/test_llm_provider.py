@@ -214,6 +214,27 @@ class TestAICodingCliProvider:
         assert str(forbidden) in result.stderr
         run_prompt.assert_not_called()
 
+    def test_exec_prompt_blocks_malformed_containment_roots(self, tmp_path):
+        provider = AICodingCliProvider(_config())
+
+        with patch.object(
+            provider._backend,
+            "run_prompt",
+            return_value=CliRunResult(exit_code=0, stdout="", stderr=""),
+        ) as run_prompt:
+            result = provider.run_prompt_result(
+                str(tmp_path),
+                "build this",
+                extra_env={
+                    "ECHELON_ALLOWED_ROOTS_JSON": "[not-json",
+                },
+            )
+
+        assert result.exit_code != 0
+        assert result.metadata["containment_violation"] is True
+        assert "malformed containment root metadata" in result.stderr
+        run_prompt.assert_not_called()
+
     def test_provider_debug_env_prints_effective_backend(self, monkeypatch, capsys):
         monkeypatch.setenv("ECHELON_DEBUG_LLM", "1")
 

@@ -166,24 +166,47 @@ def _request_metadata(extra_env: Mapping[str, str] | None) -> dict[str, object]:
 def _containment_metadata(extra_env: Mapping[str, str] | None) -> dict[str, object]:
     if not extra_env:
         return {}
+    errors: list[str] = []
     containment = {
-        "allowed_roots": _json_string_list(extra_env.get("ECHELON_ALLOWED_ROOTS_JSON")),
-        "forbidden_roots": _json_string_list(extra_env.get("ECHELON_FORBIDDEN_ROOTS_JSON")),
+        "allowed_roots": _json_string_list(
+            extra_env.get("ECHELON_ALLOWED_ROOTS_JSON"),
+            key="ECHELON_ALLOWED_ROOTS_JSON",
+            errors=errors,
+        ),
+        "forbidden_roots": _json_string_list(
+            extra_env.get("ECHELON_FORBIDDEN_ROOTS_JSON"),
+            key="ECHELON_FORBIDDEN_ROOTS_JSON",
+            errors=errors,
+        ),
         "forbidden_root_aliases": _json_string_list(
-            extra_env.get("ECHELON_FORBIDDEN_ROOT_ALIASES_JSON")
+            extra_env.get("ECHELON_FORBIDDEN_ROOT_ALIASES_JSON"),
+            key="ECHELON_FORBIDDEN_ROOT_ALIASES_JSON",
+            errors=errors,
         ),
     }
-    return {key: value for key, value in containment.items() if value}
+    cleaned: dict[str, object] = {
+        key: value for key, value in containment.items() if value
+    }
+    if errors:
+        cleaned["parse_errors"] = errors
+    return cleaned
 
 
-def _json_string_list(raw: object) -> list[str]:
+def _json_string_list(
+    raw: object,
+    *,
+    key: str,
+    errors: list[str],
+) -> list[str]:
     if not isinstance(raw, str) or not raw.strip():
         return []
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
+        errors.append(key)
         return []
     if not isinstance(parsed, list):
+        errors.append(key)
         return []
     return [str(item) for item in parsed if str(item).strip()]
 
@@ -195,6 +218,15 @@ def _containment_cwd_violation(
     containment = metadata.get("containment")
     if not isinstance(containment, Mapping):
         return None
+    parse_errors = _metadata_string_list(containment.get("parse_errors"))
+    if parse_errors:
+        return _containment_violation_result(
+            cwd=_resolved_path(cwd),
+            reason=(
+                "malformed containment root metadata: "
+                + ", ".join(sorted(parse_errors))
+            ),
+        )
     cwd_path = _resolved_path(cwd)
     allowed_roots = [
         _resolved_path(path)
