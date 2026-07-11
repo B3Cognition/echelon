@@ -1,6 +1,7 @@
 """AICodingCliProvider facade for host-side AI coding CLI backends."""
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
@@ -95,6 +96,7 @@ class AICodingCliProvider:
                 prompt=prompt,
                 env=self._build_env(extra_env),
                 timeout_s=timeout_s,
+                metadata=_request_metadata(extra_env),
             )
         )
         self._record_result(result)
@@ -118,6 +120,7 @@ class AICodingCliProvider:
                 prompt=prompt,
                 env=self._build_env(extra_env),
                 timeout_s=timeout_s,
+                metadata=_request_metadata(extra_env),
             )
         )
         self._record_result(result)
@@ -140,3 +143,35 @@ class AICodingCliProvider:
 def _debug_llm_enabled() -> bool:
     value = os.environ.get("ECHELON_DEBUG_LLM", "").strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+def _request_metadata(extra_env: Mapping[str, str] | None) -> dict[str, object]:
+    containment = _containment_metadata(extra_env)
+    if not containment:
+        return {}
+    return {"containment": containment}
+
+
+def _containment_metadata(extra_env: Mapping[str, str] | None) -> dict[str, object]:
+    if not extra_env:
+        return {}
+    containment = {
+        "allowed_roots": _json_string_list(extra_env.get("ECHELON_ALLOWED_ROOTS_JSON")),
+        "forbidden_roots": _json_string_list(extra_env.get("ECHELON_FORBIDDEN_ROOTS_JSON")),
+        "forbidden_root_aliases": _json_string_list(
+            extra_env.get("ECHELON_FORBIDDEN_ROOT_ALIASES_JSON")
+        ),
+    }
+    return {key: value for key, value in containment.items() if value}
+
+
+def _json_string_list(raw: object) -> list[str]:
+    if not isinstance(raw, str) or not raw.strip():
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item) for item in parsed if str(item).strip()]

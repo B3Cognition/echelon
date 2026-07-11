@@ -164,6 +164,31 @@ class TestAICodingCliProvider:
 
         assert result == -1
 
+    def test_exec_prompt_puts_containment_roots_in_backend_metadata(self, tmp_path):
+        provider = AICodingCliProvider(_config())
+
+        with patch.object(
+            provider._backend,
+            "run_prompt",
+            return_value=CliRunResult(exit_code=0, stdout="", stderr=""),
+        ) as run_prompt:
+            provider.exec_prompt(
+                str(tmp_path),
+                "build this",
+                extra_env={
+                    "ECHELON_ALLOWED_ROOTS_JSON": '["/workspace/sources/prosaic"]',
+                    "ECHELON_FORBIDDEN_ROOTS_JSON": '["/workspace/sources/ruler"]',
+                    "ECHELON_FORBIDDEN_ROOT_ALIASES_JSON": '["sources/ruler"]',
+                },
+            )
+
+        request = run_prompt.call_args.args[0]
+        assert request.metadata["containment"] == {
+            "allowed_roots": ["/workspace/sources/prosaic"],
+            "forbidden_roots": ["/workspace/sources/ruler"],
+            "forbidden_root_aliases": ["sources/ruler"],
+        }
+
     def test_provider_debug_env_prints_effective_backend(self, monkeypatch, capsys):
         monkeypatch.setenv("ECHELON_DEBUG_LLM", "1")
 

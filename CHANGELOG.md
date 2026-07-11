@@ -129,7 +129,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `ECHELON_ALLOWED_ROOTS_JSON`, `ECHELON_FORBIDDEN_ROOTS_JSON`, and
   `ECHELON_FORBIDDEN_ROOT_ALIASES_JSON` environment variables, so provider
   backends can consume deterministic root boundaries without parsing Echelon
-  internals.
+  internals. The same normalized containment roots are now attached to
+  `CliRunRequest.metadata["containment"]`, giving provider implementations a
+  typed API surface for enforcement instead of requiring env parsing.
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
   source roots, resolves workspace-relative context roots, exposes them as

@@ -14,6 +14,7 @@ class CliRunRequest:
     prompt: str
     env: Mapping[str, str]
     timeout_s: float
+    metadata: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
