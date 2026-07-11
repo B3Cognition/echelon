@@ -104,7 +104,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   code-execution commands such as `python`, `node`, `deno`, `ruby`, and `perl`.
   File-inspection commands such as `awk`, `nl`, `wc`, `file`, and `stat` are
   now included as well. File-transfer commands such as `cp`, `mv`, `rsync`, and
-  `ditto` are now included too.
+  `ditto` are now included too. Archive/export commands such as `tar`, `zip`,
+  `unzip`, `gzip`, and `gunzip` are now included as well.
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
   source roots, resolves workspace-relative context roots, exposes them as
