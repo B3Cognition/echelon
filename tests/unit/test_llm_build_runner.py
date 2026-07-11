@@ -57,7 +57,10 @@ class TestLlmBuildRunner:
     def test_exec_build_exposes_containment_policy_file_when_provided(self, tmp_path):
         executor = _executor(status={"status": "done"})
         policy_file = tmp_path / "delivery-containment-policy.json"
-        policy_file.write_text("{}", encoding="utf-8")
+        policy_file.write_text(
+            json.dumps({"allowed_roots": {"implementation": [str(tmp_path)]}}),
+            encoding="utf-8",
+        )
 
         LlmBuildRunner(executor).exec_build(
             str(tmp_path),
@@ -140,6 +143,22 @@ class TestLlmBuildRunner:
         assert "missing containment policy" in (result.reason or "")
         executor.exec_prompt.assert_not_called()
 
+    def test_exec_build_blocks_empty_containment_policy(self, tmp_path):
+        executor = _executor(status={"status": "done"})
+        policy_file = tmp_path / "delivery-containment-policy.json"
+        policy_file.write_text("{}", encoding="utf-8")
+
+        result = LlmBuildRunner(executor).exec_build(
+            str(tmp_path),
+            "build this",
+            containment_policy_file=str(policy_file),
+        )
+
+        assert result.status == "error"
+        assert result.exit_code == 125
+        assert "empty containment policy" in (result.reason or "")
+        executor.exec_prompt.assert_not_called()
+
     def test_exec_build_returns_impasse_from_status_file(self, tmp_path):
         executor = _executor(
             status={"status": "impasse", "impasse_file": "codegen-impasse.md"}
@@ -199,7 +218,10 @@ class TestLlmBuildRunner:
     def test_exec_feedback_exposes_containment_policy_file_when_provided(self, tmp_path):
         executor = _executor(status={"status": "done"})
         policy_file = tmp_path / "delivery-containment-policy.json"
-        policy_file.write_text("{}", encoding="utf-8")
+        policy_file.write_text(
+            json.dumps({"allowed_roots": {"implementation": [str(tmp_path)]}}),
+            encoding="utf-8",
+        )
 
         LlmBuildRunner(executor).exec_feedback(
             str(tmp_path),

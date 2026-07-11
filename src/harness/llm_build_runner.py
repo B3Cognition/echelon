@@ -131,6 +131,8 @@ def _containment_policy_env(policy_file: str) -> tuple[dict[str, str], str | Non
 
     forbidden_roots = _string_list(data.get("forbidden_source_roots"))
     forbidden_aliases = _string_list(data.get("forbidden_source_root_aliases"))
+    if not allowed_roots and not forbidden_roots:
+        return {}, "empty containment policy"
 
     return (
         {

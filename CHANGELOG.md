@@ -139,7 +139,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `delivery-containment-policy.json` files now also stop build/feedback runner
   execution before any LLM provider is launched. Missing explicit containment
   policy files now fail closed as well instead of starting the LLM without the
-  promised provider boundary.
+  promised provider boundary. Empty containment policies that produce no
+  allowed or forbidden roots now fail closed too.
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
   source roots, resolves workspace-relative context roots, exposes them as
