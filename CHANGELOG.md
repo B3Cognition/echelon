@@ -118,6 +118,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `sh`, `zsh`, `dash`, `ksh`, `fish`, `env`, and `xargs` are now included too.
   Path/directory inspection commands such as `fd`, `locate`, `tree`, `du`,
   `readlink`, `realpath`, `dirname`, and `basename` are now included as well.
+  Test/build runner commands such as `pytest`, `tox`, `nox`, `coverage`,
+  `ruff`, `mypy`, `eslint`, `tsc`, `npm`, `pnpm`, `yarn`, `bun`, `make`,
+  `just`, `task`, `go`, `cargo`, `swift`, `xcodebuild`, `gradle`, and `mvn`
+  are now included too.
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
   source roots, resolves workspace-relative context roots, exposes them as

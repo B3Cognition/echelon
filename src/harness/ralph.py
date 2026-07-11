@@ -4623,7 +4623,7 @@ _TOOL_ACCESS_LINE_RE = re.compile(
     r"(?:"
     r"▷\s*(?:Read|NotebookRead|NotebookEdit|NotebookWrite|Write|Edit|MultiEdit|BashOutput|Bash|Shell|Command|Run|Python|Node|JS|JavaScript|Grep|Glob|Find|Search|List|LS|Open|View|Show|Display|Print|Dump|Inspect|Agent|Task|Subagent)|"
     r"\b(?:Read|NotebookRead|NotebookEdit|NotebookWrite|Write|Edit|MultiEdit|BashOutput|Bash|Shell|Command|Run|Python|Node|JS|JavaScript|Grep|Glob|Find|Search|List|LS|Open|View|Show|Display|Print|Dump|Inspect|Agent|Task|Subagent):|"
-    r"\b(?:cat|rg|grep|find|fd|locate|tree|ls|sed|head|tail|less|more|awk|nl|wc|file|stat|du|readlink|realpath|dirname|basename|strings|hexdump|xxd|od|cmp|diff|git|gh|curl|wget|http|https|jq|yq|dasel|xmllint|open|vim|vi|nano|emacs|code|tee|touch|mkdir|rm|rmdir|chmod|chown|chgrp|ln|install|truncate|dd|patch|source|bash|sh|zsh|dash|ksh|fish|env|xargs|cp|mv|rsync|ditto|tar|zip|unzip|gzip|gunzip|python|python3|node|deno|ruby|perl)\s+"
+    r"\b(?:cat|rg|grep|find|fd|locate|tree|ls|sed|head|tail|less|more|awk|nl|wc|file|stat|du|readlink|realpath|dirname|basename|strings|hexdump|xxd|od|cmp|diff|git|gh|curl|wget|http|https|jq|yq|dasel|xmllint|open|vim|vi|nano|emacs|code|tee|touch|mkdir|rm|rmdir|chmod|chown|chgrp|ln|install|truncate|dd|patch|source|bash|sh|zsh|dash|ksh|fish|env|xargs|pytest|tox|nox|coverage|unittest|ruff|mypy|eslint|tsc|npm|pnpm|yarn|bun|make|just|task|go|cargo|swift|xcodebuild|gradle|mvn|cp|mv|rsync|ditto|tar|zip|unzip|gzip|gunzip|python|python3|node|deno|ruby|perl)\s+"
     r")",
     re.IGNORECASE,
 )
