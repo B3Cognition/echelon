@@ -127,14 +127,18 @@ def _recent_git_commits(worktree: Path, *, limit: int = 3) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
-def _normalized_path_list(value: object) -> list[str]:
+def _normalized_path_list(value: object, *, base_path: object | None = None) -> list[str]:
     if not isinstance(value, list):
         return []
+    base = Path(str(base_path)).expanduser() if base_path else None
     paths: list[str] = []
     for item in value:
         text = str(item).strip()
         if text:
-            paths.append(text)
+            path = Path(text).expanduser()
+            if base is not None and not path.is_absolute():
+                path = base / path
+            paths.append(str(path))
     return paths
 
 
@@ -2355,7 +2359,10 @@ class RalphController:
         source_root = state.get("source_root") or worktree_path
         source_id = state.get("source_id") or Path(str(source_root)).name
         source_git_role = state.get("source_git_role") or "source"
-        allowed_context_roots = _normalized_path_list(state.get("allowed_context_roots"))
+        allowed_context_roots = _normalized_path_list(
+            state.get("allowed_context_roots"),
+            base_path=workspace_root,
+        )
         forbidden_source_roots = self._forbidden_sibling_source_roots(
             workspace_root=workspace_root,
             source_root=source_root,
@@ -3173,7 +3180,8 @@ class RalphController:
             workspace_root=state.get("workspace_root") or "",
             source_root=state.get("source_root") or "",
             allowed_context_roots=_normalized_path_list(
-                state.get("allowed_context_roots")
+                state.get("allowed_context_roots"),
+                base_path=state.get("workspace_root") or "",
             ),
         )
         if not forbidden_roots:
