@@ -22,6 +22,10 @@ NEVER put logic in spec file names.
 ALWAYS load and extend existing specs when expanding.
 NEVER regenerate existing specs.
 
+### Rule 5 - Full-Depth Contract
+ALWAYS enforce the FULL-depth acceptance gate when configured depth is `logic` or `full`.
+NEVER return `DONE` with architecture-summary-only specs at `logic` or `full` depth.
+
 ## Bash Command Guidelines
 
 ALWAYS use Glob, Read, and Grep tools for ad hoc file exploration; when a Bash tool call is needed, keep it single-line and chain operations with `&&`.
@@ -72,7 +76,22 @@ Depth levels determine how much source code is read:
 
 ### Load Analysis Data
 
-Read `$RE_OUTPUT_DIR/analysis.json` to extract: `metadata`, `structure.file_counts`, `structure.entry_points`, `dependencies`, `git_history.commits`, `git_history.hotspots`, `configs`.
+Read `$RE_OUTPUT_DIR/analysis.json` to understand whether it is a real single-repo
+analysis or an aggregate index. If it has `metadata.materialized: true` or
+`repo_analyses`, treat it as an index only.
+
+For polyrepo runs, read every per-source file referenced by
+`$RE_OUTPUT_DIR/workspace-manifest.json` and `$RE_OUTPUT_DIR/re-source-index.json`:
+- `$RE_OUTPUT_DIR/{source}/analysis.json`
+- `$RE_OUTPUT_DIR/{source}/structure.json`
+- `$RE_OUTPUT_DIR/{source}/dependencies.json`
+- `$RE_OUTPUT_DIR/{source}/git-history.json`
+- `$RE_OUTPUT_DIR/{source}/configs.json`
+
+Use the per-source analysis files to extract: `metadata`, `structure.file_counts`,
+`structure.entry_points`, `dependencies`, `git_history.commits`,
+`git_history.hotspots`, `configs`. Do not use an aggregate root
+`analysis.json` as the only evidence for any domain spec.
 
 ### Load Structural Intelligence (REQUIRED if available)
 
@@ -185,6 +204,22 @@ Context management: process one domain at a time. Read → extract structured da
 Priority files matching `priority_patterns` are always read at the configured depth level.
 
 Respect `max_lines_per_file`; note `[... truncated at {N} lines]` in spec if truncated.
+
+### FULL-depth acceptance gate
+
+Before returning `DONE` at `logic` or `full` depth, verify every generated
+`specs/NNN-re-{domain}/spec.md` contains all required deep sections:
+- `User Scenarios & Testing`
+- `Requirements (Functional)`
+- `Key Entities`
+- `Edge Cases`
+- at least five `Source Evidence` references to concrete source files, with line
+  numbers where the source reader exposed them
+
+If any generated domain spec lacks these sections or has fewer than five concrete
+source references, return `BLOCKED` with `blocked_reason:
+shallow_summary_only_spec` and list the failing spec paths. Do not mark the
+phase `DONE`.
 
 #### Traceability Matrix (`specs/000-re-overview/traceability.md`)
 

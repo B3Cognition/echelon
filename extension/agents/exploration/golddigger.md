@@ -40,6 +40,7 @@ NEVER write temporary extraction config to `.specify/extensions/echelon/local-co
 
 ### Rule 8 - Specified Extraction Completion
 ALWAYS verify that reverse-engineering specs exist before reporting a full canonical RE extraction complete: `specs/000-re-overview/overview.md` and at least one `specs/[0-9][0-9][0-9]-re-*/spec.md`.
+NEVER report `golddigger_status: complete` unless reverse-engineering specs exist.
 NEVER report a canonical extraction as complete unless reverse-engineering specs exist and are included in `golddigger_artifacts`. Run-local cached artifacts may be reported by the harness without publishing canonical RE specs.
 
 ### Rule 9 - Source-Scoped RE Plans
@@ -164,8 +165,12 @@ fi
 Before returning `golddigger_status: complete`, confirm both:
 
 ```bash
-test -f specs/000-re-overview/overview.md
-find specs -path 'specs/[0-9][0-9][0-9]-re-*/spec.md' -type f | head -1 | grep -q .
+RE_SPECS_DIR="$RE_OUTPUT_DIR/specs"
+if [ ! -d "$RE_SPECS_DIR" ]; then
+  RE_SPECS_DIR="specs"  # legacy standalone fallback
+fi
+test -f "$RE_SPECS_DIR/000-re-overview/overview.md"
+find "$RE_SPECS_DIR" -path "$RE_SPECS_DIR/[0-9][0-9][0-9]-re-*/spec.md" -type f | head -1 | grep -q .
 ```
 
 If either check fails, do not call the extraction complete. Return `golddigger_status: partial` if analysis/manifests/codegraph artifacts exist, include `re_overview` and `re_specs` only when the files exist, and add a note that reverse-engineering specs were not produced.

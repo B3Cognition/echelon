@@ -70,6 +70,15 @@ def test_resolve_re_policy_rejects_unknown_policy() -> None:
         raise AssertionError("invalid policy should fail")
 
 
+def test_re_fingerprint_profile_defaults_to_full_depth() -> None:
+    profile = ReFingerprintProfile()
+
+    assert profile.profile == "full"
+    assert profile.depth == "full"
+    assert profile.max_lines_per_file == 5000
+    assert profile.git_history_limit == 2500
+
+
 def test_changed_policy_reuses_cached_sources_and_refreshes_new_source(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
     for source_id in ("original-a", "original-b", "original-c", "prosaic"):

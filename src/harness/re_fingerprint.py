@@ -18,10 +18,10 @@ SourceFingerprintKind = Literal["git", "file-tree"]
 class ReFingerprintProfile:
     """Reverse-engineering profile inputs that affect extracted artifact shape."""
 
-    profile: str = "survey"
-    depth: str = "signatures"
-    max_lines_per_file: int | None = None
-    git_history_limit: int | None = None
+    profile: str = "full"
+    depth: str = "full"
+    max_lines_per_file: int | None = 5000
+    git_history_limit: int | None = 2500
     codegraph_version: str | None = None
 
     def stable_json(self) -> str:

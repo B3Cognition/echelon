@@ -323,6 +323,12 @@ def _render_golddigger_cache_context(state: dict, squad_dir: Path) -> str:
     return "\n".join(chunks)
 
 
+def _re_specs_exist(specs_root: Path) -> bool:
+    overview = specs_root / "000-re-overview" / "overview.md"
+    domain_specs = list(specs_root.glob("[0-9][0-9][0-9]-re-*/spec.md"))
+    return overview.exists() and bool(domain_specs)
+
+
 def _routing_contract(node: "PhaseNode") -> str:
     """Build a compact echelon_result contract from the phase's transition conditions.
 
@@ -759,9 +765,9 @@ class PhaseExecutor(ABC):
         if status != "complete":
             return
 
-        overview = self._project_root / "specs" / "000-re-overview" / "overview.md"
-        domain_specs = list((self._project_root / "specs").glob("[0-9][0-9][0-9]-re-*/spec.md"))
-        if overview.exists() and domain_specs:
+        legacy_specs_root = self._project_root / "specs"
+        run_specs_root = self._squad_dir / "re" / "specs"
+        if _re_specs_exist(legacy_specs_root) or _re_specs_exist(run_specs_root):
             return
 
         if not isinstance(result.echelon_result, dict):
@@ -774,9 +780,15 @@ class PhaseExecutor(ABC):
         if not isinstance(notes, list):
             notes = []
         missing: list[str] = []
-        if not overview.exists():
+        if not (
+            (legacy_specs_root / "000-re-overview" / "overview.md").exists()
+            or (run_specs_root / "000-re-overview" / "overview.md").exists()
+        ):
             missing.append("specs/000-re-overview/overview.md")
-        if not domain_specs:
+        if not (
+            list(legacy_specs_root.glob("[0-9][0-9][0-9]-re-*/spec.md"))
+            or list(run_specs_root.glob("[0-9][0-9][0-9]-re-*/spec.md"))
+        ):
             missing.append("specs/[0-9][0-9][0-9]-re-*/spec.md")
         notes.append(
             "GOLDDIGGER reported complete, but reverse-engineering specs are missing: "

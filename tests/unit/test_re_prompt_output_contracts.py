@@ -62,3 +62,33 @@ class TestRePromptOutputContracts:
 
             assert "specs/004-re-utils/spec.md" not in text
             assert "specs/NNN-re-{domain}/spec.md" in text
+
+    def test_re_specify_phase_passes_polyrepo_full_artifacts(self) -> None:
+        text = RE_EXTRACT_2_SPECIFY.read_text(encoding="utf-8")
+
+        assert "{state.output_dir}/workspace-manifest.json" in text
+        assert "{state.output_dir}/re-source-index.json" in text
+        assert "{state.output_dir}/{source}/analysis.json" in text
+        assert "{state.output_dir}/{source}/codegraph-summary.json" in text
+        assert "{state.output_dir}/{source}/codegraph-analysis.json" in text
+        assert "root `analysis.json` is only an aggregate index" in text
+
+    def test_re_specifier_rejects_summary_only_specs_at_full_depth(self) -> None:
+        text = RE_SPECIFIER.read_text(encoding="utf-8")
+
+        assert "FULL-depth acceptance gate" in text
+        assert "User Scenarios & Testing" in text
+        assert "Requirements (Functional)" in text
+        assert "Key Entities" in text
+        assert "Edge Cases" in text
+        assert "Source Evidence" in text
+        assert "BLOCKED" in text
+
+    def test_re_verifier_rejects_specs_without_source_evidence(self) -> None:
+        text = (ROOT / "extension" / "agents" / "re" / "verifier.md").read_text(
+            encoding="utf-8"
+        )
+
+        assert "Source Evidence" in text
+        assert "coverage_pct: 0" in text
+        assert "shallow_summary_only" in text

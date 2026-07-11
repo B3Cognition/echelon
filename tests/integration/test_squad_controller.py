@@ -464,6 +464,56 @@ class TestSquadControllerBasics:
 
         assert store.load()["golddigger_status"] == "complete"
 
+    def test_golddigger_mode1_complete_is_preserved_when_run_re_specs_exist(self, tmp_path):
+        provider = MagicMock()
+        provider.exec_agent.side_effect = [
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {"golddigger_status": "complete"},
+                },
+                raw_output="",
+                duration_ms=50,
+                timed_out=False,
+            ),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={"verdict": "DONE", "state_updates": {}},
+                raw_output="",
+                duration_ms=50,
+                timed_out=False,
+            ),
+        ]
+
+        graph = PhaseGraph(DEFINITION, EXT_YML)
+        squad_dir = tmp_path / "squad" / "run-test"
+        re_specs_dir = squad_dir / "re" / "specs"
+        (re_specs_dir / "000-re-overview").mkdir(parents=True)
+        (re_specs_dir / "000-re-overview" / "overview.md").write_text(
+            "# RE Overview\n",
+            encoding="utf-8",
+        )
+        (re_specs_dir / "001-re-domain").mkdir()
+        (re_specs_dir / "001-re-domain" / "spec.md").write_text(
+            "# Domain\n",
+            encoding="utf-8",
+        )
+        (squad_dir / "staging").mkdir(exist_ok=True)
+        store = SquadStateStore(squad_dir)
+        store.initialize("r", "brownfield", "msg", 0, "phase1-discover", autonomy_mode="banzai")
+        executor = AgentExecutor(
+            provider,
+            graph,
+            EXT_ROOT / "extension",
+            tmp_path,
+            squad_dir,
+        )
+
+        executor.execute(graph.get("phase1-discover"), store)
+
+        assert store.load()["golddigger_status"] == "complete"
+
     def test_starts_at_entry_phase(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "DONE")

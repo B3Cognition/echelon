@@ -56,6 +56,16 @@ Use Glob to find all `specs/[0-9][0-9][0-9]-re-*/spec.md` files. Read each and e
 
 Build `covered_files` from: Source Evidence sections, "Source Files Analyzed" headers, entity definitions.
 
+If no spec contains a `Source Evidence` section, or if the extracted
+`covered_files` set is empty, treat the RE output as a shallow summary rather
+than a verified extraction:
+- write `specs/000-re-overview/coverage-report.md` with `coverage_pct: 0`
+- return `BLOCKED`
+- set `blocked_reason: shallow_summary_only`
+
+Do not infer coverage from repository names, domain labels, file counts, or
+high-level hotspot lists.
+
 ### Step 3: Calculate Coverage
 
 ```
