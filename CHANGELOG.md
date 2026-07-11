@@ -96,6 +96,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   with `structural_evidence=degraded` and `manual_fallback_required`, and stamp
   the same evidence-quality metadata into verify-spec state.
 
+- **EGR-133 / #156 lint evidence boundaries** — VERIFICATION now separates
+  `full-repo lint`, `scoped lint`, and `new-file lint` evidence, and is
+  forbidden from claiming global lint cleanliness unless the configured
+  full-repo lint command passed in the same verification pass.
 - **EGR-119 / #143 verify-spec init preflight** — `python -m harness
   init-verify-spec-run` now rejects missing `project_root` or `spec_dir`
   before creating run state, returning a clean input error instead of letting

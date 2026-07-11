@@ -25,3 +25,12 @@ class TestVerificationTemplates:
         )
         assert "agent: speckit-echelon-verification (VERIFICATION)" in text
         assert "agent: VERIFICATION" not in text
+
+    def test_verification_prompt_separates_lint_evidence_channels(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "full-repo lint" in text
+        assert "scoped lint" in text
+        assert "new-file lint" in text
+        assert "NEVER report `linting clean`" in text
+        assert "unless the configured full-repo lint command passed" in text

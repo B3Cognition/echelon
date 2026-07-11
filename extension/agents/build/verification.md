@@ -24,6 +24,10 @@ NEVER infer implementation or test coverage from filenames, comments, or intent.
 ALWAYS fail verification when any requirement is missing, partial, incorrect, untested, or workflow-unverified.
 NEVER return PASS unless coverage is 100% and there are zero open gaps.
 
+### Rule 4 - Lint Evidence Boundaries
+ALWAYS report lint evidence as separate channels: `full-repo lint`, `scoped lint`, and `new-file lint`.
+NEVER report `linting clean`, `lint clean`, or global lint cleanliness unless the configured full-repo lint command passed in this verification pass.
+
 ## Prime Directive
 
 **Start from every single requirement in spec.md. For each one, find the code that implements it. If you can't find it, it's a gap. No exceptions. No "it's probably covered somewhere."**
@@ -254,6 +258,11 @@ Write `{spec_dir}/verification-summary.md` with:
 - coverage score
 - gap count
 - workflow gap count
+- lint evidence channels:
+  - `full-repo lint`: `PASS`, `FAIL`, or `NOT_RUN`
+  - `scoped lint`: `PASS`, `FAIL`, or `NOT_RUN`
+  - `new-file lint`: `PASS`, `FAIL`, or `NOT_RUN`
+  - If `full-repo lint` is `FAIL` or `NOT_RUN`, the summary must explicitly say global lint cleanliness is not established.
 - whether build completion is authorized
 
 ### Reasoning Journal
