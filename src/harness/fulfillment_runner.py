@@ -193,6 +193,14 @@ class FulfillmentRunner:
 
         prompt = _build_verify_spec_prompt(worktree, skill_path, arguments)
         exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
+        artifact_write_violation = _verify_spec_artifact_write_violation(
+            self._prompt_executor,
+            allowed_roots=_verify_spec_artifact_allowed_roots(
+                worktree=worktree,
+                spec_dir=resolved_spec_dir,
+                orchestration_root=orchestration_root,
+            ),
+        )
         provider_limit_reason = _provider_session_limit_reason(
             self._prompt_executor,
             existing_report=report,
@@ -204,6 +212,15 @@ class FulfillmentRunner:
                 exit_code=exit_code,
                 scope="full",
                 reason=provider_limit_reason,
+                cache_key=cache_key,
+                report_path=report_path,
+            )
+        if artifact_write_violation:
+            return FulfillmentRefreshResult(
+                status="failed",
+                exit_code=2,
+                scope="full",
+                reason=artifact_write_violation,
                 cache_key=cache_key,
                 report_path=report_path,
             )
@@ -354,6 +371,14 @@ class FulfillmentRunner:
                 encoding="utf-8",
             )
             exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
+            artifact_write_violation = _verify_spec_artifact_write_violation(
+                self._prompt_executor,
+                allowed_roots=_verify_spec_artifact_allowed_roots(
+                    worktree=worktree,
+                    spec_dir=spec_dir,
+                    orchestration_root=spec_dir.parent.parent,
+                ),
+            )
             provider_limit_reason = _provider_session_limit_reason(
                 self._prompt_executor,
                 existing_report=report,
@@ -365,6 +390,14 @@ class FulfillmentRunner:
                     exit_code=exit_code,
                     scope="scoped",
                     reason=provider_limit_reason,
+                    report_path=report_path,
+                )
+            if artifact_write_violation:
+                return FulfillmentRefreshResult(
+                    status="failed",
+                    exit_code=2,
+                    scope="scoped",
+                    reason=artifact_write_violation,
                     report_path=report_path,
                 )
             if exit_code != 0:
@@ -659,6 +692,82 @@ def _provider_limit_text(prompt_executor: PromptExecutor) -> str:
         str(getattr(prompt_executor, "last_stderr", "") or ""),
     ]
     return "\n".join(part for part in parts if part).strip()
+
+
+_VERIFY_SPEC_ARTIFACT_MARKERS = (
+    "mapping_summary.txt",
+    "requirements_mapping",
+    "implementation-map.",
+    "implementation-map.md",
+    "implementation-map.json",
+)
+
+_VERIFY_SPEC_WRITE_TOOL_RE = re.compile(
+    r"(?:"
+    r"▷\s*(?:Write|Edit|MultiEdit|NotebookEdit|NotebookWrite|Bash)|"
+    r"\b(?:Write|Edit|MultiEdit|NotebookEdit|NotebookWrite|Bash):|"
+    r"\b(?:cp|copy|copied|mv|move|write|wrote)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _verify_spec_artifact_allowed_roots(
+    *,
+    worktree: Path,
+    spec_dir: Path | None,
+    orchestration_root: Path | str | None,
+) -> tuple[str, ...]:
+    roots = [worktree]
+    if spec_dir is not None:
+        roots.append(spec_dir)
+    roots.append(
+        _run_pointer_root(
+            worktree,
+            spec_dir=spec_dir,
+            orchestration_root=orchestration_root,
+        )
+    )
+    resolved: list[str] = []
+    for root in roots:
+        try:
+            resolved.append(str(root.resolve()))
+        except OSError:
+            resolved.append(str(root))
+    return tuple(dict.fromkeys(resolved))
+
+
+def _verify_spec_artifact_write_violation(
+    prompt_executor: PromptExecutor,
+    *,
+    allowed_roots: tuple[str, ...],
+) -> str:
+    text = _provider_limit_text(prompt_executor)
+    if not text:
+        return ""
+
+    in_write_block = False
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            in_write_block = False
+            continue
+        if _VERIFY_SPEC_WRITE_TOOL_RE.search(stripped):
+            in_write_block = True
+        elif not raw_line.startswith((" ", "\t", "⎿", "…")):
+            in_write_block = False
+
+        if not in_write_block:
+            continue
+        if not any(marker in stripped for marker in _VERIFY_SPEC_ARTIFACT_MARKERS):
+            continue
+        if any(root and root in stripped for root in allowed_roots):
+            continue
+        return (
+            "verify-spec artifact write outside allowed roots: "
+            f"{_truncate_provider_reason(stripped)}"
+        )
+    return ""
 
 
 def _provider_session_limit_summary(text: str) -> str:

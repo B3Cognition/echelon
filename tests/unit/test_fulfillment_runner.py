@@ -233,6 +233,39 @@ class TestFulfillmentRunner:
         assert isinstance(metadata["implementation_input_hash"], str)
         assert isinstance(metadata["verify_cache_key"], str)
 
+    def test_refresh_rejects_mapping_artifacts_written_outside_verify_roots(
+        self, tmp_path
+    ):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(tmp_path)
+        report = spec_dir / "fulfillment-report.md"
+
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            provider.last_stdout = (
+                "  ▷ Bash: copy mapping summary\n"
+                "  ⎿  wrote /tmp/mapping_summary.txt\n"
+                "  ▷ Bash: copy requirements mapping\n"
+                "  ⎿  copied to "
+                "/Users/michalbachorik/work/requirements_mapping_905_import_prose\n"
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+
+        assert result.status == "failed"
+        assert result.exit_code == 2
+        assert "verify-spec artifact write outside allowed roots" in result.reason
+        assert "/tmp/mapping_summary.txt" in result.reason
+
     def test_refresh_rejects_success_when_report_is_not_current_after_stamp(
         self, tmp_path
     ):

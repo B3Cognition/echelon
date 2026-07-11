@@ -100,6 +100,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `full-repo lint`, `scoped lint`, and `new-file lint` evidence, and is
   forbidden from claiming global lint cleanliness unless the configured
   full-repo lint command passed in the same verification pass.
+- **EGR-131 / #154 verify-spec artifact write containment** — fulfillment
+  refresh now rejects provider transcripts that write/copy mapping or
+  implementation-map artifacts outside the Python-owned verify run, spec, or
+  worktree roots.
 - **EGR-119 / #143 verify-spec init preflight** — `python -m harness
   init-verify-spec-run` now rejects missing `project_root` or `spec_dir`
   before creating run state, returning a clean input error instead of letting
