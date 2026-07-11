@@ -395,6 +395,20 @@ def test_flags_build_prompt_spec_artifact_discovery_synonyms(tmp_path: Path) -> 
     assert findings[0].reason == "build_spec_artifact_discovery"
 
 
+def test_flags_build_prompt_progress_artifact_discovery(tmp_path: Path) -> None:
+    prompt = tmp_path / "extension" / "workflow" / "phases" / "build-1-init.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "Read progress-report.md and run-history.json before build init.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "build_spec_artifact_discovery"
+
+
 def test_flags_delivery_command_runtime_discovery(tmp_path: Path) -> None:
     prompt = tmp_path / "extension" / "commands" / "echelon.build.md"
     prompt.parent.mkdir(parents=True)

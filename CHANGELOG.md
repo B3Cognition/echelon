@@ -92,7 +92,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **EGR-116 / #142 prompt tool contract scanner** — harness-internal
   discovery detection now flags scan/browse/consult/study/parse/view/show/
   display/print/dump phrasing for `src/harness/...` in addition to
-  read/open/review/inspect style prompts.
+  read/open/review/inspect style prompts. Build prompt artifact-discovery
+  detection now also covers `progress-report.md` and `run-history.json`, keeping
+  those Ralph/spec-owned lifecycle facts in the Python-owned context boundary.
 - **EGR-117 / #141 delivery runtime surface** — direct and workspace-target
   delivery runtime sync now excludes Phase A `config/` material such as
   belief registers, top-level config template/default files, and extension
