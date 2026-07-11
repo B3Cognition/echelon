@@ -67,6 +67,47 @@ class TestLlmBuildRunner:
         extra_env = executor.exec_prompt.call_args.kwargs["extra_env"]
         assert extra_env["ECHELON_CONTAINMENT_POLICY_FILE"] == str(policy_file)
 
+    def test_exec_build_exposes_provider_root_lists_from_containment_policy(self, tmp_path):
+        executor = _executor(status={"status": "done"})
+        policy_file = tmp_path / "delivery-containment-policy.json"
+        policy_file.write_text(
+            json.dumps(
+                {
+                    "allowed_roots": {
+                        "implementation": ["/workspace/sources/prosaic"],
+                        "context": ["/workspace/sources/ruler"],
+                        "spec_inputs": ["/workspace/specs/001-prose"],
+                        "harness_state": ["/workspace/runs/targets/prosaic/state"],
+                    },
+                    "forbidden_source_roots": ["/workspace/sources/spec-kit"],
+                    "forbidden_source_root_aliases": [
+                        "sources/spec-kit",
+                        "./sources/spec-kit",
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        LlmBuildRunner(executor).exec_build(
+            str(tmp_path),
+            "build this",
+            containment_policy_file=str(policy_file),
+        )
+
+        extra_env = executor.exec_prompt.call_args.kwargs["extra_env"]
+        allowed_roots = json.loads(extra_env["ECHELON_ALLOWED_ROOTS_JSON"])
+        forbidden_roots = json.loads(extra_env["ECHELON_FORBIDDEN_ROOTS_JSON"])
+        forbidden_aliases = json.loads(extra_env["ECHELON_FORBIDDEN_ROOT_ALIASES_JSON"])
+        assert allowed_roots == [
+            "/workspace/sources/prosaic",
+            "/workspace/sources/ruler",
+            "/workspace/specs/001-prose",
+            "/workspace/runs/targets/prosaic/state",
+        ]
+        assert forbidden_roots == ["/workspace/sources/spec-kit"]
+        assert forbidden_aliases == ["sources/spec-kit", "./sources/spec-kit"]
+
     def test_exec_build_returns_impasse_from_status_file(self, tmp_path):
         executor = _executor(
             status={"status": "impasse", "impasse_file": "codegen-impasse.md"}

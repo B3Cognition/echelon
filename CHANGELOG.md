@@ -124,7 +124,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   are now included too. The transcript command matcher is now built from
   named filesystem-access command categories instead of one opaque regex list,
   so future containment changes can harden categories rather than repeatedly
-  editing regex archaeology.
+  editing regex archaeology. LLM build and feedback runners now also expand
+  `delivery-containment-policy.json` into provider-facing
+  `ECHELON_ALLOWED_ROOTS_JSON`, `ECHELON_FORBIDDEN_ROOTS_JSON`, and
+  `ECHELON_FORBIDDEN_ROOT_ALIASES_JSON` environment variables, so provider
+  backends can consume deterministic root boundaries without parsing Echelon
+  internals.
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
   source roots, resolves workspace-relative context roots, exposes them as

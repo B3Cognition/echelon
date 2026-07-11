@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Mapping, Protocol
@@ -47,6 +48,7 @@ class LlmBuildRunner:
         }
         if containment_policy_file:
             extra_env["ECHELON_CONTAINMENT_POLICY_FILE"] = containment_policy_file
+            extra_env.update(_containment_policy_env(containment_policy_file))
         exit_code = self._prompt_executor.exec_prompt(
             worktree_path,
             prompt,
@@ -100,3 +102,34 @@ class LlmBuildRunner:
             prompt,
             containment_policy_file=containment_policy_file,
         )
+
+
+def _containment_policy_env(policy_file: str) -> dict[str, str]:
+    """Return provider-facing root boundary env vars derived from policy JSON."""
+    try:
+        data = json.loads(Path(policy_file).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+
+    allowed_roots: list[str] = []
+    allowed = data.get("allowed_roots")
+    if isinstance(allowed, dict):
+        for roots in allowed.values():
+            allowed_roots.extend(_string_list(roots))
+
+    forbidden_roots = _string_list(data.get("forbidden_source_roots"))
+    forbidden_aliases = _string_list(data.get("forbidden_source_root_aliases"))
+
+    return {
+        "ECHELON_ALLOWED_ROOTS_JSON": json.dumps(allowed_roots),
+        "ECHELON_FORBIDDEN_ROOTS_JSON": json.dumps(forbidden_roots),
+        "ECHELON_FORBIDDEN_ROOT_ALIASES_JSON": json.dumps(forbidden_aliases),
+    }
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
