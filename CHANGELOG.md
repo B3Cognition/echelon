@@ -108,7 +108,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `unzip`, `gzip`, and `gunzip` are now included as well. Diagnostic inspection
   commands such as `strings`, `hexdump`, `xxd`, `od`, `cmp`, and `diff` are now
   included too. VCS inspection commands such as `git` and `gh` are now included
-  as well.
+  as well. Network transfer commands such as `curl`, `wget`, `http`, and
+  `https` are now included too.
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
   source roots, resolves workspace-relative context roots, exposes them as
