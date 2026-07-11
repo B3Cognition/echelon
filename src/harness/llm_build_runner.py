@@ -48,7 +48,10 @@ class LlmBuildRunner:
         }
         if containment_policy_file:
             extra_env["ECHELON_CONTAINMENT_POLICY_FILE"] = containment_policy_file
-            policy_env, policy_error = _containment_policy_env(containment_policy_file)
+            policy_env, policy_error = _containment_policy_env(
+                containment_policy_file,
+                worktree_path=worktree_path,
+            )
             if policy_error:
                 return _containment_policy_error_result(
                     policy_file=containment_policy_file,
@@ -111,7 +114,11 @@ class LlmBuildRunner:
         )
 
 
-def _containment_policy_env(policy_file: str) -> tuple[dict[str, str], str | None]:
+def _containment_policy_env(
+    policy_file: str,
+    *,
+    worktree_path: str,
+) -> tuple[dict[str, str], str | None]:
     """Return provider-facing root boundary env vars derived from policy JSON."""
     path = Path(policy_file)
     if not path.exists():
@@ -133,6 +140,13 @@ def _containment_policy_env(policy_file: str) -> tuple[dict[str, str], str | Non
     forbidden_aliases = _string_list(data.get("forbidden_source_root_aliases"))
     if not allowed_roots and not forbidden_roots:
         return {}, "empty containment policy"
+    boundary_error = _worktree_boundary_error(
+        worktree_path,
+        allowed_roots=allowed_roots,
+        forbidden_roots=forbidden_roots,
+    )
+    if boundary_error:
+        return {}, boundary_error
 
     return (
         {
@@ -167,3 +181,32 @@ def _string_list(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if str(item).strip()]
+
+
+def _worktree_boundary_error(
+    worktree_path: str,
+    *,
+    allowed_roots: list[str],
+    forbidden_roots: list[str],
+) -> str | None:
+    worktree = _resolved_path(worktree_path)
+    for forbidden in (_resolved_path(path) for path in forbidden_roots):
+        if _path_is_relative_to(worktree, forbidden):
+            return f"worktree under containment policy forbidden root {forbidden}"
+    if allowed_roots and not any(
+        _path_is_relative_to(worktree, _resolved_path(root)) for root in allowed_roots
+    ):
+        return "worktree outside containment policy allowed roots"
+    return None
+
+
+def _resolved_path(path: object) -> Path:
+    return Path(str(path)).expanduser().resolve(strict=False)
+
+
+def _path_is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False

@@ -74,16 +74,20 @@ class TestLlmBuildRunner:
     def test_exec_build_exposes_provider_root_lists_from_containment_policy(self, tmp_path):
         executor = _executor(status={"status": "done"})
         policy_file = tmp_path / "delivery-containment-policy.json"
+        context_root = tmp_path / "context"
+        spec_root = tmp_path / "specs" / "001-prose"
+        state_root = tmp_path / "runs" / "targets" / "prosaic" / "state"
+        forbidden_root = tmp_path / "sources" / "spec-kit"
         policy_file.write_text(
             json.dumps(
                 {
                     "allowed_roots": {
-                        "implementation": ["/workspace/sources/prosaic"],
-                        "context": ["/workspace/sources/ruler"],
-                        "spec_inputs": ["/workspace/specs/001-prose"],
-                        "harness_state": ["/workspace/runs/targets/prosaic/state"],
+                        "implementation": [str(tmp_path)],
+                        "context": [str(context_root)],
+                        "spec_inputs": [str(spec_root)],
+                        "harness_state": [str(state_root)],
                     },
-                    "forbidden_source_roots": ["/workspace/sources/spec-kit"],
+                    "forbidden_source_roots": [str(forbidden_root)],
                     "forbidden_source_root_aliases": [
                         "sources/spec-kit",
                         "./sources/spec-kit",
@@ -104,12 +108,12 @@ class TestLlmBuildRunner:
         forbidden_roots = json.loads(extra_env["ECHELON_FORBIDDEN_ROOTS_JSON"])
         forbidden_aliases = json.loads(extra_env["ECHELON_FORBIDDEN_ROOT_ALIASES_JSON"])
         assert allowed_roots == [
-            "/workspace/sources/prosaic",
-            "/workspace/sources/ruler",
-            "/workspace/specs/001-prose",
-            "/workspace/runs/targets/prosaic/state",
+            str(tmp_path),
+            str(context_root),
+            str(spec_root),
+            str(state_root),
         ]
-        assert forbidden_roots == ["/workspace/sources/spec-kit"]
+        assert forbidden_roots == [str(forbidden_root)]
         assert forbidden_aliases == ["sources/spec-kit", "./sources/spec-kit"]
 
     def test_exec_build_blocks_malformed_containment_policy(self, tmp_path):
@@ -157,6 +161,35 @@ class TestLlmBuildRunner:
         assert result.status == "error"
         assert result.exit_code == 125
         assert "empty containment policy" in (result.reason or "")
+        executor.exec_prompt.assert_not_called()
+
+    def test_exec_build_blocks_worktree_outside_allowed_containment_policy(
+        self, tmp_path
+    ):
+        executor = _executor(status={"status": "done"})
+        policy_file = tmp_path / "delivery-containment-policy.json"
+        policy_file.write_text(
+            json.dumps(
+                {
+                    "allowed_roots": {
+                        "implementation": [str(tmp_path / "other-worktree")]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        result = LlmBuildRunner(executor).exec_build(
+            str(tmp_path),
+            "build this",
+            containment_policy_file=str(policy_file),
+        )
+
+        assert result.status == "error"
+        assert result.exit_code == 125
+        assert "worktree outside containment policy allowed roots" in (
+            result.reason or ""
+        )
         executor.exec_prompt.assert_not_called()
 
     def test_exec_build_returns_impasse_from_status_file(self, tmp_path):
