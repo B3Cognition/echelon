@@ -137,7 +137,6 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   verify-spec CodeGraph runs now write a deterministic `codegraph-summary.json`
   with `structural_evidence=degraded` and `manual_fallback_required`, and stamp
   the same evidence-quality metadata into verify-spec state.
-
 - **EGR-133 / #156 lint evidence boundaries** — VERIFICATION now separates
   `full-repo lint`, `scoped lint`, and `new-file lint` evidence, and is
   forbidden from claiming global lint cleanliness unless the configured
