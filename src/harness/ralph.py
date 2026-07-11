@@ -4637,7 +4637,7 @@ _HOST_HARNESS_SOURCE_MARKERS = (
 )
 
 _HOST_HARNESS_SOURCE_PATH_RE = re.compile(
-    r"\bsrc/(?:echelon|harness)/[\w.-]+\.py\b"
+    r"\bsrc/(?:echelon|harness|kernel)/[\w.-]+\.py\b"
 )
 
 
