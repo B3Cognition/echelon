@@ -131,7 +131,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   backends can consume deterministic root boundaries without parsing Echelon
   internals. The same normalized containment roots are now attached to
   `CliRunRequest.metadata["containment"]`, giving provider implementations a
-  typed API surface for enforcement instead of requiring env parsing.
+  typed API surface for enforcement instead of requiring env parsing. The
+  provider facade now rejects LLM prompt/agent invocations whose cwd is under a
+  forbidden root or outside declared allowed roots before any concrete CLI
+  backend starts.
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
   source roots, resolves workspace-relative context roots, exposes them as

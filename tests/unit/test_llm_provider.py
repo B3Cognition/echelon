@@ -176,7 +176,7 @@ class TestAICodingCliProvider:
                 str(tmp_path),
                 "build this",
                 extra_env={
-                    "ECHELON_ALLOWED_ROOTS_JSON": '["/workspace/sources/prosaic"]',
+                    "ECHELON_ALLOWED_ROOTS_JSON": json.dumps([str(tmp_path)]),
                     "ECHELON_FORBIDDEN_ROOTS_JSON": '["/workspace/sources/ruler"]',
                     "ECHELON_FORBIDDEN_ROOT_ALIASES_JSON": '["sources/ruler"]',
                 },
@@ -184,10 +184,35 @@ class TestAICodingCliProvider:
 
         request = run_prompt.call_args.args[0]
         assert request.metadata["containment"] == {
-            "allowed_roots": ["/workspace/sources/prosaic"],
+            "allowed_roots": [str(tmp_path)],
             "forbidden_roots": ["/workspace/sources/ruler"],
             "forbidden_root_aliases": ["sources/ruler"],
         }
+
+    def test_exec_prompt_blocks_cwd_outside_allowed_containment_roots(self, tmp_path):
+        provider = AICodingCliProvider(_config())
+        allowed = tmp_path / "sources" / "prosaic"
+        forbidden = tmp_path / "sources" / "ruler"
+        forbidden.mkdir(parents=True)
+
+        with patch.object(
+            provider._backend,
+            "run_prompt",
+            return_value=CliRunResult(exit_code=0, stdout="", stderr=""),
+        ) as run_prompt:
+            result = provider.run_prompt_result(
+                str(forbidden),
+                "build this",
+                extra_env={
+                    "ECHELON_ALLOWED_ROOTS_JSON": json.dumps([str(allowed)]),
+                    "ECHELON_FORBIDDEN_ROOTS_JSON": json.dumps([str(forbidden)]),
+                },
+            )
+
+        assert result.exit_code != 0
+        assert result.metadata["containment_violation"] is True
+        assert str(forbidden) in result.stderr
+        run_prompt.assert_not_called()
 
     def test_provider_debug_env_prints_effective_backend(self, monkeypatch, capsys):
         monkeypatch.setenv("ECHELON_DEBUG_LLM", "1")

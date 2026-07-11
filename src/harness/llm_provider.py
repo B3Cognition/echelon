@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 from dataclasses import replace
+from pathlib import Path
 from typing import Mapping
 
 from harness.ai_cli_backend import CliRunRequest, CliRunResult, create_ai_cli_backend
@@ -90,13 +91,18 @@ class AICodingCliProvider:
         self.last_stderr = ""
         self.last_token_usage = 0
         timeout_s = (timeout_ms / 1000.0) if timeout_ms else self._timeout_s
+        metadata = _request_metadata(extra_env)
+        containment_violation = _containment_cwd_violation(worktree_path, metadata)
+        if containment_violation is not None:
+            self._record_result(containment_violation)
+            return containment_violation
         result = self._backend.run_prompt(
             CliRunRequest(
                 cwd=worktree_path,
                 prompt=prompt,
                 env=self._build_env(extra_env),
                 timeout_s=timeout_s,
-                metadata=_request_metadata(extra_env),
+                metadata=metadata,
             )
         )
         self._record_result(result)
@@ -114,13 +120,18 @@ class AICodingCliProvider:
         self.last_stderr = ""
         self.last_token_usage = 0
         timeout_s = (timeout_ms / 1000.0) if timeout_ms else self._timeout_s
+        metadata = _request_metadata(extra_env)
+        containment_violation = _containment_cwd_violation(project_root, metadata)
+        if containment_violation is not None:
+            self._record_result(containment_violation)
+            return containment_violation
         result = self._backend.run_agent(
             CliRunRequest(
                 cwd=project_root,
                 prompt=prompt,
                 env=self._build_env(extra_env),
                 timeout_s=timeout_s,
-                metadata=_request_metadata(extra_env),
+                metadata=metadata,
             )
         )
         self._record_result(result)
@@ -175,3 +186,63 @@ def _json_string_list(raw: object) -> list[str]:
     if not isinstance(parsed, list):
         return []
     return [str(item) for item in parsed if str(item).strip()]
+
+
+def _containment_cwd_violation(
+    cwd: str,
+    metadata: Mapping[str, object],
+) -> CliRunResult | None:
+    containment = metadata.get("containment")
+    if not isinstance(containment, Mapping):
+        return None
+    cwd_path = _resolved_path(cwd)
+    allowed_roots = [
+        _resolved_path(path)
+        for path in _metadata_string_list(containment.get("allowed_roots"))
+    ]
+    forbidden_roots = [
+        _resolved_path(path)
+        for path in _metadata_string_list(containment.get("forbidden_roots"))
+    ]
+    for forbidden in forbidden_roots:
+        if _path_is_relative_to(cwd_path, forbidden):
+            return _containment_violation_result(
+                cwd=cwd_path,
+                reason=f"cwd is under forbidden root {forbidden}",
+            )
+    if allowed_roots and not any(
+        _path_is_relative_to(cwd_path, root) for root in allowed_roots
+    ):
+        return _containment_violation_result(
+            cwd=cwd_path,
+            reason="cwd is outside allowed roots",
+        )
+    return None
+
+
+def _containment_violation_result(*, cwd: Path, reason: str) -> CliRunResult:
+    message = f"LLM provider containment violation: {reason}: {cwd}"
+    return CliRunResult(
+        exit_code=125,
+        stdout="",
+        stderr=message,
+        metadata={"containment_violation": True, "reason": reason, "cwd": str(cwd)},
+    )
+
+
+def _metadata_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
+
+
+def _resolved_path(path: object) -> Path:
+    return Path(str(path)).expanduser().resolve(strict=False)
+
+
+def _path_is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
