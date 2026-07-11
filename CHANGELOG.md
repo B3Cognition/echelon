@@ -80,8 +80,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - **EGR-118 / #144 source-root containment** — delivery containment now treats
-  subagent transcript blocks (`Agent`, `Task`, `Subagent`) as filesystem-relevant
-  tool output when matching forbidden sibling source roots, and the prompt plus
+  generic command transcript blocks (`Shell`, `Command`, `Run`) and subagent
+  transcript blocks (`Agent`, `Task`, `Subagent`) as filesystem-relevant tool
+  output when matching forbidden sibling source roots, and the prompt plus
   `delivery-containment-policy.json` now explicitly forbid delegating forbidden
   source-root inspection to subagents.
 - **EGR-116 / #142 prompt tool contract scanner** — harness-internal
