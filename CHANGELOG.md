@@ -80,8 +80,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - **EGR-116 / #142 prompt tool contract scanner** — harness-internal
-  discovery detection now flags `view/show/display/print/dump src/harness/...`
-  phrasing in addition to read/open/review/inspect style prompts.
+  discovery detection now flags scan/browse/view/show/display/print/dump
+  phrasing for `src/harness/...` in addition to read/open/review/inspect style
+  prompts.
 - **EGR-117 / #141 delivery runtime surface** — direct and workspace-target
   delivery runtime sync now excludes Phase A `config/` material such as
   belief registers, top-level config template/default files, and extension
