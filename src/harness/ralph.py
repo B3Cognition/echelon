@@ -4623,7 +4623,7 @@ _TOOL_ACCESS_LINE_RE = re.compile(
     r"(?:"
     r"▷\s*(?:Read|NotebookRead|NotebookEdit|NotebookWrite|Write|Edit|MultiEdit|BashOutput|Bash|Shell|Command|Run|Python|Node|JS|JavaScript|Grep|Glob|Find|Search|List|LS|Open|View|Show|Display|Print|Dump|Inspect|Agent|Task|Subagent)|"
     r"\b(?:Read|NotebookRead|NotebookEdit|NotebookWrite|Write|Edit|MultiEdit|BashOutput|Bash|Shell|Command|Run|Python|Node|JS|JavaScript|Grep|Glob|Find|Search|List|LS|Open|View|Show|Display|Print|Dump|Inspect|Agent|Task|Subagent):|"
-    r"\b(?:cat|rg|grep|find|ls|sed|head|tail|less|more)\s+"
+    r"\b(?:cat|rg|grep|find|ls|sed|head|tail|less|more|python|python3|node|deno|ruby|perl)\s+"
     r")",
     re.IGNORECASE,
 )
