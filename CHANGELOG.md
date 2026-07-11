@@ -79,6 +79,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **EGR-118 / #144 source-root containment** — delivery containment now treats
+  subagent transcript blocks (`Agent`, `Task`, `Subagent`) as filesystem-relevant
+  tool output when matching forbidden sibling source roots.
 - **EGR-116 / #142 prompt tool contract scanner** — harness-internal
   discovery detection now flags scan/browse/consult/study/parse/view/show/
   display/print/dump phrasing for `src/harness/...` in addition to

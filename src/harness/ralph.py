@@ -4620,8 +4620,8 @@ def _status_delta(before: List[str], after: List[str]) -> List[str]:
 
 _TOOL_ACCESS_LINE_RE = re.compile(
     r"(?:"
-    r"▷\s*(?:Read|NotebookRead|NotebookEdit|NotebookWrite|Write|Edit|MultiEdit|BashOutput|Bash|Grep|Glob|Find|Search|List|LS|Open)|"
-    r"\b(?:Read|NotebookRead|NotebookEdit|NotebookWrite|Write|Edit|MultiEdit|BashOutput|Bash|Grep|Glob|Find|Search|List|LS|Open):|"
+    r"▷\s*(?:Read|NotebookRead|NotebookEdit|NotebookWrite|Write|Edit|MultiEdit|BashOutput|Bash|Grep|Glob|Find|Search|List|LS|Open|Agent|Task|Subagent)|"
+    r"\b(?:Read|NotebookRead|NotebookEdit|NotebookWrite|Write|Edit|MultiEdit|BashOutput|Bash|Grep|Glob|Find|Search|List|LS|Open|Agent|Task|Subagent):|"
     r"\b(?:cat|rg|grep|find|ls)\s+"
     r")",
     re.IGNORECASE,
