@@ -4230,6 +4230,105 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
+    def test_llm_build_blocks_when_transcript_touches_relative_host_echelon_source(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Harness detects relative transcript evidence of host Echelon CLI inspection."""
+        from harness.build_result import BuildResult
+
+        project = tmp_path / "project"
+        worktree = tmp_path / "worktree"
+        for path in (project, worktree):
+            _init_git_repo(path)
+            (path / "README.md").write_text("# Demo\n", encoding="utf-8")
+            _commit_all(path)
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="  ▷ Read: src/echelon/cli.py\n",
+            stderr="",
+            duration_ms=1000,
+        )
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = project
+        gitops.create_worktree.return_value = str(worktree)
+        state = state_store.read()
+        state["workspace_root"] = str(project)
+        state["source_root"] = str(project)
+        state_store.write(state)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "containment_violation"
+        captured = capsys.readouterr()
+        assert "HARNESS SOURCE CONTAINMENT VIOLATION" in captured.err
+        state = state_store.read()
+        violation = state["harness_source_containment_violation"]
+        assert "host Echelon source outside worktree" in violation["forbidden_root"]
+        assert "src/echelon/cli.py" in violation["matched_line"]
+        gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
+    def test_llm_build_allows_relative_echelon_source_when_file_is_inside_worktree(
+        self, tmp_path: Path
+    ) -> None:
+        """Relative Echelon CLI reads are allowed when they resolve inside the target worktree."""
+        from harness.build_result import BuildResult
+
+        project = tmp_path / "echelon-target"
+        worktree = tmp_path / "worktree"
+        for path in (project, worktree):
+            _init_git_repo(path)
+            (path / "README.md").write_text("# Demo\n", encoding="utf-8")
+            (path / "src" / "echelon").mkdir(parents=True)
+            (path / "src" / "echelon" / "cli.py").write_text("# local\n", encoding="utf-8")
+            _commit_all(path)
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="  ▷ Read: src/echelon/cli.py\n",
+            stderr="",
+            duration_ms=1000,
+        )
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        controller._config.verify_command = f"{sys.executable} -c pass"
+        gitops.base_dir = project
+        gitops.create_worktree.return_value = str(worktree)
+        state = state_store.read()
+        state["workspace_root"] = str(project)
+        state["source_root"] = str(project)
+        state_store.write(state)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "converged"
+        state = state_store.read()
+        assert "harness_source_containment_violation" not in state
+
     def test_llm_build_allows_relative_harness_source_when_file_is_inside_worktree(
         self, tmp_path: Path
     ) -> None:

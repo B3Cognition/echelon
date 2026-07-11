@@ -4636,7 +4636,9 @@ _HOST_HARNESS_SOURCE_MARKERS = (
     "/src/kernel/fulfillment.py",
 )
 
-_HOST_HARNESS_SOURCE_PATH_RE = re.compile(r"\bsrc/harness/[\w.-]+\.py\b")
+_HOST_HARNESS_SOURCE_PATH_RE = re.compile(
+    r"\bsrc/(?:echelon|harness)/[\w.-]+\.py\b"
+)
 
 
 def _looks_like_tool_access_line(line: str) -> bool:
