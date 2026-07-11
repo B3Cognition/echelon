@@ -135,7 +135,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   provider facade now rejects LLM prompt/agent invocations whose cwd is under a
   forbidden root or outside declared allowed roots before any concrete CLI
   backend starts, and malformed containment root JSON now fails closed instead
-  of silently disabling provider containment.
+  of silently disabling provider containment. Malformed
+  `delivery-containment-policy.json` files now also stop build/feedback runner
+  execution before any LLM provider is launched.
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
   source roots, resolves workspace-relative context roots, exposes them as

@@ -48,7 +48,14 @@ class LlmBuildRunner:
         }
         if containment_policy_file:
             extra_env["ECHELON_CONTAINMENT_POLICY_FILE"] = containment_policy_file
-            extra_env.update(_containment_policy_env(containment_policy_file))
+            policy_env, policy_error = _containment_policy_env(containment_policy_file)
+            if policy_error:
+                return _containment_policy_error_result(
+                    policy_file=containment_policy_file,
+                    reason=policy_error,
+                    duration_ms=int((time.monotonic() - start) * 1000),
+                )
+            extra_env.update(policy_env)
         exit_code = self._prompt_executor.exec_prompt(
             worktree_path,
             prompt,
@@ -104,14 +111,17 @@ class LlmBuildRunner:
         )
 
 
-def _containment_policy_env(policy_file: str) -> dict[str, str]:
+def _containment_policy_env(policy_file: str) -> tuple[dict[str, str], str | None]:
     """Return provider-facing root boundary env vars derived from policy JSON."""
+    path = Path(policy_file)
+    if not path.exists():
+        return {}, None
     try:
-        data = json.loads(Path(policy_file).read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {}, f"malformed containment policy: {exc}"
     if not isinstance(data, dict):
-        return {}
+        return {}, "malformed containment policy: expected JSON object"
 
     allowed_roots: list[str] = []
     allowed = data.get("allowed_roots")
@@ -122,11 +132,33 @@ def _containment_policy_env(policy_file: str) -> dict[str, str]:
     forbidden_roots = _string_list(data.get("forbidden_source_roots"))
     forbidden_aliases = _string_list(data.get("forbidden_source_root_aliases"))
 
-    return {
-        "ECHELON_ALLOWED_ROOTS_JSON": json.dumps(allowed_roots),
-        "ECHELON_FORBIDDEN_ROOTS_JSON": json.dumps(forbidden_roots),
-        "ECHELON_FORBIDDEN_ROOT_ALIASES_JSON": json.dumps(forbidden_aliases),
-    }
+    return (
+        {
+            "ECHELON_ALLOWED_ROOTS_JSON": json.dumps(allowed_roots),
+            "ECHELON_FORBIDDEN_ROOTS_JSON": json.dumps(forbidden_roots),
+            "ECHELON_FORBIDDEN_ROOT_ALIASES_JSON": json.dumps(forbidden_aliases),
+        },
+        None,
+    )
+
+
+def _containment_policy_error_result(
+    *,
+    policy_file: str,
+    reason: str,
+    duration_ms: int,
+) -> BuildResult:
+    message = f"{reason}: {policy_file}"
+    return BuildResult(
+        exit_code=125,
+        status="error",
+        impasse_file=None,
+        reason=message,
+        stdout="",
+        stderr=message,
+        duration_ms=duration_ms,
+        token_usage=0,
+    )
 
 
 def _string_list(value: object) -> list[str]:
