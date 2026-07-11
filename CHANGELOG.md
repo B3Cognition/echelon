@@ -352,6 +352,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Delivery Docker recovery** — `echelon delivery continue <spec_id>` now
+  resumes runs blocked with `termination_reason: docker_unavailable` after the
+  container runtime is restarted, and status/error guidance points at
+  `delivery continue` instead of fresh `run`/deprecated answerless `resume`.
 - **EGR-117 / #141 host harness-source containment** — Ralph now blocks build
   turns whose LLM transcript shows tool access to host Echelon implementation
   source such as any `src/harness/*.py` file or

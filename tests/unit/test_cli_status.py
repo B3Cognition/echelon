@@ -224,7 +224,7 @@ def test_next_steps_for_docker_unavailable_tells_user_to_start_container_runtime
     captured = capsys.readouterr()
     assert "docker_unavailable" in captured.out
     assert "start the configured container runtime" in captured.out
-    assert "echelon delivery run 001-demo" in captured.out
+    assert "echelon delivery continue 001-demo" in captured.out
     assert "--reset" not in captured.out
 
 

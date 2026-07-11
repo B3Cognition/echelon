@@ -717,8 +717,28 @@ class TestCmdHarnessResume:
         assert state["termination_reason"] == "docker_unavailable"
         err = capsys.readouterr().err
         assert "Docker is not running or is unreachable" in err
-        assert "echelon delivery resume 001" in err
+        assert "echelon delivery continue 001" in err
         assert "Traceback" not in err
+
+    def test_delivery_continue_retries_after_docker_unavailable(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked", "termination_reason": "docker_unavailable",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_continue
+            _cmd_harness_continue(["001"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
     def test_recoverable_resume_marks_unexpected_harness_error_blocked(
         self,

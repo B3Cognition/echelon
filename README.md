@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 3.0.37** — 55 registered agent roles across the Echelon architecture, with 46 active-routed manifest roles in the executable workflow, MemPalace requirements memory (wing-scoped, per-project, collision-safe), `echelon workspace init` wing provisioning, `codegen requirements mine/search/clean`, endocrine system fully enabled by default (all 6 hormones, phase 3), echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
+**Version 3.0.38** — 55 registered agent roles across the Echelon architecture, with 46 active-routed manifest roles in the executable workflow, MemPalace requirements memory (wing-scoped, per-project, collision-safe), `echelon workspace init` wing provisioning, `codegen requirements mine/search/clean`, endocrine system fully enabled by default (all 6 hormones, phase 3), echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -643,7 +643,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon delivery target <id>` | — | Prepare target-scoped delivery metadata in `specs/<id>/targets.yml`, including high-confidence `verify_command` detection |
 | `echelon delivery run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy); in polyrepos, validates or infers the spec target before build; prints `HARNESS HISTORY` |
 | `echelon delivery run <id> strategy=codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
-| `echelon delivery continue <id>` | `speckit.echelon.harness-resume <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |
+| `echelon delivery continue <id>` | `speckit.echelon.harness-resume <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, Docker/Podman outage recovery, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |
 | `echelon delivery resume <id> "<answer>"` | `speckit.echelon.harness-resume <id> <answer>` | Resume a blocked delivery loop by recording the human answer to a pending escalation, then continuing the loop |
 | *(spec-kit only)* | `speckit.echelon.harness-status [<id>]` | Show active loop status, iterations, token usage, PR URL |
 

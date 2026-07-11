@@ -54,7 +54,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.0.37"
+CLI_VERSION = "3.0.38"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -2241,8 +2241,8 @@ def _cmd_harness_resume(
             f"Usage: {command_prefix} <spec_id> [strategy=<s>] [mode=<guided|semi|banzai>] [answer]\n\n"
             "Resume or continue a blocked delivery run.\n"
             "Supports blocker_escalation, verify_command_needed,\n"
-            "checkpoint continuation, repaired harness_error, and recovery from\n"
-            "build_incomplete/publish_failed committed work.\n\n"
+            "checkpoint continuation, repaired harness_error, docker_unavailable,\n"
+            "and recovery from build_incomplete/publish_failed committed work.\n\n"
             "Steps:\n"
             "  1. Fix the blocker shown by the previous delivery output.\n"
             "     For blocker_escalation: pass the answer to 'echelon delivery resume'.\n"
@@ -2435,7 +2435,12 @@ def _cmd_harness_resume(
     current_status = state.get("status", "unknown")
     termination_reason = state.get("termination_reason", "")
     recoverable_reasons = {"build_incomplete", "publish_failed"}
-    continuation_reasons = {"blocker_escalation", "checkpoint_outer_cap", "no_progress"}
+    continuation_reasons = {
+        "blocker_escalation",
+        "checkpoint_outer_cap",
+        "docker_unavailable",
+        "no_progress",
+    }
     retryable_error_reasons = {"harness_error"}
 
     if current_status != "blocked" and termination_reason not in recoverable_reasons:
@@ -2541,7 +2546,7 @@ def _cmd_harness_resume(
                     f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                     f"  Error: {exc}\n"
                     f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
-                    f"       echelon delivery resume {spec_id}",
+                    f"       echelon delivery continue {spec_id}",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -2608,7 +2613,7 @@ def _cmd_harness_resume(
                     f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                     f"  Error: {exc}\n"
                     f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
-                    f"       echelon delivery resume {spec_id}",
+                    f"       echelon delivery continue {spec_id}",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -2694,7 +2699,7 @@ def _cmd_harness_resume(
                     f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                     f"  Error: {exc}\n"
                     f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
-                    f"       echelon delivery resume {spec_id}",
+                    f"       echelon delivery continue {spec_id}",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -2747,7 +2752,7 @@ def _cmd_harness_resume(
                 f"✗ {_container_runtime_display(config)} is not running or is unreachable.\n"
                 f"  Error: {exc}\n"
                 f"  Fix: {_container_runtime_fix(_container_runtime_cli(config))}, then rerun:\n"
-                f"       echelon delivery resume {spec_id}",
+                f"       echelon delivery continue {spec_id}",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -3608,7 +3613,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 fields.append(("next", f"echelon delivery continue {spec_id}"))
         elif termination_reason == "docker_unavailable":
             fields.append(("fix", "start the configured container runtime and wait until it reports running"))
-            fields.append(("next", f"echelon delivery run {spec_id}"))
+            fields.append(("next", f"echelon delivery continue {spec_id}"))
             subtitle = "HARNESS BUILD BLOCKED"
         elif harness_status in {"running", "in_progress"}:
             fields.append(("next", "echelon spec status"))
