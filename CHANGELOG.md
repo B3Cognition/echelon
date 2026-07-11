@@ -93,9 +93,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   delivery runtime sync now excludes Phase A `config/` material such as
   belief registers, top-level config template/default files, and extension
   manifest/packaging metadata from target-visible worktrees. Host-source
-  containment now also blocks relative `src/echelon/*.py` and
-  `src/kernel/*.py` transcript reads unless that file exists inside the target
-  worktree.
+  containment now also blocks relative nested reads under Echelon implementation
+  package roots such as `src/codegen/...`, unless that file exists inside the
+  target worktree.
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
   source roots, resolves workspace-relative context roots, exposes them as
