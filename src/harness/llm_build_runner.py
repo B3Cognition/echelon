@@ -115,7 +115,7 @@ def _containment_policy_env(policy_file: str) -> tuple[dict[str, str], str | Non
     """Return provider-facing root boundary env vars derived from policy JSON."""
     path = Path(policy_file)
     if not path.exists():
-        return {}, None
+        return {}, "missing containment policy"
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
