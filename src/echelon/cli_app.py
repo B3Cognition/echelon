@@ -70,7 +70,7 @@ spec_app = typer.Typer(
         "Phase A/spec lifecycle commands.\n\n"
         "Common forms:\n"
         "  run <description> [--mode semi|banzai|guided] [--reset]\n"
-        "                    [--target <source-id-or-path>]\n"
+        "                    [--target <source-id-or-path>] [--init]\n"
         "                    [--re-policy none|cached-only|changed|target-changed|target-only|refresh-all]\n"
         "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
         "  target <spec_id> <repo> <repo...> [--init]\n"
@@ -329,6 +329,7 @@ def root_run(
     description: Optional[str] = typer.Argument(None, help="Spec request or task description."),
     mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode: semi, banzai, or guided."),
     reset: bool = typer.Option(False, "--reset", help="Discard blocked state and start fresh."),
+    init: bool = typer.Option(False, "--init", help="Create or prepare the targeted source root."),
     message: Optional[str] = typer.Option(None, "--message", help="Additional run message."),
     next_phase: Optional[str] = typer.Option(None, "--next-phase", help="Resume at an explicit workflow phase."),
     target: Optional[str] = typer.Option(
@@ -345,6 +346,7 @@ def root_run(
         description=description,
         mode=mode,
         reset=reset,
+        init=init,
         message=message,
         next_phase=next_phase,
         target=target,
@@ -842,6 +844,7 @@ def spec_run(
     description: Optional[str] = typer.Argument(None, help="Spec request or task description."),
     mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode: semi, banzai, or guided."),
     reset: bool = typer.Option(False, "--reset", help="Discard blocked state and start fresh."),
+    init: bool = typer.Option(False, "--init", help="Create or prepare the targeted source root."),
     message: Optional[str] = typer.Option(None, "--message", help="Additional run message."),
     next_phase: Optional[str] = typer.Option(None, "--next-phase", help="Resume at an explicit workflow phase."),
     target: Optional[str] = typer.Option(
@@ -866,6 +869,8 @@ def spec_run(
     _extend_option(args, "--mode", mode)
     if reset:
         args.append("--reset")
+    if init:
+        args.append("--init")
     _extend_option(args, "--message", message)
     _extend_option(args, "--next-phase", next_phase)
     _extend_option(args, "--target", target)

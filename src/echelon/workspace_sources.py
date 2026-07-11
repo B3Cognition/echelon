@@ -24,6 +24,28 @@ class WorkspaceSourcesSyncResult:
         return bool(self.added or self.removed)
 
 
+def ensure_source_config_entry(root: Path, source_path: str) -> bool:
+    workspace_root = root.resolve()
+    config_path = workspace_root / CANONICAL_CONFIG_PATH
+    raw = _read_config(config_path)
+    entries = raw.get("sources") if isinstance(raw.get("sources"), list) else []
+    normalized_path = _normalize_source_path(workspace_root, source_path)
+    source_id = _source_id_from_path(normalized_path)
+
+    for entry in entries:
+        if _source_path(entry) == normalized_path or _source_id(entry) == source_id:
+            return False
+
+    raw.setdefault("workspace", {"git_role": "orchestration"})
+    raw["sources"] = [*entries, {"id": source_id, "path": normalized_path}]
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        yaml.safe_dump(raw, sort_keys=False),
+        encoding="utf-8",
+    )
+    return True
+
+
 def sync_sources_config(root: Path, *, write: bool) -> WorkspaceSourcesSyncResult:
     workspace_root = root.resolve()
     config_path = workspace_root / CANONICAL_CONFIG_PATH
@@ -119,3 +141,14 @@ def _source_id_from_path(path: str) -> str:
     if _is_canonical_sources_path(stripped):
         return Path(stripped).name
     return stripped
+
+
+def _normalize_source_path(workspace_root: Path, source_path: str) -> str:
+    raw = source_path.strip()
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        try:
+            return path.resolve().relative_to(workspace_root).as_posix()
+        except ValueError:
+            return path.as_posix()
+    return path.as_posix()

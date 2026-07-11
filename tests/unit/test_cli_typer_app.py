@@ -367,6 +367,7 @@ def test_spec_run_help_declares_phase_a_options():
     assert "DESCRIPTION" in result.output
     assert "--mode" in result.output
     assert "--reset" in result.output
+    assert "--init" in result.output
     assert "--message" in result.output
     assert "--next-phase" in result.output
     assert "--target" in result.output
@@ -388,6 +389,7 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "--mode",
         "banzai",
         "--reset",
+        "--init",
         "--message",
         "include migration notes",
         "--next-phase",
@@ -403,6 +405,7 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "--mode",
         "banzai",
         "--reset",
+        "--init",
         "--message",
         "include migration notes",
         "--next-phase",

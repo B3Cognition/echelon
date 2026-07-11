@@ -77,7 +77,7 @@ Commands:
 
   spec run <description> [--mode semi|banzai|guided] [--reset]
                     [--message <text>] [--next-phase <id>]
-                    [--target <source-id-or-path>]
+                    [--target <source-id-or-path>] [--init]
                     [--re-policy none|cached-only|changed|target-changed|target-only|refresh-all]
                                             Run Phase A squad spec authoring.
   spec status                               Show current run state, artifacts, cost, and next action.
@@ -4467,6 +4467,7 @@ def _cmd_run(
     reset = False
     next_phase = ""
     target_source = os.environ.get("ECHELON_TARGET_SOURCE", "").strip()
+    init_target = False
     re_policy = os.environ.get("ECHELON_RE_POLICY", "").strip()
     message_parts: list[str] = []
     i = 0
@@ -4480,6 +4481,9 @@ def _cmd_run(
             i += 2
         elif args[i] == "--reset":
             reset = True
+            i += 1
+        elif args[i] == "--init":
+            init_target = True
             i += 1
         elif args[i] == "--next-phase" and i + 1 < len(args):
             next_phase = args[i + 1]
@@ -4532,6 +4536,22 @@ def _cmd_run(
             f"(previous run preserved at {prev_dir.name})",
             flush=True,
         )
+
+    if init_target:
+        if not target_source:
+            print(
+                "✗ echelon spec run: --init requires --target <source id or path>",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        init_messages = _prepare_spec_target_repo(project_root, squad_dir, target_source)
+        from echelon.workspace_sources import ensure_source_config_entry
+
+        source_added = ensure_source_config_entry(project_root, target_source)
+        for init_message in init_messages:
+            print(init_message)
+        if source_added:
+            print(f"Added workspace source: {target_source}")
 
     config = load_config(project_root, squad_only=True)
     provider = SquadCliProvider(config)
@@ -6332,7 +6352,7 @@ def _cmd_spec(args: list[str]) -> None:
             "Usage: echelon spec <subcommand> [args...]\n\n"
             "  run <description> [--mode semi|banzai|guided] [--reset]\n"
             "                    [--message <text>] [--next-phase <id>]\n"
-            "                    [--target <source-id-or-path>]\n"
+            "                    [--target <source-id-or-path>] [--init]\n"
             "                    [--re-policy none|cached-only|changed|target-changed|target-only|refresh-all]\n"
             "                                      Run Phase A squad spec authoring\n"
             "  status                              Show current run state and next action\n"
