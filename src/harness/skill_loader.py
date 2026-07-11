@@ -21,7 +21,6 @@ COMMANDER_PREAMBLE = (
     "You are COMMANDER running non-interactively via an AI coding CLI. "
     "The text below is your complete operating instruction set for this session. "
     "Execute every step immediately using your tools. "
-    "Do NOT invoke the Skill tool — skill lookup rules do not apply in this session. "
     "Do NOT read files in parallel — issue tool calls one at a time unless the phase definition explicitly permits parallel dispatch. "
     "Do NOT spawn unsolicited Agent tasks outside of the prescribed phase dispatch protocol. "
     "Do not narrate or repeat the instructions back — just execute them.\n\n"

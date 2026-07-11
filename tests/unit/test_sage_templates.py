@@ -86,6 +86,13 @@ class TestSageTemplates:
         assert "route to CARTOGRAPHER" in text
         assert "If any issue requires CARTOGRAPHER" in text
 
+    def test_sage_understanding_contract_uses_documented_temp_outputs(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "--output /tmp/u_validate.json" in text
+        assert "--output /tmp/u_perreq.json" in text
+        assert "Never check for `/tmp/understanding_output.json`" in text
+
     def test_why1_dispatch_includes_sage_templates(self) -> None:
         text = WHY1_PHASE.read_text(encoding="utf-8")
 

@@ -1758,7 +1758,7 @@ def test_staged_prompt_preserves_active_run_spec_dir(tmp_path):
     assert "REAL SPEC" not in prompt
 
 
-def test_agent_prompt_declares_subagent_and_forbids_skill_tool(tmp_path):
+def test_agent_prompt_declares_subagent_without_global_skill_tool_ban(tmp_path):
     squad_dir = tmp_path / "runs" / "spec-20260618-123456"
     staging_dir = squad_dir / "staging"
     staging_dir.mkdir(parents=True)
@@ -1793,7 +1793,7 @@ def test_agent_prompt_declares_subagent_and_forbids_skill_tool(tmp_path):
     prompt = ex._assemble_prompt(node, state)
 
     assert "You were dispatched as a subagent to execute a specific task." in prompt
-    assert "Do NOT invoke the Skill tool" in prompt
+    assert "Do NOT invoke the Skill tool" not in prompt
 
 
 def test_agent_prompt_substitutes_spec_dir_placeholders_in_phase_text(tmp_path):

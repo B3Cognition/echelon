@@ -1,6 +1,21 @@
 # SAGE Understanding Follow-Up Reference
 
-Load this appendix only after `speckit.echelon.understanding-validate` succeeds in spec-validation mode.
+Load this appendix only after `speckit.echelon.understanding-validate` succeeds in spec-validation mode and `/tmp/u_validate.json` exists.
+
+## Validation Output
+
+The validation run writes its machine-readable output here:
+
+```bash
+understanding "$SPEC_PATH" --validate --json --output /tmp/u_validate.json
+```
+
+Do not read `/tmp/understanding_output.json`; that path is not part of the Understanding contract.
+
+`understanding --validate` exits with code 1 when quality gates fail. If
+`/tmp/u_validate.json` exists and parses as JSON, validation completed; use the
+scores in the file and report gate failures. Do not mark Understanding
+unavailable for this case.
 
 ## Per-Requirement Analysis
 

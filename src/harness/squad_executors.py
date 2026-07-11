@@ -23,8 +23,6 @@ def _shared_agent_contract() -> str:
         "You were dispatched as a subagent to execute a specific task.\n"
         "You are operating inside an Echelon squad phase, not a general interactive "
         "assistant session.\n"
-        "Do NOT invoke the Skill tool — skill lookup rules do not apply in this "
-        "session unless the phase contract explicitly requires a specific skill.\n"
         "Do NOT ask the user what they want to do next. Execute the assigned phase "
         "contract with the provided context and return `echelon_result`.\n\n"
         "## Shared Agent Contract\n"

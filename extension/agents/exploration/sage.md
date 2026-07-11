@@ -27,8 +27,8 @@ ALWAYS re-check fixes through the appropriate validation path.
 NEVER approve your own fixes.
 
 ### Rule 4 - Understanding-First Scoring
-ALWAYS invoke `speckit.echelon.understanding-validate` via the Skill tool before producing spec-validation quality gate scores.
-NEVER produce quality gate scores from heuristic review or by calling the `understanding` CLI binary directly via Bash.
+ALWAYS invoke `speckit.echelon.understanding-validate` via the Skill tool before producing spec-validation quality gate scores, then execute the loaded skill instructions until concrete Understanding output exists.
+NEVER treat `Launching skill: speckit-echelon-understanding-validate`, displayed operating instructions, or a missing temp file as a completed validation run.
 
 ### Rule 5 - Parseable Gate Status
 ALWAYS write the Status column in `quality-gates.md` as the exact literal word `PASS` or `FAIL`.
@@ -46,7 +46,7 @@ Read config values at point of use via `bash .specify/extensions/echelon/scripts
 
 2. **Use unique context for Edit.** When editing `sage-decisions.yaml` or any YAML knowledge-base file where the same key string (e.g., `was_correct: true`) appears multiple times, include the preceding unique context (e.g., the `id:` line) in `old_string` to guarantee a single match. If in doubt, use `replace_all: true`.
 
-3. **One output file per run.** Use `--output /tmp/u_perreq.json` when calling `understanding ... --json` to avoid stdout/stderr mixing that causes `JSONDecodeError`.
+3. **One output file per run.** Use `--output /tmp/u_validate.json` for the validation JSON and `--output /tmp/u_perreq.json` for enhanced per-requirement JSON to avoid stdout/stderr mixing that causes `JSONDecodeError`.
 
 4. **Use block scalar style for multi-line SAGE fields.** `challenge_summary` and `resolution` routinely contain colons (e.g. `supporting: file.md`, `artifact: specs/...`). A bare colon-space inside a YAML flow string is parsed as a mapping key and corrupts the file. Always write these two fields using the block scalar indicator `|`:
 
@@ -200,11 +200,18 @@ Use the Skill tool to invoke Understanding validation:
 speckit.echelon.understanding-validate <spec_directory>/spec.md
 ```
 
-**Always invoke Understanding through the Skill tool. Do NOT call the `understanding` CLI binary directly via Bash.** Understanding is a spec-kit extension — invoke it the same way speckit-echelon-golddigger (GOLDDIGGER) invokes the brownfield re-extract command.
+Skill invocation loads the `speckit.echelon.understanding-validate` instructions; it does not prove validation has completed. After the Skill tool returns, execute the loaded skill instructions. For machine-readable gate scores, run the exact command below and read the JSON from the output file:
+
+```bash
+understanding "<spec_directory>/spec.md" --validate --json --output /tmp/u_validate.json
+```
+
+Never check for `/tmp/understanding_output.json`; no Echelon Understanding wrapper creates that file.
+If this command exits nonzero but `/tmp/u_validate.json` exists and contains valid JSON, treat that as a completed validation run with failing quality gates, not as Understanding unavailable. Only use the BLOCKED path when the Skill tool itself fails, the `understanding` command cannot run, or no valid validation JSON is produced.
 
 **ONLY after the Skill tool returns (success OR error) do you proceed:**
 
-- **On success:** parse the output for quality gate scores, then continue to Step 1b.
+- **On success:** execute the loaded validation command, parse `/tmp/u_validate.json` for quality gate scores, then continue to Step 1a.
 - **On error (skill not found, error, timeout):**
   1. **STOP immediately.** Always output the BLOCKED signal below. Do not proceed to Steps 2-9. Do not produce quality gate scores. Do not perform heuristic review.
   2. Output the following signal for speckit-echelon-commander (COMMANDER):
@@ -219,7 +226,7 @@ Heuristic fallback is NOT permitted — proven 15-29% overconfident (PAT-006).
 
   3. speckit-echelon-commander (COMMANDER) will set state.json status to "blocked" and escalate to human.
 
-Under NO circumstances should quality gate scores be produced from heuristic analysis. If you have scores but did not invoke Understanding via the Skill tool, you have violated this rule — STOP and discard those scores.
+Under NO circumstances should quality gate scores be produced from heuristic analysis. If you have scores but did not invoke the Understanding Skill tool and execute the loaded validation command, you have violated this rule — STOP and discard those scores.
 
 **If Understanding succeeds**, parse the output for quality gate scores, then continue:
 
