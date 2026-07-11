@@ -173,6 +173,19 @@ def test_flags_review_harness_source_discovery_phrasing(tmp_path: Path) -> None:
     ]
 
 
+def test_flags_view_harness_source_discovery_phrasing(tmp_path: Path) -> None:
+    prompt = tmp_path / "agent.md"
+    prompt.write_text(
+        "View src/harness/ralph.py before deciding how delivery resume works.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "harness_internal_discovery"
+
+
 def test_flags_shell_harness_source_read_phrasing(tmp_path: Path) -> None:
     prompt = tmp_path / "agent.md"
     prompt.write_text(
