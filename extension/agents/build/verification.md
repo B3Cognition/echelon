@@ -70,9 +70,9 @@ Hard-fail semantics:
 
 ## Process
 
-### Step 1: Extract All Requirements
+### Step 1: Load Requirement Checklist
 
-Parse spec.md and extract EVERY requirement into a checklist:
+Use the provided spec context and Ralph-owned requirement checklist. Do not re-open or parse `spec.md` to rediscover requirements.
 
 ```
 FR-EMB-001: [text]

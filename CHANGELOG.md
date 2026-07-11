@@ -94,7 +94,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   display/print/dump phrasing for `src/harness/...` in addition to
   read/open/review/inspect style prompts. Build prompt artifact-discovery
   detection now also covers `progress-report.md` and `run-history.json`, keeping
-  those Ralph/spec-owned lifecycle facts in the Python-owned context boundary.
+  those Ralph/spec-owned lifecycle facts in the Python-owned context boundary,
+  and rejects soft inspect/open/review/look-at/parse style discovery of
+  Ralph-owned spec lifecycle artifacts.
 - **EGR-117 / #141 delivery runtime surface** — direct and workspace-target
   delivery runtime sync now excludes Phase A `config/` material such as
   belief registers, top-level config template/default files, and extension

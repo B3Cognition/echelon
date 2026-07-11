@@ -103,7 +103,7 @@ Use the Agent tool:
 
 speckit-echelon-verification (VERIFICATION) must:
 
-1. Check every FR-*, AC-*, and NFR-* in `spec.md`.
+1. Use the provided spec context and Ralph-owned requirement checklist for every FR-*, AC-*, and NFR-*.
 2. Verify code, tests, integration evidence, and gate evidence.
 3. Produce `gap-report.md`, `excess-report.md`, updated `traceability-matrix.md`, and `verification-summary.md`.
 

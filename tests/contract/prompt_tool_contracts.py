@@ -104,7 +104,9 @@ BUILD_GIT_STATE_DISCOVERY_RE = re.compile(
 )
 
 BUILD_SPEC_ARTIFACT_DISCOVERY_RE = re.compile(
-    r"\b(?:find|get|query|read|locate|glob|list|search|scan)\b"
+    r"\b(?:find|get|query|read|locate|glob|list|search|scan|inspect|open|"
+    r"view|show|display|print|dump|review|examine|check|look at|parse|cat|"
+    r"sed|less|more|tail|head)\b"
     r".{0,160}\b(?:state\.json|runs/|tasks\.md|spec\.md|specs/|"
     r"progress-report\.md|run-history\.json)\b",
     re.IGNORECASE,
@@ -181,14 +183,18 @@ def _is_negative_boundary(line: str) -> bool:
     lowered = line.strip().lower()
     if re.search(
         r"\bif\b.{0,80}\b(?:absent|missing|not provided)\b.{0,120}\b"
-        r"(?:find|locate|discover|search|read|inspect|open|grep|list|glob)\b",
+        r"(?:find|locate|discover|search|read|inspect|open|grep|list|glob|"
+        r"scan|view|show|display|print|dump|review|examine|check|look at|"
+        r"parse|cat|sed|less|more|tail|head)\b",
         lowered,
     ):
         return False
     return bool(
         re.search(
             r"\b(?:do not|never|must not)\b.{0,120}\b"
-            r"(?:find|locate|discover|search|read|inspect|open|grep|list)\b",
+            r"(?:find|locate|discover|search|read|inspect|open|grep|list|"
+            r"scan|view|show|display|print|dump|review|examine|check|look at|"
+            r"parse|cat|sed|less|more|tail|head)\b",
             lowered,
         )
     )

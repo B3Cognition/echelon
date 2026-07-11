@@ -110,8 +110,8 @@ error: "Phase A artifacts are not build-ready. Run `echelon spec continue` first
 
 ### 1.2 Load Task Facts
 
-Use the Ralph-owned build-slice context pack for task facts. Do not read or
-parse `{spec_dir}/tasks.md` directly in harness delivery; Ralph has already
+Use the Ralph-owned build-slice context pack for task facts. Do not read or parse
+`{spec_dir}/tasks.md` directly in harness delivery; Ralph has already
 resolved the current build slice, open task rows, dependency hints, referenced
 requirements, and progress ledger facts.
 
