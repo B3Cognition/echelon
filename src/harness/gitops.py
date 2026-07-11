@@ -57,6 +57,7 @@ RUNTIME_EXTENSION_EXCLUDED_PATHS = (
     Path("config"),
     Path("config-template.yml"),
     Path("echelon-config.yml"),
+    Path("extension.yml"),
     Path("presets"),
     Path("scripts") / "python",
     Path("scripts") / "bash" / "re",

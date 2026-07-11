@@ -219,6 +219,7 @@ def test_polyrepo_runtime_extension_excludes_phase_a_config_registers(
     (source / ".extensionignore").write_text("presets/\n", encoding="utf-8")
     (source / "config-template.yml").write_text("config: template\n", encoding="utf-8")
     (source / "echelon-config.yml").write_text("config: defaults\n", encoding="utf-8")
+    (source / "extension.yml").write_text("extension: {}\n", encoding="utf-8")
     (source / "templates" / "tasks-template.md").write_text(
         "# runtime task template\n", encoding="utf-8"
     )
@@ -233,6 +234,7 @@ def test_polyrepo_runtime_extension_excludes_phase_a_config_registers(
     assert not (runtime / "config").exists()
     assert not (runtime / "config-template.yml").exists()
     assert not (runtime / "echelon-config.yml").exists()
+    assert not (runtime / "extension.yml").exists()
 
 
 def test_polyrepo_runtime_extension_excludes_stack_playbooks(
