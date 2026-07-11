@@ -35,9 +35,23 @@ from harness.provider import (
     SandboxProvider,
     SandboxSpec,
 )
+from harness import ralph
 from harness.ralph import RalphController
 from harness.state import StateStore
 from harness.verify_result import VerifyResult
+
+
+def test_tool_access_classifier_uses_categorized_filesystem_commands() -> None:
+    """Containment command matching is maintained by category, not regex archaeology."""
+    commands_by_category = ralph._FILESYSTEM_ACCESS_COMMANDS_BY_CATEGORY
+
+    assert "shell_reader" in commands_by_category
+    assert "test_build_runner" in commands_by_category
+    assert "cat" in commands_by_category["shell_reader"]
+    assert "pytest" in commands_by_category["test_build_runner"]
+
+    for command in ("cat", "tree", "pytest", "npm", "swift", "python"):
+        assert ralph._looks_like_tool_access_line(f"  {command} src/harness/ralph.py")
 
 
 # === Mock SandboxProvider ===

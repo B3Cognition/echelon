@@ -121,7 +121,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Test/build runner commands such as `pytest`, `tox`, `nox`, `coverage`,
   `ruff`, `mypy`, `eslint`, `tsc`, `npm`, `pnpm`, `yarn`, `bun`, `make`,
   `just`, `task`, `go`, `cargo`, `swift`, `xcodebuild`, `gradle`, and `mvn`
-  are now included too.
+  are now included too. The transcript command matcher is now built from
+  named filesystem-access command categories instead of one opaque regex list,
+  so future containment changes can harden categories rather than repeatedly
+  editing regex archaeology.
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
   source roots, resolves workspace-relative context roots, exposes them as

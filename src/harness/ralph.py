@@ -4619,11 +4619,187 @@ def _status_delta(before: List[str], after: List[str]) -> List[str]:
     return [line for line in after if line not in before_set]
 
 
+_PROVIDER_FILESYSTEM_TOOL_LABELS = (
+    "Read",
+    "NotebookRead",
+    "NotebookEdit",
+    "NotebookWrite",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "BashOutput",
+    "Bash",
+    "Shell",
+    "Command",
+    "Run",
+    "Python",
+    "Node",
+    "JS",
+    "JavaScript",
+    "Grep",
+    "Glob",
+    "Find",
+    "Search",
+    "List",
+    "LS",
+    "Open",
+    "View",
+    "Show",
+    "Display",
+    "Print",
+    "Dump",
+    "Inspect",
+    "Agent",
+    "Task",
+    "Subagent",
+)
+
+_FILESYSTEM_ACCESS_COMMANDS_BY_CATEGORY = {
+    "shell_reader": (
+        "cat",
+        "rg",
+        "grep",
+        "find",
+        "sed",
+        "head",
+        "tail",
+        "less",
+        "more",
+        "awk",
+        "nl",
+        "wc",
+        "file",
+        "stat",
+        "strings",
+        "hexdump",
+        "xxd",
+        "od",
+        "cmp",
+        "diff",
+    ),
+    "path_inspection": (
+        "fd",
+        "locate",
+        "tree",
+        "ls",
+        "du",
+        "readlink",
+        "realpath",
+        "dirname",
+        "basename",
+    ),
+    "vcs_and_network": (
+        "git",
+        "gh",
+        "curl",
+        "wget",
+        "http",
+        "https",
+    ),
+    "structured_data_processor": (
+        "jq",
+        "yq",
+        "dasel",
+        "xmllint",
+    ),
+    "editor_or_viewer": (
+        "open",
+        "vim",
+        "vi",
+        "nano",
+        "emacs",
+        "code",
+    ),
+    "shell_writer_or_metadata": (
+        "tee",
+        "touch",
+        "mkdir",
+        "rm",
+        "rmdir",
+        "chmod",
+        "chown",
+        "chgrp",
+        "ln",
+        "install",
+        "truncate",
+        "dd",
+        "patch",
+    ),
+    "shell_execution": (
+        "source",
+        "bash",
+        "sh",
+        "zsh",
+        "dash",
+        "ksh",
+        "fish",
+        "env",
+        "xargs",
+    ),
+    "test_build_runner": (
+        "pytest",
+        "tox",
+        "nox",
+        "coverage",
+        "unittest",
+        "ruff",
+        "mypy",
+        "eslint",
+        "tsc",
+        "npm",
+        "pnpm",
+        "yarn",
+        "bun",
+        "make",
+        "just",
+        "task",
+        "go",
+        "cargo",
+        "swift",
+        "xcodebuild",
+        "gradle",
+        "mvn",
+    ),
+    "file_transfer_or_archive": (
+        "cp",
+        "mv",
+        "rsync",
+        "ditto",
+        "tar",
+        "zip",
+        "unzip",
+        "gzip",
+        "gunzip",
+    ),
+    "code_execution": (
+        "python",
+        "python3",
+        "node",
+        "deno",
+        "ruby",
+        "perl",
+    ),
+}
+
+
+def _regex_union(values: Iterable[str]) -> str:
+    return "|".join(re.escape(value) for value in values)
+
+
+_FILESYSTEM_ACCESS_COMMANDS = tuple(
+    command
+    for commands in _FILESYSTEM_ACCESS_COMMANDS_BY_CATEGORY.values()
+    for command in commands
+)
+
+_PROVIDER_FILESYSTEM_TOOL_LABEL_RE = _regex_union(_PROVIDER_FILESYSTEM_TOOL_LABELS)
+_FILESYSTEM_ACCESS_COMMAND_RE = _regex_union(_FILESYSTEM_ACCESS_COMMANDS)
+
 _TOOL_ACCESS_LINE_RE = re.compile(
     r"(?:"
-    r"▷\s*(?:Read|NotebookRead|NotebookEdit|NotebookWrite|Write|Edit|MultiEdit|BashOutput|Bash|Shell|Command|Run|Python|Node|JS|JavaScript|Grep|Glob|Find|Search|List|LS|Open|View|Show|Display|Print|Dump|Inspect|Agent|Task|Subagent)|"
-    r"\b(?:Read|NotebookRead|NotebookEdit|NotebookWrite|Write|Edit|MultiEdit|BashOutput|Bash|Shell|Command|Run|Python|Node|JS|JavaScript|Grep|Glob|Find|Search|List|LS|Open|View|Show|Display|Print|Dump|Inspect|Agent|Task|Subagent):|"
-    r"\b(?:cat|rg|grep|find|fd|locate|tree|ls|sed|head|tail|less|more|awk|nl|wc|file|stat|du|readlink|realpath|dirname|basename|strings|hexdump|xxd|od|cmp|diff|git|gh|curl|wget|http|https|jq|yq|dasel|xmllint|open|vim|vi|nano|emacs|code|tee|touch|mkdir|rm|rmdir|chmod|chown|chgrp|ln|install|truncate|dd|patch|source|bash|sh|zsh|dash|ksh|fish|env|xargs|pytest|tox|nox|coverage|unittest|ruff|mypy|eslint|tsc|npm|pnpm|yarn|bun|make|just|task|go|cargo|swift|xcodebuild|gradle|mvn|cp|mv|rsync|ditto|tar|zip|unzip|gzip|gunzip|python|python3|node|deno|ruby|perl)\s+"
+    rf"▷\s*(?:{_PROVIDER_FILESYSTEM_TOOL_LABEL_RE})|"
+    rf"\b(?:{_PROVIDER_FILESYSTEM_TOOL_LABEL_RE}):|"
+    rf"\b(?:{_FILESYSTEM_ACCESS_COMMAND_RE})\s+"
     r")",
     re.IGNORECASE,
 )
