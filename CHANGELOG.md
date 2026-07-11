@@ -98,7 +98,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   target worktree, and a legitimate worktree path on the same transcript line no
   longer masks a relative host-source marker. View-style transcript labels such
   as `View`, `Show`, `Display`, `Print`, `Dump`, and `Inspect` now count as file
-  access for containment.
+  access for containment, as do code-execution labels such as `Python`, `Node`,
+  `JS`, and `JavaScript`.
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
   source roots, resolves workspace-relative context roots, exposes them as
