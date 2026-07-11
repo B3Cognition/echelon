@@ -91,6 +91,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   artifact validation now fails when explicit summary/status counts disagree
   with the parsed per-requirement verdict rows, and reports the exact mismatch
   in CLI output and verify-spec state.
+- **EGR-134 / #157 CodeGraph degraded evidence quality** — degraded
+  verify-spec CodeGraph runs now write a deterministic `codegraph-summary.json`
+  with `structural_evidence=degraded` and `manual_fallback_required`, and stamp
+  the same evidence-quality metadata into verify-spec state.
+
 - **EGR-119 / #143 verify-spec init preflight** — `python -m harness
   init-verify-spec-run` now rejects missing `project_root` or `spec_dir`
   before creating run state, returning a clean input error instead of letting

@@ -801,7 +801,15 @@ def _write_codegraph_evidence() -> None:
             spec_dir=Path(sys.argv[4]),
         )
     except CodeGraphEvidenceError as exc:
-        _stamp_verify_spec_state(verify_run_dir, {"structural_evidence": "degraded"})
+        _stamp_verify_spec_state(
+            verify_run_dir,
+            {
+                "structural_evidence": "degraded",
+                "codegraph_evidence_quality": "manual_fallback_required",
+                "codegraph_summary_path": str(verify_run_dir / "codegraph-summary.json"),
+                "codegraph_error_path": str(exc),
+            },
+        )
         print(f"CodeGraph evidence degraded; see {exc}", file=sys.stderr)
         sys.exit(1)
 

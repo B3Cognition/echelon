@@ -328,8 +328,14 @@ def test_write_codegraph_evidence_cli_uses_fixed_installed_bridge_path(
     assert "exit_code: 7" in error
     assert ".specify/extensions/echelon/scripts/node/re/codegraph-bridge.js" in error
     assert "fixed installed extension path" in error
+    summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())
+    assert summary["structural_evidence"] == "degraded"
+    assert summary["evidence_quality"] == "manual_fallback_required"
+    assert summary["diagnostic_artifact"] == str(verify_run_dir / "codegraph-error.txt")
     state = json.loads((verify_run_dir / "state.json").read_text())
     assert state["structural_evidence"] == "degraded"
+    assert state["codegraph_evidence_quality"] == "manual_fallback_required"
+    assert state["codegraph_summary_path"] == str(verify_run_dir / "codegraph-summary.json")
 
 
 def test_write_codegraph_evidence_cli_requires_init_owned_state(

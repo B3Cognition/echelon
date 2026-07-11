@@ -88,19 +88,31 @@ def write_codegraph_evidence(
 
         node = shutil.which("node")
         if node is None:
-            _write_error(
-                error_path,
+            message = (
                 "".join(diagnostics)
-                + "Node.js is required to run CodeGraph evidence.\n",
+                + "Node.js is required to run CodeGraph evidence.\n"
+            )
+            _write_error(error_path, message)
+            _write_degraded_summary(
+                summary_path=summary_path,
+                analysis_path=analysis_path,
+                error_path=error_path,
+                message=message,
             )
             raise CodeGraphEvidenceError(str(error_path))
 
         if not bridge_path.is_file():
-            _write_error(
-                error_path,
+            message = (
                 "".join(diagnostics)
                 + "CodeGraph bridge missing at fixed installed extension path:\n"
-                f"{bridge_path}\n",
+                f"{bridge_path}\n"
+            )
+            _write_error(error_path, message)
+            _write_degraded_summary(
+                summary_path=summary_path,
+                analysis_path=analysis_path,
+                error_path=error_path,
+                message=message,
             )
             raise CodeGraphEvidenceError(str(error_path))
 
@@ -108,8 +120,7 @@ def write_codegraph_evidence(
         if completed.returncode != 0 or not _analysis_is_usable(
             analysis_path, expected_repo_path=project_root
         ):
-            _write_error(
-                error_path,
+            message = (
                 "".join(diagnostics)
                 + _provider_failure(
                     "CodeGraph bridge failed.",
@@ -126,7 +137,14 @@ def write_codegraph_evidence(
                     stdout=completed.stdout,
                     stderr=completed.stderr,
                     output_exists=analysis_path.is_file(),
-                ),
+                )
+            )
+            _write_error(error_path, message)
+            _write_degraded_summary(
+                summary_path=summary_path,
+                analysis_path=analysis_path,
+                error_path=error_path,
+                message=message,
             )
             raise CodeGraphEvidenceError(str(error_path))
 
@@ -237,6 +255,34 @@ def _shell_join(command: list[str]) -> str:
 def _write_error(error_path: Path, message: str) -> None:
     error_path.parent.mkdir(parents=True, exist_ok=True)
     error_path.write_text(message, encoding="utf-8")
+
+
+def _write_degraded_summary(
+    *,
+    summary_path: Path,
+    analysis_path: Path,
+    error_path: Path,
+    message: str,
+) -> None:
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    reason = next(
+        (line.strip() for line in message.splitlines() if line.strip()),
+        "CodeGraph evidence degraded.",
+    )
+    payload = {
+        "structural_evidence": "degraded",
+        "evidence_quality": "manual_fallback_required",
+        "reason": reason,
+        "analysis_path": str(analysis_path),
+        "diagnostic_artifact": str(error_path),
+        "symbol_kinds": [],
+        "top_callers": [],
+        "top_callees": [],
+    }
+    summary_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _remove_if_exists(path: Path) -> None:
