@@ -216,6 +216,7 @@ def test_polyrepo_runtime_extension_excludes_phase_a_config_registers(
     (source / "config" / "belief-registers" / "guardian.yaml").write_text(
         "beliefs: []\n", encoding="utf-8"
     )
+    (source / ".extensionignore").write_text("presets/\n", encoding="utf-8")
     (source / "config-template.yml").write_text("config: template\n", encoding="utf-8")
     (source / "echelon-config.yml").write_text("config: defaults\n", encoding="utf-8")
     (source / "templates" / "tasks-template.md").write_text(
@@ -228,6 +229,7 @@ def test_polyrepo_runtime_extension_excludes_phase_a_config_registers(
 
     runtime = harness_base / ".specify" / "extensions" / "echelon"
     assert (runtime / "templates" / "tasks-template.md").exists()
+    assert not (runtime / ".extensionignore").exists()
     assert not (runtime / "config").exists()
     assert not (runtime / "config-template.yml").exists()
     assert not (runtime / "echelon-config.yml").exists()

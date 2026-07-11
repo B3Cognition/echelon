@@ -53,6 +53,7 @@ RUNTIME_EXTENSION_READY_REQUIRED = (
 )
 RUNTIME_EXTENSION_EXCLUDE = ".specify/extensions/echelon/"
 RUNTIME_EXTENSION_EXCLUDED_PATHS = (
+    Path(".extensionignore"),
     Path("config"),
     Path("config-template.yml"),
     Path("echelon-config.yml"),
