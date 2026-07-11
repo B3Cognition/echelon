@@ -96,7 +96,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   detection now also covers `progress-report.md` and `run-history.json`, keeping
   those Ralph/spec-owned lifecycle facts in the Python-owned context boundary,
   and rejects soft inspect/open/review/look-at/parse style discovery of
-  Ralph-owned spec lifecycle artifacts.
+  Ralph-owned spec lifecycle artifacts. Build prompt git-state discovery now
+  also blocks `git diff`, `git branch`, and `git show` prompts so agents consume
+  Ralph-owned git facts instead of rediscovering repository state.
 - **EGR-117 / #141 delivery runtime surface** — direct and workspace-target
   delivery runtime sync now excludes Phase A `config/` material such as
   belief registers, top-level config template/default files, and extension

@@ -98,8 +98,9 @@ HARNESS_INTERNAL_DISCOVERY_RE = re.compile(
 )
 
 BUILD_GIT_STATE_DISCOVERY_RE = re.compile(
-    r"\b(?:check|get|query|inspect|read|run|use)\b"
-    r".{0,120}\b(?:git\s+status|git\s+log|git\s+rev-parse|rev-parse)\b",
+    r"\b(?:check|get|query|inspect|read|run|use|review|examine|look at|parse|"
+    r"view|show|display|print|dump)\b"
+    r".{0,120}\b(?:git\s+(?:status|log|rev-parse|diff|branch|show)|rev-parse)\b",
     re.IGNORECASE,
 )
 
@@ -183,7 +184,7 @@ def _is_negative_boundary(line: str) -> bool:
     lowered = line.strip().lower()
     if re.search(
         r"\bif\b.{0,80}\b(?:absent|missing|not provided)\b.{0,120}\b"
-        r"(?:find|locate|discover|search|read|inspect|open|grep|list|glob|"
+        r"(?:find|locate|discover|search|read|inspect|open|grep|list|glob|run|use|"
         r"scan|view|show|display|print|dump|review|examine|check|look at|"
         r"parse|cat|sed|less|more|tail|head)\b",
         lowered,
@@ -192,7 +193,7 @@ def _is_negative_boundary(line: str) -> bool:
     return bool(
         re.search(
             r"\b(?:do not|never|must not)\b.{0,120}\b"
-            r"(?:find|locate|discover|search|read|inspect|open|grep|list|"
+            r"(?:find|locate|discover|search|read|inspect|open|grep|list|run|use|"
             r"scan|view|show|display|print|dump|review|examine|check|look at|"
             r"parse|cat|sed|less|more|tail|head)\b",
             lowered,
