@@ -151,7 +151,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **EGR-129 / #152 legacy harness worktree recovery** — legacy
   `harness/<spec>/<strategy>/iter-N` worktree creation now removes stale
   registered harness worktrees under `runs/` and retries `git worktree add`,
-  matching the existing feature-branch cleanup behavior.
+  matching the existing feature-branch cleanup behavior. Later legacy
+  iterations now also branch from the prior iteration branch when present
+  instead of resetting to the default branch.
 - **EGR-132 / #155 no-answer delivery recovery guidance** — no-progress
   escalations now put `echelon delivery continue <spec_id>` first when no
   answer is required, while preserving `delivery resume <spec_id> "<answer>"`

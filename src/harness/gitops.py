@@ -352,8 +352,9 @@ class GitOpsManager:
         it is merged to main.
 
         When base_branch is None (legacy / no-echelon mode): a new branch named
-        'harness/{spec_id}-{strategy_id}-iter-{outer_iter}' is created from the
-        default branch HEAD (original behaviour).
+        'harness/{spec_id}/{strategy_id}/iter-{outer_iter}' is created from the
+        prior iteration branch when available, otherwise from the default branch
+        HEAD.
 
         Returns:
             Absolute path to the worktree directory.
@@ -461,9 +462,16 @@ class GitOpsManager:
                 else:
                     raise
         else:
-            # Legacy mode: create a new harness/* branch from default branch HEAD.
+            # Legacy mode: create a new harness/* branch, continuing from the
+            # prior iteration branch when one exists.
             default_branch = self.get_default_branch()
             branch_name = f"harness/{spec_id}/{strategy_id}/iter-{outer_iter}"
+            branch_base = self._legacy_iteration_base(
+                spec_id=spec_id,
+                strategy_id=strategy_id,
+                outer_iter=outer_iter,
+                default_branch=default_branch,
+            )
             worktree_created = False
             existing_branch = _run_git(
                 ["rev-parse", "--verify", f"refs/heads/{branch_name}"],
@@ -475,7 +483,7 @@ class GitOpsManager:
             else:
                 try:
                     _run_git(
-                        ["branch", branch_name, default_branch],
+                        ["branch", branch_name, branch_base],
                         cwd=str(self._mirror_path),
                     )
                 except GitOpsError as e:
@@ -502,7 +510,7 @@ class GitOpsManager:
                 )
                 logger.info(
                     "Created worktree at %s on branch %s (base: %s)",
-                    worktree_dir, branch_name, default_branch,
+                    worktree_dir, branch_name, branch_base,
                 )
 
         # Add 'upstream' remote pointing to the real target repo.
@@ -597,6 +605,27 @@ class GitOpsManager:
                 ["worktree", "add", str(worktree_dir), branch_name],
                 cwd=str(self._mirror_path),
             )
+
+    def _legacy_iteration_base(
+        self,
+        *,
+        spec_id: str,
+        strategy_id: str,
+        outer_iter: int,
+        default_branch: str,
+    ) -> str:
+        if outer_iter <= 0:
+            return default_branch
+
+        previous_branch = f"harness/{spec_id}/{strategy_id}/iter-{outer_iter - 1}"
+        result = _run_git(
+            ["rev-parse", "--verify", f"refs/heads/{previous_branch}"],
+            cwd=str(self._mirror_path),
+            check=False,
+        )
+        if result.returncode == 0:
+            return previous_branch
+        return default_branch
 
     def sync_runtime_extension(self, worktree_dir: str | Path) -> None:
         """Make Echelon's local runtime prompts available inside a harness worktree.
