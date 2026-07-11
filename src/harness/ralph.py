@@ -2379,6 +2379,17 @@ class RalphController:
             allowed_context_roots=allowed_context_roots,
             forbidden_source_roots=forbidden_source_roots,
         )
+        allowed_context_roots_block = ""
+        allowed_context_roots_instruction = ""
+        if allowed_context_roots:
+            allowed_context_roots_block = (
+                "allowed_context_roots:\n"
+                + "".join(f"- {path}\n" for path in allowed_context_roots)
+            )
+            allowed_context_roots_instruction = (
+                "Allowed context roots are read-only inputs for understanding; "
+                "do not edit them during targeted delivery.\n"
+            )
         forbidden_source_roots_block = ""
         forbidden_source_roots_instruction = ""
         if forbidden_source_roots:
@@ -2440,6 +2451,7 @@ class RalphController:
             f"build_slice_context_file: {build_slice_context_file}\n"
             f"build_slice_context_index_file: {build_slice_context_index_file}\n"
             f"build_implementer_context_file: {build_implementer_context_file}\n"
+            f"{allowed_context_roots_block}"
             f"{forbidden_source_roots_block}"
             f"spec_artifacts_mode: {spec_artifacts_mode}\n"
             f"spec_dir: {spec_dir_text}\n"
@@ -2450,6 +2462,7 @@ class RalphController:
             "Read `build_implementer_context_file` before implementation; it is the Python-owned context pack for IMPLEMENTER work.\n"
             "Read `build_slice_context_file` before implementation; it is the Python-owned bounded context for this build slice.\n"
             "Use `source_root` only as source identity/context; implementation edits must stay in `worktree`.\n"
+            f"{allowed_context_roots_instruction}"
             f"{forbidden_source_roots_instruction}"
             "Do not search for the application repo; it is named here and mirrored by `worktree`.\n"
             "Use `workspace_root` only for Echelon/spec orchestration unless `source_root` is the same path.\n"

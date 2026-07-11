@@ -671,7 +671,9 @@ class TestOuterLoopConvergence:
         policy_file = state_store.state_dir / "delivery-containment-policy.json"
         policy = json.loads(policy_file.read_text(encoding="utf-8"))
 
-        assert str(allowed_context) not in prompt
+        assert "allowed_context_roots:" in prompt
+        assert f"- {allowed_context}" in prompt
+        assert "Allowed context roots are read-only inputs" in prompt
         assert f"- {forbidden}" in prompt
         assert policy["allowed_roots"]["context"] == [str(allowed_context)]
         assert policy["forbidden_source_roots"] == [str(forbidden)]
@@ -704,7 +706,9 @@ class TestOuterLoopConvergence:
         policy_file = state_store.state_dir / "delivery-containment-policy.json"
         policy = json.loads(policy_file.read_text(encoding="utf-8"))
 
-        assert str(allowed_context) not in prompt
+        assert "allowed_context_roots:" in prompt
+        assert f"- {allowed_context}" in prompt
+        assert "Allowed context roots are read-only inputs" in prompt
         assert f"- {forbidden}" in prompt
         assert policy["allowed_roots"]["context"] == [str(allowed_context)]
         assert policy["forbidden_source_roots"] == [str(forbidden)]

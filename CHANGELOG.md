@@ -81,8 +81,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
-  source roots, resolves workspace-relative context roots, and records them
-  under `allowed_roots.context` in `delivery-containment-policy.json`.
+  source roots, resolves workspace-relative context roots, exposes them as
+  read-only build-prompt inputs, and records them under `allowed_roots.context`
+  in `delivery-containment-policy.json`.
 - **EGR-129 / #152 legacy harness worktree recovery** — legacy
   `harness/<spec>/<strategy>/iter-N` worktree creation now removes stale
   registered harness worktrees under `runs/` and retries `git worktree add`,
