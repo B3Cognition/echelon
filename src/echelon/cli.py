@@ -2906,13 +2906,17 @@ def _blocked_failed_dispatch_phase(run_state: dict) -> str | None:
     """Return the incomplete phase that caused a deterministic dispatch block."""
 
     blocked_reason = str(run_state.get("blocked_reason") or "").strip()
-    if not _is_retryable_dispatch_block_reason(blocked_reason):
-        return None
     if run_state.get("escalation_question"):
         return None
 
     phase_id = _last_incomplete_dispatch_phase(run_state)
     if not phase_id:
+        return None
+    completed = run_state.get("completed_phases")
+    completed_phases = {str(phase) for phase in completed} if isinstance(completed, list) else set()
+    if phase_id in completed_phases and not _is_retryable_dispatch_block_reason(blocked_reason):
+        return None
+    if blocked_reason in {"token_budget_exhausted"} or "invalid next_phase" in blocked_reason:
         return None
 
     return phase_id
@@ -2960,6 +2964,22 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
             note=str(run_state.get("escalation_question") or "").strip(),
         )
 
+    if reason == "token_budget_exhausted":
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            command="increase analysis.token_budget_k, then echelon spec continue",
+            note="the run cannot continue until the configured budget is higher",
+        )
+
+    if "invalid next_phase" in reason:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            command="echelon spec run --next-phase <phase-id>",
+            note="choose a valid phase from echelon spec status output",
+        )
+
     rewind = _blocked_non_escalation_recovery_command(run_state)
     if rewind:
         phase = str((run_state.get("last_dispatch") or {}).get("phase_id") or "").strip()
@@ -2978,23 +2998,7 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
             reason=reason,
             phase=retry_phase,
             command="echelon spec continue",
-            note="will retry the failed phase; it was not marked complete",
-        )
-
-    if reason == "token_budget_exhausted":
-        return _RunRecoveryAction(
-            "manual_recovery",
-            reason=reason,
-            command="increase analysis.token_budget_k, then echelon spec continue",
-            note="the run cannot continue until the configured budget is higher",
-        )
-
-    if "invalid next_phase" in reason:
-        return _RunRecoveryAction(
-            "manual_recovery",
-            reason=reason,
-            command="echelon spec run --next-phase <phase-id>",
-            note="choose a valid phase from echelon spec status output",
+            note="will retry the blocked phase; it was not marked complete",
         )
 
     if not reason:
@@ -3003,9 +3007,160 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
     return _RunRecoveryAction(
         "manual_recovery",
         reason=reason,
-        command="fix the blocker, then echelon spec continue",
-        note="no human question, safe rewind target, or retryable dispatch was recorded",
+        command="inspect echelon spec status, then choose a recovery action",
+        note="no human question, safe rewind target, or incomplete phase was recorded",
     )
+
+
+def _format_phase_a_elapsed(state: dict) -> str:
+    created = str(state.get("created_at") or "").strip()
+    updated = str(state.get("updated_at") or "").strip()
+    if not created or not updated:
+        return ""
+    try:
+        from datetime import datetime
+
+        start = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    seconds = max(0, int((end - start).total_seconds()))
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, rem = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {rem}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m"
+
+
+def _format_completed_phases(state: dict) -> str:
+    completed = state.get("completed_phases")
+    phases = [str(phase) for phase in completed] if isinstance(completed, list) else []
+    if not phases:
+        return "(none recorded)"
+    shown = phases[-8:]
+    prefix = f"{len(phases)} phase{'s' if len(phases) != 1 else ''} completed"
+    if len(phases) > len(shown):
+        return f"{prefix}: ... -> " + " -> ".join(shown)
+    return f"{prefix}: " + " -> ".join(shown)
+
+
+def _phase_a_current_phase(state: dict, result_phase: str) -> str:
+    phase = str(state.get("phase") or result_phase or "unknown").strip()
+    retry_phase = _last_incomplete_dispatch_phase(state)
+    if phase == "terminal-blocked" and retry_phase:
+        return f"{retry_phase} (terminal-blocked)"
+    return phase or "unknown"
+
+
+def _phase_a_result_line(status: str, state: dict) -> str:
+    status_label = {
+        "done": "done",
+        "blocked": "blocked",
+        "interrupted": "interrupted",
+        "budget_exhausted": "budget exhausted",
+    }.get(status, status or "unknown")
+    parts = [status_label]
+    elapsed = _format_phase_a_elapsed(state)
+    if elapsed:
+        parts.append(elapsed)
+    try:
+        cost = float(state.get("cost_usd") or 0)
+    except (TypeError, ValueError):
+        cost = 0.0
+    if cost:
+        parts.append(f"${cost:.4f}")
+    try:
+        token_usage = int(state.get("token_usage") or 0)
+    except (TypeError, ValueError):
+        token_usage = 0
+    if token_usage:
+        parts.append(f"{token_usage:,} tokens")
+    return "  ·  ".join(parts)
+
+
+def _print_squad_summary(
+    project_root: Path,
+    squad_dir: Path,
+    result: object,
+    *,
+    mode: str,
+    message: str,
+    target_source: str = "",
+    re_policy: str = "",
+) -> None:
+    """Render a delivery-style Phase A/spec authoring summary."""
+    import json as _json
+
+    state: dict = {}
+    state_file = squad_dir / "state.json"
+    if state_file.exists():
+        try:
+            state = _json.loads(state_file.read_text(encoding="utf-8"))
+        except Exception:
+            state = {}
+
+    status = str(getattr(result, "status", "") or state.get("status") or "unknown")
+    result_phase = str(getattr(result, "phase", "") or "")
+    action = _classify_run_recovery(state) if state else _RunRecoveryAction("advance")
+    spec_id = str(state.get("spec_id") or "").strip()
+    spec_dir = str(state.get("published_spec_dir") or state.get("spec_dir") or "").strip()
+    if not spec_id and spec_dir:
+        spec_id = Path(spec_dir).name
+
+    icon = {
+        "done": "✓",
+        "blocked": "✗",
+        "interrupted": "◐",
+        "budget_exhausted": "✗",
+    }.get(status, "•")
+    status_text = {
+        "done": "DONE",
+        "blocked": "BLOCKED",
+        "interrupted": "INTERRUPTED",
+        "budget_exhausted": "BUDGET EXHAUSTED",
+    }.get(status, status.upper() if status else "UNKNOWN")
+
+    fields: list[tuple[str, str]] = []
+    if spec_id:
+        fields.append(("spec", spec_id))
+    fields.append(("mode", mode))
+    if target_source:
+        fields.append(("target", target_source))
+    if re_policy:
+        fields.append(("RE policy", re_policy))
+    if message:
+        fields.append(("task", message))
+
+    current_phase = _phase_a_current_phase(state, result_phase)
+    fields.append(("current", current_phase))
+    if spec_dir:
+        fields.append(("spec dir", spec_dir))
+    fields.append(("artifacts", str(squad_dir)))
+    fields.append(("done", _format_completed_phases(state)))
+
+    stopped = ""
+    if status == "blocked":
+        stopped = action.reason or str(state.get("blocked_reason") or "").strip() or "blocked"
+    elif status == "interrupted":
+        stopped = action.reason or "interrupted"
+    elif status == "budget_exhausted":
+        stopped = "token budget exhausted"
+    elif status == "done":
+        stopped = "completed"
+    if stopped:
+        fields.append(("stopped", stopped))
+
+    if status in {"blocked", "interrupted", "budget_exhausted"}:
+        command = action.command or "echelon spec continue"
+        if command:
+            label = "answer" if action.kind == "human_resume" else "continue"
+            fields.append((label, command))
+        if action.note:
+            fields.append(("note", action.note))
+    fields.append(("result", _phase_a_result_line(status, state)))
+    _banner("SQUAD SUMMARY", fields, subtitle=f"{icon} {status_text}")
 
 
 def _rewind_constitution_is_real(project_root: Path) -> bool:
@@ -4611,11 +4766,15 @@ def _cmd_run(
 
     result = controller.run(user_message=message, mode=mode, next_phase_override=next_phase)
 
-    status_icon = "✓" if result.status == "done" else "✗"
-    _banner(f"{status_icon}  SQUAD RUN {result.status.upper()}", [
-        ("Phase", result.phase),
-        ("Artifacts", str(squad_dir)),
-    ])
+    _print_squad_summary(
+        project_root,
+        squad_dir,
+        result,
+        mode=mode,
+        message=message,
+        target_source=target_source,
+        re_policy=re_policy,
+    )
     _print_next_steps(project_root, result.status)
     if result.status != "done":
         sys.exit(1)

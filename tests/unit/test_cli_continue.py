@@ -573,8 +573,44 @@ def test_continue_manual_block_does_not_claim_human_resume(
 
     captured = capsys.readouterr()
     assert "Manual recovery required" in captured.out
-    assert "fix the blocker, then echelon spec continue" in captured.out
+    assert "inspect echelon spec status, then choose a recovery action" in captured.out
     assert 'echelon spec resume "<your answer>"' not in captured.out
+
+
+def test_continue_retries_external_blocker_phase_after_fix(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "Understanding extension unavailable — required for WHY2/WHY3 spec validation",
+            "last_dispatch": {"phase_id": "phase1-why2"},
+            "completed_phases": ["phase1-constitution", "phase1-what"],
+            "user_message": "build search dashboard",
+            "autonomy_mode": "semi",
+        },
+    )
+
+    calls: list[list[str]] = []
+
+    def fake_cmd_run(args, project_root, ext_dir):
+        calls.append(args)
+
+    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    captured = capsys.readouterr()
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "phase1-why2"
+    assert state["status"] == "running"
+    assert state["blocked_reason"] is None
+    assert "Retrying incomplete phase phase1-why2" in captured.out
+    assert calls == [["build search dashboard", "--mode", "semi"]]
 
 
 def test_continue_retries_interrupted_phase(

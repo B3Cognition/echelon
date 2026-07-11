@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -61,6 +62,7 @@ def test_consume_mode_arg_rejects_invalid_mode(capsys) -> None:
 def test_cmd_run_exits_nonzero_when_squad_blocks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
 
@@ -69,6 +71,24 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
             pass
 
         def run(self, **_kwargs: object) -> SimpleNamespace:
+            squad_dir.mkdir(parents=True, exist_ok=True)
+            (squad_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "blocked",
+                        "phase": "terminal-blocked",
+                        "spec_id": "905-import-prose",
+                        "spec_dir": "specs/905-import-prose",
+                        "blocked_reason": "Understanding validation unavailable",
+                        "completed_phases": ["phase1-constitution", "phase1-what"],
+                        "last_dispatch": {"phase_id": "phase1-why2"},
+                        "created_at": "2026-07-11T08:00:00+00:00",
+                        "updated_at": "2026-07-11T08:02:31+00:00",
+                        "cost_usd": 0.1234,
+                    }
+                ),
+                encoding="utf-8",
+            )
             return SimpleNamespace(
                 status="blocked",
                 phase="terminal-blocked",
@@ -96,6 +116,20 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
         _cmd_run(["build notes", "--mode=banzai"], project_root=tmp_path, ext_dir=tmp_path / "ext")
 
     assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "SQUAD SUMMARY" in out
+    assert "✗ BLOCKED" in out
+    assert "spec" in out
+    assert "905-import-prose" in out
+    assert "current" in out
+    assert "phase1-why2 (terminal-blocked)" in out
+    assert "2 phases completed: phase1-constitution -> phase1-what" in out
+    assert "stopped" in out
+    assert "Understanding validation unavailable" in out
+    assert "continue" in out
+    assert "echelon spec continue" in out
+    assert "will retry the blocked phase; it was not marked complete" in out
+    assert "blocked  ·  2m 31s  ·  $0.1234" in out
 
 
 def test_cmd_run_passes_re_target_and_policy_to_squad_controller(
