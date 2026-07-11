@@ -4750,9 +4750,6 @@ def _forbidden_harness_source_marker(line: str, worktree: Path) -> str | None:
         resolved_worktree = worktree.resolve()
     except OSError:
         resolved_worktree = worktree.absolute()
-    worktree_text = str(resolved_worktree)
-    if worktree_text and worktree_text in line:
-        return None
     harness_path_match = _HOST_HARNESS_SOURCE_PATH_RE.search(line)
     if harness_path_match:
         relative_marker = harness_path_match.group(0)
