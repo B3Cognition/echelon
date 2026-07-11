@@ -643,6 +643,39 @@ class TestOuterLoopConvergence:
             "checked, looked at, or edited"
         ) in policy["rules"]
 
+    def test_harness_context_exempts_declared_context_source_roots(
+        self, tmp_path: Path
+    ) -> None:
+        """Declared context roots are allowed inputs, not forbidden siblings."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        target = workspace / "sources" / "prosaic"
+        allowed_context = workspace / "sources" / "ruler"
+        forbidden = workspace / "sources" / "agent-registry"
+        spec_dir = workspace / "specs" / "001-prosaic"
+        worktree = tmp_path / "worktree"
+        for path in (target, allowed_context, forbidden, spec_dir, worktree):
+            path.mkdir(parents=True)
+
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["workspace_git_role"] = "workspace"
+        state["source_root"] = str(target)
+        state["source_id"] = "prosaic"
+        state["source_git_role"] = "source"
+        state["spec_dir"] = str(spec_dir)
+        state["allowed_context_roots"] = [str(allowed_context)]
+        state_store.write(state)
+
+        prompt = controller._with_harness_context("body", str(worktree))
+        policy_file = state_store.state_dir / "delivery-containment-policy.json"
+        policy = json.loads(policy_file.read_text(encoding="utf-8"))
+
+        assert str(allowed_context) not in prompt
+        assert f"- {forbidden}" in prompt
+        assert policy["allowed_roots"]["context"] == [str(allowed_context)]
+        assert policy["forbidden_source_roots"] == [str(forbidden)]
+
     def test_harness_context_includes_delivery_progress_ledger(
         self, tmp_path: Path
     ) -> None:

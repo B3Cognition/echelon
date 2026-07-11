@@ -127,6 +127,17 @@ def _recent_git_commits(worktree: Path, *, limit: int = 3) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+def _normalized_path_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    paths: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text:
+            paths.append(text)
+    return paths
+
+
 class CommitPushError(RuntimeError):
     """Raised when verified work cannot be committed or pushed."""
 
@@ -2344,9 +2355,11 @@ class RalphController:
         source_root = state.get("source_root") or worktree_path
         source_id = state.get("source_id") or Path(str(source_root)).name
         source_git_role = state.get("source_git_role") or "source"
+        allowed_context_roots = _normalized_path_list(state.get("allowed_context_roots"))
         forbidden_source_roots = self._forbidden_sibling_source_roots(
             workspace_root=workspace_root,
             source_root=source_root,
+            allowed_context_roots=allowed_context_roots,
         )
         containment_policy_file = self._write_delivery_containment_policy(
             worktree_path=worktree_path,
@@ -2356,6 +2369,7 @@ class RalphController:
             source_id=source_id,
             source_git_role=source_git_role,
             spec_dir=spec_dir,
+            allowed_context_roots=allowed_context_roots,
             forbidden_source_roots=forbidden_source_roots,
         )
         forbidden_source_roots_block = ""
@@ -3071,6 +3085,7 @@ class RalphController:
         source_id: object,
         source_git_role: object,
         spec_dir: Path | None,
+        allowed_context_roots: list[str],
         forbidden_source_roots: list[str],
     ) -> Path:
         """Write machine-readable delivery root boundaries for provider enforcement."""
@@ -3092,6 +3107,7 @@ class RalphController:
             "state_dir": str(self._state_store.state_dir),
             "allowed_roots": {
                 "implementation": [str(worktree_path)],
+                "context": allowed_context_roots,
                 "spec_inputs": spec_inputs,
                 "harness_state": [str(self._state_store.state_dir)],
                 "orchestration": [],
@@ -3116,6 +3132,7 @@ class RalphController:
         *,
         workspace_root: object,
         source_root: object,
+        allowed_context_roots: list[str] | None = None,
     ) -> list[str]:
         workspace_path = Path(str(workspace_root)).expanduser()
         source_path = Path(str(source_root)).expanduser()
@@ -3126,6 +3143,13 @@ class RalphController:
             resolved_source = source_path.resolve()
         except OSError:
             resolved_source = source_path.absolute()
+        allowed_resolved = set()
+        for allowed_root in allowed_context_roots or []:
+            allowed_path = Path(allowed_root).expanduser()
+            try:
+                allowed_resolved.add(allowed_path.resolve())
+            except OSError:
+                allowed_resolved.add(allowed_path.absolute())
 
         forbidden: list[str] = []
         for candidate in sorted(path for path in sources_dir.iterdir() if path.is_dir()):
@@ -3134,6 +3158,8 @@ class RalphController:
             except OSError:
                 resolved_candidate = candidate.absolute()
             if resolved_candidate == resolved_source:
+                continue
+            if resolved_candidate in allowed_resolved:
                 continue
             forbidden.append(str(candidate))
         return forbidden
@@ -3146,6 +3172,9 @@ class RalphController:
         forbidden_roots = self._forbidden_sibling_source_roots(
             workspace_root=state.get("workspace_root") or "",
             source_root=state.get("source_root") or "",
+            allowed_context_roots=_normalized_path_list(
+                state.get("allowed_context_roots")
+            ),
         )
         if not forbidden_roots:
             return None
