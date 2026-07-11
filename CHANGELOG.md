@@ -112,7 +112,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `https` are now included too. Structured-data processors such as `jq`, `yq`,
   `dasel`, and `xmllint` are now included as well. Direct editor/viewer
   commands such as `open`, `vim`, `vi`, `nano`, `emacs`, and `code` are now
-  included too.
+  included too. Shell writer/metadata commands such as `tee`, `touch`, `mkdir`,
+  `rm`, `chmod`, `ln`, `install`, `truncate`, `dd`, and `patch` are now
+  included as well.
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
   source roots, resolves workspace-relative context roots, exposes them as
