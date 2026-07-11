@@ -234,6 +234,24 @@ def test_flags_scan_browse_harness_source_discovery_phrasing(tmp_path: Path) -> 
     ]
 
 
+def test_flags_consult_study_parse_harness_source_discovery_phrasing(tmp_path: Path) -> None:
+    prompt = tmp_path / "agent.md"
+    prompt.write_text(
+        "Consult src/harness/ralph.py before deciding how delivery resume works.\n"
+        "Study harness internals before updating fulfillment state.\n"
+        "Parse fulfillment_runner.py to learn the fulfillment metadata format.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert [finding.reason for finding in findings] == [
+        "harness_internal_discovery",
+        "harness_internal_discovery",
+        "harness_internal_discovery",
+    ]
+
+
 def test_flags_shell_harness_source_read_phrasing(tmp_path: Path) -> None:
     prompt = tmp_path / "agent.md"
     prompt.write_text(
