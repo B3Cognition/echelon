@@ -103,7 +103,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `head`, `tail`, `less`, or `more` are also recognized, along with direct
   code-execution commands such as `python`, `node`, `deno`, `ruby`, and `perl`.
   File-inspection commands such as `awk`, `nl`, `wc`, `file`, and `stat` are
-  now included as well.
+  now included as well. File-transfer commands such as `cp`, `mv`, `rsync`, and
+  `ditto` are now included too.
 - **EGR-118 / #144 declared context roots** — targeted delivery containment
   now exempts state-declared `allowed_context_roots` from forbidden sibling
   source roots, resolves workspace-relative context roots, exposes them as
