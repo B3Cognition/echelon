@@ -2401,7 +2401,7 @@ class RalphController:
                 "Do not inspect, read, list, grep, search, check, or look at sibling source roots "
                 "listed under `forbidden_source_roots`; they are "
                 "reverse-engineering context only and not part of the targeted "
-                "build slice.\n"
+                "build slice. Do not delegate forbidden source-root inspection to subagents.\n"
             )
         spec_dir_text = str(spec_dir) if spec_dir is not None else "MISSING"
         spec_file_text = str(spec_dir / "spec.md" if spec_dir is not None else "MISSING")
@@ -3139,6 +3139,7 @@ class RalphController:
                 "spec_inputs are read-only",
                 "harness_state is Ralph-owned",
                 "forbidden_source_roots must not be inspected, listed, searched, read, checked, looked at, or edited",
+                "forbidden_source_roots must not be delegated to subagents",
             ],
         }
         policy_file.write_text(

@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: "echelon"
   name: "Echelon"
-  version: "3.0.18"
+  version: "3.0.19"
   description: "Multi-agent cognitive system with adversarial critic, kill gate, role-separation enforcement, cross-run calibration learning per-agent injection, SOAR-powered build pipeline (codegen), full 34-metric requirements quality analysis, expert persona prompts, and native brownfield extraction (re-* commands). Designed for high-stakes, complex projects where quality, alignment, and risk management are paramount."
   author: "B3Cognition"
   repository: "https://github.com/B3Cognition/echelon"

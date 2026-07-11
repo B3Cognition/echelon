@@ -588,6 +588,7 @@ class TestOuterLoopConvergence:
             "Do not inspect, read, list, grep, search, check, or look at sibling source roots"
             in prompt
         )
+        assert "Do not delegate forbidden source-root inspection to subagents" in prompt
 
     def test_harness_context_writes_delivery_containment_policy(
         self, tmp_path: Path
@@ -642,6 +643,7 @@ class TestOuterLoopConvergence:
             "forbidden_source_roots must not be inspected, listed, searched, read, "
             "checked, looked at, or edited"
         ) in policy["rules"]
+        assert "forbidden_source_roots must not be delegated to subagents" in policy["rules"]
 
     def test_harness_context_exempts_declared_context_source_roots(
         self, tmp_path: Path
