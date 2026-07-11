@@ -79,6 +79,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **EGR-135 / #159 verify-spec cache invalidation** — full verify-spec cache
+  keys now include measured `test-results/**/*.json` artifacts, so delivery
+  refreshes fulfillment evidence after runtime test-result JSON changes instead
+  of reusing stale fulfillment reports.
 - **EGR-118 / #144 source-root containment** — delivery containment now treats
   generic command transcript blocks (`Shell`, `Command`, `Run`) and subagent
   transcript blocks (`Agent`, `Task`, `Subagent`) as filesystem-relevant tool

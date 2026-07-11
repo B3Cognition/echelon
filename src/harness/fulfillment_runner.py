@@ -45,6 +45,10 @@ IMPLEMENTATION_INPUT_DIRS = (
     "test",
 )
 
+MEASURED_EVIDENCE_INPUT_DIRS = (
+    "test-results",
+)
+
 IMPLEMENTATION_INPUT_FILES = (
     "pyproject.toml",
     "package.json",
@@ -614,6 +618,13 @@ def _implementation_input_paths(worktree: Path) -> list[Path]:
         if not root.exists():
             continue
         for path in root.rglob("*"):
+            if path.is_file() and not _is_ignored_implementation_path(path):
+                paths.add(path)
+    for dirname in MEASURED_EVIDENCE_INPUT_DIRS:
+        root = worktree / dirname
+        if not root.exists():
+            continue
+        for path in root.rglob("*.json"):
             if path.is_file() and not _is_ignored_implementation_path(path):
                 paths.add(path)
     for filename in IMPLEMENTATION_INPUT_FILES:

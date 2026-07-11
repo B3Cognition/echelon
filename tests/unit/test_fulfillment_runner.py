@@ -649,6 +649,35 @@ class TestFulfillmentRunner:
         assert second.used_cache is False
         assert provider.exec_prompt.call_count == 2
 
+    def test_refresh_invalidates_cache_when_measured_test_result_changes(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(tmp_path)
+        artifact = tmp_path / "test-results" / "import-fidelity-sc004.json"
+        artifact.parent.mkdir()
+        artifact.write_text('{"pass": false, "silentLossTotal": 1}\n', encoding="utf-8")
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+        runner = FulfillmentRunner(provider)
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            first = runner.refresh(str(tmp_path), "spec-001")
+            artifact.write_text('{"pass": true, "silentLossTotal": 0}\n', encoding="utf-8")
+            second = runner.refresh(str(tmp_path), "spec-001")
+
+        assert first.status == "refreshed"
+        assert second.status == "refreshed"
+        assert second.used_cache is False
+        assert provider.exec_prompt.call_count == 2
+
     def test_refresh_invalidates_cache_when_commit_changes(self, tmp_path):
         _write_verify_skill(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"
