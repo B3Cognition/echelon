@@ -2798,7 +2798,12 @@ def _exit_if_provider_session_limited(state_store: object) -> None:
     """Return a nonzero target status for a resumable provider-exhaustion block."""
     read = getattr(state_store, "read", None)
     state = read() if callable(read) else {}
-    if isinstance(state, dict) and state.get("build_status") == "provider_session_limit":
+    if (
+        isinstance(state, dict)
+        and state.get("status") == "blocked"
+        and state.get("termination_reason") == "provider_session_limit"
+        and state.get("build_status") == "provider_session_limit"
+    ):
         raise SystemExit(2)
 
 

@@ -598,6 +598,35 @@ class TestCmdHarnessResume:
         state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
         assert state["termination_reason"] == "provider_session_limit"
 
+    def test_converged_resume_ignores_historical_provider_limit_status(
+        self, tmp_path: Path
+    ) -> None:
+        """A successful resumed run must not inherit an old provider-limit exit code."""
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "provider_session_limit",
+            "build_status": "provider_session_limit",
+        })
+
+        def converge(*_args, **_kwargs) -> None:
+            state_path = sd / "default.json"
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state.update({"status": "converged", "termination_reason": "converged"})
+            state_path.write_text(json.dumps(state), encoding="utf-8")
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run", side_effect=converge) as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_continue
+            _cmd_harness_continue(["001"])
+
+        mock_recover.assert_not_called()
+        mock_run.assert_called_once()
+
     def test_target_resume_recovers_against_source_repo_not_target_harness_dir(
         self,
         tmp_path: Path,
