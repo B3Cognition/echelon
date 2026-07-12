@@ -306,6 +306,15 @@ DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERBS = (
     "locate",
     "discover",
     "search",
+    "check",
+    "review",
+    "examine",
+    "look at",
+    "view",
+    "show",
+    "display",
+    "print",
+    "dump",
 )
 
 DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERB_RE = "|".join(
