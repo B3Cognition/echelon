@@ -991,6 +991,32 @@ def test_golddigger_publication_failure_blocks_and_preserves_context(tmp_path, m
     assert "golddigger_status" not in updated
 
 
+def test_blocked_publication_error_is_persisted_in_squad_state(tmp_path):
+    ctrl, _provider = _squad_controller(tmp_path)
+    result = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "BLOCKED",
+            "state_updates": {
+                "blocked_reason": "re_publication_failed",
+                "re_publication_error": "shallow reverse-engineering spec is not publishable",
+            },
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+
+    ctrl._block_after_executor_failure("phase1-discover", "re_publication_failed", result)
+
+    state = ctrl._state_store.load()
+    assert state["blocked_reason"] == "re_publication_failed"
+    assert state["re_publication_error"] == (
+        "shallow reverse-engineering spec is not publishable"
+    )
+
+
 def test_blocked_golddigger_result_never_publishes(tmp_path, monkeypatch):
     from harness.phase_graph import PhaseNode
 

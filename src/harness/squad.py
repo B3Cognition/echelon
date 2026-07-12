@@ -1373,6 +1373,10 @@ class SquadController:
         state["phase"] = PHASE_TERMINAL_BLOCKED
         state["status"] = "blocked"
         state["blocked_reason"] = reason
+        state.pop("re_publication_error", None)
+        publication_error = (result.state_updates or {}).get("re_publication_error")
+        if isinstance(publication_error, str) and publication_error.strip():
+            state["re_publication_error"] = publication_error
         state["last_dispatch"] = {
             "phase_id": phase,
             "verdict": result.verdict,

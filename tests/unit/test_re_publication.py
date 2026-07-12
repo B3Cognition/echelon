@@ -213,6 +213,20 @@ def test_complete_two_source_publish_creates_one_generation(tmp_path: Path) -> N
 
 
 @pytest.mark.unit
+def test_complete_publication_accepts_line_range_source_evidence(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    spec = run_dir / "re/sources/api/specs/001-re-domain/spec.md"
+    text = spec.read_text(encoding="utf-8")
+    for line in range(1, 6):
+        text = text.replace(f"file-{line}.ts:{line}`", f"file-{line}.ts:{line}-{line + 1}`")
+    spec.write_text(text, encoding="utf-8")
+
+    result = publish_re_run(tmp_path, run_dir)
+
+    assert result.generation == 1
+
+
+@pytest.mark.unit
 def test_partial_publication_requires_explicit_override(tmp_path: Path) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",), status="partial")
 

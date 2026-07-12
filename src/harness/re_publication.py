@@ -31,7 +31,7 @@ from harness.re_registry import (
 
 
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9._-]+$")
-_SOURCE_REFERENCE = re.compile(r"`[^`\n]+:\d+`")
+_SOURCE_REFERENCE = re.compile(r"`[^`\n]+:\d+(?:-\d+)?`")
 _DEEP_SPEC_SECTIONS = (
     "User Scenarios & Testing",
     "Requirements (Functional)",
