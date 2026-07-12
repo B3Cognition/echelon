@@ -525,6 +525,7 @@ def validate_re_source_ownership_contract(root: Path) -> list[str]:
     constituter = root / "extension/agents/re/constituter.md"
     golddigger = root / "extension/agents/exploration/golddigger.md"
     preflight = root / "extension/workflow/phases/re-extract-0-preflight.md"
+    finalize = root / "extension/scripts/bash/finalize-run.sh"
     checks = [
         PatternCheck("specifier source overview", specifier, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/overview\.md"),
         PatternCheck("specifier source spec", specifier, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/specs/\{domain-id\}/spec\.md"),
@@ -540,6 +541,10 @@ def validate_re_source_ownership_contract(root: Path) -> list[str]:
         PatternCheck("preflight initializes workspace mode", preflight, r"'mode': 'workspace'"),
         PatternCheck("preflight does not initialize single mode", preflight, r"'mode': 'single'", should_match=False),
         PatternCheck("preflight allows empty workspace", preflight, r"empty declared workspace is valid"),
+        PatternCheck("finalize stages RE index", finalize, r"re/index\.json"),
+        PatternCheck("finalize stages RE sources", finalize, r"re/sources"),
+        PatternCheck("finalize stages RE workspace", finalize, r"re/workspace"),
+        PatternCheck("finalize rejects RE runtime paths", finalize, r"cache\|staging\|locks"),
     ]
     return _run_checks(checks)
 

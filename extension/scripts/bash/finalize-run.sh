@@ -32,6 +32,20 @@ fi
 # ── 2. Stage artifacts ────────────────────────────────────────────────────────
 git -C "${PROJECT_ROOT}" add "${SPEC_DIR}/"
 git -C "${PROJECT_ROOT}" add "${PROJECT_ROOT}/knowledge-base/" 2>/dev/null || true
+if [ -f "${PROJECT_ROOT}/re/index.json" ]; then
+  git -C "${PROJECT_ROOT}" add -- \
+    "re/.gitignore" \
+    "re/index.json" \
+    "re/sources" \
+    "re/workspace"
+fi
+
+STAGED_RE_RUNTIME=$(git -C "${PROJECT_ROOT}" diff --cached --name-only | grep -E '^re/\.(cache|staging|locks)/' || true)
+if [ -n "${STAGED_RE_RUNTIME}" ]; then
+  echo "[FINALIZE] ERROR: refusing to commit RE runtime paths"
+  echo "${STAGED_RE_RUNTIME}"
+  exit 1
+fi
 
 # ── 3. Commit if anything staged ─────────────────────────────────────────────
 if git -C "${PROJECT_ROOT}" diff --cached --quiet; then
