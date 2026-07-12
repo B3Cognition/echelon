@@ -89,6 +89,11 @@ harness_app = typer.Typer(
     help="Compatibility alias for delivery init/run/resume.",
     no_args_is_help=True,
 )
+re_app = typer.Typer(
+    add_completion=False,
+    help="Publish and inspect workspace reverse engineering.",
+    no_args_is_help=True,
+)
 
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(spec_app, name="spec")
@@ -97,6 +102,7 @@ app.add_typer(benchmark_app, name="benchmark")
 app.add_typer(stack_app, name="stack")
 app.add_typer(delivery_app, name="delivery")
 app.add_typer(harness_app, name="harness", hidden=True)
+app.add_typer(re_app, name="re")
 workspace_app.add_typer(workspace_sources_app, name="sources")
 spec_app.add_typer(spec_checkpoint_app, name="checkpoint")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
@@ -165,6 +171,29 @@ def version_command() -> None:
     legacy_cli = _legacy_cli()
 
     typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
+
+
+@re_app.command("publish")
+def re_publish(
+    run_id: str = typer.Argument(..., help="Run id below runs/ or squad/."),
+    allow_partial: bool = typer.Option(
+        False,
+        "--allow-partial",
+        help="Explicitly allow a structurally valid partial publication.",
+    ),
+    commit: bool = typer.Option(
+        False,
+        "--commit",
+        help="Commit only durable published re/ artifacts.",
+    ),
+) -> None:
+    """Publish validated reverse-engineering output from one run."""
+    args = [run_id]
+    if allow_partial:
+        args.append("--allow-partial")
+    if commit:
+        args.append("--commit")
+    _legacy_cli()._cmd_re_publish(args)
 
 
 @app.command(

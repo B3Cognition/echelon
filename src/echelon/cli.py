@@ -101,6 +101,9 @@ Commands:
                     [--message <text>]
                                             Run one explicit phase through COMMANDER contracts.
 
+  re publish <run-id> [--allow-partial] [--commit]
+                                            Publish validated workspace RE output.
+
   benchmark list                            List experimental benchmark fixtures and variants.
   benchmark show [latest|<summary-path-or-run-dir>]
                                             Print saved benchmark scores.
@@ -6526,6 +6529,146 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
         _run_claude_streaming(bin_, prompt, project_dir, tool_policy=tool_policy)
         return  # _run_claude_streaming calls sys.exit
     sys.exit(result.returncode)
+
+
+# ── RE publication subcommand ────────────────────────────────────────────────
+
+def _cmd_re_publish(args: list[str]) -> None:
+    """Publish one validated run into the canonical workspace RE registry."""
+    import re
+
+    from echelon.git_helpers import GitHelperError, run_git
+    from harness.re_lock import (
+        RePublicationActiveRun,
+        RePublishLocked,
+        RePublishRecoveryRequired,
+    )
+    from harness.re_migration import import_legacy_re_cache
+    from harness.re_publication import RePublicationError, publish_re_run
+
+    allow_partial = False
+    commit = False
+    positional: list[str] = []
+    for arg in args:
+        if arg == "--allow-partial":
+            allow_partial = True
+        elif arg == "--commit":
+            commit = True
+        elif arg.startswith("-"):
+            print(f"echelon re publish: unknown argument '{arg}'", file=sys.stderr)
+            raise SystemExit(1)
+        else:
+            positional.append(arg)
+
+    if len(positional) != 1 or not re.fullmatch(r"[A-Za-z0-9._-]+", positional[0]):
+        print(
+            "Usage: echelon re publish <run-id> [--allow-partial] [--commit]",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    run_id = positional[0]
+    if run_id in {".", ".."}:
+        print(f"echelon re publish: unsafe run id '{run_id}'", file=sys.stderr)
+        raise SystemExit(1)
+    project_root = Path.cwd().resolve()
+    candidates = [project_root / "runs" / run_id, project_root / "squad" / run_id]
+    run_dir = next((path for path in candidates if path.is_dir()), None)
+    if run_dir is None:
+        print(
+            f"echelon re publish: run not found under runs/ or squad/: {run_id}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+    try:
+        imported = import_legacy_re_cache(project_root)
+        result = publish_re_run(
+            project_root,
+            run_dir,
+            allow_partial=allow_partial,
+        )
+        if commit:
+            _commit_re_publication(project_root, result.generation, run_git)
+    except (
+        RePublicationError,
+        RePublicationActiveRun,
+        RePublishLocked,
+        RePublishRecoveryRequired,
+        GitHelperError,
+        OSError,
+        ValueError,
+    ) as exc:
+        print(f"echelon re publish: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    print(f"Published RE generation {result.generation} ({result.status})")
+    if result.changed_sources:
+        print("Changed sources: " + ", ".join(result.changed_sources))
+    if result.removed_sources:
+        print("Removed sources: " + ", ".join(result.removed_sources))
+    if imported:
+        print(f"Imported {len(imported)} legacy RE cache entr{'y' if len(imported) == 1 else 'ies'}")
+    if not commit:
+        print("Git commit: not requested")
+
+
+def _commit_re_publication(project_root: Path, generation: int, run_git) -> None:
+    """Commit exactly the durable published RE surface."""
+    pre_staged = run_git(
+        project_root,
+        "diff",
+        "--cached",
+        "--name-only",
+    ).stdout.splitlines()
+    if pre_staged:
+        raise ValueError(
+            "cannot commit RE publication while other staged changes exist: "
+            + ", ".join(pre_staged)
+        )
+
+    run_git(
+        project_root,
+        "add",
+        "--",
+        "re/.gitignore",
+        "re/index.json",
+        "re/sources",
+        "re/workspace",
+    )
+    staged = run_git(
+        project_root,
+        "diff",
+        "--cached",
+        "--name-only",
+    ).stdout.splitlines()
+    forbidden = (
+        "re/.cache/",
+        "re/.staging/",
+        "re/.locks/",
+    )
+    invalid = [
+        path
+        for path in staged
+        if path.startswith(forbidden)
+        or not (
+            path in {"re/.gitignore", "re/index.json"}
+            or path.startswith("re/sources/")
+            or path.startswith("re/workspace/")
+        )
+    ]
+    if invalid:
+        raise ValueError(
+            "refusing RE commit with non-durable staged paths: " + ", ".join(invalid)
+        )
+    if not staged:
+        return
+    run_git(
+        project_root,
+        "commit",
+        "-m",
+        f"docs(re): publish workspace reverse engineering generation {generation}",
+    )
 
 
 # ── spec subcommands ──────────────────────────────────────────────────────────

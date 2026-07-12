@@ -15,6 +15,28 @@ def invoke_help(*args: str):
 
 
 @pytest.mark.unit
+def test_re_publish_routes_explicit_flags(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_re_publish", lambda args: calls.append(args))
+
+    run(["re", "publish", "spec-123", "--allow-partial", "--commit"])
+
+    assert calls == [["spec-123", "--allow-partial", "--commit"]]
+
+
+@pytest.mark.unit
+def test_re_publish_help_declares_manual_safety_flags():
+    result = invoke_help("re", "publish")
+
+    assert result.exit_code == 0
+    assert "RUN_ID" in result.output
+    assert "--allow-partial" in result.output
+    assert "--commit" in result.output
+
+
+@pytest.mark.unit
 def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
     from echelon.cli_app import run
 
