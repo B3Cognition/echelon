@@ -737,6 +737,9 @@ class SquadController:
                 "re_missing_sources": [
                     source.id for source in plan.sources if source.action == "missing"
                 ],
+                "re_empty_sources": [
+                    source.id for source in plan.sources if source.action == "skip-empty"
+                ],
                 "re_source_actions": {
                     source.id: source.action for source in plan.sources
                 },

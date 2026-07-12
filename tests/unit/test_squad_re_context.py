@@ -24,6 +24,12 @@ def _write_source(root: Path, source_id: str) -> None:
     (source / "index.ts").write_text(f"export const id = '{source_id}';\n", encoding="utf-8")
 
 
+def _write_empty_source(root: Path, source_id: str) -> None:
+    source = root / "sources" / source_id
+    source.mkdir(parents=True)
+    (source / ".git").mkdir()
+
+
 def _cache_source(root: Path, cache_root: Path, source_id: str, profile: ReFingerprintProfile) -> None:
     source = root / "sources" / source_id
     fingerprint = fingerprint_source(source, profile)
@@ -87,4 +93,42 @@ def test_squad_initialization_materializes_re_plan_and_artifacts(tmp_path: Path)
     assert {source["id"]: source["action"] for source in source_index["sources"]} == {
         "original-a": "reuse",
         "prosaic": "refresh",
+    }
+
+
+def test_squad_initialization_skips_empty_target_source_successfully(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "original-a")
+    _write_empty_source(root, "prosaic")
+
+    squad_dir = root / "runs" / "run-1"
+    store = SquadStateStore(squad_dir)
+    controller = SquadController(
+        provider=object(),
+        state_store=store,
+        phase_graph=_TerminalGraph(),
+        ext_dir=root / "ext",
+        project_root=root,
+        squad_dir=squad_dir,
+        target_source="prosaic",
+    )
+
+    result = controller.run(user_message="add prosaic feature")
+
+    assert result.status == "done"
+    state = store.load()
+    assert state["re_policy"] == "target-changed"
+    assert state["target_source"] == "prosaic"
+    assert state["re_refresh_sources"] == []
+    assert state["re_missing_sources"] == []
+    assert state["re_empty_sources"] == ["prosaic"]
+    assert state["re_source_actions"] == {
+        "original-a": "exclude",
+        "prosaic": "skip-empty",
+    }
+
+    source_index = json.loads((squad_dir / "re" / "re-source-index.json").read_text())
+    assert {source["id"]: source["action"] for source in source_index["sources"]} == {
+        "original-a": "exclude",
+        "prosaic": "skip-empty",
     }

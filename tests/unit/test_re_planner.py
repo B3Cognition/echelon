@@ -29,11 +29,34 @@ def _manifest(root: Path, *source_ids: str) -> WorkspaceManifest:
     )
 
 
+def _manifest_with_counts(root: Path, source_counts: dict[str, int]) -> WorkspaceManifest:
+    return WorkspaceManifest(
+        schema_version=1,
+        workspace=WorkspaceInfo(root=root, git_role="orchestration", git_present=True),
+        sources=tuple(
+            SourceRoot(
+                id=source_id,
+                path=f"sources/{source_id}",
+                git_present=False,
+                project_markers=("package.json",),
+                source_file_count=count,
+            )
+            for source_id, count in source_counts.items()
+        ),
+    )
+
+
 def _write_source(root: Path, source_id: str) -> Path:
     source = root / "sources" / source_id
     source.mkdir(parents=True)
     (source / "package.json").write_text(f'{{"name":"{source_id}"}}\n', encoding="utf-8")
     (source / "index.ts").write_text(f"export const id = '{source_id}';\n", encoding="utf-8")
+    return source
+
+
+def _write_empty_source(root: Path, source_id: str) -> Path:
+    source = root / "sources" / source_id
+    source.mkdir(parents=True)
     return source
 
 
@@ -157,6 +180,31 @@ def test_target_changed_refreshes_missing_target_but_requires_cached_siblings(tm
         "original-a": "reuse",
         "original-b": "missing",
         "prosaic": "refresh",
+    }
+
+
+def test_target_changed_skips_empty_target_without_requiring_sibling_cache(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "original-a")
+    _write_empty_source(root, "prosaic")
+    manifest = _manifest_with_counts(root, {"original-a": 1, "prosaic": 0})
+    profile = ReFingerprintProfile()
+    cache_root = root / ".echelon" / "cache" / "re"
+
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=manifest,
+        cache_root=cache_root,
+        target_source="prosaic",
+        requested_policy="",
+        profile=profile,
+    )
+
+    assert plan.policy == "target-changed"
+    assert plan.refresh_sources_count == 0
+    assert {source.id: source.action for source in plan.sources} == {
+        "original-a": "exclude",
+        "prosaic": "skip-empty",
     }
 
 

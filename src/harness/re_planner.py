@@ -18,7 +18,7 @@ RePolicy = Literal[
     "target-only",
     "refresh-all",
 ]
-RePlanAction = Literal["reuse", "refresh", "missing", "exclude"]
+RePlanAction = Literal["reuse", "refresh", "missing", "exclude", "skip-empty"]
 
 VALID_RE_POLICIES: set[str] = {
     "none",
@@ -130,6 +130,7 @@ def build_re_execution_plan(
     root = project_root.resolve()
     target = _resolve_target_source(manifest.sources, target_source)
     policy = resolve_re_policy(target.id if target is not None else "", requested_policy)
+    target_empty = target is not None and _source_empty(target)
     forbidden_roots: list[str] = []
     planned: list[RePlanSource] = []
 
@@ -138,11 +139,15 @@ def build_re_execution_plan(
         fingerprint = fingerprint_source(absolute_path, profile)
         hit = cache_hit(cache_root, source.id, fingerprint)
         selected = _source_selected(policy, source, target)
+        if policy == "target-changed" and target_empty and target is not None and source.id != target.id:
+            selected = False
         if not selected:
             action: RePlanAction = "exclude"
         elif policy == "none":
             action = "exclude"
             selected = False
+        elif _source_empty(source):
+            action = "skip-empty"
         elif policy == "refresh-all":
             action = "refresh"
         elif policy == "cached-only" and not hit:
@@ -204,3 +209,7 @@ def _source_selected(policy: RePolicy, source: SourceRoot, target: SourceRoot | 
     if policy == "target-only":
         return target is not None and source.id == target.id
     return True
+
+
+def _source_empty(source: SourceRoot) -> bool:
+    return source.source_file_count <= 0

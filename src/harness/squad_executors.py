@@ -212,6 +212,11 @@ def _render_re_execution_context(state: dict) -> str:
         for item in (state.get("re_missing_sources") or [])
         if str(item).strip()
     ]
+    empty_sources = [
+        str(item)
+        for item in (state.get("re_empty_sources") or [])
+        if str(item).strip()
+    ]
     forbidden_roots = [
         str(item)
         for item in (state.get("re_forbidden_source_roots") or [])
@@ -224,6 +229,7 @@ def _render_re_execution_context(state: dict) -> str:
         f"RE_TARGET_SOURCE={state.get('target_source') or ''}",
         "RE_REFRESH_SOURCES=" + (", ".join(refresh_sources) if refresh_sources else "(none)"),
         "RE_MISSING_SOURCES=" + (", ".join(missing_sources) if missing_sources else "(none)"),
+        "RE_EMPTY_SOURCES=" + (", ".join(empty_sources) if empty_sources else "(none)"),
     ]
     if forbidden_roots:
         lines.append("FORBIDDEN_SOURCE_ROOTS:")
@@ -740,6 +746,11 @@ class PhaseExecutor(ABC):
             for item in (state.get("re_missing_sources") or [])
             if str(item).strip()
         ]
+        empty_sources = [
+            str(item)
+            for item in (state.get("re_empty_sources") or [])
+            if str(item).strip()
+        ]
         state["golddigger_artifacts"] = artifacts
         state["golddigger_status"] = "partial" if missing_sources else "complete"
         state["golddigger_mode"] = "cached-re"
@@ -750,6 +761,11 @@ class PhaseExecutor(ABC):
             notes.append(
                 "GOLDDIGGER Mode 1 skipped by RE policy; missing cached sources: "
                 + ", ".join(missing_sources)
+            )
+        elif empty_sources:
+            notes.append(
+                "GOLDDIGGER Mode 1 skipped; empty source roots skipped: "
+                + ", ".join(empty_sources)
             )
         else:
             notes.append("GOLDDIGGER Mode 1 skipped; run-local RE artifacts reused from cache.")

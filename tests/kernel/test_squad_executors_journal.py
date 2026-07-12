@@ -819,6 +819,64 @@ def test_golddigger_mode1_skips_when_re_plan_has_no_refresh_sources(tmp_path):
     )
 
 
+def test_golddigger_mode1_skip_empty_sources_is_success(tmp_path):
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nPre-dispatch agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "brownfield", "msg", 0, "phase1-discover")
+    state = state_store.load()
+    state.update(
+        {
+            "re_policy": "target-changed",
+            "target_source": "prosaic",
+            "re_refresh_sources": [],
+            "re_missing_sources": [],
+            "re_empty_sources": ["prosaic"],
+            "re_artifacts": {
+                "analysis": str(squad_dir / "re" / "analysis.json"),
+                "source_index": str(squad_dir / "re" / "re-source-index.json"),
+                "per_repo": [],
+            },
+        }
+    )
+    state_store.save(state)
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[
+            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+        ],
+        allowed_state_updates=[
+            "golddigger_artifacts",
+            "golddigger_status",
+            "golddigger_mode",
+            "golddigger_notes",
+        ],
+    )
+
+    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
+
+    provider.exec_agent.assert_not_called()
+    assert result is None
+    updated = state_store.load()
+    assert updated["golddigger_status"] == "complete"
+    assert updated["golddigger_mode"] == "cached-re"
+    assert "empty source roots skipped: prosaic" in updated["golddigger_notes"][0]
+
+
 def test_pre_dispatch_blocks_unallowed_state_updates_before_mutation(tmp_path):
     """Pre-dispatch agents must obey the phase state_update allowlist."""
     from harness.phase_graph import PhaseNode

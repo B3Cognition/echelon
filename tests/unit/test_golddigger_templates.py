@@ -56,3 +56,10 @@ class TestGolddiggerTemplates:
         assert "POLYREPO FULL RE COMPLETE" in text
         assert "SURVEY COMPLETE" not in text
         assert "polyrepo-survey" not in text
+
+    def test_golddigger_treats_empty_sources_as_successful_skip(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "RE_EMPTY_SOURCES" in text
+        assert "empty source roots were skipped successfully" in text
+        assert "Empty repositories are a valid no-op, not a failure" in text

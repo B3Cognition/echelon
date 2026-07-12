@@ -83,10 +83,13 @@ COMMANDER may provide a `## Reverse Engineering Execution Plan` section with:
 - `RE_TARGET_SOURCE`
 - `RE_REFRESH_SOURCES`
 - `RE_MISSING_SOURCES`
+- `RE_EMPTY_SOURCES`
 - `FORBIDDEN_SOURCE_ROOTS`
 - `RE_ARTIFACTS`
 
 If `RE_REFRESH_SOURCES=(none)`, COMMANDER should normally skip dispatching you and reuse run-local cached artifacts. If you are still dispatched with no refresh sources, return `golddigger_status: partial` with a note that the dispatch was inconsistent, and do not run reverse engineering.
+
+If `RE_REFRESH_SOURCES=(none)` because `RE_EMPTY_SOURCES` lists one or more source IDs, return `golddigger_status: complete`, `golddigger_mode: cached-re`, and a note that the empty source roots were skipped successfully. Empty repositories are a valid no-op, not a failure.
 
 If `RE_REFRESH_SOURCES` names one or more sources, refresh only those source IDs. Treat `RE_ARTIFACTS.source_index` and `RE_ARTIFACTS.execution_plan` as authoritative for the run-local compatibility view. Reused sibling artifacts are already copied under the run `re/` directory; do not re-read or re-summarize unchanged sibling source roots.
 

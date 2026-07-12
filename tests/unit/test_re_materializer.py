@@ -27,11 +27,33 @@ def _manifest(root: Path, *source_ids: str) -> WorkspaceManifest:
     )
 
 
+def _manifest_with_counts(root: Path, source_counts: dict[str, int]) -> WorkspaceManifest:
+    return WorkspaceManifest(
+        schema_version=1,
+        workspace=WorkspaceInfo(root=root, git_role="orchestration", git_present=True),
+        sources=tuple(
+            SourceRoot(
+                id=source_id,
+                path=f"sources/{source_id}",
+                git_present=False,
+                project_markers=("package.json",),
+                source_file_count=count,
+            )
+            for source_id, count in source_counts.items()
+        ),
+    )
+
+
 def _write_source(root: Path, source_id: str) -> None:
     source = root / "sources" / source_id
     source.mkdir(parents=True)
     (source / "package.json").write_text(f'{{"name":"{source_id}"}}\n', encoding="utf-8")
     (source / "index.ts").write_text(f"export const id = '{source_id}';\n", encoding="utf-8")
+
+
+def _write_empty_source(root: Path, source_id: str) -> None:
+    source = root / "sources" / source_id
+    source.mkdir(parents=True)
 
 
 def _cache_source(root: Path, cache_root: Path, source_id: str, profile: ReFingerprintProfile) -> None:
@@ -164,3 +186,44 @@ def test_materialize_re_run_view_records_refresh_sources_without_cache(
     aggregate = json.loads((run_re / "analysis.json").read_text(encoding="utf-8"))
     assert aggregate["repo_count"] == 1
     assert artifacts["per_repo"] == [str(run_re / "original-a")]
+
+
+def test_materialize_re_run_view_records_empty_target_skip_without_artifacts(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "original-a")
+    _write_empty_source(root, "prosaic")
+    manifest = _manifest_with_counts(root, {"original-a": 1, "prosaic": 0})
+    profile = ReFingerprintProfile()
+    cache_root = root / ".echelon" / "cache" / "re"
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=manifest,
+        cache_root=cache_root,
+        target_source="prosaic",
+        requested_policy="",
+        profile=profile,
+    )
+
+    artifacts = materialize_re_run_view(
+        project_root=root,
+        run_re_dir=root / "runs" / "run-1" / "re",
+        workspace_manifest=manifest,
+        plan=plan,
+        cache_root=cache_root,
+    )
+
+    run_re = root / "runs" / "run-1" / "re"
+    assert not (run_re / "prosaic").exists()
+    source_index = json.loads((run_re / "re-source-index.json").read_text(encoding="utf-8"))
+    assert {source["id"]: source["action"] for source in source_index["sources"]} == {
+        "original-a": "exclude",
+        "prosaic": "skip-empty",
+    }
+    assert source_index["sources"][1]["run_path"] == ""
+    assert source_index["sources"][1]["artifacts"] == []
+
+    aggregate = json.loads((run_re / "analysis.json").read_text(encoding="utf-8"))
+    assert aggregate["repo_count"] == 0
+    assert artifacts["per_repo"] == []
