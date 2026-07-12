@@ -29,7 +29,7 @@ specify extension add --dev ~/echelon/extension
 
 | Tool | Purpose |
 | ---- | ------- |
-| `echelon` | Main CLI — workspace, spec, phase, delivery, benchmark, stack |
+| `echelon` | Main CLI - workspace, spec, phase, RE publication, delivery, benchmark, stack |
 | `echelon delivery` | Build/delivery subcommands — init, run, resume, land |
 | `echelon spec` | Spec lifecycle subcommands — run, status, target, verify, reopen |
 | `codegen` | SOAR codegen pipeline (also called by `echelon codegen`) |
@@ -106,6 +106,56 @@ sources:
 Use `sources: []` for a planning-only workspace. Run `echelon workspace doctor`
 to validate the contract, or `echelon workspace migrate --write` to copy legacy
 config, ignore runtime state, and stage the canonical workspace files.
+
+### Published reverse engineering
+
+Reverse engineering is a first-class workspace artifact. Echelon keeps only the
+latest published generation under `re/`; runs stage candidate output under
+`runs/<run-id>/re/` and consume unchanged published documents directly.
+
+```text
+re/
+  .gitignore                    # ignores .cache/, .staging/, and .locks/
+  index.json                    # generation and source-id mapping
+  sources/<source-id>/
+    manifest.json
+    overview.md
+    specs/<domain-id>/spec.md
+  workspace/
+    manifest.json
+    overview.md
+    relationships.md
+    contracts.md
+    domains/*.md
+  .cache/                       # ignored heavy extraction cache
+  .staging/                     # ignored publication transactions
+  .locks/                       # ignored single-writer lock
+```
+
+`<source-id>` is the stable `sources[].id` from `.echelon/config.yml`; its
+manifest records the matching `sources[].path`. Source content/fingerprint
+changes, dirty Git state, or any profile-hash change trigger refresh. The
+default profile remains `full` depth with `max_lines_per_file: 5000` and
+`git_history_limit: 2500`; `--re-policy` overrides selection without changing
+those depth defaults.
+
+A successful complete GOLDDIGGER workspace run publishes atomically and pins
+the active run to the new generation. Unchanged later runs skip GOLDDIGGER and
+read canonical `re/` paths. Empty declared sources publish an explicit `empty`
+manifest without inventing domain specs. Partial output is never published
+automatically.
+
+```bash
+echelon re publish <run-id>                   # publish a validated complete run
+echelon re publish <run-id> --allow-partial   # explicit structural override
+echelon re publish <run-id> --commit          # also make a local durable-RE commit
+```
+
+Publication never pushes. Without `--commit`, it does not invoke Git. With
+`--commit`, it stages only `re/.gitignore`, `re/index.json`, `re/sources`, and
+`re/workspace`; runtime directories remain ignored. Legacy
+`.echelon/cache/re` data is one-way migration input for manual publication and
+is never freshness or publication authority.
 
 ### Typical workflow
 
@@ -517,7 +567,7 @@ File: agents/exploration/scout.md
 | Codename | Functional | Purpose |
 |----------|------------|---------|
 | **SCOUT** | DISCOVER | Maps domain, glossary, boundaries |
-| **GOLDDIGGER** | BROWNFIELD-EXTRACT | Drives native brownfield re-* extraction (Mode 1: full reverse engineering, Mode 2: deep dive) |
+| **GOLDDIGGER** | BROWNFIELD-EXTRACT | Drives native brownfield RE (Mode 1: full workspace reverse engineering, Mode 2: focused-domain deep dive) |
 | **SYNTHESIZER** | FUSE | Fuses discovery outputs into unified knowledge base |
 | **CARTOGRAPHER** | WHAT | Writes testable requirements via spec-kit |
 | **SAGE** | WHY | Adversarial critic, quality gates via Understanding CLI |
@@ -578,12 +628,12 @@ File: agents/exploration/scout.md
 
 ## Brownfield Support
 
-When analyzing an existing codebase, the squad uses a two-phase extraction pipeline:
+When analyzing existing source roots, the squad uses a workspace extraction pipeline:
 
-1. **GOLDDIGGER Mode 1 (Full Reverse Engineering)** runs `speckit.echelon.re-extract` at full depth → writes analysis, manifest, CodeGraph, and RE spec paths to `state.json.golddigger_artifacts`
+1. **GOLDDIGGER Mode 1 (Workspace Reverse Engineering)** runs `speckit.echelon.re-extract` at full depth for planner-selected sources, stages source-owned specs plus workspace synthesis, and atomically publishes a complete generation under `re/`.
 2. If `speckit.echelon.re-extract` skill invocation succeeds:
-   - **SCOUT** reads artifact paths from `state.json.golddigger_artifacts` as a head-start for domain mapping
-   - **GOLDDIGGER Mode 2 (Deep Dive)** runs on-demand when Phase 1 agents need deeper analysis of specific domains
+   - **SCOUT** reads the exact canonical artifact paths from `state.json.golddigger_artifacts` as a head-start for domain mapping.
+   - **GOLDDIGGER Mode 2 (Focused Domain Deep Dive)** runs only for explicit queued domain requests and uses its separate focused cache.
 3. If brownfield extraction is not available, SCOUT proceeds with manual structural analysis
 
 Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives by writing to `state.json.golddigger_requests`. COMMANDER processes the queue between agent dispatches.
@@ -1181,29 +1231,32 @@ Echelon includes native brownfield extraction for reverse-engineering existing c
 
 ### Three-phase workflow
 
-**Phase 1 — Extract** (`/speckit.echelon.re-extract`): Full pipeline from codebase → specs + strategic artifacts. Runs analysis, generates domain specs with iterative coverage/validation loops, produces `constitution.md`, `migration-strategy.md`, `risk-matrix.md`, `gap-analysis.md`, and ADRs.
+**Phase 1 - Extract** (`/speckit.echelon.re-extract`): Full workspace pipeline from selected sources to source-owned specs, workspace contracts, iterative source quality reports, and workspace strategy artifacts.
 
-**Phase 2 — Retarget** (`/speckit.echelon.re-retarget`): Guided prompts to fill `[REQUIRES INPUT]` placeholders in strategic artifacts — target stack decisions, migration strategy choices.
+**Phase 2 - Retarget** (`/speckit.echelon.re-retarget`): Guided prompts fill `[REQUIRES INPUT]` placeholders in canonical `re/workspace/strategy/` artifacts - target stack decisions, migration strategy choices, risks, gaps, and ADRs.
 
-**Phase 3 — Plan All** (`/speckit.echelon.re-plan-all`): Generates per-domain `plan.md` and `tasks.md` files ready for echelon's build pipeline.
+**Phase 3 - Plan All** (`/speckit.echelon.re-plan-all`): Generates source-owned `plan.md` and `tasks.md` beside each canonical `re/sources/<source-id>/specs/<domain-id>/spec.md`.
 
 ### Individual commands
 
 | Command | Purpose |
 |---------|---------|
-| `speckit.echelon.re-analyze` | Extract structured data from codebase → `runs/<run-id>/re/analysis.json` during `echelon spec run`, or `.specify/echelon/re/analysis.json` standalone, plus optional CodeGraph artifacts |
+| `speckit.echelon.re-analyze` | Extract selected sources to `runs/<run-id>/re/sources/<source-id>/` plus aggregate analysis and optional CodeGraph artifacts |
 | `speckit.echelon.re-specify` | Generate domain specs with coverage tracking |
 | `speckit.echelon.re-verify` | Verify spec coverage; identify orphan files |
 | `speckit.echelon.re-expand` | Fill coverage gaps from orphan file clusters |
 | `speckit.echelon.re-validate` | Quality-check specs; auto-resolve ambiguities |
 | `speckit.echelon.re-checklist` | Generate per-domain quality checklists |
 | `speckit.echelon.re-constitute` | Generate strategic artifacts with `[REQUIRES INPUT]` placeholders |
-| `speckit.echelon.re-plan` | Generate per-domain `plan.md` files |
-| `speckit.echelon.re-tasks` | Generate per-domain `tasks.md` files |
+| `speckit.echelon.re-plan` | Generate source-owned per-domain `plan.md` files under `re/sources/` |
+| `speckit.echelon.re-tasks` | Generate source-owned per-domain `tasks.md` files under `re/sources/` |
 
-### Polyrepo support
+### Workspace source support
 
-Auto-detects multi-repo workspaces via `discover-repos.sh`. Runs per-repo extraction and produces `cross-repo.json` for shared-tech and dependency mapping.
+The same flow handles zero, one, or many declared source roots. Analysis is
+source-scoped, source specs remain source-owned, and cross-source technology,
+dependency, API, event, and schema findings are synthesized under
+`re/workspace/`.
 
 ### Presets
 

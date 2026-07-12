@@ -35,6 +35,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   scheduled upstream-latest compatibility smoke test and pinned-runtime
   integration script.
 
+- **Workspace RE publication** - reverse engineering now publishes the latest
+  complete generation under tracked `re/sources/<id>/` and `re/workspace/`
+  with an index-last atomic transaction, source fingerprints/profile hashes,
+  direct unchanged-run reuse, empty/unavailable/removal lifecycle handling,
+  single-writer locking, and pinned-generation guards. Added `echelon re
+  publish <run-id> [--allow-partial] [--commit]`; publication never pushes and
+  only `--commit` creates a local durable-RE commit.
+
 - **Workspace source sync** — added `echelon workspace sources sync [--write]`
   to reconcile `.echelon/config.yml` source entries from canonical
   `sources/*` child repositories while preserving explicitly configured
@@ -43,10 +51,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   with `--strategy` and `--json` so Phase B has a canonical status sibling to
   `echelon spec status`, summarizing Ralph delivery state, checkpoint/salvage
   facts, spec delivery history, and the next canonical command.
-- **EGR-123 / #148 source-scoped RE cache** — Phase A `echelon spec run`
-  now accepts `--target`/`--target-source` and `--re-policy`, fingerprints
-  workspace source roots, materializes run-local RE artifacts from cache, and
-  skips GOLDDIGGER Mode 1 when no source needs refresh.
+- **EGR-123 / #148 source-scoped RE planning** - Phase A `echelon spec run`
+  accepts `--target`/`--target-source` and `--re-policy`, fingerprints workspace
+  source roots, and skips GOLDDIGGER Mode 1 when the published source context is
+  current. `.echelon/cache/re` is migration input only; active freshness and
+  reuse authority is `re/index.json`. Existing full-depth defaults and RE
+  selection policies are unchanged.
 - **EGR-114 / #139 checkpoint namespaces** — added explicit
   `echelon spec checkpoint list|accept|commit` and
   `echelon delivery checkpoint list <spec_id>` commands so Phase A artifact
