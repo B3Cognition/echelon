@@ -2,6 +2,7 @@ from pathlib import Path
 
 from tests.contract.prompt_tool_contracts import (
     BUILD_GIT_STATE_DISCOVERY_COMMANDS,
+    BUILD_GIT_STATE_DISCOVERY_VERBS,
     BUILD_SPEC_ARTIFACT_DISCOVERY_VERBS,
     BUILD_SPEC_ARTIFACT_DISCOVERY_TARGETS,
     HARNESS_INTERNAL_DISCOVERY_TARGETS,
@@ -420,6 +421,27 @@ def test_build_git_state_discovery_commands_are_named_category() -> None:
         "ls-tree",
         "cat-file",
         "grep",
+    )
+
+
+def test_build_git_state_discovery_verbs_are_named_category() -> None:
+    assert BUILD_GIT_STATE_DISCOVERY_VERBS == (
+        "check",
+        "get",
+        "query",
+        "inspect",
+        "read",
+        "run",
+        "use",
+        "review",
+        "examine",
+        "look at",
+        "parse",
+        "view",
+        "show",
+        "display",
+        "print",
+        "dump",
     )
 
 

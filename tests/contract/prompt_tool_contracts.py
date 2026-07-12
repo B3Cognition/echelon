@@ -157,9 +157,31 @@ BUILD_GIT_STATE_DISCOVERY_COMMAND_RE = "|".join(
     re.escape(command) for command in BUILD_GIT_STATE_DISCOVERY_COMMANDS
 )
 
+BUILD_GIT_STATE_DISCOVERY_VERBS = (
+    "check",
+    "get",
+    "query",
+    "inspect",
+    "read",
+    "run",
+    "use",
+    "review",
+    "examine",
+    "look at",
+    "parse",
+    "view",
+    "show",
+    "display",
+    "print",
+    "dump",
+)
+
+BUILD_GIT_STATE_DISCOVERY_VERB_RE = "|".join(
+    re.escape(verb) for verb in BUILD_GIT_STATE_DISCOVERY_VERBS
+)
+
 BUILD_GIT_STATE_DISCOVERY_RE = re.compile(
-    r"\b(?:check|get|query|inspect|read|run|use|review|examine|look at|parse|"
-    r"view|show|display|print|dump)\b"
+    rf"\b(?:{BUILD_GIT_STATE_DISCOVERY_VERB_RE})\b"
     rf".{{0,120}}\b(?:git\s+(?:{BUILD_GIT_STATE_DISCOVERY_COMMAND_RE})|rev-parse)\b",
     re.IGNORECASE,
 )

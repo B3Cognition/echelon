@@ -600,7 +600,7 @@ wheels = [
 
 [[package]]
 name = "echelon"
-version = "3.0.65"
+version = "3.0.66"
 source = { editable = "." }
 dependencies = [
     { name = "en-core-web-sm" },
