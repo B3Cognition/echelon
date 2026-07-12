@@ -100,7 +100,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Python-owned context boundary, and rejects soft inspect/open/review/look-at/
   parse style discovery of Ralph-owned spec lifecycle artifacts. The lifecycle
   artifact target and verb lists are now named scanner categories instead of
-  inline regex fragments. Build prompt git-state discovery now also blocks `git diff`,
+  inline regex fragments. Verify-spec latest-run discovery now uses named
+  target and verb categories for `runs/` discovery. Build prompt git-state
+  discovery now also blocks `git diff`,
   `git branch`, `git show`, `git ls-files`, `git ls-tree`, `git cat-file`, and
   `git grep` prompts so agents consume Ralph-owned git facts instead of
   rediscovering repository state. The git-state command and verb lists are now
