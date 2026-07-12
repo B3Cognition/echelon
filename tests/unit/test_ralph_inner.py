@@ -251,7 +251,13 @@ class TestInnerLoopTaskProgress:
 
     def test_llm_feedback_preserves_completed_task_ids(self, tmp_path: Path) -> None:
         class Runner:
-            def exec_feedback(self, worktree_path: str, prompt: str) -> BuildResult:
+            def exec_feedback(
+                self,
+                worktree_path: str,
+                prompt: str,
+                *,
+                containment_policy_file: str | None = None,
+            ) -> BuildResult:
                 return BuildResult(
                     exit_code=0,
                     status="done",

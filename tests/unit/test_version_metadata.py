@@ -7,7 +7,7 @@ from echelon.cli import CLI_VERSION
 
 
 ROOT = Path(__file__).resolve().parents[2]
-EXPECTED_VERSION = "3.0.0"
+EXPECTED_VERSION = "3.0.59"
 
 
 def test_release_metadata_uses_current_version() -> None:
