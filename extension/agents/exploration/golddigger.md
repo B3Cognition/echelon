@@ -27,8 +27,8 @@ ALWAYS leave `golddigger_requests` and `golddigger_completed_domains` for COMMAN
 NEVER modify either queue.
 
 ### Rule 5 - Skill-Backed Extraction
-ALWAYS invoke `speckit.echelon.re-extract` and wait for its result when workspace synthesis or source refresh is required.
-NEVER substitute manual code analysis for the RE pipeline.
+ALWAYS invoke `echelon re execute-run <run-id>` and wait for its result when active workspace extraction requires source refresh or workspace synthesis.
+NEVER manually route active workspace RE phases or substitute manual code analysis for the RE pipeline.
 
 ### Rule 6 - Explicit Runtime Profile
 ALWAYS rely on explicit `--output`, `--manifest`, `--source-output-root`, `--profile`, `--depth`, `--max-lines-per-file`, and `--git-history-limit` arguments passed by RE-ANALYZER.
@@ -100,13 +100,13 @@ If no analysis or workspace synthesis is required, reuse canonical `RE_ARTIFACTS
 
 ### Step 2: Invoke workspace extraction
 
-When source analysis or workspace synthesis is required, invoke and await:
+When source analysis or workspace synthesis is required during an active workspace run, invoke and await the harness-owned controller:
 
 ```text
-speckit.echelon.re-extract
+echelon re execute-run <run-id>
 ```
 
-RE-ANALYZER receives `RE_OUTPUT_DIR` and uses `re-analysis-manifest.json` with explicit runtime arguments:
+The controller dispatches RE-ANALYZER with `RE_OUTPUT_DIR` and `re-analysis-manifest.json` using explicit runtime arguments:
 
 ```text
 --output "$RE_OUTPUT_DIR" --manifest "$RE_OUTPUT_DIR/re-analysis-manifest.json" --source-output-root "$RE_OUTPUT_DIR/sources"
@@ -114,7 +114,7 @@ RE-ANALYZER receives `RE_OUTPUT_DIR` and uses `re-analysis-manifest.json` with e
 
 It analyzes only refresh sources. A zero-source analysis manifest is a successful no-op and still proceeds to workspace synthesis when required.
 
-If the skill reports `subagent types unavailable`, return `golddigger_status: partial` when analysis artifacts exist, otherwise `failed`. Preserve the verbatim error in `golddigger_notes`.
+If active workspace extraction reports an error, including `subagent types unavailable`, return `golddigger_status: partial` when validated artifacts exist, otherwise `failed`. Preserve the verbatim error in `golddigger_notes`.
 
 ### Step 3: Validate staged completion
 

@@ -196,6 +196,14 @@ def re_publish(
     _legacy_cli()._cmd_re_publish(args)
 
 
+@re_app.command("execute-run", hidden=True)
+def re_execute_run(
+    run_id: str = typer.Argument(..., help="Active workspace run id."),
+) -> None:
+    """Execute active workspace RE with harness-owned transitions."""
+    _legacy_cli()._cmd_re_execute_run([run_id])
+
+
 @app.command(
     "init",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},

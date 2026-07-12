@@ -27,6 +27,18 @@ def test_re_publish_routes_explicit_flags(monkeypatch):
 
 
 @pytest.mark.unit
+def test_re_execute_run_routes_to_deterministic_controller(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_re_execute_run", lambda args: calls.append(args))
+
+    run(["re", "execute-run", "spec-123"])
+
+    assert calls == [["spec-123"]]
+
+
+@pytest.mark.unit
 def test_re_publish_help_declares_manual_safety_flags():
     result = invoke_help("re", "publish")
 

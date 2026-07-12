@@ -28,6 +28,14 @@ class RePublishLocked(RuntimeError):
         super().__init__(f"RE publication lock is owned by {owner_run_id}")
 
 
+class ReExtractLocked(RuntimeError):
+    """Raised when another controller owns the workspace extraction lease."""
+
+    def __init__(self, owner_run_id: str) -> None:
+        self.owner_run_id = owner_run_id
+        super().__init__(f"RE extraction lock is owned by {owner_run_id}")
+
+
 class RePublicationActiveRun(RuntimeError):
     """Raised when publication would change context for another active run."""
 
@@ -93,6 +101,58 @@ class RePublishLock:
         shutil.rmtree(self.path)
 
     def __enter__(self) -> "RePublishLock":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.release()
+
+
+@dataclass
+class ReExtractionLock:
+    """Single-writer lease for an active workspace RE controller."""
+
+    path: Path
+    owner_run_id: str
+
+    @classmethod
+    def acquire(
+        cls,
+        workspace_root: Path,
+        owner_run_id: str,
+        owner_run_dir: Path,
+    ) -> "ReExtractionLock":
+        root = workspace_root.resolve()
+        if not _SAFE_RUN_ID.fullmatch(owner_run_id):
+            raise ValueError(f"unsafe extraction owner run ID: {owner_run_id!r}")
+        lock_path = ensure_re_layout(root).locks / "extract.lock"
+        try:
+            lock_path.mkdir()
+        except FileExistsError as exc:
+            owner = _read_owner(lock_path, required=False)
+            raise ReExtractLocked(str(owner.get("run_id") or "unknown")) from exc
+        metadata = {
+            "run_id": owner_run_id,
+            "run_dir": str(owner_run_dir.resolve()),
+            "pid": os.getpid(),
+            "hostname": socket.gethostname(),
+            "acquired_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            _write_json_atomic(lock_path / "owner.json", metadata)
+        except Exception:
+            shutil.rmtree(lock_path)
+            raise
+        return cls(path=lock_path, owner_run_id=owner_run_id)
+
+    def release(self) -> None:
+        if not self.path.exists():
+            return
+        owner = _read_owner(self.path)
+        if owner.get("run_id") != self.owner_run_id:
+            raise ReExtractLocked(str(owner.get("run_id") or "unknown"))
+        shutil.rmtree(self.path)
+
+    def __enter__(self) -> "ReExtractionLock":
         return self
 
     def __exit__(self, *_exc: object) -> None:

@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from harness.re_lock import (
+    ReExtractLocked,
+    ReExtractionLock,
     RePublicationActiveRun,
     RePublishLock,
     RePublishLocked,
@@ -60,6 +62,18 @@ def test_second_live_publisher_cannot_acquire(tmp_path: Path) -> None:
     with RePublishLock.acquire(tmp_path, "run-a", None):
         with pytest.raises(RePublishLocked, match="run-a"):
             RePublishLock.acquire(tmp_path, "run-b", None)
+
+
+@pytest.mark.unit
+def test_second_live_extractor_cannot_acquire(tmp_path: Path) -> None:
+    owner = _write_run(tmp_path, "run-a", "running")
+
+    with ReExtractionLock.acquire(tmp_path, "run-a", owner):
+        with pytest.raises(ReExtractLocked, match="run-a"):
+            ReExtractionLock.acquire(tmp_path, "run-b", _write_run(tmp_path, "run-b", "running"))
+
+    with ReExtractionLock.acquire(tmp_path, "run-b", _write_run(tmp_path, "run-b", "running")):
+        pass
 
 
 @pytest.mark.unit

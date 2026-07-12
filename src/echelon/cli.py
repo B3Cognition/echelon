@@ -6635,6 +6635,50 @@ def _cmd_re_publish(args: list[str]) -> None:
         print("Git commit: not requested")
 
 
+def _cmd_re_execute_run(args: list[str]) -> None:
+    """Run active workspace RE phases under the deterministic controller."""
+    import json
+    import re
+
+    from harness.re_controller import ReExtractionController
+    from harness.squad_provider import SquadCliProvider
+
+    if len(args) != 1 or not re.fullmatch(r"[A-Za-z0-9._-]+", args[0]):
+        print("Usage: echelon re execute-run <run-id>", file=sys.stderr)
+        raise SystemExit(1)
+    run_id = args[0]
+    project_root = Path.cwd().resolve()
+    current_path = project_root / "runs" / ".current"
+    run_dir = project_root / "runs" / run_id
+    if not run_dir.is_dir() or not current_path.is_file() or current_path.read_text().strip() != run_id:
+        print(
+            f"echelon re execute-run: {run_id!r} is not the active workspace run",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    extension_root = _installed_extension_or_exit(project_root)
+    try:
+        provider = SquadCliProvider(_load_cli_config(project_root))
+        result = ReExtractionController(
+            provider=provider,
+            project_root=project_root,
+            run_dir=run_dir,
+            extension_root=extension_root,
+        ).run()
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"echelon re execute-run: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    payload = {
+        "run_id": run_id,
+        "status": "complete" if result.completed else "blocked",
+        "blocked_reason": result.blocked_reason,
+    }
+    print(json.dumps(payload, sort_keys=True))
+    if not result.completed:
+        raise SystemExit(1)
+
+
 def _commit_re_publication(project_root: Path, generation: int, run_git) -> None:
     """Commit exactly the durable published RE surface."""
     pre_staged = run_git(

@@ -124,3 +124,12 @@ class TestRePromptOutputContracts:
         assert "Source Evidence" in text
         assert "coverage_pct: 0" in text
         assert "shallow_summary_only" in text
+
+    def test_re_agents_reference_the_deterministic_deep_spec_gate(self) -> None:
+        specifier = RE_SPECIFIER.read_text(encoding="utf-8")
+        verifier = (ROOT / "extension" / "agents" / "re" / "verifier.md").read_text(
+            encoding="utf-8"
+        )
+
+        assert "quality/deep-spec-gate.json" in specifier
+        assert "quality/deep-spec-gate.json" in verifier

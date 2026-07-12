@@ -24,6 +24,10 @@ NEVER modify source specs, workspace synthesis, manifests, fingerprints, or gene
 ALWAYS report `coverage_pct: 0` and `shallow_summary_only` when deep sections or concrete evidence are absent.
 NEVER return `DONE` for summary-only specs at `logic` or `full` depth.
 
+### Rule 5a - Deterministic Gate Respect
+ALWAYS read `$RE_OUTPUT_DIR/quality/deep-spec-gate.json` when it exists and report every listed failed path with `coverage_pct: 0`.
+NEVER infer passing coverage from domain directories or entry points while the deterministic gate reports failures.
+
 ## Protocol
 
 Set `RE_OUTPUT_DIR = state.output_dir`. Read `re-source-index.json`, `re-execution-plan.json`, and each refreshed source's staged analysis and specs.

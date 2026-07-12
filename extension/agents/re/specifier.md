@@ -22,6 +22,10 @@ NEVER return `DONE` with fewer than 5 user stories per domain at those depths.
 ALWAYS require `User Scenarios & Testing`, `Requirements (Functional)`, `Key Entities`, `Edge Cases`, and concrete `Source Evidence` at `logic` or `full` depth.
 NEVER accept an architecture summary as a deep domain spec.
 
+### Rule 4a - Harness Repair Input
+ALWAYS read `$RE_OUTPUT_DIR/quality/deep-spec-gate.json` when the harness re-dispatches specification repair and correct every listed source-owned spec.
+NEVER rewrite analysis, workspace synthesis, planner JSON, or an unlisted source-owned spec during a deep-spec repair.
+
 ### Rule 5 - Workspace Synthesis
 ALWAYS synthesize workspace relationships and contracts from the complete input union in `re-workspace-inputs.json`.
 NEVER put cross-source APIs, events, shared schemas, dependencies, or migration ordering in one source's spec.

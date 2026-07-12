@@ -149,3 +149,9 @@ class TestGolddiggerTemplates:
 
         assert "Nested Result Boundary" in text
         assert "NEVER forward a nested `echelon_result`" in text
+
+    def test_golddigger_mode1_uses_harness_owned_re_controller(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "echelon re execute-run <run-id>" in text
+        assert "active workspace extraction" in text

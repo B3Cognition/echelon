@@ -132,6 +132,19 @@ class TestCompleteDispatch:
         assert s2["resolution_pct"] == 85
         assert s2["validate_iterations"] == 1
 
+    def test_rejects_agent_override_of_iteration_limit(self):
+        s = self._dispatched_state()
+
+        with pytest.raises(ValueError, match="not allowed"):
+            complete_dispatch(
+                s,
+                {
+                    "verdict": "DONE",
+                    "phase_id": "re-extract-3-verify",
+                    "state_updates": {"max_verify_expand_iterations": 999},
+                },
+            )
+
     def test_does_not_mutate_input(self):
         s = self._dispatched_state()
         original = s["last_dispatch"]["post_dispatch_complete"]

@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Harness-owned RE deep-spec repair loop** — active workspace Mode 1 now
+  runs through `echelon re execute-run <run-id>`, which owns RE phase
+  transitions and retries. A deterministic staged-spec gate runs before
+  verification and after each bounded repair, reports exact missing sections
+  and source-evidence counts, blocks repair writes outside listed source specs,
+  and shares the same validation with manual publication. Extraction has its
+  own workspace lease; publication retains its independent generation-pinned
+  transaction guard.
+
 - **EGR-116 / #142 prompt tool contract scanner closure** — prompt-contract
   scanning now covers every `extension/commands/echelon.*.md` wrapper instead
   of a hand-picked subset, and command-wrapper runtime discovery checks apply

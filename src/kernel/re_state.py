@@ -106,7 +106,6 @@ def write_last_dispatch(state: dict, phase_id: str, agent: str) -> dict:
 _ALLOWED_STATE_UPDATE_KEYS = frozenset({
     "coverage_pct", "resolution_pct", "domains", "mode",
     "validate_iterations", "verify_expand_iterations",
-    "max_validate_iterations", "max_verify_expand_iterations",
     "artifacts", "issues_log",
 })
 
