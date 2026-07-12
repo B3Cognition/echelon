@@ -2,6 +2,7 @@ from pathlib import Path
 
 from tests.contract.prompt_tool_contracts import (
     BUILD_GIT_STATE_DISCOVERY_COMMANDS,
+    HARNESS_INTERNAL_DISCOVERY_TARGETS,
     BUILD_SPEC_ARTIFACT_DISCOVERY_TARGETS,
     scan_prompt_tool_contracts,
 )
@@ -98,6 +99,20 @@ def test_flags_direct_harness_source_read_instruction(tmp_path: Path) -> None:
 
     assert len(findings) == 1
     assert findings[0].reason == "harness_internal_discovery"
+
+
+def test_harness_internal_discovery_targets_are_named_category() -> None:
+    assert HARNESS_INTERNAL_DISCOVERY_TARGETS == (
+        r"harness (?:source|code|files?|internals?|scripts?|functions?|(?:verify|verification|fulfillment|delivery)\s+scripts?)",
+        "Ralph code",
+        "src/harness",
+        "ralph.py",
+        "fulfillment_runner.py",
+        "fulfillment_report_is_current",
+        "latest_fulfillment_report",
+        "read_fulfillment_metadata",
+        "stamp_fulfillment_report",
+    )
 
 
 def test_flags_harness_function_implementation_discovery(tmp_path: Path) -> None:

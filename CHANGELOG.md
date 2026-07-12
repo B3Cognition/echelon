@@ -92,17 +92,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **EGR-116 / #142 prompt tool contract scanner** — harness-internal
   discovery detection now flags scan/browse/consult/study/parse/view/show/
   display/print/dump phrasing for `src/harness/...` in addition to
-  read/open/review/inspect style prompts. Build prompt artifact-discovery
-  detection now also covers `progress-report.md` and `run-history.json`, keeping
-  those Ralph/spec-owned lifecycle facts in the Python-owned context boundary,
-  and rejects soft inspect/open/review/look-at/parse style discovery of
-  Ralph-owned spec lifecycle artifacts. The lifecycle artifact target list is
+  read/open/review/inspect style prompts. The harness-internal target list is
   now a named scanner category instead of an inline regex fragment. Build prompt
-  git-state discovery now
-  also blocks `git diff`, `git branch`, `git show`, `git ls-files`, `git ls-tree`,
-  `git cat-file`, and `git grep` prompts so agents consume Ralph-owned git facts
-  instead of rediscovering repository state. The git-state command list is now a
-  named scanner category instead of an inline regex fragment, reducing future
+  artifact-discovery detection now also covers `progress-report.md` and
+  `run-history.json`, keeping those Ralph/spec-owned lifecycle facts in the
+  Python-owned context boundary, and rejects soft inspect/open/review/look-at/
+  parse style discovery of Ralph-owned spec lifecycle artifacts. The lifecycle
+  artifact target list is now a named scanner category instead of an inline regex
+  fragment. Build prompt git-state discovery now also blocks `git diff`,
+  `git branch`, `git show`, `git ls-files`, `git ls-tree`, `git cat-file`, and
+  `git grep` prompts so agents consume Ralph-owned git facts instead of
+  rediscovering repository state. The git-state command list is now a named
+  scanner category instead of an inline regex fragment, reducing future
   one-command-at-a-time drift.
 - **EGR-117 / #141 delivery runtime surface** — direct and workspace-target
   delivery runtime sync now excludes Phase A `config/` material such as

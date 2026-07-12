@@ -81,19 +81,26 @@ FENCED_COMMAND_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+HARNESS_INTERNAL_DISCOVERY_TARGETS = (
+    r"harness (?:source|code|files?|internals?|scripts?|functions?|(?:verify|verification|fulfillment|delivery)\s+scripts?)",
+    "Ralph code",
+    "src/harness",
+    "ralph.py",
+    "fulfillment_runner.py",
+    "fulfillment_report_is_current",
+    "latest_fulfillment_report",
+    "read_fulfillment_metadata",
+    "stamp_fulfillment_report",
+)
+
+HARNESS_INTERNAL_DISCOVERY_TARGET_RE = "|".join(
+    target if "\\" in target else re.escape(target)
+    for target in HARNESS_INTERNAL_DISCOVERY_TARGETS
+)
+
 HARNESS_INTERNAL_DISCOVERY_RE = re.compile(
     r"\b(?:find|locate|discover|search|scan|browse|consult|study|parse|read|inspect|open|view|show|display|print|dump|grep|list|check|look at|review|examine|cat|sed|less|more|tail|head)\b"
-    r".{0,160}\b(?:"
-    r"harness (?:source|code|files?|internals?|scripts?|functions?|(?:verify|verification|fulfillment|delivery)\s+scripts?)|"
-    r"Ralph code|"
-    r"src/harness|"
-    r"ralph\.py|"
-    r"fulfillment_runner\.py|"
-    r"fulfillment_report_is_current|"
-    r"latest_fulfillment_report|"
-    r"read_fulfillment_metadata|"
-    r"stamp_fulfillment_report"
-    r")\b",
+    rf".{{0,160}}\b(?:{HARNESS_INTERNAL_DISCOVERY_TARGET_RE})\b",
     re.IGNORECASE,
 )
 
