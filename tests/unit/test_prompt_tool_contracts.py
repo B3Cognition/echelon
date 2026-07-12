@@ -2,6 +2,7 @@ from pathlib import Path
 
 from tests.contract.prompt_tool_contracts import (
     BUILD_GIT_STATE_DISCOVERY_COMMANDS,
+    BUILD_SPEC_ARTIFACT_DISCOVERY_VERBS,
     BUILD_SPEC_ARTIFACT_DISCOVERY_TARGETS,
     HARNESS_INTERNAL_DISCOVERY_TARGETS,
     HARNESS_INTERNAL_DISCOVERY_VERBS,
@@ -529,6 +530,38 @@ def test_build_spec_artifact_discovery_targets_are_named_category() -> None:
         "specs/",
         "progress-report.md",
         "run-history.json",
+    )
+
+
+def test_build_spec_artifact_discovery_verbs_are_named_category() -> None:
+    assert BUILD_SPEC_ARTIFACT_DISCOVERY_VERBS == (
+        "find",
+        "get",
+        "query",
+        "read",
+        "locate",
+        "glob",
+        "list",
+        "search",
+        "scan",
+        "inspect",
+        "open",
+        "view",
+        "show",
+        "display",
+        "print",
+        "dump",
+        "review",
+        "examine",
+        "check",
+        "look at",
+        "parse",
+        "cat",
+        "sed",
+        "less",
+        "more",
+        "tail",
+        "head",
     )
 
 

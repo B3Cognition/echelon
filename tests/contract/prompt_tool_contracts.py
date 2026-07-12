@@ -178,10 +178,42 @@ BUILD_SPEC_ARTIFACT_DISCOVERY_TARGET_RE = "|".join(
     re.escape(target) for target in BUILD_SPEC_ARTIFACT_DISCOVERY_TARGETS
 )
 
+BUILD_SPEC_ARTIFACT_DISCOVERY_VERBS = (
+    "find",
+    "get",
+    "query",
+    "read",
+    "locate",
+    "glob",
+    "list",
+    "search",
+    "scan",
+    "inspect",
+    "open",
+    "view",
+    "show",
+    "display",
+    "print",
+    "dump",
+    "review",
+    "examine",
+    "check",
+    "look at",
+    "parse",
+    "cat",
+    "sed",
+    "less",
+    "more",
+    "tail",
+    "head",
+)
+
+BUILD_SPEC_ARTIFACT_DISCOVERY_VERB_RE = "|".join(
+    re.escape(verb) for verb in BUILD_SPEC_ARTIFACT_DISCOVERY_VERBS
+)
+
 BUILD_SPEC_ARTIFACT_DISCOVERY_RE = re.compile(
-    r"\b(?:find|get|query|read|locate|glob|list|search|scan|inspect|open|"
-    r"view|show|display|print|dump|review|examine|check|look at|parse|cat|"
-    r"sed|less|more|tail|head)\b"
+    rf"\b(?:{BUILD_SPEC_ARTIFACT_DISCOVERY_VERB_RE})\b"
     rf".{{0,160}}\b(?:{BUILD_SPEC_ARTIFACT_DISCOVERY_TARGET_RE})\b",
     re.IGNORECASE,
 )
