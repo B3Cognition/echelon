@@ -17,6 +17,7 @@ from echelon.artifact_index import write_artifact_index
 from echelon.context_builder import build_run_context
 from echelon.workspace_model import discover_workspace
 from harness.condition_evaluator import ConditionEvaluator
+from harness.config import get_full_resolved_config
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
     validate_echelon_result,
@@ -30,8 +31,9 @@ from harness.phase_a_readiness import (
 from harness.phase_checkpoints import create_phase_checkpoint
 from harness.quality_scores import normalize_why_quality_scores
 from harness.re_fingerprint import ReFingerprintProfile
-from harness.re_materializer import materialize_re_run_view
+from harness.re_materializer import materialize_re_run_context
 from harness.re_planner import build_re_execution_plan
+from harness.re_registry import load_published_index
 from harness.run_history import append_phase_a_run
 from harness.spec_frontmatter import find_spec_dir
 from harness.squad_executors import (
@@ -89,6 +91,36 @@ JUDGMENT_STATE_UPDATE_KEYS = frozenset(
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_re_fingerprint_profile(project_root: Path) -> ReFingerprintProfile:
+    """Resolve extraction settings that affect published RE compatibility."""
+    config = get_full_resolved_config(project_root)
+    re_config = config.get("re") if isinstance(config.get("re"), dict) else {}
+    depth_config = (
+        re_config.get("depth") if isinstance(re_config.get("depth"), dict) else {}
+    )
+    sources_config = (
+        re_config.get("sources") if isinstance(re_config.get("sources"), dict) else {}
+    )
+    discovery_config = (
+        config.get("discovery") if isinstance(config.get("discovery"), dict) else {}
+    )
+    return ReFingerprintProfile.from_json_dict(
+        {
+            "profile": re_config.get("profile", "full"),
+            "depth": depth_config.get("level", "full"),
+            "max_lines_per_file": depth_config.get(
+                "max_lines_per_file",
+                discovery_config.get("max_lines_per_file", 5000),
+            ),
+            "git_history_limit": sources_config.get(
+                "git_history_limit",
+                discovery_config.get("git_history_limit", 2500),
+            ),
+            "codegraph_version": re_config.get("codegraph_version"),
+        }
+    )
 
 
 def _spec_id_from_phase_a_dir(spec_dir: Path) -> str:
@@ -700,22 +732,22 @@ class SquadController:
         state = self._state_store.load()
         try:
             manifest = discover_workspace(self._project_root)
-            profile = ReFingerprintProfile()
-            cache_root = self._project_root / ".echelon" / "cache" / "re"
+            profile = _resolve_re_fingerprint_profile(self._project_root)
+            published_index = load_published_index(self._project_root)
             plan = build_re_execution_plan(
                 project_root=self._project_root,
                 manifest=manifest,
-                cache_root=cache_root,
                 target_source=self._target_source,
                 requested_policy=self._re_policy,
                 profile=profile,
+                published_index=published_index,
             )
-            artifacts = materialize_re_run_view(
+            artifacts = materialize_re_run_context(
                 project_root=self._project_root,
                 run_re_dir=self._squad_dir / "re",
                 workspace_manifest=manifest,
                 plan=plan,
-                cache_root=cache_root,
+                published_index=published_index,
             )
         except Exception as exc:
             state["status"] = "blocked"
@@ -731,6 +763,12 @@ class SquadController:
                 "re_output_dir": str(self._squad_dir / "re"),
                 "re_execution_plan": plan.to_json_dict(),
                 "re_artifacts": artifacts,
+                "re_generation": published_index.generation if published_index else 0,
+                "re_index": str(self._project_root / "re" / "index.json"),
+                "re_sources": artifacts.get("source_manifests", {}),
+                "re_workspace": artifacts.get("workspace_manifest"),
+                "re_profile": profile.to_json_dict(),
+                "re_profile_hash": profile.profile_hash(),
                 "re_refresh_sources": [
                     source.id for source in plan.sources if source.action == "refresh"
                 ],
@@ -738,12 +776,22 @@ class SquadController:
                     source.id for source in plan.sources if source.action == "missing"
                 ],
                 "re_empty_sources": [
-                    source.id for source in plan.sources if source.action == "skip-empty"
+                    source.id
+                    for source in plan.sources
+                    if source.classification == "empty"
+                ],
+                "re_unavailable_sources": [
+                    source.id
+                    for source in plan.sources
+                    if source.classification == "unavailable"
                 ],
                 "re_source_actions": {
                     source.id: source.action for source in plan.sources
                 },
                 "re_forbidden_source_roots": plan.forbidden_source_roots,
+                "re_analysis_required": plan.analysis_required,
+                "re_workspace_synthesis_required": plan.workspace_synthesis_required,
+                "re_publication_required": plan.publication_required,
             }
         )
         self._state_store.save(state)

@@ -50,7 +50,8 @@ class ReCacheStore:
 
     def __init__(self, workspace_root: Path):
         self.workspace_root = workspace_root.resolve()
-        self.root = self.workspace_root / ".echelon" / "cache" / "re"
+        self.root = self.workspace_root / "re" / ".cache"
+        self.legacy_root = self.workspace_root / ".echelon" / "cache" / "re"
 
     def entry_path(self, source_id: str, fingerprint: SourceFingerprint) -> Path:
         return cache_source_dir(self.root, source_id, fingerprint)

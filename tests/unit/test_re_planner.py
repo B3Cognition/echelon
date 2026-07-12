@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
+import shutil
 from pathlib import Path
 
 import pytest
 
 from echelon.workspace_model import SourceRoot, WorkspaceInfo, WorkspaceManifest
-from harness.re_cache import ReCacheRecord, cache_source_dir, write_cache_record
 from harness.re_fingerprint import ReFingerprintProfile, fingerprint_source
 from harness.re_planner import (
     ReExecutionPlan,
@@ -13,6 +14,7 @@ from harness.re_planner import (
     build_re_execution_plan,
     resolve_re_policy,
 )
+from harness.re_registry import ensure_re_layout, load_published_index
 
 
 def _manifest(root: Path, *source_ids: str) -> WorkspaceManifest:
@@ -63,21 +65,65 @@ def _write_empty_source(root: Path, source_id: str) -> Path:
     return source
 
 
-def _cache_source(root: Path, cache_root: Path, source_id: str, profile: ReFingerprintProfile) -> None:
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _publish_source(root: Path, source_id: str, profile: ReFingerprintProfile) -> None:
     source = root / "sources" / source_id
     fingerprint = fingerprint_source(source, profile)
-    output = root / "tmp-output" / source_id
-    output.mkdir(parents=True)
-    (output / "analysis.json").write_text(f'{{"repo_name":"{source_id}"}}\n', encoding="utf-8")
-    write_cache_record(
-        output,
-        cache_source_dir(cache_root, source_id, fingerprint),
-        ReCacheRecord(
-            source_id=source_id,
-            source_path=f"sources/{source_id}",
-            fingerprint=fingerprint,
-            profile={"profile": profile.profile, "depth": profile.depth},
-        ),
+    paths = ensure_re_layout(root)
+    source_re = paths.sources / source_id
+    spec = source_re / "specs" / "domain" / "spec.md"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_text("# Domain\n", encoding="utf-8")
+    (source_re / "overview.md").write_text(f"# {source_id}\n", encoding="utf-8")
+    _write_json(
+        source_re / "manifest.json",
+        {
+            "schema_version": 1,
+            "source_id": source_id,
+            "source_path": f"sources/{source_id}",
+            "source_fingerprint": fingerprint.value,
+            "profile": profile.to_json_dict(),
+            "profile_hash": fingerprint.profile_hash,
+            "publication_status": "complete",
+            "overview": f"re/sources/{source_id}/overview.md",
+            "specs": [f"re/sources/{source_id}/specs/domain/spec.md"],
+        },
+    )
+    records: dict[str, object] = {}
+    if paths.index.is_file():
+        records = json.loads(paths.index.read_text(encoding="utf-8"))["sources"]
+    records[source_id] = {
+        "path": f"sources/{source_id}",
+        "published_path": f"re/sources/{source_id}",
+        "fingerprint": fingerprint.value,
+        "profile_hash": fingerprint.profile_hash,
+        "status": "complete",
+        "manifest": f"re/sources/{source_id}/manifest.json",
+    }
+    _write_json(paths.workspace / "manifest.json", {"schema_version": 1, "sources": []})
+    for name in ("overview.md", "relationships.md", "contracts.md"):
+        (paths.workspace / name).write_text(f"# {name}\n", encoding="utf-8")
+    _write_json(
+        paths.index,
+        {
+            "schema_version": 1,
+            "generation": 1,
+            "publication_status": "complete",
+            "published_at": "2026-07-12T12:00:00+00:00",
+            "published_from_run": "fixture",
+            "sources": records,
+            "workspace": {
+                "manifest": "re/workspace/manifest.json",
+                "overview": "re/workspace/overview.md",
+                "relationships": "re/workspace/relationships.md",
+                "contracts": "re/workspace/contracts.md",
+            },
+            "warnings": [],
+        },
     )
 
 
@@ -105,23 +151,22 @@ def test_re_fingerprint_profile_defaults_to_full_depth() -> None:
     assert profile.git_history_limit == 2500
 
 
-def test_changed_policy_reuses_cached_sources_and_refreshes_new_source(tmp_path: Path) -> None:
+def test_changed_policy_reuses_published_sources_and_refreshes_new_source(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
     for source_id in ("original-a", "original-b", "original-c", "prosaic"):
         _write_source(root, source_id)
     manifest = _manifest(root, "original-a", "original-b", "original-c", "prosaic")
     profile = ReFingerprintProfile()
-    cache_root = root / ".echelon" / "cache" / "re"
     for source_id in ("original-a", "original-b", "original-c"):
-        _cache_source(root, cache_root, source_id, profile)
+        _publish_source(root, source_id, profile)
 
     plan = build_re_execution_plan(
         project_root=root,
         manifest=manifest,
-        cache_root=cache_root,
         target_source="",
         requested_policy="changed",
         profile=profile,
+        published_index=load_published_index(root),
     )
 
     assert plan.policy == "changed"
@@ -140,16 +185,15 @@ def test_cached_only_never_refreshes_missing_sources(tmp_path: Path) -> None:
         _write_source(root, source_id)
     manifest = _manifest(root, "original-a", "prosaic")
     profile = ReFingerprintProfile()
-    cache_root = root / ".echelon" / "cache" / "re"
-    _cache_source(root, cache_root, "original-a", profile)
+    _publish_source(root, "original-a", profile)
 
     plan = build_re_execution_plan(
         project_root=root,
         manifest=manifest,
-        cache_root=cache_root,
         target_source="",
         requested_policy="cached-only",
         profile=profile,
+        published_index=load_published_index(root),
     )
 
     assert plan.refresh_sources_count == 0
@@ -165,16 +209,15 @@ def test_target_changed_refreshes_missing_target_but_requires_cached_siblings(tm
         _write_source(root, source_id)
     manifest = _manifest(root, "original-a", "original-b", "prosaic")
     profile = ReFingerprintProfile()
-    cache_root = root / ".echelon" / "cache" / "re"
-    _cache_source(root, cache_root, "original-a", profile)
+    _publish_source(root, "original-a", profile)
 
     plan = build_re_execution_plan(
         project_root=root,
         manifest=manifest,
-        cache_root=cache_root,
         target_source="prosaic",
         requested_policy="",
         profile=profile,
+        published_index=load_published_index(root),
     )
 
     assert plan.policy == "target-changed"
@@ -192,12 +235,10 @@ def test_target_changed_skips_empty_target_without_requiring_sibling_cache(tmp_p
     _write_empty_source(root, "prosaic")
     manifest = _manifest_with_counts(root, {"original-a": 1, "prosaic": 0})
     profile = ReFingerprintProfile()
-    cache_root = root / ".echelon" / "cache" / "re"
 
     plan = build_re_execution_plan(
         project_root=root,
         manifest=manifest,
-        cache_root=cache_root,
         target_source="prosaic",
         requested_policy="",
         profile=profile,
@@ -217,12 +258,10 @@ def test_target_only_selects_target_and_forbids_sibling_roots(tmp_path: Path) ->
         _write_source(root, source_id)
     manifest = _manifest(root, "original-a", "original-b", "prosaic")
     profile = ReFingerprintProfile()
-    cache_root = root / ".echelon" / "cache" / "re"
 
     plan = build_re_execution_plan(
         project_root=root,
         manifest=manifest,
-        cache_root=cache_root,
         target_source="prosaic",
         requested_policy="target-only",
         profile=profile,
@@ -248,7 +287,6 @@ def test_re_execution_plan_round_trips_exact_profile_and_fingerprints(tmp_path: 
     plan = build_re_execution_plan(
         project_root=root,
         manifest=_manifest(root, "api"),
-        cache_root=root / ".echelon" / "cache" / "re",
         target_source="",
         requested_policy="changed",
         profile=profile,
@@ -269,7 +307,6 @@ def test_re_execution_plan_rejects_profile_hash_mismatch(tmp_path: Path) -> None
     plan = build_re_execution_plan(
         project_root=root,
         manifest=_manifest(root, "api"),
-        cache_root=root / ".echelon" / "cache" / "re",
         target_source="",
         requested_policy="changed",
         profile=ReFingerprintProfile(),
@@ -286,7 +323,6 @@ def test_re_execution_plan_rejects_duplicate_source_ids(tmp_path: Path) -> None:
     plan = build_re_execution_plan(
         project_root=root,
         manifest=_manifest(root, "api"),
-        cache_root=root / ".echelon" / "cache" / "re",
         target_source="",
         requested_policy="changed",
         profile=ReFingerprintProfile(),
@@ -295,3 +331,89 @@ def test_re_execution_plan_rejects_duplicate_source_ids(tmp_path: Path) -> None:
 
     with pytest.raises(RePlanError, match="duplicate source ID"):
         ReExecutionPlan.from_json_dict(plan)
+
+
+def test_matching_publication_is_current_without_heavy_cache(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "api")
+    profile = ReFingerprintProfile()
+    _publish_source(root, "api", profile)
+
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest(root, "api"),
+        target_source="",
+        requested_policy="changed",
+        profile=profile,
+        published_index=load_published_index(root),
+    )
+
+    assert plan.sources[0].classification == "current"
+    assert plan.sources[0].action == "reuse"
+    assert not plan.analysis_required
+    assert not plan.publication_required
+    assert not (root / "re/.cache/sources/api").exists()
+
+
+def test_profile_change_refreshes_published_source(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "api")
+    _publish_source(root, "api", ReFingerprintProfile())
+    changed_profile = ReFingerprintProfile(profile="deep", depth="full")
+
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest(root, "api"),
+        target_source="",
+        requested_policy="changed",
+        profile=changed_profile,
+        published_index=load_published_index(root),
+    )
+
+    assert plan.sources[0].classification == "refresh"
+    assert plan.sources[0].action == "refresh"
+
+
+def test_unavailable_declared_source_retains_published_context(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "api")
+    profile = ReFingerprintProfile()
+    _publish_source(root, "api", profile)
+    shutil.rmtree(root / "sources/api")
+
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest(root, "api"),
+        target_source="",
+        requested_policy="changed",
+        profile=profile,
+        published_index=load_published_index(root),
+    )
+
+    assert plan.sources[0].classification == "unavailable"
+    assert plan.sources[0].action == "missing"
+    assert not plan.analysis_required
+    assert not plan.publication_required
+
+
+def test_published_source_absent_from_workspace_is_removed(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "api")
+    _write_source(root, "web")
+    profile = ReFingerprintProfile()
+    _publish_source(root, "api", profile)
+    _publish_source(root, "web", profile)
+
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest(root, "api"),
+        target_source="",
+        requested_policy="changed",
+        profile=profile,
+        published_index=load_published_index(root),
+    )
+
+    assert plan.removed_sources == ("web",)
+    assert not plan.analysis_required
+    assert plan.workspace_synthesis_required
+    assert plan.publication_required

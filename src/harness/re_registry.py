@@ -182,6 +182,77 @@ def canonical_re_artifacts(
     }
 
 
+def published_source_is_usable(
+    workspace_root: Path,
+    index: PublishedReIndex,
+    source_id: str,
+    *,
+    expect_empty: bool | None = None,
+) -> bool:
+    """Return whether one published source has a complete durable file set."""
+    source = index.sources.get(source_id)
+    if source is None:
+        return False
+    try:
+        root = workspace_root.resolve()
+        manifest_path = _existing_registry_path(root, source.manifest, "manifest")
+        manifest = _read_object(manifest_path, "source manifest")
+        if manifest.get("schema_version") != RE_REGISTRY_SCHEMA_VERSION:
+            return False
+        if manifest.get("source_id") != source_id:
+            return False
+        if manifest.get("source_path") != source.source_path:
+            return False
+        if manifest.get("source_fingerprint") != source.fingerprint:
+            return False
+        if manifest.get("profile_hash") != source.profile_hash:
+            return False
+        if manifest.get("publication_status") != source.status:
+            return False
+        overview = _required_string(manifest, "overview", str(manifest_path))
+        _require_prefix(overview, PurePosixPath(f"re/sources/{source_id}"), "overview")
+        _existing_registry_path(root, overview, "overview")
+        raw_specs = manifest.get("specs")
+        if not isinstance(raw_specs, list) or any(not isinstance(item, str) for item in raw_specs):
+            return False
+        if expect_empty is True and (source.status != "empty" or raw_specs):
+            return False
+        if expect_empty is False and (source.status == "empty" or not raw_specs):
+            return False
+        for spec in raw_specs:
+            _require_prefix(spec, PurePosixPath(f"re/sources/{source_id}/specs"), "spec")
+            _existing_registry_path(root, spec, "spec")
+    except ReRegistryError:
+        return False
+    return True
+
+
+def published_source_is_current(
+    workspace_root: Path,
+    index: PublishedReIndex,
+    source_id: str,
+    *,
+    source_path: str,
+    fingerprint: str,
+    profile_hash: str,
+    expect_empty: bool,
+) -> bool:
+    """Return whether source state exactly matches its durable publication."""
+    source = index.sources.get(source_id)
+    return bool(
+        source
+        and source.source_path == source_path
+        and source.fingerprint == fingerprint
+        and source.profile_hash == profile_hash
+        and published_source_is_usable(
+            workspace_root,
+            index,
+            source_id,
+            expect_empty=expect_empty,
+        )
+    )
+
+
 def _parse_index(raw: Any) -> PublishedReIndex:
     if not isinstance(raw, dict):
         raise ReRegistryError("RE index must be a JSON object")

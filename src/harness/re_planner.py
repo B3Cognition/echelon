@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
-import re
 from typing import Any, Literal, Mapping
 
 from echelon.workspace_model import SourceRoot, WorkspaceManifest
-from harness.re_cache import cache_hit, cache_source_dir
+from harness.re_cache import cache_source_dir
 from harness.re_fingerprint import ReFingerprintProfile, SourceFingerprint, fingerprint_source
+from harness.re_registry import (
+    PublishedReIndex,
+    published_source_is_current,
+)
 
 RePolicy = Literal[
     "none",
@@ -173,7 +177,10 @@ class ReExecutionPlan:
             source = RePlanSource.from_json_dict(raw_source)
             if source.id in seen:
                 raise RePlanError(f"duplicate source ID in RE plan: {source.id}")
-            if source.fingerprint.profile_hash != profile.profile_hash():
+            if (
+                source.classification != "unavailable"
+                and source.fingerprint.profile_hash != profile.profile_hash()
+            ):
                 raise RePlanError(f"profile hash mismatch for source {source.id}")
             seen.add(source.id)
             sources.append(source)
@@ -239,13 +246,18 @@ def build_re_execution_plan(
     *,
     project_root: Path,
     manifest: WorkspaceManifest,
-    cache_root: Path,
     target_source: str,
     requested_policy: str,
     profile: ReFingerprintProfile,
+    published_index: PublishedReIndex | None = None,
+    cache_root: Path | None = None,
 ) -> ReExecutionPlan:
     """Build a per-source RE execution plan."""
     root = project_root.resolve()
+    cache_root = cache_root or (root / "re" / ".cache")
+    source_ids = [source.id for source in manifest.sources]
+    if len(source_ids) != len(set(source_ids)):
+        raise RePlanError("duplicate source IDs in workspace manifest")
     target = _resolve_target_source(manifest.sources, target_source)
     policy = resolve_re_policy(target.id if target is not None else "", requested_policy)
     target_empty = target is not None and _source_empty(target)
@@ -254,8 +266,31 @@ def build_re_execution_plan(
 
     for source in manifest.sources:
         absolute_path = _source_absolute_path(root, source)
-        fingerprint = fingerprint_source(absolute_path, profile)
-        hit = cache_hit(cache_root, source.id, fingerprint)
+        source_exists = absolute_path.exists()
+        published = published_index.sources.get(source.id) if published_index else None
+        if not source_exists and published is not None:
+            fingerprint = SourceFingerprint(
+                value=published.fingerprint,
+                kind="file-tree",
+                dirty=False,
+                profile_hash=published.profile_hash,
+            )
+        else:
+            fingerprint = fingerprint_source(absolute_path, profile)
+        source_empty = source_exists and _source_empty(source)
+        current = bool(
+            published_index
+            and source_exists
+            and published_source_is_current(
+                root,
+                published_index,
+                source.id,
+                source_path=source.path,
+                fingerprint=fingerprint.value,
+                profile_hash=fingerprint.profile_hash,
+                expect_empty=source_empty,
+            )
+        )
         selected = _source_selected(policy, source, target)
         if policy == "target-changed" and target_empty and target is not None and source.id != target.id:
             selected = False
@@ -264,15 +299,17 @@ def build_re_execution_plan(
         elif policy == "none":
             action = "exclude"
             selected = False
-        elif _source_empty(source):
-            action = "skip-empty"
+        elif not source_exists:
+            action = "missing"
+        elif source_empty:
+            action = "reuse" if current else "skip-empty"
         elif policy == "refresh-all":
             action = "refresh"
-        elif policy == "cached-only" and not hit:
+        elif policy == "cached-only" and not current:
             action = "missing"
-        elif policy == "target-changed" and target is not None and source.id != target.id and not hit:
+        elif policy == "target-changed" and target is not None and source.id != target.id and not current:
             action = "missing"
-        elif hit:
+        elif current:
             action = "reuse"
         else:
             action = "refresh"
@@ -290,12 +327,21 @@ def build_re_execution_plan(
                 cache_path=str(cache_source_dir(cache_root, source.id, fingerprint)),
                 dirty=fingerprint.dirty,
                 selected=selected,
-                classification=_source_classification(absolute_path, source, hit),
+                classification=_source_classification(
+                    source_exists=source_exists,
+                    source_empty=source_empty,
+                    current=current,
+                ),
             )
         )
 
+    removed_sources = (
+        tuple(sorted(set(published_index.sources) - set(source_ids)))
+        if published_index is not None and policy != "none"
+        else ()
+    )
     analysis_required = any(source.action == "refresh" for source in planned)
-    workspace_synthesis_required = analysis_required or any(
+    workspace_synthesis_required = bool(removed_sources) or analysis_required or any(
         source.action == "skip-empty" for source in planned
     )
     return ReExecutionPlan(
@@ -305,6 +351,7 @@ def build_re_execution_plan(
         sources=tuple(planned),
         forbidden_source_roots=forbidden_roots,
         profile=profile,
+        removed_sources=removed_sources,
         analysis_required=analysis_required,
         workspace_synthesis_required=workspace_synthesis_required,
         publication_required=workspace_synthesis_required,
@@ -342,15 +389,16 @@ def _source_empty(source: SourceRoot) -> bool:
 
 
 def _source_classification(
-    absolute_path: Path,
-    source: SourceRoot,
-    cache_is_current: bool,
+    *,
+    source_exists: bool,
+    source_empty: bool,
+    current: bool,
 ) -> ReSourceClassification:
-    if not absolute_path.exists():
+    if not source_exists:
         return "unavailable"
-    if _source_empty(source):
+    if source_empty:
         return "empty"
-    if cache_is_current:
+    if current:
         return "current"
     return "refresh"
 

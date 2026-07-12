@@ -46,7 +46,8 @@ def test_re_cache_entry_paths_are_scoped_by_source_id_and_fingerprint(tmp_path: 
 
     entry = store.entry_path("app", fingerprint)
 
-    assert entry == tmp_path / ".echelon" / "cache" / "re" / "sources" / "app" / fingerprint.value
+    assert entry == tmp_path / "re" / ".cache" / "sources" / "app" / fingerprint.value
+    assert store.legacy_root == tmp_path / ".echelon" / "cache" / "re"
 
 
 def test_re_cache_rejects_unsafe_source_ids(tmp_path: Path) -> None:
