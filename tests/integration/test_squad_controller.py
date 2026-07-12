@@ -373,7 +373,7 @@ class TestSquadControllerBasics:
                 exit_code=0,
                 echelon_result={
                     "verdict": "DONE",
-                    "state_updates": {"golddigger_status": "complete"},
+                    "state_updates": {"golddigger_status": "partial"},
                 },
                 raw_output="",
                 duration_ms=50,
@@ -406,14 +406,13 @@ class TestSquadControllerBasics:
         assert provider.exec_agent.call_count == 2
         golddigger_prompt = provider.exec_agent.call_args_list[0].args[1]
         assert "You are GOLDDIGGER." in golddigger_prompt
-        assert "Run **Mode 1 (Full Reverse Engineering)**" in golddigger_prompt
+        assert "Run **Mode 1 (Workspace Reverse Engineering)**" in golddigger_prompt
         assert f"project_root: {tmp_path}" in golddigger_prompt
         assert "mode: brownfield" in golddigger_prompt
         state = store.load()
         assert state["golddigger_status"] == "partial"
-        assert "reverse-engineering specs are missing" in state["golddigger_notes"][0]
 
-    def test_golddigger_mode1_complete_is_preserved_when_re_specs_exist(self, tmp_path):
+    def test_golddigger_mode1_complete_is_preserved_when_publication_not_required(self, tmp_path):
         provider = MagicMock()
         provider.exec_agent.side_effect = [
             SquadAgentResult(
@@ -434,71 +433,9 @@ class TestSquadControllerBasics:
                 timed_out=False,
             ),
         ]
-        specs_dir = tmp_path / "specs"
-        (specs_dir / "000-re-overview").mkdir(parents=True)
-        (specs_dir / "000-re-overview" / "overview.md").write_text(
-            "# RE Overview\n",
-            encoding="utf-8",
-        )
-        (specs_dir / "001-re-domain").mkdir()
-        (specs_dir / "001-re-domain" / "spec.md").write_text(
-            "# Domain\n",
-            encoding="utf-8",
-        )
-
         graph = PhaseGraph(DEFINITION, EXT_YML)
         squad_dir = tmp_path / "squad" / "run-test"
         squad_dir.mkdir(parents=True, exist_ok=True)
-        (squad_dir / "staging").mkdir(exist_ok=True)
-        store = SquadStateStore(squad_dir)
-        store.initialize("r", "brownfield", "msg", 0, "phase1-discover", autonomy_mode="banzai")
-        executor = AgentExecutor(
-            provider,
-            graph,
-            EXT_ROOT / "extension",
-            tmp_path,
-            squad_dir,
-        )
-
-        executor.execute(graph.get("phase1-discover"), store)
-
-        assert store.load()["golddigger_status"] == "complete"
-
-    def test_golddigger_mode1_complete_is_preserved_when_run_re_specs_exist(self, tmp_path):
-        provider = MagicMock()
-        provider.exec_agent.side_effect = [
-            SquadAgentResult(
-                exit_code=0,
-                echelon_result={
-                    "verdict": "DONE",
-                    "state_updates": {"golddigger_status": "complete"},
-                },
-                raw_output="",
-                duration_ms=50,
-                timed_out=False,
-            ),
-            SquadAgentResult(
-                exit_code=0,
-                echelon_result={"verdict": "DONE", "state_updates": {}},
-                raw_output="",
-                duration_ms=50,
-                timed_out=False,
-            ),
-        ]
-
-        graph = PhaseGraph(DEFINITION, EXT_YML)
-        squad_dir = tmp_path / "squad" / "run-test"
-        re_specs_dir = squad_dir / "re" / "specs"
-        (re_specs_dir / "000-re-overview").mkdir(parents=True)
-        (re_specs_dir / "000-re-overview" / "overview.md").write_text(
-            "# RE Overview\n",
-            encoding="utf-8",
-        )
-        (re_specs_dir / "001-re-domain").mkdir()
-        (re_specs_dir / "001-re-domain" / "spec.md").write_text(
-            "# Domain\n",
-            encoding="utf-8",
-        )
         (squad_dir / "staging").mkdir(exist_ok=True)
         store = SquadStateStore(squad_dir)
         store.initialize("r", "brownfield", "msg", 0, "phase1-discover", autonomy_mode="banzai")

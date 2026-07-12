@@ -17,6 +17,7 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.phase_graph import PhaseGraph
+from harness.re_publication import RePublicationResult, RePublicationValidationError
 from harness.squad_executors import (
     AgentExecutor,
     ConditionalSequentialExecutor,
@@ -740,9 +741,17 @@ def test_pre_dispatch_prompt_includes_re_execution_context(tmp_path):
         "target_source": "prosaic",
         "re_refresh_sources": ["prosaic"],
         "re_missing_sources": [],
+        "re_empty_sources": [],
+        "re_unavailable_sources": ["archive"],
+        "re_execution_plan": {"removed_sources": ["retired"]},
+        "re_analysis_required": True,
+        "re_workspace_synthesis_required": True,
+        "re_publication_required": True,
         "re_forbidden_source_roots": [str(tmp_path / "sources" / "original-a")],
         "re_artifacts": {
             "source_index": str(squad_dir / "re" / "re-source-index.json"),
+            "analysis_manifest": str(squad_dir / "re" / "re-analysis-manifest.json"),
+            "workspace_inputs": str(squad_dir / "re" / "re-workspace-inputs.json"),
             "analysis": str(squad_dir / "re" / "analysis.json"),
         },
     }
@@ -757,6 +766,13 @@ def test_pre_dispatch_prompt_includes_re_execution_context(tmp_path):
     assert "## Reverse Engineering Execution Plan" in prompt
     assert "RE_POLICY=target-only" in prompt
     assert "RE_REFRESH_SOURCES=prosaic" in prompt
+    assert "RE_UNAVAILABLE_SOURCES=archive" in prompt
+    assert "RE_REMOVED_SOURCES=retired" in prompt
+    assert "RE_ANALYSIS_REQUIRED=true" in prompt
+    assert "RE_WORKSPACE_SYNTHESIS_REQUIRED=true" in prompt
+    assert "RE_PUBLICATION_REQUIRED=true" in prompt
+    assert "re-analysis-manifest.json" in prompt
+    assert "re-workspace-inputs.json" in prompt
     assert "FORBIDDEN_SOURCE_ROOTS:" in prompt
     assert str(tmp_path / "sources" / "original-a") in prompt
 
@@ -816,6 +832,229 @@ def test_golddigger_mode1_skips_when_re_plan_has_no_refresh_sources(tmp_path):
     assert updated["golddigger_mode"] == "cached-re"
     assert updated["golddigger_artifacts"]["source_index"] == str(
         squad_dir / "re" / "re-source-index.json"
+    )
+
+
+def test_golddigger_mode1_complete_publishes_canonical_context(tmp_path, monkeypatch):
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\n")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("run-test", "brownfield", "msg", 0, "phase1-discover")
+    state = state_store.load()
+    state.update(
+        {
+            "re_refresh_sources": ["api"],
+            "re_publication_required": True,
+            "re_generation": 1,
+            "re_artifacts": {"manifest": str(tmp_path / "re/index.json")},
+        }
+    )
+    state_store.save(state)
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"golddigger_status": "complete"},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=1,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[
+            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+        ],
+        allowed_state_updates=["golddigger_status"],
+    )
+
+    publish = MagicMock(
+        return_value=RePublicationResult(
+            generation=2,
+            status="complete",
+            index_path=tmp_path / "re/index.json",
+            changed_sources=("api",),
+            removed_sources=(),
+            warnings=(),
+        )
+    )
+    canonical = {
+        "manifest": str(tmp_path / "re/index.json"),
+        "source_manifests": {"api": str(tmp_path / "re/sources/api/manifest.json")},
+        "workspace_manifest": str(tmp_path / "re/workspace/manifest.json"),
+        "re_overview": str(tmp_path / "re/workspace/overview.md"),
+        "re_specs": [str(tmp_path / "re/sources/api/specs/domain/spec.md")],
+    }
+    monkeypatch.setattr("harness.squad_executors.publish_re_run", publish)
+    monkeypatch.setattr(
+        "harness.squad_executors.load_published_index",
+        lambda _root: SimpleNamespace(generation=2),
+    )
+    monkeypatch.setattr(
+        "harness.squad_executors.canonical_re_artifacts",
+        lambda _root, _index: canonical,
+    )
+
+    result = executor._run_pre_dispatch(node, state_store.load(), state_store)
+
+    assert result is None
+    publish.assert_called_once_with(
+        tmp_path,
+        squad_dir,
+        allow_partial=False,
+        status_override="complete",
+        expected_generation=1,
+    )
+    updated = state_store.load()
+    assert updated["re_generation"] == 2
+    assert updated["re_artifacts"] == canonical
+    assert updated["golddigger_artifacts"] == canonical
+    assert updated["re_sources"] == canonical["source_manifests"]
+    assert updated["re_workspace"] == canonical["workspace_manifest"]
+
+
+def test_golddigger_publication_failure_blocks_and_preserves_context(tmp_path, monkeypatch):
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\n")
+    old_context = {"manifest": str(tmp_path / "re/index.json"), "generation": 1}
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("run-test", "brownfield", "msg", 0, "phase1-discover")
+    state = state_store.load()
+    state.update(
+        {
+            "re_refresh_sources": ["api"],
+            "re_publication_required": True,
+            "re_generation": 1,
+            "re_artifacts": old_context,
+        }
+    )
+    state_store.save(state)
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"golddigger_status": "complete"},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=1,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/golddigger.md"
+    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[
+            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+        ],
+        allowed_state_updates=["golddigger_status"],
+    )
+    monkeypatch.setattr(
+        "harness.squad_executors.publish_re_run",
+        MagicMock(side_effect=RePublicationValidationError("workspace mismatch")),
+    )
+
+    result = executor._run_pre_dispatch(node, state_store.load(), state_store)
+
+    assert result is not None and result.blocked
+    assert result.state_updates["blocked_reason"] == "re_publication_failed"
+    assert "workspace mismatch" in result.state_updates["re_publication_error"]
+    updated = state_store.load()
+    assert updated["re_generation"] == 1
+    assert updated["re_artifacts"] == old_context
+    assert "golddigger_status" not in updated
+
+
+def test_blocked_golddigger_result_never_publishes(tmp_path, monkeypatch):
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\n")
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("run-test", "brownfield", "msg", 0, "phase1-discover")
+    state = state_store.load()
+    state.update(
+        {
+            "re_refresh_sources": ["api"],
+            "re_publication_required": True,
+            "re_generation": 0,
+        }
+    )
+    state_store.save(state)
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "BLOCKED",
+            "state_updates": {
+                "blocked_reason": "agent blocked",
+                "golddigger_status": "complete",
+            },
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=1,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/golddigger.md"
+    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[
+            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+        ],
+        allowed_state_updates=["golddigger_status"],
+    )
+    publish = MagicMock()
+    monkeypatch.setattr("harness.squad_executors.publish_re_run", publish)
+
+    result = executor._run_pre_dispatch(node, state_store.load(), state_store)
+
+    assert result is not None and result.blocked
+    publish.assert_not_called()
+
+
+def test_golddigger_no_refresh_still_dispatches_for_workspace_synthesis(tmp_path):
+    executor = _executor(tmp_path)
+
+    assert not executor._golddigger_mode1_cache_hit(
+        {
+            "re_refresh_sources": [],
+            "re_publication_required": True,
+            "re_workspace_synthesis_required": True,
+        }
     )
 
 

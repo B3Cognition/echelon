@@ -10,6 +10,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from harness.quality_scores import normalize_why_quality_scores
+from harness.re_lock import (
+    RePublicationActiveRun,
+    RePublishLocked,
+    RePublishRecoveryRequired,
+)
+from harness.re_publication import RePublicationError, publish_re_run
+from harness.re_registry import (
+    ReRegistryError,
+    canonical_re_artifacts,
+    load_published_index,
+)
 
 if TYPE_CHECKING:
     from harness.phase_graph import PhaseGraph, PhaseNode
@@ -187,6 +198,8 @@ def _render_re_execution_context(state: dict) -> str:
             "manifest",
             "source_index",
             "execution_plan",
+            "analysis_manifest",
+            "workspace_inputs",
             "analysis",
             "cross_repo",
         ):
@@ -217,6 +230,21 @@ def _render_re_execution_context(state: dict) -> str:
         for item in (state.get("re_empty_sources") or [])
         if str(item).strip()
     ]
+    unavailable_sources = [
+        str(item)
+        for item in (state.get("re_unavailable_sources") or [])
+        if str(item).strip()
+    ]
+    execution_plan = state.get("re_execution_plan")
+    removed_sources = (
+        [
+            str(item)
+            for item in (execution_plan.get("removed_sources") or [])
+            if str(item).strip()
+        ]
+        if isinstance(execution_plan, dict)
+        else []
+    )
     forbidden_roots = [
         str(item)
         for item in (state.get("re_forbidden_source_roots") or [])
@@ -230,6 +258,12 @@ def _render_re_execution_context(state: dict) -> str:
         "RE_REFRESH_SOURCES=" + (", ".join(refresh_sources) if refresh_sources else "(none)"),
         "RE_MISSING_SOURCES=" + (", ".join(missing_sources) if missing_sources else "(none)"),
         "RE_EMPTY_SOURCES=" + (", ".join(empty_sources) if empty_sources else "(none)"),
+        "RE_UNAVAILABLE_SOURCES=" + (", ".join(unavailable_sources) if unavailable_sources else "(none)"),
+        "RE_REMOVED_SOURCES=" + (", ".join(removed_sources) if removed_sources else "(none)"),
+        f"RE_ANALYSIS_REQUIRED={str(bool(state.get('re_analysis_required'))).lower()}",
+        "RE_WORKSPACE_SYNTHESIS_REQUIRED="
+        + str(bool(state.get("re_workspace_synthesis_required"))).lower(),
+        f"RE_PUBLICATION_REQUIRED={str(bool(state.get('re_publication_required'))).lower()}",
     ]
     if forbidden_roots:
         lines.append("FORBIDDEN_SOURCE_ROOTS:")
@@ -327,12 +361,6 @@ def _render_golddigger_cache_context(state: dict, squad_dir: Path) -> str:
             text = text[:_GOLDDIGGER_CACHE_CONTEXT_MAX_CHARS]
         chunks.append(f"\n## {path.relative_to(squad_dir).as_posix()}\n{text}")
     return "\n".join(chunks)
-
-
-def _re_specs_exist(specs_root: Path) -> bool:
-    overview = specs_root / "000-re-overview" / "overview.md"
-    domain_specs = list(specs_root.glob("[0-9][0-9][0-9]-re-*/spec.md"))
-    return overview.exists() and bool(domain_specs)
 
 
 def _routing_contract(node: "PhaseNode") -> str:
@@ -720,10 +748,15 @@ class PhaseExecutor(ABC):
                         str(self._project_root), prompt
                     )
                     result = self._validate_result_state_updates(node, result)
-                    if entry.get("id") == "golddigger_mode1":
-                        self._downgrade_golddigger_complete_without_re_specs(result)
                     if result.blocked:
                         return result
+                    if entry.get("id") == "golddigger_mode1":
+                        publication_failure = self._publish_golddigger_mode1_complete(
+                            result,
+                            state_store,
+                        )
+                        if publication_failure is not None:
+                            return publication_failure
                     self._write_journal_entries(result, node.id)
                     for k, v in result.state_updates.items():
                         s = state_store.load()
@@ -734,6 +767,10 @@ class PhaseExecutor(ABC):
     def _golddigger_mode1_cache_hit(self, state: dict) -> bool:
         """Return True when the RE plan says Mode 1 has no refresh work."""
         if "re_refresh_sources" not in state:
+            return False
+        if state.get("re_publication_required") or state.get(
+            "re_workspace_synthesis_required"
+        ):
             return False
         refresh_sources = state.get("re_refresh_sources")
         return isinstance(refresh_sources, list) and not refresh_sources
@@ -768,49 +805,99 @@ class PhaseExecutor(ABC):
                 + ", ".join(empty_sources)
             )
         else:
-            notes.append("GOLDDIGGER Mode 1 skipped; run-local RE artifacts reused from cache.")
+            notes.append("GOLDDIGGER Mode 1 skipped; published RE artifacts reused.")
         state["golddigger_notes"] = notes
         state_store.save(state)
 
-    def _downgrade_golddigger_complete_without_re_specs(
-        self, result: "SquadAgentResult"
-    ) -> None:
-        """Do not let analysis-only brownfield extraction masquerade as full RE."""
+    def _publish_golddigger_mode1_complete(
+        self,
+        result: "SquadAgentResult",
+        state_store: "SquadStateStore",
+    ) -> Optional["SquadAgentResult"]:
+        """Publish validated Mode 1 output before applying agent state updates."""
         updates = result.state_updates
         status = str(updates.get("golddigger_status") or "").strip().lower()
         if status != "complete":
-            return
+            return None
 
-        legacy_specs_root = self._project_root / "specs"
-        run_specs_root = self._squad_dir / "re" / "specs"
-        if _re_specs_exist(legacy_specs_root) or _re_specs_exist(run_specs_root):
-            return
+        state = state_store.load()
+        if not state.get("re_publication_required"):
+            return None
+        expected_generation = state.get("re_generation")
+        if not isinstance(expected_generation, int) or isinstance(
+            expected_generation, bool
+        ):
+            expected_generation = None
 
-        if not isinstance(result.echelon_result, dict):
-            return
-        mutable_updates = result.echelon_result.setdefault("state_updates", {})
-        if not isinstance(mutable_updates, dict):
-            return
-        mutable_updates["golddigger_status"] = "partial"
-        notes = mutable_updates.get("golddigger_notes")
+        try:
+            publication = publish_re_run(
+                self._project_root,
+                self._squad_dir,
+                allow_partial=False,
+                status_override="complete",
+                expected_generation=expected_generation,
+            )
+            published_index = load_published_index(self._project_root)
+            if (
+                published_index is None
+                or published_index.generation != publication.generation
+            ):
+                raise ReRegistryError(
+                    "published RE index does not match the completed generation"
+                )
+            artifacts = canonical_re_artifacts(
+                self._project_root,
+                published_index,
+            )
+        except (
+            RePublicationError,
+            RePublicationActiveRun,
+            RePublishLocked,
+            RePublishRecoveryRequired,
+            ReRegistryError,
+            OSError,
+        ) as exc:
+            from harness.squad_provider import SquadAgentResult
+
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {
+                        "blocked_reason": "re_publication_failed",
+                        "re_publication_error": str(exc),
+                    },
+                    "journal_entries": [],
+                },
+                raw_output=result.raw_output,
+                duration_ms=result.duration_ms,
+                timed_out=result.timed_out,
+                cost_usd=result.cost_usd,
+            )
+
+        notes = updates.get("golddigger_notes")
         if not isinstance(notes, list):
             notes = []
-        missing: list[str] = []
-        if not (
-            (legacy_specs_root / "000-re-overview" / "overview.md").exists()
-            or (run_specs_root / "000-re-overview" / "overview.md").exists()
-        ):
-            missing.append("specs/000-re-overview/overview.md")
-        if not (
-            list(legacy_specs_root.glob("[0-9][0-9][0-9]-re-*/spec.md"))
-            or list(run_specs_root.glob("[0-9][0-9][0-9]-re-*/spec.md"))
-        ):
-            missing.append("specs/[0-9][0-9][0-9]-re-*/spec.md")
-        notes.append(
-            "GOLDDIGGER reported complete, but reverse-engineering specs are missing: "
-            + ", ".join(missing)
+        notes.extend(
+            warning for warning in publication.warnings if warning not in notes
         )
-        mutable_updates["golddigger_notes"] = notes
+        updates.update(
+            {
+                "golddigger_status": "complete",
+                "golddigger_mode": "workspace-full-re",
+                "golddigger_artifacts": artifacts,
+                "golddigger_notes": notes,
+                "re_generation": publication.generation,
+                "re_index": str(publication.index_path),
+                "re_sources": artifacts.get("source_manifests", {}),
+                "re_workspace": artifacts.get("workspace_manifest"),
+                "re_artifacts": artifacts,
+                "re_analysis_required": False,
+                "re_workspace_synthesis_required": False,
+                "re_publication_required": False,
+            }
+        )
+        return None
 
     def _normalize_golddigger_request(self, request: object) -> dict:
         if isinstance(request, str):
@@ -1033,7 +1120,7 @@ class PhaseExecutor(ABC):
                 + "</context>\n\n"
                 + "<instructions>\n"
                 + "You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.\n"
-                + f"Run **Mode {entry.get('mode', 1)} (Full Reverse Engineering)** for target path `{self._project_root}`. "
+                + f"Run **Mode {entry.get('mode', 1)} (Workspace Reverse Engineering)** for target path `{self._project_root}`. "
                 + f"Your context: run_id is `{run_id}`, mode is {project_mode}.\n"
                 + "</instructions>\n"
                 + _allowed_state_updates_contract(allowed_state_updates)
