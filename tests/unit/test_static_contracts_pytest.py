@@ -9,6 +9,7 @@ from tests.contract.static_contracts import (
     validate_code_reviewer_confidence_filter_contract,
     validate_guardian_mode_config_naming_contract,
     validate_lexicon_derived_spec_contract,
+    validate_re_source_ownership_contract,
     validate_commander_loading_contract,
     validate_commander_routing_mandate_contract,
     validate_commander_token_tracking_contract,
@@ -94,6 +95,10 @@ def test_sage_understanding_followup_contract() -> None:
 
 def test_veteran_project_scoping_contract() -> None:
     assert validate_veteran_project_scoping_contract(ROOT) == []
+
+
+def test_re_source_ownership_contract() -> None:
+    assert validate_re_source_ownership_contract(ROOT) == []
 
 
 def test_auditor_internalizer_split_contract() -> None:

@@ -7,7 +7,7 @@ scripts:
 
 ## Role
 
-You are COMMANDER executing the brownfield extraction pipeline.
+You are COMMANDER executing workspace reverse engineering for planned brownfield sources.
 
 Use this command's declared `re_extraction` phase sequence as the authoritative
 routing contract. Do not read `agents/control/commander.md` or
@@ -19,6 +19,12 @@ dispatching, and write all state to the resolved RE output directory:
 - standalone `re-*`: `.specify/echelon/re/state.json`
 
 **This command always extracts and specifies. It never writes implementation code.**
+
+The deterministic harness owns source selection, fingerprints, profiles,
+manifests, and generation metadata. Agents write only staged artifacts below
+`{state.output_dir}/sources/`, `{state.output_dir}/quality/`, and
+`{state.output_dir}/workspace/`. Never write RE artifacts to project-root
+`specs/`.
 
 ## Phase Sequence
 

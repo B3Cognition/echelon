@@ -1,22 +1,23 @@
 # Phase: re-extract-4-expand
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching RE-EXPANDER
 # Agent: speckit-echelon-re-expander
 
 ## Context Pack
 
-- `specs/000-re-overview/coverage-report.md` — orphan file clusters
-- `{state.output_dir}/analysis.json` — file metadata for orphan files
-- `{state.output_dir}/state.json` — domain list, output_dir
+- `{state.output_dir}/state.json`
+- `{state.output_dir}/re-source-index.json`
+- `{state.output_dir}/quality/{source-id}/coverage-report.md`
+- `{state.output_dir}/sources/{source-id}/analysis.json`
+- `{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md`
 
 ## Dispatch Prompt
 
-Instruct RE-EXPANDER to: read orphan clusters from coverage-report.md, create or expand domain specs to cover high-confidence clusters (≥3 related files), preserve existing spec content, write new/updated spec.md files.
+Instruct RE-EXPANDER to expand only the source directory matching each failing coverage report. Preserve existing evidence and deep sections; create source-local domains for high-confidence orphan clusters. Do not edit workspace synthesis or deterministic JSON.
 
 ## Expected Outputs
 
-- `specs/NNN-re-{domain}/spec.md` — new or expanded domains
+- `{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md` for new or expanded source domains
 
-## echelon_result schema
+## echelon_result Schema
 
 ```yaml
 echelon_result:
@@ -25,11 +26,11 @@ echelon_result:
   state_updates:
     domains: [auth, api, data-layer, utils]
   output_files:
-    - specs/NNN-re-{domain}/spec.md
+    - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
   journal_entries:
     - type: phase_complete
       phase: re-extract-4-expand
       data:
-        summary: "Added {N} new domain(s), expanded {M} existing"
+        summary: "Expanded source-owned specs"
   blocked_reason: null
 ```

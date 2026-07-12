@@ -515,6 +515,35 @@ def validate_veteran_project_scoping_contract(root: Path) -> list[str]:
     return failures
 
 
+def validate_re_source_ownership_contract(root: Path) -> list[str]:
+    """RE extraction stages source-owned artifacts and workspace synthesis."""
+    specifier = root / "extension/agents/re/specifier.md"
+    verifier = root / "extension/agents/re/verifier.md"
+    expander = root / "extension/agents/re/expander.md"
+    validator = root / "extension/agents/re/validator.md"
+    checklister = root / "extension/agents/re/checklister.md"
+    constituter = root / "extension/agents/re/constituter.md"
+    golddigger = root / "extension/agents/exploration/golddigger.md"
+    preflight = root / "extension/workflow/phases/re-extract-0-preflight.md"
+    checks = [
+        PatternCheck("specifier source overview", specifier, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/overview\.md"),
+        PatternCheck("specifier source spec", specifier, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/specs/\{domain-id\}/spec\.md"),
+        PatternCheck("specifier workspace contracts", specifier, r"\$RE_OUTPUT_DIR/workspace/contracts\.md"),
+        PatternCheck("verifier source quality", verifier, r"\$RE_OUTPUT_DIR/quality/\{source-id\}/coverage-report\.md"),
+        PatternCheck("expander source ownership", expander, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/specs/\{domain-id\}/spec\.md"),
+        PatternCheck("validator source quality", validator, r"\$RE_OUTPUT_DIR/quality/\{source-id\}/validation-report\.md"),
+        PatternCheck("checklister source checklist", checklister, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/specs/\{domain-id\}/checklist\.md"),
+        PatternCheck("checklister workspace checklist", checklister, r"\$RE_OUTPUT_DIR/workspace/checklist\.md"),
+        PatternCheck("constituter workspace strategy", constituter, r"\$RE_OUTPUT_DIR/workspace/strategy/constitution\.md"),
+        PatternCheck("golddigger workspace mode", golddigger, r"Mode 1 - Workspace Reverse Engineering"),
+        PatternCheck("golddigger no project-root overview", golddigger, r"specs/000-re-overview", should_match=False),
+        PatternCheck("preflight initializes workspace mode", preflight, r"'mode': 'workspace'"),
+        PatternCheck("preflight does not initialize single mode", preflight, r"'mode': 'single'", should_match=False),
+        PatternCheck("preflight allows empty workspace", preflight, r"empty declared workspace is valid"),
+    ]
+    return _run_checks(checks)
+
+
 def validate_auditor_internalizer_split_contract(root: Path) -> list[str]:
     auditor = root / "extension/agents/learning/auditor.md"
     internalizer = root / "extension/agents/learning/internalizer.md"

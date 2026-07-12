@@ -1,27 +1,32 @@
 # Phase: re-extract-7-constitute
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching RE-CONSTITUTER
 # Agent: speckit-echelon-re-constituter
 
 ## Context Pack
 
-- `specs/NNN-re-*/spec.md`
-- `specs/000-re-overview/checklist.md`
-- `{state.output_dir}/analysis.json`
 - `{state.output_dir}/state.json`
+- `{state.output_dir}/re-workspace-inputs.json`
+- canonical source manifests/specs referenced by the workspace inputs
+- `{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md`
+- `{state.output_dir}/quality/{source-id}/coverage-report.md`
+- `{state.output_dir}/quality/{source-id}/validation-report.md`
+- `{state.output_dir}/workspace/overview.md`
+- `{state.output_dir}/workspace/relationships.md`
+- `{state.output_dir}/workspace/contracts.md`
+- `{state.output_dir}/workspace/checklist.md`
 
 ## Dispatch Prompt
 
-Instruct RE-CONSTITUTER to: synthesize `constitution.md` (legacy analysis + target stack decisions with [REQUIRES INPUT] for unknowns), `migration-strategy.md` (6R/7R per domain), `risk-matrix.md`, `gap-analysis.md`, ADRs in `adrs/ADR-NNN-*.md`. Use preset templates if installed (check `.specify/presets/echelon-brownfield-*/`).
+Instruct RE-CONSTITUTER to synthesize evidence-backed strategy from the complete workspace union, including current, refreshed, empty, unavailable retained, and removed sources. Mark undecidable target-state choices `[REQUIRES INPUT]`. Write only under workspace strategy staging.
 
 ## Expected Outputs
 
-- `constitution.md`
-- `migration-strategy.md`
-- `risk-matrix.md`
-- `gap-analysis.md`
-- `adrs/ADR-001-*.md` (at minimum one ADR)
+- `{state.output_dir}/workspace/strategy/constitution.md`
+- `{state.output_dir}/workspace/strategy/migration-strategy.md`
+- `{state.output_dir}/workspace/strategy/risk-matrix.md`
+- `{state.output_dir}/workspace/strategy/gap-analysis.md`
+- `{state.output_dir}/workspace/strategy/adrs/ADR-NNN-*.md`
 
-## echelon_result schema
+## echelon_result Schema
 
 ```yaml
 echelon_result:
@@ -30,15 +35,15 @@ echelon_result:
   state_updates:
     status: done
   output_files:
-    - constitution.md
-    - migration-strategy.md
-    - risk-matrix.md
-    - gap-analysis.md
-    - adrs/ADR-001-tech-debt-classification.md
+    - "{state.output_dir}/workspace/strategy/constitution.md"
+    - "{state.output_dir}/workspace/strategy/migration-strategy.md"
+    - "{state.output_dir}/workspace/strategy/risk-matrix.md"
+    - "{state.output_dir}/workspace/strategy/gap-analysis.md"
+    - "{state.output_dir}/workspace/strategy/adrs/ADR-NNN-*.md"
   journal_entries:
     - type: phase_complete
       phase: re-extract-7-constitute
       data:
-        summary: "Strategic artifacts generated. {N} [REQUIRES INPUT] markers need human decisions."
+        summary: "Generated workspace strategy"
   blocked_reason: null
 ```

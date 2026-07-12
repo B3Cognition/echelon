@@ -1,22 +1,27 @@
 # Phase: re-extract-5-validate
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching RE-VALIDATOR
 # Agent: speckit-echelon-re-validator
 
 ## Context Pack
 
-- `specs/NNN-re-*/spec.md` — all domain specs
-- `{state.output_dir}/analysis.json` — source code for ambiguity resolution
-- `{state.output_dir}/state.json` — resolution_pct, validate_iterations, max_validate_iterations
+- `{state.output_dir}/state.json`
+- `{state.output_dir}/re-source-index.json`
+- `{state.output_dir}/workspace/contracts.md`
+- `{state.output_dir}/workspace/relationships.md`
+- `{state.output_dir}/sources/{source-id}/analysis.json`
+- `{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md`
+- `{state.output_dir}/quality/{source-id}/coverage-report.md`
 
 ## Dispatch Prompt
 
-Instruct RE-VALIDATOR to: apply quality checks (Basic strategy first, then Deep if resolution_pct < threshold and iterations < max, then Extended), auto-resolve ambiguities by reading source code, write validation-report.md with per-domain resolution scores, update resolution_pct and increment validate_iterations.
+Instruct RE-VALIDATOR to validate each non-empty refresh source independently, resolve ambiguity only from matching source evidence, validate cross-source claims against workspace contracts, and use the minimum source score as aggregate `resolution_pct`.
 
 ## Expected Outputs
 
-- `specs/000-re-overview/validation-report.md`
+- `{state.output_dir}/quality/{source-id}/validation-report.md` for each non-empty refresh source
 
-## echelon_result schema
+Empty sources require no report. An all-empty workspace returns `resolution_pct: 100`.
+
+## echelon_result Schema
 
 ```yaml
 echelon_result:
@@ -24,13 +29,14 @@ echelon_result:
   phase_id: re-extract-5-validate
   state_updates:
     resolution_pct: 85
+    source_resolution: {api: 85}
     validate_iterations: 1
   output_files:
-    - specs/000-re-overview/validation-report.md
+    - "{state.output_dir}/quality/{source-id}/validation-report.md"
   journal_entries:
     - type: phase_complete
       phase: re-extract-5-validate
       data:
-        summary: "Resolution: {resolution_pct}% (iteration {validate_iterations})"
+        summary: "Validated source-owned specs independently"
   blocked_reason: null
 ```

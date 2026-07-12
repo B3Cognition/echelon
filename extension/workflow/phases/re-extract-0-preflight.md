@@ -32,10 +32,10 @@ export OUTPUT_DIR
 mkdir -p "$OUTPUT_DIR"
 ```
 
-### 3. Codebase non-empty
+### 3. Source inventory warning
 
 Use Glob tool to count source files matching `**/*.{ts,js,py,go,rs,java,kt,cs,rb,cpp,c,swift}`.
-If count < 5: warn "Fewer than 5 source files found — analysis may be sparse" but continue.
+If count < 5: warn "Fewer than 5 source files found - analysis may be sparse" but continue. An empty declared workspace is valid and must not hard-stop preflight.
 
 ### 4. Read thresholds from echelon-config.yml
 
@@ -70,7 +70,7 @@ if not state_path.exists():
         'run_id': f're-{ts}', 'status': 'in_progress',
         'phase': 're-extract-0-preflight',
         'last_dispatch': {'phase_id': None, 'agent': None, 'post_dispatch_complete': False, 'dispatched_at': None},
-        'mode': 'single', 'output_dir': output_dir,
+        'mode': 'workspace', 'output_dir': output_dir,
         'domains': [], 'coverage_pct': 0,
         'coverage_threshold': int(os.environ.get('COVERAGE_THRESHOLD', 80)),
         'verify_expand_iterations': 0, 'resolution_pct': 0,
@@ -79,10 +79,16 @@ if not state_path.exists():
         'max_validate_iterations': int(os.environ.get('MAX_VALIDATE', 3)),
         'max_verify_expand_iterations': int(os.environ.get('MAX_VERIFY_EXPAND', 5)),
         'artifacts': {'analysis_json': f'{output_dir}/analysis.json',
-                      'repos_manifest': f'{output_dir}/repos-manifest.json',
-                      'cross_repo': None,
+                      'analysis_manifest': f'{output_dir}/re-analysis-manifest.json',
+                      'workspace_manifest': f'{output_dir}/workspace-manifest.json',
+                      'source_index': f'{output_dir}/re-source-index.json',
+                      'workspace_inputs': f'{output_dir}/re-workspace-inputs.json',
+                      'cross_repo': f'{output_dir}/cross-repo.json',
                       'codegraph_analysis': f'{output_dir}/codegraph-analysis.json',
-                      'codegraph_summary': f'{output_dir}/codegraph-summary.json'},
+                      'codegraph_summary': f'{output_dir}/codegraph-summary.json',
+                      'sources_root': f'{output_dir}/sources',
+                      'workspace_root': f'{output_dir}/workspace',
+                      'quality_root': f'{output_dir}/quality'},
         'issues_log': []
     }
     state_path.parent.mkdir(parents=True, exist_ok=True)

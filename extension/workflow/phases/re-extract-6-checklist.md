@@ -1,23 +1,26 @@
 # Phase: re-extract-6-checklist
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching RE-CHECKLISTER
 # Agent: speckit-echelon-re-checklister
 
 ## Context Pack
 
-- `specs/NNN-re-*/spec.md` — all domain specs
-- `specs/000-re-overview/coverage-report.md`
-- `specs/000-re-overview/validation-report.md`
+- `{state.output_dir}/re-workspace-inputs.json`
+- `{state.output_dir}/workspace/overview.md`
+- `{state.output_dir}/workspace/relationships.md`
+- `{state.output_dir}/workspace/contracts.md`
+- `{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md`
+- `{state.output_dir}/quality/{source-id}/coverage-report.md`
+- `{state.output_dir}/quality/{source-id}/validation-report.md`
 
 ## Dispatch Prompt
 
-Instruct RE-CHECKLISTER to: generate per-domain checklists (`NNN-re-{domain}/checklist.md`) with domain-specific quality items (completeness, clarity, consistency, implementability), generate summary checklist (`000-re-overview/checklist.md`) covering cross-domain migration concerns.
+Instruct RE-CHECKLISTER to write each domain checklist beside its source spec and one workspace checklist for cross-source contracts, relationships, compatibility, removals, and migration ordering. An all-empty workspace gets only the workspace checklist.
 
 ## Expected Outputs
 
-- `specs/NNN-re-{domain}/checklist.md` — one per domain
-- `specs/000-re-overview/checklist.md`
+- `{state.output_dir}/sources/{source-id}/specs/{domain-id}/checklist.md`
+- `{state.output_dir}/workspace/checklist.md`
 
-## echelon_result schema
+## echelon_result Schema
 
 ```yaml
 echelon_result:
@@ -25,12 +28,12 @@ echelon_result:
   phase_id: re-extract-6-checklist
   state_updates: {}
   output_files:
-    - specs/000-re-overview/checklist.md
-    - specs/NNN-re-{domain}/checklist.md
+    - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/checklist.md"
+    - "{state.output_dir}/workspace/checklist.md"
   journal_entries:
     - type: phase_complete
       phase: re-extract-6-checklist
       data:
-        summary: "Generated checklists for {N} domains"
+        summary: "Generated source-domain and workspace checklists"
   blocked_reason: null
 ```

@@ -48,7 +48,7 @@ class TestRePromptOutputContracts:
             text = path.read_text(encoding="utf-8")
 
             assert "specs/001-re-auth/spec.md" not in text
-            assert "specs/NNN-re-{domain}/spec.md" in text
+            assert "sources/{source-id}/specs/{domain-id}/spec.md" in text
 
     def test_re_planner_uses_domain_placeholder_in_output_examples(self) -> None:
         for path in [RE_PLANNER, RE_PLANNING_1_PLAN]:
@@ -71,25 +71,24 @@ class TestRePromptOutputContracts:
             text = path.read_text(encoding="utf-8")
 
             assert "specs/001-re-auth/checklist.md" not in text
-            assert "specs/000-re-overview/checklist.md" in text
-            assert "specs/NNN-re-{domain}/checklist.md" in text
+            assert "workspace/checklist.md" in text
+            assert "sources/{source-id}/specs/{domain-id}/checklist.md" in text
 
     def test_re_expander_uses_domain_placeholder_in_output_examples(self) -> None:
         for path in [RE_EXPANDER, RE_EXTRACT_4_EXPAND]:
             text = path.read_text(encoding="utf-8")
 
             assert "specs/004-re-utils/spec.md" not in text
-            assert "specs/NNN-re-{domain}/spec.md" in text
+            assert "sources/{source-id}/specs/{domain-id}/spec.md" in text
 
-    def test_re_specify_phase_passes_polyrepo_full_artifacts(self) -> None:
+    def test_re_specify_phase_passes_workspace_source_artifacts(self) -> None:
         text = RE_EXTRACT_2_SPECIFY.read_text(encoding="utf-8")
 
-        assert "{state.output_dir}/workspace-manifest.json" in text
+        assert "{state.output_dir}/re-workspace-inputs.json" in text
         assert "{state.output_dir}/re-source-index.json" in text
-        assert "{state.output_dir}/{source}/analysis.json" in text
-        assert "{state.output_dir}/{source}/codegraph-summary.json" in text
-        assert "{state.output_dir}/{source}/codegraph-analysis.json" in text
-        assert "root `analysis.json` is only an aggregate index" in text
+        assert "{state.output_dir}/sources/{source-id}/analysis.json" in text
+        assert "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md" in text
+        assert "canonical source manifests/specs" in text
 
     def test_re_specifier_rejects_summary_only_specs_at_full_depth(self) -> None:
         text = RE_SPECIFIER.read_text(encoding="utf-8")

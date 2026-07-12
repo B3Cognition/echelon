@@ -1727,11 +1727,15 @@ re_extraction:
       tier: re_extraction
       context_pack:
         - "{state.output_dir}/state.json"
+        - "{state.output_dir}/re-execution-plan.json"
+        - "{state.output_dir}/re-analysis-manifest.json"
+        - "{state.output_dir}/workspace-manifest.json"
+        - "{state.output_dir}/re-source-index.json"
         - echelon-config.yml (re: section)
       outputs:
         - "{state.output_dir}/analysis.json"
-        - "{state.output_dir}/repos-manifest.json"   # polyrepo only
-        - "{state.output_dir}/cross-repo.json"        # polyrepo only
+        - "{state.output_dir}/sources/{source-id}/analysis.json"
+        - "{state.output_dir}/cross-repo.json"  # multiple selected sources only
       transitions:
         - to: re-extract-2-specify
           condition: verdict = DONE
@@ -1743,12 +1747,18 @@ re_extraction:
       agent: speckit-echelon-re-specifier
       tier: re_extraction
       context_pack:
-        - "{state.output_dir}/analysis.json"
         - "{state.output_dir}/state.json"
-        - "{state.output_dir}/repos-manifest.json"    # if exists
+        - "{state.output_dir}/re-execution-plan.json"
+        - "{state.output_dir}/re-source-index.json"
+        - "{state.output_dir}/re-workspace-inputs.json"
+        - "{state.output_dir}/analysis.json"
+        - "{state.output_dir}/sources/{source-id}/analysis.json"
       outputs:
-        - specs/000-re-overview/overview.md
-        - specs/NNN-re-{domain}/spec.md               # one per domain
+        - "{state.output_dir}/sources/{source-id}/overview.md"
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
+        - "{state.output_dir}/workspace/overview.md"
+        - "{state.output_dir}/workspace/relationships.md"
+        - "{state.output_dir}/workspace/contracts.md"
       transitions:
         - to: re-extract-3-verify
           condition: verdict = DONE
@@ -1760,11 +1770,12 @@ re_extraction:
       agent: speckit-echelon-re-verifier
       tier: re_extraction
       context_pack:
-        - specs/NNN-re-*/spec.md
-        - "{state.output_dir}/analysis.json"
         - "{state.output_dir}/state.json"
+        - "{state.output_dir}/re-source-index.json"
+        - "{state.output_dir}/sources/{source-id}/analysis.json"
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
       outputs:
-        - specs/000-re-overview/coverage-report.md
+        - "{state.output_dir}/quality/{source-id}/coverage-report.md"
         - state.json[coverage_pct, verify_expand_iterations]
       transitions:
         - to: re-extract-4-expand
@@ -1779,11 +1790,12 @@ re_extraction:
       agent: speckit-echelon-re-expander
       tier: re_extraction
       context_pack:
-        - specs/000-re-overview/coverage-report.md
-        - "{state.output_dir}/analysis.json"
         - "{state.output_dir}/state.json"
+        - "{state.output_dir}/quality/{source-id}/coverage-report.md"
+        - "{state.output_dir}/sources/{source-id}/analysis.json"
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
       outputs:
-        - specs/NNN-re-{domain}/spec.md    # new or expanded domains
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
         - state.json[verify_expand_iterations]
       transitions:
         - to: re-extract-3-verify
@@ -1796,11 +1808,13 @@ re_extraction:
       agent: speckit-echelon-re-validator
       tier: re_extraction
       context_pack:
-        - specs/NNN-re-*/spec.md
-        - "{state.output_dir}/analysis.json"
         - "{state.output_dir}/state.json"
+        - "{state.output_dir}/workspace/contracts.md"
+        - "{state.output_dir}/sources/{source-id}/analysis.json"
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
+        - "{state.output_dir}/quality/{source-id}/coverage-report.md"
       outputs:
-        - specs/000-re-overview/validation-report.md
+        - "{state.output_dir}/quality/{source-id}/validation-report.md"
         - state.json[resolution_pct, validate_iterations]
       transitions:
         - to: re-extract-5-validate
@@ -1815,12 +1829,14 @@ re_extraction:
       agent: speckit-echelon-re-checklister
       tier: re_extraction
       context_pack:
-        - specs/NNN-re-*/spec.md
-        - specs/000-re-overview/coverage-report.md
-        - specs/000-re-overview/validation-report.md
+        - "{state.output_dir}/re-workspace-inputs.json"
+        - "{state.output_dir}/workspace/contracts.md"
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
+        - "{state.output_dir}/quality/{source-id}/coverage-report.md"
+        - "{state.output_dir}/quality/{source-id}/validation-report.md"
       outputs:
-        - specs/NNN-re-{domain}/checklist.md
-        - specs/000-re-overview/checklist.md
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/checklist.md"
+        - "{state.output_dir}/workspace/checklist.md"
       transitions:
         - to: re-extract-7-constitute
           condition: always
@@ -1832,16 +1848,21 @@ re_extraction:
       agent: speckit-echelon-re-constituter
       tier: re_extraction
       context_pack:
-        - specs/NNN-re-*/spec.md
-        - specs/000-re-overview/checklist.md
-        - "{state.output_dir}/analysis.json"
         - "{state.output_dir}/state.json"
+        - "{state.output_dir}/re-workspace-inputs.json"
+        - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
+        - "{state.output_dir}/quality/{source-id}/coverage-report.md"
+        - "{state.output_dir}/quality/{source-id}/validation-report.md"
+        - "{state.output_dir}/workspace/overview.md"
+        - "{state.output_dir}/workspace/relationships.md"
+        - "{state.output_dir}/workspace/contracts.md"
+        - "{state.output_dir}/workspace/checklist.md"
       outputs:
-        - constitution.md
-        - migration-strategy.md
-        - risk-matrix.md
-        - gap-analysis.md
-        - adrs/ADR-*.md
+        - "{state.output_dir}/workspace/strategy/constitution.md"
+        - "{state.output_dir}/workspace/strategy/migration-strategy.md"
+        - "{state.output_dir}/workspace/strategy/risk-matrix.md"
+        - "{state.output_dir}/workspace/strategy/gap-analysis.md"
+        - "{state.output_dir}/workspace/strategy/adrs/ADR-*.md"
       transitions:
         - to: DONE
           condition: always

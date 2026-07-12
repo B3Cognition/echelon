@@ -78,7 +78,9 @@ class TestScoutTemplates:
 
         assert "golddigger_artifacts.re_overview" in text
         assert "golddigger_artifacts.re_specs[]" in text
-        assert "specs/000-re-overview/overview.md" in text
+        assert "using the exact registered paths" in text
+        assert "do not replace registered paths with project-root glob conventions" in text
+        assert "specs/000-re-overview/overview.md" not in text
         assert "treat the extraction as degraded-brownfield" in text
 
     def test_phase1_discover_dispatch_includes_scout_templates(self) -> None:

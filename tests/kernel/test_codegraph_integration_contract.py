@@ -153,14 +153,12 @@ def test_re_analyzer_uses_state_output_dir_instead_of_hardcoded_re_path():
 
 
 def test_re_prompts_prefer_workspace_manifest_with_repos_fallback():
-    for rel_path in [
+    compatibility_agents = [
         "extension/agents/re/analyzer.md",
-        "extension/agents/re/specifier.md",
-        "extension/agents/re/verifier.md",
-        "extension/agents/re/constituter.md",
         "extension/agents/exploration/scout.md",
         "extension/agents/exploration/golddigger.md",
-    ]:
+    ]
+    for rel_path in compatibility_agents:
         text = (EXT_ROOT / rel_path).read_text()
 
         assert "workspace-manifest.json" in text, rel_path
@@ -171,24 +169,32 @@ def test_re_prompts_prefer_workspace_manifest_with_repos_fallback():
             assert "Prefer workspace-manifest.json" in text, rel_path
         assert "compatibility fallback" in text, rel_path
 
+    for rel_path in [
+        "extension/agents/re/specifier.md",
+        "extension/agents/re/verifier.md",
+        "extension/agents/re/constituter.md",
+    ]:
+        text = (EXT_ROOT / rel_path).read_text()
+        assert "re-source-index.json" in text or "re-workspace-inputs.json" in text
+
 
 def test_golddigger_reports_workspace_manifest_as_primary_artifact():
     text = (EXT_ROOT / "extension/agents/exploration/golddigger.md").read_text()
 
     assert 'manifest: "{RE_OUTPUT_DIR}/workspace-manifest.json"' in text
     assert 'repos_manifest: "{RE_OUTPUT_DIR}/repos-manifest.json"' in text
-    assert "Manifest: {RE_OUTPUT_DIR}/workspace-manifest.json" in text
-    assert "per_repo_codegraph" in text
-    assert '"{RE_OUTPUT_DIR}/<repo-name>/codegraph-summary.json"' in text
+    assert 'sources_root: "{RE_OUTPUT_DIR}/sources"' in text
+    assert 'workspace_root: "{RE_OUTPUT_DIR}/workspace"' in text
+    assert 're_overview: "{RE_OUTPUT_DIR}/workspace/overview.md"' in text
 
 
-def test_polyrepo_prompts_describe_per_source_codegraph_shape():
+def test_workspace_prompts_describe_per_source_codegraph_shape():
     scout = (EXT_ROOT / "extension/agents/exploration/scout.md").read_text()
     specifier = (EXT_ROOT / "extension/agents/re/specifier.md").read_text()
 
     assert "aggregate index of per-source summaries" in scout
-    assert "$RE_OUTPUT_DIR/{source}/codegraph-summary.json" in specifier
-    assert "$RE_OUTPUT_DIR/{source}/codegraph-analysis.json" in specifier
+    assert "$RE_OUTPUT_DIR/sources/{source-id}/codegraph-summary.json" in specifier
+    assert "$RE_OUTPUT_DIR/sources/{source-id}/codegraph-analysis.json" in specifier
 
 
 def test_exploration_agents_do_not_hardcode_re_artifact_reads():
