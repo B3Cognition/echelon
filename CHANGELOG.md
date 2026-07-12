@@ -116,7 +116,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   for `workflow/definition.yaml` as well. Delivery command runtime discovery
   also blocks soft check/review/examine/look-at/view/show/display/print/dump
   phrasing, list/search-reader phrasing, and shell-reader phrasing such as
-  cat/sed/less/more/tail/head for `agents/control/commander.md` and
+  cat/sed/less/more/tail/head, plus locator phrasing such as find/glob, for
+  `agents/control/commander.md` and
   `workflow/definition.yaml`.
   Build prompt
   git-state discovery now also blocks `git diff`,

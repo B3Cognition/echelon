@@ -324,6 +324,8 @@ DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERBS = (
     "more",
     "tail",
     "head",
+    "find",
+    "glob",
 )
 
 DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERB_RE = "|".join(
