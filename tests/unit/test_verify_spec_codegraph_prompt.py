@@ -192,12 +192,17 @@ def test_verify_spec_stage4_degraded_codegraph_skip_is_command_owned() -> None:
 
 def test_verify_spec_stage5_forbids_llm_provenance_discovery() -> None:
     text = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")
+    normalized = " ".join(text.split())
+    normalized_lower = normalized.lower()
 
     assert "Ralph stamps `verified_commit` and `verified_at`" in text
-    assert "Do not inspect Echelon or harness source code" in text
-    assert "Do not search sibling repos under `sources/`" in text
-    assert "Do not add or repair provenance frontmatter by hand" in text
-    assert "python -m harness inspect-fulfillment-report" in text
+    assert "Provenance is intentionally absent during this direct invocation" in normalized
+    assert "do not run `inspect-fulfillment-report`" in normalized_lower
+    assert "do not search for a stamping command" in normalized_lower
+    assert "do not inspect echelon or harness source code" in normalized_lower
+    assert "do not search sibling repos under `sources/`" in normalized_lower
+    assert "do not add or repair provenance frontmatter by hand" in normalized_lower
+    assert "python -m harness inspect-fulfillment-report" not in text
 
 
 def test_verify_spec_stage5_validation_stamps_state() -> None:

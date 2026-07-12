@@ -114,14 +114,15 @@ Write:
 - `{spec_dir}/fulfillment-gaps.md` only when actionable gaps exist
 
 Ralph stamps `verified_commit` and `verified_at` after a successful
-verify-spec fulfillment refresh. Do not inspect Echelon or harness source code
-to discover fulfillment-report provenance format. Do not add or repair provenance frontmatter by hand. Do not search sibling repos under `sources/`
-for harness, fulfillment, or verify-spec implementation details; those repos
-are not part of the targeted implementation evidence unless they are the
-explicit delivery target.
-If you need fulfillment report metadata or freshness facts, use the opaque
-command `python -m harness inspect-fulfillment-report "{spec_dir}" "{current_commit}"`
-instead of inspecting harness implementation files.
+verify-spec fulfillment refresh. Provenance is intentionally absent during this
+direct invocation because Ralph stamps the report only after this command
+returns successfully. Do not run `inspect-fulfillment-report`, do not search
+for a stamping command, and do not inspect Echelon or harness source code to
+discover fulfillment-report provenance format. Do not add or repair provenance
+frontmatter by hand. Do not search sibling repos under `sources/` for harness,
+fulfillment, or verify-spec implementation details; those repos are not part of
+the targeted implementation evidence unless they are the explicit delivery
+target. After deterministic artifact validation succeeds, return `DONE`.
 
 After SPEC-GUARD fills fallback-only fulfillment rows, assemble the final
 report with:
