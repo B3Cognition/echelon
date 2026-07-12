@@ -61,7 +61,7 @@ RUNTIME_EXTENSION_EXCLUDED_PATHS = (
     Path("presets"),
     Path("scripts") / "python",
     Path("scripts") / "bash" / "re",
-    Path("scripts") / "node",
+    Path("scripts") / "node" / "context7",
     Path("stacks"),
 )
 RUNTIME_EXTENSION_EXCLUDED_NAMES = (

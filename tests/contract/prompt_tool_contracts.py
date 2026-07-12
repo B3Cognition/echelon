@@ -318,6 +318,8 @@ DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERBS = (
     "dump",
     "run",
     "use",
+    "grep",
+    "rg",
     "cat",
     "sed",
     "less",

@@ -119,8 +119,8 @@ def test_sync_runtime_extension_copies_codegraph_node_runtime_deps(tmp_path):
     assert copied.read_text(encoding="utf-8") == '{"name":"picomatch"}\n'
 
 
-def test_sync_runtime_extension_excludes_node_runtime_sources_but_keeps_deps(tmp_path):
-    """Delivery worktrees should expose CodeGraph deps, not Node bridge source."""
+def test_sync_runtime_extension_copies_codegraph_bridge_and_locked_runtime(tmp_path):
+    """Delivery worktrees must carry the executable CodeGraph bridge and deps."""
     source = tmp_path / ".specify" / "extensions" / "echelon"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
@@ -161,8 +161,8 @@ def test_sync_runtime_extension_excludes_node_runtime_sources_but_keeps_deps(tmp
         gitops.sync_runtime_extension(worktree)
 
     runtime_node = worktree / ".specify" / "extensions" / "echelon" / "scripts" / "node"
-    assert not (runtime_node / "re" / "codegraph-bridge.js").exists()
-    assert not (runtime_node / "re" / "package.json").exists()
+    assert (runtime_node / "re" / "codegraph-bridge.js").exists()
+    assert (runtime_node / "re" / "package.json").exists()
     assert not (runtime_node / "context7").exists()
     assert (
         runtime_node / "re" / "node_modules" / "picomatch" / "package.json"

@@ -4,6 +4,7 @@
   "private": true,
   "description": "CodeGraph bridge for revenge pipeline — vendored until @colbymchenry/codegraph has a public release",
   "dependencies": {
+    "@colbymchenry/codegraph": "1.4.1",
     "commander": "^14.0.2",
     "node-sqlite3-wasm": "^0.8.30",
     "picomatch": "^4.0.3",

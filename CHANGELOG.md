@@ -14,6 +14,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   re-blocking so operators can distinguish “wait for provider reset” from a
   failed recovery.
 
+- **CodeGraph runtime bridge packaging** — delivery worktree runtime-extension
+  sync now keeps the executable CodeGraph Node bridge and locked runtime
+  dependencies while still excluding `scripts/node/context7`, so CodeGraph
+  evidence generation can run from worktrees without copying unrelated Node
+  tooling. The CodeGraph integration contract now asserts the pinned
+  `@colbymchenry/codegraph` runtime/adapter path instead of stale vendored
+  payload metadata.
+
 - **Workspace source sync** — added `echelon workspace sources sync [--write]`
   to reconcile `.echelon/config.yml` source entries from canonical
   `sources/*` child repositories while preserving explicitly configured
@@ -115,7 +123,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   workflow-definition routing discovery now uses named target and verb categories
   for `workflow/definition.yaml` as well. Delivery command runtime discovery
   also blocks soft check/review/examine/look-at/view/show/display/print/dump
-  phrasing, list/search-reader phrasing, and shell-reader phrasing such as
+  phrasing, list/search-reader phrasing, direct grep/rg search-command
+  phrasing, and shell-reader phrasing such as
   cat/sed/less/more/tail/head, plus locator phrasing such as find/glob, for
   `agents/control/commander.md` and
   `workflow/definition.yaml`.

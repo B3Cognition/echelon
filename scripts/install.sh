@@ -5,7 +5,7 @@ set -e
 
 ECHELON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOAR_VERSION="9.6.4"
-CODEGRAPH_CLI_VERSION="1.0.1"
+CODEGRAPH_CLI_VERSION="1.4.1"
 SOAR_DIR="$HOME/.echelon/soar"
 VENV_DIR="$HOME/.echelon/venv"
 MEMORY_DIR="$HOME/.echelon/memory"

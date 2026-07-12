@@ -743,6 +743,8 @@ def test_delivery_command_runtime_discovery_verbs_are_named_category() -> None:
         "dump",
         "run",
         "use",
+        "grep",
+        "rg",
         "cat",
         "sed",
         "less",
@@ -817,6 +819,25 @@ def test_flags_delivery_command_runtime_discovery_search_readers(
     prompt.write_text(
         "Run `grep -n re_extraction workflow/definition.yaml` before build.\n"
         "List `agents/control/commander.md` before build.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert [finding.reason for finding in findings] == [
+        "command_runtime_discovery",
+        "command_runtime_discovery",
+    ]
+
+
+def test_flags_delivery_command_runtime_discovery_direct_search_commands(
+    tmp_path: Path,
+) -> None:
+    prompt = tmp_path / "extension" / "commands" / "echelon.build.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "Grep `workflow/definition.yaml` before build.\n"
+        "rg `agents/control/commander.md` before build.\n",
         encoding="utf-8",
     )
 

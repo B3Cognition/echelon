@@ -3,11 +3,10 @@
  * CodeGraph Adapter
  *
  * Thin adapter layer that isolates the bridge from CodeGraph's API surface.
- * This is the ONLY file that imports from @colbymchenry/codegraph (or locally
- * from the main index for brownfield — same contract either way).
+ * This is the ONLY file that imports from @colbymchenry/codegraph.
  * All bridge code MUST call through this adapter.
  *
- * ADR-003: Pre-1.0 API stability — all CodeGraph calls localized here.
+ * ADR-003: API compatibility — all CodeGraph calls are localized here.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.initializeGrammars = initializeGrammars;
@@ -22,7 +21,7 @@ exports.getPublicSymbols = getPublicSymbols;
 exports.getIndexStats = getIndexStats;
 exports.getExtractionSummary = getExtractionSummary;
 exports.closeIndex = closeIndex;
-const index_1 = require("./vendor/codegraph/dist/index");
+const index_1 = require("@colbymchenry/codegraph");
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
