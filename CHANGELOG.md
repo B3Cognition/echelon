@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-116 / #142 prompt tool contract scanner closure** — prompt-contract
+  scanning now covers every `extension/commands/echelon.*.md` wrapper instead
+  of a hand-picked subset, and command-wrapper runtime discovery checks apply
+  uniformly across that namespace. The legacy `speckit.echelon.status` wrapper
+  now delegates to `echelon spec status` instead of model-reading `state.json`
+  and scanning spec artifacts. The active prompt audit currently covers 188
+  prompt files with zero findings. The same closure pass also repairs a
+  GOLDDIGGER ALWAYS/NEVER pairing violation caught by the broader prompt
+  reference suite.
+
 - **EGR-049 provider session-limit recovery** — provider session-limit blocks now
   use `termination_reason=provider_session_limit` instead of flattening into
   ordinary `build_incomplete` state. Legacy blocked states with

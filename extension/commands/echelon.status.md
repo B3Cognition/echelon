@@ -1,167 +1,26 @@
 ---
-description: "Check current cognitive squad state and progress"
+name: speckit.echelon.status
+description: "Show current Echelon spec run status through the Python harness"
 behavior:
   invocation: explicit
 ---
 
 ## Role
 
-You are COMMANDER checking current squad state. This is read-only — display progress and artifact inventory without modifying anything.
+You are a thin orchestrator for `echelon spec status`. Do not inspect run
+directories, `state.json`, spec artifacts, or Echelon implementation files
+yourself. The Python harness owns state discovery, artifact inventory, cost
+summary, roadmap rendering, and next-step selection.
 
 ---
 
-## Overview
+## Step 1: Run The Status Command
 
-Display the current state of the Echelon, including active run progress, quality trajectory, and artifact inventory. This is a read-only command -- it modifies nothing.
+Run this command synchronously in the foreground using the Bash tool:
 
----
-
-## Step 1: Load State
-
-Read `${SQUAD_DIR}/state.json`.
-
-- If the file does not exist, report **"No active squad run."** and stop.
-- Parse the JSON. If malformed, report the parse error and stop.
-
----
-
-## Step 2: Display Run Header
-
-Print:
-
-```
-============================================
-  ECHELON STATUS
-============================================
-
-Run ID:      {run_id}
-Status:      {status}
-Phase:       {phase}
-Mode:        {mode}
-Iteration:   {iteration}
-Created:     {created_at}
-Updated:     {updated_at}
+```bash
+echelon spec status
 ```
 
-Also print workflow state if present:
-
-```
-Workflow:    {workflow_state or "n/a"}
-```
-
-Accepted split-phase workflow values:
-
-- `BUILD_IN_PROGRESS`
-- `BUILD_COMPLETE`
-- `QA_IN_PROGRESS`
-- `QA_COMPLETE`
-- `QA_FAILED`
-- `REWORK_PLANNED`
-- `CHANGE_PENDING`
-- `ESCALATED`
-
----
-
-## Step 3: Quality Scores Trajectory
-
-If `quality_scores` array is non-empty, print each pass:
-
-```
-QUALITY TRAJECTORY:
-  Pass  Overall  Structure  Testability  Semantic  Cognitive  Readability
-  1     0.52     0.60       0.45         0.48      0.55       0.62
-  2     0.68     0.72       0.65         0.60      0.58       0.70
-  ...
-```
-
-If no quality scores yet, print: `Quality: No WHY passes completed yet.`
-
----
-
-## Step 4: Active Specialists
-
-Print the `active_specialists` array. If empty, print: `Specialists: None summoned yet.`
-
----
-
-## Step 5: Issues and Escalations
-
-If `status` is `"blocked"`, prominently display:
-
-```
-!! BLOCKED — HUMAN INPUT REQUIRED !!
-Question: {escalation_question}
-Reason:   {blocked_reason}
-
-Resume with: speckit.echelon.resume {your answer}
-```
-
-Print all entries from `issues_log`:
-
-```
-ISSUES:
-  {id}  [{severity}]  {source}: {description}  (x{occurrences}) {resolved ? "RESOLVED" : "OPEN"}
-```
-
-If no issues, print: `Issues: None logged.`
-
----
-
-## Step 6: Artifact Inventory
-
-If `state.json.spec_dir` is present, use it as the spec directory. Only fall back to `specs/{spec_id}-*/` when `state.json.spec_dir` is absent.
-
-Scan the spec directory and list all files found, grouped by producer:
-
-```
-ARTIFACTS:
-  DISCOVER:       glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md
-  WHAT:           spec.md, 00-overview.md
-  WHY:            issues.md, quality-gates.md, assumption-review.md
-  ASSESS:         feasibility.md, prioritization.md, estimates.md, mvp-scope.md
-  HOW:            plan.md, research.md, data-model.md, constitution.md, contracts/
-  TEST speckit-echelon-architect (ARCHITECT): test-strategy.md, test-architecture.md, coverage-map.md
-  PLAN:           tasks.md, critical-path.md, risk-matrix.md, dependencies.md
-  GROUND:         reality-check.md, cost-analysis.md, benchmark-data.md
-  SCIENTIST:      investigation/*.md, evidence-grades.md, recommendations.md
-  CALIBRATE:      confidence-flags.md
-  EVOLVE:         evolution-report.md, improvement-metrics.md
-  REFLECT:        (updates knowledge-base/)
-  Journal:        reasoning-journal.jsonl
-```
-
-Mark each as `OK` (exists) or `--` (not yet produced). Count total files.
-
----
-
-## Step 7: Token Usage
-
-Print estimated token usage from `state.json.token_usage`:
-
-```
-Token Usage: ~{token_usage} tokens ({percentage}% of {budget}k budget)
-```
-
----
-
-## Step 8: Prior Runs
-
-Scan `squad/` and `runs/` for subdirectories containing `state.json` to list prior completed runs:
-
-```
-PRIOR RUNS:
-  001-real-time-chat    done      2026-03-15
-  002-legacy-api        killed    2026-03-16
-```
-
-If no prior runs, print: `Prior Runs: None.`
-
----
-
-## Step 9: Print Footer
-
-```
-============================================
-  End of status report
-============================================
-```
+Report the output verbatim. If the command exits non-zero, report the error and
+stop.

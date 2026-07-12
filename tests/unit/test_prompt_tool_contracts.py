@@ -16,6 +16,7 @@ from tests.contract.prompt_tool_contracts import (
     VERIFY_SPEC_DIR_DISCOVERY_VERBS,
     VERIFY_SPEC_RUN_DISCOVERY_TARGETS,
     VERIFY_SPEC_RUN_DISCOVERY_VERBS,
+    _default_prompt_paths,
     scan_prompt_tool_contracts,
 )
 
@@ -917,6 +918,28 @@ def test_flags_command_appendix_runtime_discovery(tmp_path: Path) -> None:
 
     assert len(findings) == 1
     assert findings[0].reason == "command_runtime_discovery"
+
+
+def test_flags_any_echelon_command_runtime_discovery(tmp_path: Path) -> None:
+    prompt = tmp_path / "extension" / "commands" / "echelon.re-verify.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "Read `workflow/definition.yaml` before running the phase.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "command_runtime_discovery"
+
+
+def test_default_prompt_paths_include_all_echelon_command_wrappers() -> None:
+    root = Path(__file__).resolve().parents[2]
+    expected = set((root / "extension" / "commands").glob("echelon.*.md"))
+    actual = set(_default_prompt_paths(root))
+
+    assert expected <= actual
 
 
 def test_build_phase_prompts_use_ralph_owned_context_packs() -> None:

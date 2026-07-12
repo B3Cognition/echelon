@@ -8,14 +8,7 @@ from pathlib import Path
 PROMPT_GLOBS = (
     "extension/agents/**/*.md",
     "extension/commands/appendices/*.md",
-    "extension/commands/echelon.bugfix.md",
-    "extension/commands/echelon.build.md",
-    "extension/commands/echelon.harness-run.md",
-    "extension/commands/echelon.re-extract.md",
-    "extension/commands/echelon.re-plan-all.md",
-    "extension/commands/echelon.re-retarget.md",
-    "extension/commands/echelon.reopen.md",
-    "extension/commands/echelon.verify-spec.md",
+    "extension/commands/echelon.*.md",
     "extension/workflow/phases/**/*.md",
 )
 
@@ -483,30 +476,18 @@ def _is_verify_spec_phase(path: Path) -> bool:
     )
 
 
-def _is_delivery_command(path: Path) -> bool:
+def _is_echelon_command_wrapper(path: Path) -> bool:
     normalized = path.as_posix()
-    return normalized.endswith(
-        ("extension/commands/echelon.build.md", "extension/commands/echelon.verify-spec.md")
-    )
+    return (
+        "/extension/commands/echelon." in normalized
+        or normalized.startswith("extension/commands/echelon.")
+    ) and path.name.endswith(".md")
 
 
 def _is_command_appendix(path: Path) -> bool:
     normalized = path.as_posix()
     return "/extension/commands/appendices/" in normalized or normalized.startswith(
         "extension/commands/appendices/"
-    )
-
-
-def _is_re_extract_command(path: Path) -> bool:
-    normalized = path.as_posix()
-    return normalized.endswith(
-        (
-            "extension/commands/echelon.re-extract.md",
-            "extension/commands/echelon.re-plan-all.md",
-            "extension/commands/echelon.re-retarget.md",
-            "extension/commands/echelon.reopen.md",
-            "extension/commands/echelon.bugfix.md",
-        )
     )
 
 
@@ -638,9 +619,8 @@ def scan_prompt_tool_contracts(
                 continue
             if (
                 (
-                    _is_delivery_command(path)
+                    _is_echelon_command_wrapper(path)
                     or _is_command_appendix(path)
-                    or _is_re_extract_command(path)
                 )
                 and DELIVERY_COMMAND_RUNTIME_DISCOVERY_RE.search(stripped)
             ):

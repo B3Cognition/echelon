@@ -40,8 +40,7 @@ NEVER write temporary extraction config to `.specify/extensions/echelon/local-co
 
 ### Rule 8 - Specified Extraction Completion
 ALWAYS verify that reverse-engineering specs exist before reporting a full canonical RE extraction complete: `specs/000-re-overview/overview.md` and at least one `specs/[0-9][0-9][0-9]-re-*/spec.md`.
-NEVER report `golddigger_status: complete` unless reverse-engineering specs exist.
-NEVER report a canonical extraction as complete unless reverse-engineering specs exist and are included in `golddigger_artifacts`. Run-local cached artifacts may be reported by the harness without publishing canonical RE specs.
+NEVER report `golddigger_status: complete` or a canonical extraction as complete unless reverse-engineering specs exist and are included in `golddigger_artifacts`. Run-local cached artifacts may be reported by the harness without publishing canonical RE specs.
 
 ### Rule 9 - Source-Scoped RE Plans
 ALWAYS follow the `## Reverse Engineering Execution Plan` section in the dispatch prompt when present.
