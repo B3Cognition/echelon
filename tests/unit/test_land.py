@@ -650,9 +650,10 @@ class TestLand:
         # Verify git branch --list was called
         list_call = mock_run.call_args_list[0]
         assert list_call[0][0] == ["git", "branch", "--list", "harness/042/*"]
-        # Verify git branch -D was called for each branch
+        # Verify safe git branch -d was called for each branch.
         assert mock_run.call_count == 3
         deleted_branches = [c[0][0][3] for c in mock_run.call_args_list[1:]]
+        assert all(c[0][0][2] == "-d" for c in mock_run.call_args_list[1:])
         assert "harness/042/strategy1/iter-1" in deleted_branches
         assert "harness/042/strategy1/iter-2" in deleted_branches
 

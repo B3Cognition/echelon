@@ -1393,7 +1393,7 @@ def _delete_local_branch(branch: str, project_dir: str) -> None:
 
 
 def _delete_harness_branches(spec_id: str, project_dir: Path) -> None:
-    """Delete local harness/{spec_id}-* branches left over from harness runs."""
+    """Safely delete merged local harness branches left over from delivery runs."""
     try:
         result = subprocess.run(
             ["git", "branch", "--list", f"harness/{spec_id}/*"],
@@ -1406,7 +1406,7 @@ def _delete_harness_branches(spec_id: str, project_dir: Path) -> None:
         for branch in branches:
             try:
                 subprocess.run(
-                    ["git", "branch", "-D", branch],
+                    ["git", "branch", "-d", branch],
                     capture_output=True,
                     text=True,
                     timeout=30,
@@ -1415,6 +1415,10 @@ def _delete_harness_branches(spec_id: str, project_dir: Path) -> None:
                 )
                 logger.info("land: deleted legacy branch %s", branch)
             except subprocess.CalledProcessError as e:
-                logger.warning("land: could not delete legacy branch %s: %s", branch, e)
+                logger.warning(
+                    "land: preserved unmerged legacy branch %s for review: %s",
+                    branch,
+                    e,
+                )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
         logger.warning("land: could not list harness branches for %s: %s", spec_id, e)
