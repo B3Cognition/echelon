@@ -2,10 +2,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from shutil import copytree
 
 import yaml
 
 from echelon.cli import _sync_polyrepo_runtime_extension
+from harness.runtime_surface import (
+    DELIVERY_AGENT_DIRS,
+    DELIVERY_BASH_FILES,
+    DELIVERY_COMMAND_FILES,
+    DELIVERY_TEMPLATE_FILES,
+    is_delivery_workflow_phase_path,
+)
 
 
 def test_polyrepo_runtime_extension_excludes_python_migration_helpers(
@@ -385,6 +393,10 @@ def test_polyrepo_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(
         "verify-spec-1-init.md",
         "bugfix-1-init.md",
         "codegen-0-preflight.md",
+        "codegen-A-preamble.md",
+        "codegen-resume.md",
+        "codegenlight-0-preflight.md",
+        "codegenlight-resume.md",
         "phase1-what.md",
         "phase3-plan.md",
         "phase4-document.md",
@@ -410,10 +422,14 @@ def test_polyrepo_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(
     phases = harness_base / ".specify" / "extensions" / "echelon" / "workflow" / "phases"
     assert (phases / "build-1-init.md").exists()
     assert (phases / "verify-spec-1-init.md").exists()
-    assert (phases / "codegen-0-preflight.md").exists()
     assert (phases / "appendices" / "build-8-verify-gates.md").exists()
     assert not (phases / "appendices" / "phase1-what-reference.md").exists()
     assert not (phases / "bugfix-1-init.md").exists()
+    assert not (phases / "codegen-0-preflight.md").exists()
+    assert not (phases / "codegen-A-preamble.md").exists()
+    assert not (phases / "codegen-resume.md").exists()
+    assert not (phases / "codegenlight-0-preflight.md").exists()
+    assert not (phases / "codegenlight-resume.md").exists()
     assert not (phases / "phase1-what.md").exists()
     assert not (phases / "phase3-plan.md").exists()
     assert not (phases / "phase4-document.md").exists()
@@ -478,3 +494,52 @@ def test_polyrepo_runtime_extension_prunes_workflow_definition_to_delivery_surfa
     assert "verify_spec" in definition
     assert "re_extraction" not in definition
     assert "re_planning" not in definition
+
+
+def test_polyrepo_runtime_extension_real_tree_matches_delivery_surface_policy(
+    tmp_path: Path,
+) -> None:
+    """Workspace-target harness roots must not leak non-delivery runtime surface."""
+    repo_root = Path(__file__).resolve().parents[2]
+    workspace = tmp_path / "workspace"
+    source = workspace / ".specify" / "extensions" / "echelon"
+    copytree(repo_root / "extension", source)
+    harness_base = workspace / "runs" / "targets" / "prosaic"
+
+    _sync_polyrepo_runtime_extension(workspace, harness_base)
+
+    runtime = harness_base / ".specify" / "extensions" / "echelon"
+
+    commands = {p.name for p in (runtime / "commands").iterdir() if p.is_file()}
+    assert commands == DELIVERY_COMMAND_FILES
+
+    agent_dirs = {p.name for p in (runtime / "agents").iterdir() if p.is_dir()}
+    assert agent_dirs == DELIVERY_AGENT_DIRS
+
+    bash_files = {p.name for p in (runtime / "scripts" / "bash").iterdir() if p.is_file()}
+    assert bash_files <= DELIVERY_BASH_FILES
+
+    template_files = {p.name for p in (runtime / "templates").iterdir() if p.is_file()}
+    assert template_files == DELIVERY_TEMPLATE_FILES
+
+    phases_root = runtime / "workflow" / "phases"
+    for path in phases_root.rglob("*.md"):
+        relative = Path("workflow") / "phases" / path.relative_to(phases_root)
+        assert is_delivery_workflow_phase_path(relative), relative
+        assert not path.name.startswith(("bugfix-", "codegen-", "codegenlight-"))
+        assert not path.name.startswith(("phase", "re-", "init"))
+
+    for forbidden in [
+        ".extensionignore",
+        "config",
+        "config-template.yml",
+        "echelon-config.yml",
+        "extension.yml",
+        "presets",
+        "scripts/bash/re",
+        "scripts/node/context7",
+        "scripts/node/re/vendor",
+        "scripts/python",
+        "stacks",
+    ]:
+        assert not (runtime / forbidden).exists(), forbidden

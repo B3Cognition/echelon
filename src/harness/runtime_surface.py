@@ -66,18 +66,10 @@ DELIVERY_TEMPLATE_FILES = frozenset(
 
 DELIVERY_WORKFLOW_PHASE_PREFIXES = (
     "build-",
-    "codegen-",
-    "codegenlight-",
     "verify-spec-",
 )
 
-DELIVERY_WORKFLOW_PHASE_FILES = frozenset(
-    {
-        "codegen-A-preamble.md",
-        "codegen-resume.md",
-        "codegenlight-resume.md",
-    }
-)
+DELIVERY_WORKFLOW_PHASE_FILES = frozenset()
 
 DELIVERY_WORKFLOW_DEFINITION_KEYS = frozenset(
     {

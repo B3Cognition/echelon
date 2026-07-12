@@ -108,6 +108,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **EGR-117 / #141 delivery runtime surface closure** — delivery worktrees no
+  longer expose orphaned `codegen-*`/`codegenlight-*` workflow phase contracts
+  when the delivery command surface is limited to build and verify-spec. Direct
+  and workspace-target runtime sync now have real installed-extension-tree
+  invariants proving the copied runtime contains only delivery-safe commands,
+  build agents, bash helpers, templates, workflow phases, and required
+  CodeGraph runtime support.
 - **EGR-135 / #159 verify-spec cache invalidation** — full verify-spec cache
   keys now include measured `test-results/**/*.json` artifacts, so delivery
   refreshes fulfillment evidence after runtime test-result JSON changes instead

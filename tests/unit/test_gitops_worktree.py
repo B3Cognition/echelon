@@ -1,6 +1,8 @@
 """Tests for GitOpsManager.get_latest_worktree."""
 from __future__ import annotations
 
+from pathlib import Path
+from shutil import copytree
 import time
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -10,6 +12,13 @@ import yaml
 from harness.config import HarnessConfig
 from harness.errors import GitOpsError
 from harness.gitops import GitOpsManager, _clean_branch_listing
+from harness.runtime_surface import (
+    DELIVERY_AGENT_DIRS,
+    DELIVERY_BASH_FILES,
+    DELIVERY_COMMAND_FILES,
+    DELIVERY_TEMPLATE_FILES,
+    is_delivery_workflow_phase_path,
+)
 
 
 def _make_gitops(tmp_path, *, llm_cli: str = "claude"):
@@ -634,6 +643,10 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
         "verify-spec-1-init.md",
         "bugfix-1-init.md",
         "codegen-0-preflight.md",
+        "codegen-A-preamble.md",
+        "codegen-resume.md",
+        "codegenlight-0-preflight.md",
+        "codegenlight-resume.md",
         "phase1-what.md",
         "phase3-plan.md",
         "phase4-document.md",
@@ -664,10 +677,14 @@ def test_sync_runtime_extension_excludes_phase_a_and_re_workflow_phase_docs(tmp_
     phases = worktree / ".specify" / "extensions" / "echelon" / "workflow" / "phases"
     assert (phases / "build-1-init.md").exists()
     assert (phases / "verify-spec-1-init.md").exists()
-    assert (phases / "codegen-0-preflight.md").exists()
     assert (phases / "appendices" / "build-8-verify-gates.md").exists()
     assert not (phases / "appendices" / "phase1-what-reference.md").exists()
     assert not (phases / "bugfix-1-init.md").exists()
+    assert not (phases / "codegen-0-preflight.md").exists()
+    assert not (phases / "codegen-A-preamble.md").exists()
+    assert not (phases / "codegen-resume.md").exists()
+    assert not (phases / "codegenlight-0-preflight.md").exists()
+    assert not (phases / "codegenlight-resume.md").exists()
     assert not (phases / "phase1-what.md").exists()
     assert not (phases / "phase3-plan.md").exists()
     assert not (phases / "phase4-document.md").exists()
@@ -736,6 +753,58 @@ def test_sync_runtime_extension_prunes_workflow_definition_to_delivery_surface(t
     assert "verify_spec" in definition
     assert "re_extraction" not in definition
     assert "re_planning" not in definition
+
+
+def test_sync_runtime_extension_real_tree_matches_delivery_surface_policy(tmp_path):
+    """The installed extension tree must not leak non-delivery runtime surface."""
+    repo_root = Path(__file__).resolve().parents[2]
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    copytree(repo_root / "extension", source)
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path, llm_cli="codex")
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    runtime = worktree / ".specify" / "extensions" / "echelon"
+
+    commands = {p.name for p in (runtime / "commands").iterdir() if p.is_file()}
+    assert commands == DELIVERY_COMMAND_FILES
+
+    agent_dirs = {p.name for p in (runtime / "agents").iterdir() if p.is_dir()}
+    assert agent_dirs == DELIVERY_AGENT_DIRS
+
+    bash_files = {p.name for p in (runtime / "scripts" / "bash").iterdir() if p.is_file()}
+    assert bash_files <= DELIVERY_BASH_FILES
+
+    template_files = {p.name for p in (runtime / "templates").iterdir() if p.is_file()}
+    assert template_files == DELIVERY_TEMPLATE_FILES
+
+    phases_root = runtime / "workflow" / "phases"
+    for path in phases_root.rglob("*.md"):
+        relative = Path("workflow") / "phases" / path.relative_to(phases_root)
+        assert is_delivery_workflow_phase_path(relative), relative
+        assert not path.name.startswith(("bugfix-", "codegen-", "codegenlight-"))
+        assert not path.name.startswith(("phase", "re-", "init"))
+
+    for forbidden in [
+        ".extensionignore",
+        "config",
+        "config-template.yml",
+        "echelon-config.yml",
+        "extension.yml",
+        "presets",
+        "scripts/bash/re",
+        "scripts/node/context7",
+        "scripts/node/re/vendor",
+        "scripts/python",
+        "stacks",
+    ]:
+        assert not (runtime / forbidden).exists(), forbidden
 
 
 def test_sync_runtime_extension_materializes_claude_command_skills(tmp_path):
