@@ -93,7 +93,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   discovery detection now flags scan/browse/consult/study/parse/view/show/
   display/print/dump phrasing for `src/harness/...` in addition to
   read/open/review/inspect style prompts. The harness-internal target list is
-  now a named scanner category instead of an inline regex fragment. Build prompt
+  now a named scanner category instead of an inline regex fragment, and the
+  harness-internal discovery verb list is named the same way. Build prompt
   artifact-discovery detection now also covers `progress-report.md` and
   `run-history.json`, keeping those Ralph/spec-owned lifecycle facts in the
   Python-owned context boundary, and rejects soft inspect/open/review/look-at/

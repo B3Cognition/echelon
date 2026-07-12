@@ -98,8 +98,44 @@ HARNESS_INTERNAL_DISCOVERY_TARGET_RE = "|".join(
     for target in HARNESS_INTERNAL_DISCOVERY_TARGETS
 )
 
+HARNESS_INTERNAL_DISCOVERY_VERBS = (
+    "find",
+    "locate",
+    "discover",
+    "search",
+    "scan",
+    "browse",
+    "consult",
+    "study",
+    "parse",
+    "read",
+    "inspect",
+    "open",
+    "view",
+    "show",
+    "display",
+    "print",
+    "dump",
+    "grep",
+    "list",
+    "check",
+    "look at",
+    "review",
+    "examine",
+    "cat",
+    "sed",
+    "less",
+    "more",
+    "tail",
+    "head",
+)
+
+HARNESS_INTERNAL_DISCOVERY_VERB_RE = "|".join(
+    re.escape(verb) for verb in HARNESS_INTERNAL_DISCOVERY_VERBS
+)
+
 HARNESS_INTERNAL_DISCOVERY_RE = re.compile(
-    r"\b(?:find|locate|discover|search|scan|browse|consult|study|parse|read|inspect|open|view|show|display|print|dump|grep|list|check|look at|review|examine|cat|sed|less|more|tail|head)\b"
+    rf"\b(?:{HARNESS_INTERNAL_DISCOVERY_VERB_RE})\b"
     rf".{{0,160}}\b(?:{HARNESS_INTERNAL_DISCOVERY_TARGET_RE})\b",
     re.IGNORECASE,
 )

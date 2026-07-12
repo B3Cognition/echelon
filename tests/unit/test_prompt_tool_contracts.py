@@ -2,8 +2,9 @@ from pathlib import Path
 
 from tests.contract.prompt_tool_contracts import (
     BUILD_GIT_STATE_DISCOVERY_COMMANDS,
-    HARNESS_INTERNAL_DISCOVERY_TARGETS,
     BUILD_SPEC_ARTIFACT_DISCOVERY_TARGETS,
+    HARNESS_INTERNAL_DISCOVERY_TARGETS,
+    HARNESS_INTERNAL_DISCOVERY_VERBS,
     scan_prompt_tool_contracts,
 )
 
@@ -112,6 +113,40 @@ def test_harness_internal_discovery_targets_are_named_category() -> None:
         "latest_fulfillment_report",
         "read_fulfillment_metadata",
         "stamp_fulfillment_report",
+    )
+
+
+def test_harness_internal_discovery_verbs_are_named_category() -> None:
+    assert HARNESS_INTERNAL_DISCOVERY_VERBS == (
+        "find",
+        "locate",
+        "discover",
+        "search",
+        "scan",
+        "browse",
+        "consult",
+        "study",
+        "parse",
+        "read",
+        "inspect",
+        "open",
+        "view",
+        "show",
+        "display",
+        "print",
+        "dump",
+        "grep",
+        "list",
+        "check",
+        "look at",
+        "review",
+        "examine",
+        "cat",
+        "sed",
+        "less",
+        "more",
+        "tail",
+        "head",
     )
 
 
