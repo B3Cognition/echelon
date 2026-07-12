@@ -306,6 +306,7 @@ DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERBS = (
     "locate",
     "discover",
     "search",
+    "list",
     "check",
     "review",
     "examine",
