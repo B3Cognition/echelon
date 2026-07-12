@@ -19,6 +19,11 @@ from harness.re_lock import (
     recoverable_publish_lock_owner,
 )
 from harness.re_planner import ReExecutionPlan, RePlanSource
+from harness.re_quality_gate import (
+    MINIMUM_SOURCE_EVIDENCE,
+    ReSpecQualityFailure,
+    validate_staged_re_quality,
+)
 from harness.re_registry import (
     PublishedReIndex,
     PublishedSource,
@@ -31,15 +36,6 @@ from harness.re_registry import (
 
 
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9._-]+$")
-_SOURCE_REFERENCE = re.compile(r"`[^`\n]+:\d+(?:-\d+)?`")
-_DEEP_SPEC_SECTIONS = (
-    "User Scenarios & Testing",
-    "Requirements (Functional)",
-    "Key Entities",
-    "Edge Cases",
-)
-
-
 class RePublicationError(RuntimeError):
     """Base error for deterministic RE publication."""
 
@@ -126,12 +122,16 @@ def validate_re_run(
     empty: list[str] = []
     for source in plan.sources:
         if source.action == "refresh":
-            _validate_refreshed_source(run_re / "sources" / source.id, source, plan)
+            _validate_refreshed_source(run_re / "sources" / source.id, source)
             refreshed.append(source.id)
         elif source.action == "skip-empty":
             empty.append(source.id)
         elif source.action in {"reuse", "missing"}:
             _validate_current_source(source, current)
+
+    quality_report = validate_staged_re_quality(run_re, plan)
+    if quality_report.failures:
+        _raise_quality_failure(quality_report.failures[0])
 
     for removed_id in plan.removed_sources:
         if current is None or removed_id not in current.sources:
@@ -553,7 +553,6 @@ def _validate_workspace_inputs(path: Path, plan: ReExecutionPlan) -> None:
 def _validate_refreshed_source(
     source_dir: Path,
     source: RePlanSource,
-    plan: ReExecutionPlan,
 ) -> None:
     if not (source_dir / "analysis.json").is_file():
         raise RePublicationValidationError(
@@ -563,18 +562,15 @@ def _validate_refreshed_source(
         raise RePublicationValidationError(
             f"required source overview missing: {source_dir / 'overview.md'}"
         )
-    specs = sorted((source_dir / "specs").glob("*/spec.md"))
-    if not specs:
-        raise RePublicationValidationError(f"source {source.id} has no domain specs")
-    if plan.profile.depth not in {"logic", "full"}:
-        return
-    for spec in specs:
-        text = spec.read_text(encoding="utf-8")
-        missing = [section for section in _DEEP_SPEC_SECTIONS if section not in text]
-        if missing or len(set(_SOURCE_REFERENCE.findall(text))) < 5:
-            raise RePublicationValidationError(
-                f"shallow reverse-engineering spec is not publishable: {spec}"
-            )
+
+
+def _raise_quality_failure(failure: ReSpecQualityFailure) -> None:
+    missing = ", ".join(failure.missing_sections) or "none"
+    raise RePublicationValidationError(
+        "shallow reverse-engineering spec is not publishable: "
+        f"{failure.spec_path}; missing sections: {missing}; source evidence: "
+        f"{failure.source_evidence_count}/{MINIMUM_SOURCE_EVIDENCE}"
+    )
 
 
 def _validate_current_source(

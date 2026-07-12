@@ -401,7 +401,14 @@ def test_shallow_full_depth_spec_is_not_publishable(tmp_path: Path) -> None:
     spec = run_dir / "re/sources/api/specs/001-re-domain/spec.md"
     spec.write_text("# Architecture summary\n", encoding="utf-8")
 
-    with pytest.raises(RePublicationValidationError, match="shallow"):
+    with pytest.raises(
+        RePublicationValidationError,
+        match=(
+            r"shallow reverse-engineering spec is not publishable: .*spec.md; "
+            r"missing sections: User Scenarios & Testing, Requirements \(Functional\), "
+            r"Key Entities, Edge Cases; source evidence: 0/5"
+        ),
+    ):
         publish_re_run(tmp_path, run_dir)
 
 
