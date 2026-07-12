@@ -2,6 +2,7 @@ from pathlib import Path
 
 from tests.contract.prompt_tool_contracts import (
     BUILD_GIT_STATE_DISCOVERY_COMMANDS,
+    BUILD_SPEC_ARTIFACT_DISCOVERY_TARGETS,
     scan_prompt_tool_contracts,
 )
 
@@ -467,6 +468,18 @@ def test_flags_build_prompt_spec_artifact_discovery(tmp_path: Path) -> None:
 
     assert len(findings) == 1
     assert findings[0].reason == "build_spec_artifact_discovery"
+
+
+def test_build_spec_artifact_discovery_targets_are_named_category() -> None:
+    assert BUILD_SPEC_ARTIFACT_DISCOVERY_TARGETS == (
+        "state.json",
+        "runs/",
+        "tasks.md",
+        "spec.md",
+        "specs/",
+        "progress-report.md",
+        "run-history.json",
+    )
 
 
 def test_flags_build_prompt_spec_artifact_discovery_synonyms(tmp_path: Path) -> None:
