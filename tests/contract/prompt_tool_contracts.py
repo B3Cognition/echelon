@@ -290,9 +290,31 @@ VERIFY_SPEC_RUN_DISCOVERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+DELIVERY_COMMAND_RUNTIME_DISCOVERY_TARGETS = (
+    "agents/control/commander.md",
+    "workflow/definition.yaml",
+)
+
+DELIVERY_COMMAND_RUNTIME_DISCOVERY_TARGET_RE = "|".join(
+    re.escape(target) for target in DELIVERY_COMMAND_RUNTIME_DISCOVERY_TARGETS
+)
+
+DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERBS = (
+    "read",
+    "inspect",
+    "open",
+    "locate",
+    "discover",
+    "search",
+)
+
+DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERB_RE = "|".join(
+    re.escape(verb) for verb in DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERBS
+)
+
 DELIVERY_COMMAND_RUNTIME_DISCOVERY_RE = re.compile(
-    r"\b(?:read|inspect|open|locate|discover|search)\b"
-    r".{0,120}\b(?:agents/control/commander\.md|workflow/definition\.yaml)\b",
+    rf"\b(?:{DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERB_RE})\b"
+    rf".{{0,120}}\b(?:{DELIVERY_COMMAND_RUNTIME_DISCOVERY_TARGET_RE})\b",
     re.IGNORECASE,
 )
 

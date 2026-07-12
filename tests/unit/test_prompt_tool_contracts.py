@@ -5,6 +5,8 @@ from tests.contract.prompt_tool_contracts import (
     BUILD_GIT_STATE_DISCOVERY_VERBS,
     BUILD_SPEC_ARTIFACT_DISCOVERY_VERBS,
     BUILD_SPEC_ARTIFACT_DISCOVERY_TARGETS,
+    DELIVERY_COMMAND_RUNTIME_DISCOVERY_TARGETS,
+    DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERBS,
     HARNESS_INTERNAL_DISCOVERY_TARGETS,
     HARNESS_INTERNAL_DISCOVERY_VERBS,
     VERIFY_SPEC_DIR_DISCOVERY_TARGETS,
@@ -675,6 +677,24 @@ def test_flags_delivery_command_runtime_discovery(tmp_path: Path) -> None:
 
     assert len(findings) == 1
     assert findings[0].reason == "command_runtime_discovery"
+
+
+def test_delivery_command_runtime_discovery_targets_are_named_category() -> None:
+    assert DELIVERY_COMMAND_RUNTIME_DISCOVERY_TARGETS == (
+        "agents/control/commander.md",
+        "workflow/definition.yaml",
+    )
+
+
+def test_delivery_command_runtime_discovery_verbs_are_named_category() -> None:
+    assert DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERBS == (
+        "read",
+        "inspect",
+        "open",
+        "locate",
+        "discover",
+        "search",
+    )
 
 
 def test_flags_delivery_command_runtime_discovery_synonyms(tmp_path: Path) -> None:
