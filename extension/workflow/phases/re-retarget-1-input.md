@@ -11,7 +11,7 @@ Guided walkthrough to fill in `[REQUIRES INPUT]` sections in strategic artifacts
 Count markers across all strategic artifacts:
 
 ```bash
-grep -r "\[REQUIRES INPUT\]" constitution.md migration-strategy.md risk-matrix.md gap-analysis.md adrs/ 2>/dev/null | wc -l
+grep -r "\[REQUIRES INPUT\]" re/workspace/strategy/constitution.md re/workspace/strategy/migration-strategy.md re/workspace/strategy/risk-matrix.md re/workspace/strategy/gap-analysis.md re/workspace/strategy/adrs/ 2>/dev/null | wc -l
 ```
 
 Report to user: "Found {count} sections requiring your input."
@@ -29,11 +29,11 @@ This will guide you through filling in the [REQUIRES INPUT] sections
 in your strategic artifacts.
 
 Files to review:
-  - constitution.md       (target technology stack)
-  - migration-strategy.md (6R/7R decisions per domain)
-  - risk-matrix.md        (risk owners, mitigations)
-  - gap-analysis.md       (gap priorities)
-  - adrs/*.md             (architecture decisions)
+  - re/workspace/strategy/constitution.md       (target technology stack)
+  - re/workspace/strategy/migration-strategy.md (6R/7R decisions per domain)
+  - re/workspace/strategy/risk-matrix.md        (risk owners, mitigations)
+  - re/workspace/strategy/gap-analysis.md       (gap priorities)
+  - re/workspace/strategy/adrs/*.md             (architecture decisions)
 
 Sections requiring input: {count}
 
@@ -47,7 +47,7 @@ You can say "skip" to defer any question and return to it later.
 
 ## Step 3: Constitution — Target Technology Stack
 
-Read `constitution.md`. For each `[REQUIRES INPUT]` found in the Target Technology Stack section, present to user:
+Read `re/workspace/strategy/constitution.md`. For each `[REQUIRES INPUT]` found in the Target Technology Stack section, present to user:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -65,15 +65,15 @@ Question {N}:
   Your choice:
 ```
 
-Record the user's answer. Update `constitution.md`: replace `[REQUIRES INPUT]` with the user's answer, preserving surrounding markdown structure.
+Record the user's answer. Update `re/workspace/strategy/constitution.md`: replace `[REQUIRES INPUT]` with the user's answer, preserving surrounding markdown structure.
 
 ## Step 4: Constitution — Coding Standards
 
-For each `[REQUIRES INPUT]` in the Coding Standards section of `constitution.md`, present in the same format as Step 3.
+For each `[REQUIRES INPUT]` in the Coding Standards section of `re/workspace/strategy/constitution.md`, present in the same format as Step 3.
 
 ## Step 5: Migration Strategy — 6R/7R Decisions
 
-Read `migration-strategy.md`. For each domain with a `[REQUIRES INPUT]` on its migration strategy:
+Read `re/workspace/strategy/migration-strategy.md`. For each domain with a `[REQUIRES INPUT]` on its migration strategy:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -97,35 +97,35 @@ Do you agree with this approach, or choose a different 6R/7R strategy?
   Rationale (optional):
 ```
 
-Update `migration-strategy.md` with the user's choice.
+Update `re/workspace/strategy/migration-strategy.md` with the user's choice.
 
 ## Step 6: Risk Matrix — Risk Owners and Mitigations
 
-Read `risk-matrix.md`. For each `[REQUIRES INPUT]` on risk owner or mitigation, present the risk row and ask:
+Read `re/workspace/strategy/risk-matrix.md`. For each `[REQUIRES INPUT]` on risk owner or mitigation, present the risk row and ask:
 1. Who owns this risk? (person or team name)
 2. What is the mitigation plan?
 
-Update `risk-matrix.md` with answers.
+Update `re/workspace/strategy/risk-matrix.md` with answers.
 
 ## Step 7: Gap Analysis — Gap Priorities
 
-Read `gap-analysis.md`. For each `[REQUIRES INPUT]` on priority or owner, present the gap and ask:
+Read `re/workspace/strategy/gap-analysis.md`. For each `[REQUIRES INPUT]` on priority or owner, present the gap and ask:
 1. Priority: Critical / High / Medium / Low
 2. Target date (optional)
 3. Owner (optional)
 
-Update `gap-analysis.md` with answers.
+Update `re/workspace/strategy/gap-analysis.md` with answers.
 
 ## Step 8: ADRs — Architecture Decision Records
 
-Read each `adrs/*.md` file. For each `[REQUIRES INPUT]`, present the ADR title, context, and question. Record the user's decision text. Update the ADR file.
+Read each `re/workspace/strategy/adrs/*.md` file. For each `[REQUIRES INPUT]`, present the ADR title, context, and question. Record the user's decision text. Update the ADR file.
 
 ## Step 9: Completion summary
 
 After processing all questions (or when user says "done"):
 
 ```bash
-REMAINING=$(grep -r "\[REQUIRES INPUT\]" constitution.md migration-strategy.md risk-matrix.md gap-analysis.md adrs/ 2>/dev/null | wc -l)
+REMAINING=$(grep -r "\[REQUIRES INPUT\]" re/workspace/strategy/constitution.md re/workspace/strategy/migration-strategy.md re/workspace/strategy/risk-matrix.md re/workspace/strategy/gap-analysis.md re/workspace/strategy/adrs/ 2>/dev/null | wc -l)
 ```
 
 Report:

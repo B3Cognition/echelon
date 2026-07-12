@@ -1,23 +1,29 @@
 # Phase: re-planning-1-plan
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching RE-PLANNER
 # Agent: speckit-echelon-re-planner
 
 ## Context Pack
 
-- `specs/NNN-re-{domain}/spec.md` — domain spec (one per iteration)
-- `constitution.md` — non-negotiable coding rules and target decisions
-- `migration-strategy.md` — 6R/7R per domain
-- `{state.output_dir}/state.json` — domain list
+- `re/index.json`
+- `re/sources/{source-id}/manifest.json`
+- `re/sources/{source-id}/overview.md`
+- `re/sources/{source-id}/specs/{domain-id}/spec.md`
+- `re/workspace/relationships.md`
+- `re/workspace/contracts.md`
+- `re/workspace/strategy/constitution.md`
+- `re/workspace/strategy/migration-strategy.md`
+- `re/workspace/strategy/risk-matrix.md`
+- `re/workspace/strategy/gap-analysis.md`
+- `{state.output_dir}/state.json`
 
 ## Dispatch Prompt
 
-Instruct RE-PLANNER to: iterate over all domains in `state.json.domains`, for each read the domain spec + constitution + migration strategy, generate `specs/NNN-re-{domain}/plan.md` with implementation phases, milestones, dependencies, and effort estimates.
+Instruct RE-PLANNER to iterate canonical source domains in workspace dependency order and write each implementation plan beside its source-owned spec. Plans retain source identity, cross-source contracts, 6R/7R evidence, risks, phases, tests, milestones, and effort estimates.
 
 ## Expected Outputs
 
-- `specs/NNN-re-{domain}/plan.md` — one per domain
+- `re/sources/{source-id}/specs/{domain-id}/plan.md`
 
-## echelon_result schema
+## echelon_result Schema
 
 ```yaml
 echelon_result:
@@ -25,11 +31,11 @@ echelon_result:
   phase_id: re-planning-1-plan
   state_updates: {}
   output_files:
-    - specs/NNN-re-{domain}/plan.md
+    - re/sources/{source-id}/specs/{domain-id}/plan.md
   journal_entries:
     - type: phase_complete
       phase: re-planning-1-plan
       data:
-        summary: "Generated plans for {N} domains"
+        summary: "Generated source-owned implementation plans"
   blocked_reason: null
 ```

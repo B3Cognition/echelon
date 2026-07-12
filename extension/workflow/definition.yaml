@@ -1916,12 +1916,16 @@ re_planning:
       agent: speckit-echelon-re-planner
       tier: re_planning
       context_pack:
-        - specs/NNN-re-{domain}/spec.md
-        - constitution.md
-        - migration-strategy.md
+        - re/index.json
+        - re/sources/{source-id}/manifest.json
+        - re/sources/{source-id}/specs/{domain-id}/spec.md
+        - re/workspace/contracts.md
+        - re/workspace/relationships.md
+        - re/workspace/strategy/constitution.md
+        - re/workspace/strategy/migration-strategy.md
         - "{state.output_dir}/state.json"
       outputs:
-        - specs/NNN-re-{domain}/plan.md
+        - re/sources/{source-id}/specs/{domain-id}/plan.md
       transitions:
         - to: re-planning-2-tasks
           condition: verdict = DONE
@@ -1933,11 +1937,12 @@ re_planning:
       agent: speckit-echelon-re-tasker
       tier: re_planning
       context_pack:
-        - specs/NNN-re-{domain}/plan.md
-        - specs/NNN-re-{domain}/spec.md
-        - constitution.md
+        - re/sources/{source-id}/specs/{domain-id}/plan.md
+        - re/sources/{source-id}/specs/{domain-id}/spec.md
+        - re/workspace/contracts.md
+        - re/workspace/strategy/constitution.md
       outputs:
-        - specs/NNN-re-{domain}/tasks.md
+        - re/sources/{source-id}/specs/{domain-id}/tasks.md
       transitions:
         - to: DONE
           condition: always

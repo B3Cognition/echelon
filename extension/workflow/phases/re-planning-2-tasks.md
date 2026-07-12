@@ -1,25 +1,26 @@
 # Phase: re-planning-2-tasks
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching RE-TASKER
 # Agent: speckit-echelon-re-tasker
 
 ## Context Pack
 
-- `specs/NNN-re-{domain}/plan.md`
-- `specs/NNN-re-{domain}/spec.md`
-- `constitution.md`
+- `re/sources/{source-id}/specs/{domain-id}/spec.md`
+- `re/sources/{source-id}/specs/{domain-id}/plan.md`
+- `re/workspace/contracts.md`
+- `re/workspace/relationships.md`
+- `re/workspace/strategy/constitution.md`
 - `extension/templates/tasks-template.md`
 - `extension/templates/task-entry-fragment.md`
 - `extension/templates/task-checkpoint-fragment.md`
 
 ## Dispatch Prompt
 
-Instruct RE-TASKER to: iterate over all domains, for each read plan.md + spec.md + constitution, generate `specs/NNN-re-{domain}/tasks.md` from `extension/templates/tasks-template.md`. Every executable task must start with a canonical `T-###` row containing `complexity=`, `phase=`, `req=`, and `depends=` metadata. After all domains complete, optionally offer `speckit.analyze` for consistency analysis.
+Instruct RE-TASKER to iterate canonical source domains, read each adjacent spec and plan plus workspace strategy, and write tasks beside them. Every executable task uses a canonical `T-###` row with `complexity=`, `phase=`, `req=`, and `depends=` metadata and retains cross-source dependency traceability.
 
 ## Expected Outputs
 
-- `specs/NNN-re-{domain}/tasks.md` — one per domain
+- `re/sources/{source-id}/specs/{domain-id}/tasks.md`
 
-## echelon_result schema
+## echelon_result Schema
 
 ```yaml
 echelon_result:
@@ -28,11 +29,11 @@ echelon_result:
   state_updates:
     status: done
   output_files:
-    - specs/NNN-re-{domain}/tasks.md
+    - re/sources/{source-id}/specs/{domain-id}/tasks.md
   journal_entries:
     - type: phase_complete
       phase: re-planning-2-tasks
       data:
-        summary: "Generated tasks for {N} domains"
+        summary: "Generated source-owned implementation tasks"
   blocked_reason: null
 ```

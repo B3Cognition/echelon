@@ -26,6 +26,10 @@ RE_ANALYZER = ROOT / "extension" / "agents" / "re" / "analyzer.md"
 RE_EXTRACT_1_ANALYZE = (
     ROOT / "extension" / "workflow" / "phases" / "re-extract-1-analyze.md"
 )
+RE_RETARGET_PHASES = [
+    ROOT / "extension" / "workflow" / "phases" / "re-retarget-0-preflight.md",
+    ROOT / "extension" / "workflow" / "phases" / "re-retarget-1-input.md",
+]
 
 
 class TestRePromptOutputContracts:
@@ -56,7 +60,8 @@ class TestRePromptOutputContracts:
 
             assert "specs/001-re-auth/plan.md" not in text
             assert "specs/002-re-api/plan.md" not in text
-            assert "specs/NNN-re-{domain}/plan.md" in text
+            assert "re/sources/{source-id}/specs/{domain-id}/plan.md" in text
+            assert "re/workspace/strategy/constitution.md" in text
 
     def test_re_tasker_uses_domain_placeholder_in_output_examples(self) -> None:
         for path in [RE_TASKER, RE_PLANNING_2_TASKS]:
@@ -64,7 +69,17 @@ class TestRePromptOutputContracts:
 
             assert "specs/001-re-auth/tasks.md" not in text
             assert "specs/002-re-api/tasks.md" not in text
-            assert "specs/NNN-re-{domain}/tasks.md" in text
+            assert "re/sources/{source-id}/specs/{domain-id}/tasks.md" in text
+            assert "re/workspace/strategy/constitution.md" in text
+
+    def test_re_retarget_uses_canonical_workspace_strategy_paths(self) -> None:
+        for path in RE_RETARGET_PHASES:
+            text = path.read_text(encoding="utf-8")
+
+            assert "re/workspace/strategy/constitution.md" in text
+            assert "re/workspace/strategy/migration-strategy.md" in text
+            assert "re/workspace/strategy/risk-matrix.md" in text
+            assert "re/workspace/strategy/gap-analysis.md" in text
 
     def test_re_checklister_uses_domain_placeholder_in_output_examples(self) -> None:
         for path in [RE_CHECKLISTER, RE_EXTRACT_6_CHECKLIST]:

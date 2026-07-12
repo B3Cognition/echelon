@@ -2,20 +2,10 @@
 # Read by: speckit-echelon-commander (COMMANDER)
 # Type: commander_internal
 
-## Preflight checks
+## Preflight Checks
 
-### 1. constitution.md exists
-Read `constitution.md` with Read tool. If not found: HARD STOP — "Run /speckit.echelon.re-retarget first to fill target decisions."
-
-### 2. No unresolved [REQUIRES INPUT] markers
-
-```bash
-grep -r "\[REQUIRES INPUT\]" constitution.md migration-strategy.md risk-matrix.md gap-analysis.md adrs/ 2>/dev/null | wc -l
-```
-
-If count > 0: HARD STOP — "Found {N} unresolved [REQUIRES INPUT] markers. Run /speckit.echelon.re-retarget to fill them before planning."
-
-### 3. Domain specs exist
-Use Glob: `specs/NNN-re-*/spec.md`. If no files found: HARD STOP — "No re-* specs found. Run /speckit.echelon.re-extract first."
+1. Read `re/workspace/strategy/constitution.md`. If absent, hard stop: run `speckit.echelon.re-retarget` after extraction.
+2. Search `re/workspace/strategy/constitution.md`, migration strategy, risk matrix, gap analysis, and `adrs/` for `[REQUIRES INPUT]`. Hard stop while any remain.
+3. Require at least one `re/sources/{source-id}/specs/{domain-id}/spec.md`. An all-empty workspace has no implementation domains and planning completes as a no-op.
 
 Preflight complete. Advance to `re-planning-1-plan`.
