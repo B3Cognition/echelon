@@ -345,6 +345,42 @@ BUILD_WORKFLOW_DEFINITION_ROUTING_RE = re.compile(
     re.IGNORECASE,
 )
 
+DISCOVERY_NEGATIVE_BOUNDARY_VERBS = (
+    "find",
+    "locate",
+    "discover",
+    "search",
+    "read",
+    "inspect",
+    "open",
+    "grep",
+    "list",
+    "glob",
+    "run",
+    "use",
+    "scan",
+    "view",
+    "show",
+    "display",
+    "print",
+    "dump",
+    "review",
+    "examine",
+    "check",
+    "look at",
+    "parse",
+    "cat",
+    "sed",
+    "less",
+    "more",
+    "tail",
+    "head",
+)
+
+DISCOVERY_NEGATIVE_BOUNDARY_VERB_RE = "|".join(
+    re.escape(verb) for verb in DISCOVERY_NEGATIVE_BOUNDARY_VERBS
+)
+
 
 @dataclass(frozen=True)
 class PromptToolContractFinding:
@@ -394,18 +430,14 @@ def _is_negative_boundary(line: str) -> bool:
     lowered = line.strip().lower()
     if re.search(
         r"\bif\b.{0,80}\b(?:absent|missing|not provided)\b.{0,120}\b"
-        r"(?:find|locate|discover|search|read|inspect|open|grep|list|glob|run|use|"
-        r"scan|view|show|display|print|dump|review|examine|check|look at|"
-        r"parse|cat|sed|less|more|tail|head)\b",
+        rf"(?:{DISCOVERY_NEGATIVE_BOUNDARY_VERB_RE})\b",
         lowered,
     ):
         return False
     return bool(
         re.search(
             r"\b(?:do not|never|must not)\b.{0,120}\b"
-            r"(?:find|locate|discover|search|read|inspect|open|grep|list|run|use|"
-            r"scan|view|show|display|print|dump|review|examine|check|look at|"
-            r"parse|cat|sed|less|more|tail|head)\b",
+            rf"(?:{DISCOVERY_NEGATIVE_BOUNDARY_VERB_RE})\b",
             lowered,
         )
     )

@@ -110,7 +110,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `git branch`, `git show`, `git ls-files`, `git ls-tree`, `git cat-file`, and
   `git grep` prompts so agents consume Ralph-owned git facts instead of
   rediscovering repository state. The git-state command and verb lists are now
-  named scanner categories instead of inline regex fragments, reducing future
+  named scanner categories instead of inline regex fragments, and negative
+  discovery-boundary verbs are named the same way, reducing future
   one-command-at-a-time drift.
 - **EGR-117 / #141 delivery runtime surface** — direct and workspace-target
   delivery runtime sync now excludes Phase A `config/` material such as
