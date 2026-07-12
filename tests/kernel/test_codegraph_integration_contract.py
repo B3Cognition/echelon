@@ -143,11 +143,12 @@ def test_re_analyzer_uses_state_output_dir_instead_of_hardcoded_re_path():
     assert "RE_OUTPUT_DIR" in analyzer
     assert '"$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" \\' in analyzer
     assert '--output "$RE_OUTPUT_DIR"' in analyzer
-    assert '--manifest "$RE_OUTPUT_DIR/repos-manifest.json"' in analyzer
+    assert '--manifest "$RE_ANALYSIS_MANIFEST"' in analyzer
+    assert '--source-output-root "$RE_OUTPUT_DIR/sources"' in analyzer
     assert '--profile "$RE_PROFILE"' in analyzer
     assert '"$EXTENSION_PATH/scripts/bash/re/discover-repos.sh" "$RE_OUTPUT_DIR/repos-manifest.json"' in analyzer
+    assert "Prefer `$RE_OUTPUT_DIR/re-analysis-manifest.json`" in analyzer
     assert "repos-manifest.json" in analyzer
-    assert "Prefer workspace-manifest.json" in analyzer
     assert '"$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" ".specify/echelon/re"' not in analyzer
 
 
@@ -164,7 +165,10 @@ def test_re_prompts_prefer_workspace_manifest_with_repos_fallback():
 
         assert "workspace-manifest.json" in text, rel_path
         assert "repos-manifest.json" in text, rel_path
-        assert "Prefer workspace-manifest.json" in text, rel_path
+        if rel_path == "extension/agents/re/analyzer.md":
+            assert "prefer workspace-manifest.json for standalone extraction" in text
+        else:
+            assert "Prefer workspace-manifest.json" in text, rel_path
         assert "compatibility fallback" in text, rel_path
 
 

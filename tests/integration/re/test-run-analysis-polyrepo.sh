@@ -218,6 +218,49 @@ assert_json_field "repo-c analysis has repo_name" "$RE_OUTPUT_DIR/repo-c/analysi
 assert_json_field "repo-a has metadata" "$RE_OUTPUT_DIR/repo-a/analysis.json" '.metadata | type' "object"
 assert_json_field "repo-a has structure" "$RE_OUTPUT_DIR/repo-a/analysis.json" '.structure | type' "object"
 
+# ---------- Test 3b: Analysis manifest selects source-scoped output ----------
+
+echo ""
+echo "=== Test 3b: source-scoped workspace analysis ==="
+
+SCOPED_OUTPUT="$TMPDIR3/scoped-run"
+SCOPED_SOURCES="$SCOPED_OUTPUT/sources"
+mkdir -p "$SCOPED_OUTPUT"
+cp "$RE_OUTPUT_DIR/workspace-manifest.json" "$SCOPED_OUTPUT/workspace-manifest.json"
+jq '.sources = [.sources[] | select(.id == "repo-a")]' \
+    "$SCOPED_OUTPUT/workspace-manifest.json" \
+    > "$SCOPED_OUTPUT/re-analysis-manifest.json"
+WORKSPACE_BEFORE=$(shasum -a 256 "$SCOPED_OUTPUT/workspace-manifest.json" | awk '{print $1}')
+
+(cd "$FIXTURES_DIR/polyrepo" && "$RUN_ANALYSIS" \
+    --output "$SCOPED_OUTPUT" \
+    --manifest "$SCOPED_OUTPUT/re-analysis-manifest.json" \
+    --source-output-root "$SCOPED_SOURCES" \
+    --profile full \
+    --depth full \
+    --max-lines-per-file 5000 \
+    --git-history-limit 2500 \
+    2>/dev/null)
+
+assert_file_exists "selected source analysis exists" "$SCOPED_SOURCES/repo-a/analysis.json"
+assert_file_not_exists "unselected source analysis is absent" "$SCOPED_SOURCES/repo-b/analysis.json"
+assert_json_field "aggregate uses source-scoped relative path" "$SCOPED_OUTPUT/analysis.json" '.repos[0].path' "sources/repo-a/analysis.json"
+assert_json_field "aggregate records analysis manifest" "$SCOPED_OUTPUT/analysis.json" '.manifest_path' "re-analysis-manifest.json"
+WORKSPACE_AFTER=$(shasum -a 256 "$SCOPED_OUTPUT/workspace-manifest.json" | awk '{print $1}')
+assert_eq "full workspace manifest remains unchanged" "$WORKSPACE_BEFORE" "$WORKSPACE_AFTER"
+
+EMPTY_OUTPUT="$TMPDIR3/empty-run"
+mkdir -p "$EMPTY_OUTPUT"
+jq '.sources = []' "$RE_OUTPUT_DIR/workspace-manifest.json" > "$EMPTY_OUTPUT/re-analysis-manifest.json"
+(cd "$FIXTURES_DIR/polyrepo" && "$RUN_ANALYSIS" \
+    --output "$EMPTY_OUTPUT" \
+    --manifest "$EMPTY_OUTPUT/re-analysis-manifest.json" \
+    --source-output-root "$EMPTY_OUTPUT/sources" \
+    2>/dev/null)
+
+assert_json_field "empty selection succeeds with zero sources" "$EMPTY_OUTPUT/analysis.json" '.metadata.repo_count' "0"
+assert_file_not_exists "empty selection does not analyze cwd" "$EMPTY_OUTPUT/structure.json"
+
 # ---------- Test 4: Legacy repos-manifest fallback ----------
 
 echo ""

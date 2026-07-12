@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Extract cross-repo integration map from per-repo analysis artifacts.
-# Usage: extract-cross-repo.sh OUTPUT_DIR MANIFEST_PATH
+# Usage: extract-cross-repo.sh OUTPUT_DIR MANIFEST_PATH [SOURCE_OUTPUT_ROOT]
 set -euo pipefail
 
 if ! command -v jq &>/dev/null; then
@@ -8,8 +8,9 @@ if ! command -v jq &>/dev/null; then
     exit 1
 fi
 
-OUTPUT_DIR="${1:?Usage: extract-cross-repo.sh OUTPUT_DIR MANIFEST_PATH}"
-MANIFEST_PATH="${2:?Usage: extract-cross-repo.sh OUTPUT_DIR MANIFEST_PATH}"
+OUTPUT_DIR="${1:?Usage: extract-cross-repo.sh OUTPUT_DIR MANIFEST_PATH [SOURCE_OUTPUT_ROOT]}"
+MANIFEST_PATH="${2:?Usage: extract-cross-repo.sh OUTPUT_DIR MANIFEST_PATH [SOURCE_OUTPUT_ROOT]}"
+SOURCE_OUTPUT_ROOT="${3:-$OUTPUT_DIR}"
 
 if [[ ! -f "$MANIFEST_PATH" ]]; then
     echo "Error: manifest file not found: $MANIFEST_PATH" >&2
@@ -29,7 +30,7 @@ REPO_COUNT=$(jq '.repos | length' "$MANIFEST_PATH")
 SHARED_TECH="{}"
 
 for repo_name in $REPO_NAMES; do
-    STRUCTURE_FILE="$OUTPUT_DIR/$repo_name/structure.json"
+    STRUCTURE_FILE="$SOURCE_OUTPUT_ROOT/$repo_name/structure.json"
     if [[ ! -f "$STRUCTURE_FILE" ]]; then
         continue
     fi
@@ -140,7 +141,7 @@ match_dep_to_repo() {
 }
 
 for repo_name in $REPO_NAMES; do
-    DEPS_FILE="$OUTPUT_DIR/$repo_name/dependencies.json"
+    DEPS_FILE="$SOURCE_OUTPUT_ROOT/$repo_name/dependencies.json"
     if [[ ! -f "$DEPS_FILE" ]]; then
         continue
     fi

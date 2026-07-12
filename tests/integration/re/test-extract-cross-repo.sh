@@ -243,6 +243,22 @@ echo "=== Test 6: potential_integrations ==="
 assert_json_field "potential_integrations is empty array" "$TMPDIR/cross-repo.json" '.potential_integrations | length' "0"
 assert_json_field "potential_integrations is array type" "$TMPDIR/cross-repo.json" '.potential_integrations | type' "array"
 
+# ---------- Test 7: Reads analyses from an explicit source output root ----------
+
+echo ""
+echo "=== Test 7: explicit source output root ==="
+
+SCOPED_OUTPUT="$TMPDIR/scoped-output"
+SCOPED_SOURCES="$SCOPED_OUTPUT/sources"
+mkdir -p "$SCOPED_SOURCES"
+cp -R "$TMPDIR/repo-alpha" "$TMPDIR/repo-beta" "$TMPDIR/repo-gamma" "$SCOPED_SOURCES/"
+
+"$EXTRACT_CROSS_REPO" "$SCOPED_OUTPUT" "$MANIFEST" "$SCOPED_SOURCES" 2>/dev/null
+
+assert_file_exists "source-scoped cross-repo.json created" "$SCOPED_OUTPUT/cross-repo.json"
+assert_json_field "source-scoped dependency links found" "$SCOPED_OUTPUT/cross-repo.json" '.dependency_links | length' "2"
+assert_json_field "source-scoped shared technology found" "$SCOPED_OUTPUT/cross-repo.json" '.shared_tech.typescript | length' "2"
+
 # ---------- summary ----------
 
 echo ""

@@ -22,9 +22,27 @@ RE_EXPANDER = ROOT / "extension" / "agents" / "re" / "expander.md"
 RE_EXTRACT_4_EXPAND = (
     ROOT / "extension" / "workflow" / "phases" / "re-extract-4-expand.md"
 )
+RE_ANALYZER = ROOT / "extension" / "agents" / "re" / "analyzer.md"
+RE_EXTRACT_1_ANALYZE = (
+    ROOT / "extension" / "workflow" / "phases" / "re-extract-1-analyze.md"
+)
 
 
 class TestRePromptOutputContracts:
+    def test_re_analyzer_uses_refresh_manifest_and_source_scoped_outputs(self) -> None:
+        for path in [RE_ANALYZER, RE_EXTRACT_1_ANALYZE]:
+            text = path.read_text(encoding="utf-8")
+
+            assert "re-analysis-manifest.json" in text
+            assert "--source-output-root" in text
+            assert "sources/{source-id}/analysis.json" in text
+
+        analyzer = RE_ANALYZER.read_text(encoding="utf-8")
+        assert '--profile "$RE_PROFILE"' in analyzer
+        assert '--depth "$RE_DEPTH"' in analyzer
+        assert '--max-lines-per-file "$RE_MAX_LINES"' in analyzer
+        assert '--git-history-limit "$RE_GIT_LIMIT"' in analyzer
+
     def test_re_specifier_uses_domain_placeholder_in_output_examples(self) -> None:
         for path in [RE_SPECIFIER, RE_EXTRACT_2_SPECIFY]:
             text = path.read_text(encoding="utf-8")

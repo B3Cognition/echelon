@@ -3,7 +3,8 @@
 # Usage:
 #   run-analysis.sh [OUTPUT_DIR] [MANIFEST_PATH]  # legacy positional form
 #   run-analysis.sh --output DIR --manifest PATH --profile full --depth full \
-#       --max-lines-per-file 5000 --git-history-limit 2500
+#       --max-lines-per-file 5000 --git-history-limit 2500 \
+#       --source-output-root DIR
 set -euo pipefail
 
 # Helper: resolve output directory, supporting echelon re-* config
@@ -19,6 +20,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUTPUT_DIR=""
+SOURCE_OUTPUT_ROOT=""
 MANIFEST_PATH=""
 PROFILE="${ECHELON_CFG_RE_PROFILE:-full}"
 DEPTH_LEVEL="${ECHELON_CFG_RE_DEPTH_LEVEL:-}"
@@ -32,6 +34,7 @@ Usage:
   run-analysis.sh --output DIR [--manifest PATH] [--profile full|survey|deep]
                   [--depth metadata|signatures|logic|full]
                   [--max-lines-per-file N] [--git-history-limit N]
+                  [--source-output-root DIR]
 EOF
 }
 
@@ -45,6 +48,11 @@ while [[ $# -gt 0 ]]; do
         --manifest|--repos-manifest|--workspace-manifest)
             [[ $# -ge 2 ]] || { echo "run-analysis.sh: $1 requires a value" >&2; exit 64; }
             MANIFEST_PATH="$2"
+            shift 2
+            ;;
+        --source-output-root)
+            [[ $# -ge 2 ]] || { echo "run-analysis.sh: $1 requires a value" >&2; exit 64; }
+            SOURCE_OUTPUT_ROOT="$2"
             shift 2
             ;;
         --profile)
@@ -112,6 +120,11 @@ resolve_workspace_manifest() {
 
     if [[ -z "$repos_manifest" ]]; then
         printf '%s\n' ""
+        return 0
+    fi
+
+    if jq -e '.sources | type == "array"' "$repos_manifest" >/dev/null 2>&1; then
+        printf '%s\n' "$repos_manifest"
         return 0
     fi
 
@@ -184,10 +197,14 @@ copy_manifest_artifacts() {
     local repos_manifest="$1"
     local workspace_manifest="$2"
 
-    if [[ -n "$repos_manifest" && -f "$repos_manifest" && "$repos_manifest" != "$OUTPUT_DIR/repos-manifest.json" ]]; then
+    if [[ -n "$repos_manifest" && -f "$repos_manifest" \
+        && "$repos_manifest" != "$OUTPUT_DIR/repos-manifest.json" \
+        && "$(jq -r 'has("repos")' "$repos_manifest" 2>/dev/null || echo false)" == "true" ]]; then
         cp "$repos_manifest" "$OUTPUT_DIR/repos-manifest.json"
     fi
-    if [[ -n "$workspace_manifest" && -f "$workspace_manifest" && "$workspace_manifest" != "$OUTPUT_DIR/workspace-manifest.json" ]]; then
+    if [[ -n "$workspace_manifest" && -f "$workspace_manifest" \
+        && "$workspace_manifest" != "$OUTPUT_DIR/workspace-manifest.json" \
+        && ! -f "$OUTPUT_DIR/workspace-manifest.json" ]]; then
         cp "$workspace_manifest" "$OUTPUT_DIR/workspace-manifest.json"
     fi
 }
@@ -341,8 +358,20 @@ extraction_profile_json() {
 }
 
 mkdir -p "$OUTPUT_DIR"
-# Resolve to absolute paths — required because polyrepo mode cd's into repo dirs
+# Resolve to absolute paths because workspace analysis changes into source roots.
 OUTPUT_DIR="$(cd "$OUTPUT_DIR" && pwd)"
+if [[ -z "$SOURCE_OUTPUT_ROOT" ]]; then
+    SOURCE_OUTPUT_ROOT="$OUTPUT_DIR"
+fi
+mkdir -p "$SOURCE_OUTPUT_ROOT"
+SOURCE_OUTPUT_ROOT="$(cd "$SOURCE_OUTPUT_ROOT" && pwd)"
+case "$SOURCE_OUTPUT_ROOT" in
+    "$OUTPUT_DIR"|"$OUTPUT_DIR"/*) ;;
+    *)
+        echo "run-analysis.sh: --source-output-root must be inside --output" >&2
+        exit 64
+        ;;
+esac
 if [[ -n "$MANIFEST_PATH" && -f "$MANIFEST_PATH" ]]; then
     MANIFEST_PATH="$(cd "$(dirname "$MANIFEST_PATH")" && pwd)/$(basename "$MANIFEST_PATH")"
 fi
@@ -350,13 +379,13 @@ WORKSPACE_MANIFEST="$(resolve_workspace_manifest "$MANIFEST_PATH")"
 EXTRACTION_PROFILE_JSON="$(extraction_profile_json)"
 
 # ---------- Determine mode ----------
-# If manifest exists and has repos, use manifest-driven mode (cd into each repo)
-# Otherwise, use single-repo mode (run extraction in CWD)
+# A source or repository manifest is authoritative even when it selects zero sources.
 
 USE_MANIFEST=false
 if [[ -n "$MANIFEST_PATH" && -f "$MANIFEST_PATH" ]]; then
-    REPO_COUNT=$(manifest_source_count "$MANIFEST_PATH" "$WORKSPACE_MANIFEST")
-    if [[ "$REPO_COUNT" -gt 0 ]]; then
+    if [[ -n "$WORKSPACE_MANIFEST" ]] \
+        || jq -e '.repos | type == "array"' "$MANIFEST_PATH" >/dev/null 2>&1; then
+        REPO_COUNT=$(manifest_source_count "$MANIFEST_PATH" "$WORKSPACE_MANIFEST")
         USE_MANIFEST=true
     fi
 fi
@@ -425,6 +454,7 @@ write_polyrepo_codegraph_summary() {
     local output_dir="$1"
     local manifest_path="$2"
     local workspace_manifest="$3"
+    local source_output_root="$4"
     local summary_path="$output_dir/codegraph-summary.json"
     local repo_summaries="[]"
     local repo_count
@@ -436,13 +466,13 @@ write_polyrepo_codegraph_summary() {
     repo_count=$(manifest_source_count "$manifest_path" "$workspace_manifest")
     for (( i=0; i<repo_count; i++ )); do
         repo_name=$(manifest_source_name "$manifest_path" "$workspace_manifest" "$i")
-        repo_summary="$output_dir/$repo_name/codegraph-summary.json"
+        repo_summary="$source_output_root/$repo_name/codegraph-summary.json"
         if [[ -f "$repo_summary" ]]; then
             index_state=$(jq -r '.index_state // "unknown"' "$repo_summary" 2>/dev/null || echo "unknown")
             symbols=$(jq -r '.index_stats.total_symbols // .index_stats.symbol_count // 0' "$repo_summary" 2>/dev/null || echo 0)
             repo_summaries=$(echo "$repo_summaries" | jq \
                 --arg name "$repo_name" \
-                --arg path "$repo_name/codegraph-summary.json" \
+                --arg path "${repo_summary#"$output_dir"/}" \
                 --arg state "$index_state" \
                 --argjson symbols "$symbols" \
                 '. + [{repo: $name, summary_path: $path, index_state: $state, symbols: $symbols}]')
@@ -510,7 +540,7 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
             continue
         fi
 
-        REPO_OUTPUT="$OUTPUT_DIR/$REPO_NAME"
+        REPO_OUTPUT="$SOURCE_OUTPUT_ROOT/$REPO_NAME"
         mkdir -p "$REPO_OUTPUT"
 
         echo "--- Analyzing repo: $REPO_NAME ($REPO_PATH) ---" >&2
@@ -602,7 +632,7 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
     # Cross-repo extraction only makes sense with multiple repos
     CROSS_REPO_PATH=""
     if [[ "$REPO_COUNT" -gt 1 ]]; then
-        "$SCRIPT_DIR/extract-cross-repo.sh" "$OUTPUT_DIR" "$ANALYSIS_REPOS_MANIFEST"
+        "$SCRIPT_DIR/extract-cross-repo.sh" "$OUTPUT_DIR" "$ANALYSIS_REPOS_MANIFEST" "$SOURCE_OUTPUT_ROOT"
         CROSS_REPO_PATH="cross-repo.json"
     fi
 
@@ -618,20 +648,24 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
     # Get repo names from manifest
     for (( i=0; i<REPO_COUNT; i++ )); do
         REPO_NAME=$(manifest_source_name "$MANIFEST_PATH" "$WORKSPACE_MANIFEST" "$i")
-        REPO_ANALYSIS="$OUTPUT_DIR/$REPO_NAME/analysis.json"
+        REPO_ANALYSIS="$SOURCE_OUTPUT_ROOT/$REPO_NAME/analysis.json"
         if [[ -f "$REPO_ANALYSIS" ]]; then
             repo_files=$(jq -r '.metadata.total_files // 0' "$REPO_ANALYSIS" 2>/dev/null || echo 0)
             repo_lines=$(jq -r '.metadata.total_lines // 0' "$REPO_ANALYSIS" 2>/dev/null || echo 0)
             total_files=$((total_files + repo_files))
             total_lines=$((total_lines + repo_lines))
-            repo_analyses=$(echo "$repo_analyses" | jq --arg name "$REPO_NAME" --arg path "$REPO_NAME/analysis.json" '. + [{name: $name, path: $path}]')
+            REPO_ANALYSIS_RELATIVE="${REPO_ANALYSIS#"$OUTPUT_DIR"/}"
+            repo_analyses=$(echo "$repo_analyses" | jq --arg name "$REPO_NAME" --arg path "$REPO_ANALYSIS_RELATIVE" '. + [{name: $name, path: $path}]')
         fi
     done
 
     # Write aggregate analysis.json (cross_repo_path only if multiple repos)
     aggregate_manifest_path="repos-manifest.json"
     if [[ -n "$WORKSPACE_MANIFEST" ]]; then
-        aggregate_manifest_path="workspace-manifest.json"
+        case "$WORKSPACE_MANIFEST" in
+            "$OUTPUT_DIR"/*) aggregate_manifest_path="${WORKSPACE_MANIFEST#"$OUTPUT_DIR"/}" ;;
+            *) aggregate_manifest_path="workspace-manifest.json" ;;
+        esac
     fi
 
     if [[ -n "$CROSS_REPO_PATH" ]]; then
@@ -674,10 +708,10 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
             }' > "$OUTPUT_DIR/analysis.json"
     fi
 
-    write_polyrepo_codegraph_summary "$OUTPUT_DIR" "$MANIFEST_PATH" "$WORKSPACE_MANIFEST"
+    write_polyrepo_codegraph_summary "$OUTPUT_DIR" "$MANIFEST_PATH" "$WORKSPACE_MANIFEST" "$SOURCE_OUTPUT_ROOT"
 
     echo "Analysis complete! ($REPO_COUNT repo(s))" >&2
-    echo "Per-repo outputs in: $OUTPUT_DIR/{repo-name}/" >&2
+    echo "Per-source outputs in: $SOURCE_OUTPUT_ROOT/{source-id}/" >&2
     [[ -n "$CROSS_REPO_PATH" ]] && echo "Cross-repo map: $OUTPUT_DIR/cross-repo.json" >&2
     echo "Aggregate analysis: $OUTPUT_DIR/analysis.json" >&2
     exit 0

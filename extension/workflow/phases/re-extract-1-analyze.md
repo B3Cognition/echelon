@@ -6,23 +6,30 @@
 
 Provide RE-ANALYZER with:
 - `{state.output_dir}/state.json` — current run state (output_dir, mode)
+- `{state.output_dir}/re-execution-plan.json` — per-source refresh decisions
+- `{state.output_dir}/re-analysis-manifest.json` — refresh-only source selection
+- `{state.output_dir}/workspace-manifest.json` — full workspace inventory; preserve unchanged
+- `{state.output_dir}/re-source-index.json` — source decisions and run paths
 - `echelon-config.yml` `re:` section — analysis scope, extensions, depth settings
 
 ## Dispatch Prompt
 
 Instruct RE-ANALYZER to:
-1. Run `discover-repos.sh` to detect single vs. polyrepo workspace
-2. Resolve echelon `re:` config and export `ECHELON_CFG_RE_*` env vars
-3. Run `run-analysis.sh` to produce `analysis.json` (and per-repo files if polyrepo)
-4. Summarize outputs and return `echelon_result:`
+1. Prefer `re-analysis-manifest.json`; use standalone discovery only when no planned manifest exists
+2. Analyze only the selected workspace sources with `--source-output-root {state.output_dir}/sources`
+3. Pass explicit resolved profile, depth, max-lines, and git-history values
+4. Treat an empty source selection as a successful no-op
+5. Summarize exact profile values and outputs, then return `echelon_result:`
 
 ## Expected Outputs
 
 | File | Required |
 |---|---|
 | `{state.output_dir}/analysis.json` | Yes |
-| `{state.output_dir}/repos-manifest.json` | Yes |
-| `{state.output_dir}/cross-repo.json` | Polyrepo only |
+| `{state.output_dir}/re-analysis-manifest.json` | Active run |
+| `{state.output_dir}/sources/{source-id}/analysis.json` | Each refresh source |
+| `{state.output_dir}/repos-manifest.json` | Compatibility |
+| `{state.output_dir}/cross-repo.json` | Multiple selected sources only |
 | `{state.output_dir}/codegraph-analysis.json` | Optional (Node.js) |
 | `{state.output_dir}/codegraph-summary.json` | Optional (Node.js) |
 
@@ -33,10 +40,12 @@ echelon_result:
   verdict: DONE | BLOCKED
   phase_id: re-extract-1-analyze
   state_updates:
-    mode: single | polyrepo
+    mode: workspace
     domains: []
     artifacts:
       analysis_json: "{state.output_dir}/analysis.json"
+      analysis_manifest: "{state.output_dir}/re-analysis-manifest.json"
+      workspace_manifest: "{state.output_dir}/workspace-manifest.json"
       repos_manifest: "{state.output_dir}/repos-manifest.json"
       cross_repo: null
       codegraph_analysis: "{state.output_dir}/codegraph-analysis.json" | null
@@ -50,6 +59,6 @@ echelon_result:
     - type: phase_complete
       phase: re-extract-1-analyze
       data:
-        summary: "Analyzed {N} files across {M} repo(s)"
+        summary: "Analyzed {N} files across {M} selected workspace source(s) with explicit profile settings"
   blocked_reason: null
 ```
