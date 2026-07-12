@@ -409,6 +409,20 @@ def test_flags_build_prompt_git_ls_tree_discovery(tmp_path: Path) -> None:
     assert findings[0].reason == "build_git_state_discovery"
 
 
+def test_flags_build_prompt_git_cat_file_discovery(tmp_path: Path) -> None:
+    prompt = tmp_path / "extension" / "agents" / "build" / "implementer.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "Use git cat-file to inspect repository objects before implementing.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert len(findings) == 1
+    assert findings[0].reason == "build_git_state_discovery"
+
+
 def test_flags_build_prompt_git_grep_discovery(tmp_path: Path) -> None:
     prompt = tmp_path / "extension" / "agents" / "build" / "implementer.md"
     prompt.parent.mkdir(parents=True)
