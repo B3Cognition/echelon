@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from echelon.workspace_model import SourceRoot, WorkspaceInfo, WorkspaceManifest
 from harness.re_cache import ReCacheRecord, cache_source_dir, write_cache_record
 from harness.re_fingerprint import ReFingerprintProfile, fingerprint_source
 from harness.re_planner import (
+    ReExecutionPlan,
     RePlanError,
     build_re_execution_plan,
     resolve_re_policy,
@@ -236,3 +239,59 @@ def test_target_only_selects_target_and_forbids_sibling_roots(tmp_path: Path) ->
         str(root / "sources" / "original-a"),
         str(root / "sources" / "original-b"),
     ]
+
+
+def test_re_execution_plan_round_trips_exact_profile_and_fingerprints(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "api")
+    profile = ReFingerprintProfile()
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest(root, "api"),
+        cache_root=root / ".echelon" / "cache" / "re",
+        target_source="",
+        requested_policy="changed",
+        profile=profile,
+    )
+
+    restored = ReExecutionPlan.from_json_dict(plan.to_json_dict())
+
+    assert restored == plan
+    assert restored.sources[0].classification == "refresh"
+    assert restored.analysis_required is True
+    assert restored.workspace_synthesis_required is True
+    assert restored.publication_required is True
+
+
+def test_re_execution_plan_rejects_profile_hash_mismatch(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "api")
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest(root, "api"),
+        cache_root=root / ".echelon" / "cache" / "re",
+        target_source="",
+        requested_policy="changed",
+        profile=ReFingerprintProfile(),
+    ).to_json_dict()
+    plan["sources"][0]["fingerprint"]["profile_hash"] = "wrong"
+
+    with pytest.raises(RePlanError, match="profile hash"):
+        ReExecutionPlan.from_json_dict(plan)
+
+
+def test_re_execution_plan_rejects_duplicate_source_ids(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "api")
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest(root, "api"),
+        cache_root=root / ".echelon" / "cache" / "re",
+        target_source="",
+        requested_policy="changed",
+        profile=ReFingerprintProfile(),
+    ).to_json_dict()
+    plan["sources"].append(dict(plan["sources"][0]))
+
+    with pytest.raises(RePlanError, match="duplicate source ID"):
+        ReExecutionPlan.from_json_dict(plan)

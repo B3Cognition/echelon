@@ -7,7 +7,7 @@ import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from echelon.workspace_model import IGNORED_SOURCE_DIRS
 
@@ -24,15 +24,38 @@ class ReFingerprintProfile:
     git_history_limit: int | None = 2500
     codegraph_version: str | None = None
 
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "profile": self.profile,
+            "depth": self.depth,
+            "max_lines_per_file": self.max_lines_per_file,
+            "git_history_limit": self.git_history_limit,
+            "codegraph_version": self.codegraph_version,
+        }
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object]) -> "ReFingerprintProfile":
+        profile = _required_string(data, "profile")
+        depth = _required_string(data, "depth")
+        max_lines = _optional_positive_int(data, "max_lines_per_file")
+        history_limit = _optional_positive_int(data, "git_history_limit")
+        codegraph_version = data.get("codegraph_version")
+        if codegraph_version is not None and not isinstance(codegraph_version, str):
+            raise ValueError("codegraph_version must be a string or null")
+        return cls(
+            profile=profile,
+            depth=depth,
+            max_lines_per_file=max_lines,
+            git_history_limit=history_limit,
+            codegraph_version=codegraph_version,
+        )
+
+    def profile_hash(self) -> str:
+        return _sha256_text(self.stable_json())
+
     def stable_json(self) -> str:
         return json.dumps(
-            {
-                "profile": self.profile,
-                "depth": self.depth,
-                "max_lines_per_file": self.max_lines_per_file,
-                "git_history_limit": self.git_history_limit,
-                "codegraph_version": self.codegraph_version,
-            },
+            self.to_json_dict(),
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -48,11 +71,41 @@ class SourceFingerprint:
     profile_hash: str
     git_head: str | None = None
 
+    def to_json_dict(self) -> dict[str, Any]:
+        return {
+            "value": self.value,
+            "kind": self.kind,
+            "dirty": self.dirty,
+            "profile_hash": self.profile_hash,
+            "git_head": self.git_head,
+        }
+
+    @classmethod
+    def from_json_dict(cls, data: Mapping[str, object]) -> "SourceFingerprint":
+        value = _required_string(data, "value")
+        kind = data.get("kind")
+        if kind not in {"git", "file-tree"}:
+            raise ValueError(f"invalid fingerprint kind: {kind!r}")
+        dirty = data.get("dirty")
+        if not isinstance(dirty, bool):
+            raise ValueError("fingerprint dirty must be a boolean")
+        profile_hash = _required_string(data, "profile_hash")
+        git_head = data.get("git_head")
+        if git_head is not None and not isinstance(git_head, str):
+            raise ValueError("fingerprint git_head must be a string or null")
+        return cls(
+            value=value,
+            kind=kind,
+            dirty=dirty,
+            profile_hash=profile_hash,
+            git_head=git_head,
+        )
+
 
 def fingerprint_source(source_path: Path, profile: ReFingerprintProfile) -> SourceFingerprint:
     """Compute a deterministic fingerprint for one source root."""
     source = source_path.resolve()
-    profile_hash = _sha256_text(profile.stable_json())
+    profile_hash = profile.profile_hash()
     if _is_git_worktree(source):
         return _fingerprint_git_source(source, profile, profile_hash)
     return _fingerprint_file_tree(source, profile_hash)
@@ -157,6 +210,22 @@ def _run_git(path: Path, *args: str, check: bool = True) -> subprocess.Completed
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _required_string(data: Mapping[str, object], key: str) -> str:
+    value = data.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{key} must be a non-empty string")
+    return value.strip()
+
+
+def _optional_positive_int(data: Mapping[str, object], key: str) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{key} must be a positive integer or null")
+    return value
 
 
 def _digest_text(digest: Any, value: str) -> None:

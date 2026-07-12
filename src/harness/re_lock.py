@@ -133,13 +133,13 @@ def recover_stale_publish_lock(
     """Remove a provably stale lock when no replacement rollback is pending."""
     root = workspace_root.resolve()
     lock_path = ensure_re_layout(root).locks / "publish.lock"
-    if not lock_path.exists():
+    owner = recoverable_publish_lock_owner(
+        root,
+        stale_after_seconds=stale_after_seconds,
+    )
+    if owner is None:
         return False
-
-    owner = _read_owner(lock_path)
     run_id = str(owner.get("run_id") or "")
-    if not _SAFE_RUN_ID.fullmatch(run_id):
-        raise RePublishRecoveryRequired(f"publish lock run ID is malformed: {run_id!r}")
     journal = ensure_re_layout(root).staging / run_id / "rollback-journal.json"
     if journal.is_file():
         journal_data = _read_json(journal)
@@ -148,22 +148,37 @@ def recover_stale_publish_lock(
                 f"rollback journal must be recovered before removing lock: {journal}"
             )
 
+    shutil.rmtree(lock_path)
+    return True
+
+
+def recoverable_publish_lock_owner(
+    workspace_root: Path,
+    *,
+    stale_after_seconds: int = 3600,
+) -> dict[str, Any] | None:
+    """Return inactive stale owner metadata without modifying the lock."""
+    root = workspace_root.resolve()
+    lock_path = ensure_re_layout(root).locks / "publish.lock"
+    if not lock_path.exists():
+        return None
+    owner = _read_owner(lock_path)
+    run_id = str(owner.get("run_id") or "")
+    if not _SAFE_RUN_ID.fullmatch(run_id):
+        raise RePublishRecoveryRequired(f"publish lock run ID is malformed: {run_id!r}")
     if _owner_run_is_active(root, owner):
-        return False
+        return None
 
     hostname = str(owner.get("hostname") or "")
     pid = owner.get("pid")
     if isinstance(pid, bool) or not isinstance(pid, int):
         raise RePublishRecoveryRequired("publish lock owner PID is malformed")
-
     if hostname == socket.gethostname():
         if _pid_alive(pid):
-            return False
+            return None
     elif _lock_age_seconds(owner) < stale_after_seconds:
-        return False
-
-    shutil.rmtree(lock_path)
-    return True
+        return None
+    return owner
 
 
 def _owner_run_is_active(workspace_root: Path, owner: dict[str, Any]) -> bool:

@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from harness.re_fingerprint import ReFingerprintProfile, fingerprint_source
 
 
@@ -102,3 +104,31 @@ def test_non_git_source_fingerprint_hashes_relevant_files_and_profile_inputs(
     assert first.dirty is False
     assert ignored_change.value == first.value
     assert relevant_change.value != first.value
+
+
+def test_re_fingerprint_profile_round_trips_and_hashes_stable_json() -> None:
+    profile = ReFingerprintProfile(
+        profile="deep",
+        depth="full",
+        max_lines_per_file=3200,
+        git_history_limit=1400,
+        codegraph_version="cg-2",
+    )
+
+    restored = ReFingerprintProfile.from_json_dict(profile.to_json_dict())
+
+    assert restored == profile
+    assert restored.profile_hash() == profile.profile_hash()
+
+
+def test_re_fingerprint_profile_rejects_invalid_numeric_fields() -> None:
+    with pytest.raises(ValueError, match="max_lines_per_file"):
+        ReFingerprintProfile.from_json_dict(
+            {
+                "profile": "full",
+                "depth": "full",
+                "max_lines_per_file": True,
+                "git_history_limit": 2500,
+                "codegraph_version": None,
+            }
+        )
