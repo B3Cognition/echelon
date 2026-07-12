@@ -110,6 +110,79 @@ def test_complete_golddigger_publishes_canonical_workspace_context(tmp_path: Pat
     assert not updated["re_publication_required"]
 
 
+def test_golddigger_mode1_recovers_forwarded_nested_re_extract_result(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",), run_id="run-nested-result")
+    state_store = SquadStateStore(run_dir)
+    state = state_store.load()
+    state.update(
+        {
+            "re_refresh_sources": ["api"],
+            "re_generation": 0,
+            "re_publication_required": True,
+            "re_workspace_synthesis_required": True,
+            "re_analysis_required": True,
+        }
+    )
+    state_store.save(state)
+
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.exec_agent.side_effect = [
+        SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "phase_id": "re-extract-1-analyze",
+                "state_updates": {
+                    "mode": "workspace",
+                    "domains": [],
+                    "artifacts": {"analysis_json": "runs/run-nested-result/re/analysis.json"},
+                },
+                "journal_entries": [],
+            },
+            raw_output="nested RE result",
+            duration_ms=1,
+            timed_out=False,
+        ),
+        SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {"golddigger_status": "complete"},
+                "journal_entries": [],
+            },
+            raw_output="outer GOLDDIGGER result",
+            duration_ms=1,
+            timed_out=False,
+        ),
+    ]
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/golddigger.md"
+    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, run_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[
+            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+        ],
+        allowed_state_updates=["golddigger_status"],
+    )
+
+    result = executor._run_pre_dispatch(node, state_store.load(), state_store)
+
+    assert result is None
+    assert provider.exec_agent.call_count == 2
+    recovery_prompt = provider.exec_agent.call_args_list[1].args[1]
+    assert "forwarded a nested re-extract result" in recovery_prompt
+    assert (tmp_path / "re/index.json").is_file()
+    assert state_store.load()["golddigger_status"] == "complete"
+
+
 def test_all_empty_workspace_publishes_successfully_without_source_specs(
     tmp_path: Path,
 ) -> None:

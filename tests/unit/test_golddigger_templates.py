@@ -143,3 +143,9 @@ class TestGolddiggerTemplates:
         assert "Empty repositories are a valid no-op, not a failure" in text
         assert "all-empty declared workspace" in text
         assert "no source domain spec is required" in text
+
+    def test_golddigger_keeps_nested_re_extract_results_inside_its_boundary(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "Nested Result Boundary" in text
+        assert "NEVER forward a nested `echelon_result`" in text

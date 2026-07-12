@@ -747,6 +747,11 @@ class PhaseExecutor(ABC):
                     result = self._provider.exec_agent(
                         str(self._project_root), prompt
                     )
+                    if entry.get("id") == "golddigger_mode1":
+                        result = self._recover_forwarded_golddigger_mode1_result(
+                            prompt,
+                            result,
+                        )
                     result = self._validate_result_state_updates(node, result)
                     if result.blocked:
                         return result
@@ -763,6 +768,36 @@ class PhaseExecutor(ABC):
                         s[k] = v
                         state_store.save(s)
         return None
+
+    def _recover_forwarded_golddigger_mode1_result(
+        self,
+        prompt: str,
+        result: "SquadAgentResult",
+    ) -> "SquadAgentResult":
+        """Request the outer GOLDDIGGER result when an RE sub-skill leaked its result."""
+        payload = result.echelon_result
+        if not isinstance(payload, dict):
+            return result
+        phase_id = payload.get("phase_id")
+        updates = payload.get("state_updates")
+        if (
+            not isinstance(phase_id, str)
+            or not phase_id.startswith("re-extract-")
+            or not isinstance(updates, dict)
+            or "golddigger_status" in updates
+        ):
+            return result
+
+        recovery_prompt = (
+            prompt
+            + "\n\n# Required GOLDDIGGER Result Recovery\n"
+            + "Your previous response forwarded a nested re-extract result instead "
+            + "of completing the outer GOLDDIGGER dispatch. Resume from the staged "
+            + "RE state; do not return the nested phase result. Return one new outer "
+            + "GOLDDIGGER `echelon_result` using only the allowed GOLDDIGGER "
+            + "state_updates, including `golddigger_status`.\n"
+        )
+        return self._provider.exec_agent(str(self._project_root), recovery_prompt)
 
     def _golddigger_mode1_cache_hit(self, state: dict) -> bool:
         """Return True when the RE plan says Mode 1 has no refresh work."""

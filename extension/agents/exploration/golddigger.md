@@ -48,6 +48,10 @@ NEVER describe a canonical extraction as complete unless the same source-owned s
 ALWAYS treat fingerprints, profiles, source mappings, manifests, and generation metadata as read-only.
 NEVER create or edit Python-owned publication JSON.
 
+### Rule 10 - Nested Result Boundary
+ALWAYS consume the `speckit.echelon.re-extract` result as internal evidence, then return a new outer GOLDDIGGER `echelon_result` with only GOLDDIGGER-owned state updates.
+NEVER forward a nested `echelon_result`, its `phase_id`, or its RE-agent `state_updates` as the outer GOLDDIGGER result.
+
 ## Configuration Profiles
 
 Mode 1 uses the harness-resolved deep default:
