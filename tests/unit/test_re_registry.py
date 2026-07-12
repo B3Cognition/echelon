@@ -156,4 +156,3 @@ def test_canonical_re_artifacts_reads_only_durable_paths(tmp_path: Path) -> None
         for value in artifacts.values()
         for runtime in ("/.cache/", "/.staging/", "/.locks/")
     )
-

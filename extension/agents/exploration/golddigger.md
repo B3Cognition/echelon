@@ -41,6 +41,7 @@ NEVER inspect, search, summarize, or refresh a forbidden or excluded source root
 ### Rule 8 - Specified Extraction Completion
 ALWAYS verify workspace synthesis and every non-empty refreshed source's deep specs before reporting complete.
 NEVER report `golddigger_status: complete` unless reverse-engineering specs exist for every non-empty refreshed source and are included in `golddigger_artifacts`; the all-empty workspace exception still requires complete workspace synthesis.
+ALWAYS apply the same source-owned spec and workspace-synthesis checks to every claim of canonical extraction completeness.
 NEVER describe a canonical extraction as complete unless the same source-owned specs and workspace synthesis have been validated.
 
 ### Rule 9 - Deterministic Metadata Ownership

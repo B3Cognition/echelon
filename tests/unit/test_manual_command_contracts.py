@@ -51,11 +51,13 @@ class TestManualCommandContracts:
         assert "`{spec_dir}/spec.md`" in text
         assert "`{spec_dir}/adrs/`" in text
 
-    def test_status_command_locates_specs_from_workspace_specs_dir(self) -> None:
+    def test_status_command_delegates_to_python_harness(self) -> None:
         text = (COMMAND_DIR / "echelon.status.md").read_text(encoding="utf-8")
 
+        assert "echelon spec status" in text
+        assert "Python harness owns state discovery, artifact inventory" in text
         assert ".specify/specs/{spec_id}-*/" not in text
-        assert "specs/{spec_id}-*/" in text
+        assert "specs/{spec_id}-*/" not in text
 
     def test_manual_specialist_commands_require_state_spec_dir(self) -> None:
         for filename in ["echelon.innovate.md", "echelon.ground.md"]:
@@ -66,11 +68,12 @@ class TestManualCommandContracts:
             assert "Active squad state is missing spec_dir" in text
             assert "If `state.json.spec_dir` is absent, locate" not in text
 
-    def test_status_command_prefers_state_spec_dir_for_artifact_inventory(self) -> None:
+    def test_status_command_does_not_duplicate_artifact_discovery(self) -> None:
         text = (COMMAND_DIR / "echelon.status.md").read_text(encoding="utf-8")
 
-        assert "If `state.json.spec_dir` is present, use it as the spec directory" in text
-        assert "Only fall back to `specs/{spec_id}-*/`" in text
+        assert "Do not inspect run\n" in text
+        assert "directories, `state.json`, spec artifacts" in text
+        assert "If `state.json.spec_dir` is present" not in text
 
     def test_feedback_command_locates_specs_from_workspace_specs_dir(self) -> None:
         text = (COMMAND_DIR / "echelon.feedback.md").read_text(encoding="utf-8")
