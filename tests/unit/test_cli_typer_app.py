@@ -302,11 +302,12 @@ def test_hidden_top_level_alias_still_routes(monkeypatch):
 
 @pytest.mark.unit
 def test_typer_run_prints_version_without_subcommand(capsys):
+    from echelon.cli import CLI_VERSION
     from echelon.cli_app import run
 
     run(["--version"])
 
-    assert capsys.readouterr().out.strip() == "echelon 3.0.0"
+    assert capsys.readouterr().out.strip() == f"echelon {CLI_VERSION}"
 
 
 @pytest.mark.unit
