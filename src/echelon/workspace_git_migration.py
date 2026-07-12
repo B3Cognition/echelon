@@ -9,6 +9,7 @@ from pathlib import Path
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.config import CANONICAL_CONFIG_PATH, LEGACY_CONFIG_PATH
+from harness.re_registry import ensure_re_layout
 from echelon.workspace_model import discover_workspace
 
 
@@ -107,6 +108,7 @@ def _existing_stage_paths(root: Path) -> tuple[str, ...]:
     paths = [".gitignore"]
     paths.extend(path for path in (".echelon/config.yml",) if (root / path).exists())
     paths.extend(path for path in ("sources/README.md",) if (root / path).exists())
+    paths.extend(path for path in ("re/.gitignore",) if (root / path).exists())
     paths.extend(path for path in ("specs",) if (root / path).exists())
     return tuple(paths)
 
@@ -345,6 +347,38 @@ def doctor_workspace(workspace_root: Path) -> WorkspaceDoctorResult:
                 )
             )
 
+    re_root = root / "re"
+    if re_root.exists() and _git_ignored(root, "re/index.json"):
+        findings.append(
+            WorkspaceDoctorFinding(
+                "error",
+                "re_ignored",
+                "re/ must be a tracked artifact surface, not ignored",
+                "re",
+            )
+        )
+    for runtime_path in ("re/.cache", "re/.staging", "re/.locks"):
+        runtime_obj = root / runtime_path
+        if runtime_obj.exists() and not _git_ignored(root, runtime_path):
+            findings.append(
+                WorkspaceDoctorFinding(
+                    "error",
+                    "re_runtime_not_ignored",
+                    f"{runtime_path}/ must be ignored by workspace Git",
+                    runtime_path,
+                )
+            )
+        tracked_runtime = _tracked_paths(root, runtime_path) if _has_git_marker(root) else ()
+        if tracked_runtime:
+            findings.append(
+                WorkspaceDoctorFinding(
+                    "error",
+                    "re_runtime_tracked",
+                    f"{runtime_path} contains tracked runtime files",
+                    runtime_path,
+                )
+            )
+
     specs = root / "specs"
     if not specs.exists():
         findings.append(
@@ -466,6 +500,7 @@ def migrate_workspace(
 
     canonical_config_copied = _copy_legacy_config_to_canonical(plan)
     source_roots_scaffolded = _scaffold_source_roots_directory(plan.workspace_root)
+    ensure_re_layout(plan.workspace_root)
     gitignore_updated = _append_missing_gitignore_entries(
         plan.workspace_root,
         plan.gitignore_entries,
@@ -477,6 +512,8 @@ def migrate_workspace(
             stage_paths_list.append(".gitignore")
         if source_roots_scaffolded or not _is_tracked(plan.workspace_root, "sources/README.md"):
             stage_paths_list.append("sources/README.md")
+        if not _is_tracked(plan.workspace_root, "re/.gitignore"):
+            stage_paths_list.append("re/.gitignore")
         if canonical_config_copied or (
             plan.canonical_config.exists()
             and (gitignore_updated or not _is_tracked(plan.workspace_root, ".echelon/config.yml"))

@@ -82,6 +82,7 @@ def test_migration_write_initializes_git_and_stages_only_workspace_files(
         text=True,
     ).stdout.splitlines()
     assert ".gitignore" in staged
+    assert "re/.gitignore" in staged
     assert "sources/README.md" in staged
     assert ".specify" not in staged
     assert "specs/001-demo/spec.md" in staged
@@ -99,7 +100,7 @@ def test_existing_git_workspace_migration_only_stages_gitignore(tmp_path: Path) 
     result = migrate_workspace(tmp_path, write=True, commit=False)
 
     assert result.git_initialized is False
-    assert result.staged_paths == (".gitignore", "sources/README.md")
+    assert result.staged_paths == (".gitignore", "sources/README.md", "re/.gitignore")
     staged = subprocess.run(
         ["git", "diff", "--cached", "--name-only"],
         cwd=tmp_path,
@@ -107,7 +108,7 @@ def test_existing_git_workspace_migration_only_stages_gitignore(tmp_path: Path) 
         capture_output=True,
         text=True,
     ).stdout.splitlines()
-    assert staged == [".gitignore", "sources/README.md"]
+    assert staged == [".gitignore", "re/.gitignore", "sources/README.md"]
 
 
 @pytest.mark.unit
@@ -228,7 +229,7 @@ def test_existing_gitignore_runtime_entries_satisfy_runtime_ignore(tmp_path: Pat
     result = migrate_workspace(tmp_path, write=True, commit=False)
 
     assert result.gitignore_updated is False
-    assert result.staged_paths == ("sources/README.md",)
+    assert result.staged_paths == ("sources/README.md", "re/.gitignore")
     assert (tmp_path / ".gitignore").read_text(encoding="utf-8") == (
         ".specify\nruns\n.claude\n!/.echelon/\n!/.echelon/config.yml\n.echelon/local.yml\n.echelon/runtime\n.echelon/cache\n.echelon/recovery-backups\n/sources/*\n!/sources/README.md\n"
     )
@@ -356,3 +357,47 @@ def test_workspace_doctor_marks_empty_sources_planning_only(tmp_path: Path) -> N
     assert result.has_errors is False
     assert result.buildable is False
     assert {finding.code for finding in result.findings} == {"planning_only_workspace"}
+
+
+@pytest.mark.unit
+def test_workspace_doctor_rejects_ignored_re_artifact_surface(tmp_path: Path) -> None:
+    _write_workspace(tmp_path)
+    (tmp_path / ".gitignore").write_text(
+        "/.specify/\n/runs/\n/re/\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon" / "config.yml").write_text(
+        "workspace:\n  git_role: orchestration\nsources: []\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "re").mkdir()
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    result = doctor_workspace(tmp_path)
+
+    findings = {finding.code: finding for finding in result.findings}
+    assert findings["re_ignored"].path == "re"
+
+
+@pytest.mark.unit
+def test_workspace_doctor_rejects_unignored_re_runtime_dirs(tmp_path: Path) -> None:
+    _write_workspace(tmp_path)
+    (tmp_path / ".gitignore").write_text("/.specify/\n/runs/\n", encoding="utf-8")
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon" / "config.yml").write_text(
+        "workspace:\n  git_role: orchestration\nsources: []\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "re" / ".cache").mkdir(parents=True)
+    (tmp_path / "re" / ".cache" / "entry.json").write_text("{}\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+
+    result = doctor_workspace(tmp_path)
+
+    runtime_paths = {
+        finding.path
+        for finding in result.findings
+        if finding.code == "re_runtime_not_ignored"
+    }
+    assert "re/.cache" in runtime_paths
