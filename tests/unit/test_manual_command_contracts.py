@@ -56,6 +56,7 @@ class TestManualCommandContracts:
 
         assert "echelon spec status" in text
         assert "Python harness owns state discovery, artifact inventory" in text
+        assert "Do not inspect run" in text
         assert ".specify/specs/{spec_id}-*/" not in text
         assert "specs/{spec_id}-*/" not in text
 
@@ -73,7 +74,11 @@ class TestManualCommandContracts:
 
         assert "Do not inspect run\n" in text
         assert "directories, `state.json`, spec artifacts" in text
+        assert "Python harness owns state discovery" in text
+        assert "Python harness owns state discovery, artifact inventory" in text
         assert "If `state.json.spec_dir` is present" not in text
+        assert "If `state.json.spec_dir` is present, use it as the spec directory" not in text
+        assert "Only fall back to `specs/{spec_id}-*/`" not in text
 
     def test_feedback_command_locates_specs_from_workspace_specs_dir(self) -> None:
         text = (COMMAND_DIR / "echelon.feedback.md").read_text(encoding="utf-8")

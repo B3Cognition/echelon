@@ -21,8 +21,9 @@ MARKER='**Endocrine awareness.**'
 
 # Extract ALL_AGENTS from endocrine.sh source (parse the ALL_AGENTS=(…) block).
 ALL_AGENTS=()
-mapfile -t ALL_AGENTS < <(
-  python3 - "$ENDOCRINE" <<'PY'
+while IFS= read -r agent; do
+  ALL_AGENTS+=("$agent")
+done < <(python3 - "$ENDOCRINE" <<'PY'
 import re, sys
 text = open(sys.argv[1]).read()
 m = re.search(r'^ALL_AGENTS=\(([^)]*)\)', text, flags=re.M)

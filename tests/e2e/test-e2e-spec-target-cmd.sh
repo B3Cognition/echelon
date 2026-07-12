@@ -85,7 +85,7 @@ else
 fi
 
 # ── Test 3: no duplication on rewrite ─────────────────────────────────────────
-targets_count="$(grep -c 'targets:' "$tmpdir/specs/024-psd-import/spec.md" || true)"
+targets_count="$(grep -c '^targets:' "$tmpdir/specs/024-psd-import/targets.yml" || true)"
 if [[ "$targets_count" == "1" ]]; then
   assert "no duplication on rewrite" "$(ok_result)"
 else

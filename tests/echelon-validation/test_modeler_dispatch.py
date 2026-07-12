@@ -41,9 +41,9 @@ class TestModelerDispatch:
             content,
             re.IGNORECASE | re.DOTALL,
         )
-        impl_idx = content.index("IMPLEMENTER")
-        modeler_update_idx = content.index("MODELER) Update")
-        assert modeler_update_idx > impl_idx
+        section_start = content.index("**speckit-echelon-modeler (MODELER) Update")
+        section = content[section_start:]
+        assert "speckit-echelon-implementer (IMPLEMENTER)" in section
 
     def test_build_md_modeler_checks_invariant_violations(self) -> None:
         # Content moved to workflow/phases/build-6-progress.md (echelon.build.md is now a thin wrapper)
