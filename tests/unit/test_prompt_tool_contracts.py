@@ -7,6 +7,8 @@ from tests.contract.prompt_tool_contracts import (
     BUILD_SPEC_ARTIFACT_DISCOVERY_TARGETS,
     HARNESS_INTERNAL_DISCOVERY_TARGETS,
     HARNESS_INTERNAL_DISCOVERY_VERBS,
+    VERIFY_SPEC_DIR_DISCOVERY_TARGETS,
+    VERIFY_SPEC_DIR_DISCOVERY_VERBS,
     VERIFY_SPEC_RUN_DISCOVERY_TARGETS,
     VERIFY_SPEC_RUN_DISCOVERY_VERBS,
     scan_prompt_tool_contracts,
@@ -350,6 +352,20 @@ def test_flags_verify_spec_prompt_side_spec_dir_discovery(tmp_path: Path) -> Non
 
     assert len(findings) == 1
     assert findings[0].reason == "verify_spec_dir_discovery"
+
+
+def test_verify_spec_dir_discovery_targets_are_named_category() -> None:
+    assert VERIFY_SPEC_DIR_DISCOVERY_TARGETS == ("specs/",)
+
+
+def test_verify_spec_dir_discovery_verbs_are_named_category() -> None:
+    assert VERIFY_SPEC_DIR_DISCOVERY_VERBS == (
+        "find",
+        "locate",
+        "glob",
+        "list",
+        "search",
+    )
 
 
 def test_flags_harness_run_prompt_side_spec_dir_discovery(tmp_path: Path) -> None:

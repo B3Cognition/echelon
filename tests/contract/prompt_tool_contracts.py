@@ -240,8 +240,27 @@ BUILD_SPEC_ARTIFACT_DISCOVERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+VERIFY_SPEC_DIR_DISCOVERY_TARGETS = ("specs/",)
+
+VERIFY_SPEC_DIR_DISCOVERY_TARGET_RE = "|".join(
+    re.escape(target) for target in VERIFY_SPEC_DIR_DISCOVERY_TARGETS
+)
+
+VERIFY_SPEC_DIR_DISCOVERY_VERBS = (
+    "find",
+    "locate",
+    "glob",
+    "list",
+    "search",
+)
+
+VERIFY_SPEC_DIR_DISCOVERY_VERB_RE = "|".join(
+    re.escape(verb) for verb in VERIFY_SPEC_DIR_DISCOVERY_VERBS
+)
+
 VERIFY_SPEC_DIR_DISCOVERY_RE = re.compile(
-    r"\b(?:find|locate|glob|list|search)\b.{0,120}\bspecs/",
+    rf"\b(?:{VERIFY_SPEC_DIR_DISCOVERY_VERB_RE})\b"
+    rf".{{0,120}}\b(?:{VERIFY_SPEC_DIR_DISCOVERY_TARGET_RE})",
     re.IGNORECASE,
 )
 
