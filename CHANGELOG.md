@@ -107,7 +107,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   workflow-definition routing discovery now uses named target and verb categories
   for `workflow/definition.yaml` as well. Delivery command runtime discovery
   also blocks soft check/review/examine/look-at/view/show/display/print/dump
-  phrasing for `agents/control/commander.md` and `workflow/definition.yaml`.
+  phrasing plus shell-reader phrasing such as cat/sed/less/more/tail/head for
+  `agents/control/commander.md` and `workflow/definition.yaml`.
   Build prompt
   git-state discovery now also blocks `git diff`,
   `git branch`, `git show`, `git ls-files`, `git ls-tree`, `git cat-file`, and

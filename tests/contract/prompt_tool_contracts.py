@@ -315,6 +315,14 @@ DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERBS = (
     "display",
     "print",
     "dump",
+    "run",
+    "use",
+    "cat",
+    "sed",
+    "less",
+    "more",
+    "tail",
+    "head",
 )
 
 DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERB_RE = "|".join(

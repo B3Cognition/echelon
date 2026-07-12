@@ -740,6 +740,14 @@ def test_delivery_command_runtime_discovery_verbs_are_named_category() -> None:
         "display",
         "print",
         "dump",
+        "run",
+        "use",
+        "cat",
+        "sed",
+        "less",
+        "more",
+        "tail",
+        "head",
     )
 
 
@@ -768,6 +776,25 @@ def test_flags_delivery_command_runtime_discovery_soft_verbs(
     prompt.write_text(
         "Check `workflow/definition.yaml` before build.\n"
         "Review `agents/control/commander.md` before build.\n",
+        encoding="utf-8",
+    )
+
+    findings = scan_prompt_tool_contracts(tmp_path, [prompt])
+
+    assert [finding.reason for finding in findings] == [
+        "command_runtime_discovery",
+        "command_runtime_discovery",
+    ]
+
+
+def test_flags_delivery_command_runtime_discovery_shell_readers(
+    tmp_path: Path,
+) -> None:
+    prompt = tmp_path / "extension" / "commands" / "echelon.build.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "Run `cat workflow/definition.yaml` before build.\n"
+        "Use `sed -n '1,80p' agents/control/commander.md` before build.\n",
         encoding="utf-8",
     )
 
