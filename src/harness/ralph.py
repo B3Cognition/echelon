@@ -1784,7 +1784,7 @@ class RalphController:
         refresh_kwargs: dict[str, object] = {
             "spec_dir": self._find_spec_dir(worktree_path),
             "orchestration_root": (
-                getattr(self._gitops, "base_dir", None)
+                self._orchestration_root(Path(worktree_path))
                 if self._spec_artifacts_mode() == "external"
                 else None
             )
@@ -3361,6 +3361,9 @@ class RalphController:
         self._state_store.write(state)
 
     def _orchestration_root(self, fallback: Path | None = None) -> Path:
+        workspace_root = self._state_store.read().get("workspace_root")
+        if workspace_root:
+            return Path(str(workspace_root)).resolve()
         base_dir = getattr(self._gitops, "base_dir", None)
         if base_dir:
             return Path(base_dir).resolve()

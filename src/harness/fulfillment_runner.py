@@ -197,13 +197,15 @@ class FulfillmentRunner:
 
         prompt = _build_verify_spec_prompt(worktree, skill_path, arguments)
         exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
+        artifact_policy = _verify_spec_artifact_write_policy(
+            worktree=worktree,
+            spec_dir=resolved_spec_dir,
+            orchestration_root=orchestration_root,
+            spec_id=spec_id,
+        )
         artifact_write_violation = _verify_spec_artifact_write_violation(
             self._prompt_executor,
-            allowed_roots=_verify_spec_artifact_allowed_roots(
-                worktree=worktree,
-                spec_dir=resolved_spec_dir,
-                orchestration_root=orchestration_root,
-            ),
+            policy=artifact_policy,
         )
         provider_limit_reason = _provider_session_limit_reason(
             self._prompt_executor,
@@ -233,11 +235,7 @@ class FulfillmentRunner:
                 worktree,
                 spec_id,
                 spec_dir=resolved_spec_dir,
-                artifact_root=_run_pointer_root(
-                    worktree,
-                    spec_dir=resolved_spec_dir,
-                    orchestration_root=orchestration_root,
-                ),
+                artifact_root=artifact_policy.workspace_root,
             ):
                 return FulfillmentRefreshResult(
                     status="failed",
@@ -251,7 +249,7 @@ class FulfillmentRunner:
                 worktree,
                 spec_id,
                 spec_dir=resolved_spec_dir,
-                orchestration_root=orchestration_root,
+                orchestration_root=artifact_policy.workspace_root,
                 commit=commit,
                 spec_input_hash=spec_input_hash,
                 implementation_input_hash=implementation_input_hash,
@@ -377,10 +375,11 @@ class FulfillmentRunner:
             exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
             artifact_write_violation = _verify_spec_artifact_write_violation(
                 self._prompt_executor,
-                allowed_roots=_verify_spec_artifact_allowed_roots(
+                policy=_verify_spec_artifact_write_policy(
                     worktree=worktree,
                     spec_dir=spec_dir,
                     orchestration_root=spec_dir.parent.parent,
+                    spec_id=spec_id,
                 ),
             )
             provider_limit_reason = _provider_session_limit_reason(
@@ -711,47 +710,80 @@ _VERIFY_SPEC_ARTIFACT_MARKERS = (
     "implementation-map.",
     "implementation-map.md",
     "implementation-map.json",
+    "fulfillment-report.md",
+    "fulfillment-gaps.md",
 )
 
 _VERIFY_SPEC_WRITE_TOOL_RE = re.compile(
     r"(?:"
     r"▷\s*(?:Write|Edit|MultiEdit|NotebookEdit|NotebookWrite|Bash)|"
-    r"\b(?:Write|Edit|MultiEdit|NotebookEdit|NotebookWrite|Bash):|"
-    r"\b(?:cp|copy|copied|mv|move|write|wrote)\b"
+    r"\b(?:Write|Edit|MultiEdit|NotebookEdit|NotebookWrite|Bash):"
     r")",
     re.IGNORECASE,
 )
 
+_VERIFY_SPEC_ABSOLUTE_PATH_RE = re.compile(
+    r"(?:[`\"'](?P<quoted>/[^`\"']+)[`\"'])|(?P<bare>/[^\s`\"'),;]+)"
+)
 
-def _verify_spec_artifact_allowed_roots(
+
+@dataclass(frozen=True)
+class VerifySpecArtifactWritePolicy:
+    """Exact paths where a direct verify-spec refresh may write artifacts."""
+
+    workspace_root: Path
+    spec_dir: Path | None
+    spec_id: str
+
+    def allows(self, path: Path) -> bool:
+        candidate = path.resolve()
+        if self.spec_dir is not None:
+            spec_dir = self.spec_dir.resolve()
+            if candidate in {
+                spec_dir / "fulfillment-report.md",
+                spec_dir / "fulfillment-gaps.md",
+            }:
+                return True
+
+        runs_dir = self.workspace_root.resolve() / "runs"
+        try:
+            relative = candidate.relative_to(runs_dir)
+        except ValueError:
+            return False
+        parts = relative.parts
+        if len(parts) >= 2 and parts[0].startswith(
+            f"verify-spec-{self.spec_id}-"
+        ):
+            return True
+        return (
+            len(parts) >= 4
+            and parts[1] == "verify-spec"
+            and parts[2] == self.spec_id
+        )
+
+
+def _verify_spec_artifact_write_policy(
     *,
     worktree: Path,
     spec_dir: Path | None,
     orchestration_root: Path | str | None,
-) -> tuple[str, ...]:
-    roots = [worktree]
-    if spec_dir is not None:
-        roots.append(spec_dir)
-    roots.append(
-        _run_pointer_root(
+    spec_id: str,
+) -> VerifySpecArtifactWritePolicy:
+    return VerifySpecArtifactWritePolicy(
+        workspace_root=_run_pointer_root(
             worktree,
             spec_dir=spec_dir,
             orchestration_root=orchestration_root,
-        )
+        ).resolve(),
+        spec_dir=spec_dir.resolve() if spec_dir is not None else None,
+        spec_id=spec_id,
     )
-    resolved: list[str] = []
-    for root in roots:
-        try:
-            resolved.append(str(root.resolve()))
-        except OSError:
-            resolved.append(str(root))
-    return tuple(dict.fromkeys(resolved))
 
 
 def _verify_spec_artifact_write_violation(
     prompt_executor: PromptExecutor,
     *,
-    allowed_roots: tuple[str, ...],
+    policy: VerifySpecArtifactWritePolicy,
 ) -> str:
     text = _provider_limit_text(prompt_executor)
     if not text:
@@ -772,13 +804,23 @@ def _verify_spec_artifact_write_violation(
             continue
         if not any(marker in stripped for marker in _VERIFY_SPEC_ARTIFACT_MARKERS):
             continue
-        if any(root and root in stripped for root in allowed_roots):
+        paths = _verify_spec_artifact_paths(stripped)
+        if paths and all(policy.allows(path) for path in paths):
             continue
         return (
             "verify-spec artifact write outside allowed roots: "
             f"{_truncate_provider_reason(stripped)}"
         )
     return ""
+
+
+def _verify_spec_artifact_paths(line: str) -> list[Path]:
+    paths: list[Path] = []
+    for match in _VERIFY_SPEC_ABSOLUTE_PATH_RE.finditer(line):
+        text = match.group("quoted") or match.group("bare")
+        if text:
+            paths.append(Path(text))
+    return paths
 
 
 def _provider_session_limit_summary(text: str) -> str:
@@ -964,11 +1006,11 @@ def _run_pointer_root(
     spec_dir: Path | None = None,
     orchestration_root: Path | str | None = None,
 ) -> Path:
-    if orchestration_root is not None:
-        return Path(orchestration_root)
     if spec_dir is not None:
         if spec_dir.parent.name == "specs":
             return spec_dir.parent.parent
+    if orchestration_root is not None:
+        return Path(orchestration_root)
     return worktree
 
 

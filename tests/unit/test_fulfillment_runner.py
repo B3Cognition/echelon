@@ -266,6 +266,135 @@ class TestFulfillmentRunner:
         assert "verify-spec artifact write outside allowed roots" in result.reason
         assert "/tmp/mapping_summary.txt" in result.reason
 
+    def test_refresh_accepts_workspace_verify_run_from_target_scoped_runtime(
+        self, tmp_path
+    ):
+        workspace = tmp_path / "workspace"
+        runtime_root = workspace / "runs" / "targets" / "prosaic"
+        worktree = runtime_root / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        spec_dir = workspace / "specs" / "spec-001-demo"
+        _write_verify_skill(worktree)
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(workspace)
+        report = spec_dir / "fulfillment-report.md"
+        artifact = (
+            workspace
+            / "runs"
+            / "spec-20260708-123456"
+            / "verify-spec"
+            / "spec-001"
+            / "implementation-map.md"
+        )
+        provider = MagicMock(cli="claude")
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            provider.last_stdout = (
+                "  ▷ Bash: write implementation map\n"
+                f"  ⎿  wrote {artifact}\n"
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(
+                str(worktree),
+                "spec-001",
+                spec_dir=spec_dir,
+                orchestration_root=runtime_root,
+            )
+
+        assert result.status == "refreshed"
+
+    def test_refresh_rejects_mapping_artifact_in_sibling_source_root(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "runs" / "targets" / "prosaic" / "worktree"
+        spec_dir = workspace / "specs" / "spec-001-demo"
+        _write_verify_skill(worktree)
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(workspace)
+        report = spec_dir / "fulfillment-report.md"
+        sibling_artifact = workspace / "sources" / "ruler" / "implementation-map.md"
+        provider = MagicMock(cli="claude")
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            provider.last_stdout = (
+                "  ▷ Bash: write implementation map\n"
+                f"  ⎿  wrote {sibling_artifact}\n"
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(
+                str(worktree),
+                "spec-001",
+                spec_dir=spec_dir,
+                orchestration_root=workspace,
+            )
+
+        assert result.status == "failed"
+        assert "verify-spec artifact write outside allowed roots" in result.reason
+        assert str(sibling_artifact) in result.reason
+
+    def test_refresh_rejects_fulfillment_report_outside_spec_dir(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "runs" / "targets" / "prosaic" / "worktree"
+        spec_dir = workspace / "specs" / "spec-001-demo"
+        _write_verify_skill(worktree)
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(workspace)
+        report = spec_dir / "fulfillment-report.md"
+        invalid_report = workspace / "sources" / "prosaic" / "fulfillment-report.md"
+        provider = MagicMock(cli="claude")
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            provider.last_stdout = (
+                "  ▷ Write: write fulfillment report\n"
+                f"  ⎿  wrote {invalid_report}\n"
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(
+                str(worktree),
+                "spec-001",
+                spec_dir=spec_dir,
+                orchestration_root=workspace,
+            )
+
+        assert result.status == "failed"
+        assert "verify-spec artifact write outside allowed roots" in result.reason
+        assert str(invalid_report) in result.reason
+
+    def test_refresh_ignores_summary_text_that_is_not_a_tool_write(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        _write_matching_audit(tmp_path)
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock(cli="claude")
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            _write_matching_report(report)
+            provider.last_stdout = (
+                "Wrote /tmp/implementation-map.md with a parser-conformant table.\n"
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+
+        assert result.status == "refreshed"
+
     def test_refresh_rejects_success_when_report_is_not_current_after_stamp(
         self, tmp_path
     ):

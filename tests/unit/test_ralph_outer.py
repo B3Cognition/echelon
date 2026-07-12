@@ -2068,6 +2068,43 @@ class TestOuterLoopConvergence:
         assert result.final_verify is not None
         assert result.final_verify.failures[0].id == "fulfillment-gaps"
 
+    def test_refresh_uses_state_workspace_root_for_external_spec_artifacts(
+        self, tmp_path: Path
+    ) -> None:
+        """Target runtime storage must not redefine the workspace artifact root."""
+        controller, _provider, gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        runtime_root = workspace / "runs" / "targets" / "prosaic"
+        worktree = runtime_root / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        spec_dir = workspace / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        gitops.base_dir = runtime_root
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["target_repo"] = "prosaic"
+        state["target_path"] = str(workspace / "sources" / "prosaic")
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+        controller._fulfillment_runner = MagicMock()
+        controller._fulfillment_runner.refresh.return_value = FulfillmentRefreshResult(
+            status="cached",
+            exit_code=0,
+            used_cache=True,
+        )
+
+        result = controller._refresh_fulfillment_report(
+            VerifyResult(passed=True, failures=[]),
+            str(worktree),
+        )
+
+        assert result.passed is True
+        controller._fulfillment_runner.refresh.assert_called_once_with(
+            str(worktree),
+            "spec-001",
+            spec_dir=spec_dir,
+            orchestration_root=workspace,
+        )
+
     def test_cached_verify_spec_refresh_is_accepted_before_fulfillment_gate(
         self, tmp_path: Path
     ) -> None:
