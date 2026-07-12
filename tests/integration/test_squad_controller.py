@@ -76,6 +76,33 @@ def _mark_constitution_complete(tmp_path: Path, store: SquadStateStore) -> None:
     store.save(state)
 
 
+def _write_re_index_generation(root: Path, generation: int) -> None:
+    path = root / "re" / "index.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "generation": generation,
+                "publication_status": "complete",
+                "published_at": "2026-07-12T12:00:00+00:00",
+                "published_from_run": "fixture",
+                "sources": {},
+                "workspace": {
+                    "manifest": "re/workspace/manifest.json",
+                    "overview": "re/workspace/overview.md",
+                    "relationships": "re/workspace/relationships.md",
+                    "contracts": "re/workspace/contracts.md",
+                },
+                "warnings": [],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 class TestConsensusCannotBeSkipped:
     """Regression: phase3-consensus was previously skipped via EVOI fabrication.
     With the harness, phase3-plan → phase3-consensus is condition: always.
@@ -353,6 +380,43 @@ class TestCartographerResumeGuard:
 
 
 class TestSquadControllerBasics:
+    def test_generation_change_blocks_before_normal_executor_dispatch(self, tmp_path):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
+        state = store.load()
+        state["re_generation"] = 1
+        store.save(state)
+        _write_re_index_generation(tmp_path, 2)
+
+        result = ctrl.run("msg", "banzai")
+
+        assert result.status == "blocked"
+        state = store.load()
+        assert state["blocked_reason"] == "re_generation_mismatch"
+        assert state["re_generation_expected"] == 1
+        assert state["re_generation_actual"] == 2
+        assert state.get("phase_dispatch_counts", {}).get("phase1-tracker", 0) == 0
+        provider.exec_agent.assert_not_called()
+
+    def test_generation_change_blocks_manual_phase_before_executor_dispatch(self, tmp_path):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
+        state = store.load()
+        state["re_generation"] = 1
+        store.save(state)
+        _write_re_index_generation(tmp_path, 2)
+
+        result = ctrl.run_single_phase("phase1-tracker", "msg", "banzai")
+
+        assert result.status == "blocked"
+        state = store.load()
+        assert state["blocked_reason"] == "re_generation_mismatch"
+        assert state["re_generation_expected"] == 1
+        assert state["re_generation_actual"] == 2
+        provider.exec_agent.assert_not_called()
+
     def test_fresh_run_detects_project_mode_separately_from_autonomy_mode(self, tmp_path):
         for i in range(6):
             (tmp_path / f"module_{i}.py").write_text("pass\n", encoding="utf-8")

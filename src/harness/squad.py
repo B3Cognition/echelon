@@ -93,6 +93,25 @@ JUDGMENT_STATE_UPDATE_KEYS = frozenset(
 logger = logging.getLogger(__name__)
 
 
+class ReGenerationMismatch(RuntimeError):
+    """Raised when a run's pinned RE generation is no longer current."""
+
+    def __init__(self, expected: int, actual: int) -> None:
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"pinned RE generation {expected} does not match current generation {actual}"
+        )
+
+
+def assert_re_generation(workspace_root: Path, expected_generation: int) -> None:
+    """Require the workspace registry to match a run's pinned generation."""
+    index = load_published_index(workspace_root)
+    actual_generation = index.generation if index is not None else 0
+    if actual_generation != expected_generation:
+        raise ReGenerationMismatch(expected_generation, actual_generation)
+
+
 def _resolve_re_fingerprint_profile(project_root: Path) -> ReFingerprintProfile:
     """Resolve extraction settings that affect published RE compatibility."""
     config = get_full_resolved_config(project_root)
@@ -609,6 +628,9 @@ class SquadController:
             if self._skip_phase_if_condition_false(node):
                 continue
 
+            if not self._guard_re_generation(phase):
+                return SquadResult.from_state(self._state_store.load())
+
             # Per-phase dispatch cap — prevents runaway loops on any phase.
             # WHY phases use max_iterations as their cap (they legitimately iterate).
             # All other phases use MAX_PHASE_DISPATCHES.
@@ -858,6 +880,8 @@ class SquadController:
         label = node.label or node.id
         if self._skip_phase_if_condition_false(node, manual_phase_run=True):
             return SquadResult.from_state(self._state_store.load())
+        if not self._guard_re_generation(phase):
+            return SquadResult.from_state(self._state_store.load())
         print(f"\n[squad] ▶ {node.id}  {label}  (manual phase run)", flush=True)
 
         executor = self._executors.get(node.type)
@@ -894,6 +918,30 @@ class SquadController:
         self._refresh_run_context(f"manual phase advance {phase} -> {next_phase}")
         print(f"[squad] ✓ {node.id}  → {next_phase}  (stopped)", flush=True)
         return SquadResult.from_state(self._state_store.load())
+
+    def _guard_re_generation(self, phase: str) -> bool:
+        """Block before dispatch when canonical RE context changed mid-run."""
+        state = self._state_store.load()
+        expected = state.get("re_generation", 0)
+        if not isinstance(expected, int) or isinstance(expected, bool):
+            expected = 0
+        try:
+            assert_re_generation(self._project_root, expected)
+        except ReGenerationMismatch as exc:
+            state["status"] = "blocked"
+            state["phase"] = PHASE_TERMINAL_BLOCKED
+            state["blocked_reason"] = "re_generation_mismatch"
+            state["blocked_phase"] = phase
+            state["re_generation_expected"] = exc.expected
+            state["re_generation_actual"] = exc.actual
+            self._state_store.save(state)
+            print(
+                f"[squad] RE generation changed: expected {exc.expected}, "
+                f"found {exc.actual}; blocking before {phase}",
+                flush=True,
+            )
+            return False
+        return True
 
     def _skip_phase_if_condition_false(
         self,

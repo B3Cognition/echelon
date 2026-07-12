@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from harness.re_fingerprint import ReFingerprintProfile, fingerprint_source
 from harness.re_registry import ensure_re_layout
-from harness.squad import SquadController
+from harness.squad import ReGenerationMismatch, SquadController, assert_re_generation
 from harness.squad_state import SquadStateStore
 
 
@@ -95,6 +97,36 @@ def _publish_source(root: Path, source_id: str, profile: ReFingerprintProfile) -
             "warnings": [],
         },
     )
+
+
+def test_re_generation_guard_pins_zero_when_no_publication_exists(tmp_path: Path) -> None:
+    assert_re_generation(tmp_path, 0)
+
+    paths = ensure_re_layout(tmp_path)
+    _write_json(
+        paths.index,
+        {
+            "schema_version": 1,
+            "generation": 1,
+            "publication_status": "complete",
+            "published_at": "2026-07-12T12:00:00+00:00",
+            "published_from_run": "fixture",
+            "sources": {},
+            "workspace": {
+                "manifest": "re/workspace/manifest.json",
+                "overview": "re/workspace/overview.md",
+                "relationships": "re/workspace/relationships.md",
+                "contracts": "re/workspace/contracts.md",
+            },
+            "warnings": [],
+        },
+    )
+
+    with pytest.raises(ReGenerationMismatch) as exc_info:
+        assert_re_generation(tmp_path, 0)
+
+    assert exc_info.value.expected == 0
+    assert exc_info.value.actual == 1
 
 
 def test_squad_initialization_materializes_re_plan_and_artifacts(tmp_path: Path) -> None:
