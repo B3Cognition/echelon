@@ -3059,7 +3059,7 @@ class TestOuterLoopConvergence:
         )
 
         assert result.status == "blocked"
-        assert result.termination_reason == "build_incomplete"
+        assert result.termination_reason == "provider_session_limit"
         captured = capsys.readouterr()
         assert "HARNESS — PROVIDER SESSION LIMIT" in captured.err
         assert "LLM provider session limit reached before COMMANDER finalized" in captured.err
@@ -3070,6 +3070,7 @@ class TestOuterLoopConvergence:
         assert "missing build status marker" not in captured.err
         assert "COMMANDER may have changed files, but did not write" not in captured.err
         state = state_store.read()
+        assert state["termination_reason"] == "provider_session_limit"
         assert state["build_status"] == "provider_session_limit"
         assert state["build_exit_code"] == 1
         assert state["provider_reset_hint"] == "9:10pm"
@@ -6060,8 +6061,9 @@ class TestOuterLoopConvergence:
         )
 
         assert result.status == "blocked"
-        assert result.termination_reason == "build_incomplete"
+        assert result.termination_reason == "provider_session_limit"
         state = state_store.read()
+        assert state["termination_reason"] == "provider_session_limit"
         assert state["build_status"] == "provider_session_limit"
         assert state["build_reason"] == "verify-spec provider session limit"
         assert state["fulfillment_refresh"]["status"] == "provider_session_limit"

@@ -580,8 +580,8 @@ class RalphController:
                                 why = "LLM provider session limit reached before COMMANDER finalized"
                                 meaning = (
                                     "The provider stopped the build because its session budget "
-                                    "was exhausted; wait for the reset window, then resume to "
-                                    "recover the salvage commit"
+                                    "was exhausted; wait for the reset window, then resume the "
+                                    "preserved worktree"
                                 )
                                 build_status = "provider_session_limit"
                             elif build_status == "unknown":
@@ -655,12 +655,17 @@ class RalphController:
                                 if provider_reset_hint:
                                     fields.append(("reset", provider_reset_hint))
                                 fields.append(("retry after", "provider reset window"))
+                            next_action = (
+                                "resume after provider reset"
+                                if build_status == "provider_session_limit"
+                                else "recover and finalize this build"
+                            )
                             fields.extend(
                                 [
                                     ("meaning", meaning),
                                     (
                                         "next",
-                                        f"echelon delivery continue {self._spec_id}  (recover and finalize this build)",
+                                        f"echelon delivery continue {self._spec_id}  ({next_action})",
                                     ),
                                 ]
                             )
@@ -682,7 +687,11 @@ class RalphController:
                                 blocked_state["provider_limit_message"] = provider_limit_message
                             return self._finalize(
                                 status="blocked",
-                                reason="build_incomplete",
+                                reason=(
+                                    "provider_session_limit"
+                                    if build_status == "provider_session_limit"
+                                    else "build_incomplete"
+                                ),
                                 outer_iterations=outer_iter + 1,
                                 inner_iterations=total_inner_iterations,
                                 pr_url=pr_url,
@@ -721,7 +730,7 @@ class RalphController:
                         )
                         return self._finalize(
                             status="blocked",
-                            reason="build_incomplete",
+                            reason="provider_session_limit",
                             outer_iterations=outer_iter + 1,
                             inner_iterations=total_inner_iterations,
                             pr_url=pr_url,
@@ -838,7 +847,7 @@ class RalphController:
                         )
                         return self._finalize(
                             status="blocked",
-                            reason="build_incomplete",
+                            reason="provider_session_limit",
                             outer_iterations=outer_iter + 1,
                             inner_iterations=total_inner_iterations,
                             pr_url=pr_url,

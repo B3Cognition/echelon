@@ -54,7 +54,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.0.74"
+CLI_VERSION = "3.0.75"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -2434,12 +2434,20 @@ def _cmd_harness_resume(
 
     current_status = state.get("status", "unknown")
     termination_reason = state.get("termination_reason", "")
+    if (
+        state.get("build_status") == "provider_session_limit"
+        and termination_reason in {"build_incomplete", "publish_failed"}
+    ):
+        state["termination_reason"] = "provider_session_limit"
+        state_store.write(state)
+        termination_reason = "provider_session_limit"
     recoverable_reasons = {"build_incomplete", "publish_failed"}
     continuation_reasons = {
         "blocker_escalation",
         "checkpoint_outer_cap",
         "docker_unavailable",
         "no_progress",
+        "provider_session_limit",
     }
     retryable_error_reasons = {"harness_error"}
 
@@ -2557,6 +2565,7 @@ def _cmd_harness_resume(
                 command=rerun_command,
                 exc=exc,
             )
+        _exit_if_provider_session_limited(state_store)
         return
 
     if termination_reason in retryable_error_reasons:
@@ -2624,6 +2633,7 @@ def _cmd_harness_resume(
                 command=rerun_command,
                 exc=exc,
             )
+        _exit_if_provider_session_limited(state_store)
         return
 
     if termination_reason in recoverable_reasons:
@@ -2710,6 +2720,7 @@ def _cmd_harness_resume(
                 command=rerun_command,
                 exc=exc,
             )
+        _exit_if_provider_session_limited(state_store)
         return
 
     if not config.verify_command:
@@ -2763,6 +2774,7 @@ def _cmd_harness_resume(
             command=rerun_command,
             exc=exc,
         )
+    _exit_if_provider_session_limited(state_store)
 
 
 def _cmd_harness_continue(
@@ -2777,6 +2789,14 @@ def _cmd_harness_continue(
         display_args=display_args,
         require_answer=False,
     )
+
+
+def _exit_if_provider_session_limited(state_store: object) -> None:
+    """Return a nonzero target status for a resumable provider-exhaustion block."""
+    read = getattr(state_store, "read", None)
+    state = read() if callable(read) else {}
+    if isinstance(state, dict) and state.get("build_status") == "provider_session_limit":
+        raise SystemExit(2)
 
 
 def _setup_run_dir(project_root: Path, run_id: str) -> Path:

@@ -132,6 +132,19 @@ class TestLoopResultConstruction:
         )
         assert result.termination_reason == "build_incomplete"
 
+    def test_provider_session_limit_is_valid_termination_reason(self) -> None:
+        """Provider exhaustion is a resumable block, not a recovery failure."""
+        result = LoopResult(
+            status="blocked",
+            termination_reason="provider_session_limit",
+            outer_iterations=1,
+            inner_iterations=0,
+            pr_url=None,
+            tokens_used=0,
+            final_verify=None,
+        )
+        assert result.termination_reason == "provider_session_limit"
+
 
 @pytest.mark.unit
 class TestLoopResultValidation:

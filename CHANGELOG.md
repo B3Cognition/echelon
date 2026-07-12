@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-049 provider session-limit recovery** — provider session-limit blocks now
+  use `termination_reason=provider_session_limit` instead of flattening into
+  ordinary `build_incomplete` state. Legacy blocked states with
+  `build_status=provider_session_limit` are normalized on resume/continue,
+  avoid git recovery/cherry-pick, and return a nonzero CLI status after
+  re-blocking so operators can distinguish “wait for provider reset” from a
+  failed recovery.
+
 - **Workspace source sync** — added `echelon workspace sources sync [--write]`
   to reconcile `.echelon/config.yml` source entries from canonical
   `sources/*` child repositories while preserving explicitly configured

@@ -571,6 +571,33 @@ class TestCmdHarnessResume:
         mock_run.assert_called_once()
         assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
 
+    def test_provider_limit_resume_skips_recovery_for_legacy_blocked_state(
+        self, tmp_path: Path
+    ) -> None:
+        """Provider exhaustion resumes the preserved worktree without cherry-picking."""
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_incomplete",
+            "build_status": "provider_session_limit",
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.recovery.recover_blocked_run") as mock_recover, \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_continue
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_continue(["001"])
+
+        assert exc.value.code == 2
+        mock_recover.assert_not_called()
+        mock_run.assert_called_once()
+        state = json.loads((sd / "default.json").read_text(encoding="utf-8"))
+        assert state["termination_reason"] == "provider_session_limit"
+
     def test_target_resume_recovers_against_source_repo_not_target_harness_dir(
         self,
         tmp_path: Path,

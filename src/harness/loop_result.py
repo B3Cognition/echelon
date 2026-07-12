@@ -34,6 +34,7 @@ VALID_TERMINATION_REASONS = {
     "publish_failed",
     "ready_status_failed",
     "verify_command_needed",
+    "provider_session_limit",
     "containment_violation",
     "external_spec_artifact_missing",
 }
