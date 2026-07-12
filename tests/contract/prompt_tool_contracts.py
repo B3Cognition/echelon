@@ -97,10 +97,27 @@ HARNESS_INTERNAL_DISCOVERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+BUILD_GIT_STATE_DISCOVERY_COMMANDS = (
+    "status",
+    "log",
+    "rev-parse",
+    "diff",
+    "branch",
+    "show",
+    "ls-files",
+    "ls-tree",
+    "cat-file",
+    "grep",
+)
+
+BUILD_GIT_STATE_DISCOVERY_COMMAND_RE = "|".join(
+    re.escape(command) for command in BUILD_GIT_STATE_DISCOVERY_COMMANDS
+)
+
 BUILD_GIT_STATE_DISCOVERY_RE = re.compile(
     r"\b(?:check|get|query|inspect|read|run|use|review|examine|look at|parse|"
     r"view|show|display|print|dump)\b"
-    r".{0,120}\b(?:git\s+(?:status|log|rev-parse|diff|branch|show|ls-files|ls-tree|cat-file|grep)|rev-parse)\b",
+    rf".{{0,120}}\b(?:git\s+(?:{BUILD_GIT_STATE_DISCOVERY_COMMAND_RE})|rev-parse)\b",
     re.IGNORECASE,
 )
 

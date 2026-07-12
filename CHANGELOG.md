@@ -99,7 +99,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Ralph-owned spec lifecycle artifacts. Build prompt git-state discovery now
   also blocks `git diff`, `git branch`, `git show`, `git ls-files`, `git ls-tree`,
   `git cat-file`, and `git grep` prompts so agents consume Ralph-owned git facts
-  instead of rediscovering repository state.
+  instead of rediscovering repository state. The git-state command list is now a
+  named scanner category instead of an inline regex fragment, reducing future
+  one-command-at-a-time drift.
 - **EGR-117 / #141 delivery runtime surface** — direct and workspace-target
   delivery runtime sync now excludes Phase A `config/` material such as
   belief registers, top-level config template/default files, and extension

@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from tests.contract.prompt_tool_contracts import scan_prompt_tool_contracts
+from tests.contract.prompt_tool_contracts import (
+    BUILD_GIT_STATE_DISCOVERY_COMMANDS,
+    scan_prompt_tool_contracts,
+)
 
 
 def test_flags_vague_validator_reference(tmp_path: Path) -> None:
@@ -351,6 +354,21 @@ def test_flags_build_prompt_git_state_discovery(tmp_path: Path) -> None:
 
     assert len(findings) == 1
     assert findings[0].reason == "build_git_state_discovery"
+
+
+def test_build_git_state_discovery_commands_are_named_category() -> None:
+    assert BUILD_GIT_STATE_DISCOVERY_COMMANDS == (
+        "status",
+        "log",
+        "rev-parse",
+        "diff",
+        "branch",
+        "show",
+        "ls-files",
+        "ls-tree",
+        "cat-file",
+        "grep",
+    )
 
 
 def test_flags_build_prompt_git_state_discovery_synonyms(tmp_path: Path) -> None:
