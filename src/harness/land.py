@@ -450,6 +450,48 @@ def resolve_land_repo(project_dir: Path, spec_dir: Path) -> Path:
     return target
 
 
+def _find_latest_harness_branch(spec_id: str, project_dir: Path) -> str | None:
+    """Return the unambiguous newest legacy harness iteration for a spec.
+
+    Legacy delivery runs commit to ``harness/<spec>/<strategy>/iter-N`` rather
+    than a conventional feature branch.  Landing must either merge that branch
+    or stop; treating it as absent would silently discard verified work.
+    """
+    result = _run_git(
+        ["branch", "--list", f"harness/{spec_id}/*/iter-*"],
+        cwd=str(project_dir),
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("could not list legacy harness branches")
+
+    pattern = re.compile(
+        rf"^harness/{re.escape(spec_id)}/[^/]+/iter-(?P<iteration>\d+)$"
+    )
+    candidates: list[tuple[int, str]] = []
+    for line in result.stdout.splitlines():
+        branch = line.strip()
+        match = pattern.fullmatch(branch)
+        if match:
+            candidates.append((int(match.group("iteration")), branch))
+
+    if not candidates:
+        return None
+
+    latest_iteration = max(iteration for iteration, _ in candidates)
+    latest = sorted(
+        branch for iteration, branch in candidates if iteration == latest_iteration
+    )
+    if len(latest) != 1:
+        raise RuntimeError(
+            "ambiguous legacy harness branches at iteration "
+            f"{latest_iteration}: {', '.join(latest)}"
+        )
+
+    logger.info("Found latest legacy harness branch for spec %s: %s", spec_id, latest[0])
+    return latest[0]
+
+
 def land(
     spec_id: str,
     *,
@@ -470,6 +512,22 @@ def land(
         project_dir = resolve_land_repo(wrapper_project_dir, spec_dir)
 
     feature_branch = gitops.find_feature_branch(spec_id)
+    if feature_branch is None:
+        try:
+            feature_branch = _find_latest_harness_branch(spec_id, project_dir)
+        except RuntimeError as exc:
+            logger.error("land: could not resolve legacy harness branch for %s: %s", spec_id, exc)
+            _banner(
+                "LAND — BRANCH RESOLUTION BLOCKED",
+                [
+                    ("spec", spec_id),
+                    ("problem", str(exc)),
+                    ("next step", "resolve the legacy harness branch, then re-run land"),
+                ],
+                subtitle="Echelon will not mark a spec landed until its verified branch is resolved.",
+            )
+            return False
+
     if feature_branch is None:
         logger.info("land: %s — feature branch not found, already landed", spec_id)
         _cleanup_worktrees(spec_id, wrapper_project_dir, gitops)

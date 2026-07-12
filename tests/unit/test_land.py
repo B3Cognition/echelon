@@ -14,6 +14,7 @@ from harness.land import (
     LandOptions,
     LandPrepareResult,
     _check_ready_before_land,
+    _delete_harness_branches,
     _fulfillment_warning,
     _finish_landing,
     _land_status_warning,
@@ -396,6 +397,8 @@ class TestLand:
         assert "no fulfillment report" in warning
 
     def test_returns_true_when_feature_branch_not_found(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
+        _commit(tmp_path, "README.md", "base\n", "base")
         gitops = _make_gitops(feature_branch=None)
         result = land("042", project_dir=tmp_path, gitops=gitops)
         assert result is True
@@ -579,9 +582,50 @@ class TestLand:
         assert read_frontmatter(spec_dir)["status"] == "landed"
 
     def test_is_idempotent_when_branch_already_deleted(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
+        _commit(tmp_path, "README.md", "base\n", "base")
         gitops = _make_gitops(feature_branch=None)
         result = land("042", project_dir=tmp_path, gitops=gitops)
         assert result is True
+
+    def test_lands_latest_legacy_harness_branch_when_feature_branch_is_missing(
+        self, tmp_path: Path
+    ) -> None:
+        _init_repo(tmp_path)
+        _commit(tmp_path, "README.md", "base\n", "base")
+        _git(tmp_path, "branch", "harness/042/default/iter-0")
+        _git(tmp_path, "checkout", "harness/042/default/iter-0")
+        _commit(tmp_path, "feature.txt", "verified work\n", "legacy implementation")
+        _git(tmp_path, "branch", "harness/042/default/iter-3")
+        _git(tmp_path, "checkout", "main")
+        gitops = _make_gitops(feature_branch=None)
+
+        with (
+            patch("harness.land._check_ready_before_land", return_value=True),
+            patch("harness.land._verify_before_land", return_value=True),
+            patch("harness.land._clean_generated_drift_before_direct_merge", return_value=True),
+            patch("harness.land._finish_landing", return_value=True),
+        ):
+            result = land("042", project_dir=tmp_path, gitops=gitops)
+
+        assert result is True
+        gitops.merge_branch_into_default.assert_called_once_with(
+            "harness/042/default/iter-3", str(tmp_path)
+        )
+
+    def test_blocks_ambiguous_legacy_harness_branch_selection(self, tmp_path: Path) -> None:
+        _init_repo(tmp_path)
+        _commit(tmp_path, "README.md", "base\n", "base")
+        _git(tmp_path, "branch", "harness/042/default/iter-3")
+        _git(tmp_path, "branch", "harness/042/conservative/iter-3")
+        gitops = _make_gitops(feature_branch=None)
+
+        with patch("harness.land._banner") as banner:
+            result = land("042", project_dir=tmp_path, gitops=gitops)
+
+        assert result is False
+        gitops.merge_branch_into_default.assert_not_called()
+        assert banner.call_args.args[0] == "LAND — BRANCH RESOLUTION BLOCKED"
 
     def test_cleans_up_worktrees(self, tmp_path: Path) -> None:
         worktree_dir = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
@@ -594,7 +638,6 @@ class TestLand:
 
     @patch("harness.land.subprocess.run")
     def test_deletes_harness_branches(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        gitops = _make_gitops(feature_branch=None)
         list_result = MagicMock(
             returncode=0,
             stdout="  harness/042/strategy1/iter-1\n  harness/042/strategy1/iter-2\n",
@@ -602,9 +645,8 @@ class TestLand:
         delete_result = MagicMock(returncode=0, stdout="")
         mock_run.side_effect = [list_result, delete_result, delete_result]
 
-        result = land("042", project_dir=tmp_path, gitops=gitops)
+        _delete_harness_branches("042", tmp_path)
 
-        assert result is True
         # Verify git branch --list was called
         list_call = mock_run.call_args_list[0]
         assert list_call[0][0] == ["git", "branch", "--list", "harness/042/*"]
