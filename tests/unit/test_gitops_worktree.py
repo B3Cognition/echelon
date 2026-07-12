@@ -138,6 +138,10 @@ def test_sync_runtime_extension_copies_codegraph_bridge_and_locked_runtime(tmp_p
     (source / "scripts" / "node" / "re" / "package.json").write_text(
         '{"name":"re"}\n', encoding="utf-8"
     )
+    (source / "scripts" / "node" / "re" / "vendor").mkdir()
+    (source / "scripts" / "node" / "re" / "vendor" / "legacy.js").write_text(
+        "legacy\n", encoding="utf-8"
+    )
     (source / "scripts" / "node" / "context7" / "package.json").write_text(
         '{"name":"context7"}\n', encoding="utf-8"
     )
@@ -163,6 +167,7 @@ def test_sync_runtime_extension_copies_codegraph_bridge_and_locked_runtime(tmp_p
     runtime_node = worktree / ".specify" / "extensions" / "echelon" / "scripts" / "node"
     assert (runtime_node / "re" / "codegraph-bridge.js").exists()
     assert (runtime_node / "re" / "package.json").exists()
+    assert not (runtime_node / "re" / "vendor").exists()
     assert not (runtime_node / "context7").exists()
     assert (
         runtime_node / "re" / "node_modules" / "picomatch" / "package.json"

@@ -178,7 +178,7 @@ def test_write_codegraph_evidence_cli_writes_analysis_and_summary(
     assert not (project_root / ".codegraph").exists()
 
 
-def test_write_codegraph_evidence_prefers_codegraph_cli_when_available(
+def test_write_codegraph_evidence_uses_installed_bridge_when_global_cli_exists(
     tmp_path: Path, monkeypatch
 ) -> None:
     project_root = tmp_path / "project"
@@ -205,8 +205,8 @@ def test_write_codegraph_evidence_prefers_codegraph_cli_when_available(
     assert result.returncode == 0, result.stderr
     analysis = json.loads((verify_run_dir / "codegraph-analysis.json").read_text())
     summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())
-    assert analysis["provider"] == "codegraph-cli"
-    assert summary["top_callers"][0] == {"symbol": "CliA", "outgoing_calls": 1}
+    assert "provider" not in analysis
+    assert summary["top_callers"][0] == {"symbol": "A", "outgoing_calls": 2}
     assert not error_path.exists()
 
 
@@ -301,7 +301,7 @@ def test_write_codegraph_evidence_cli_preserves_existing_codegraph_dir(
     assert marker.read_text(encoding="utf-8") == "existing"
 
 
-def test_write_codegraph_evidence_cli_uses_fixed_installed_bridge_path(
+def test_write_codegraph_evidence_reports_missing_fixed_installed_bridge_path(
     tmp_path: Path, monkeypatch
 ) -> None:
     project_root = tmp_path / "project"
@@ -324,8 +324,6 @@ def test_write_codegraph_evidence_cli_uses_fixed_installed_bridge_path(
 
     assert result.returncode != 0
     error = (verify_run_dir / "codegraph-error.txt").read_text(encoding="utf-8")
-    assert "CodeGraph CLI failed." in error
-    assert "exit_code: 7" in error
     assert ".specify/extensions/echelon/scripts/node/re/codegraph-bridge.js" in error
     assert "fixed installed extension path" in error
     summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())

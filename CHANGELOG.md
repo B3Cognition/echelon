@@ -20,7 +20,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   evidence generation can run from worktrees without copying unrelated Node
   tooling. The CodeGraph integration contract now asserts the pinned
   `@colbymchenry/codegraph` runtime/adapter path instead of stale vendored
-  payload metadata.
+  payload metadata, the evidence writer now uses the installed bridge instead
+  of probing a global `codegraph` CLI, and CI now carries Node 24 plus a
+  scheduled upstream-latest compatibility smoke test and pinned-runtime
+  integration script.
 
 - **Workspace source sync** — added `echelon workspace sources sync [--write]`
   to reconcile `.echelon/config.yml` source entries from canonical

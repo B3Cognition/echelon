@@ -41,57 +41,12 @@ def write_codegraph_evidence(
     bridge_path = project_root / FIXED_BRIDGE_RELATIVE
     codegraph_dir = project_root / ".codegraph"
     codegraph_preexisted = codegraph_dir.exists()
-    diagnostics: list[str] = []
-
     verify_run_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        codegraph = shutil.which("codegraph")
-        if codegraph is not None:
-            completed = _run_codegraph_cli(codegraph, project_root, analysis_path)
-            if completed.returncode == 0 and _analysis_is_usable(
-                analysis_path, expected_repo_path=project_root
-            ):
-                _write_summary(analysis_path, summary_path)
-                _remove_if_exists(error_path)
-                return CodeGraphEvidenceResult(
-                    analysis_path=analysis_path,
-                    summary_path=summary_path,
-                    error_path=error_path,
-                    ok=True,
-                )
-            cli_failure_title = (
-                "CodeGraph CLI produced stale or unusable output."
-                if completed.returncode == 0
-                else "CodeGraph CLI failed."
-            )
-            diagnostics.append(
-                _provider_failure(
-                    cli_failure_title,
-                    command=[
-                        codegraph,
-                        "export",
-                        "--format",
-                        "echelon",
-                        "--path",
-                        str(project_root),
-                        "--output",
-                        str(analysis_path),
-                    ],
-                    exit_code=completed.returncode,
-                    stdout=completed.stdout,
-                    stderr=completed.stderr,
-                    output_exists=analysis_path.is_file(),
-                )
-            )
-            _remove_if_exists(analysis_path)
-
         node = shutil.which("node")
         if node is None:
-            message = (
-                "".join(diagnostics)
-                + "Node.js is required to run CodeGraph evidence.\n"
-            )
+            message = "Node.js is required to run CodeGraph evidence.\n"
             _write_error(error_path, message)
             _write_degraded_summary(
                 summary_path=summary_path,
@@ -103,8 +58,7 @@ def write_codegraph_evidence(
 
         if not bridge_path.is_file():
             message = (
-                "".join(diagnostics)
-                + "CodeGraph bridge missing at fixed installed extension path:\n"
+                "CodeGraph bridge missing at fixed installed extension path:\n"
                 f"{bridge_path}\n"
             )
             _write_error(error_path, message)
@@ -120,9 +74,7 @@ def write_codegraph_evidence(
         if completed.returncode != 0 or not _analysis_is_usable(
             analysis_path, expected_repo_path=project_root
         ):
-            message = (
-                "".join(diagnostics)
-                + _provider_failure(
+            message = _provider_failure(
                     "CodeGraph bridge failed.",
                     command=[
                         node,
@@ -138,7 +90,6 @@ def write_codegraph_evidence(
                     stderr=completed.stderr,
                     output_exists=analysis_path.is_file(),
                 )
-            )
             _write_error(error_path, message)
             _write_degraded_summary(
                 summary_path=summary_path,
@@ -162,27 +113,6 @@ def write_codegraph_evidence(
                 codegraph_dir.unlink()
             else:
                 shutil.rmtree(codegraph_dir)
-
-
-def _run_codegraph_cli(
-    codegraph: str, project_root: Path, analysis_path: Path
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [
-            codegraph,
-            "export",
-            "--format",
-            "echelon",
-            "--path",
-            str(project_root),
-            "--output",
-            str(analysis_path),
-        ],
-        cwd=str(project_root),
-        text=True,
-        capture_output=True,
-        check=False,
-    )
 
 
 def _run_vendored_bridge(

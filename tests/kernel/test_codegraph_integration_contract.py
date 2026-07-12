@@ -49,6 +49,13 @@ def test_codegraph_runtime_is_pinned_to_current_supported_release():
     assert f'CODEGRAPH_CLI_VERSION="{CODEGRAPH_VERSION}"' in install_script
 
 
+def test_shell_ci_uses_a_node_runtime_supported_by_codegraph_sdk():
+    workflow = (EXT_ROOT / ".github" / "workflows" / "ci.yml").read_text()
+
+    assert "actions/setup-node@v4" in workflow
+    assert 'node-version: "24"' in workflow
+
+
 def test_run_analysis_points_to_extension_node_install_path():
     run_analysis = (
         EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"
