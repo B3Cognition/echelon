@@ -5,6 +5,8 @@ from tests.contract.prompt_tool_contracts import (
     BUILD_GIT_STATE_DISCOVERY_VERBS,
     BUILD_SPEC_ARTIFACT_DISCOVERY_VERBS,
     BUILD_SPEC_ARTIFACT_DISCOVERY_TARGETS,
+    BUILD_WORKFLOW_DEFINITION_ROUTING_TARGETS,
+    BUILD_WORKFLOW_DEFINITION_ROUTING_VERBS,
     DELIVERY_COMMAND_RUNTIME_DISCOVERY_TARGETS,
     DELIVERY_COMMAND_RUNTIME_DISCOVERY_VERBS,
     HARNESS_INTERNAL_DISCOVERY_TARGETS,
@@ -726,6 +728,23 @@ def test_flags_build_phase_workflow_definition_routing(tmp_path: Path) -> None:
 
     assert len(findings) == 1
     assert findings[0].reason == "build_workflow_definition_routing"
+
+
+def test_build_workflow_definition_routing_targets_are_named_category() -> None:
+    assert BUILD_WORKFLOW_DEFINITION_ROUTING_TARGETS == ("workflow/definition.yaml",)
+
+
+def test_build_workflow_definition_routing_verbs_are_named_category() -> None:
+    assert BUILD_WORKFLOW_DEFINITION_ROUTING_VERBS == (
+        "follow",
+        "following",
+        "use",
+        "consult",
+        "read",
+        "inspect",
+        "open",
+        "check",
+    )
 
 
 def test_flags_command_appendix_runtime_discovery(tmp_path: Path) -> None:

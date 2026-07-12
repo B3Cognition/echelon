@@ -318,9 +318,30 @@ DELIVERY_COMMAND_RUNTIME_DISCOVERY_RE = re.compile(
     re.IGNORECASE,
 )
 
+BUILD_WORKFLOW_DEFINITION_ROUTING_TARGETS = ("workflow/definition.yaml",)
+
+BUILD_WORKFLOW_DEFINITION_ROUTING_TARGET_RE = "|".join(
+    re.escape(target) for target in BUILD_WORKFLOW_DEFINITION_ROUTING_TARGETS
+)
+
+BUILD_WORKFLOW_DEFINITION_ROUTING_VERBS = (
+    "follow",
+    "following",
+    "use",
+    "consult",
+    "read",
+    "inspect",
+    "open",
+    "check",
+)
+
+BUILD_WORKFLOW_DEFINITION_ROUTING_VERB_RE = "|".join(
+    re.escape(verb) for verb in BUILD_WORKFLOW_DEFINITION_ROUTING_VERBS
+)
+
 BUILD_WORKFLOW_DEFINITION_ROUTING_RE = re.compile(
-    r"\b(?:follow|following|use|consult|read|inspect|open|check)\b"
-    r".{0,260}\bworkflow/definition\.yaml\b",
+    rf"\b(?:{BUILD_WORKFLOW_DEFINITION_ROUTING_VERB_RE})\b"
+    rf".{{0,260}}\b(?:{BUILD_WORKFLOW_DEFINITION_ROUTING_TARGET_RE})\b",
     re.IGNORECASE,
 )
 

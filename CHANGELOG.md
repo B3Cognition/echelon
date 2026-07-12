@@ -103,7 +103,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   inline regex fragments. Verify-spec spec-directory and latest-run discovery
   now use named target and verb categories for `specs/` and `runs/` discovery.
   Delivery command runtime discovery now uses named target and verb categories
-  for `agents/control/commander.md` and `workflow/definition.yaml`. Build prompt
+  for `agents/control/commander.md` and `workflow/definition.yaml`. Build
+  workflow-definition routing discovery now uses named target and verb categories
+  for `workflow/definition.yaml` as well. Build prompt
   git-state discovery now also blocks `git diff`,
   `git branch`, `git show`, `git ls-files`, `git ls-tree`, `git cat-file`, and
   `git grep` prompts so agents consume Ralph-owned git facts instead of
