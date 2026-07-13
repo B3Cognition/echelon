@@ -27,7 +27,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from harness.gitops import runtime_extension_copy_ignore
+from harness.gitops import runtime_extension_copy_ignore, sync_codegraph_node_modules
 from harness.runtime_surface import prune_delivery_workflow_definition
 from harness.phase_a_readiness import validate_phase_a_readiness
 
@@ -1489,6 +1489,7 @@ def _sync_polyrepo_runtime_extension(polyrepo_root: Path, harness_base_dir: Path
         dirs_exist_ok=True,
         ignore=runtime_extension_copy_ignore(source),
     )
+    sync_codegraph_node_modules(source, dest)
     prune_delivery_workflow_definition(dest / "workflow" / "definition.yaml")
 
 

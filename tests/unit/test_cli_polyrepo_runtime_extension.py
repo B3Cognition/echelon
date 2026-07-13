@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from shutil import copytree
+import subprocess
 
 import yaml
 
@@ -14,6 +15,41 @@ from harness.runtime_surface import (
     DELIVERY_TEMPLATE_FILES,
     is_delivery_workflow_phase_path,
 )
+
+
+def test_polyrepo_runtime_extension_copies_resolvable_codegraph_runtime(
+    tmp_path: Path,
+) -> None:
+    """Target harness roots retain the CodeGraph SDK needed by delivery worktrees."""
+    source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
+    runtime = source / "scripts" / "node" / "re"
+    package = runtime / "node_modules" / "@colbymchenry" / "codegraph"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    package.mkdir(parents=True)
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (package / "package.json").write_text(
+        '{"name":"@colbymchenry/codegraph","version":"1.4.1","main":"index.js"}\n',
+        encoding="utf-8",
+    )
+    (package / "index.js").write_text("module.exports = { version: '1.4.1' };\n", encoding="utf-8")
+
+    harness_base = tmp_path / "workspace" / "runs" / "targets" / "prosaic"
+    _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
+
+    deployed_runtime = harness_base / ".specify" / "extensions" / "echelon" / "scripts" / "node" / "re"
+    resolved = subprocess.run(
+        ["node", "-e", "require('@colbymchenry/codegraph')"],
+        cwd=deployed_runtime,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert resolved.returncode == 0, resolved.stderr
 
 
 def test_polyrepo_runtime_extension_excludes_python_migration_helpers(

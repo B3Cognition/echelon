@@ -71,6 +71,25 @@ RUNTIME_EXTENSION_EXCLUDED_NAMES = (
     ".pytest_cache",
     "node_modules",
 )
+
+
+def sync_codegraph_node_modules(source: Path, dest: Path) -> None:
+    """Copy the vendored CodeGraph runtime deps omitted from extension syncs."""
+    relative = Path("scripts/node/re/node_modules")
+    source_node_modules = source / relative
+    if not source_node_modules.exists():
+        return
+    shutil.copytree(
+        source_node_modules,
+        dest / relative,
+        dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns(
+            ".cache",
+            ".bin",
+        ),
+    )
+
+
 def runtime_extension_copy_ignore(source_root: Path):
     """Return a copytree ignore callable for target-visible runtime extension sync."""
     source_root = source_root.resolve()
@@ -683,19 +702,7 @@ class GitOpsManager:
     @staticmethod
     def _sync_codegraph_node_modules(source: Path, dest: Path) -> None:
         """Copy vendored CodeGraph runtime deps ignored by the broad extension sync."""
-        relative = Path("scripts/node/re/node_modules")
-        source_node_modules = source / relative
-        if not source_node_modules.exists():
-            return
-        shutil.copytree(
-            source_node_modules,
-            dest / relative,
-            dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns(
-                ".cache",
-                ".bin",
-            ),
-        )
+        sync_codegraph_node_modules(source, dest)
 
     @staticmethod
     def _runtime_extension_ready(path: Path) -> bool:
