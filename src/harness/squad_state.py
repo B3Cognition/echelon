@@ -270,6 +270,15 @@ class SquadStateStore:
         state = self.load()
         return (state.get("phase_dispatch_counts") or {}).get(phase, 0)
 
+    def reset_phase_dispatch_count(self, phase: str) -> None:
+        """Forget attempts that never reached the phase agent."""
+        state = self.load()
+        counts = state.get("phase_dispatch_counts") or {}
+        if phase in counts:
+            counts.pop(phase)
+            state["phase_dispatch_counts"] = counts
+            self.save(state)
+
     def increment_convergence_guard_fires(self) -> int:
         state = self.load()
         count = state.get("convergence_guard_fire_count", 0) + 1

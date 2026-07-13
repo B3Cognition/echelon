@@ -503,6 +503,45 @@ class TestSquadControllerBasics:
         state = store.load()
         assert state["golddigger_status"] == "complete"
 
+    def test_blocked_re_recovery_does_not_consume_discovery_dispatches(
+        self, tmp_path
+    ):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "brownfield", "msg", 0, "phase1-discover")
+        for _ in range(6):
+            store.increment_phase_dispatch_count("phase1-discover")
+        re_state_path = ctrl._squad_dir / "re" / "state.json"
+        re_state_path.parent.mkdir(parents=True, exist_ok=True)
+        re_state_path.write_text(
+            json.dumps(
+                {
+                    "status": "blocked",
+                    "phase": "re-extract-2-specify",
+                    "blocked_reason": "re_quality_repair_modified_non_target_output",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        ctrl._reset_discovery_dispatches_for_pending_recovery("phase1-discover")
+
+        assert store.get_phase_dispatch_count("phase1-discover") == 0
+
+    def test_discovery_dispatch_count_remains_for_non_re_failure(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "brownfield", "msg", 0, "phase1-discover")
+        store.increment_phase_dispatch_count("phase1-discover")
+        re_state_path = ctrl._squad_dir / "re" / "state.json"
+        re_state_path.parent.mkdir(parents=True, exist_ok=True)
+        re_state_path.write_text(
+            json.dumps({"status": "done", "phase": "re-extract-7-constitute"}),
+            encoding="utf-8",
+        )
+
+        ctrl._reset_discovery_dispatches_for_pending_recovery("phase1-discover")
+
+        assert store.get_phase_dispatch_count("phase1-discover") == 1
+
     def test_golddigger_mode1_complete_is_preserved_when_publication_not_required(
         self,
         tmp_path,

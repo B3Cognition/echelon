@@ -631,6 +631,8 @@ class SquadController:
             if not self._guard_re_generation(phase):
                 return SquadResult.from_state(self._state_store.load())
 
+            self._reset_discovery_dispatches_for_pending_recovery(phase)
+
             # Per-phase dispatch cap — prevents runaway loops on any phase.
             # WHY phases use max_iterations as their cap (they legitimately iterate).
             # All other phases use MAX_PHASE_DISPATCHES.
@@ -942,6 +944,35 @@ class SquadController:
             )
             return False
         return True
+
+    def _reset_discovery_dispatches_for_pending_recovery(self, phase: str) -> None:
+        """Do not count a blocked nested RE retry as a SCOUT dispatch.
+
+        GOLDDIGGER runs as phase1-discover pre-dispatch work. When its controller
+        blocks, SCOUT has not run, but the outer phase used to consume one of the
+        five discovery attempts. That made a recoverable RE repair unreachable
+        through ``echelon spec continue``. The nested controller owns its own
+        bounded retry limits, so reset only this pre-dispatch accounting.
+        """
+        if phase != "phase1-discover":
+            return
+        re_state_path = self._squad_dir / "re" / "state.json"
+        try:
+            re_state = json.loads(re_state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if re_state.get("status") != "blocked":
+            return
+        re_phase = re_state.get("phase")
+        if not isinstance(re_phase, str) or not re_phase.startswith("re-extract-"):
+            return
+        if self._state_store.get_phase_dispatch_count(phase) == 0:
+            return
+        self._state_store.reset_phase_dispatch_count(phase)
+        print(
+            "[squad] RE recovery pending; resetting discovery dispatch count",
+            flush=True,
+        )
 
     def _skip_phase_if_condition_false(
         self,

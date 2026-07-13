@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE recovery no longer trips the outer discovery cap** — a blocked
+  GOLDDIGGER controller is phase1-discover pre-dispatch work, not a SCOUT
+  attempt. `echelon spec continue` now resets only that synthetic count while
+  RE has a saved blocked state, allowing the controller to resume, publish, and
+  continue the normal squad flow. Genuine SCOUT failures retain their cap.
+
 - **RE repair snapshot false blocks on resume** — provider-owned root result
   captures such as `re/echelon_result.json`, plus Finder `.DS_Store` metadata,
   are now excluded from repair-output comparison. Resuming an older run now
