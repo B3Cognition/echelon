@@ -3000,6 +3000,19 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
             note="the run cannot continue until the configured budget is higher",
         )
 
+    if reason == "provider_session_limit":
+        provider_message = str(run_state.get("provider_limit_message") or "").strip()
+        note = "wait for the provider reset, then retry the blocked phase"
+        if provider_message:
+            note += f": {provider_message}"
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason=reason,
+            phase=_last_incomplete_dispatch_phase(run_state) or "",
+            command="echelon spec continue",
+            note=note,
+        )
+
     if "invalid next_phase" in reason:
         return _RunRecoveryAction(
             "manual_recovery",
@@ -3179,6 +3192,10 @@ def _print_squad_summary(
         stopped = "completed"
     if stopped:
         fields.append(("stopped", stopped))
+    if status == "blocked" and stopped == "provider_session_limit":
+        provider_message = str(state.get("provider_limit_message") or "").strip()
+        if provider_message:
+            fields.append(("provider", provider_message))
 
     if status in {"blocked", "interrupted", "budget_exhausted"}:
         command = action.command or "echelon spec continue"

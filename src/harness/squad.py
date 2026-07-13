@@ -1349,6 +1349,8 @@ class SquadController:
     def _blocked_executor_reason(
         self, result: SquadAgentResult
     ) -> str | None:
+        if result.provider_limit_message:
+            return "provider_session_limit"
         if result.echelon_result is None:
             return "missing_echelon_result"
         if result.timed_out:
@@ -1373,6 +1375,13 @@ class SquadController:
         state["phase"] = PHASE_TERMINAL_BLOCKED
         state["status"] = "blocked"
         state["blocked_reason"] = reason
+        if reason == "provider_session_limit":
+            state["provider_limit_message"] = result.provider_limit_message
+            if result.echelon_result is None:
+                state["blocked_context"] = "missing_echelon_result"
+        else:
+            state.pop("provider_limit_message", None)
+            state.pop("blocked_context", None)
         state.pop("re_publication_error", None)
         publication_error = (result.state_updates or {}).get("re_publication_error")
         if isinstance(publication_error, str) and publication_error.strip():
@@ -1383,11 +1392,10 @@ class SquadController:
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
         self._state_store.save(state)
-        print(
-            f"[squad] ✗ {phase} blocked: {reason} "
-            "(phase not marked complete)",
-            flush=True,
-        )
+        detail = "phase not marked complete"
+        if reason == "provider_session_limit":
+            detail = f"missing_echelon_result; provider: {result.provider_limit_message}"
+        print(f"[squad] ✗ {phase} blocked: {reason} ({detail})", flush=True)
 
     def _preserve_cartographer_spec_context(self, state: dict) -> None:
         """Record an existing CARTOGRAPHER spec before blocking a failed dispatch."""

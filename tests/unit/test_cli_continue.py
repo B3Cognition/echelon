@@ -397,6 +397,39 @@ def test_continue_retries_incomplete_phase_before_constitution(
     assert calls == [["make terminal ascii art", "--mode", "semi"]]
 
 
+def test_continue_provider_session_limit_retries_incomplete_phase(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    _write_real_constitution(tmp_path)
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "provider_session_limit",
+            "provider_limit_message": "You've hit your session limit · resets 4am (Europe/Prague)",
+            "last_dispatch": {"phase_id": "phase3-consensus"},
+            "completed_phases": ["phase1-constitution", "phase3-plan"],
+            "user_message": "style the CLI output",
+            "autonomy_mode": "banzai",
+        },
+    )
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, project_root, ext_dir: calls.append(args),
+    )
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    captured = capsys.readouterr()
+    assert calls == [["style the CLI output", "--mode", "banzai"]]
+    assert "Retrying incomplete phase" in captured.out
+
+
 def test_continue_blocks_new_branchless_workspace(
     tmp_path: Path,
     capsys,

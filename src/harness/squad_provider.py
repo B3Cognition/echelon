@@ -26,6 +26,7 @@ class SquadAgentResult:
     cost_usd: float = 0.0
     echelon_result_repair_attempted: bool = False
     echelon_result_repair_succeeded: bool = False
+    provider_limit_message: str = ""
 
     @property
     def verdict(self) -> Optional[str]:
@@ -42,6 +43,17 @@ class SquadAgentResult:
     @property
     def blocked(self) -> bool:
         return self.verdict == "BLOCKED" or self.timed_out or self.exit_code != 0
+
+
+def _provider_session_limit_message(*transcripts: str) -> str:
+    """Return the provider's actionable session-limit line, when present."""
+    needles = ("session limit", "usage limit", "rate limit", "quota exceeded")
+    for transcript in transcripts:
+        for line in transcript.splitlines():
+            message = line.strip()
+            if message and any(needle in message.lower() for needle in needles):
+                return message
+    return ""
 
 
 def _extract_echelon_result(raw: str) -> Optional[dict]:
@@ -228,6 +240,12 @@ class SquadCliProvider(AICodingCliProvider):
         raw = backend_result.stdout
         timed_out = backend_result.timed_out
         cost_usd = backend_result.cost_usd
+        provider_limit_message = ""
+        if exit_code != 0 or timed_out:
+            provider_limit_message = _provider_session_limit_message(
+                backend_result.stdout,
+                backend_result.stderr,
+            )
         parsed_result = _extract_echelon_result(raw)
         echelon_result, validation_reason = _validate_echelon_result_or_reason(
             parsed_result
@@ -282,4 +300,5 @@ class SquadCliProvider(AICodingCliProvider):
             cost_usd=cost_usd,
             echelon_result_repair_attempted=repair_attempted,
             echelon_result_repair_succeeded=repair_succeeded,
+            provider_limit_message=provider_limit_message,
         )

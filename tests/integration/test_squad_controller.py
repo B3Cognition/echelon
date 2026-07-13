@@ -169,6 +169,28 @@ class TestSolutionPhaseOrdering:
 
 
 class TestAgentResultIntegrity:
+    def test_provider_session_limit_is_primary_over_missing_result(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=2,
+            echelon_result=None,
+            raw_output="You've hit your session limit · resets 4am (Europe/Prague)",
+            duration_ms=100,
+            timed_out=False,
+            provider_limit_message="You've hit your session limit · resets 4am (Europe/Prague)",
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+
+        result = ctrl.run("msg", "banzai")
+        state = store.load()
+
+        assert result.status == "blocked"
+        assert state["blocked_reason"] == "provider_session_limit"
+        assert state["provider_limit_message"] == "You've hit your session limit · resets 4am (Europe/Prague)"
+        assert state["blocked_context"] == "missing_echelon_result"
+
     def test_agent_phase_without_parseable_echelon_result_blocks(self, tmp_path):
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(
