@@ -519,6 +519,88 @@ def test_continue_retries_timeout_without_resume_dead_end(
     assert calls == [["make terminal ascii art", "--mode", "semi"]]
 
 
+def test_continue_prioritizes_blocked_re_over_outer_escalation(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_dispatch_limit",
+            "escalation_question": "Possible routing loop. How should I proceed?",
+            "last_dispatch": {"phase_id": "phase1-discover"},
+            "completed_phases": ["init"],
+            "user_message": "reverse engineer the workspace",
+            "autonomy_mode": "banzai",
+        },
+    )
+    re_state = run_dir / "re" / "state.json"
+    re_state.parent.mkdir(parents=True)
+    re_state.write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "re-extract-2-specify",
+                "blocked_reason": "re_quality_repair_modified_non_target_output",
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+
+    def fake_cmd_run(args, project_root, ext_dir):
+        calls.append(args)
+
+    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "phase1-discover"
+    assert state["status"] == "running"
+    assert state["blocked_reason"] is None
+    assert state["escalation_question"] is None
+    assert 'echelon spec resume "<your answer>"' not in capsys.readouterr().out
+    assert calls == [["reverse engineer the workspace", "--mode", "banzai"]]
+
+
+def test_continue_returns_to_discovery_when_bad_resume_skipped_blocked_re(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "running",
+            "phase": "phase1-what",
+            "blocked_reason": None,
+            "completed_phases": ["init", "phase1-constitution"],
+            "user_message": "reverse engineer the workspace",
+            "autonomy_mode": "banzai",
+        },
+    )
+    re_state = run_dir / "re" / "state.json"
+    re_state.parent.mkdir(parents=True)
+    re_state.write_text(
+        json.dumps({"status": "blocked", "phase": "re-extract-2-specify"}),
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, project_root, ext_dir: calls.append(args),
+    )
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "phase1-discover"
+    assert calls == [["reverse engineer the workspace", "--mode", "banzai"]]
+
+
 def test_continue_blocks_branchless_completed_run_from_starting_new_phase(
     tmp_path: Path,
     monkeypatch,

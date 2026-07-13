@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE recovery now wins over every outer continuation state** — `echelon spec
+  continue` checks the nested controller before classifying a run as blocked,
+  running, or completed. This prevents a prior `spec resume` from advancing to
+  constitution or WHAT while RE remains blocked; it returns safely to
+  phase1-discover instead.
+
 - **RE recovery no longer trips the outer discovery cap** — a blocked
   GOLDDIGGER controller is phase1-discover pre-dispatch work, not a SCOUT
   attempt. `echelon spec continue` now resets only that synthetic count while

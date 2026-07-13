@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import os
 import shlex
 import shutil
@@ -54,7 +55,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.2.10"
+CLI_VERSION = "3.2.11"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -2957,6 +2958,30 @@ def _interrupted_retry_phase(run_state: dict) -> str | None:
     return _last_incomplete_dispatch_phase(run_state)
 
 
+def _pending_re_recovery_phase(squad_dir: Path, run_state: dict) -> str | None:
+    """Return discovery when its nested GOLDDIGGER controller must resume.
+
+    RE is pre-dispatch work for phase1-discover. Its controller owns repair
+    retries and publication, so an outer escalation must never route around it
+    to constitution or WHAT.
+    """
+    if run_state.get("golddigger_status") == "complete":
+        return None
+    re_state_path = squad_dir / "re" / "state.json"
+    try:
+        re_state = json.loads(re_state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    phase = re_state.get("phase")
+    if (
+        re_state.get("status") == "blocked"
+        and isinstance(phase, str)
+        and phase.startswith("re-extract-")
+    ):
+        return "phase1-discover"
+    return None
+
+
 def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
     status = str(run_state.get("status") or "").strip()
     reason = str(run_state.get("blocked_reason") or "").strip()
@@ -5597,6 +5622,15 @@ def _cmd_continue(
             flush=True,
         )
         _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
+
+    pending_recovery_phase = _pending_re_recovery_phase(squad_dir, state)
+    if pending_recovery_phase:
+        start_phase(
+            pending_recovery_phase,
+            verb="Resuming blocked reverse engineering from",
+            clear_recovery=True,
+        )
+        return
 
     action = _classify_run_recovery(state)
     if action.kind == "safe_rewind":
