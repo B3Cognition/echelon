@@ -55,7 +55,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.2.12"
+CLI_VERSION = "3.2.13"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -6711,6 +6711,47 @@ def _cmd_re_execute_run(args: list[str]) -> None:
     }
     print(json.dumps(payload, sort_keys=True))
     if not result.completed:
+        raise SystemExit(1)
+
+
+def _cmd_re_check_domain(args: list[str]) -> None:
+    """Check one staged domain against the deterministic deep-spec contract."""
+    import json
+    import re
+
+    from harness.re_planner import ReExecutionPlan
+    from harness.re_quality_gate import validate_staged_re_domain_quality
+
+    if len(args) != 3 or any(
+        not re.fullmatch(r"[A-Za-z0-9._-]+", value) for value in args
+    ):
+        print(
+            "Usage: echelon re check-domain <run-id> <source-id> <domain-id>",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    run_id, source_id, domain_id = args
+    project_root = Path.cwd().resolve()
+    run_dir = project_root / "runs" / run_id
+    plan_path = run_dir / "re" / "re-execution-plan.json"
+    if not plan_path.is_file():
+        print(
+            f"echelon re check-domain: run not found under runs/: {run_id}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    try:
+        plan = ReExecutionPlan.from_json_dict(
+            json.loads(plan_path.read_text(encoding="utf-8"))
+        )
+        report = validate_staged_re_domain_quality(
+            run_dir / "re", plan, source_id, domain_id
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        print(f"echelon re check-domain: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(json.dumps(report.to_json_dict(), sort_keys=True))
+    if not report.passed:
         raise SystemExit(1)
 
 

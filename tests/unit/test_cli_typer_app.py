@@ -39,6 +39,18 @@ def test_re_execute_run_routes_to_deterministic_controller(monkeypatch):
 
 
 @pytest.mark.unit
+def test_re_check_domain_routes_to_deterministic_gate(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_re_check_domain", lambda args: calls.append(args))
+
+    run(["re", "check-domain", "spec-123", "api", "001-re-api"])
+
+    assert calls == [["spec-123", "api", "001-re-api"]]
+
+
+@pytest.mark.unit
 def test_re_publish_help_declares_manual_safety_flags():
     result = invoke_help("re", "publish")
 

@@ -204,6 +204,16 @@ def re_execute_run(
     _legacy_cli()._cmd_re_execute_run([run_id])
 
 
+@re_app.command("check-domain", hidden=True)
+def re_check_domain(
+    run_id: str = typer.Argument(..., help="Run id below runs/."),
+    source_id: str = typer.Argument(..., help="Source id from the RE plan."),
+    domain_id: str = typer.Argument(..., help="Domain id from the source manifest."),
+) -> None:
+    """Check one staged source-domain spec before the agent returns DONE."""
+    _legacy_cli()._cmd_re_check_domain([run_id, source_id, domain_id])
+
+
 @app.command(
     "init",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},

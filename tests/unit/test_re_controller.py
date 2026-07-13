@@ -287,6 +287,55 @@ def test_controller_reinitializes_legacy_state_before_first_dispatch(
 
 
 @pytest.mark.unit
+def test_legacy_specification_resume_queues_invalid_specs_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api", "web"))
+    _initialize_re_state(run_dir, max_repairs=1)
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase": "re-extract-2-specify",
+            "re_specification_targets": [
+                {
+                    "kind": "source-domain",
+                    "source_id": "web",
+                    "domain_id": "001-re-domain",
+                    "root": "src",
+                }
+            ],
+            "re_domain_quality_attempts": {"api/001-re-domain": 5},
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    (run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md").write_text(
+        "# Architecture summary\n", encoding="utf-8"
+    )
+
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert controller._ensure_target_quality_protocol(state, controller._load_plan()) is None
+    assert state["re_target_quality_protocol_version"] == 1
+    assert state["re_specification_targets"] == [
+        {
+            "kind": "source-domain",
+            "source_id": "api",
+            "domain_id": "001-re-domain",
+            "root": "src",
+        }
+    ]
+    assert "re_domain_quality_attempts" not in state
+    assert state["re_quality_gate_report"].endswith("quality/deep-spec-gate.json")
+
+
+@pytest.mark.unit
 def test_repaired_specification_advances_to_all_downstream_re_phases(
     tmp_path: Path,
 ) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import tempfile
 import hashlib
@@ -80,6 +81,7 @@ _ARCHITECTURE_OVERLAY_OUTPUTS = frozenset(
         "workspace/domain-catalog.md",
     }
 )
+_TARGET_QUALITY_PROTOCOL_VERSION = 1
 
 
 class ReExtractionController:
@@ -139,6 +141,9 @@ class ReExtractionController:
             state["status"] = "in_progress"
             state.pop("blocked_reason", None)
             self._save_state(state)
+        protocol_error = self._ensure_target_quality_protocol(state, plan)
+        if protocol_error is not None:
+            return self._block(state, protocol_error)
         while True:
             phase = str(state.get("phase") or "re-extract-1-analyze")
             last_dispatch = state.get("last_dispatch")
@@ -292,6 +297,9 @@ class ReExtractionController:
                 return self._block(state, architecture_error)
             state["re_domain_partition_version"] = DOMAIN_PARTITION_VERSION
             state["re_specification_targets"] = self._initial_specification_targets(plan)
+            state["re_target_quality_protocol_version"] = (
+                _TARGET_QUALITY_PROTOCOL_VERSION
+            )
             state["re_workspace_synthesis_complete"] = False
             state["phase"] = "re-extract-2-specify"
         elif phase == "re-extract-2-specify":
@@ -332,6 +340,47 @@ class ReExtractionController:
             state["status"] = "done"
             self._save_state(state)
             return ReControllerResult(completed=True)
+        self._save_state(state)
+        return None
+
+    def _ensure_target_quality_protocol(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+    ) -> str | None:
+        """Backfill per-domain validation before a legacy specification resume.
+
+        Older runs produced several domain specs before target-level quality
+        enforcement existed. Without this migration, they are first checked by
+        the workspace-wide gate only after the remaining queue drains. A
+        one-time scan makes every existing shallow or missing spec an immediate
+        controller-owned target, while fresh runs mark the protocol when their
+        queue is created.
+        """
+        if state.get("phase") != "re-extract-2-specify":
+            return None
+        if state.get("re_target_quality_protocol_version") == (
+            _TARGET_QUALITY_PROTOCOL_VERSION
+        ):
+            return None
+
+        report = validate_staged_re_quality(self._run_re_dir, plan)
+        report_path = write_re_quality_report(self._run_re_dir, report)
+        state["re_quality_gate_report"] = str(report_path)
+        if not report.passed:
+            targets = self._repair_specification_targets(report)
+            if targets is None:
+                return "re_domain_manifest_invalid"
+            state["re_specification_targets"] = targets
+            state["re_workspace_synthesis_complete"] = False
+            # This is a protocol migration, not a failed repair pass. Reset
+            # only target-local retries so the revised, executable validation
+            # protocol gets one bounded chance to correct legacy output.
+            state.pop("re_domain_quality_attempts", None)
+            state.pop("re_target_quality_repair_snapshot", None)
+        state["re_target_quality_protocol_version"] = (
+            _TARGET_QUALITY_PROTOCOL_VERSION
+        )
         self._save_state(state)
         return None
 
@@ -689,6 +738,13 @@ class ReExtractionController:
             "root; it must resolve within that domain. Never use Markdown-link citations. "
             "Include at least five distinct valid citations. Do not write another domain spec, "
             "source overview, or workspace synthesis.\n"
+            "Before returning DONE, run this exact deterministic check from the "
+            "workspace root; it exits non-zero and prints the authoritative failures "
+            "when the spec is not acceptable:\n"
+            f"`cd {shlex.quote(str(self._project_root))} && echelon re check-domain "
+            f"{self._run_dir.name} {source_id} {domain_id}`\n"
+            "Do not claim that a citation is valid because its path exists: its line "
+            "range must also exist. Correct every printed failure before returning DONE.\n"
             + quality_contract
             + architecture_contract
             + (

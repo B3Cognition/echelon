@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE depth enforcement now validates legacy output before it can drain the
+  queue** — interrupted runs created before target-level quality enforcement now
+  receive a one-time deterministic scan on resume. Every shallow, missing, or
+  invalid staged domain is re-queued before another agent dispatch, rather than
+  being discovered only by the final workspace-wide gate. RE-SPECIFIER must run
+  the new deterministic target checker before returning `DONE`, so an existing
+  citation path with an out-of-range line number cannot be self-certified.
+
 - **Legacy RE repair snapshots now migrate on every resume** — older runs may
   have captured Finder `.DS_Store` metadata before it was excluded, and may
   predate the controller-owned architecture map and domain catalog. Each
