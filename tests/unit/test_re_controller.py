@@ -700,7 +700,10 @@ def test_quality_repair_snapshot_allows_creation_of_a_missing_target_spec(
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("filename", ("ECHELON_RESULT.yaml", "REPAIR_RESULT.yaml"))
+@pytest.mark.parametrize(
+    "filename",
+    ("ECHELON_RESULT.yaml", "REPAIR_RESULT.yaml", "echelon_result.json", ".DS_Store"),
+)
 def test_quality_repair_snapshot_ignores_provider_result_capture(
     tmp_path: Path, filename: str
 ) -> None:
@@ -721,6 +724,121 @@ def test_quality_repair_snapshot_ignores_provider_result_capture(
     after = controller._non_target_snapshot([spec])
 
     assert before == after
+
+
+@pytest.mark.unit
+def test_architecture_overlay_refreshes_active_repair_snapshot(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = controller._load_plan()
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    (run_dir / "re" / "workspace" / "architecture-map.json").unlink()
+    (run_dir / "re" / "workspace" / "domain-catalog.md").unlink()
+    target = {
+        "kind": "source-domain",
+        "source_id": "api",
+        "domain_id": "001-re-domain",
+        "root": "src",
+    }
+    report = controller._target_quality_report(plan, target)
+    assert report is not None
+    state.update(
+        {
+            "phase": "re-extract-2-specify",
+            "re_target_quality_repair_snapshot": controller._repair_snapshot(report),
+        }
+    )
+    controller._save_state(state)
+
+    assert controller._ensure_architecture_overlay(state, plan) is None
+    assert (run_dir / "re" / "workspace" / "architecture-map.json").is_file()
+    assert (run_dir / "re" / "workspace" / "domain-catalog.md").is_file()
+    assert (
+        controller._repair_snapshot_failure(
+            state, "re_target_quality_repair_snapshot"
+        )
+        is None
+    )
+
+
+@pytest.mark.unit
+def test_architecture_overlay_does_not_mask_non_target_change(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = controller._load_plan()
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    (run_dir / "re" / "workspace" / "architecture-map.json").unlink()
+    (run_dir / "re" / "workspace" / "domain-catalog.md").unlink()
+    target = {
+        "kind": "source-domain",
+        "source_id": "api",
+        "domain_id": "001-re-domain",
+        "root": "src",
+    }
+    report = controller._target_quality_report(plan, target)
+    assert report is not None
+    state["re_target_quality_repair_snapshot"] = controller._repair_snapshot(report)
+    (run_dir / "re" / "workspace").mkdir(parents=True, exist_ok=True)
+    (run_dir / "re" / "workspace" / "unexpected.md").write_text(
+        "not controller output\n", encoding="utf-8"
+    )
+
+    assert (
+        controller._ensure_architecture_overlay(state, plan)
+        == "re_quality_repair_modified_non_target_output"
+    )
+
+
+@pytest.mark.unit
+def test_quality_repair_allows_root_echelon_result_capture(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    spec.write_text("# Incomplete\n", encoding="utf-8")
+
+    class CaptureWritingProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            phase = self.phases[-1]
+            payload = dict(result.echelon_result)
+            updates: dict[str, int] = {}
+            if phase == "re-extract-2-specify" and self.phases.count(phase) == 2:
+                spec.write_text(_deep_spec("api", "v1"), encoding="utf-8")
+                (run_dir / "re" / "echelon_result.json").write_text(
+                    '{"echelon_result": {"verdict": "DONE"}}\n',
+                    encoding="utf-8",
+                )
+            if phase == "re-extract-3-verify":
+                updates["coverage_pct"] = 80
+            payload["state_updates"] = updates
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result=payload,
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    result = ReExtractionController(
+        provider=CaptureWritingProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
 
 
 @pytest.mark.unit

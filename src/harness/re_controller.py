@@ -67,7 +67,19 @@ _PHASE_SPECS = {
     "re-extract-6-checklist": "re-extract-6-checklist.md",
     "re-extract-7-constitute": "re-extract-7-constitute.md",
 }
-_REPAIR_EPHEMERAL_OUTPUTS = frozenset({"state.json", "quality/deep-spec-gate.json"})
+_REPAIR_EPHEMERAL_OUTPUTS = frozenset(
+    {
+        "state.json",
+        "echelon_result.json",
+        "quality/deep-spec-gate.json",
+    }
+)
+_ARCHITECTURE_OVERLAY_OUTPUTS = frozenset(
+    {
+        "workspace/architecture-map.json",
+        "workspace/domain-catalog.md",
+    }
+)
 
 
 class ReExtractionController:
@@ -698,13 +710,20 @@ class ReExtractionController:
         map_path = self._run_re_dir / "workspace" / "architecture-map.json"
         catalog_path = self._run_re_dir / "workspace" / "domain-catalog.md"
         try:
-            if rebuild or not map_path.is_file() or not catalog_path.is_file():
+            overlay_written = rebuild or not map_path.is_file() or not catalog_path.is_file()
+            if overlay_written:
                 architecture = build_re_architecture_map(plan, run_re_dir=self._run_re_dir)
                 map_path, catalog_path = write_re_architecture_catalog(
                     self._run_re_dir, architecture
                 )
             else:
                 load_re_architecture_map(map_path)
+            if overlay_written:
+                snapshot_error = self._refresh_repair_snapshots_for_architecture_overlay(
+                    state
+                )
+                if snapshot_error is not None:
+                    return snapshot_error
             state["re_architecture_map"] = str(map_path)
             state["re_domain_catalog"] = str(catalog_path)
             self._save_state(state)
@@ -895,6 +914,45 @@ class ReExtractionController:
             return "re_quality_repair_modified_non_target_output"
         return None
 
+    def _refresh_repair_snapshots_for_architecture_overlay(
+        self, state: dict
+    ) -> str | None:
+        """Accept only controller-created catalog changes in an active snapshot.
+
+        A run started before the architecture catalog feature can resume with an
+        active repair snapshot. The controller creates the missing catalog before
+        its next dispatch, so its expected-output baseline must include those two
+        files. Any other difference remains a guarded non-target modification.
+        """
+        for snapshot_key in (
+            "re_quality_repair_snapshot",
+            "re_target_quality_repair_snapshot",
+        ):
+            snapshot = state.get(snapshot_key)
+            if snapshot is None:
+                continue
+            if not isinstance(snapshot, dict):
+                return "re_quality_repair_snapshot_missing"
+            previous = snapshot.get("non_target_outputs")
+            target_relatives = snapshot.get("repair_targets")
+            if (
+                not isinstance(previous, dict)
+                or not isinstance(target_relatives, list)
+                or any(not isinstance(path, str) for path in target_relatives)
+            ):
+                return "re_quality_repair_snapshot_missing"
+            targets = [self._run_re_dir / path for path in target_relatives]
+            current = self._non_target_snapshot(targets)
+            changed = {
+                relative
+                for relative in set(previous) | set(current)
+                if previous.get(relative) != current.get(relative)
+            }
+            if not changed.issubset(_ARCHITECTURE_OVERLAY_OUTPUTS):
+                return "re_quality_repair_modified_non_target_output"
+            snapshot["non_target_outputs"] = current
+        return None
+
     def _repair_target_paths(self, report: ReQualityReport) -> list[Path]:
         targets: list[Path] = []
         for failure in report.failures:
@@ -946,6 +1004,8 @@ class ReExtractionController:
     @staticmethod
     def _is_repair_control_plane_file(relative: str) -> bool:
         if relative in _REPAIR_EPHEMERAL_OUTPUTS:
+            return True
+        if Path(relative).name == ".DS_Store":
             return True
         # Providers may persist the trailing echelon_result under a phase-specific
         # name (for example, REPAIR_RESULT.yaml). Restrict the exemption to the

@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE repair snapshot false blocks on resume** — provider-owned root result
+  captures such as `re/echelon_result.json`, plus Finder `.DS_Store` metadata,
+  are now excluded from repair-output comparison. Resuming an older run now
+  adds the controller-owned architecture catalog to its active snapshot without
+  masking any other changed output; nested result captures and all non-target
+  artifact changes remain blocking errors.
+
 - **RE architecture composition catalog** — every workspace RE generation now
   publishes a deterministic architecture map and dependency-ordered domain
   catalog. Stable source-owned domain IDs and cache/repair boundaries remain
