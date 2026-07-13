@@ -4,6 +4,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Reverse-engineering hidden-directory exclusion** — workspace/domain
+  discovery, deterministic analysis, CodeGraph artifacts, fingerprints, and
+  RE agent scope now exclude all hidden directories such as `.git`, `.github`,
+  `.claude`, and `.npm`. This prevents repository metadata from becoming RE
+  domains or source evidence.
+
 ### Added
 
 - **Manifest-bound RE domain coverage** — active workspace RE now derives a

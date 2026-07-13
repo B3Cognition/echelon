@@ -45,7 +45,7 @@ count_source_files() {
     local dir="$1"
     # Single find with all extensions, pruning heavy directories for performance
     find "$dir" -maxdepth 5 \
-        \( -name "node_modules" -o -name "vendor" -o -name "dist" -o -name "build" -o -name "__pycache__" -o -name ".venv" -o -name "venv" -o -name "target" \) -prune -o \
+        \( -name ".*" -o -name "node_modules" -o -name "vendor" -o -name "dist" -o -name "build" -o -name "__pycache__" -o -name ".venv" -o -name "venv" -o -name "target" \) -prune -o \
         -type f \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.java" -o -name "*.go" -o -name "*.rs" -o -name "*.rb" -o -name "*.php" -o -name "*.cs" -o -name "*.cpp" -o -name "*.c" -o -name "*.swift" -o -name "*.kt" -o -name "*.scala" -o -name "*.pas" -o -name "*.pl" \) -print 2>/dev/null | wc -l | tr -d ' '
 }
 

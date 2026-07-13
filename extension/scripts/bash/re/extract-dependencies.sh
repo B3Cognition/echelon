@@ -108,7 +108,7 @@ fi
 # Java/Kotlin - Maven (search subdirectories for multi-module projects)
 while IFS= read -r -d '' f; do
     deps+=("$(jq -n --arg file "$f" '{type: "maven", file: $file}')")
-done < <(find . -maxdepth 3 -name "pom.xml" -print0 2>/dev/null || true)
+done < <(find . -maxdepth 3 -not -path '*/.*/*' -name "pom.xml" -print0 2>/dev/null || true)
 
 # Java/Kotlin - Gradle
 if [[ -f "build.gradle" ]]; then
@@ -121,11 +121,11 @@ fi
 # Java/Kotlin - Gradle multi-module (search subdirectories)
 while IFS= read -r -d '' f; do
     [[ "$f" != "./build.gradle" ]] && deps+=("$(jq -n --arg file "$f" '{type: "gradle", file: $file}')")
-done < <(find . -maxdepth 3 -name "build.gradle" -print0 2>/dev/null || true)
+done < <(find . -maxdepth 3 -not -path '*/.*/*' -name "build.gradle" -print0 2>/dev/null || true)
 
 while IFS= read -r -d '' f; do
     [[ "$f" != "./build.gradle.kts" ]] && deps+=("$(jq -n --arg file "$f" '{type: "gradle-kts", file: $file}')")
-done < <(find . -maxdepth 3 -name "build.gradle.kts" -print0 2>/dev/null || true)
+done < <(find . -maxdepth 3 -not -path '*/.*/*' -name "build.gradle.kts" -print0 2>/dev/null || true)
 
 # Perl - cpanfile (modern)
 if [[ -f "cpanfile" ]]; then
@@ -155,27 +155,27 @@ done
 # .NET - C# project files (NuGet references)
 while IFS= read -r -d '' f; do
     deps+=("$(jq -n --arg file "$f" '{type: "nuget", file: $file}')")
-done < <(find . -maxdepth 3 -name "*.csproj" -print0 2>/dev/null || true)
+done < <(find . -maxdepth 3 -not -path '*/.*/*' -name "*.csproj" -print0 2>/dev/null || true)
 
 # .NET - F# project files
 while IFS= read -r -d '' f; do
     deps+=("$(jq -n --arg file "$f" '{type: "nuget", file: $file}')")
-done < <(find . -maxdepth 3 -name "*.fsproj" -print0 2>/dev/null || true)
+done < <(find . -maxdepth 3 -not -path '*/.*/*' -name "*.fsproj" -print0 2>/dev/null || true)
 
 # .NET - packages.config (older NuGet format)
 while IFS= read -r -d '' f; do
     deps+=("$(jq -n --arg file "$f" '{type: "nuget-legacy", file: $file}')")
-done < <(find . -maxdepth 3 -name "packages.config" -print0 2>/dev/null || true)
+done < <(find . -maxdepth 3 -not -path '*/.*/*' -name "packages.config" -print0 2>/dev/null || true)
 
 # PHP - Composer (search subdirectories)
 while IFS= read -r -d '' f; do
     deps+=("$(jq -c --arg file "$f" '{type: "composer", file: $file, require: (.require // {}), "require-dev": (."require-dev" // {})}' "$f" 2>/dev/null || echo '{}')")
-done < <(find . -maxdepth 3 -name "composer.json" -print0 2>/dev/null || true)
+done < <(find . -maxdepth 3 -not -path '*/.*/*' -name "composer.json" -print0 2>/dev/null || true)
 
 # Delphi - Project files
 while IFS= read -r -d '' f; do
     deps+=("$(jq -n --arg file "$f" '{type: "delphi-project", file: $file}')")
-done < <(find . -maxdepth 3 -name "*.dproj" -print0 2>/dev/null || true)
+done < <(find . -maxdepth 3 -not -path '*/.*/*' -name "*.dproj" -print0 2>/dev/null || true)
 
 # Delphi - Project group files
 for f in *.groupproj; do
@@ -185,7 +185,7 @@ done
 # Delphi - Package files (.dpk)
 while IFS= read -r -d '' f; do
     deps+=("$(jq -n --arg file "$f" '{type: "delphi-package", file: $file}')")
-done < <(find . -maxdepth 3 -name "*.dpk" -print0 2>/dev/null || true)
+done < <(find . -maxdepth 3 -not -path '*/.*/*' -name "*.dpk" -print0 2>/dev/null || true)
 
 # Output JSON array
 {

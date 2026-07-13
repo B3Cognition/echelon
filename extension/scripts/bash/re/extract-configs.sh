@@ -8,13 +8,9 @@ echo "Extracting configs..." >&2
 
 configs=()
 
-# CI/CD - GitHub Actions
-for f in .github/workflows/*.yml .github/workflows/*.yaml; do
-    [[ -f "$f" ]] && configs+=("{\"type\": \"ci\", \"file\": \"$f\"}")
-done
-
-# CI/CD - GitLab, CircleCI
-for f in .gitlab-ci.yml .circleci/config.yml; do
+# CI/CD - root-level descriptors only. Hidden directories are deliberately
+# excluded from RE, so provider-specific workflow directories are not read.
+for f in .gitlab-ci.yml; do
     [[ -f "$f" ]] && configs+=("{\"type\": \"ci\", \"file\": \"$f\"}")
 done
 

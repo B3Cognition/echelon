@@ -142,15 +142,19 @@ def project_markers(path: Path) -> tuple[str, ...]:
 def count_source_files(path: Path) -> int:
     count = 0
     for _, dirnames, filenames in os.walk(path):
-        dirnames[:] = [name for name in dirnames if name not in IGNORED_SOURCE_DIRS]
+        dirnames[:] = [name for name in dirnames if not _is_ignored_source_dir(name)]
         count += len(filenames)
     return count
+
+
+def _is_ignored_source_dir(name: str) -> bool:
+    return name.startswith(".") or name in IGNORED_SOURCE_DIRS
 
 
 def _source_roots_under(candidate_root: Path, workspace_root: Path) -> tuple[SourceRoot, ...]:
     sources: list[SourceRoot] = []
     for child in sorted(candidate_root.iterdir(), key=lambda item: item.name):
-        if not child.is_dir() or child.name in IGNORED_SOURCE_DIRS:
+        if not child.is_dir() or _is_ignored_source_dir(child.name):
             continue
         markers = project_markers(child)
         git_present = has_git_marker(child)

@@ -246,7 +246,7 @@ def test_manifest_json_round_trips(tmp_path: Path) -> None:
     assert loaded == manifest
 
 
-def test_source_file_count_ignores_dependency_and_git_dirs(tmp_path: Path) -> None:
+def test_source_file_count_ignores_dependency_and_hidden_dirs(tmp_path: Path) -> None:
     (tmp_path / "node_modules" / "left-pad").mkdir(parents=True)
     (tmp_path / "node_modules" / "left-pad" / "index.js").write_text(
         "module.exports = 1;\n",
@@ -254,6 +254,11 @@ def test_source_file_count_ignores_dependency_and_git_dirs(tmp_path: Path) -> No
     )
     (tmp_path / ".git" / "objects").mkdir(parents=True)
     (tmp_path / ".git" / "objects" / "ignored").write_text("git data\n", encoding="utf-8")
+    (tmp_path / ".github" / "skills").mkdir(parents=True)
+    (tmp_path / ".github" / "skills" / "logger.ts").write_text(
+        "export const ignored = true;\n",
+        encoding="utf-8",
+    )
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("print('hello')\n", encoding="utf-8")
 

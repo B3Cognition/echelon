@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -117,7 +118,9 @@ def _fingerprint_git_source(
     profile_hash: str,
 ) -> SourceFingerprint:
     head = _git(source, "rev-parse", "HEAD")
-    status_entries = _git_status_entries(source)
+    status_entries = [
+        entry for entry in _git_status_entries(source) if not _is_ignored_path(entry[0])
+    ]
     digest = hashlib.sha256()
     _digest_text(digest, "kind=git")
     _digest_text(digest, f"profile={profile.stable_json()}")
@@ -155,13 +158,22 @@ def _fingerprint_file_tree(source: Path, profile_hash: str) -> SourceFingerprint
 
 def _iter_relevant_files(root: Path) -> list[Path]:
     files: list[Path] = []
-    for path in root.rglob("*"):
-        if path.is_dir():
-            continue
-        if any(part in IGNORED_SOURCE_DIRS for part in path.relative_to(root).parts):
-            continue
-        files.append(path)
+    for directory, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            name
+            for name in dirnames
+            if name not in IGNORED_SOURCE_DIRS and not name.startswith(".")
+        ]
+        files.extend(Path(directory) / name for name in filenames)
     return sorted(files, key=lambda item: item.relative_to(root).as_posix())
+
+
+def _is_ignored_path(relative_path: str) -> bool:
+    """Ignore changes below hidden or generated directories, but not root dotfiles."""
+    return any(
+        part.startswith(".") or part in IGNORED_SOURCE_DIRS
+        for part in Path(relative_path).parts[:-1]
+    )
 
 
 def _is_git_worktree(path: Path) -> bool:

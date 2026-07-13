@@ -193,12 +193,10 @@ def write_domain_manifest(path: Path, manifest: ReDomainManifest) -> None:
 def _component_roots(source_root: Path) -> list[str]:
     manifest_roots: set[str] = set()
     if source_root.is_dir():
-        for path in source_root.rglob("*"):
+        for path in _visible_files(source_root):
             if not path.is_file() or path.name not in _MANIFEST_NAMES:
                 continue
             relative = path.relative_to(source_root)
-            if any(part in _IGNORED_PARTS for part in relative.parts):
-                continue
             root = relative.parent.as_posix() or "."
             if _source_files(path.parent):
                 manifest_roots.add(root)
@@ -238,7 +236,9 @@ def _uncovered_component_roots(source_root: Path, roots: set[str]) -> set[str]:
         ):
             continue
         if len(relative.parts) == 1:
-            fallback.add(".")
+            # Root files in a workspace with independently buildable children
+            # are tooling, not a catch-all domain. A root domain would overlap
+            # every child and let the agent escape manifest-bound scope.
             continue
         top = relative.parts[0]
         # Monorepo conventions put independently deployed components below a
@@ -278,15 +278,29 @@ def _files_outside_roots(source_root: Path, roots: set[str]) -> bool:
 
 
 def _source_files(root: Path) -> list[Path]:
+    return [
+        path
+        for path in _visible_files(root)
+        if path.suffix.lower() in _SOURCE_SUFFIXES
+    ]
+
+
+def _visible_files(root: Path) -> list[Path]:
+    """List files while pruning generated and hidden directories before descent."""
     if not root.is_dir():
         return []
-    return sorted(
-        path
-        for path in root.rglob("*")
-        if path.is_file()
-        and path.suffix.lower() in _SOURCE_SUFFIXES
-        and not any(part in _IGNORED_PARTS for part in path.parts)
-    )
+
+    files: list[Path] = []
+    for directory, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(
+            name for name in dirnames if not _is_ignored_directory(name)
+        )
+        files.extend(Path(directory) / name for name in filenames)
+    return sorted(files)
+
+
+def _is_ignored_directory(name: str) -> bool:
+    return name.startswith(".") or name in _IGNORED_PARTS
 
 
 def _line_count(path: Path) -> int:
@@ -308,6 +322,7 @@ def _safe_relative_root(value: str) -> bool:
     return value == "." or (
         not path.is_absolute()
         and ".." not in path.parts
+        and not any(_is_ignored_directory(part) for part in path.parts)
         and value == path.as_posix()
         and value != ""
     )

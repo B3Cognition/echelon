@@ -222,6 +222,24 @@ async function atomicWrite(outputPath, data) {
  */
 function assembleAnalysisOutput(params) {
     const { repoPath, symbols, relationships, callGraph, typeHierarchy, impactRadius, publicSymbols, indexStats, extractionSummary, } = params;
+    // CodeGraph follows git-tracked source by default, which can include
+    // repository metadata such as .github/skills. Keep that data outside the
+    // RE artifact boundary even when the upstream indexer includes it.
+    const visibleSymbols = symbols.filter((symbol) => !isHiddenDirectoryPath(symbol.file_path));
+    const visibleQualifiedNames = new Set(visibleSymbols.map((symbol) => symbol.qualified_name));
+    const visibleRelationships = relationships.filter((relationship) => visibleQualifiedNames.has(relationship.source) &&
+        visibleQualifiedNames.has(relationship.target));
+    const visibleCallGraph = callGraph.filter((edge) => visibleQualifiedNames.has(edge.caller) && visibleQualifiedNames.has(edge.callee));
+    const visibleTypeHierarchy = typeHierarchy.filter((edge) => visibleQualifiedNames.has(edge.child) && visibleQualifiedNames.has(edge.parent));
+    const visibleImpactRadius = impactRadius
+        .filter((entry) => visibleQualifiedNames.has(entry.symbol))
+        .map((entry) => ({
+        ...entry,
+        affected: Array.isArray(entry.affected)
+            ? entry.affected.filter((symbol) => visibleQualifiedNames.has(symbol))
+            : entry.affected,
+    }));
+    const visiblePublicSymbols = publicSymbols.filter((symbol) => !isHiddenDirectoryPath(symbol.file_path));
     // Build language_coverage map from extraction summary
     const languageCoverage = {};
     for (const lang of extractionSummary.languages) {
@@ -243,13 +261,13 @@ function assembleAnalysisOutput(params) {
         repo_path: repoPath,
         supported: extractionSummary.total_extracted > 0,
         language_coverage: languageCoverage,
-        symbols,
-        relationships,
-        call_graph: callGraph,
-        type_hierarchy: typeHierarchy,
-        impact_radius: impactRadius,
+        symbols: visibleSymbols,
+        relationships: visibleRelationships,
+        call_graph: visibleCallGraph,
+        type_hierarchy: visibleTypeHierarchy,
+        impact_radius: visibleImpactRadius,
         coverage: {
-            total_symbols: publicSymbols.length,
+            total_symbols: visiblePublicSymbols.length,
             documented_symbols: 0, // post-MVP (T026)
             coverage_percent: 0.0, // post-MVP
         },
@@ -257,6 +275,13 @@ function assembleAnalysisOutput(params) {
         extraction_summary: extractionSummary,
     };
     return output;
+}
+
+function isHiddenDirectoryPath(filePath) {
+    if (typeof filePath !== 'string')
+        return false;
+    const parts = filePath.replace(/\\/g, '/').split('/');
+    return parts.slice(0, -1).some((part) => part.startsWith('.'));
 }
 /**
  * Maps a language identifier to a canonical file extension.

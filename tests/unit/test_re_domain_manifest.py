@@ -82,6 +82,30 @@ def test_discovery_preserves_code_outside_manifest_owned_components(tmp_path: Pa
 
 
 @pytest.mark.unit
+def test_discovery_excludes_hidden_directories_and_root_tooling_from_component_domains(
+    tmp_path: Path,
+) -> None:
+    source = _source(tmp_path)
+    root = Path(source.absolute_path)
+    (root / "package.json").write_text('{"workspaces":["apps/*"]}\n', encoding="utf-8")
+    (root / "workspace.mjs").write_text("export {};\n", encoding="utf-8")
+    (root / "apps" / "web" / "src").mkdir(parents=True)
+    (root / "apps" / "web" / "package.json").write_text("{}\n", encoding="utf-8")
+    (root / "apps" / "web" / "src" / "main.ts").write_text("export {};\n", encoding="utf-8")
+    (root / ".github" / "skills").mkdir(parents=True)
+    (root / ".github" / "skills" / "logger.ts").write_text("export {};\n", encoding="utf-8")
+    (root / ".claude" / "hooks").mkdir(parents=True)
+    (root / ".claude" / "hooks" / "tool.py").write_text("pass\n", encoding="utf-8")
+
+    manifest = discover_source_domains(source)
+
+    assert [(domain.domain_id, domain.root) for domain in manifest.domains] == [
+        ("001-re-apps-web", "apps/web"),
+    ]
+    assert manifest.domains[0].source_file_count == 1
+
+
+@pytest.mark.unit
 def test_discovery_folds_nested_helper_packages_into_their_code_owning_parent(
     tmp_path: Path,
 ) -> None:

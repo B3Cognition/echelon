@@ -564,6 +564,7 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
         # Count source files and lines for this repo
         SOURCE_EXTENSIONS="ts|tsx|js|jsx|py|go|rs|java|kt|cs|rb|php|swift|c|cpp|h|hpp"
         total_files=$(find "$REPO_PATH" -type f \
+            -not -path '*/.*/*' \
             -not -path '*/.git/*' \
             -not -path '*/node_modules/*' \
             -not -path '*/vendor/*' \
@@ -582,6 +583,7 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
                 total_lines=$((total_lines + lines))
             fi
         done < <(find "$REPO_PATH" -type f \
+            -not -path '*/.*/*' \
             -not -path '*/.git/*' \
             -not -path '*/node_modules/*' \
             -not -path '*/vendor/*' \
@@ -732,6 +734,7 @@ echo "" >&2
 # Step 2: Count total source lines for metadata
 SOURCE_EXTENSIONS="ts|tsx|js|jsx|py|go|rs|java|kt|cs|rb|php|swift|c|cpp|h|hpp"
 total_files=$(find . -type f \
+    -not -path '*/.*/*' \
     -not -path './.git/*' \
     -not -path './node_modules/*' \
     -not -path './vendor/*' \
@@ -750,6 +753,7 @@ while IFS= read -r file; do
         total_lines=$((total_lines + lines))
     fi
 done < <(find . -type f \
+    -not -path '*/.*/*' \
     -not -path './.git/*' \
     -not -path './node_modules/*' \
     -not -path './vendor/*' \

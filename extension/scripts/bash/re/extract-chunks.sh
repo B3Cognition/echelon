@@ -26,6 +26,7 @@ SOURCE_EXTENSIONS="ts|tsx|js|jsx|py|go|rs|java|kt|cs|rb|php|swift|c|cpp|h|hpp"
 
 # Count total source files (excluding common non-source directories)
 total_files=$(find . -type f \
+    -not -path '*/.*/*' \
     -not -path './.git/*' \
     -not -path './node_modules/*' \
     -not -path './vendor/*' \
@@ -45,6 +46,7 @@ while IFS= read -r file; do
         total_lines=$((total_lines + lines))
     fi
 done < <(find . -type f \
+    -not -path '*/.*/*' \
     -not -path './.git/*' \
     -not -path './node_modules/*' \
     -not -path './vendor/*' \
@@ -95,6 +97,7 @@ if [[ "$needs_chunking" == "true" ]] && [[ "$CHUNKING_MODE" == "auto" ]]; then
             chunks_json=$(
                 # Get unique top-level directories containing source files
                 find . -type f \
+                    -not -path '*/.*/*' \
                     -not -path './.git/*' \
                     -not -path './node_modules/*' \
                     -not -path './vendor/*' \
@@ -118,6 +121,7 @@ if [[ "$needs_chunking" == "true" ]] && [[ "$CHUNKING_MODE" == "auto" ]]; then
                     else
                         dir_path="./$dir"
                         dir_lines=$(find "$dir_path" -type f \
+                            -not -path '*/.*/*' \
                             -not -path './node_modules/*' \
                             -not -path './vendor/*' \
                             -not -path './dist/*' \
@@ -138,6 +142,7 @@ if [[ "$needs_chunking" == "true" ]] && [[ "$CHUNKING_MODE" == "auto" ]]; then
             # Group by file type
             chunks_json=$(
                 find . -type f \
+                    -not -path '*/.*/*' \
                     -not -path './.git/*' \
                     -not -path './node_modules/*' \
                     -not -path './vendor/*' \
@@ -151,6 +156,7 @@ if [[ "$needs_chunking" == "true" ]] && [[ "$CHUNKING_MODE" == "auto" ]]; then
                 while read -r count ext; do
                     # Get line count for this extension
                     ext_lines=$(find . -type f -name "*.$ext" \
+                        -not -path '*/.*/*' \
                         -not -path './.git/*' \
                         -not -path './node_modules/*' \
                         -not -path './vendor/*' \

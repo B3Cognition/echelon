@@ -18,7 +18,7 @@ TMPFILE=$(mktemp)
 trap 'rm -f "$TMPFILE"' EXIT
 
 # Find all files and extract extensions
-find . -type f -not -path './.git/*' -not -path './node_modules/*' -not -path './vendor/*' 2>/dev/null | while IFS= read -r file; do
+find . -type f -not -path '*/.*/*' -not -path './.git/*' -not -path './node_modules/*' -not -path './vendor/*' 2>/dev/null | while IFS= read -r file; do
     basename_file=$(basename "$file")
     if [[ "$basename_file" == *.* ]]; then
         echo "${basename_file##*.}"
@@ -40,7 +40,7 @@ entry_points_json=$(
 )
 
 # Count total files
-total_files=$(find . -type f -not -path './.git/*' -not -path './node_modules/*' -not -path './vendor/*' 2>/dev/null | wc -l | tr -d ' ')
+total_files=$(find . -type f -not -path '*/.*/*' -not -path './.git/*' -not -path './node_modules/*' -not -path './vendor/*' 2>/dev/null | wc -l | tr -d ' ')
 
 # Output JSON
 jq -n \

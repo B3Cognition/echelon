@@ -82,6 +82,24 @@ def test_dirty_git_source_fingerprint_includes_tracked_and_untracked_changes(
     assert untracked_dirty.value != tracked_dirty.value
 
 
+def test_dirty_git_source_fingerprint_ignores_hidden_directory_changes(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    profile = ReFingerprintProfile()
+    clean = fingerprint_source(repo, profile)
+
+    (repo / ".github" / "skills").mkdir(parents=True)
+    (repo / ".github" / "skills" / "logger.ts").write_text(
+        "export const ignored = true;\n",
+        encoding="utf-8",
+    )
+
+    hidden_dirty = fingerprint_source(repo, profile)
+
+    assert hidden_dirty.dirty is False
+    assert hidden_dirty.value == clean.value
+
+
 def test_non_git_source_fingerprint_hashes_relevant_files_and_profile_inputs(
     tmp_path: Path,
 ) -> None:

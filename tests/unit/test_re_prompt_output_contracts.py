@@ -116,6 +116,13 @@ class TestRePromptOutputContracts:
         assert "Source Evidence" in text
         assert "BLOCKED" in text
 
+    def test_re_specifier_excludes_hidden_directories_from_domain_scope(self) -> None:
+        text = RE_SPECIFIER.read_text(encoding="utf-8")
+
+        assert "Hidden Directory Exclusion" in text
+        assert ".github" in text
+        assert "NEVER inspect, cite, summarize, or create a domain" in text
+
     def test_re_verifier_rejects_specs_without_source_evidence(self) -> None:
         text = (ROOT / "extension" / "agents" / "re" / "verifier.md").read_text(
             encoding="utf-8"

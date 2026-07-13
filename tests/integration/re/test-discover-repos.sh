@@ -265,6 +265,7 @@ echo "=== Test 6: source_file_count ==="
 
 SRC_COUNT_A=$(jq '.repos[] | select(.name == "repo-a") | .source_file_count' "$TMPOUT1")
 assert_gt "repo-a source_file_count > 0" 0 "$SRC_COUNT_A"
+assert_eq "repo-a source_file_count excludes hidden source files" "6" "$SRC_COUNT_A"
 
 # ---------- Test 6b: wrapper repo with child repos remains polyrepo ----------
 

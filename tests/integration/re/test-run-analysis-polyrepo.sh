@@ -115,8 +115,12 @@ assert_file_exists "dependencies.json at root output dir" "$TMPDIR1/dependencies
 if [[ -f "$TMPDIR1/codegraph-analysis.json" ]]; then
     assert_file_exists "codegraph-summary.json at root output dir" "$TMPDIR1/codegraph-summary.json"
     assert_json_field "codegraph summary has index_state" "$TMPDIR1/codegraph-summary.json" '.index_state' "ready"
+    assert_json_field "codegraph excludes hidden source evidence" "$TMPDIR1/codegraph-analysis.json" 'tostring | contains(".github")' "false"
 fi
 assert_path_not_exists "single-repo fixture remains free of .codegraph" "$FIXTURES_DIR/single-repo/.codegraph"
+assert_json_field "hidden source files are excluded from analysis totals" "$TMPDIR1/analysis.json" '.metadata.total_files' "1"
+assert_json_field "hidden source files are excluded from structure" "$TMPDIR1/structure.json" '.file_counts.ts' "1"
+assert_json_field "hidden workflow files are excluded from configs" "$TMPDIR1/configs.json" 'length' "0"
 
 # Should NOT have any subdirectories with analysis.json
 SUBDIRS_WITH_ANALYSIS=$(find "$TMPDIR1" -mindepth 2 -name "analysis.json" 2>/dev/null | wc -l | tr -d ' ')

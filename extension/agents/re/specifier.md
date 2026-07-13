@@ -30,6 +30,10 @@ NEVER rewrite analysis, workspace synthesis, planner JSON, or another failed sou
 ALWAYS treat `$RE_OUTPUT_DIR/sources/{source-id}/domain-manifest.json` and the controller-owned target appended to the dispatch as the complete scope for this invocation.
 NEVER collapse several manifest domains into one spec, create a spec for another target, or claim `DONE` before the target spec has five valid source-relative line citations.
 
+### Rule 4c - Hidden Directory Exclusion
+ALWAYS exclude every hidden directory beneath the source root from reverse-engineering scope, including `.git`, `.github`, `.claude`, and `.npm`.
+NEVER inspect, cite, summarize, or create a domain for files below a hidden directory, even when they use a source-code extension.
+
 ### Rule 5 - Workspace Synthesis
 ALWAYS synthesize workspace relationships and contracts from the complete input union in `re-workspace-inputs.json`.
 NEVER put cross-source APIs, events, shared schemas, dependencies, or migration ordering in one source's spec.
