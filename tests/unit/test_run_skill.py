@@ -497,6 +497,63 @@ class TestRunSkillAutoLand:
         assert "next: echelon delivery run 001-demo" in captured.err
         assert "continue with a fresh outer-loop budget" in captured.err
 
+    def test_delivery_summary_promotes_fulfillment_gap_remediation(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-gaps.md").write_text(
+            "# Fulfillment Gaps\n\n"
+            "## Gap 1 - NFR-008\n\n"
+            "- **Remediation (WHAT decision):** Choose a palette with measured "
+            "simulated contrast of at least 3:1 for every state pair.\n",
+            encoding="utf-8",
+        )
+        intent = RunIntent(spec_id="001-demo", mode="semi")
+        result = LoopResult(
+            status="blocked",
+            termination_reason="blocker_escalation",
+            outer_iterations=1,
+            inner_iterations=3,
+            pr_url=None,
+            tokens_used=100,
+            final_verify=VerifyResult(
+                passed=False,
+                failures=[
+                    FailureEntry(
+                        category=FailureCategory.OTHER,
+                        id="fulfillment-gaps",
+                        error="fulfillment report has unresolved statuses",
+                    )
+                ],
+            ),
+        )
+        comparison = {
+            "strategies": {
+                "default": {
+                    "status": result.status,
+                    "termination_reason": result.termination_reason,
+                    "outer_iterations": result.outer_iterations,
+                    "inner_iterations": result.inner_iterations,
+                    "tokens_used": result.tokens_used,
+                    "pr_url": result.pr_url,
+                    "converged": False,
+                }
+            },
+            "summary": {"converged": 0, "failed": 1, "total_tokens": 100},
+        }
+
+        _print_delivery_summary(intent, {"default": result}, comparison, str(tmp_path))
+
+        captured = capsys.readouterr()
+        assert "recommended action:" in captured.err
+        assert "Choose a palette with measured simulated contrast" in captured.err
+
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")

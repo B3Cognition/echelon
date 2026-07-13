@@ -7,6 +7,7 @@ Acquires lock, runs GC, launches coordinator, prints results.
 from __future__ import annotations
 
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict
@@ -33,6 +34,33 @@ def _count_tasks(spec_id: str, base_dir: str) -> int:
         return 0
 
 
+def _fulfillment_gap_recommendation(spec_dir: Path | None) -> str:
+    """Read the first deterministic remediation from a verified gaps artifact."""
+    if spec_dir is None:
+        return ""
+    gaps_path = spec_dir / "fulfillment-gaps.md"
+    try:
+        text = gaps_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+    match = re.search(
+        r"(?ms)^-\s+\*\*Remediation[^:]*:\*\*\s*(.+?)(?=^\s*$|^##\s|\Z)",
+        text,
+    )
+    if match is None:
+        return ""
+    return re.sub(r"\s+", " ", match.group(1)).strip()
+
+
+def _has_fulfillment_gap_failure(result: Any) -> bool:
+    verify_result = getattr(result, "final_verify", None)
+    return any(
+        getattr(failure, "id", "") == "fulfillment-gaps"
+        for failure in (getattr(verify_result, "failures", None) or [])
+    )
+
+
 def _print_delivery_summary(
     intent: Any,
     result_map: Dict[str, Any],
@@ -46,6 +74,9 @@ def _print_delivery_summary(
     task_count = _count_tasks(intent.spec_id, base_dir)
     task_note = f"  ({task_count} tasks)" if task_count else ""
     target_repo = getattr(config, "target_repo", None) if config is not None else None
+    fulfillment_recommendation = _fulfillment_gap_recommendation(
+        _resolve_spec_dir(base_dir, intent.spec_id)
+    )
 
     fields: list[tuple[str, str]] = [("spec", f"{intent.spec_id}{task_note}")]
     if target_repo:
@@ -142,6 +173,8 @@ def _print_delivery_summary(
                         )
             else:
                 lines.append("verify: skipped (no sandbox / project type undetected)")
+            if fulfillment_recommendation and _has_fulfillment_gap_failure(result):
+                lines.append(f"recommended action: {fulfillment_recommendation}")
 
         fields.append((sid, "\n".join(lines)))
 
