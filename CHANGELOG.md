@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Legacy RE repair snapshots now migrate on every resume** — older runs may
+  have captured Finder `.DS_Store` metadata before it was excluded, and may
+  predate the controller-owned architecture map and domain catalog. Each
+  recovery now normalizes that historical baseline and admits only those two
+  controller-owned files. Any real non-target artifact change remains a
+  blocking error.
+
 - **RE recovery now wins over every outer continuation state** — `echelon spec
   continue` checks the nested controller before classifying a run as blocked,
   running, or completed. This prevents a prior `spec resume` from advancing to

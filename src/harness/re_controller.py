@@ -718,12 +718,11 @@ class ReExtractionController:
                 )
             else:
                 load_re_architecture_map(map_path)
-            if overlay_written:
-                snapshot_error = self._refresh_repair_snapshots_for_architecture_overlay(
-                    state
-                )
-                if snapshot_error is not None:
-                    return snapshot_error
+            snapshot_error = self._refresh_repair_snapshots_for_architecture_overlay(
+                state
+            )
+            if snapshot_error is not None:
+                return snapshot_error
             state["re_architecture_map"] = str(map_path)
             state["re_domain_catalog"] = str(catalog_path)
             self._save_state(state)
@@ -919,10 +918,11 @@ class ReExtractionController:
     ) -> str | None:
         """Accept only controller-created catalog changes in an active snapshot.
 
-        A run started before the architecture catalog feature can resume with an
-        active repair snapshot. The controller creates the missing catalog before
-        its next dispatch, so its expected-output baseline must include those two
-        files. Any other difference remains a guarded non-target modification.
+        A run can predate either the architecture catalog or the exclusion of
+        Finder metadata from artifact comparison. Normalize those historical
+        snapshot entries first, then allow only the two controller-owned catalog
+        files to enter its expected-output baseline. Any other difference remains
+        a guarded non-target modification.
         """
         for snapshot_key in (
             "re_quality_repair_snapshot",
@@ -941,12 +941,18 @@ class ReExtractionController:
                 or any(not isinstance(path, str) for path in target_relatives)
             ):
                 return "re_quality_repair_snapshot_missing"
+            normalized_previous = {
+                relative: digest
+                for relative, digest in previous.items()
+                if isinstance(relative, str)
+                and not self._is_repair_control_plane_file(relative)
+            }
             targets = [self._run_re_dir / path for path in target_relatives]
             current = self._non_target_snapshot(targets)
             changed = {
                 relative
-                for relative in set(previous) | set(current)
-                if previous.get(relative) != current.get(relative)
+                for relative in set(normalized_previous) | set(current)
+                if normalized_previous.get(relative) != current.get(relative)
             }
             if not changed.issubset(_ARCHITECTURE_OVERLAY_OUTPUTS):
                 return "re_quality_repair_modified_non_target_output"

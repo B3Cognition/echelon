@@ -802,6 +802,43 @@ def test_architecture_overlay_does_not_mask_non_target_change(tmp_path: Path) ->
 
 
 @pytest.mark.unit
+def test_architecture_overlay_migrates_legacy_finder_snapshot(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = controller._load_plan()
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    target = {
+        "kind": "source-domain",
+        "source_id": "api",
+        "domain_id": "001-re-domain",
+        "root": "src",
+    }
+    report = controller._target_quality_report(plan, target)
+    assert report is not None
+    snapshot = controller._repair_snapshot(report)
+    outputs = snapshot["non_target_outputs"]
+    assert isinstance(outputs, dict)
+    outputs.pop("workspace/architecture-map.json", None)
+    outputs.pop("workspace/domain-catalog.md", None)
+    outputs[".DS_Store"] = "legacy-finder-metadata"
+    state["re_target_quality_repair_snapshot"] = snapshot
+
+    assert controller._ensure_architecture_overlay(state, plan) is None
+    assert (
+        controller._repair_snapshot_failure(
+            state, "re_target_quality_repair_snapshot"
+        )
+        is None
+    )
+
+
+@pytest.mark.unit
 def test_quality_repair_allows_root_echelon_result_capture(tmp_path: Path) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",))
     _initialize_re_state(run_dir, max_repairs=1)
