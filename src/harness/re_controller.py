@@ -92,6 +92,10 @@ class ReExtractionController:
     def _run_locked(self) -> ReControllerResult:
         plan = self._load_plan()
         state = self._load_state()
+        if state.get("status") == "blocked":
+            state["status"] = "in_progress"
+            state.pop("blocked_reason", None)
+            self._save_state(state)
         while True:
             phase = str(state.get("phase") or "re-extract-1-analyze")
             last_dispatch = state.get("last_dispatch")
@@ -185,6 +189,12 @@ class ReExtractionController:
             report_path = write_re_quality_report(self._run_re_dir, report)
             state["re_quality_gate_report"] = str(report_path)
             if not report.passed:
+                # Every target from the current repair pass has completed. A
+                # remaining failure must start a new bounded pass with a new
+                # snapshot; retaining an empty pending list would spin here.
+                if state.get("re_quality_repair_pending"):
+                    state.pop("re_quality_repair_pending", None)
+                    state.pop("re_quality_repair_snapshot", None)
                 return self._schedule_quality_repair(state, report)
             state.pop("re_quality_repair_pending", None)
             if not state.get("re_workspace_synthesis_complete"):
@@ -396,9 +406,10 @@ class ReExtractionController:
             f"Owned source root: `{root}`\n"
             f"Domain manifest: `{manifest}`\n"
             "Read only this source's owned root and its staged extraction artifacts. "
-            "Every source citation must use the exact source-relative form "
-            "`path/to/file:line` and resolve within the owned source root. Include at "
-            "least five distinct valid citations. Do not write another domain spec, "
+            "Every source citation must be a backticked `path/to/file:line` reference "
+            "using either the source-root path or a path relative to the owned domain "
+            "root; it must resolve within that domain. Never use Markdown-link citations. "
+            "Include at least five distinct valid citations. Do not write another domain spec, "
             "source overview, or workspace synthesis.\n"
         )
 

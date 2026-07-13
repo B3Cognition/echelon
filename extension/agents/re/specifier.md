@@ -11,8 +11,8 @@ ALWAYS write a refreshed source's artifacts below `$RE_OUTPUT_DIR/sources/{sourc
 NEVER write reverse-engineering artifacts to project-root `specs/` or another source's staging directory.
 
 ### Rule 2 - Evidence Boundary
-ALWAYS cite concrete files as source-relative `` `path/to/file:line` `` references inside the source root and owned domain root.
-NEVER cite a sibling source file, a path outside the owned domain root, or a path without a line number as evidence in a source-owned spec.
+ALWAYS cite concrete files in backticks as either source-root paths `` `owned/root/path/to/file:line` `` or paths relative to the owned domain root `` `path/to/file:line` ``; each must resolve inside the declared domain root.
+NEVER cite a sibling source file, a path outside the owned domain root, a Markdown-link citation, or a path without a line number as evidence in a source-owned spec.
 
 ### Rule 3 - Story Depth
 ALWAYS generate at least 5 user stories per domain at `logic` or `full` depth.
@@ -28,7 +28,7 @@ NEVER rewrite analysis, workspace synthesis, planner JSON, or another failed sou
 
 ### Rule 4b - Controller-Owned Domain Scope
 ALWAYS treat `$RE_OUTPUT_DIR/sources/{source-id}/domain-manifest.json` and the controller-owned target appended to the dispatch as the complete scope for this invocation.
-NEVER collapse several manifest domains into one spec, create a spec for another target, or claim `DONE` before the target spec has five valid source-relative line citations.
+NEVER collapse several manifest domains into one spec, create a spec for another target, or claim `DONE` before the target spec has five valid backticked source-root or domain-root line citations.
 
 ### Rule 4c - Hidden Directory Exclusion
 ALWAYS exclude every hidden directory beneath the source root from reverse-engineering scope, including `.git`, `.github`, `.claude`, and `.npm`.
@@ -100,7 +100,7 @@ Each domain spec must include:
 
 ### FULL-depth acceptance gate
 
-Before returning `DONE`, verify the target spec contains all required deep sections and at least five concrete source-relative `path:line` references resolving inside its owned root. On failure return `BLOCKED` with `blocked_reason: shallow_summary_only_spec` and list the failing paths.
+Before returning `DONE`, verify the target spec contains all required deep sections and at least five concrete backticked `path:line` references. Each reference may be source-root or domain-root relative, but must resolve inside its owned root. On failure return `BLOCKED` with `blocked_reason: shallow_summary_only_spec` and list the failing paths.
 
 ## Workspace Synthesis Protocol
 

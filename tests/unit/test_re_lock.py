@@ -77,6 +77,30 @@ def test_second_live_extractor_cannot_acquire(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_extractor_reclaims_dead_local_owner(tmp_path: Path) -> None:
+    paths = ensure_re_layout(tmp_path)
+    lock_dir = paths.locks / "extract.lock"
+    lock_dir.mkdir()
+    _write_json(
+        lock_dir / "owner.json",
+        {
+            "run_id": "run-dead",
+            "run_dir": str(tmp_path / "runs" / "run-dead"),
+            "pid": 999_999_999,
+            "hostname": socket.gethostname(),
+            "acquired_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+
+    with ReExtractionLock.acquire(
+        tmp_path, "run-next", _write_run(tmp_path, "run-next", "running")
+    ) as lock:
+        owner = json.loads((lock.path / "owner.json").read_text(encoding="utf-8"))
+        assert owner["run_id"] == "run-next"
+        assert owner["pid"] == os.getpid()
+
+
+@pytest.mark.unit
 def test_owner_run_is_excluded_but_another_active_run_blocks(tmp_path: Path) -> None:
     owner = _write_run(tmp_path, "run-a", "running")
     other = _write_run(tmp_path, "run-b", "in_progress")

@@ -125,11 +125,18 @@ class ReExtractionLock:
         if not _SAFE_RUN_ID.fullmatch(owner_run_id):
             raise ValueError(f"unsafe extraction owner run ID: {owner_run_id!r}")
         lock_path = ensure_re_layout(root).locks / "extract.lock"
-        try:
-            lock_path.mkdir()
-        except FileExistsError as exc:
-            owner = _read_owner(lock_path, required=False)
-            raise ReExtractLocked(str(owner.get("run_id") or "unknown")) from exc
+        while True:
+            try:
+                lock_path.mkdir()
+                break
+            except FileExistsError as exc:
+                owner = _read_owner(lock_path, required=False)
+                if _dead_local_extraction_owner(owner):
+                    # SIGKILL/SIGTERM can bypass __exit__. A dead local PID is
+                    # definitive evidence that this lease has no holder.
+                    shutil.rmtree(lock_path, ignore_errors=True)
+                    continue
+                raise ReExtractLocked(str(owner.get("run_id") or "unknown")) from exc
         metadata = {
             "run_id": owner_run_id,
             "run_dir": str(owner_run_dir.resolve()),
@@ -157,6 +164,17 @@ class ReExtractionLock:
 
     def __exit__(self, *_exc: object) -> None:
         self.release()
+
+
+def _dead_local_extraction_owner(owner: dict[str, Any]) -> bool:
+    hostname = owner.get("hostname")
+    pid = owner.get("pid")
+    return (
+        hostname == socket.gethostname()
+        and isinstance(pid, int)
+        and not isinstance(pid, bool)
+        and not _pid_alive(pid)
+    )
 
 
 def find_other_active_runs(

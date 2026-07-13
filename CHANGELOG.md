@@ -6,6 +6,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE repair convergence and recovery** — a completed repair pass that still
+  has failing specs now starts a fresh bounded repair pass instead of spinning
+  with an empty target list. A resumed run changes from blocked to in-progress
+  before dispatch. Extraction leases now reclaim a lock only when its owner is
+  demonstrably a dead process on the same host, preventing an interrupted run
+  from blocking all future RE work while preserving live and remote owners.
+
+- **RE source-evidence contract alignment** — the deep-spec gate now accepts
+  either source-root or owned-domain-root-relative backticked `path:line`
+  evidence, always resolving it within the declared domain. The specifier and
+  controller explicitly prohibit Markdown-link citations, which the gate
+  cannot validate as source evidence.
+
 - **RE repair transaction completion** — a missing, controller-authorized
   domain spec can now be created during deep-spec repair without being
   mistaken for an unauthorized output. The controller prepares the target file

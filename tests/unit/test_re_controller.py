@@ -109,6 +109,27 @@ def test_shallow_specification_runs_only_bounded_repair_before_blocking(
 
 
 @pytest.mark.unit
+def test_failed_repair_passes_are_rescheduled_until_their_bound(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=2)
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    spec.write_text("# Architecture summary\n", encoding="utf-8")
+    provider = _ShallowSpecifierProvider()
+
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.blocked_reason == "re_deep_spec_gate_failed"
+    assert provider.phases == ["re-extract-2-specify"] * 3
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert state["re_quality_repair_attempts"] == 2
+
+
+@pytest.mark.unit
 def test_zero_repair_limit_blocks_before_repair_dispatch(tmp_path: Path) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",))
     _initialize_re_state(run_dir, max_repairs=0)

@@ -169,25 +169,33 @@ def _validated_source_evidence(
             or relative.is_absolute()
             or ".." in relative.parts
             or end < start
-            or not _is_within_domain(raw_path, domain_root)
         ):
             invalid.add(reference)
             continue
-        candidate = (root / relative).resolve()
-        try:
-            candidate.relative_to(root)
-        except ValueError:
-            invalid.add(reference)
-            continue
-        if not candidate.is_file() or end > _line_count(candidate):
+        candidate = _resolve_domain_evidence_path(
+            relative, source_root=root, domain_root=domain_root
+        )
+        if candidate is None or end > _line_count(candidate):
             invalid.add(reference)
             continue
         valid.add(reference)
     return valid, invalid
 
 
-def _is_within_domain(path: str, domain_root: str) -> bool:
-    return domain_root == "." or path == domain_root or path.startswith(domain_root + "/")
+def _resolve_domain_evidence_path(
+    relative: Path, *, source_root: Path, domain_root: str
+) -> Path | None:
+    """Resolve source-root or domain-root evidence without crossing domain scope."""
+    domain_path = (source_root / domain_root).resolve()
+    candidates = ((source_root / relative).resolve(), (domain_path / relative).resolve())
+    for candidate in candidates:
+        try:
+            candidate.relative_to(domain_path)
+        except ValueError:
+            continue
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _line_count(path: Path) -> int:

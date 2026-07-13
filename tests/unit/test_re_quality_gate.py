@@ -87,3 +87,17 @@ def test_gate_rejects_source_evidence_outside_the_domain_root(tmp_path: Path) ->
 
     assert not report.passed
     assert report.failures[0].invalid_source_evidence == ("`outside.ts:1`",)
+
+
+@pytest.mark.unit
+def test_gate_accepts_domain_relative_source_evidence(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace("src/file-", "file-"),
+        encoding="utf-8",
+    )
+
+    report = validate_staged_re_quality(run_dir / "re", _plan(run_dir))
+
+    assert report.passed
