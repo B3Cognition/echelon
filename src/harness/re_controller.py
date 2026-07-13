@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import hashlib
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -105,12 +106,19 @@ class ReExtractionController:
 
             state = write_last_dispatch(state, phase, _PHASES[phase])
             self._save_state(state)
-            result = self._provider.exec_agent(
-                str(self._project_root), self._prompt_for(phase, state)
-            )
-            if result.blocked:
-                return self._block(state, "re_agent_dispatch_failed")
-            payload = result.echelon_result
+            if phase == "re-extract-1-analyze":
+                analysis_error = self._run_analysis_script(plan)
+                if analysis_error is not None:
+                    state["re_analysis_error"] = analysis_error
+                    return self._block(state, "re_analysis_script_failed")
+                payload = self._analysis_result()
+            else:
+                result = self._provider.exec_agent(
+                    str(self._project_root), self._prompt_for(phase, state)
+                )
+                if result.blocked:
+                    return self._block(state, "re_agent_dispatch_failed")
+                payload = result.echelon_result
             if not isinstance(payload, dict) or payload.get("verdict") != "DONE":
                 return self._block(state, "re_agent_result_invalid")
             try:
@@ -212,6 +220,98 @@ class ReExtractionController:
                 f"{state.get('re_quality_gate_report', '')}. Do not re-analyze sources.\n"
             )
         return prompt
+
+    def _run_analysis_script(self, plan: ReExecutionPlan) -> str | None:
+        """Run extraction in the controller so one-shot agents cannot detach it."""
+        profile = plan.profile
+        script = self._extension_root / "scripts" / "bash" / "re" / "run-analysis.sh"
+        manifest = self._run_re_dir / "re-analysis-manifest.json"
+        if not script.is_file():
+            return f"analysis script not found: {script}"
+        if not manifest.is_file():
+            return f"analysis manifest not found: {manifest}"
+
+        command = [
+            "bash",
+            str(script),
+            "--output",
+            str(self._run_re_dir),
+            "--manifest",
+            str(manifest),
+            "--source-output-root",
+            str(self._run_re_dir / "sources"),
+            "--profile",
+            profile.profile,
+            "--depth",
+            profile.depth,
+            "--max-lines-per-file",
+            str(profile.max_lines_per_file or 5000),
+            "--git-history-limit",
+            str(profile.git_history_limit or 2500),
+        ]
+        environment = os.environ.copy()
+        environment["EXTENSION_PATH"] = str(self._extension_root)
+        try:
+            completed = self._execute_analysis_command(command, environment)
+        except subprocess.TimeoutExpired:
+            return "analysis script exceeded the 3-hour controller timeout"
+        except OSError as exc:
+            return f"analysis script could not start: {exc}"
+        if completed.returncode != 0:
+            output = (completed.stderr or completed.stdout or "").strip()
+            return f"analysis script exited {completed.returncode}: {output[-1000:]}"
+        if not (self._run_re_dir / "analysis.json").is_file():
+            return "analysis script completed without aggregate analysis.json"
+        return None
+
+    def _execute_analysis_command(
+        self,
+        command: list[str],
+        environment: dict[str, str],
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            command,
+            cwd=self._project_root,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10_800,
+            check=False,
+        )
+
+    def _analysis_result(self) -> dict:
+        return {
+            "verdict": "DONE",
+            "state_updates": {
+                "mode": "workspace",
+                "domains": [],
+                "artifacts": {
+                    "analysis_json": str(self._run_re_dir / "analysis.json"),
+                    "analysis_manifest": str(
+                        self._run_re_dir / "re-analysis-manifest.json"
+                    ),
+                    "workspace_manifest": str(
+                        self._run_re_dir / "workspace-manifest.json"
+                    ),
+                    "repos_manifest": str(self._run_re_dir / "repos-manifest.json"),
+                    "cross_repo": str(self._run_re_dir / "cross-repo.json")
+                    if (self._run_re_dir / "cross-repo.json").is_file()
+                    else None,
+                    "codegraph_analysis": str(
+                        self._run_re_dir / "codegraph-analysis.json"
+                    )
+                    if (self._run_re_dir / "codegraph-analysis.json").is_file()
+                    else None,
+                    "codegraph_summary": str(
+                        self._run_re_dir / "codegraph-summary.json"
+                    )
+                    if (self._run_re_dir / "codegraph-summary.json").is_file()
+                    else None,
+                },
+            },
+            "journal_entries": [],
+        }
 
     def _load_plan(self) -> ReExecutionPlan:
         raw = json.loads(

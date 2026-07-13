@@ -10,6 +10,15 @@ from harness.squad_provider import SquadAgentResult
 from tests.unit.test_re_publication import _deep_spec, write_valid_re_run
 
 
+@pytest.fixture(autouse=True)
+def _stub_controller_analysis_script(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        ReExtractionController,
+        "_run_analysis_script",
+        lambda _controller, _plan: None,
+    )
+
+
 class _ShallowSpecifierProvider:
     def __init__(self) -> None:
         self.phases: list[str] = []
@@ -91,7 +100,6 @@ def test_shallow_specification_runs_only_bounded_repair_before_blocking(
 
     assert result.blocked_reason == "re_deep_spec_gate_failed"
     assert provider.phases == [
-        "re-extract-1-analyze",
         "re-extract-2-specify",
         "re-extract-2-specify",
     ]
@@ -116,7 +124,7 @@ def test_zero_repair_limit_blocks_before_repair_dispatch(tmp_path: Path) -> None
     ).run()
 
     assert result.blocked_reason == "re_deep_spec_gate_failed"
-    assert provider.phases == ["re-extract-1-analyze", "re-extract-2-specify"]
+    assert provider.phases == ["re-extract-2-specify"]
 
 
 @pytest.mark.unit
@@ -152,7 +160,7 @@ def test_controller_initializes_missing_re_state_before_first_dispatch(
 
     assert result.blocked_reason == "re_agent_dispatch_failed"
     state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
-    assert state["phase"] == "re-extract-1-analyze"
+    assert state["phase"] == "re-extract-2-specify"
     assert state["status"] == "blocked"
 
 
@@ -191,7 +199,7 @@ def test_controller_reinitializes_legacy_state_before_first_dispatch(
     assert result.blocked_reason == "re_agent_dispatch_failed"
     state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
     assert state["run_id"] == run_dir.name
-    assert state["phase"] == "re-extract-1-analyze"
+    assert state["phase"] == "re-extract-2-specify"
 
 
 @pytest.mark.unit
@@ -236,7 +244,6 @@ def test_repaired_specification_advances_to_all_downstream_re_phases(
 
     assert result.completed
     assert provider.phases == [
-        "re-extract-1-analyze",
         "re-extract-2-specify",
         "re-extract-2-specify",
         "re-extract-3-verify",
@@ -285,7 +292,6 @@ def test_below_threshold_coverage_runs_expander_then_reverifies(
 
     assert result.completed
     assert provider.phases == [
-        "re-extract-1-analyze",
         "re-extract-2-specify",
         "re-extract-3-verify",
         "re-extract-4-expand",

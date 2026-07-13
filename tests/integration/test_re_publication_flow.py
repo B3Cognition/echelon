@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -175,11 +176,22 @@ def test_mode1_runs_harness_controller_before_publication(
 
 def test_mode1_controller_rebuilds_missing_state_and_specs_before_publication(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",), run_id="run-fresh")
     run_re = run_dir / "re"
     shutil.rmtree(run_re / "sources")
     (run_re / "state.json").unlink()
+    (run_re / "re-analysis-manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "workspace": {"root": str(tmp_path)},
+                "sources": [{"id": "api", "path": "sources/api"}],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     state_store = SquadStateStore(run_dir)
     state = state_store.load()
@@ -207,6 +219,29 @@ def test_mode1_controller_rebuilds_missing_state_and_specs_before_publication(
         path = ext_dir / "agents" / "re" / f"{name}.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"# {name}\n", encoding="utf-8")
+    script = ext_dir / "scripts" / "bash" / "re" / "run-analysis.sh"
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+
+    script_calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def run_analysis(
+        _controller: object,
+        command: list[str],
+        environment: dict[str, str],
+    ) -> subprocess.CompletedProcess[str]:
+        script_calls.append((command, {"environment": environment, "timeout": 10_800}))
+        source = run_re / "sources" / "api"
+        source.mkdir(parents=True, exist_ok=True)
+        (source / "analysis.json").write_text("{}\n", encoding="utf-8")
+        (source / "overview.md").write_text("# API\n", encoding="utf-8")
+        (run_re / "analysis.json").write_text("{}\n", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(
+        "harness.re_controller.ReExtractionController._execute_analysis_command",
+        run_analysis,
+    )
 
     class PipelineProvider:
         def __init__(self) -> None:
@@ -216,10 +251,6 @@ def test_mode1_controller_rebuilds_missing_state_and_specs_before_publication(
             phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
             self.phases.append(phase)
             source = run_re / "sources" / "api"
-            if phase == "re-extract-1-analyze":
-                source.mkdir(parents=True, exist_ok=True)
-                (source / "analysis.json").write_text("{}\n", encoding="utf-8")
-                (source / "overview.md").write_text("# API\n", encoding="utf-8")
             if phase == "re-extract-2-specify":
                 spec = source / "specs" / "001-domain" / "spec.md"
                 spec.parent.mkdir(parents=True, exist_ok=True)
@@ -256,8 +287,27 @@ def test_mode1_controller_rebuilds_missing_state_and_specs_before_publication(
     result = executor._run_pre_dispatch(node, state_store.load(), state_store)
 
     assert result is None
+    assert len(script_calls) == 1
+    assert script_calls[0][0] == [
+        "bash",
+        str(script),
+        "--output",
+        str(run_re),
+        "--manifest",
+        str(run_re / "re-analysis-manifest.json"),
+        "--source-output-root",
+        str(run_re / "sources"),
+        "--profile",
+        "full",
+        "--depth",
+        "full",
+        "--max-lines-per-file",
+        "5000",
+        "--git-history-limit",
+        "2500",
+    ]
+    assert script_calls[0][1]["timeout"] == 10_800
     assert provider.phases == [
-        "re-extract-1-analyze",
         "re-extract-2-specify",
         "re-extract-3-verify",
         "re-extract-5-validate",
