@@ -94,6 +94,8 @@ def materialize_re_run_context(
         "re_contexts": canonical.get("re_contexts", []),
         "re_specs": canonical.get("re_specs", []),
         "re_overview": canonical.get("re_overview"),
+        "architecture_map": canonical.get("architecture_map"),
+        "domain_catalog": canonical.get("domain_catalog"),
         "source_manifests": canonical.get("source_manifests", {}),
         "workspace_manifest": canonical.get("workspace_manifest"),
         "published_generation": published_index.generation if published_index else 0,

@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE architecture composition catalog** — every workspace RE generation now
+  publishes a deterministic architecture map and dependency-ordered domain
+  catalog. Stable source-owned domain IDs and cache/repair boundaries remain
+  unchanged; the new view classifies domains into layers, derives relative
+  import dependencies, marks cycles, and groups domains into migration waves.
+  Source-domain specs receive their controller-owned layer, prerequisites, and
+  wave in the specification prompt, while publication rejects a generation
+  without the catalog.
+
 - **RE adaptive quality contract and repair loop** — full-depth domain specs are
   now accepted only when they meet size-derived scenario, functional
   requirement, and non-functional requirement minima. Every scenario requires

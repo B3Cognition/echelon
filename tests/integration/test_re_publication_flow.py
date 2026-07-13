@@ -524,6 +524,13 @@ def test_second_unchanged_run_reuses_canonical_context_without_golddigger(
     index = load_published_index(tmp_path)
     assert index is not None
     canonical = canonical_re_artifacts(tmp_path, index)
+    assert canonical["architecture_map"] == str(
+        tmp_path / "re/workspace/architecture-map.json"
+    )
+    assert canonical["domain_catalog"] == str(
+        tmp_path / "re/workspace/domain-catalog.md"
+    )
+    assert canonical["domain_catalog"] in canonical["re_contexts"]
 
     second_run = tmp_path / "runs/run-second"
     second_run.mkdir(parents=True)

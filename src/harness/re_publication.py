@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Literal
 
+from harness.re_architecture import validate_re_architecture_catalog
 from harness.re_lock import (
     RePublishLock,
     RePublishRecoveryRequired,
@@ -134,6 +135,12 @@ def validate_re_run(
     if quality_report.failures:
         _raise_quality_failure(quality_report.failures[0])
     _validate_semantic_quality_report(run_re)
+    try:
+        validate_re_architecture_catalog(run_re, plan)
+    except ValueError as exc:
+        raise RePublicationValidationError(
+            f"architecture catalog validation failed: {exc}"
+        ) from exc
 
     for removed_id in plan.removed_sources:
         if current is None or removed_id not in current.sources:

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from harness.re_architecture import build_re_architecture_map, write_re_architecture_catalog
 from harness.re_quality_gate import QUALITY_CONTRACT_VERSION
 from harness.re_fingerprint import ReFingerprintProfile, SourceFingerprint
 from harness.re_planner import ReExecutionPlan, RePlanSource
@@ -212,6 +213,10 @@ def write_valid_re_run(
     (workspace / "overview.md").write_text(f"# Workspace {run_id}\n", encoding="utf-8")
     (workspace / "relationships.md").write_text("# Relationships\n", encoding="utf-8")
     (workspace / "contracts.md").write_text("# Contracts\n", encoding="utf-8")
+    write_re_architecture_catalog(
+        run_re,
+        build_re_architecture_map(plan, run_re_dir=run_re),
+    )
     _write_json(
         run_re / "quality" / "semantic-quality-review.json",
         {
@@ -222,6 +227,14 @@ def write_valid_re_run(
         },
     )
     return run_dir
+
+
+def test_publication_rejects_missing_architecture_catalog(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    (run_dir / "re" / "workspace" / "architecture-map.json").unlink()
+
+    with pytest.raises(RePublicationValidationError, match="architecture catalog validation failed"):
+        publish_re_run(tmp_path, run_dir)
 
 
 def _durable_snapshot(root: Path) -> dict[str, bytes]:
@@ -261,6 +274,8 @@ def test_complete_two_source_publish_creates_one_generation(tmp_path: Path) -> N
     fingerprint = index["sources"]["api"]["fingerprint"]
     assert (tmp_path / f"re/.cache/sources/api/{fingerprint}/analysis.json").is_file()
     assert (tmp_path / "re/workspace/contracts.md").is_file()
+    assert (tmp_path / "re/workspace/architecture-map.json").is_file()
+    assert (tmp_path / "re/workspace/domain-catalog.md").is_file()
 
 
 @pytest.mark.unit

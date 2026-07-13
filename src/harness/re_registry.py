@@ -156,6 +156,8 @@ def canonical_re_artifacts(
         for field in _WORKSPACE_FIELDS
     }
     workspace_domains = paths.workspace / "domains"
+    architecture_map = paths.workspace / "architecture-map.json"
+    domain_catalog = paths.workspace / "domain-catalog.md"
     if workspace_domains.is_dir():
         specs.extend(
             str(path)
@@ -168,10 +170,14 @@ def canonical_re_artifacts(
         str(workspace_paths["relationships"]),
         str(workspace_paths["contracts"]),
     ]
+    if domain_catalog.is_file():
+        re_contexts.append(str(domain_catalog))
     return {
         "manifest": str(paths.index),
         "source_index": str(paths.index),
         "workspace_manifest": str(workspace_paths["manifest"]),
+        "architecture_map": str(architecture_map) if architecture_map.is_file() else None,
+        "domain_catalog": str(domain_catalog) if domain_catalog.is_file() else None,
         "re_overview": str(workspace_paths["overview"]),
         "cross_repo": str(workspace_paths["relationships"]),
         "contracts": str(workspace_paths["contracts"]),

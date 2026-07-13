@@ -150,6 +150,8 @@ echelon_result:
       sources_root: "{RE_OUTPUT_DIR}/sources"
       workspace_root: "{RE_OUTPUT_DIR}/workspace"
       re_overview: "{RE_OUTPUT_DIR}/workspace/overview.md"
+      architecture_map: "{RE_OUTPUT_DIR}/workspace/architecture-map.json"
+      domain_catalog: "{RE_OUTPUT_DIR}/workspace/domain-catalog.md"
       relationships: "{RE_OUTPUT_DIR}/workspace/relationships.md"
       contracts: "{RE_OUTPUT_DIR}/workspace/contracts.md"
       re_specs:

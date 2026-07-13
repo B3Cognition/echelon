@@ -12,6 +12,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from harness.re_architecture import (
+    build_re_architecture_map,
+    load_re_architecture_map,
+    write_re_architecture_catalog,
+)
 from harness.re_lock import ReExtractLocked, ReExtractionLock
 from harness.re_domain_manifest import (
     DOMAIN_PARTITION_VERSION,
@@ -114,6 +119,10 @@ class ReExtractionController:
                     return self._block(state, migration_error)
             state["re_domain_partition_version"] = DOMAIN_PARTITION_VERSION
             self._save_state(state)
+        if state.get("phase") not in {"re-extract-0-preflight", "re-extract-1-analyze"}:
+            architecture_error = self._ensure_architecture_overlay(state, plan)
+            if architecture_error is not None:
+                return self._block(state, architecture_error)
         if state.get("status") == "blocked":
             state["status"] = "in_progress"
             state.pop("blocked_reason", None)
@@ -264,6 +273,11 @@ class ReExtractionController:
                 )
                 if migration_error is not None:
                     return self._block(state, migration_error)
+            architecture_error = self._ensure_architecture_overlay(
+                state, plan, rebuild=True
+            )
+            if architecture_error is not None:
+                return self._block(state, architecture_error)
             state["re_domain_partition_version"] = DOMAIN_PARTITION_VERSION
             state["re_specification_targets"] = self._initial_specification_targets(plan)
             state["re_workspace_synthesis_complete"] = False
@@ -628,6 +642,7 @@ class ReExtractionController:
             self._run_re_dir / "quality" / "targets" / source_id / f"{domain_id}.json"
         )
         quality_contract = ""
+        architecture_contract = self._architecture_target_context(source_id, domain_id)
         try:
             domain_manifest = load_domain_manifest(manifest)
             domain = next(
@@ -663,12 +678,66 @@ class ReExtractionController:
             "Include at least five distinct valid citations. Do not write another domain spec, "
             "source overview, or workspace synthesis.\n"
             + quality_contract
+            + architecture_contract
             + (
                 f"Read `{target_report}` before editing: it is the exact deterministic "
                 "failure report for this target.\n"
                 if target_report.is_file()
                 else ""
             )
+        )
+
+    def _ensure_architecture_overlay(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+        *,
+        rebuild: bool = False,
+    ) -> str | None:
+        """Materialize the read-only architectural view over stable domains."""
+        map_path = self._run_re_dir / "workspace" / "architecture-map.json"
+        catalog_path = self._run_re_dir / "workspace" / "domain-catalog.md"
+        try:
+            if rebuild or not map_path.is_file() or not catalog_path.is_file():
+                architecture = build_re_architecture_map(plan, run_re_dir=self._run_re_dir)
+                map_path, catalog_path = write_re_architecture_catalog(
+                    self._run_re_dir, architecture
+                )
+            else:
+                load_re_architecture_map(map_path)
+            state["re_architecture_map"] = str(map_path)
+            state["re_domain_catalog"] = str(catalog_path)
+            self._save_state(state)
+        except (OSError, ValueError) as exc:
+            return f"architecture catalog generation failed: {exc}"
+        return None
+
+    def _architecture_target_context(self, source_id: str, domain_id: str) -> str:
+        """Return immutable layer and dependency context for one source-domain spec."""
+        map_path = self._run_re_dir / "workspace" / "architecture-map.json"
+        try:
+            architecture = load_re_architecture_map(map_path)
+        except ValueError:
+            return (
+                "Architecture catalog is unavailable; do not infer an architecture layer. "
+                "The controller will block and regenerate it.\n"
+            )
+        key = f"{source_id}/{domain_id}"
+        domain = next((item for item in architecture.domains if item.key == key), None)
+        if domain is None:
+            return (
+                "Architecture catalog has no entry for this domain; do not infer one. "
+                "The controller will block and regenerate it.\n"
+            )
+        prerequisites = ", ".join(domain.dependencies) if domain.dependencies else "None"
+        cycle = domain.cycle_group or "None"
+        return (
+            "Architecture composition is controller-owned and read-only. Include these exact "
+            "values in the spec header: "
+            f"layer `{domain.layer_label}`, migration wave `{domain.migration_wave}`, "
+            f"prerequisites `{prerequisites}`, cycle group `{cycle}`. "
+            f"Read `{map_path}` and `{self._run_re_dir / 'workspace' / 'domain-catalog.md'}` "
+            "for the complete architecture view. Do not change either artifact.\n"
         )
 
     def _prepare_specification_target(self, target: dict[str, object]) -> str | None:

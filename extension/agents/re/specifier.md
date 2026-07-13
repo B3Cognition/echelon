@@ -90,7 +90,10 @@ For each controller-owned `source-domain` target:
 
 Each domain spec must include:
 
-- Header: domain ID, source ID/path, profile/depth, status, dependencies
+- Header: domain ID, source ID/path, profile/depth, status, controller-provided
+  architecture layer, migration wave, prerequisites, cycle group, and dependencies.
+  Copy controller-provided architecture values exactly; never infer or rewrite
+  the architecture map from one source-domain spec.
 - Complexity Estimation: files, lines, commits, contributors, hotspots, rationale
 - User Scenarios & Testing: use `### Scenario N:` headings. Meet the controller-provided minimum, and give every scenario priority, valid source evidence, at least one Given/When/Then acceptance scenario, and technical notes.
 - Requirements (Functional): use `### FR-NNN:` headings. Meet the controller-provided minimum, and give every FR concrete valid Source Evidence.

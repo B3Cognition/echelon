@@ -175,6 +175,42 @@ def test_zero_repair_limit_blocks_before_repair_dispatch(tmp_path: Path) -> None
     assert provider.phases == ["re-extract-2-specify"]
 
 
+def test_controller_passes_architecture_order_to_each_domain_specifier(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+
+    class CapturingProvider(_ShallowSpecifierProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.prompts: list[str] = []
+
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            self.prompts.append(prompt)
+            result = super().exec_agent(project_root, prompt)
+            if "RE phase: re-extract-3-verify" in prompt:
+                result.echelon_result["state_updates"] = {"coverage_pct": 100}
+            return result
+
+    provider = CapturingProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    specification_prompt = next(
+        prompt for prompt in provider.prompts if "RE phase: re-extract-2-specify" in prompt
+    )
+    assert "Architecture composition is controller-owned and read-only." in specification_prompt
+    assert "migration wave `1`" in specification_prompt
+    assert (run_dir / "re" / "workspace" / "architecture-map.json").is_file()
+    assert (run_dir / "re" / "workspace" / "domain-catalog.md").is_file()
+
+
 @pytest.mark.unit
 def test_controller_initializes_missing_re_state_before_first_dispatch(
     tmp_path: Path,
