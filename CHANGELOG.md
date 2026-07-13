@@ -10,7 +10,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   domain spec can now be created during deep-spec repair without being
   mistaken for an unauthorized output. The controller prepares the target file
   before dispatch for read-then-edit providers, while the repair snapshot
-  ignores the ephemeral `ECHELON_RESULT.yaml` provider capture.
+  ignores root-level `*_RESULT.yaml` agent result captures. Nested captures
+  and every other non-target output remain protected.
 
 - **Reverse-engineering hidden-directory exclusion** — workspace/domain
   discovery, deterministic analysis, CodeGraph artifacts, fingerprints, and
@@ -28,14 +29,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   synthesis runs only after all required domain specs pass; repair is limited
   to the failed domain target.
 
-- **Harness-owned RE deep-spec repair loop** — active workspace Mode 1 now
-  runs through `echelon re execute-run <run-id>`, which owns RE phase
-  transitions and retries. A deterministic staged-spec gate runs before
-  verification and after each bounded repair, reports exact missing sections
-  and source-evidence counts, blocks repair writes outside listed source specs,
-  and shares the same validation with manual publication. Extraction has its
-  own workspace lease; publication retains its independent generation-pinned
-  transaction guard.
+- **Harness-owned RE deep-spec repair loop** — the active workspace Mode 1
+  controller owns RE phase transitions and retries; a blocked Phase A run
+  resumes through `echelon spec continue`. A deterministic staged-spec gate
+  runs before verification and after each bounded repair, reports exact
+  missing sections and source-evidence counts, blocks repair writes outside
+  listed source specs, and shares the same validation with manual publication.
+  Extraction has its own workspace lease; publication retains its independent
+  generation-pinned transaction guard.
 
 - **EGR-116 / #142 prompt tool contract scanner closure** — prompt-contract
   scanning now covers every `extension/commands/echelon.*.md` wrapper instead

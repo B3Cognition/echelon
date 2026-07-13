@@ -528,7 +528,10 @@ def test_quality_repair_snapshot_allows_creation_of_a_missing_target_spec(
 
 
 @pytest.mark.unit
-def test_quality_repair_snapshot_ignores_provider_result_capture(tmp_path: Path) -> None:
+@pytest.mark.parametrize("filename", ("ECHELON_RESULT.yaml", "REPAIR_RESULT.yaml"))
+def test_quality_repair_snapshot_ignores_provider_result_capture(
+    tmp_path: Path, filename: str
+) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",))
     controller = ReExtractionController(
         provider=_ShallowSpecifierProvider(),
@@ -539,13 +542,32 @@ def test_quality_repair_snapshot_ignores_provider_result_capture(tmp_path: Path)
     spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
 
     before = controller._non_target_snapshot([spec])
-    (run_dir / "re" / "ECHELON_RESULT.yaml").write_text(
+    (run_dir / "re" / filename).write_text(
         "echelon_result:\n  verdict: DONE\n",
         encoding="utf-8",
     )
     after = controller._non_target_snapshot([spec])
 
     assert before == after
+
+
+@pytest.mark.unit
+def test_quality_repair_snapshot_rejects_nested_result_capture(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+
+    before = controller._non_target_snapshot([spec])
+    nested_capture = run_dir / "re" / "sources" / "api" / "REPAIR_RESULT.yaml"
+    nested_capture.write_text("echelon_result:\n  verdict: DONE\n", encoding="utf-8")
+    after = controller._non_target_snapshot([spec])
+
+    assert before != after
 
 
 @pytest.mark.unit

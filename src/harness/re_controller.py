@@ -55,9 +55,7 @@ _PHASE_SPECS = {
     "re-extract-6-checklist": "re-extract-6-checklist.md",
     "re-extract-7-constitute": "re-extract-7-constitute.md",
 }
-_REPAIR_EPHEMERAL_OUTPUTS = frozenset(
-    {"state.json", "quality/deep-spec-gate.json", "ECHELON_RESULT.yaml"}
-)
+_REPAIR_EPHEMERAL_OUTPUTS = frozenset({"state.json", "quality/deep-spec-gate.json"})
 
 
 class ReExtractionController:
@@ -593,10 +591,10 @@ class ReExtractionController:
             if not path.is_file():
                 continue
             relative = path.relative_to(self._run_re_dir).as_posix()
-            # The controller state, quality report, and provider result capture
-            # are control-plane files. They are never RE artifacts and are not
-            # read or published as source output.
-            if relative in _REPAIR_EPHEMERAL_OUTPUTS:
+            # The controller state, quality report, and root-level agent result
+            # captures are control-plane files. They are never RE artifacts and
+            # are not read or published as source output.
+            if self._is_repair_control_plane_file(relative):
                 continue
             if relative in target_files or any(
                 relative.startswith(root + "/") for root in target_roots
@@ -604,6 +602,15 @@ class ReExtractionController:
                 continue
             paths.append(path)
         return self._snapshot_paths(paths)
+
+    @staticmethod
+    def _is_repair_control_plane_file(relative: str) -> bool:
+        if relative in _REPAIR_EPHEMERAL_OUTPUTS:
+            return True
+        # Providers may persist the trailing echelon_result under a phase-specific
+        # name (for example, REPAIR_RESULT.yaml). Restrict the exemption to the
+        # RE root: any source-owned or other nested output remains protected.
+        return "/" not in relative and relative.endswith("_RESULT.yaml")
 
     def _snapshot_changed(self, expected: dict) -> bool:
         paths = [self._run_re_dir / str(relative) for relative in expected]
