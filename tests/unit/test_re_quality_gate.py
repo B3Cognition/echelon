@@ -6,7 +6,10 @@ import pytest
 
 from harness.re_domain_manifest import domain_manifest_path
 from harness.re_planner import ReExecutionPlan
-from harness.re_quality_gate import validate_staged_re_quality
+from harness.re_quality_gate import (
+    validate_staged_re_domain_quality,
+    validate_staged_re_quality,
+)
 from tests.unit.test_re_publication import write_valid_re_run
 
 
@@ -101,3 +104,19 @@ def test_gate_accepts_domain_relative_source_evidence(tmp_path: Path) -> None:
     report = validate_staged_re_quality(run_dir / "re", _plan(run_dir))
 
     assert report.passed
+
+
+@pytest.mark.unit
+def test_target_gate_reports_only_its_declared_domain(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    spec.write_text("# Architecture summary\n", encoding="utf-8")
+
+    report = validate_staged_re_domain_quality(
+        run_dir / "re", _plan(run_dir), "api", "001-re-domain"
+    )
+
+    assert not report.passed
+    assert len(report.failures) == 1
+    assert report.failures[0].domain_id == "001-re-domain"
+    assert report.failures[0].spec_path == spec

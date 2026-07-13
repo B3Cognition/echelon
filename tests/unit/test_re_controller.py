@@ -98,14 +98,16 @@ def test_shallow_specification_runs_only_bounded_repair_before_blocking(
         extension_root=extension_root,
     ).run()
 
-    assert result.blocked_reason == "re_deep_spec_gate_failed"
+    assert result.blocked_reason == "re_domain_deep_spec_gate_failed"
     assert provider.phases == [
         "re-extract-2-specify",
         "re-extract-2-specify",
     ]
     state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
-    assert state["re_quality_repair_attempts"] == 1
-    assert state["re_quality_gate_report"].endswith("quality/deep-spec-gate.json")
+    assert state["re_domain_quality_attempts"] == {"api/001-re-domain": 2}
+    assert state["re_target_quality_gate_report"].endswith(
+        "quality/targets/api/001-re-domain.json"
+    )
 
 
 @pytest.mark.unit
@@ -123,10 +125,10 @@ def test_failed_repair_passes_are_rescheduled_until_their_bound(tmp_path: Path) 
         extension_root=_extension_root(tmp_path),
     ).run()
 
-    assert result.blocked_reason == "re_deep_spec_gate_failed"
+    assert result.blocked_reason == "re_domain_deep_spec_gate_failed"
     assert provider.phases == ["re-extract-2-specify"] * 3
     state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
-    assert state["re_quality_repair_attempts"] == 2
+    assert state["re_domain_quality_attempts"] == {"api/001-re-domain": 3}
 
 
 @pytest.mark.unit
@@ -144,7 +146,7 @@ def test_zero_repair_limit_blocks_before_repair_dispatch(tmp_path: Path) -> None
         extension_root=_extension_root(tmp_path),
     ).run()
 
-    assert result.blocked_reason == "re_deep_spec_gate_failed"
+    assert result.blocked_reason == "re_domain_deep_spec_gate_failed"
     assert provider.phases == ["re-extract-2-specify"]
 
 
@@ -615,4 +617,4 @@ def test_controller_prepares_an_empty_target_spec_before_specifier_dispatch(
         extension_root=_extension_root(tmp_path),
     ).run()
 
-    assert result.blocked_reason == "re_deep_spec_gate_failed"
+    assert result.blocked_reason == "re_domain_deep_spec_gate_failed"

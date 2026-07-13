@@ -21,7 +21,9 @@ from harness.re_domain_manifest import (
 from harness.re_planner import ReExecutionPlan
 from harness.re_quality_gate import (
     ReQualityReport,
+    validate_staged_re_domain_quality,
     validate_staged_re_quality,
+    write_re_target_quality_report,
     write_re_quality_report,
 )
 from kernel.re_state import complete_dispatch, init_re_state, write_last_dispatch
@@ -100,14 +102,19 @@ class ReExtractionController:
             phase = str(state.get("phase") or "re-extract-1-analyze")
             last_dispatch = state.get("last_dispatch")
             if (
-                state.get("re_quality_repair_pending")
-                and isinstance(last_dispatch, dict)
+                isinstance(last_dispatch, dict)
                 and last_dispatch.get("phase_id") == phase
                 and not last_dispatch.get("post_dispatch_complete", True)
             ):
-                snapshot_reason = self._repair_snapshot_failure(state)
-                if snapshot_reason is not None:
-                    return self._block(state, snapshot_reason)
+                for snapshot_key in (
+                    "re_quality_repair_snapshot",
+                    "re_target_quality_repair_snapshot",
+                ):
+                    if snapshot_key not in state:
+                        continue
+                    snapshot_reason = self._repair_snapshot_failure(state, snapshot_key)
+                    if snapshot_reason is not None:
+                        return self._block(state, snapshot_reason)
             if phase == "re-extract-0-preflight":
                 state["phase"] = "re-extract-1-analyze"
                 self._save_state(state)
@@ -155,11 +162,33 @@ class ReExtractionController:
             except (KeyError, ValueError) as exc:
                 state["re_agent_result_detail"] = str(exc)
                 return self._block(state, "re_agent_result_invalid")
-            if phase == "re-extract-2-specify" and state.get("re_quality_repair_pending"):
-                snapshot_reason = self._repair_snapshot_failure(state)
-                if snapshot_reason is not None:
-                    return self._block(state, snapshot_reason)
+            if phase == "re-extract-2-specify":
+                for snapshot_key in (
+                    "re_quality_repair_snapshot",
+                    "re_target_quality_repair_snapshot",
+                ):
+                    if snapshot_key not in state:
+                        continue
+                    snapshot_reason = self._repair_snapshot_failure(state, snapshot_key)
+                    if snapshot_reason is not None:
+                        return self._block(state, snapshot_reason)
             if phase == "re-extract-2-specify" and target is not None:
+                target_report = self._target_quality_report(plan, target)
+                if target_report is not None and not target_report.passed:
+                    source_id = str(target["source_id"])
+                    domain_id = str(target["domain_id"])
+                    report_path = write_re_target_quality_report(
+                        self._run_re_dir, source_id, domain_id, target_report
+                    )
+                    attempts = self._record_target_quality_failure(
+                        state, target, target_report
+                    )
+                    state["re_target_quality_gate_report"] = str(report_path)
+                    if attempts > self._metric(state, "max_verify_expand_iterations"):
+                        return self._block(state, "re_domain_deep_spec_gate_failed")
+                    self._save_state(state)
+                    continue
+                self._clear_target_quality_failure(state, target)
                 self._complete_specification_target(state, target)
             self._save_state(state)
 
@@ -382,6 +411,65 @@ class ReExtractionController:
         if target.get("kind") == "workspace-synthesis":
             state["re_workspace_synthesis_complete"] = True
 
+    def _target_quality_report(
+        self, plan: ReExecutionPlan, target: dict[str, object]
+    ) -> ReQualityReport | None:
+        if target.get("kind") != "source-domain":
+            return None
+        source_id = target.get("source_id")
+        domain_id = target.get("domain_id")
+        if not isinstance(source_id, str) or not isinstance(domain_id, str):
+            return ReQualityReport(passed=False, failures=())
+        return validate_staged_re_domain_quality(
+            self._run_re_dir, plan, source_id, domain_id
+        )
+
+    @staticmethod
+    def _target_quality_key(target: dict[str, object]) -> str | None:
+        source_id = target.get("source_id")
+        domain_id = target.get("domain_id")
+        if not isinstance(source_id, str) or not isinstance(domain_id, str):
+            return None
+        return f"{source_id}/{domain_id}"
+
+    def _record_target_quality_failure(
+        self,
+        state: dict,
+        target: dict[str, object],
+        report: ReQualityReport,
+    ) -> int:
+        key = self._target_quality_key(target)
+        if key is None:
+            return self._metric(state, "max_verify_expand_iterations") + 1
+        raw_attempts = state.get("re_domain_quality_attempts")
+        attempts = raw_attempts if isinstance(raw_attempts, dict) else {}
+        next_attempt = self._metric(attempts, key) + 1
+        attempts[key] = next_attempt
+        state["re_domain_quality_attempts"] = attempts
+        if (
+            not state.get("re_quality_repair_pending")
+            and "re_target_quality_repair_snapshot" not in state
+        ):
+            state["re_target_quality_repair_snapshot"] = self._repair_snapshot(report)
+        return next_attempt
+
+    def _clear_target_quality_failure(self, state: dict, target: dict[str, object]) -> None:
+        key = self._target_quality_key(target)
+        attempts = state.get("re_domain_quality_attempts")
+        if key is not None and isinstance(attempts, dict):
+            attempts.pop(key, None)
+            if not attempts:
+                state.pop("re_domain_quality_attempts", None)
+        state.pop("re_target_quality_repair_snapshot", None)
+        source_id = target.get("source_id")
+        domain_id = target.get("domain_id")
+        if isinstance(source_id, str) and isinstance(domain_id, str):
+            path = self._run_re_dir / "quality" / "targets" / source_id / f"{domain_id}.json"
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
     def _specification_target_prompt(self, target: dict[str, object]) -> str:
         kind = target.get("kind")
         if kind == "workspace-synthesis":
@@ -398,6 +486,9 @@ class ReExtractionController:
             raise ValueError("invalid controller specification target")
         manifest = domain_manifest_path(self._run_re_dir, source_id)
         spec_path = self._run_re_dir / "sources" / source_id / "specs" / domain_id / "spec.md"
+        target_report = (
+            self._run_re_dir / "quality" / "targets" / source_id / f"{domain_id}.json"
+        )
         return (
             "\n## Controller-Owned Specification Target\n"
             f"Generate exactly one deep source-domain spec: `{spec_path}`.\n"
@@ -411,6 +502,12 @@ class ReExtractionController:
             "root; it must resolve within that domain. Never use Markdown-link citations. "
             "Include at least five distinct valid citations. Do not write another domain spec, "
             "source overview, or workspace synthesis.\n"
+            + (
+                f"Read `{target_report}` before editing: it is the exact deterministic "
+                "failure report for this target.\n"
+                if target_report.is_file()
+                else ""
+            )
         )
 
     def _prepare_specification_target(self, target: dict[str, object]) -> str | None:
@@ -545,8 +642,10 @@ class ReExtractionController:
             ],
         }
 
-    def _repair_snapshot_failure(self, state: dict) -> str | None:
-        snapshot = state.get("re_quality_repair_snapshot")
+    def _repair_snapshot_failure(
+        self, state: dict, snapshot_key: str = "re_quality_repair_snapshot"
+    ) -> str | None:
+        snapshot = state.get(snapshot_key)
         if not isinstance(snapshot, dict):
             return "re_quality_repair_snapshot_missing"
         immutable = snapshot.get("immutable_inputs")
@@ -621,7 +720,9 @@ class ReExtractionController:
         # Providers may persist the trailing echelon_result under a phase-specific
         # name (for example, REPAIR_RESULT.yaml). Restrict the exemption to the
         # RE root: any source-owned or other nested output remains protected.
-        return "/" not in relative and relative.endswith("_RESULT.yaml")
+        return relative.startswith("quality/") or (
+            "/" not in relative and relative.endswith("_RESULT.yaml")
+        )
 
     def _snapshot_changed(self, expected: dict) -> bool:
         paths = [self._run_re_dir / str(relative) for relative in expected]
@@ -697,6 +798,8 @@ class ReExtractionController:
             "validate_iterations",
             "verify_expand_iterations",
             "re_quality_repair_attempts",
+            "re_domain_quality_attempts",
+            "re_target_quality_repair_snapshot",
             # Repair metadata is useful in the agent transcript but is not a
             # RE-state transition. Treat it as controller-owned diagnostics.
             "repair_action",

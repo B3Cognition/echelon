@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE first-pass domain acceptance** — a source-domain spec is now checked by
+  the deterministic deep-spec gate immediately after its agent returns
+  `DONE`. A failing target stays at the head of the queue, receives its own
+  exact gate report on the next dispatch, and is bounded independently before
+  the controller moves to another domain. The workspace-wide gate remains the
+  final consistency check rather than the first time invalid evidence is found.
+
 - **RE repair convergence and recovery** — a completed repair pass that still
   has failing specs now starts a fresh bounded repair pass instead of spinning
   with an empty target list. A resumed run changes from blocked to in-progress

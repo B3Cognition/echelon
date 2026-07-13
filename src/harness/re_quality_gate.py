@@ -9,8 +9,8 @@ import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from harness.re_domain_manifest import domain_manifest_path, load_domain_manifest
-from harness.re_planner import ReExecutionPlan
+from harness.re_domain_manifest import ReDomain, domain_manifest_path, load_domain_manifest
+from harness.re_planner import ReExecutionPlan, RePlanSource
 
 
 SOURCE_REFERENCE = re.compile(
@@ -97,43 +97,9 @@ def validate_staged_re_quality(
             path.parent.name for path in specs_root.glob("*/spec.md")
         } if specs_root.is_dir() else set()
         for domain in manifest.domains:
-            spec_path = specs_root / domain.domain_id / "spec.md"
-            if not spec_path.is_file():
-                failures.append(
-                    ReSpecQualityFailure(
-                        source_id=source.id,
-                        spec_path=spec_path,
-                        missing_sections=DEEP_SPEC_SECTIONS,
-                        source_evidence_count=0,
-                        domain_id=domain.domain_id,
-                        reason="required_domain_spec_missing",
-                    )
-                )
-                continue
-            text = spec_path.read_text(encoding="utf-8")
-            missing_sections = tuple(
-                section for section in DEEP_SPEC_SECTIONS if section not in text
-            )
-            evidence, invalid_evidence = _validated_source_evidence(
-                text,
-                source_root=Path(source.absolute_path),
-                domain_root=domain.root,
-            )
-            if (
-                missing_sections
-                or len(evidence) < MINIMUM_SOURCE_EVIDENCE
-                or invalid_evidence
-            ):
-                failures.append(
-                    ReSpecQualityFailure(
-                        source_id=source.id,
-                        spec_path=spec_path,
-                        missing_sections=missing_sections,
-                        source_evidence_count=len(evidence),
-                        domain_id=domain.domain_id,
-                        invalid_source_evidence=tuple(sorted(invalid_evidence)),
-                    )
-                )
+            failure = _domain_quality_failure(run_re_dir, source, domain)
+            if failure is not None:
+                failures.append(failure)
         for unexpected_domain_id in sorted(actual_ids - expected_ids):
             failures.append(
                 ReSpecQualityFailure(
@@ -146,6 +112,116 @@ def validate_staged_re_quality(
                 )
             )
     return ReQualityReport(passed=not failures, failures=tuple(failures))
+
+
+def validate_staged_re_domain_quality(
+    run_re_dir: Path,
+    plan: ReExecutionPlan,
+    source_id: str,
+    domain_id: str,
+) -> ReQualityReport:
+    """Validate one controller-owned domain before accepting its spec dispatch."""
+    if plan.profile.depth not in {"logic", "full"}:
+        return ReQualityReport(passed=True, failures=())
+    source = next((item for item in plan.refresh_sources if item.id == source_id), None)
+    if source is None:
+        return ReQualityReport(
+            passed=False,
+            failures=(
+                ReSpecQualityFailure(
+                    source_id=source_id,
+                    spec_path=run_re_dir / "sources" / source_id / "domain-manifest.json",
+                    missing_sections=(),
+                    source_evidence_count=0,
+                    domain_id=domain_id,
+                    reason="controller_target_source_not_refreshable",
+                ),
+            ),
+        )
+    manifest_path = domain_manifest_path(run_re_dir, source.id)
+    try:
+        manifest = load_domain_manifest(manifest_path)
+    except ValueError:
+        return ReQualityReport(
+            passed=False,
+            failures=(
+                ReSpecQualityFailure(
+                    source_id=source.id,
+                    spec_path=manifest_path,
+                    missing_sections=(),
+                    source_evidence_count=0,
+                    domain_id=domain_id,
+                    reason="domain_manifest_missing_or_invalid",
+                ),
+            ),
+        )
+    if manifest.source_id != source.id or manifest.source_path != source.path:
+        return ReQualityReport(
+            passed=False,
+            failures=(
+                ReSpecQualityFailure(
+                    source_id=source.id,
+                    spec_path=manifest_path,
+                    missing_sections=(),
+                    source_evidence_count=0,
+                    domain_id=domain_id,
+                    reason="domain_manifest_source_mismatch",
+                ),
+            ),
+        )
+    domain = next((item for item in manifest.domains if item.domain_id == domain_id), None)
+    if domain is None:
+        return ReQualityReport(
+            passed=False,
+            failures=(
+                ReSpecQualityFailure(
+                    source_id=source.id,
+                    spec_path=manifest_path,
+                    missing_sections=(),
+                    source_evidence_count=0,
+                    domain_id=domain_id,
+                    reason="controller_target_domain_missing",
+                ),
+            ),
+        )
+    failure = _domain_quality_failure(run_re_dir, source, domain)
+    return ReQualityReport(passed=failure is None, failures=() if failure is None else (failure,))
+
+
+def _domain_quality_failure(
+    run_re_dir: Path, source: RePlanSource, domain: ReDomain
+) -> ReSpecQualityFailure | None:
+    spec_path = run_re_dir / "sources" / source.id / "specs" / domain.domain_id / "spec.md"
+    if not spec_path.is_file():
+        return ReSpecQualityFailure(
+            source_id=source.id,
+            spec_path=spec_path,
+            missing_sections=DEEP_SPEC_SECTIONS,
+            source_evidence_count=0,
+            domain_id=domain.domain_id,
+            reason="required_domain_spec_missing",
+        )
+    text = spec_path.read_text(encoding="utf-8")
+    missing_sections = tuple(section for section in DEEP_SPEC_SECTIONS if section not in text)
+    evidence, invalid_evidence = _validated_source_evidence(
+        text,
+        source_root=Path(source.absolute_path),
+        domain_root=domain.root,
+    )
+    if not (
+        missing_sections
+        or len(evidence) < MINIMUM_SOURCE_EVIDENCE
+        or invalid_evidence
+    ):
+        return None
+    return ReSpecQualityFailure(
+        source_id=source.id,
+        spec_path=spec_path,
+        missing_sections=missing_sections,
+        source_evidence_count=len(evidence),
+        domain_id=domain.domain_id,
+        invalid_source_evidence=tuple(sorted(invalid_evidence)),
+    )
 
 
 def _validated_source_evidence(
@@ -209,6 +285,21 @@ def _line_count(path: Path) -> int:
 def write_re_quality_report(run_re_dir: Path, report: ReQualityReport) -> Path:
     """Atomically persist the deterministic gate report for diagnostics/repair."""
     path = run_re_dir / "quality" / "deep-spec-gate.json"
+    return _write_quality_report(path, report)
+
+
+def write_re_target_quality_report(
+    run_re_dir: Path,
+    source_id: str,
+    domain_id: str,
+    report: ReQualityReport,
+) -> Path:
+    """Persist the exact gate failure that a source-domain repair must address."""
+    path = run_re_dir / "quality" / "targets" / source_id / f"{domain_id}.json"
+    return _write_quality_report(path, report)
+
+
+def _write_quality_report(path: Path, report: ReQualityReport) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(
         dir=str(path.parent),
