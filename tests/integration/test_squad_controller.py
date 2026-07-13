@@ -16,6 +16,7 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.re_controller import ReControllerResult
 from harness.squad import (
     SquadController,
     SquadResult,
@@ -452,27 +453,19 @@ class TestSquadControllerBasics:
         assert state["mode"] == "brownfield"
         assert state["autonomy_mode"] == "banzai"
 
-    def test_brownfield_discovery_pre_dispatches_golddigger_mode1_with_context(self, tmp_path):
+    def test_brownfield_discovery_runs_mode1_controller_before_scout(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
         provider = MagicMock()
-        provider.exec_agent.side_effect = [
-            SquadAgentResult(
-                exit_code=0,
-                echelon_result={
-                    "verdict": "DONE",
-                    "state_updates": {"golddigger_status": "partial"},
-                },
-                raw_output="",
-                duration_ms=50,
-                timed_out=False,
-            ),
-            SquadAgentResult(
-                exit_code=0,
-                echelon_result={"verdict": "DONE", "state_updates": {}},
-                raw_output="",
-                duration_ms=50,
-                timed_out=False,
-            ),
-        ]
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=50,
+            timed_out=False,
+        )
         graph = PhaseGraph(DEFINITION, EXT_YML)
         squad_dir = tmp_path / "squad" / "run-test"
         squad_dir.mkdir(parents=True, exist_ok=True)
@@ -487,38 +480,42 @@ class TestSquadControllerBasics:
             squad_dir,
         )
 
+        controller_calls = []
+
+        class CompleteController:
+            def __init__(self, **kwargs):
+                controller_calls.append(kwargs)
+
+            def run(self):
+                return ReControllerResult(completed=True)
+
+        monkeypatch.setattr(
+            "harness.squad_executors.ReExtractionController",
+            CompleteController,
+        )
+
         executor.execute(graph.get("phase1-discover"), store)
 
-        assert provider.exec_agent.call_count == 2
-        golddigger_prompt = provider.exec_agent.call_args_list[0].args[1]
-        assert "You are GOLDDIGGER." in golddigger_prompt
-        assert "Run **Mode 1 (Workspace Reverse Engineering)**" in golddigger_prompt
-        assert f"project_root: {tmp_path}" in golddigger_prompt
-        assert "mode: brownfield" in golddigger_prompt
+        assert len(controller_calls) == 1
+        assert controller_calls[0]["project_root"] == tmp_path
+        assert controller_calls[0]["run_dir"] == squad_dir
+        assert provider.exec_agent.call_count == 1
         state = store.load()
-        assert state["golddigger_status"] == "partial"
+        assert state["golddigger_status"] == "complete"
 
-    def test_golddigger_mode1_complete_is_preserved_when_publication_not_required(self, tmp_path):
+    def test_golddigger_mode1_complete_is_preserved_when_publication_not_required(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
         provider = MagicMock()
-        provider.exec_agent.side_effect = [
-            SquadAgentResult(
-                exit_code=0,
-                echelon_result={
-                    "verdict": "DONE",
-                    "state_updates": {"golddigger_status": "complete"},
-                },
-                raw_output="",
-                duration_ms=50,
-                timed_out=False,
-            ),
-            SquadAgentResult(
-                exit_code=0,
-                echelon_result={"verdict": "DONE", "state_updates": {}},
-                raw_output="",
-                duration_ms=50,
-                timed_out=False,
-            ),
-        ]
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=50,
+            timed_out=False,
+        )
         graph = PhaseGraph(DEFINITION, EXT_YML)
         squad_dir = tmp_path / "squad" / "run-test"
         squad_dir.mkdir(parents=True, exist_ok=True)
@@ -531,11 +528,24 @@ class TestSquadControllerBasics:
             EXT_ROOT / "extension",
             tmp_path,
             squad_dir,
+        )
+
+        class CompleteController:
+            def __init__(self, **_kwargs):
+                pass
+
+            def run(self):
+                return ReControllerResult(completed=True)
+
+        monkeypatch.setattr(
+            "harness.squad_executors.ReExtractionController",
+            CompleteController,
         )
 
         executor.execute(graph.get("phase1-discover"), store)
 
         assert store.load()["golddigger_status"] == "complete"
+        assert provider.exec_agent.call_count == 1
 
     def test_starts_at_entry_phase(self, tmp_path):
         ctrl, store = _controller(tmp_path)

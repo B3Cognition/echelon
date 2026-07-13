@@ -120,6 +120,81 @@ def test_zero_repair_limit_blocks_before_repair_dispatch(tmp_path: Path) -> None
 
 
 @pytest.mark.unit
+def test_controller_initializes_missing_re_state_before_first_dispatch(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    (run_dir / "re" / "state.json").unlink()
+
+    class BlockingProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
+            self.phases.append(phase)
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {},
+                    "journal_entries": [],
+                },
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    provider = BlockingProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.blocked_reason == "re_agent_dispatch_failed"
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "re-extract-1-analyze"
+    assert state["status"] == "blocked"
+
+
+@pytest.mark.unit
+def test_controller_reinitializes_legacy_state_before_first_dispatch(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+
+    class BlockingProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
+            self.phases.append(phase)
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {},
+                    "journal_entries": [],
+                },
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    provider = BlockingProvider()
+    extension_root = _extension_root(tmp_path)
+
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=extension_root,
+    ).run()
+
+    assert result.blocked_reason == "re_agent_dispatch_failed"
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert state["run_id"] == run_dir.name
+    assert state["phase"] == "re-extract-1-analyze"
+
+
+@pytest.mark.unit
 def test_repaired_specification_advances_to_all_downstream_re_phases(
     tmp_path: Path,
 ) -> None:

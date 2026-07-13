@@ -21,6 +21,7 @@ from harness.re_registry import (
     canonical_re_artifacts,
     load_published_index,
 )
+from harness.re_controller import ReExtractionController
 
 if TYPE_CHECKING:
     from harness.phase_graph import PhaseGraph, PhaseNode
@@ -731,6 +732,22 @@ class PhaseExecutor(ABC):
             if entry.get("id") == "golddigger_mode1" and self._golddigger_mode1_cache_hit(state):
                 self._apply_golddigger_mode1_cache_hit(state_store)
                 continue
+            if entry.get("id") == "golddigger_mode1":
+                result = self._run_golddigger_mode1_controller()
+                if result.blocked:
+                    return result
+                publication_failure = self._publish_golddigger_mode1_complete(
+                    result,
+                    state_store,
+                )
+                if publication_failure is not None:
+                    return publication_failure
+                self._write_journal_entries(result, node.id)
+                for k, v in result.state_updates.items():
+                    s = state_store.load()
+                    s[k] = v
+                    state_store.save(s)
+                continue
             pre_agent = entry.get("agent", "").split(" ")[0]
             if not pre_agent:
                 continue
@@ -747,21 +764,9 @@ class PhaseExecutor(ABC):
                     result = self._provider.exec_agent(
                         str(self._project_root), prompt
                     )
-                    if entry.get("id") == "golddigger_mode1":
-                        result = self._recover_forwarded_golddigger_mode1_result(
-                            prompt,
-                            result,
-                        )
                     result = self._validate_result_state_updates(node, result)
                     if result.blocked:
                         return result
-                    if entry.get("id") == "golddigger_mode1":
-                        publication_failure = self._publish_golddigger_mode1_complete(
-                            result,
-                            state_store,
-                        )
-                        if publication_failure is not None:
-                            return publication_failure
                     self._write_journal_entries(result, node.id)
                     for k, v in result.state_updates.items():
                         s = state_store.load()
@@ -769,35 +774,48 @@ class PhaseExecutor(ABC):
                         state_store.save(s)
         return None
 
-    def _recover_forwarded_golddigger_mode1_result(
-        self,
-        prompt: str,
-        result: "SquadAgentResult",
-    ) -> "SquadAgentResult":
-        """Request the outer GOLDDIGGER result when an RE sub-skill leaked its result."""
-        payload = result.echelon_result
-        if not isinstance(payload, dict):
-            return result
-        phase_id = payload.get("phase_id")
-        updates = payload.get("state_updates")
-        if (
-            not isinstance(phase_id, str)
-            or not phase_id.startswith("re-extract-")
-            or not isinstance(updates, dict)
-            or "golddigger_status" in updates
-        ):
-            return result
+    def _run_golddigger_mode1_controller(self) -> "SquadAgentResult":
+        """Run active workspace RE under the harness, then publish its result."""
+        from harness.squad_provider import SquadAgentResult
 
-        recovery_prompt = (
-            prompt
-            + "\n\n# Required GOLDDIGGER Result Recovery\n"
-            + "Your previous response forwarded a nested re-extract result instead "
-            + "of completing the outer GOLDDIGGER dispatch. Resume from the staged "
-            + "RE state; do not return the nested phase result. Return one new outer "
-            + "GOLDDIGGER `echelon_result` using only the allowed GOLDDIGGER "
-            + "state_updates, including `golddigger_status`.\n"
+        controller = ReExtractionController(
+            provider=self._provider,
+            project_root=self._project_root,
+            run_dir=self._squad_dir,
+            extension_root=self._ext_dir,
         )
-        return self._provider.exec_agent(str(self._project_root), recovery_prompt)
+        outcome = controller.run()
+        if not outcome.completed:
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {
+                        "blocked_reason": outcome.blocked_reason
+                        or "re_controller_failed",
+                    },
+                    "journal_entries": [],
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {
+                    "golddigger_status": "complete",
+                    "golddigger_mode": "workspace-full-re",
+                    "golddigger_notes": [],
+                },
+                "journal_entries": [],
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
 
     def _golddigger_mode1_cache_hit(self, state: dict) -> bool:
         """Return True when the RE plan says Mode 1 has no refresh work."""

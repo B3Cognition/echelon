@@ -27,8 +27,8 @@ ALWAYS leave `golddigger_requests` and `golddigger_completed_domains` for COMMAN
 NEVER modify either queue.
 
 ### Rule 5 - Skill-Backed Extraction
-ALWAYS invoke `echelon re execute-run <run-id>` and wait for its result when active workspace extraction requires source refresh or workspace synthesis.
-NEVER manually route active workspace RE phases or substitute manual code analysis for the RE pipeline.
+ALWAYS consume the active workspace RE artifacts produced by the harness-owned controller before reporting Mode 1 completion.
+NEVER invoke, manually route, or substitute active workspace RE phases; the harness controller owns that execution.
 
 ### Rule 6 - Explicit Runtime Profile
 ALWAYS rely on explicit `--output`, `--manifest`, `--source-output-root`, `--profile`, `--depth`, `--max-lines-per-file`, and `--git-history-limit` arguments passed by RE-ANALYZER.
@@ -98,13 +98,9 @@ Read these state fields when supplied by COMMANDER:
 
 If no analysis or workspace synthesis is required, reuse canonical `RE_ARTIFACTS` and do not dispatch extraction.
 
-### Step 2: Invoke workspace extraction
+### Step 2: Consume harness-owned workspace extraction
 
-When source analysis or workspace synthesis is required during an active workspace run, invoke and await the harness-owned controller:
-
-```text
-echelon re execute-run <run-id>
-```
+When source analysis or workspace synthesis is required during an active workspace run, the harness invokes and awaits the controller before GOLDDIGGER receives control. Read its staged artifacts; do not invoke it yourself.
 
 The controller dispatches RE-ANALYZER with `RE_OUTPUT_DIR` and `re-analysis-manifest.json` using explicit runtime arguments:
 

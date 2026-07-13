@@ -17,7 +17,7 @@ from harness.re_quality_gate import (
     validate_staged_re_quality,
     write_re_quality_report,
 )
-from kernel.re_state import complete_dispatch, write_last_dispatch
+from kernel.re_state import complete_dispatch, init_re_state, write_last_dispatch
 
 
 class ReAgentProvider(Protocol):
@@ -310,7 +310,37 @@ class ReExtractionController:
 
     def _load_state(self) -> dict:
         path = self._run_re_dir / "state.json"
-        return json.loads(path.read_text(encoding="utf-8"))
+        if not path.exists():
+            return self._initialize_state()
+        state = json.loads(path.read_text(encoding="utf-8"))
+        if not self._is_controller_state(state):
+            # Legacy/manual extraction state has no dispatch protocol.  Treat it
+            # as unverified rather than accepting a shallow result as complete.
+            return self._initialize_state()
+        return state
+
+    def _initialize_state(self) -> dict:
+        self._run_re_dir.mkdir(parents=True, exist_ok=True)
+        state = init_re_state(
+            output_dir=f"runs/{self._run_dir.name}/re",
+            mode="workspace",
+        )
+        state["run_id"] = self._run_dir.name
+        self._save_state(state)
+        return state
+
+    @staticmethod
+    def _is_controller_state(state: object) -> bool:
+        if not isinstance(state, dict):
+            return False
+        phase = state.get("phase")
+        last_dispatch = state.get("last_dispatch")
+        return (
+            isinstance(phase, str)
+            and phase in {"re-extract-0-preflight", *_PHASES}
+            and isinstance(last_dispatch, dict)
+            and isinstance(last_dispatch.get("post_dispatch_complete"), bool)
+        )
 
     def _save_state(self, state: dict) -> None:
         path = self._run_re_dir / "state.json"

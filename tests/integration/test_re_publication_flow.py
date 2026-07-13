@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
+from harness.re_controller import ReControllerResult
 from harness.phase_graph import PhaseNode
 from harness.re_publication import publish_re_run
 from harness.re_registry import canonical_re_artifacts, load_published_index
 from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
-from tests.unit.test_re_publication import write_valid_re_run
+from tests.unit.test_re_publication import _deep_spec, write_valid_re_run
 
 
 def _pre_dispatch_executor(
@@ -48,7 +52,27 @@ def _pre_dispatch_executor(
     return executor, node, provider
 
 
-def test_complete_golddigger_publishes_canonical_workspace_context(tmp_path: Path) -> None:
+def _stub_mode1_controller(
+    monkeypatch: pytest.MonkeyPatch,
+    outcome: ReControllerResult = ReControllerResult(completed=True),
+) -> list[dict[str, object]]:
+    calls: list[dict[str, object]] = []
+
+    class StubController:
+        def __init__(self, **kwargs: object) -> None:
+            calls.append(kwargs)
+
+        def run(self) -> ReControllerResult:
+            return outcome
+
+    monkeypatch.setattr("harness.squad_executors.ReExtractionController", StubController)
+    return calls
+
+
+def test_complete_golddigger_publishes_canonical_workspace_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",), run_id="run-test")
     state_store = SquadStateStore(run_dir)
     state = state_store.load()
@@ -62,6 +86,7 @@ def test_complete_golddigger_publishes_canonical_workspace_context(tmp_path: Pat
         }
     )
     state_store.save(state)
+    _stub_mode1_controller(monkeypatch)
 
     ext_dir = tmp_path / "ext"
     agent_dir = ext_dir / "agents"
@@ -110,8 +135,147 @@ def test_complete_golddigger_publishes_canonical_workspace_context(tmp_path: Pat
     assert not updated["re_publication_required"]
 
 
-def test_golddigger_mode1_recovers_forwarded_nested_re_extract_result(
+def test_mode1_runs_harness_controller_before_publication(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",), run_id="run-controller")
+    state_store = SquadStateStore(run_dir)
+    state = state_store.load()
+    state.update(
+        {
+            "re_refresh_sources": ["api"],
+            "re_generation": 0,
+            "re_publication_required": True,
+            "re_workspace_synthesis_required": True,
+            "re_analysis_required": True,
+        }
+    )
+    state_store.save(state)
+    executor, node, provider = _pre_dispatch_executor(tmp_path, run_dir, "complete")
+    calls: list[dict[str, object]] = []
+
+    class CompleteController:
+        def __init__(self, **kwargs: object) -> None:
+            calls.append(kwargs)
+
+        def run(self) -> ReControllerResult:
+            return ReControllerResult(completed=True)
+
+    monkeypatch.setattr("harness.squad_executors.ReExtractionController", CompleteController)
+
+    result = executor._run_pre_dispatch(node, state_store.load(), state_store)
+
+    assert result is None
+    assert len(calls) == 1
+    assert calls[0]["run_dir"] == run_dir
+    provider.exec_agent.assert_not_called()
+    assert (tmp_path / "re" / "index.json").is_file()
+
+
+def test_mode1_controller_rebuilds_missing_state_and_specs_before_publication(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",), run_id="run-fresh")
+    run_re = run_dir / "re"
+    shutil.rmtree(run_re / "sources")
+    (run_re / "state.json").unlink()
+
+    state_store = SquadStateStore(run_dir)
+    state = state_store.load()
+    state.update(
+        {
+            "re_refresh_sources": ["api"],
+            "re_generation": 0,
+            "re_publication_required": True,
+            "re_workspace_synthesis_required": True,
+            "re_analysis_required": True,
+        }
+    )
+    state_store.save(state)
+
+    ext_dir = tmp_path / "ext"
+    for name in (
+        "analyzer",
+        "specifier",
+        "verifier",
+        "expander",
+        "validator",
+        "checklister",
+        "constituter",
+    ):
+        path = ext_dir / "agents" / "re" / f"{name}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {name}\n", encoding="utf-8")
+
+    class PipelineProvider:
+        def __init__(self) -> None:
+            self.phases: list[str] = []
+
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
+            self.phases.append(phase)
+            source = run_re / "sources" / "api"
+            if phase == "re-extract-1-analyze":
+                source.mkdir(parents=True, exist_ok=True)
+                (source / "analysis.json").write_text("{}\n", encoding="utf-8")
+                (source / "overview.md").write_text("# API\n", encoding="utf-8")
+            if phase == "re-extract-2-specify":
+                spec = source / "specs" / "001-domain" / "spec.md"
+                spec.parent.mkdir(parents=True, exist_ok=True)
+                spec.write_text(_deep_spec("api", "v1"), encoding="utf-8")
+            updates: dict[str, int] = {}
+            if phase == "re-extract-3-verify":
+                updates["coverage_pct"] = 80
+            if phase == "re-extract-5-validate":
+                updates["resolution_pct"] = 80
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": updates,
+                    "journal_entries": [],
+                },
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    provider = PipelineProvider()
+    graph = MagicMock()
+    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, run_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[
+            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+        ],
+        allowed_state_updates=["golddigger_status"],
+    )
+
+    result = executor._run_pre_dispatch(node, state_store.load(), state_store)
+
+    assert result is None
+    assert provider.phases == [
+        "re-extract-1-analyze",
+        "re-extract-2-specify",
+        "re-extract-3-verify",
+        "re-extract-5-validate",
+        "re-extract-6-checklist",
+        "re-extract-7-constitute",
+    ]
+    assert (tmp_path / "re" / "index.json").is_file()
+    assert (run_re / "sources" / "api" / "specs" / "001-domain" / "spec.md").is_file()
+    assert json.loads((run_re / "state.json").read_text(encoding="utf-8"))["status"] == "done"
+    updated = state_store.load()
+    assert updated["golddigger_status"] == "complete"
+    assert updated["re_generation"] == 1
+    assert updated["re_publication_required"] is False
+
+
+def test_golddigger_mode1_does_not_dispatch_an_outer_agent_after_controller_completion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",), run_id="run-nested-result")
     state_store = SquadStateStore(run_dir)
@@ -126,6 +290,7 @@ def test_golddigger_mode1_recovers_forwarded_nested_re_extract_result(
         }
     )
     state_store.save(state)
+    _stub_mode1_controller(monkeypatch)
 
     ext_dir = tmp_path / "ext"
     agent_dir = ext_dir / "agents"
@@ -176,15 +341,14 @@ def test_golddigger_mode1_recovers_forwarded_nested_re_extract_result(
     result = executor._run_pre_dispatch(node, state_store.load(), state_store)
 
     assert result is None
-    assert provider.exec_agent.call_count == 2
-    recovery_prompt = provider.exec_agent.call_args_list[1].args[1]
-    assert "forwarded a nested re-extract result" in recovery_prompt
+    provider.exec_agent.assert_not_called()
     assert (tmp_path / "re/index.json").is_file()
     assert state_store.load()["golddigger_status"] == "complete"
 
 
 def test_all_empty_workspace_publishes_successfully_without_source_specs(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run_dir = write_valid_re_run(
         tmp_path,
@@ -205,6 +369,7 @@ def test_all_empty_workspace_publishes_successfully_without_source_specs(
         }
     )
     state_store.save(state)
+    _stub_mode1_controller(monkeypatch)
 
     ext_dir = tmp_path / "ext"
     agent_dir = ext_dir / "agents"
@@ -247,7 +412,10 @@ def test_all_empty_workspace_publishes_successfully_without_source_specs(
     assert updated["re_generation"] == 1
 
 
-def test_zero_source_workspace_publishes_workspace_generation(tmp_path: Path) -> None:
+def test_zero_source_workspace_publishes_workspace_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     run_dir = write_valid_re_run(tmp_path, (), run_id="run-zero")
     state_store = SquadStateStore(run_dir)
     state = state_store.load()
@@ -261,6 +429,7 @@ def test_zero_source_workspace_publishes_workspace_generation(tmp_path: Path) ->
         }
     )
     state_store.save(state)
+    _stub_mode1_controller(monkeypatch)
     executor, node, provider = _pre_dispatch_executor(
         tmp_path,
         run_dir,
@@ -270,7 +439,7 @@ def test_zero_source_workspace_publishes_workspace_generation(tmp_path: Path) ->
     result = executor._run_pre_dispatch(node, state_store.load(), state_store)
 
     assert result is None
-    provider.exec_agent.assert_called_once()
+    provider.exec_agent.assert_not_called()
     index = json.loads((tmp_path / "re/index.json").read_text(encoding="utf-8"))
     assert index["generation"] == 1
     assert index["sources"] == {}
@@ -332,7 +501,10 @@ def test_second_unchanged_run_reuses_canonical_context_without_golddigger(
     )
 
 
-def test_automatic_partial_output_is_not_published(tmp_path: Path) -> None:
+def test_controller_failure_is_not_published(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     run_dir = write_valid_re_run(
         tmp_path,
         ("api",),
@@ -351,6 +523,10 @@ def test_automatic_partial_output_is_not_published(tmp_path: Path) -> None:
         }
     )
     state_store.save(state)
+    _stub_mode1_controller(
+        monkeypatch,
+        ReControllerResult(completed=False, blocked_reason="re_agent_dispatch_failed"),
+    )
     executor, node, provider = _pre_dispatch_executor(
         tmp_path,
         run_dir,
@@ -359,8 +535,9 @@ def test_automatic_partial_output_is_not_published(tmp_path: Path) -> None:
 
     result = executor._run_pre_dispatch(node, state_store.load(), state_store)
 
-    assert result is None
-    provider.exec_agent.assert_called_once()
+    assert result is not None
+    assert result.blocked
+    provider.exec_agent.assert_not_called()
     assert not (tmp_path / "re/index.json").exists()
     updated = state_store.load()
     assert updated["golddigger_status"] == "partial"

@@ -17,6 +17,7 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.phase_graph import PhaseGraph
+from harness.re_controller import ReControllerResult
 from harness.re_publication import RePublicationResult, RePublicationValidationError
 from harness.squad_executors import (
     AgentExecutor,
@@ -58,6 +59,17 @@ def _result(entries=None, verdict="DONE") -> SquadAgentResult:
         duration_ms=0,
         timed_out=False,
     )
+
+
+def _stub_mode1_controller(monkeypatch, outcome=ReControllerResult(completed=True)):
+    class StubController:
+        def __init__(self, **_kwargs):
+            pass
+
+        def run(self):
+            return outcome
+
+    monkeypatch.setattr("harness.squad_executors.ReExtractionController", StubController)
 
 
 def _journal_entry(entry_type: str = "insight", **overrides) -> dict:
@@ -857,6 +869,7 @@ def test_golddigger_mode1_complete_publishes_canonical_context(tmp_path, monkeyp
         }
     )
     state_store.save(state)
+    _stub_mode1_controller(monkeypatch)
 
     provider = MagicMock()
     provider.exec_agent.return_value = SquadAgentResult(
@@ -951,6 +964,7 @@ def test_golddigger_publication_failure_blocks_and_preserves_context(tmp_path, m
         }
     )
     state_store.save(state)
+    _stub_mode1_controller(monkeypatch)
 
     provider = MagicMock()
     provider.exec_agent.return_value = SquadAgentResult(
@@ -1037,6 +1051,10 @@ def test_blocked_golddigger_result_never_publishes(tmp_path, monkeypatch):
         }
     )
     state_store.save(state)
+    _stub_mode1_controller(
+        monkeypatch,
+        ReControllerResult(completed=False, blocked_reason="re_agent_dispatch_failed"),
+    )
     provider = MagicMock()
     provider.exec_agent.return_value = SquadAgentResult(
         exit_code=0,
@@ -1176,7 +1194,7 @@ def test_pre_dispatch_blocks_unallowed_state_updates_before_mutation(tmp_path):
         id="phase1-discover",
         type="agent",
         pre_dispatch=[
-            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+            {"id": "test_pre_dispatch", "agent": "speckit-echelon-golddigger"}
         ],
         allowed_state_updates=["allowed_key"],
     )
@@ -1270,7 +1288,7 @@ def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
         id="phase1-discover",
         type="agent",
         pre_dispatch=[
-            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+            {"id": "test_pre_dispatch", "agent": "speckit-echelon-golddigger"}
         ],
         allowed_state_updates=["allowed_key"],
     )

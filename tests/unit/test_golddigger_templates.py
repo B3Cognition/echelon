@@ -153,5 +153,5 @@ class TestGolddiggerTemplates:
     def test_golddigger_mode1_uses_harness_owned_re_controller(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
 
-        assert "echelon re execute-run <run-id>" in text
+        assert "the harness invokes and awaits the controller" in text
         assert "active workspace extraction" in text
