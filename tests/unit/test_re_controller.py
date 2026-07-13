@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -58,6 +59,7 @@ def _initialize_re_state(run_dir: Path, *, max_repairs: int) -> None:
             "max_validate_iterations": 3,
             "verify_expand_iterations": 0,
             "validate_iterations": 0,
+            "re_domain_partition_version": 2,
         }
     )
     path.write_text(json.dumps(state), encoding="utf-8")
@@ -618,3 +620,111 @@ def test_controller_prepares_an_empty_target_spec_before_specifier_dispatch(
     ).run()
 
     assert result.blocked_reason == "re_domain_deep_spec_gate_failed"
+
+
+@pytest.mark.unit
+def test_legacy_specification_resume_migrates_a_changed_domain_partition(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    source_root = tmp_path / "sources" / "api"
+    shutil.rmtree(source_root / "src")
+    (source_root / "package.json").write_text("{}\n", encoding="utf-8")
+    for root in ("pages", "shared"):
+        directory = source_root / root
+        directory.mkdir()
+        (directory / "one.ts").write_text("export {};\n", encoding="utf-8")
+        (directory / "two.ts").write_text("export {};\n", encoding="utf-8")
+
+    old_spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "status": "in_progress",
+            "phase": "re-extract-2-specify",
+            "last_dispatch": {
+                "phase_id": None,
+                "agent": None,
+                "post_dispatch_complete": True,
+                "dispatched_at": None,
+            },
+            "max_verify_expand_iterations": 0,
+            "re_specification_targets": [
+                {
+                    "kind": "source-domain",
+                    "source_id": "api",
+                    "domain_id": "001-re-domain",
+                    "root": "src",
+                }
+            ],
+        }
+    )
+    state.pop("re_domain_partition_version", None)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    provider = _ShallowSpecifierProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.blocked_reason == "re_domain_deep_spec_gate_failed"
+    assert old_spec.is_file() is False
+    manifest = json.loads(
+        (run_dir / "re" / "sources" / "api" / "domain-manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["partition_version"] == 2
+    assert [domain["root"] for domain in manifest["domains"]] == ["pages", "shared"]
+    resumed_state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert resumed_state["re_domain_partition_version"] == 2
+    assert resumed_state["re_specification_targets"][0]["domain_id"] == "001-re-pages"
+
+
+@pytest.mark.unit
+def test_legacy_analysis_resume_removes_obsolete_specs_for_a_changed_partition(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    source_root = tmp_path / "sources" / "api"
+    shutil.rmtree(source_root / "src")
+    (source_root / "package.json").write_text("{}\n", encoding="utf-8")
+    for root in ("pages", "shared"):
+        directory = source_root / root
+        directory.mkdir()
+        (directory / "one.ts").write_text("export {};\n", encoding="utf-8")
+        (directory / "two.ts").write_text("export {};\n", encoding="utf-8")
+
+    old_spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "status": "in_progress",
+            "phase": "re-extract-1-analyze",
+            "re_specification_targets": [],
+        }
+    )
+    state.pop("re_domain_partition_version", None)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+
+    result = controller._advance("re-extract-1-analyze", state, controller._load_plan())
+
+    assert result is None
+    assert old_spec.is_file() is False
+    assert state["re_domain_partition_version"] == 2
+    assert [target["domain_id"] for target in state["re_specification_targets"]] == [
+        "001-re-pages",
+        "002-re-shared",
+    ]

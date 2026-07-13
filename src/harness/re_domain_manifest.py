@@ -18,7 +18,9 @@ _SOURCE_SUFFIXES = frozenset(
         ".cc",
         ".cpp",
         ".cs",
+        ".gql",
         ".go",
+        ".graphql",
         ".h",
         ".hpp",
         ".java",
@@ -46,6 +48,26 @@ _MANIFEST_NAMES = frozenset(
 _IGNORED_PARTS = frozenset(
     {".agents", ".git", ".specify", ".venv", "build", "dist", "node_modules", "vendor"}
 )
+_NON_DOMAIN_ROOTS = frozenset(
+    {
+        "__mocks__",
+        "__tests__",
+        "certificates",
+        "docs",
+        "generated",
+        "mocks",
+        "public",
+        "specs",
+        "styles",
+        "test",
+        "test-helpers",
+        "tests",
+    }
+)
+_LOGICAL_DOMAIN_MIN_FILES = 2
+_LOGICAL_DOMAIN_MAX_LEAVES = 12
+_LOGICAL_DOMAIN_MAX_DEPTH = 2
+DOMAIN_PARTITION_VERSION = 2
 _SAFE_SLUG = re.compile(r"[^a-z0-9]+")
 
 
@@ -69,10 +91,12 @@ class ReDomainManifest:
     source_id: str
     source_path: str
     domains: tuple[ReDomain, ...]
+    partition_version: int = DOMAIN_PARTITION_VERSION
 
     def to_json_dict(self) -> dict[str, object]:
         return {
             "schema_version": 1,
+            "partition_version": self.partition_version,
             "source_id": self.source_id,
             "source_path": self.source_path,
             "domains": [domain.to_json_dict() for domain in self.domains],
@@ -85,12 +109,15 @@ class ReDomainManifest:
         source_id = data.get("source_id")
         source_path = data.get("source_path")
         raw_domains = data.get("domains")
+        partition_version = data.get("partition_version", 1)
         if not isinstance(source_id, str) or not source_id:
             raise ValueError("domain manifest source_id must be a non-empty string")
         if not isinstance(source_path, str) or not source_path:
             raise ValueError("domain manifest source_path must be a non-empty string")
         if not isinstance(raw_domains, list):
             raise ValueError("domain manifest domains must be a list")
+        if not isinstance(partition_version, int) or partition_version < 1:
+            raise ValueError("domain manifest partition_version must be a positive integer")
 
         domains: list[ReDomain] = []
         seen_ids: set[str] = set()
@@ -124,7 +151,12 @@ class ReDomainManifest:
                     source_line_count=line_count,
                 )
             )
-        return cls(source_id=source_id, source_path=source_path, domains=tuple(domains))
+        return cls(
+            source_id=source_id,
+            source_path=source_path,
+            domains=tuple(domains),
+            partition_version=partition_version,
+        )
 
 
 def domain_manifest_path(run_re_dir: Path, source_id: str) -> Path:
@@ -159,6 +191,7 @@ def discover_source_domains(source: RePlanSource) -> ReDomainManifest:
         source_id=source.id,
         source_path=source.path,
         domains=tuple(domains),
+        partition_version=DOMAIN_PARTITION_VERSION,
     )
 
 
@@ -210,9 +243,17 @@ def _component_roots(source_root: Path) -> list[str]:
         manifest_roots.remove(".")
     if manifest_roots:
         component_roots = _prune_nested_component_roots(source_root, manifest_roots)
-        return sorted(
+        roots = (
             component_roots
             | _uncovered_component_roots(source_root, component_roots)
+        )
+        # Multiple package roots are already independently buildable components.
+        # Splitting each one further turns a stable workspace partition into a
+        # noisy directory inventory. A lone component needs logical discovery.
+        return (
+            _logical_domain_roots(source_root, roots)
+            if len(roots) == 1
+            else sorted(roots)
         )
 
     top_level = {
@@ -221,8 +262,55 @@ def _component_roots(source_root: Path) -> list[str]:
         if len(path.relative_to(source_root).parts) > 1
     }
     if top_level:
-        return sorted(top_level)
+        return _logical_domain_roots(source_root, top_level)
     return ["."] if _source_files(source_root) else []
+
+
+def _logical_domain_roots(source_root: Path, roots: set[str]) -> list[str]:
+    """Split large package roots into bounded code-bearing documentation domains."""
+    domains: set[str] = set()
+    for root in sorted(roots):
+        domains.update(_split_logical_domain_root(source_root, root, depth=0))
+    return sorted(domains)
+
+
+def _split_logical_domain_root(
+    source_root: Path,
+    root: str,
+    *,
+    depth: int,
+) -> set[str]:
+    component_path = source_root if root == "." else source_root / root
+    if depth >= _LOGICAL_DOMAIN_MAX_DEPTH or not component_path.is_dir():
+        return {root}
+    children = [
+        path
+        for path in sorted(component_path.iterdir())
+        if path.is_dir()
+        and not _is_ignored_directory(path.name)
+        and path.name not in _NON_DOMAIN_ROOTS
+        and len(_source_files(path)) >= _LOGICAL_DOMAIN_MIN_FILES
+    ]
+    if not children:
+        return {root}
+
+    child_roots = {
+        child.relative_to(source_root).as_posix()
+        for child in children
+    }
+    if len(children) == 1:
+        return _split_logical_domain_root(
+            source_root, next(iter(child_roots)), depth=depth + 1
+        )
+
+    leaves: set[str] = set()
+    for child_root in child_roots:
+        leaves.update(
+            _split_logical_domain_root(source_root, child_root, depth=depth + 1)
+        )
+    # Preserve a useful top-level boundary when recursive splitting would
+    # create a noisy directory inventory instead of documentation domains.
+    return child_roots if len(leaves) > _LOGICAL_DOMAIN_MAX_LEAVES else leaves
 
 
 def _uncovered_component_roots(source_root: Path, roots: set[str]) -> set[str]:

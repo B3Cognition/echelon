@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE logical domain recovery** — a repository with one root build manifest is
+  no longer collapsed into one whole-repository spec when it contains multiple
+  substantive code areas. The deterministic partitioner now creates bounded
+  logical domains, includes GraphQL sources, excludes mock/test/documentation
+  roots from logical discovery, and keeps explicit multi-package workspaces at
+  their existing component boundaries. Interrupted legacy runs carry a
+  partition revision: before resuming specification they replace obsolete
+  staged specs and queue only the newly required domains, while current runs
+  retain their active manifest unchanged.
+
 - **RE first-pass domain acceptance** — a source-domain spec is now checked by
   the deterministic deep-spec gate immediately after its agent returns
   `DONE`. A failing target stays at the head of the queue, receives its own

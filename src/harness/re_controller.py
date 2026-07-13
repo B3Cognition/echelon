@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import hashlib
 import subprocess
@@ -13,6 +14,7 @@ from typing import Protocol
 
 from harness.re_lock import ReExtractLocked, ReExtractionLock
 from harness.re_domain_manifest import (
+    DOMAIN_PARTITION_VERSION,
     discover_source_domains,
     domain_manifest_path,
     load_domain_manifest,
@@ -94,6 +96,21 @@ class ReExtractionController:
     def _run_locked(self) -> ReControllerResult:
         plan = self._load_plan()
         state = self._load_state()
+        if (
+            state.get("phase") == "re-extract-2-specify"
+            and state.get("re_domain_partition_version") != DOMAIN_PARTITION_VERSION
+        ):
+            changed_sources, manifest_error = self._synchronize_domain_manifests(plan)
+            if manifest_error is not None:
+                return self._block(state, manifest_error)
+            if changed_sources:
+                migration_error = self._migrate_changed_domain_manifests(
+                    state, plan, changed_sources
+                )
+                if migration_error is not None:
+                    return self._block(state, migration_error)
+            state["re_domain_partition_version"] = DOMAIN_PARTITION_VERSION
+            self._save_state(state)
         if state.get("status") == "blocked":
             state["status"] = "in_progress"
             state.pop("blocked_reason", None)
@@ -207,9 +224,20 @@ class ReExtractionController:
         plan: ReExecutionPlan,
     ) -> ReControllerResult | None:
         if phase == "re-extract-1-analyze":
-            manifest_error = self._ensure_domain_manifests(plan)
+            if state.get("re_domain_partition_version") != DOMAIN_PARTITION_VERSION:
+                changed_sources, manifest_error = self._synchronize_domain_manifests(plan)
+            else:
+                changed_sources = set()
+                manifest_error = self._ensure_domain_manifests(plan)
             if manifest_error is not None:
                 return self._block(state, manifest_error)
+            if changed_sources:
+                migration_error = self._migrate_changed_domain_manifests(
+                    state, plan, changed_sources
+                )
+                if migration_error is not None:
+                    return self._block(state, migration_error)
+            state["re_domain_partition_version"] = DOMAIN_PARTITION_VERSION
             state["re_specification_targets"] = self._initial_specification_targets(plan)
             state["re_workspace_synthesis_complete"] = False
             state["phase"] = "re-extract-2-specify"
@@ -312,8 +340,29 @@ class ReExtractionController:
             prompt += self._specification_target_prompt(target)
         return prompt
 
+    def _synchronize_domain_manifests(
+        self, plan: ReExecutionPlan
+    ) -> tuple[set[str], str | None]:
+        """Refresh deterministic manifests and report source partitions that changed."""
+        changed_sources: set[str] = set()
+        try:
+            for source in plan.refresh_sources:
+                path = domain_manifest_path(self._run_re_dir, source.id)
+                discovered = discover_source_domains(source)
+                existing = None
+                if path.exists():
+                    manifest = load_domain_manifest(path)
+                    existing = manifest
+                    if not self._same_domain_partition(manifest, discovered):
+                        changed_sources.add(source.id)
+                if existing != discovered:
+                    write_domain_manifest(path, discovered)
+        except (OSError, ValueError) as exc:
+            return set(), f"domain manifest generation failed: {exc}"
+        return changed_sources, None
+
     def _ensure_domain_manifests(self, plan: ReExecutionPlan) -> str | None:
-        """Materialize controller-owned required domain inventories after analysis."""
+        """Materialize missing manifests without changing an active partition."""
         try:
             for source in plan.refresh_sources:
                 path = domain_manifest_path(self._run_re_dir, source.id)
@@ -327,6 +376,71 @@ class ReExtractionController:
                 write_domain_manifest(path, discover_source_domains(source))
         except (OSError, ValueError) as exc:
             return f"domain manifest generation failed: {exc}"
+        return None
+
+    @staticmethod
+    def _same_domain_partition(first: object, second: object) -> bool:
+        return (
+            hasattr(first, "source_id")
+            and hasattr(first, "source_path")
+            and hasattr(first, "domains")
+            and hasattr(second, "source_id")
+            and hasattr(second, "source_path")
+            and hasattr(second, "domains")
+            and first.source_id == second.source_id
+            and first.source_path == second.source_path
+            and [
+                (domain.domain_id, domain.root) for domain in first.domains
+            ]
+            == [
+                (domain.domain_id, domain.root) for domain in second.domains
+            ]
+        )
+
+    def _migrate_changed_domain_manifests(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+        changed_sources: set[str],
+    ) -> str | None:
+        """Replace obsolete staged specs when domain ownership has changed."""
+        try:
+            for source_id in changed_sources:
+                specs_root = self._run_re_dir / "sources" / source_id / "specs"
+                if specs_root.exists():
+                    shutil.rmtree(specs_root)
+            refreshed_targets = [
+                target
+                for target in self._initial_specification_targets(plan)
+                if target.get("source_id") in changed_sources
+            ]
+        except (OSError, ValueError) as exc:
+            return f"domain manifest migration failed: {exc}"
+
+        existing_targets = state.get("re_specification_targets")
+        remaining_targets = (
+            [
+                target
+                for target in existing_targets
+                if not (
+                    isinstance(target, dict)
+                    and target.get("source_id") in changed_sources
+                )
+            ]
+            if isinstance(existing_targets, list)
+            else []
+        )
+        state["re_specification_targets"] = refreshed_targets + remaining_targets
+        state["re_workspace_synthesis_complete"] = False
+        state["phase"] = "re-extract-2-specify"
+        for key in (
+            "re_quality_repair_pending",
+            "re_quality_repair_snapshot",
+            "re_target_quality_repair_snapshot",
+            "re_domain_quality_attempts",
+            "re_target_quality_gate_report",
+        ):
+            state.pop(key, None)
         return None
 
     def _initial_specification_targets(self, plan: ReExecutionPlan) -> list[dict[str, object]]:

@@ -64,6 +64,68 @@ def test_discovery_uses_one_root_domain_when_source_has_no_component_manifest(
 
 
 @pytest.mark.unit
+def test_discovery_splits_a_large_root_package_into_logical_code_domains(
+    tmp_path: Path,
+) -> None:
+    source = _source(tmp_path)
+    root = Path(source.absolute_path)
+    (root / "package.json").write_text("{}\n", encoding="utf-8")
+    for domain in ("pages", "queries", "shared"):
+        directory = root / domain
+        directory.mkdir()
+        (directory / "one.ts").write_text("export {};\n", encoding="utf-8")
+        (directory / "two.ts").write_text("export {};\n", encoding="utf-8")
+
+    manifest = discover_source_domains(source)
+
+    assert [(domain.domain_id, domain.root) for domain in manifest.domains] == [
+        ("001-re-pages", "pages"),
+        ("002-re-queries", "queries"),
+        ("003-re-shared", "shared"),
+    ]
+
+
+@pytest.mark.unit
+def test_discovery_descends_through_single_source_container_before_splitting(
+    tmp_path: Path,
+) -> None:
+    source = _source(tmp_path)
+    root = Path(source.absolute_path)
+    (root / "package.json").write_text("{}\n", encoding="utf-8")
+    for domain in ("src/api", "src/events"):
+        directory = root / domain
+        directory.mkdir(parents=True)
+        (directory / "one.ts").write_text("export {};\n", encoding="utf-8")
+        (directory / "two.ts").write_text("export {};\n", encoding="utf-8")
+
+    manifest = discover_source_domains(source)
+
+    assert [(domain.domain_id, domain.root) for domain in manifest.domains] == [
+        ("001-re-src-api", "src/api"),
+        ("002-re-src-events", "src/events"),
+    ]
+
+
+@pytest.mark.unit
+def test_logical_partition_includes_graphql_and_excludes_mock_only_roots(
+    tmp_path: Path,
+) -> None:
+    source = _source(tmp_path)
+    root = Path(source.absolute_path)
+    (root / "package.json").write_text("{}\n", encoding="utf-8")
+    for domain in ("pages", "queries", "mocks"):
+        directory = root / domain
+        directory.mkdir()
+        suffix = ".graphql" if domain == "queries" else ".ts"
+        (directory / f"one{suffix}").write_text("query One { id }\n", encoding="utf-8")
+        (directory / f"two{suffix}").write_text("query Two { id }\n", encoding="utf-8")
+
+    manifest = discover_source_domains(source)
+
+    assert [domain.root for domain in manifest.domains] == ["pages", "queries"]
+
+
+@pytest.mark.unit
 def test_discovery_preserves_code_outside_manifest_owned_components(tmp_path: Path) -> None:
     source = _source(tmp_path)
     root = Path(source.absolute_path)
