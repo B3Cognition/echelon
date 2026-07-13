@@ -362,7 +362,7 @@ def test_controller_dispatches_one_specifier_call_for_each_required_domain(
                 evidence = "\n".join(
                     f"- `{root}/file-{number}.ts:1`" for number in range(1, 6)
                 )
-                (specs_root / domain_id).mkdir(parents=True)
+                (specs_root / domain_id).mkdir(parents=True, exist_ok=True)
                 (specs_root / domain_id / "spec.md").write_text(
                     "\n".join(
                         [
@@ -501,3 +501,75 @@ def test_quality_repair_cannot_create_non_target_workspace_output(tmp_path: Path
     ).run()
 
     assert result.blocked_reason == "re_quality_repair_modified_non_target_output"
+
+
+@pytest.mark.unit
+def test_quality_repair_snapshot_allows_creation_of_a_missing_target_spec(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    missing_spec = (
+        run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    )
+    missing_spec.unlink()
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+
+    before = controller._non_target_snapshot([missing_spec])
+    missing_spec.parent.mkdir(parents=True, exist_ok=True)
+    missing_spec.write_text(_deep_spec("api", "v1"), encoding="utf-8")
+    after = controller._non_target_snapshot([missing_spec])
+
+    assert before == after
+
+
+@pytest.mark.unit
+def test_quality_repair_snapshot_ignores_provider_result_capture(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+
+    before = controller._non_target_snapshot([spec])
+    (run_dir / "re" / "ECHELON_RESULT.yaml").write_text(
+        "echelon_result:\n  verdict: DONE\n",
+        encoding="utf-8",
+    )
+    after = controller._non_target_snapshot([spec])
+
+    assert before == after
+
+
+@pytest.mark.unit
+def test_controller_prepares_an_empty_target_spec_before_specifier_dispatch(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=0)
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    spec.unlink()
+
+    class ObservingProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            if self.phases[-1] == "re-extract-2-specify":
+                assert spec.is_file()
+                assert spec.read_text(encoding="utf-8") == ""
+            return result
+
+    result = ReExtractionController(
+        provider=ObservingProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.blocked_reason == "re_deep_spec_gate_failed"

@@ -123,6 +123,13 @@ class TestRePromptOutputContracts:
         assert ".github" in text
         assert "NEVER inspect, cite, summarize, or create a domain" in text
 
+    def test_re_specifier_edits_the_controller_prepared_target(self) -> None:
+        text = RE_SPECIFIER.read_text(encoding="utf-8")
+
+        assert "Prepared Target Artifact" in text
+        assert "ALWAYS read the controller-prepared target" in text
+        assert "NEVER create or replace the target with shell redirection" in text
+
     def test_re_verifier_rejects_specs_without_source_evidence(self) -> None:
         text = (ROOT / "extension" / "agents" / "re" / "verifier.md").read_text(
             encoding="utf-8"

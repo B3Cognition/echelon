@@ -34,6 +34,10 @@ NEVER collapse several manifest domains into one spec, create a spec for another
 ALWAYS exclude every hidden directory beneath the source root from reverse-engineering scope, including `.git`, `.github`, `.claude`, and `.npm`.
 NEVER inspect, cite, summarize, or create a domain for files below a hidden directory, even when they use a source-code extension.
 
+### Rule 4d - Prepared Target Artifact
+ALWAYS read the controller-prepared target `spec.md` before updating it; it may be empty for a newly discovered domain.
+NEVER create or replace the target with shell redirection, `cat`, `tee`, or another filesystem command.
+
 ### Rule 5 - Workspace Synthesis
 ALWAYS synthesize workspace relationships and contracts from the complete input union in `re-workspace-inputs.json`.
 NEVER put cross-source APIs, events, shared schemas, dependencies, or migration ordering in one source's spec.

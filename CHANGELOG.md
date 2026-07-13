@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE repair transaction completion** — a missing, controller-authorized
+  domain spec can now be created during deep-spec repair without being
+  mistaken for an unauthorized output. The controller prepares the target file
+  before dispatch for read-then-edit providers, while the repair snapshot
+  ignores the ephemeral `ECHELON_RESULT.yaml` provider capture.
+
 - **Reverse-engineering hidden-directory exclusion** — workspace/domain
   discovery, deterministic analysis, CodeGraph artifacts, fingerprints, and
   RE agent scope now exclude all hidden directories such as `.git`, `.github`,

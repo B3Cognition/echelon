@@ -55,6 +55,9 @@ _PHASE_SPECS = {
     "re-extract-6-checklist": "re-extract-6-checklist.md",
     "re-extract-7-constitute": "re-extract-7-constitute.md",
 }
+_REPAIR_EPHEMERAL_OUTPUTS = frozenset(
+    {"state.json", "quality/deep-spec-gate.json", "ECHELON_RESULT.yaml"}
+)
 
 
 class ReExtractionController:
@@ -119,6 +122,9 @@ class ReExtractionController:
                         return next_result
                     state = self._load_state()
                     continue
+                target_error = self._prepare_specification_target(target)
+                if target_error is not None:
+                    return self._block(state, target_error)
 
             state = write_last_dispatch(state, phase, _PHASES[phase])
             self._save_state(state)
@@ -398,6 +404,22 @@ class ReExtractionController:
             "source overview, or workspace synthesis.\n"
         )
 
+    def _prepare_specification_target(self, target: dict[str, object]) -> str | None:
+        """Create the one writable target so constrained providers can edit it."""
+        if target.get("kind") != "source-domain":
+            return None
+        source_id = target.get("source_id")
+        domain_id = target.get("domain_id")
+        if not all(isinstance(value, str) and value for value in (source_id, domain_id)):
+            return "re_specification_target_invalid"
+        path = self._run_re_dir / "sources" / source_id / "specs" / domain_id / "spec.md"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch(exist_ok=True)
+        except OSError as exc:
+            return f"re_specification_target_prepare_failed: {exc}"
+        return None
+
     def _run_analysis_script(self, plan: ReExecutionPlan) -> str | None:
         """Run extraction in the controller so one-shot agents cannot detach it."""
         profile = plan.profile
@@ -560,7 +582,6 @@ class ReExtractionController:
         target_files = {
             target.relative_to(self._run_re_dir).as_posix()
             for target in targets
-            if target.is_file()
         }
         target_roots = {
             target.relative_to(self._run_re_dir).as_posix()
@@ -572,7 +593,10 @@ class ReExtractionController:
             if not path.is_file():
                 continue
             relative = path.relative_to(self._run_re_dir).as_posix()
-            if relative in {"state.json", "quality/deep-spec-gate.json"}:
+            # The controller state, quality report, and provider result capture
+            # are control-plane files. They are never RE artifacts and are not
+            # read or published as source output.
+            if relative in _REPAIR_EPHEMERAL_OUTPUTS:
                 continue
             if relative in target_files or any(
                 relative.startswith(root + "/") for root in target_roots
