@@ -38,7 +38,7 @@ def _fingerprint(source_id: str, version: str, profile: ReFingerprintProfile) ->
 
 def _deep_spec(source_id: str, version: str) -> str:
     evidence = "\n".join(
-        f"- `{source_id}/src/file-{number}.ts:{number}`" for number in range(1, 6)
+        f"- `src/file-{number}.ts:1`" for number in range(1, 6)
     )
     return (
         f"# {source_id} domain {version}\n\n"
@@ -83,7 +83,7 @@ def write_valid_re_run(
             for number in range(1, 6):
                 (source_root / "src").mkdir(exist_ok=True)
                 (source_root / "src" / f"file-{number}.ts").write_text(
-                    f"export const version{number} = '{version}';\n",
+                    f"export const version{number} = '{version}';\nexport default version{number};\n",
                     encoding="utf-8",
                 )
 
@@ -125,6 +125,22 @@ def write_valid_re_run(
         if action == "refresh":
             staged_source = run_re / "sources" / source_id
             _write_json(staged_source / "analysis.json", {"source_id": source_id, "version": version})
+            _write_json(
+                staged_source / "domain-manifest.json",
+                {
+                    "schema_version": 1,
+                    "source_id": source_id,
+                    "source_path": plan_source.path,
+                    "domains": [
+                        {
+                            "domain_id": "001-re-domain",
+                            "root": "src",
+                            "source_file_count": 5,
+                            "source_line_count": 10,
+                        }
+                    ],
+                },
+            )
             (staged_source / "overview.md").write_text(
                 f"# {source_id}\n\nVersion {version}.\n",
                 encoding="utf-8",

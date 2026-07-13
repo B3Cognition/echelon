@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Protocol
 
 from harness.re_lock import ReExtractLocked, ReExtractionLock
+from harness.re_domain_manifest import (
+    discover_source_domains,
+    domain_manifest_path,
+    load_domain_manifest,
+    write_domain_manifest,
+)
 from harness.re_planner import ReExecutionPlan
 from harness.re_quality_gate import (
     ReQualityReport,
@@ -104,6 +110,16 @@ class ReExtractionController:
             if phase not in _PHASES:
                 return self._block(state, "re_controller_unknown_phase")
 
+            target: dict[str, object] | None = None
+            if phase == "re-extract-2-specify":
+                target = self._next_specification_target(state)
+                if target is None:
+                    next_result = self._advance(phase, state, plan)
+                    if next_result is not None:
+                        return next_result
+                    state = self._load_state()
+                    continue
+
             state = write_last_dispatch(state, phase, _PHASES[phase])
             self._save_state(state)
             if phase == "re-extract-1-analyze":
@@ -114,22 +130,33 @@ class ReExtractionController:
                 payload = self._analysis_result()
             else:
                 result = self._provider.exec_agent(
-                    str(self._project_root), self._prompt_for(phase, state)
+                    str(self._project_root), self._prompt_for(phase, state, target)
                 )
                 if result.blocked:
                     return self._block(state, "re_agent_dispatch_failed")
                 payload = result.echelon_result
             if not isinstance(payload, dict) or payload.get("verdict") != "DONE":
+                state["re_agent_result_detail"] = (
+                    "missing result object"
+                    if not isinstance(payload, dict)
+                    else f"unexpected verdict: {payload.get('verdict')!r}"
+                )
                 return self._block(state, "re_agent_result_invalid")
             try:
                 state = complete_dispatch(state, self._agent_result_without_controller_keys(payload))
-            except (KeyError, ValueError):
+            except (KeyError, ValueError) as exc:
+                state["re_agent_result_detail"] = str(exc)
                 return self._block(state, "re_agent_result_invalid")
             if phase == "re-extract-2-specify" and state.get("re_quality_repair_pending"):
                 snapshot_reason = self._repair_snapshot_failure(state)
                 if snapshot_reason is not None:
                     return self._block(state, snapshot_reason)
+            if phase == "re-extract-2-specify" and target is not None:
+                self._complete_specification_target(state, target)
             self._save_state(state)
+
+            if phase == "re-extract-2-specify":
+                continue
 
             next_result = self._advance(phase, state, plan)
             if next_result is not None:
@@ -143,6 +170,11 @@ class ReExtractionController:
         plan: ReExecutionPlan,
     ) -> ReControllerResult | None:
         if phase == "re-extract-1-analyze":
+            manifest_error = self._ensure_domain_manifests(plan)
+            if manifest_error is not None:
+                return self._block(state, manifest_error)
+            state["re_specification_targets"] = self._initial_specification_targets(plan)
+            state["re_workspace_synthesis_complete"] = False
             state["phase"] = "re-extract-2-specify"
         elif phase == "re-extract-2-specify":
             report = validate_staged_re_quality(self._run_re_dir, plan)
@@ -151,7 +183,12 @@ class ReExtractionController:
             if not report.passed:
                 return self._schedule_quality_repair(state, report)
             state.pop("re_quality_repair_pending", None)
-            state["phase"] = "re-extract-3-verify"
+            if not state.get("re_workspace_synthesis_complete"):
+                state["re_specification_targets"] = [
+                    {"kind": "workspace-synthesis"}
+                ]
+            else:
+                state["phase"] = "re-extract-3-verify"
         elif phase == "re-extract-3-verify":
             if self._metric(state, "coverage_pct") < self._metric(state, "coverage_threshold"):
                 iterations = self._metric(state, "verify_expand_iterations")
@@ -191,15 +228,24 @@ class ReExtractionController:
         if attempts >= maximum:
             return self._block(state, "re_deep_spec_gate_failed")
         if not state.get("re_quality_repair_pending"):
+            repair_targets = self._repair_specification_targets(report)
+            if repair_targets is None:
+                return self._block(state, "re_domain_manifest_invalid")
             attempts += 1
             state["re_quality_repair_attempts"] = attempts
             state["re_quality_repair_pending"] = True
             state["re_quality_repair_snapshot"] = self._repair_snapshot(report)
+            state["re_specification_targets"] = repair_targets
         state["phase"] = "re-extract-2-specify"
         self._save_state(state)
         return None
 
-    def _prompt_for(self, phase: str, state: dict) -> str:
+    def _prompt_for(
+        self,
+        phase: str,
+        state: dict,
+        target: dict[str, object] | None = None,
+    ) -> str:
         agent = _PHASES[phase]
         agent_path = self._extension_root / "agents" / "re" / f"{agent}.md"
         agent_text = agent_path.read_text(encoding="utf-8")
@@ -219,7 +265,138 @@ class ReExtractionController:
                 "Repair only the source-owned specs listed in "
                 f"{state.get('re_quality_gate_report', '')}. Do not re-analyze sources.\n"
             )
+        if phase == "re-extract-2-specify" and target is not None:
+            prompt += self._specification_target_prompt(target)
         return prompt
+
+    def _ensure_domain_manifests(self, plan: ReExecutionPlan) -> str | None:
+        """Materialize controller-owned required domain inventories after analysis."""
+        try:
+            for source in plan.refresh_sources:
+                path = domain_manifest_path(self._run_re_dir, source.id)
+                if path.exists():
+                    manifest = load_domain_manifest(path)
+                    if (
+                        manifest.source_id == source.id
+                        and manifest.source_path == source.path
+                    ):
+                        continue
+                write_domain_manifest(path, discover_source_domains(source))
+        except (OSError, ValueError) as exc:
+            return f"domain manifest generation failed: {exc}"
+        return None
+
+    def _initial_specification_targets(self, plan: ReExecutionPlan) -> list[dict[str, object]]:
+        targets: list[dict[str, object]] = []
+        for source in plan.refresh_sources:
+            manifest = load_domain_manifest(domain_manifest_path(self._run_re_dir, source.id))
+            for domain in manifest.domains:
+                targets.append(
+                    {
+                        "kind": "source-domain",
+                        "source_id": source.id,
+                        "domain_id": domain.domain_id,
+                        "root": domain.root,
+                    }
+                )
+        return targets
+
+    def _repair_specification_targets(
+        self, report: ReQualityReport
+    ) -> list[dict[str, object]] | None:
+        """Translate quality failures to the exact domain specs a repair may edit."""
+        targets: list[dict[str, object]] = []
+        seen: set[tuple[str, str]] = set()
+        for failure in report.failures:
+            if failure.reason not in {"deep_spec_incomplete", "required_domain_spec_missing"}:
+                return None
+            if not failure.domain_id:
+                return None
+            manifest_path = domain_manifest_path(self._run_re_dir, failure.source_id)
+            try:
+                manifest = load_domain_manifest(manifest_path)
+            except ValueError:
+                return None
+            domain = next(
+                (
+                    candidate
+                    for candidate in manifest.domains
+                    if candidate.domain_id == failure.domain_id
+                ),
+                None,
+            )
+            if domain is None:
+                return None
+            key = (failure.source_id, domain.domain_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            targets.append(
+                {
+                    "kind": "source-domain",
+                    "source_id": failure.source_id,
+                    "domain_id": domain.domain_id,
+                    "root": domain.root,
+                }
+            )
+        return targets
+
+    @staticmethod
+    def _next_specification_target(
+        state: dict,
+    ) -> dict[str, object] | None:
+        raw_targets = state.get("re_specification_targets")
+        if raw_targets is None:
+            # Legacy interrupted runs did not persist a queue. Reconstruct the
+            # initial source-domain queue only before a repair is scheduled.
+            if state.get("re_quality_repair_pending"):
+                return None
+            return None
+        if not isinstance(raw_targets, list):
+            return None
+        if not raw_targets:
+            return None
+        target = raw_targets[0]
+        return target if isinstance(target, dict) else None
+
+    @staticmethod
+    def _complete_specification_target(state: dict, target: dict[str, object]) -> None:
+        targets = state.get("re_specification_targets")
+        if not isinstance(targets, list) or not targets or targets[0] != target:
+            raise ValueError("specification target queue changed during dispatch")
+        del targets[0]
+        if target.get("kind") == "workspace-synthesis":
+            state["re_workspace_synthesis_complete"] = True
+
+    def _specification_target_prompt(self, target: dict[str, object]) -> str:
+        kind = target.get("kind")
+        if kind == "workspace-synthesis":
+            return (
+                "\n## Controller-Owned Specification Target\n"
+                "Generate source overviews and workspace synthesis only. All required "
+                "source-domain specs have already been dispatched independently. Do not "
+                "create, rename, or rewrite any source-domain spec.\n"
+            )
+        source_id = target.get("source_id")
+        domain_id = target.get("domain_id")
+        root = target.get("root")
+        if not all(isinstance(value, str) and value for value in (source_id, domain_id, root)):
+            raise ValueError("invalid controller specification target")
+        manifest = domain_manifest_path(self._run_re_dir, source_id)
+        spec_path = self._run_re_dir / "sources" / source_id / "specs" / domain_id / "spec.md"
+        return (
+            "\n## Controller-Owned Specification Target\n"
+            f"Generate exactly one deep source-domain spec: `{spec_path}`.\n"
+            f"Source ID: `{source_id}`\n"
+            f"Domain ID: `{domain_id}`\n"
+            f"Owned source root: `{root}`\n"
+            f"Domain manifest: `{manifest}`\n"
+            "Read only this source's owned root and its staged extraction artifacts. "
+            "Every source citation must use the exact source-relative form "
+            "`path/to/file:line` and resolve within the owned source root. Include at "
+            "least five distinct valid citations. Do not write another domain spec, "
+            "source overview, or workspace synthesis.\n"
+        )
 
     def _run_analysis_script(self, plan: ReExecutionPlan) -> str | None:
         """Run extraction in the controller so one-shot agents cannot detach it."""
@@ -478,6 +655,9 @@ class ReExtractionController:
             "validate_iterations",
             "verify_expand_iterations",
             "re_quality_repair_attempts",
+            # Repair metadata is useful in the agent transcript but is not a
+            # RE-state transition. Treat it as controller-owned diagnostics.
+            "repair_action",
         }
         filtered = {key: value for key, value in updates.items() if key not in controlled}
         return {**payload, "state_updates": filtered}

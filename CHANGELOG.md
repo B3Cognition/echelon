@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Manifest-bound RE domain coverage** — active workspace RE now derives a
+  controller-owned domain manifest for every refreshed source and dispatches
+  one deep specification target per required component domain. The quality gate
+  rejects missing or unexpected domain specs and validates every cited
+  source-relative path and line against the target's owned root. Workspace
+  synthesis runs only after all required domain specs pass; repair is limited
+  to the failed domain target.
+
 - **Harness-owned RE deep-spec repair loop** — active workspace Mode 1 now
   runs through `echelon re execute-run <run-id>`, which owns RE phase
   transitions and retries. A deterministic staged-spec gate runs before

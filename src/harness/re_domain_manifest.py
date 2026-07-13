@@ -1,0 +1,313 @@
+"""Deterministic source-domain inventories for reverse-engineering runs."""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import tempfile
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+from harness.re_planner import RePlanSource
+
+
+_SOURCE_SUFFIXES = frozenset(
+    {
+        ".c",
+        ".cc",
+        ".cpp",
+        ".cs",
+        ".go",
+        ".h",
+        ".hpp",
+        ".java",
+        ".js",
+        ".jsx",
+        ".kt",
+        ".php",
+        ".py",
+        ".rb",
+        ".rs",
+        ".swift",
+        ".ts",
+        ".tsx",
+    }
+)
+_MANIFEST_NAMES = frozenset(
+    {
+        "Cargo.toml",
+        "go.mod",
+        "package.json",
+        "pom.xml",
+        "pyproject.toml",
+    }
+)
+_IGNORED_PARTS = frozenset(
+    {".agents", ".git", ".specify", ".venv", "build", "dist", "node_modules", "vendor"}
+)
+_SAFE_SLUG = re.compile(r"[^a-z0-9]+")
+
+
+@dataclass(frozen=True)
+class ReDomain:
+    """One independently documented source component."""
+
+    domain_id: str
+    root: str
+    source_file_count: int
+    source_line_count: int
+
+    def to_json_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ReDomainManifest:
+    """A source-owned list of every domain that requires a staged spec."""
+
+    source_id: str
+    source_path: str
+    domains: tuple[ReDomain, ...]
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "source_id": self.source_id,
+            "source_path": self.source_path,
+            "domains": [domain.to_json_dict() for domain in self.domains],
+        }
+
+    @classmethod
+    def from_json_dict(cls, data: object) -> "ReDomainManifest":
+        if not isinstance(data, dict) or data.get("schema_version") != 1:
+            raise ValueError("unsupported domain manifest schema")
+        source_id = data.get("source_id")
+        source_path = data.get("source_path")
+        raw_domains = data.get("domains")
+        if not isinstance(source_id, str) or not source_id:
+            raise ValueError("domain manifest source_id must be a non-empty string")
+        if not isinstance(source_path, str) or not source_path:
+            raise ValueError("domain manifest source_path must be a non-empty string")
+        if not isinstance(raw_domains, list):
+            raise ValueError("domain manifest domains must be a list")
+
+        domains: list[ReDomain] = []
+        seen_ids: set[str] = set()
+        seen_roots: set[str] = set()
+        for raw in raw_domains:
+            if not isinstance(raw, dict):
+                raise ValueError("domain manifest domain must be an object")
+            domain_id = raw.get("domain_id")
+            root = raw.get("root")
+            file_count = raw.get("source_file_count")
+            line_count = raw.get("source_line_count")
+            if not isinstance(domain_id, str) or not re.fullmatch(
+                r"\d{3}-re-[a-z0-9][a-z0-9-]*", domain_id
+            ):
+                raise ValueError(f"invalid domain ID: {domain_id!r}")
+            if not isinstance(root, str) or not _safe_relative_root(root):
+                raise ValueError(f"invalid domain root: {root!r}")
+            if not isinstance(file_count, int) or file_count <= 0:
+                raise ValueError("domain source_file_count must be a positive integer")
+            if not isinstance(line_count, int) or line_count < 0:
+                raise ValueError("domain source_line_count must be a non-negative integer")
+            if domain_id in seen_ids or root in seen_roots:
+                raise ValueError("domain IDs and roots must be unique")
+            seen_ids.add(domain_id)
+            seen_roots.add(root)
+            domains.append(
+                ReDomain(
+                    domain_id=domain_id,
+                    root=root,
+                    source_file_count=file_count,
+                    source_line_count=line_count,
+                )
+            )
+        return cls(source_id=source_id, source_path=source_path, domains=tuple(domains))
+
+
+def domain_manifest_path(run_re_dir: Path, source_id: str) -> Path:
+    return run_re_dir / "sources" / source_id / "domain-manifest.json"
+
+
+def discover_source_domains(source: RePlanSource) -> ReDomainManifest:
+    """Derive stable documentation domains from independently buildable roots.
+
+    A source is not delegated wholesale to one model invocation. Every source
+    component with code beneath a language/package manifest becomes a required
+    domain. Repositories without component manifests fall back to their
+    top-level code roots, then to the source root itself.
+    """
+    source_root = Path(source.absolute_path).resolve()
+    domain_roots = _component_roots(source_root)
+    domains: list[ReDomain] = []
+    for index, root in enumerate(domain_roots, start=1):
+        files = _source_files(source_root / root) if root != "." else _source_files(source_root)
+        if not files:
+            continue
+        slug = _slug(root)
+        domains.append(
+            ReDomain(
+                domain_id=f"{index:03d}-re-{slug}",
+                root=root,
+                source_file_count=len(files),
+                source_line_count=sum(_line_count(path) for path in files),
+            )
+        )
+    return ReDomainManifest(
+        source_id=source.id,
+        source_path=source.path,
+        domains=tuple(domains),
+    )
+
+
+def load_domain_manifest(path: Path) -> ReDomainManifest:
+    try:
+        return ReDomainManifest.from_json_dict(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid domain manifest {path}: {exc}") from exc
+
+
+def write_domain_manifest(path: Path, manifest: ReDomainManifest) -> None:
+    """Atomically write a controller-owned domain manifest."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}-", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(manifest.to_json_dict(), handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        Path(temporary).replace(path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def _component_roots(source_root: Path) -> list[str]:
+    manifest_roots: set[str] = set()
+    if source_root.is_dir():
+        for path in source_root.rglob("*"):
+            if not path.is_file() or path.name not in _MANIFEST_NAMES:
+                continue
+            relative = path.relative_to(source_root)
+            if any(part in _IGNORED_PARTS for part in relative.parts):
+                continue
+            root = relative.parent.as_posix() or "."
+            if _source_files(path.parent):
+                manifest_roots.add(root)
+
+    # The repository root describes the workspace; prefer its independently
+    # buildable children unless it also owns source files outside them.
+    nested_roots = {root for root in manifest_roots if root != "."}
+    if "." in manifest_roots and nested_roots:
+        # A repository-root package/pom is normally the build workspace, not
+        # an independently documented component. Its children own the code.
+        manifest_roots.remove(".")
+    if manifest_roots:
+        component_roots = _prune_nested_component_roots(source_root, manifest_roots)
+        return sorted(
+            component_roots
+            | _uncovered_component_roots(source_root, component_roots)
+        )
+
+    top_level = {
+        path.relative_to(source_root).parts[0]
+        for path in _source_files(source_root)
+        if len(path.relative_to(source_root).parts) > 1
+    }
+    if top_level:
+        return sorted(top_level)
+    return ["."] if _source_files(source_root) else []
+
+
+def _uncovered_component_roots(source_root: Path, roots: set[str]) -> set[str]:
+    """Return stable fallback roots for code not owned by a package manifest."""
+    fallback: set[str] = set()
+    for path in _source_files(source_root):
+        relative = path.relative_to(source_root)
+        relative_text = relative.as_posix()
+        if any(
+            root == "." or relative_text.startswith(root + "/") for root in roots
+        ):
+            continue
+        if len(relative.parts) == 1:
+            fallback.add(".")
+            continue
+        top = relative.parts[0]
+        # Monorepo conventions put independently deployed components below a
+        # common container such as apps/, services/, or libs/. Avoid assigning
+        # an uncovered sibling to that whole container when it has manifest
+        # owned children.
+        if any(root.startswith(top + "/") for root in roots) and len(relative.parts) > 2:
+            fallback.add("/".join(relative.parts[:2]))
+        else:
+            fallback.add(top)
+    return fallback
+
+
+def _prune_nested_component_roots(source_root: Path, roots: set[str]) -> set[str]:
+    """Keep a parent component when it owns code beyond nested helper packages."""
+    kept: set[str] = set()
+    for root in sorted(roots, key=lambda value: (len(Path(value).parts), value)):
+        if any(root.startswith(parent + "/") for parent in kept):
+            continue
+        descendants = {
+            candidate[len(root) + 1 :]
+            for candidate in roots
+            if candidate.startswith(root + "/")
+        }
+        if descendants and not _files_outside_roots(source_root / root, descendants):
+            continue
+        kept.add(root)
+    return kept
+
+
+def _files_outside_roots(source_root: Path, roots: set[str]) -> bool:
+    for path in _source_files(source_root):
+        relative = path.relative_to(source_root).as_posix()
+        if not any(relative.startswith(root + "/") for root in roots):
+            return True
+    return False
+
+
+def _source_files(root: Path) -> list[Path]:
+    if not root.is_dir():
+        return []
+    return sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file()
+        and path.suffix.lower() in _SOURCE_SUFFIXES
+        and not any(part in _IGNORED_PARTS for part in path.parts)
+    )
+
+
+def _line_count(path: Path) -> int:
+    try:
+        with path.open("rb") as handle:
+            return sum(1 for _ in handle)
+    except OSError:
+        return 0
+
+
+def _slug(root: str) -> str:
+    value = "root" if root == "." else root.lower().replace("_", "-")
+    value = _SAFE_SLUG.sub("-", value).strip("-")
+    return value or "root"
+
+
+def _safe_relative_root(value: str) -> bool:
+    path = Path(value)
+    return value == "." or (
+        not path.is_absolute()
+        and ".." not in path.parts
+        and value == path.as_posix()
+        and value != ""
+    )

@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from harness.re_domain_manifest import domain_manifest_path
 from harness.re_planner import ReExecutionPlan
 from harness.re_quality_gate import validate_staged_re_quality
 from tests.unit.test_re_publication import write_valid_re_run
@@ -48,3 +49,41 @@ def test_shallow_architecture_summary_reports_all_missing_deep_requirements(
         "Edge Cases",
     )
     assert failure.source_evidence_count == 0
+
+
+@pytest.mark.unit
+def test_gate_rejects_a_source_when_any_manifest_domain_has_no_spec(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    manifest_path = domain_manifest_path(run_dir / "re", "api")
+    manifest = __import__("json").loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["domains"].append(
+        {
+            "domain_id": "002-re-worker",
+            "root": "worker",
+            "source_file_count": 1,
+            "source_line_count": 1,
+        }
+    )
+    manifest_path.write_text(__import__("json").dumps(manifest), encoding="utf-8")
+
+    report = validate_staged_re_quality(run_dir / "re", _plan(run_dir))
+
+    assert not report.passed
+    assert len(report.failures) == 1
+    assert report.failures[0].domain_id == "002-re-worker"
+    assert report.failures[0].reason == "required_domain_spec_missing"
+
+
+@pytest.mark.unit
+def test_gate_rejects_source_evidence_outside_the_domain_root(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    spec.write_text(
+        spec.read_text(encoding="utf-8").replace("src/file-1.ts:1", "outside.ts:1"),
+        encoding="utf-8",
+    )
+
+    report = validate_staged_re_quality(run_dir / "re", _plan(run_dir))
+
+    assert not report.passed
+    assert report.failures[0].invalid_source_evidence == ("`outside.ts:1`",)

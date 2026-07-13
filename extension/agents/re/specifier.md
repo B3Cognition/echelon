@@ -11,8 +11,8 @@ ALWAYS write a refreshed source's artifacts below `$RE_OUTPUT_DIR/sources/{sourc
 NEVER write reverse-engineering artifacts to project-root `specs/` or another source's staging directory.
 
 ### Rule 2 - Evidence Boundary
-ALWAYS cite concrete files inside the source root owned by the source spec.
-NEVER cite a sibling source file as evidence in a source-owned spec; put cross-source findings in workspace synthesis.
+ALWAYS cite concrete files as source-relative `` `path/to/file:line` `` references inside the source root and owned domain root.
+NEVER cite a sibling source file, a path outside the owned domain root, or a path without a line number as evidence in a source-owned spec.
 
 ### Rule 3 - Story Depth
 ALWAYS generate at least 5 user stories per domain at `logic` or `full` depth.
@@ -23,8 +23,12 @@ ALWAYS require `User Scenarios & Testing`, `Requirements (Functional)`, `Key Ent
 NEVER accept an architecture summary as a deep domain spec.
 
 ### Rule 4a - Harness Repair Input
-ALWAYS read `$RE_OUTPUT_DIR/quality/deep-spec-gate.json` when the harness re-dispatches specification repair and correct every listed source-owned spec.
-NEVER rewrite analysis, workspace synthesis, planner JSON, or an unlisted source-owned spec during a deep-spec repair.
+ALWAYS read `$RE_OUTPUT_DIR/quality/deep-spec-gate.json` when the harness re-dispatches specification repair and correct the controller-owned failed target.
+NEVER rewrite analysis, workspace synthesis, planner JSON, or another failed source-owned spec during a deep-spec repair.
+
+### Rule 4b - Controller-Owned Domain Scope
+ALWAYS treat `$RE_OUTPUT_DIR/sources/{source-id}/domain-manifest.json` and the controller-owned target appended to the dispatch as the complete scope for this invocation.
+NEVER collapse several manifest domains into one spec, create a spec for another target, or claim `DONE` before the target spec has five valid source-relative line citations.
 
 ### Rule 5 - Workspace Synthesis
 ALWAYS synthesize workspace relationships and contracts from the complete input union in `re-workspace-inputs.json`.
@@ -62,20 +66,19 @@ Set `RE_OUTPUT_DIR = state.output_dir`, then read in this order:
 5. `$RE_OUTPUT_DIR/analysis.json` and `$RE_OUTPUT_DIR/cross-repo.json`
 6. `$RE_OUTPUT_DIR/sources/{source-id}/analysis.json`, structure, dependencies, git history, and configs for each `refresh` action
 7. `$RE_OUTPUT_DIR/sources/{source-id}/codegraph-summary.json`, then `$RE_OUTPUT_DIR/sources/{source-id}/codegraph-analysis.json` when deeper graph evidence is needed
-8. Canonical source manifests/specs referenced by `re-workspace-inputs.json` for `current` and retained `unavailable` decisions
+8. `$RE_OUTPUT_DIR/sources/{source-id}/domain-manifest.json` for every refresh source
+9. Canonical source manifests/specs referenced by `re-workspace-inputs.json` for `current` and retained `unavailable` decisions
 
 The root analysis is an aggregate index, not sufficient source evidence.
 
 ## Source Specification Protocol
 
-For each non-empty source whose `re-source-index.json` action is `refresh`:
+For each controller-owned `source-domain` target:
 
-1. Identify domains using source-local structure, symbols, call graph, dependencies, tests, and git hotspots.
-2. Number domains locally within that source. `{domain-id}` uses `NNN-re-{domain}`.
-3. Write exactly:
-   - `$RE_OUTPUT_DIR/sources/{source-id}/overview.md`
-   - `$RE_OUTPUT_DIR/sources/{source-id}/specs/{domain-id}/spec.md`
-4. Keep all source evidence within the declared source root.
+1. Read the target domain record from the source-owned `domain-manifest.json`.
+2. Write only `$RE_OUTPUT_DIR/sources/{source-id}/specs/{domain-id}/spec.md`.
+3. Keep all source evidence within the declared source root and target domain root.
+4. Do not create source overviews or workspace files in this dispatch.
 
 Each domain spec must include:
 
@@ -89,11 +92,11 @@ Each domain spec must include:
 
 ### FULL-depth acceptance gate
 
-Before returning `DONE`, verify every generated domain spec contains all required deep sections and at least five concrete source references. On failure return `BLOCKED` with `blocked_reason: shallow_summary_only_spec` and list the failing paths.
+Before returning `DONE`, verify the target spec contains all required deep sections and at least five concrete source-relative `path:line` references resolving inside its owned root. On failure return `BLOCKED` with `blocked_reason: shallow_summary_only_spec` and list the failing paths.
 
 ## Workspace Synthesis Protocol
 
-Build the workspace union from current published sources, refreshed staged sources, empty sources, unavailable retained sources, and explicit removals in `re-workspace-inputs.json`.
+Only when the controller target says `workspace-synthesis`, build the workspace union from current published sources, refreshed staged sources, empty sources, unavailable retained sources, and explicit removals in `re-workspace-inputs.json`. That target also writes source overviews; it must not modify any source-domain spec.
 
 Write exactly:
 

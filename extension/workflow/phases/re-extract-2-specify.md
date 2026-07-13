@@ -14,12 +14,13 @@
 
 ## Dispatch Prompt
 
-Instruct RE-SPECIFIER to produce deep source-owned specs for each non-empty refresh source, then synthesize the complete workspace union. Number domains locally per source. Source specs may cite only their own source root. Cross-source APIs, events, schemas, dependencies, and migration ordering belong in workspace synthesis. Treat all planner/publication JSON as read-only.
+The controller dispatches one manifest target at a time. For a `source-domain` target, RE-SPECIFIER writes exactly the requested source-owned spec and cites only the target's owned root using source-relative `` `path:line` `` evidence. After every required domain passes the deterministic gate, the controller dispatches one `workspace-synthesis` target to write source overviews and workspace documents. Cross-source APIs, events, schemas, dependencies, and migration ordering belong only in workspace synthesis. Treat all planner/publication JSON and domain manifests as read-only.
 
 ## Expected Outputs
 
-- `{state.output_dir}/sources/{source-id}/overview.md` for each non-empty refresh source
-- `{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md` for each discovered source domain
+- `{state.output_dir}/sources/{source-id}/domain-manifest.json` is controller-owned and required before dispatch
+- `{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md` for the current `source-domain` target
+- `{state.output_dir}/sources/{source-id}/overview.md` only for the `workspace-synthesis` target
 - `{state.output_dir}/workspace/overview.md`
 - `{state.output_dir}/workspace/relationships.md`
 - `{state.output_dir}/workspace/contracts.md`

@@ -246,6 +246,7 @@ def test_repaired_specification_advances_to_all_downstream_re_phases(
     assert provider.phases == [
         "re-extract-2-specify",
         "re-extract-2-specify",
+        "re-extract-2-specify",
         "re-extract-3-verify",
         "re-extract-5-validate",
         "re-extract-6-checklist",
@@ -293,6 +294,7 @@ def test_below_threshold_coverage_runs_expander_then_reverifies(
     assert result.completed
     assert provider.phases == [
         "re-extract-2-specify",
+        "re-extract-2-specify",
         "re-extract-3-verify",
         "re-extract-4-expand",
         "re-extract-3-verify",
@@ -302,6 +304,144 @@ def test_below_threshold_coverage_runs_expander_then_reverifies(
     ]
     state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
     assert state["verify_expand_iterations"] == 1
+
+
+@pytest.mark.unit
+def test_controller_dispatches_one_specifier_call_for_each_required_domain(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    source_root = tmp_path / "sources" / "api"
+    for root in ("apps/public-api", "apps/worker"):
+        directory = source_root / root
+        directory.mkdir(parents=True)
+        for number in range(1, 6):
+            (directory / f"file-{number}.ts").write_text("export {};\n", encoding="utf-8")
+    manifest = run_dir / "re" / "sources" / "api" / "domain-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "source_id": "api",
+                "source_path": "sources/api",
+                "domains": [
+                    {
+                        "domain_id": "001-re-public-api",
+                        "root": "apps/public-api",
+                        "source_file_count": 5,
+                        "source_line_count": 5,
+                    },
+                    {
+                        "domain_id": "002-re-worker",
+                        "root": "apps/worker",
+                        "source_file_count": 5,
+                        "source_line_count": 5,
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    specs_root = run_dir / "re" / "sources" / "api" / "specs"
+    for path in specs_root.glob("*"):
+        if path.is_dir():
+            __import__("shutil").rmtree(path)
+
+    class DomainProvider(_ShallowSpecifierProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.domain_targets: list[str] = []
+
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            if "Generate exactly one deep source-domain spec" in prompt:
+                domain_id = prompt.split("Domain ID: `", 1)[1].split("`", 1)[0]
+                root = prompt.split("Owned source root: `", 1)[1].split("`", 1)[0]
+                self.domain_targets.append(domain_id)
+                evidence = "\n".join(
+                    f"- `{root}/file-{number}.ts:1`" for number in range(1, 6)
+                )
+                (specs_root / domain_id).mkdir(parents=True)
+                (specs_root / domain_id / "spec.md").write_text(
+                    "\n".join(
+                        [
+                            f"# {domain_id}",
+                            "## User Scenarios & Testing",
+                            "Scenario coverage.",
+                            "## Requirements (Functional)",
+                            "Functional behavior.",
+                            "## Key Entities",
+                            "Domain entities.",
+                            "## Edge Cases",
+                            "Observed failure paths.",
+                            "## Source Evidence",
+                            evidence,
+                        ]
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+            phase = self.phases[-1]
+            updates: dict[str, int] = {}
+            if phase == "re-extract-3-verify":
+                updates["coverage_pct"] = 80
+            if phase == "re-extract-5-validate":
+                updates["resolution_pct"] = 80
+            return SquadAgentResult(
+                exit_code=result.exit_code,
+                echelon_result={"verdict": "DONE", "state_updates": updates, "journal_entries": []},
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    provider = DomainProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert provider.domain_targets == ["001-re-public-api", "002-re-worker"]
+    assert (specs_root / "001-re-public-api" / "spec.md").is_file()
+    assert (specs_root / "002-re-worker" / "spec.md").is_file()
+
+
+@pytest.mark.unit
+def test_controller_ignores_non_routing_repair_metadata_from_a_done_agent(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+
+    class RepairMetadataProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            phase = self.phases[-1]
+            updates: dict[str, object] = {"repair_action": "deep_spec_gate_repair"}
+            if phase == "re-extract-3-verify":
+                updates["coverage_pct"] = 80
+            if phase == "re-extract-5-validate":
+                updates["resolution_pct"] = 80
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={"verdict": "DONE", "state_updates": updates, "journal_entries": []},
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    result = ReExtractionController(
+        provider=RepairMetadataProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
 
 
 @pytest.mark.unit

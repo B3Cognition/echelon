@@ -251,8 +251,9 @@ def test_mode1_controller_rebuilds_missing_state_and_specs_before_publication(
             phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
             self.phases.append(phase)
             source = run_re / "sources" / "api"
-            if phase == "re-extract-2-specify":
-                spec = source / "specs" / "001-domain" / "spec.md"
+            if phase == "re-extract-2-specify" and "Domain ID: `" in prompt:
+                domain_id = prompt.split("Domain ID: `", 1)[1].split("`", 1)[0]
+                spec = source / "specs" / domain_id / "spec.md"
                 spec.parent.mkdir(parents=True, exist_ok=True)
                 spec.write_text(_deep_spec("api", "v1"), encoding="utf-8")
             updates: dict[str, int] = {}
@@ -309,13 +310,14 @@ def test_mode1_controller_rebuilds_missing_state_and_specs_before_publication(
     assert script_calls[0][1]["timeout"] == 10_800
     assert provider.phases == [
         "re-extract-2-specify",
+        "re-extract-2-specify",
         "re-extract-3-verify",
         "re-extract-5-validate",
         "re-extract-6-checklist",
         "re-extract-7-constitute",
     ]
     assert (tmp_path / "re" / "index.json").is_file()
-    assert (run_re / "sources" / "api" / "specs" / "001-domain" / "spec.md").is_file()
+    assert (run_re / "sources" / "api" / "specs" / "001-re-src" / "spec.md").is_file()
     assert json.loads((run_re / "state.json").read_text(encoding="utf-8"))["status"] == "done"
     updated = state_store.load()
     assert updated["golddigger_status"] == "complete"
