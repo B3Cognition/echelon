@@ -144,6 +144,34 @@ def test_discovery_preserves_code_outside_manifest_owned_components(tmp_path: Pa
 
 
 @pytest.mark.unit
+def test_discovery_splits_an_oversized_component_before_deep_specification(
+    tmp_path: Path,
+) -> None:
+    source = _source(tmp_path)
+    root = Path(source.absolute_path)
+    for component in ("apps/api", "apps/web"):
+        (root / component).mkdir(parents=True)
+        (root / component / "package.json").write_text("{}\n", encoding="utf-8")
+    for child in ("handlers", "models"):
+        directory = root / "apps/api" / child
+        directory.mkdir()
+        for number in range(2):
+            (directory / f"file-{number}.ts").write_text(
+                "export const value = true;\n" * 2_000,
+                encoding="utf-8",
+            )
+    (root / "apps/web" / "main.ts").write_text("export {};\n", encoding="utf-8")
+
+    manifest = discover_source_domains(source)
+
+    assert [(domain.domain_id, domain.root) for domain in manifest.domains] == [
+        ("001-re-apps-api-handlers", "apps/api/handlers"),
+        ("002-re-apps-api-models", "apps/api/models"),
+        ("003-re-apps-web", "apps/web"),
+    ]
+
+
+@pytest.mark.unit
 def test_discovery_excludes_hidden_directories_and_root_tooling_from_component_domains(
     tmp_path: Path,
 ) -> None:

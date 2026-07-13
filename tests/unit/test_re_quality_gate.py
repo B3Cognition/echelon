@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 
-from harness.re_domain_manifest import domain_manifest_path
+from harness.re_domain_manifest import ReDomain, domain_manifest_path
 from harness.re_planner import ReExecutionPlan
 from harness.re_quality_gate import (
+    quality_target_for_domain,
+    validate_semantic_quality_review,
     validate_staged_re_domain_quality,
     validate_staged_re_quality,
 )
@@ -48,6 +51,7 @@ def test_shallow_architecture_summary_reports_all_missing_deep_requirements(
     assert failure.missing_sections == (
         "User Scenarios & Testing",
         "Requirements (Functional)",
+        "Requirements (Non-Functional)",
         "Key Entities",
         "Edge Cases",
     )
@@ -120,3 +124,91 @@ def test_target_gate_reports_only_its_declared_domain(tmp_path: Path) -> None:
     assert len(report.failures) == 1
     assert report.failures[0].domain_id == "001-re-domain"
     assert report.failures[0].spec_path == spec
+
+
+@pytest.mark.unit
+def test_quality_target_scales_from_domain_files_and_lines() -> None:
+    target = quality_target_for_domain(
+        ReDomain(
+            domain_id="001-re-api",
+            root="src/api",
+            source_file_count=25,
+            source_line_count=1_600,
+        )
+    )
+
+    assert target.complexity_units == 3
+    assert target.minimum_scenarios == 7
+    assert target.minimum_functional_requirements == 11
+    assert target.minimum_non_functional_requirements == 4
+
+
+@pytest.mark.unit
+def test_gate_reports_missing_acceptance_cases_and_adaptive_requirement_counts(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    text = spec.read_text(encoding="utf-8")
+    text = text.replace("Given the current source state", "With the current source state")
+    text = re.sub(r"^### NFR-.*?(?=^### NFR-|^## )", "", text, flags=re.MULTILINE | re.DOTALL)
+    spec.write_text(text, encoding="utf-8")
+
+    report = validate_staged_re_domain_quality(
+        run_dir / "re", _plan(run_dir), "api", "001-re-domain"
+    )
+
+    assert not report.passed
+    failure = report.failures[0]
+    assert failure.expected_scenario_count == 5
+    assert failure.scenario_count == 5
+    assert len(failure.scenarios_without_acceptance) == 5
+    assert failure.expected_functional_requirement_count == 7
+    assert failure.functional_requirement_count == 7
+    assert failure.expected_non_functional_requirement_count == 3
+    assert failure.non_functional_requirement_count == 0
+
+
+@pytest.mark.unit
+def test_semantic_review_requires_complete_domain_audit_and_evidence(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    payload = {
+        "schema_version": 1,
+        "domains": [
+            {
+                "source_id": "api",
+                "domain_id": "001-re-domain",
+                "verdict": "REPAIR",
+                "findings": [
+                    "The retry exhaustion behavior is absent from the failure scenarios."
+                ],
+                "source_evidence": ["`src/file-1.ts:1`"],
+            }
+        ],
+    }
+
+    report, error = validate_semantic_quality_review(
+        run_dir / "re", _plan(run_dir), payload
+    )
+
+    assert error is None
+    assert report is not None
+    assert not report.passed
+    assert report.failures[0].reason == "semantic_quality_incomplete"
+    assert report.failures[0].semantic_findings == (
+        "The retry exhaustion behavior is absent from the failure scenarios.",
+    )
+
+
+@pytest.mark.unit
+def test_semantic_review_rejects_an_incomplete_domain_inventory(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+
+    report, error = validate_semantic_quality_review(
+        run_dir / "re", _plan(run_dir), {"schema_version": 1, "domains": []}
+    )
+
+    assert report is None
+    assert error == "semantic quality review did not audit every refreshed domain"

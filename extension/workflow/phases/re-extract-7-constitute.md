@@ -8,7 +8,7 @@
 - canonical source manifests/specs referenced by the workspace inputs
 - `{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md`
 - `{state.output_dir}/quality/{source-id}/coverage-report.md`
-- `{state.output_dir}/quality/{source-id}/validation-report.md`
+- `{state.output_dir}/quality/semantic-quality-review.json`
 - `{state.output_dir}/workspace/overview.md`
 - `{state.output_dir}/workspace/relationships.md`
 - `{state.output_dir}/workspace/contracts.md`

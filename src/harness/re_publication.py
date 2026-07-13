@@ -24,6 +24,7 @@ from harness.re_quality_gate import (
     ReSpecQualityFailure,
     validate_staged_re_quality,
 )
+from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
 from harness.re_registry import (
     PublishedReIndex,
     PublishedSource,
@@ -132,6 +133,7 @@ def validate_re_run(
     quality_report = validate_staged_re_quality(run_re, plan)
     if quality_report.failures:
         _raise_quality_failure(quality_report.failures[0])
+    _validate_semantic_quality_report(run_re)
 
     for removed_id in plan.removed_sources:
         if current is None or removed_id not in current.sources:
@@ -160,6 +162,19 @@ def validate_re_run(
         removed_sources=tuple(sorted(plan.removed_sources)),
         warnings=warnings,
     )
+
+
+def _validate_semantic_quality_report(run_re: Path) -> None:
+    path = run_re / "quality" / "semantic-quality-review.json"
+    report = _read_json(path, required=False)
+    if report.get("quality_contract_version") != QUALITY_CONTRACT_VERSION:
+        raise RePublicationValidationError(
+            f"current semantic quality review is required before publication: {path}"
+        )
+    if report.get("passed") is not True or report.get("failures"):
+        raise RePublicationValidationError(
+            f"semantic quality review has unresolved findings: {path}"
+        )
 
 
 def publish_re_run(
@@ -608,6 +623,7 @@ def _source_manifest(
         "dirty": source.fingerprint.dirty,
         "profile": plan.profile.to_json_dict(),
         "profile_hash": source.fingerprint.profile_hash,
+        "quality_contract_version": QUALITY_CONTRACT_VERSION,
         "publication_status": status,
         "cache_path": cache_path,
         "overview": f"re/sources/{source.id}/overview.md",

@@ -236,10 +236,11 @@ def published_source_is_current(
     fingerprint: str,
     profile_hash: str,
     expect_empty: bool,
+    quality_contract_version: int | None = None,
 ) -> bool:
     """Return whether source state exactly matches its durable publication."""
     source = index.sources.get(source_id)
-    return bool(
+    if not (
         source
         and source.source_path == source_path
         and source.fingerprint == fingerprint
@@ -250,7 +251,18 @@ def published_source_is_current(
             source_id,
             expect_empty=expect_empty,
         )
-    )
+    ):
+        return False
+    if quality_contract_version is None:
+        return True
+    try:
+        manifest_path = _existing_registry_path(
+            workspace_root.resolve(), source.manifest, "manifest"
+        )
+        manifest = _read_object(manifest_path, "source manifest")
+    except ReRegistryError:
+        return False
+    return manifest.get("quality_contract_version") == quality_contract_version
 
 
 def _parse_index(raw: Any) -> PublishedReIndex:

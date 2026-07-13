@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from harness.re_quality_gate import QUALITY_CONTRACT_VERSION
 from harness.re_fingerprint import ReFingerprintProfile, SourceFingerprint
 from harness.re_planner import ReExecutionPlan, RePlanSource
 from harness.re_publication import (
@@ -40,12 +41,37 @@ def _deep_spec(source_id: str, version: str) -> str:
     evidence = "\n".join(
         f"- `src/file-{number}.ts:1`" for number in range(1, 6)
     )
+    scenarios = "\n\n".join(
+        (
+            f"### Scenario {number}: Current behavior {number}\n\n"
+            f"Source Evidence: `src/file-{((number - 1) % 5) + 1}.ts:1`\n\n"
+            "Given the current source state, When the behavior is invoked, "
+            "Then the observed result is preserved."
+        )
+        for number in range(1, 6)
+    )
+    functional_requirements = "\n\n".join(
+        (
+            f"### FR-{number:03d}: Current functional requirement {number}\n\n"
+            f"Source Evidence: `src/file-{((number - 1) % 5) + 1}.ts:1`"
+        )
+        for number in range(1, 8)
+    )
+    non_functional_requirements = "\n\n".join(
+        (
+            f"### NFR-{number:03d}: Current operational constraint {number}\n\n"
+            f"Source Evidence: `src/file-{((number - 1) % 5) + 1}.ts:1`"
+        )
+        for number in range(1, 4)
+    )
     return (
         f"# {source_id} domain {version}\n\n"
         "## User Scenarios & Testing\n\n"
-        "Five source-backed scenarios describe the current behavior.\n\n"
+        f"{scenarios}\n\n"
         "## Requirements (Functional)\n\n"
-        "The current behavior must remain observable.\n\n"
+        f"{functional_requirements}\n\n"
+        "## Requirements (Non-Functional)\n\n"
+        f"{non_functional_requirements}\n\n"
         "## Key Entities\n\n"
         "The source entity and its fields are preserved.\n\n"
         "## Edge Cases\n\n"
@@ -186,6 +212,15 @@ def write_valid_re_run(
     (workspace / "overview.md").write_text(f"# Workspace {run_id}\n", encoding="utf-8")
     (workspace / "relationships.md").write_text("# Relationships\n", encoding="utf-8")
     (workspace / "contracts.md").write_text("# Contracts\n", encoding="utf-8")
+    _write_json(
+        run_re / "quality" / "semantic-quality-review.json",
+        {
+            "schema_version": 1,
+            "quality_contract_version": QUALITY_CONTRACT_VERSION,
+            "passed": True,
+            "failures": [],
+        },
+    )
     return run_dir
 
 
@@ -420,10 +455,23 @@ def test_shallow_full_depth_spec_is_not_publishable(tmp_path: Path) -> None:
     with pytest.raises(
         RePublicationValidationError,
         match=(
-            r"shallow reverse-engineering spec is not publishable: .*spec.md; "
-            r"missing sections: User Scenarios & Testing, Requirements \(Functional\), "
-            r"Key Entities, Edge Cases; source evidence: 0/5"
+                r"shallow reverse-engineering spec is not publishable: .*spec.md; "
+                r"missing sections: User Scenarios & Testing, Requirements \(Functional\), "
+                r"Requirements \(Non-Functional\), Key Entities, Edge Cases; "
+                r"source evidence: 0/5"
         ),
+    ):
+        publish_re_run(tmp_path, run_dir)
+
+
+@pytest.mark.unit
+def test_publication_requires_a_current_semantic_quality_review(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    review = run_dir / "re" / "quality" / "semantic-quality-review.json"
+    review.unlink()
+
+    with pytest.raises(
+        RePublicationValidationError, match="current semantic quality review is required"
     ):
         publish_re_run(tmp_path, run_dir)
 

@@ -90,10 +90,11 @@ class TestGolddiggerTemplates:
         specifier = RE_AGENTS["specifier"].read_text(encoding="utf-8")
 
         assert "--profile full --depth full --max-lines-per-file 5000 --git-history-limit 2500" in golddigger
-        assert "at least 5 user stories per domain" in specifier
+        assert "controller-provided minimum" in specifier
         for section in (
             "User Scenarios & Testing",
             "Requirements (Functional)",
+            "Requirements (Non-Functional)",
             "Key Entities",
             "Edge Cases",
             "Source Evidence",
@@ -110,7 +111,7 @@ class TestGolddiggerTemplates:
             ),
             "verifier": ("$RE_OUTPUT_DIR/quality/{source-id}/coverage-report.md",),
             "expander": ("$RE_OUTPUT_DIR/sources/{source-id}/specs/{domain-id}/spec.md",),
-            "validator": ("$RE_OUTPUT_DIR/quality/{source-id}/validation-report.md",),
+            "validator": ("semantic_quality_review",),
             "checklister": (
                 "$RE_OUTPUT_DIR/sources/{source-id}/specs/{domain-id}/checklist.md",
                 "$RE_OUTPUT_DIR/workspace/checklist.md",
@@ -131,7 +132,7 @@ class TestGolddiggerTemplates:
 
         assert "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md" in RE_PHASES["2-specify"].read_text()
         assert "{state.output_dir}/quality/{source-id}/coverage-report.md" in RE_PHASES["3-verify"].read_text()
-        assert "{state.output_dir}/quality/{source-id}/validation-report.md" in RE_PHASES["5-validate"].read_text()
+        assert "{state.output_dir}/quality/semantic-quality-review.json" in RE_PHASES["5-validate"].read_text()
         assert "{state.output_dir}/workspace/checklist.md" in RE_PHASES["6-checklist"].read_text()
         assert "{state.output_dir}/workspace/strategy/constitution.md" in RE_PHASES["7-constitute"].read_text()
 

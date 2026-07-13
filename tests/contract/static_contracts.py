@@ -535,7 +535,7 @@ def validate_re_source_ownership_contract(root: Path) -> list[str]:
         PatternCheck("specifier workspace contracts", specifier, r"\$RE_OUTPUT_DIR/workspace/contracts\.md"),
         PatternCheck("verifier source quality", verifier, r"\$RE_OUTPUT_DIR/quality/\{source-id\}/coverage-report\.md"),
         PatternCheck("expander source ownership", expander, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/specs/\{domain-id\}/spec\.md"),
-        PatternCheck("validator source quality", validator, r"\$RE_OUTPUT_DIR/quality/\{source-id\}/validation-report\.md"),
+        PatternCheck("validator semantic quality", validator, r"semantic_quality_review"),
         PatternCheck("checklister source checklist", checklister, r"\$RE_OUTPUT_DIR/sources/\{source-id\}/specs/\{domain-id\}/checklist\.md"),
         PatternCheck("checklister workspace checklist", checklister, r"\$RE_OUTPUT_DIR/workspace/checklist\.md"),
         PatternCheck("constituter workspace strategy", constituter, r"\$RE_OUTPUT_DIR/workspace/strategy/constitution\.md"),

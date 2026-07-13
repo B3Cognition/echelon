@@ -23,8 +23,11 @@ from harness.re_domain_manifest import (
 from harness.re_planner import ReExecutionPlan
 from harness.re_quality_gate import (
     ReQualityReport,
+    quality_target_for_domain,
+    validate_semantic_quality_review,
     validate_staged_re_domain_quality,
     validate_staged_re_quality,
+    write_re_semantic_quality_report,
     write_re_target_quality_report,
     write_re_quality_report,
 )
@@ -207,6 +210,30 @@ class ReExtractionController:
                     continue
                 self._clear_target_quality_failure(state, target)
                 self._complete_specification_target(state, target)
+            if phase == "re-extract-5-validate":
+                semantic_report, semantic_error = validate_semantic_quality_review(
+                    self._run_re_dir,
+                    plan,
+                    payload.get("semantic_quality_review")
+                    if isinstance(payload, dict)
+                    else None,
+                )
+                if semantic_error is not None or semantic_report is None:
+                    state["re_agent_result_detail"] = (
+                        semantic_error or "semantic quality review was unavailable"
+                    )
+                    return self._block(state, "re_semantic_quality_review_invalid")
+                semantic_report_path = write_re_semantic_quality_report(
+                    self._run_re_dir, semantic_report
+                )
+                state["re_semantic_quality_report"] = str(semantic_report_path)
+                if not semantic_report.passed:
+                    state["re_quality_gate_report"] = str(semantic_report_path)
+                    scheduled = self._schedule_quality_repair(state, semantic_report)
+                    if scheduled is not None:
+                        return scheduled
+                    state = self._load_state()
+                    continue
             self._save_state(state)
 
             if phase == "re-extract-2-specify":
@@ -272,14 +299,7 @@ class ReExtractionController:
         elif phase == "re-extract-4-expand":
             state["phase"] = "re-extract-3-verify"
         elif phase == "re-extract-5-validate":
-            if self._metric(state, "resolution_pct") < self._metric(state, "resolution_threshold"):
-                iterations = self._metric(state, "validate_iterations")
-                if iterations >= self._metric(state, "max_validate_iterations"):
-                    return self._block(state, "re_resolution_threshold_not_met")
-                state["validate_iterations"] = iterations + 1
-                state["phase"] = "re-extract-5-validate"
-            else:
-                state["phase"] = "re-extract-6-checklist"
+            state["phase"] = "re-extract-6-checklist"
         elif phase == "re-extract-6-checklist":
             state["phase"] = "re-extract-7-constitute"
         elif phase == "re-extract-7-constitute":
@@ -465,7 +485,11 @@ class ReExtractionController:
         targets: list[dict[str, object]] = []
         seen: set[tuple[str, str]] = set()
         for failure in report.failures:
-            if failure.reason not in {"deep_spec_incomplete", "required_domain_spec_missing"}:
+            if failure.reason not in {
+                "deep_spec_incomplete",
+                "required_domain_spec_missing",
+                "semantic_quality_incomplete",
+            }:
                 return None
             if not failure.domain_id:
                 return None
@@ -603,6 +627,28 @@ class ReExtractionController:
         target_report = (
             self._run_re_dir / "quality" / "targets" / source_id / f"{domain_id}.json"
         )
+        quality_contract = ""
+        try:
+            domain_manifest = load_domain_manifest(manifest)
+            domain = next(
+                candidate
+                for candidate in domain_manifest.domains
+                if candidate.domain_id == domain_id
+            )
+            target = quality_target_for_domain(domain)
+            quality_contract = (
+                "The deterministic quality contract for this domain requires at least "
+                f"{target.minimum_scenarios} scenario headings, "
+                f"{target.minimum_functional_requirements} FR headings, and "
+                f"{target.minimum_non_functional_requirements} NFR headings. "
+                "Every scenario needs a source-evidenced Given/When/Then acceptance case; "
+                "every FR and NFR needs at least one valid source citation.\n"
+            )
+        except (StopIteration, ValueError):
+            quality_contract = (
+                "The domain manifest could not provide adaptive quality counts. "
+                "Do not infer another target; the controller will report the manifest failure.\n"
+            )
         return (
             "\n## Controller-Owned Specification Target\n"
             f"Generate exactly one deep source-domain spec: `{spec_path}`.\n"
@@ -616,6 +662,7 @@ class ReExtractionController:
             "root; it must resolve within that domain. Never use Markdown-link citations. "
             "Include at least five distinct valid citations. Do not write another domain spec, "
             "source overview, or workspace synthesis.\n"
+            + quality_contract
             + (
                 f"Read `{target_report}` before editing: it is the exact deterministic "
                 "failure report for this target.\n"

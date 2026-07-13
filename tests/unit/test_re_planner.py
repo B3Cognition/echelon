@@ -14,6 +14,7 @@ from harness.re_planner import (
     build_re_execution_plan,
     resolve_re_policy,
 )
+from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
 from harness.re_registry import ensure_re_layout, load_published_index
 
 
@@ -88,6 +89,7 @@ def _publish_source(root: Path, source_id: str, profile: ReFingerprintProfile) -
             "source_fingerprint": fingerprint.value,
             "profile": profile.to_json_dict(),
             "profile_hash": fingerprint.profile_hash,
+            "quality_contract_version": QUALITY_CONTRACT_VERSION,
             "publication_status": "complete",
             "overview": f"re/sources/{source_id}/overview.md",
             "specs": [f"re/sources/{source_id}/specs/domain/spec.md"],
@@ -353,6 +355,31 @@ def test_matching_publication_is_current_without_heavy_cache(tmp_path: Path) -> 
     assert not plan.analysis_required
     assert not plan.publication_required
     assert not (root / "re/.cache/sources/api").exists()
+
+
+def test_changed_policy_refreshes_sources_published_under_an_old_quality_contract(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "api")
+    profile = ReFingerprintProfile()
+    _publish_source(root, "api", profile)
+    manifest_path = root / "re" / "sources" / "api" / "manifest.json"
+    published_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    published_manifest.pop("quality_contract_version")
+    _write_json(manifest_path, published_manifest)
+
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest(root, "api"),
+        target_source="",
+        requested_policy="changed",
+        profile=profile,
+        published_index=load_published_index(root),
+    )
+
+    assert plan.sources[0].action == "refresh"
+    assert plan.sources[0].classification == "refresh"
 
 
 def test_profile_change_refreshes_published_source(tmp_path: Path) -> None:

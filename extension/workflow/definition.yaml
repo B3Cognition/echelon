@@ -1814,13 +1814,10 @@ re_extraction:
         - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
         - "{state.output_dir}/quality/{source-id}/coverage-report.md"
       outputs:
-        - "{state.output_dir}/quality/{source-id}/validation-report.md"
-        - state.json[resolution_pct, validate_iterations]
+        - "{state.output_dir}/quality/semantic-quality-review.json"
       transitions:
-        - to: re-extract-5-validate
-          condition: "resolution_pct < resolution_threshold AND validate_iterations < max_validate_iterations"
         - to: re-extract-6-checklist
-          condition: "resolution_pct >= resolution_threshold OR validate_iterations >= max_validate_iterations"
+          condition: always
 
     - id: re-extract-6-checklist
       label: "Quality Checklists (RE-CHECKLISTER)"
@@ -1833,7 +1830,7 @@ re_extraction:
         - "{state.output_dir}/workspace/contracts.md"
         - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
         - "{state.output_dir}/quality/{source-id}/coverage-report.md"
-        - "{state.output_dir}/quality/{source-id}/validation-report.md"
+        - "{state.output_dir}/quality/semantic-quality-review.json"
       outputs:
         - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/checklist.md"
         - "{state.output_dir}/workspace/checklist.md"
@@ -1852,7 +1849,7 @@ re_extraction:
         - "{state.output_dir}/re-workspace-inputs.json"
         - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
         - "{state.output_dir}/quality/{source-id}/coverage-report.md"
-        - "{state.output_dir}/quality/{source-id}/validation-report.md"
+        - "{state.output_dir}/quality/semantic-quality-review.json"
         - "{state.output_dir}/workspace/overview.md"
         - "{state.output_dir}/workspace/relationships.md"
         - "{state.output_dir}/workspace/contracts.md"

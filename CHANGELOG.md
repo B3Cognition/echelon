@@ -6,6 +6,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE adaptive quality contract and repair loop** — full-depth domain specs are
+  now accepted only when they meet size-derived scenario, functional
+  requirement, and non-functional requirement minima. Every scenario requires
+  a source-evidenced Given/When/Then acceptance case; every FR and NFR requires
+  owned-domain source evidence. RE-VALIDATOR now audits every refreshed domain
+  with an explicit `PASS` or source-evidenced `REPAIR` result; the controller
+  sends only repair domains back to RE-SPECIFIER and re-audits them before the
+  run can proceed. Publication requires a passed current semantic review.
+
+- **RE contract freshness and capacity partitioning** — published source
+  manifests record the RE quality-contract version, so changed-only runs do
+  not reuse artifacts accepted under an older contract. Domain discovery now
+  refines oversized code-bearing component roots before deep-spec quality is
+  calculated, while retaining roots with direct source files to avoid dropping
+  or overlapping ownership.
+
 - **RE logical domain recovery** — a repository with one root build manifest is
   no longer collapsed into one whole-repository spec when it contains multiple
   substantive code areas. The deterministic partitioner now creates bounded

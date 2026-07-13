@@ -11,6 +11,7 @@ from pathlib import Path
 
 from harness.re_domain_manifest import ReDomain, domain_manifest_path, load_domain_manifest
 from harness.re_planner import ReExecutionPlan, RePlanSource
+from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
 
 
 SOURCE_REFERENCE = re.compile(
@@ -19,10 +20,26 @@ SOURCE_REFERENCE = re.compile(
 DEEP_SPEC_SECTIONS = (
     "User Scenarios & Testing",
     "Requirements (Functional)",
+    "Requirements (Non-Functional)",
     "Key Entities",
     "Edge Cases",
 )
 MINIMUM_SOURCE_EVIDENCE = 5
+SEMANTIC_QUALITY_REVIEW_VERSION = 1
+_FILES_PER_COMPLEXITY_UNIT = 12
+_LINES_PER_COMPLEXITY_UNIT = 800
+_MAX_SCENARIOS = 12
+_MAX_FUNCTIONAL_REQUIREMENTS = 20
+_MAX_NON_FUNCTIONAL_REQUIREMENTS = 8
+_SECTION_HEADING = re.compile(r"^##\s+(?P<title>.+?)\s*$", re.MULTILINE)
+_SUBSECTION_HEADING = re.compile(r"^###\s+(?P<title>.+?)\s*$", re.MULTILINE)
+_SCENARIO_HEADING = re.compile(r"^(?:US-\d|Scenario\b|User Story\b|Use Case\b)", re.IGNORECASE)
+_FUNCTIONAL_REQUIREMENT_HEADING = re.compile(
+    r"^(?:FR-\d|Req(?:uirement)?\b)", re.IGNORECASE
+)
+_NON_FUNCTIONAL_REQUIREMENT_HEADING = re.compile(
+    r"^(?:NFR-\d|Non-Functional Requirement\b)", re.IGNORECASE
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +51,17 @@ class ReSpecQualityFailure:
     domain_id: str | None = None
     reason: str = "deep_spec_incomplete"
     invalid_source_evidence: tuple[str, ...] = ()
+    expected_scenario_count: int = 0
+    scenario_count: int = 0
+    scenarios_without_acceptance: tuple[str, ...] = ()
+    scenarios_without_evidence: tuple[str, ...] = ()
+    expected_functional_requirement_count: int = 0
+    functional_requirement_count: int = 0
+    functional_requirements_without_evidence: tuple[str, ...] = ()
+    expected_non_functional_requirement_count: int = 0
+    non_functional_requirement_count: int = 0
+    non_functional_requirements_without_evidence: tuple[str, ...] = ()
+    semantic_findings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -44,6 +72,7 @@ class ReQualityReport:
     def to_json_dict(self) -> dict[str, object]:
         return {
             "schema_version": 1,
+            "quality_contract_version": QUALITY_CONTRACT_VERSION,
             "passed": self.passed,
             "failures": [
                 {
@@ -53,6 +82,106 @@ class ReQualityReport:
                 for failure in self.failures
             ],
         }
+
+
+def validate_semantic_quality_review(
+    run_re_dir: Path,
+    plan: ReExecutionPlan,
+    payload: object,
+) -> tuple[ReQualityReport | None, str | None]:
+    """Validate the validator's complete, source-evidenced domain audit.
+
+    The review is advisory only when it says PASS, but its coverage is not: the
+    agent must account for every refreshed domain. REPAIR findings are converted
+    into controller-owned, target-scoped repair work.
+    """
+    if not isinstance(payload, dict):
+        return None, "semantic quality review must be an object"
+    if payload.get("schema_version") != SEMANTIC_QUALITY_REVIEW_VERSION:
+        return None, "unsupported semantic quality review schema"
+    raw_domains = payload.get("domains")
+    if not isinstance(raw_domains, list):
+        return None, "semantic quality review domains must be a list"
+
+    expected: dict[tuple[str, str], tuple[RePlanSource, ReDomain]] = {}
+    try:
+        for source in plan.refresh_sources:
+            manifest = load_domain_manifest(domain_manifest_path(run_re_dir, source.id))
+            if manifest.source_id != source.id or manifest.source_path != source.path:
+                return None, "semantic quality review source manifest mismatch"
+            for domain in manifest.domains:
+                expected[(source.id, domain.domain_id)] = (source, domain)
+    except ValueError as exc:
+        return None, f"semantic quality review manifest invalid: {exc}"
+
+    seen: set[tuple[str, str]] = set()
+    failures: list[ReSpecQualityFailure] = []
+    for item in raw_domains:
+        if not isinstance(item, dict):
+            return None, "semantic quality review domain must be an object"
+        source_id = item.get("source_id")
+        domain_id = item.get("domain_id")
+        verdict = item.get("verdict")
+        findings = item.get("findings")
+        evidence = item.get("source_evidence")
+        key = (source_id, domain_id)
+        if (
+            not isinstance(source_id, str)
+            or not isinstance(domain_id, str)
+            or key not in expected
+            or key in seen
+        ):
+            return None, "semantic quality review domain inventory is invalid"
+        if verdict not in {"PASS", "REPAIR"}:
+            return None, "semantic quality review verdict must be PASS or REPAIR"
+        if not isinstance(findings, list) or any(
+            not isinstance(finding, str) or not finding.strip() for finding in findings
+        ):
+            return None, "semantic quality review findings must be non-empty strings"
+        if not isinstance(evidence, list) or any(
+            not isinstance(reference, str) for reference in evidence
+        ):
+            return None, "semantic quality review source_evidence must be strings"
+        if verdict == "PASS" and findings:
+            return None, "semantic quality review PASS cannot contain findings"
+        if verdict == "REPAIR" and not findings:
+            return None, "semantic quality review REPAIR requires findings"
+        source, domain = expected[key]
+        evidence_text = "\n".join(evidence)
+        valid_evidence, invalid_evidence = _validated_source_evidence(
+            evidence_text,
+            source_root=Path(source.absolute_path),
+            domain_root=domain.root,
+        )
+        if verdict == "REPAIR" and (
+            invalid_evidence or len(valid_evidence) < len(findings)
+        ):
+            return None, "semantic quality review REPAIR findings need valid source evidence"
+        if invalid_evidence:
+            return None, "semantic quality review contains invalid source evidence"
+        seen.add(key)
+        if verdict == "REPAIR":
+            failures.append(
+                ReSpecQualityFailure(
+                    source_id=source_id,
+                    spec_path=(
+                        run_re_dir
+                        / "sources"
+                        / source_id
+                        / "specs"
+                        / domain_id
+                        / "spec.md"
+                    ),
+                    missing_sections=(),
+                    source_evidence_count=len(valid_evidence),
+                    domain_id=domain_id,
+                    reason="semantic_quality_incomplete",
+                    semantic_findings=tuple(findings),
+                )
+            )
+    if seen != set(expected):
+        return None, "semantic quality review did not audit every refreshed domain"
+    return ReQualityReport(passed=not failures, failures=tuple(failures)), None
 
 
 def validate_staged_re_quality(
@@ -208,10 +337,48 @@ def _domain_quality_failure(
         source_root=Path(source.absolute_path),
         domain_root=domain.root,
     )
+    target = quality_target_for_domain(domain)
+    scenario_items = _section_items(
+        text, "User Scenarios & Testing", _SCENARIO_HEADING
+    )
+    functional_requirement_items = _section_items(
+        text, "Requirements (Functional)", _FUNCTIONAL_REQUIREMENT_HEADING
+    )
+    non_functional_requirement_items = _section_items(
+        text, "Requirements (Non-Functional)", _NON_FUNCTIONAL_REQUIREMENT_HEADING
+    )
+    scenarios_without_acceptance = tuple(
+        title
+        for title, body in scenario_items
+        if not _has_acceptance_scenario(body)
+    )
+    scenarios_without_evidence = _items_without_valid_evidence(
+        scenario_items, source_root=Path(source.absolute_path), domain_root=domain.root
+    )
+    functional_requirements_without_evidence = _items_without_valid_evidence(
+        functional_requirement_items,
+        source_root=Path(source.absolute_path),
+        domain_root=domain.root,
+    )
+    non_functional_requirements_without_evidence = _items_without_valid_evidence(
+        non_functional_requirement_items,
+        source_root=Path(source.absolute_path),
+        domain_root=domain.root,
+    )
     if not (
         missing_sections
         or len(evidence) < MINIMUM_SOURCE_EVIDENCE
         or invalid_evidence
+        or len(scenario_items) < target.minimum_scenarios
+        or scenarios_without_acceptance
+        or scenarios_without_evidence
+        or len(functional_requirement_items) < target.minimum_functional_requirements
+        or functional_requirements_without_evidence
+        or (
+            len(non_functional_requirement_items)
+            < target.minimum_non_functional_requirements
+        )
+        or non_functional_requirements_without_evidence
     ):
         return None
     return ReSpecQualityFailure(
@@ -221,7 +388,101 @@ def _domain_quality_failure(
         source_evidence_count=len(evidence),
         domain_id=domain.domain_id,
         invalid_source_evidence=tuple(sorted(invalid_evidence)),
+        expected_scenario_count=target.minimum_scenarios,
+        scenario_count=len(scenario_items),
+        scenarios_without_acceptance=scenarios_without_acceptance,
+        scenarios_without_evidence=scenarios_without_evidence,
+        expected_functional_requirement_count=target.minimum_functional_requirements,
+        functional_requirement_count=len(functional_requirement_items),
+        functional_requirements_without_evidence=functional_requirements_without_evidence,
+        expected_non_functional_requirement_count=(
+            target.minimum_non_functional_requirements
+        ),
+        non_functional_requirement_count=len(non_functional_requirement_items),
+        non_functional_requirements_without_evidence=(
+            non_functional_requirements_without_evidence
+        ),
     )
+
+
+@dataclass(frozen=True)
+class ReDomainQualityTarget:
+    """Adaptive deep-spec minima derived from the owned source domain size."""
+
+    complexity_units: int
+    minimum_scenarios: int
+    minimum_functional_requirements: int
+    minimum_non_functional_requirements: int
+
+
+def quality_target_for_domain(domain: ReDomain) -> ReDomainQualityTarget:
+    """Set deep-spec expectations from domain scale without accepting summaries."""
+    units = max(
+        1,
+        _ceil_div(domain.source_file_count, _FILES_PER_COMPLEXITY_UNIT),
+        _ceil_div(domain.source_line_count, _LINES_PER_COMPLEXITY_UNIT),
+    )
+    return ReDomainQualityTarget(
+        complexity_units=units,
+        minimum_scenarios=min(_MAX_SCENARIOS, 4 + units),
+        minimum_functional_requirements=min(
+            _MAX_FUNCTIONAL_REQUIREMENTS, 5 + (2 * units)
+        ),
+        minimum_non_functional_requirements=min(
+            _MAX_NON_FUNCTIONAL_REQUIREMENTS, 2 + ((units + 1) // 2)
+        ),
+    )
+
+
+def _ceil_div(value: int, divisor: int) -> int:
+    return (value + divisor - 1) // divisor
+
+
+def _section_items(
+    text: str, section: str, heading_pattern: re.Pattern[str]
+) -> tuple[tuple[str, str], ...]:
+    """Return matching level-three items inside one exact level-two section."""
+    section_text = _section_text(text, section)
+    if section_text is None:
+        return ()
+    headings = list(_SUBSECTION_HEADING.finditer(section_text))
+    items: list[tuple[str, str]] = []
+    for index, match in enumerate(headings):
+        title = match.group("title").strip()
+        if not heading_pattern.match(title):
+            continue
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(section_text)
+        items.append((title, section_text[match.end() : end]))
+    return tuple(items)
+
+
+def _section_text(text: str, section: str) -> str | None:
+    headings = list(_SECTION_HEADING.finditer(text))
+    for index, match in enumerate(headings):
+        if match.group("title").strip() != section:
+            continue
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
+        return text[match.end() : end]
+    return None
+
+
+def _has_acceptance_scenario(text: str) -> bool:
+    return bool(
+        re.search(r"\bGiven\b[\s\S]*?\bWhen\b[\s\S]*?\bThen\b", text, re.IGNORECASE)
+    )
+
+
+def _items_without_valid_evidence(
+    items: tuple[tuple[str, str], ...], *, source_root: Path, domain_root: str
+) -> tuple[str, ...]:
+    missing: list[str] = []
+    for title, body in items:
+        valid, _invalid = _validated_source_evidence(
+            body, source_root=source_root, domain_root=domain_root
+        )
+        if not valid:
+            missing.append(title)
+    return tuple(missing)
 
 
 def _validated_source_evidence(
@@ -285,6 +546,12 @@ def _line_count(path: Path) -> int:
 def write_re_quality_report(run_re_dir: Path, report: ReQualityReport) -> Path:
     """Atomically persist the deterministic gate report for diagnostics/repair."""
     path = run_re_dir / "quality" / "deep-spec-gate.json"
+    return _write_quality_report(path, report)
+
+
+def write_re_semantic_quality_report(run_re_dir: Path, report: ReQualityReport) -> Path:
+    """Persist the complete semantic audit used to schedule target repairs."""
+    path = run_re_dir / "quality" / "semantic-quality-review.json"
     return _write_quality_report(path, report)
 
 

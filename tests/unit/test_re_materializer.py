@@ -7,6 +7,7 @@ from echelon.workspace_model import SourceRoot, WorkspaceInfo, WorkspaceManifest
 from harness.re_fingerprint import ReFingerprintProfile, fingerprint_source
 from harness.re_materializer import materialize_re_run_context
 from harness.re_planner import build_re_execution_plan
+from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
 from harness.re_registry import ensure_re_layout, load_published_index
 
 
@@ -64,6 +65,7 @@ def _publish_sources(
                 "source_fingerprint": fingerprint.value,
                 "profile": profile.to_json_dict(),
                 "profile_hash": fingerprint.profile_hash,
+                "quality_contract_version": QUALITY_CONTRACT_VERSION,
                 "publication_status": "complete",
                 "overview": f"re/sources/{source_id}/overview.md",
                 "specs": [f"re/sources/{source_id}/specs/domain/spec.md"],

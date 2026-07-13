@@ -9,7 +9,7 @@
 - `{state.output_dir}/workspace/contracts.md`
 - `{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md`
 - `{state.output_dir}/quality/{source-id}/coverage-report.md`
-- `{state.output_dir}/quality/{source-id}/validation-report.md`
+- `{state.output_dir}/quality/semantic-quality-review.json`
 
 ## Dispatch Prompt
 

@@ -66,8 +66,10 @@ _NON_DOMAIN_ROOTS = frozenset(
 )
 _LOGICAL_DOMAIN_MIN_FILES = 2
 _LOGICAL_DOMAIN_MAX_LEAVES = 12
-_LOGICAL_DOMAIN_MAX_DEPTH = 2
-DOMAIN_PARTITION_VERSION = 2
+_LOGICAL_DOMAIN_MAX_DEPTH = 3
+_MAX_DOMAIN_SOURCE_FILES = 96
+_MAX_DOMAIN_SOURCE_LINES = 6_400
+DOMAIN_PARTITION_VERSION = 3
 _SAFE_SLUG = re.compile(r"[^a-z0-9]+")
 
 
@@ -248,13 +250,11 @@ def _component_roots(source_root: Path) -> list[str]:
             | _uncovered_component_roots(source_root, component_roots)
         )
         # Multiple package roots are already independently buildable components.
-        # Splitting each one further turns a stable workspace partition into a
-        # noisy directory inventory. A lone component needs logical discovery.
-        return (
-            _logical_domain_roots(source_root, roots)
-            if len(roots) == 1
-            else sorted(roots)
-        )
+        # Retain those boundaries unless one is too large for a source-evidenced
+        # deep spec. Oversized roots are split into code-bearing children before
+        # quality targets are calculated; a fixed requirements cap must never
+        # turn a 70k-line directory into a one-page summary.
+        return _partition_component_roots(source_root, roots)
 
     top_level = {
         path.relative_to(source_root).parts[0]
@@ -274,14 +274,58 @@ def _logical_domain_roots(source_root: Path, roots: set[str]) -> list[str]:
     return sorted(domains)
 
 
+def _partition_component_roots(source_root: Path, roots: set[str]) -> list[str]:
+    """Keep component roots unless their size exceeds deep-spec capacity."""
+    if len(roots) == 1:
+        initial_roots = set(_logical_domain_roots(source_root, roots))
+    else:
+        initial_roots = roots
+    return _refine_oversized_roots(source_root, initial_roots)
+
+
+def _refine_oversized_roots(source_root: Path, roots: set[str]) -> list[str]:
+    """Recursively partition safe oversized roots from an initial component set."""
+    domains: set[str] = set()
+    for root in sorted(roots):
+        if _domain_root_exceeds_capacity(source_root, root):
+            domains.update(
+                _split_logical_domain_root(
+                    source_root,
+                    root,
+                    depth=0,
+                    preserve_direct_source_files=True,
+                )
+            )
+        else:
+            domains.add(root)
+    return sorted(domains)
+
+
+def _domain_root_exceeds_capacity(source_root: Path, root: str) -> bool:
+    path = source_root if root == "." else source_root / root
+    files = _source_files(path)
+    return len(files) > _MAX_DOMAIN_SOURCE_FILES or (
+        sum(_line_count(file) for file in files) > _MAX_DOMAIN_SOURCE_LINES
+    )
+
+
 def _split_logical_domain_root(
     source_root: Path,
     root: str,
     *,
     depth: int,
+    preserve_direct_source_files: bool = False,
 ) -> set[str]:
     component_path = source_root if root == "." else source_root / root
     if depth >= _LOGICAL_DOMAIN_MAX_DEPTH or not component_path.is_dir():
+        return {root}
+    # Capacity refinement must retain a root that owns direct source files.
+    # Splitting its children would otherwise drop those files or create
+    # overlapping source ownership. Initial logical discovery keeps the
+    # established workspace behavior and can still descend through a root.
+    if preserve_direct_source_files and any(
+        path.parent == component_path for path in _source_files(component_path)
+    ):
         return {root}
     children = [
         path
@@ -300,13 +344,21 @@ def _split_logical_domain_root(
     }
     if len(children) == 1:
         return _split_logical_domain_root(
-            source_root, next(iter(child_roots)), depth=depth + 1
+            source_root,
+            next(iter(child_roots)),
+            depth=depth + 1,
+            preserve_direct_source_files=preserve_direct_source_files,
         )
 
     leaves: set[str] = set()
     for child_root in child_roots:
         leaves.update(
-            _split_logical_domain_root(source_root, child_root, depth=depth + 1)
+            _split_logical_domain_root(
+                source_root,
+                child_root,
+                depth=depth + 1,
+                preserve_direct_source_files=preserve_direct_source_files,
+            )
         )
     # Preserve a useful top-level boundary when recursive splitting would
     # create a noisy directory inventory instead of documentation domains.

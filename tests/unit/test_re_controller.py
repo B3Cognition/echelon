@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from harness.re_controller import ReExtractionController
+from harness.re_domain_manifest import DOMAIN_PARTITION_VERSION
 from harness.squad_provider import SquadAgentResult
 from tests.unit.test_re_publication import _deep_spec, write_valid_re_run
 
@@ -27,17 +28,39 @@ class _ShallowSpecifierProvider:
     def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
         phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
         self.phases.append(phase)
+        payload: dict[str, object] = {
+            "verdict": "DONE",
+            "state_updates": {},
+            "journal_entries": [],
+        }
+        if phase == "re-extract-5-validate":
+            payload["semantic_quality_review"] = _passing_semantic_quality_review(prompt)
         return SquadAgentResult(
             exit_code=0,
-            echelon_result={
-                "verdict": "DONE",
-                "state_updates": {},
-                "journal_entries": [],
-            },
+            echelon_result=payload,
             raw_output="",
             duration_ms=1,
             timed_out=False,
         )
+
+
+def _passing_semantic_quality_review(prompt: str) -> dict[str, object]:
+    re_dir = Path(prompt.split("RE output directory: ", 1)[1].split("\n", 1)[0])
+    domains: list[dict[str, object]] = []
+    for manifest_path in sorted((re_dir / "sources").glob("*/domain-manifest.json")):
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        source_id = manifest["source_id"]
+        for domain in manifest["domains"]:
+            domains.append(
+                {
+                    "source_id": source_id,
+                    "domain_id": domain["domain_id"],
+                    "verdict": "PASS",
+                    "findings": [],
+                    "source_evidence": [],
+                }
+            )
+    return {"schema_version": 1, "domains": domains}
 
 
 def _initialize_re_state(run_dir: Path, *, max_repairs: int) -> None:
@@ -59,7 +82,7 @@ def _initialize_re_state(run_dir: Path, *, max_repairs: int) -> None:
             "max_validate_iterations": 3,
             "verify_expand_iterations": 0,
             "validate_iterations": 0,
-            "re_domain_partition_version": 2,
+            "re_domain_partition_version": DOMAIN_PARTITION_VERSION,
         }
     )
     path.write_text(json.dumps(state), encoding="utf-8")
@@ -250,9 +273,8 @@ def test_repaired_specification_advances_to_all_downstream_re_phases(
             return SquadAgentResult(
                 exit_code=result.exit_code,
                 echelon_result={
-                    "verdict": "DONE",
+                    **result.echelon_result,
                     "state_updates": updates,
-                    "journal_entries": [],
                 },
                 raw_output=result.raw_output,
                 duration_ms=result.duration_ms,
@@ -299,9 +321,8 @@ def test_below_threshold_coverage_runs_expander_then_reverifies(
             return SquadAgentResult(
                 exit_code=result.exit_code,
                 echelon_result={
-                    "verdict": "DONE",
+                    **result.echelon_result,
                     "state_updates": updates,
-                    "journal_entries": [],
                 },
                 raw_output=result.raw_output,
                 duration_ms=result.duration_ms,
@@ -387,15 +408,39 @@ def test_controller_dispatches_one_specifier_call_for_each_required_domain(
                 evidence = "\n".join(
                     f"- `{root}/file-{number}.ts:1`" for number in range(1, 6)
                 )
+                scenarios = "\n\n".join(
+                    (
+                        f"### Scenario {number}: API behavior {number}\n\n"
+                        f"Source Evidence: `{root}/file-{((number - 1) % 5) + 1}.ts:1`\n\n"
+                        "Given valid input, When the API is invoked, Then the result is returned."
+                    )
+                    for number in range(1, 6)
+                )
+                functional_requirements = "\n\n".join(
+                    (
+                        f"### FR-{number:03d}: API requirement {number}\n\n"
+                        f"Source Evidence: `{root}/file-{((number - 1) % 5) + 1}.ts:1`"
+                    )
+                    for number in range(1, 8)
+                )
+                non_functional_requirements = "\n\n".join(
+                    (
+                        f"### NFR-{number:03d}: API constraint {number}\n\n"
+                        f"Source Evidence: `{root}/file-{((number - 1) % 5) + 1}.ts:1`"
+                    )
+                    for number in range(1, 4)
+                )
                 (specs_root / domain_id).mkdir(parents=True, exist_ok=True)
                 (specs_root / domain_id / "spec.md").write_text(
                     "\n".join(
                         [
                             f"# {domain_id}",
                             "## User Scenarios & Testing",
-                            "Scenario coverage.",
+                            scenarios,
                             "## Requirements (Functional)",
-                            "Functional behavior.",
+                            functional_requirements,
+                            "## Requirements (Non-Functional)",
+                            non_functional_requirements,
                             "## Key Entities",
                             "Domain entities.",
                             "## Edge Cases",
@@ -415,7 +460,7 @@ def test_controller_dispatches_one_specifier_call_for_each_required_domain(
                 updates["resolution_pct"] = 80
             return SquadAgentResult(
                 exit_code=result.exit_code,
-                echelon_result={"verdict": "DONE", "state_updates": updates, "journal_entries": []},
+                echelon_result={**result.echelon_result, "state_updates": updates},
                 raw_output="",
                 duration_ms=1,
                 timed_out=False,
@@ -453,7 +498,7 @@ def test_controller_ignores_non_routing_repair_metadata_from_a_done_agent(
                 updates["resolution_pct"] = 80
             return SquadAgentResult(
                 exit_code=0,
-                echelon_result={"verdict": "DONE", "state_updates": updates, "journal_entries": []},
+                echelon_result={**result.echelon_result, "state_updates": updates},
                 raw_output="",
                 duration_ms=1,
                 timed_out=False,
@@ -467,6 +512,72 @@ def test_controller_ignores_non_routing_repair_metadata_from_a_done_agent(
     ).run()
 
     assert result.completed
+
+
+@pytest.mark.unit
+def test_semantic_quality_repair_returns_only_the_failed_domain_to_specifier(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+
+    class SemanticRepairProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            phase = self.phases[-1]
+            payload = dict(result.echelon_result)
+            updates: dict[str, int] = {}
+            if phase == "re-extract-3-verify":
+                updates["coverage_pct"] = 80
+            if phase == "re-extract-5-validate":
+                review = _passing_semantic_quality_review(prompt)
+                if self.phases.count(phase) == 1:
+                    review["domains"] = [
+                        {
+                            "source_id": "api",
+                            "domain_id": "001-re-domain",
+                            "verdict": "REPAIR",
+                            "findings": [
+                                "FR-001 omits the observed retry exhaustion behavior."
+                            ],
+                            "source_evidence": ["`src/file-1.ts:1`"],
+                        }
+                    ]
+                payload["semantic_quality_review"] = review
+            if (
+                phase == "re-extract-2-specify"
+                and self.phases.count(phase) == 3
+            ):
+                spec.write_text(
+                    spec.read_text(encoding="utf-8")
+                    + "\nRetry exhaustion is documented from `src/file-1.ts:1`.\n",
+                    encoding="utf-8",
+                )
+            payload["state_updates"] = updates
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result=payload,
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    provider = SemanticRepairProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert provider.phases.count("re-extract-2-specify") == 3
+    assert provider.phases.count("re-extract-5-validate") == 2
+    assert "Retry exhaustion is documented" in spec.read_text(encoding="utf-8")
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert state["re_quality_repair_attempts"] == 1
+    assert state["re_semantic_quality_report"].endswith("quality/semantic-quality-review.json")
 
 
 @pytest.mark.unit
@@ -678,10 +789,10 @@ def test_legacy_specification_resume_migrates_a_changed_domain_partition(
             encoding="utf-8"
         )
     )
-    assert manifest["partition_version"] == 2
+    assert manifest["partition_version"] == DOMAIN_PARTITION_VERSION
     assert [domain["root"] for domain in manifest["domains"]] == ["pages", "shared"]
     resumed_state = json.loads(state_path.read_text(encoding="utf-8"))
-    assert resumed_state["re_domain_partition_version"] == 2
+    assert resumed_state["re_domain_partition_version"] == DOMAIN_PARTITION_VERSION
     assert resumed_state["re_specification_targets"][0]["domain_id"] == "001-re-pages"
 
 
@@ -723,7 +834,7 @@ def test_legacy_analysis_resume_removes_obsolete_specs_for_a_changed_partition(
 
     assert result is None
     assert old_spec.is_file() is False
-    assert state["re_domain_partition_version"] == 2
+    assert state["re_domain_partition_version"] == DOMAIN_PARTITION_VERSION
     assert [target["domain_id"] for target in state["re_specification_targets"]] == [
         "001-re-pages",
         "002-re-shared",

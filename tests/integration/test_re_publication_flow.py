@@ -261,13 +261,31 @@ def test_mode1_controller_rebuilds_missing_state_and_specs_before_publication(
                 updates["coverage_pct"] = 80
             if phase == "re-extract-5-validate":
                 updates["resolution_pct"] = 80
+            payload: dict[str, object] = {
+                "verdict": "DONE",
+                "state_updates": updates,
+                "journal_entries": [],
+            }
+            if phase == "re-extract-5-validate":
+                manifest = json.loads(
+                    (source / "domain-manifest.json").read_text(encoding="utf-8")
+                )
+                payload["semantic_quality_review"] = {
+                    "schema_version": 1,
+                    "domains": [
+                        {
+                            "source_id": manifest["source_id"],
+                            "domain_id": domain["domain_id"],
+                            "verdict": "PASS",
+                            "findings": [],
+                            "source_evidence": [],
+                        }
+                        for domain in manifest["domains"]
+                    ],
+                }
             return SquadAgentResult(
                 exit_code=0,
-                echelon_result={
-                    "verdict": "DONE",
-                    "state_updates": updates,
-                    "journal_entries": [],
-                },
+                echelon_result=payload,
                 raw_output="",
                 duration_ms=1,
                 timed_out=False,

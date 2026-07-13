@@ -92,15 +92,16 @@ Each domain spec must include:
 
 - Header: domain ID, source ID/path, profile/depth, status, dependencies
 - Complexity Estimation: files, lines, commits, contributors, hotspots, rationale
-- User Scenarios & Testing: 5-10 stories with priority, source evidence, Given/When/Then acceptance scenarios, and technical notes
-- Requirements (Functional): numbered requirements with concrete Source Evidence
+- User Scenarios & Testing: use `### Scenario N:` headings. Meet the controller-provided minimum, and give every scenario priority, valid source evidence, at least one Given/When/Then acceptance scenario, and technical notes.
+- Requirements (Functional): use `### FR-NNN:` headings. Meet the controller-provided minimum, and give every FR concrete valid Source Evidence.
+- Requirements (Non-Functional): use `### NFR-NNN:` headings. Meet the controller-provided minimum using only constraints observed in the owned code or tests (security, reliability, performance, accessibility, compatibility, or operability). Give every NFR concrete valid Source Evidence; never invent an SLA or a constraint that the source does not support.
 - Key Entities: attributes, constraints, relationships, and behaviors
 - Edge Cases: observed handling with source references
 - Success Criteria: measurable outcomes
 
 ### FULL-depth acceptance gate
 
-Before returning `DONE`, verify the target spec contains all required deep sections and at least five concrete backticked `path:line` references. Each reference may be source-root or domain-root relative, but must resolve inside its owned root. On failure return `BLOCKED` with `blocked_reason: shallow_summary_only_spec` and list the failing paths.
+Before returning `DONE`, verify the target spec meets the controller-provided adaptive scenario/FR/NFR counts, every listed item has the required valid evidence, every scenario includes Given/When/Then, and the spec contains at least five concrete backticked `path:line` references. Each reference may be source-root or domain-root relative, but must resolve inside its owned root. On failure return `BLOCKED` with `blocked_reason: shallow_summary_only_spec` and list the failing paths.
 
 ## Workspace Synthesis Protocol
 

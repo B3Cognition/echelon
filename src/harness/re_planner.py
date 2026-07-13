@@ -14,6 +14,7 @@ from harness.re_registry import (
     PublishedReIndex,
     published_source_is_current,
 )
+from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
 
 RePolicy = Literal[
     "none",
@@ -289,6 +290,7 @@ def build_re_execution_plan(
                 fingerprint=fingerprint.value,
                 profile_hash=fingerprint.profile_hash,
                 expect_empty=source_empty,
+                quality_contract_version=QUALITY_CONTRACT_VERSION,
             )
         )
         selected = _source_selected(policy, source, target)
