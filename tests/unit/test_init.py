@@ -73,6 +73,13 @@ def test_init_sets_visual_tests_enabled_when_playwright_detected(tmp_path):
         config = init_harness(str(tmp_path), base_dir=str(tmp_path))
 
     assert config.visual_tests.enabled is True
+    mock_gitops.create_worktree.assert_called_once_with(
+        "init",
+        "fingerprint",
+        0,
+        build_id="init",
+        prepare_codegraph=False,
+    )
 
 
 def test_init_does_not_enable_visual_tests_when_playwright_absent(tmp_path):

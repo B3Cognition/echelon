@@ -333,6 +333,7 @@ class RalphController:
                 self._spec_id, self._strategy_id, outer_iter,
                 base_branch=feature_branch,
                 build_id=self._build_id,
+                prepare_codegraph=True,
             )
             preserve_worktree = False
 

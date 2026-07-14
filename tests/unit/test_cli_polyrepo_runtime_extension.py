@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from shutil import copytree
-import subprocess
 
 import yaml
 
@@ -17,12 +16,12 @@ from harness.runtime_surface import (
 )
 
 
-def test_polyrepo_runtime_extension_copies_resolvable_codegraph_runtime(
+def test_polyrepo_runtime_extension_excludes_codegraph_node_modules(
     tmp_path: Path,
 ) -> None:
-    """Target harness roots retain the CodeGraph SDK needed by delivery worktrees."""
+    """Target harness roots retain locked CodeGraph source, not installed packages."""
     source = tmp_path / "workspace" / ".specify" / "extensions" / "echelon"
-    runtime = source / "scripts" / "node" / "re"
+    runtime = source / "scripts" / "node" / "codegraph"
     package = runtime / "node_modules" / "@colbymchenry" / "codegraph"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
@@ -31,6 +30,8 @@ def test_polyrepo_runtime_extension_copies_resolvable_codegraph_runtime(
         "commander\n", encoding="utf-8"
     )
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (runtime / "package.json").write_text('{"name":"codegraph"}\n', encoding="utf-8")
+    (runtime / "package-lock.json").write_text("{}\n", encoding="utf-8")
     (package / "package.json").write_text(
         '{"name":"@colbymchenry/codegraph","version":"1.4.1","main":"index.js"}\n',
         encoding="utf-8",
@@ -40,16 +41,18 @@ def test_polyrepo_runtime_extension_copies_resolvable_codegraph_runtime(
     harness_base = tmp_path / "workspace" / "runs" / "targets" / "prosaic"
     _sync_polyrepo_runtime_extension(tmp_path / "workspace", harness_base)
 
-    deployed_runtime = harness_base / ".specify" / "extensions" / "echelon" / "scripts" / "node" / "re"
-    resolved = subprocess.run(
-        ["node", "-e", "require('@colbymchenry/codegraph')"],
-        cwd=deployed_runtime,
-        check=False,
-        capture_output=True,
-        text=True,
+    deployed_runtime = (
+        harness_base
+        / ".specify"
+        / "extensions"
+        / "echelon"
+        / "scripts"
+        / "node"
+        / "codegraph"
     )
-
-    assert resolved.returncode == 0, resolved.stderr
+    assert (deployed_runtime / "package.json").exists()
+    assert (deployed_runtime / "package-lock.json").exists()
+    assert not (deployed_runtime / "node_modules").exists()
 
 
 def test_polyrepo_runtime_extension_excludes_python_migration_helpers(
