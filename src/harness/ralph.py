@@ -1144,7 +1144,7 @@ class RalphController:
                         failure_history,
                         same_failures,
                     )
-                    self._escalation.escalate(
+                    escalation_file = self._escalation.escalate(
                         spec_id=self._spec_id,
                         strategy_id=self._strategy_id,
                         category="same_failure_repeat",
@@ -1157,6 +1157,9 @@ class RalphController:
                         ),
                         last_verify_result=_verify_to_dict(current_verify),
                     )
+                    state = self._state_store.read()
+                    state["escalation_file"] = escalation_file
+                    self._state_store.write(state)
                     return {
                         "converged": False,
                         "blocked": True,

@@ -104,10 +104,46 @@ class TestEscalationFileCreation:
 
         metadata = _json_section(Path(filepath).read_text(encoding="utf-8"), "Decision Metadata")
         assert metadata["schema_version"] == 1
-        assert metadata["answer_type"] == "free_text"
+        assert metadata["answer_type"] == "choice"
         assert metadata["question"] == "Should we retry or abort?"
         assert metadata["options_considered"] == ["Retry after 30s", "Abort and notify"]
         assert metadata["recommended_answer"] == "Retry after 30s"
+        assert metadata["suggested_answers"][0]["label"] == "Retry with blocker context"
+
+    def test_same_failure_repeat_fulfillment_gap_includes_workflow_safe_suggestions(
+        self, handler: EscalationHandler
+    ) -> None:
+        filepath = handler.escalate(
+            spec_id="906",
+            strategy_id="default",
+            category="same_failure_repeat",
+            context="Same fulfillment gap repeated.",
+            last_verify_result={
+                "passed": False,
+                "failures": [
+                    {
+                        "id": "fulfillment-gaps",
+                        "error": "fulfillment report has unresolved statuses",
+                    }
+                ],
+            },
+        )
+
+        content = Path(filepath).read_text(encoding="utf-8")
+        assert "## Suggested Answers" in content
+        assert "Continue implementing gaps" in content
+        assert "Stop and reopen/waive through harness" in content
+        assert "Reconcile bookkeeping only" in content
+        assert "bypass" not in content.lower()
+        assert "cherry-pick" not in content.lower()
+
+        metadata = _json_section(content, "Decision Metadata")
+        suggestions = metadata["suggested_answers"]
+        assert len(suggestions) == 4
+        assert metadata["answer_type"] == "choice"
+        assert any(option["recommended"] for option in suggestions)
+        assert all("answer" in option for option in suggestions)
+        assert all("consequence" in option for option in suggestions)
 
     def test_no_progress_file_prefers_continue_without_answer(
         self, handler: EscalationHandler

@@ -28,6 +28,11 @@ def _resume_answer_command(spec_id: str) -> str:
     return f'echelon delivery resume {spec_id} "<answer>"'
 
 
+def _resume_choice_command(spec_id: str, answer: str) -> str:
+    safe_answer = answer.replace("\\", "\\\\").replace('"', '\\"')
+    return f'echelon delivery resume {spec_id} "{safe_answer}"'
+
+
 def print_escalation_sticky_banner(spec_id: str, strategy_id: str, esc_file: str) -> None:
     """Print a structured blocked banner to stderr when an escalation is still pending."""
     from echelon.ui import banner as _banner
@@ -272,6 +277,11 @@ def _render_escalation_file(
     timestamp: str,
 ) -> str:
     """Render escalation file content in markdown format."""
+    suggested_answers = _suggested_answers(
+        spec_id=spec_id,
+        category=category,
+        last_verify_result=last_verify_result,
+    )
     lines = [
         f"# Escalation: {category}",
         "",
@@ -305,15 +315,28 @@ def _render_escalation_file(
         lines.append(recommended_answer)
         lines.append("")
 
+    if suggested_answers:
+        lines.append("## Suggested Answers")
+        lines.append("")
+        for option in suggested_answers:
+            marker = " (recommended)" if option.get("recommended") else ""
+            lines.append(f"- **{option['label']}**{marker}")
+            lines.append(f"  - Answer: `{option['answer']}`")
+            lines.append(f"  - Command: `{_resume_choice_command(spec_id, option['answer'])}`")
+            lines.append(f"  - Consequence: {option['consequence']}")
+        lines.append("")
+
     metadata: Dict[str, Any] = {
         "schema_version": 1,
-        "answer_type": "free_text",
+        "answer_type": "choice" if suggested_answers else "free_text",
         "question": question,
         "category": category,
         "spec_id": spec_id,
         "strategy_id": strategy_id,
         "blocked_at": timestamp,
     }
+    if suggested_answers:
+        metadata["suggested_answers"] = suggested_answers
     if options_considered:
         metadata["options_considered"] = options_considered
     if recommended_answer:
@@ -354,6 +377,99 @@ def _render_escalation_file(
     lines.append("")
 
     return "\n".join(lines)
+
+
+def _last_verify_failure_ids(last_verify_result: Optional[Dict[str, Any]]) -> set[str]:
+    if not isinstance(last_verify_result, dict):
+        return set()
+    failures = last_verify_result.get("failures")
+    if not isinstance(failures, list):
+        return set()
+    ids: set[str] = set()
+    for failure in failures:
+        if isinstance(failure, dict):
+            fid = str(failure.get("id") or "").strip()
+            if fid:
+                ids.add(fid)
+    return ids
+
+
+def _suggested_answers(
+    *,
+    spec_id: str,
+    category: str,
+    last_verify_result: Optional[Dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return workflow-safe resume choices for a harness escalation."""
+    if "fulfillment-gaps" in _last_verify_failure_ids(last_verify_result):
+        return [
+            {
+                "label": "Continue implementing gaps",
+                "answer": (
+                    "Continue delivery using fulfillment-gaps.md as mandatory "
+                    "implementation context; implement unresolved fulfillment rows "
+                    "before verifying again."
+                ),
+                "consequence": "Runs another harness-owned implementation attempt.",
+                "recommended": True,
+            },
+            {
+                "label": "Accept partial via harness decision",
+                "answer": (
+                    "Stop delivery; require a harness-owned acceptance or waiver "
+                    "decision for unresolved fulfillment rows before any landing."
+                ),
+                "consequence": "Preserves the current partial result while keeping the gate owned by the harness.",
+            },
+            {
+                "label": "Stop and reopen/waive through harness",
+                "answer": (
+                    f"Stop delivery and run echelon spec reopen {spec_id} for the "
+                    "unresolved requirement decision before starting delivery again."
+                ),
+                "consequence": "Moves the product/spec decision into the reopen workflow.",
+            },
+            {
+                "label": "Reconcile bookkeeping only",
+                "answer": (
+                    "Run fulfillment reconciliation for task-progress bookkeeping "
+                    "only; do not treat reconciliation as resolving fulfillment gaps."
+                ),
+                "consequence": "Syncs safe task state without changing unresolved requirement status.",
+            },
+        ]
+
+    if category == "no_progress":
+        return [
+            {
+                "label": "Continue without answer",
+                "answer": "Continue the delivery loop without new instructions.",
+                "consequence": "Retries the current slice through the harness continuation path.",
+                "recommended": True,
+            },
+            {
+                "label": "Clarify implementation direction",
+                "answer": "Resume with additional implementation guidance for the blocked slice.",
+                "consequence": "Records human guidance before retrying the slice.",
+            },
+        ]
+
+    return [
+        {
+            "label": "Retry with blocker context",
+            "answer": "Continue the delivery loop using this escalation context as mandatory guidance.",
+            "consequence": "Retries through the harness with the recorded human decision.",
+            "recommended": True,
+        },
+        {
+            "label": "Stop and reopen spec",
+            "answer": (
+                f"Stop delivery and run echelon spec reopen {spec_id} to resolve "
+                "the blocker before starting delivery again."
+            ),
+            "consequence": "Moves the decision to the harness-owned spec reopen workflow.",
+        },
+    ]
 
 
 def _print_banner(

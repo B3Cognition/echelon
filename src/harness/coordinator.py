@@ -243,6 +243,7 @@ class StrategyCoordinator:
                 "salvage_commit": state.get("salvage_commit"),
                 "salvage_branch": state.get("salvage_branch"),
                 "salvage_verified": state.get("salvage_verified"),
+                "escalation_file": state.get("escalation_file"),
             }
 
         # Summary
