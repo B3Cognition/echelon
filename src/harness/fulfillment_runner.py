@@ -366,6 +366,38 @@ class FulfillmentRunner:
             if report is None or not fulfillment_report_is_current(
                 report, current_commit=commit
             ):
+                if (
+                    report is not None
+                    and verified_fulfillment_ledger_path(spec_dir).is_file()
+                    and ledger_plan.reused_requirement_ids
+                    and not ledger_plan.rechecked_requirement_ids
+                ):
+                    stamp_fulfillment_report(
+                        report,
+                        spec_id=spec_id,
+                        commit=commit,
+                        extra_metadata={
+                            "verify_scope": "scoped",
+                            "base_full_verify_commit": plan.base_full_verify_commit or "",
+                            "scoped_requirement_ids": [],
+                        },
+                    )
+                    _write_verified_fulfillment_ledger(
+                        worktree,
+                        spec_dir=spec_dir,
+                        report=report,
+                        spec_input_hash=spec_input_hash,
+                        implementation_input_hash=implementation_input_hash,
+                    )
+                    return FulfillmentRefreshResult(
+                        status="cached",
+                        exit_code=0,
+                        used_cache=True,
+                        scope="scoped",
+                        reason="scoped verify-spec reused verified ledger",
+                        report_path=report_path,
+                        verified_ledger=verified_ledger,
+                    )
                 return self.refresh(
                     worktree_path,
                     spec_id,

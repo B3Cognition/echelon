@@ -1080,6 +1080,61 @@ class TestFulfillmentRunner:
         assert result.reason == "scoped verify-spec skipped; no impacted requirements"
         provider.exec_prompt.assert_not_called()
 
+    def test_scoped_refresh_reuses_ledger_when_commit_changes_but_inputs_do_not(
+        self, tmp_path
+    ):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "a.swift").write_text("let a = 1\n", encoding="utf-8")
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_full_report(_worktree_path: str, _prompt: str) -> int:
+            report.write_text(
+                "| ID | Status | Evidence | Confidence | Notes |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| FR-001 | IMPLEMENTED | src/a.swift | high | reusable |\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_full_report
+        runner = FulfillmentRunner(provider)
+
+        with patch(
+            "harness.fulfillment_runner._current_git_commit",
+            side_effect=["old123", "new456"],
+        ):
+            full = runner.refresh(str(tmp_path), "spec-001")
+            scoped = runner.refresh(
+                str(tmp_path),
+                "spec-001",
+                scope="scoped",
+                completed_task_ids=[],
+            )
+
+        assert full.status == "refreshed"
+        assert scoped.status == "cached"
+        assert scoped.scope == "scoped"
+        assert scoped.reason == "scoped verify-spec reused verified ledger"
+        assert scoped.verified_ledger == {
+            "reused": 1,
+            "rechecked": 0,
+            "invalidated": 0,
+            "unresolved": 0,
+        }
+        provider.exec_prompt.assert_called_once()
+        metadata = read_fulfillment_metadata(report)
+        assert metadata["verified_commit"] == "new456"
+        assert metadata["verify_scope"] == "scoped"
+        assert metadata["base_full_verify_commit"] == "old123"
+        assert "| FR-001 | IMPLEMENTED | src/a.swift | high | reusable |" in report.read_text(
+            encoding="utf-8"
+        )
+
     def test_scoped_refresh_falls_back_to_full_when_report_is_stale(self, tmp_path):
         _write_verify_skill(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"
