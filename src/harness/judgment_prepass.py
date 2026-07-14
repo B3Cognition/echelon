@@ -15,6 +15,7 @@ FULFILLMENT_STATUSES = {
     "MISSING",
     "DEVIATED",
     "OBSOLETE_SPEC",
+    "DEFERRED_SCOPE",
 }
 
 
@@ -428,5 +429,6 @@ def _status_sort_key(status: str) -> tuple[int, str]:
         "MISSING": 3,
         "DEVIATED": 4,
         "OBSOLETE_SPEC": 5,
+        "DEFERRED_SCOPE": 6,
     }
     return (order.get(status, 99), status)

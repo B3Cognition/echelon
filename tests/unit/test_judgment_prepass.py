@@ -839,7 +839,7 @@ def test_write_fallback_fulfillment_template_limits_rows_to_scoped_fallback_ids(
     assert result == ["FR-002"]
     assert (
         "Allowed status values: IMPLEMENTED, PARTIAL, UNVERIFIED, MISSING, "
-        "DEVIATED, OBSOLETE_SPEC."
+        "DEVIATED, OBSOLETE_SPEC, DEFERRED_SCOPE."
     ) in text
     assert "| FR-001 |" not in text
     assert "| FR-002 | TODO_STATUS | TODO_EVIDENCE |" in text

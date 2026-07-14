@@ -44,6 +44,10 @@ python -m harness assemble-fulfillment-report \
   "{spec_dir}/fulfillment-report.md" \
   "{spec_dir}/fulfillment-report.md" \
   "{verify_run_dir}/state.json"
+python -m harness apply-deferred-scope \
+  "{spec_dir}" \
+  "{spec_dir}/fulfillment-report.md" \
+  "{verify_run_dir}/state.json"
 ```
 
 Then proceed directly to row-set integrity validation and summary.
@@ -132,6 +136,10 @@ python -m harness assemble-fulfillment-report \
   "{verify_run_dir}/canonical-requirements.json" \
   "{verify_run_dir}/judgment-prepass.json" \
   "{verify_run_dir}/fulfillment-report.fallback.md" \
+  "{spec_dir}/fulfillment-report.md" \
+  "{verify_run_dir}/state.json"
+python -m harness apply-deferred-scope \
+  "{spec_dir}" \
   "{spec_dir}/fulfillment-report.md" \
   "{verify_run_dir}/state.json"
 ```

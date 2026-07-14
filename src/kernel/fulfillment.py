@@ -8,11 +8,14 @@ from pathlib import Path
 import re
 from typing import Any
 
+from harness.deferred_scope import active_entries
+
 NON_STRICT_BLOCKING = {"MISSING", "PARTIAL", "DEVIATED"}
 STRICT_BLOCKING = NON_STRICT_BLOCKING | {"UNVERIFIED"}
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---(?:\n|$)", re.DOTALL)
 _TABLE_ITEM_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:-[A-Z0-9_.:]+)*$")
-_KNOWN_STATUSES = STRICT_BLOCKING | {"IMPLEMENTED", "OBSOLETE_SPEC"}
+DEFERRED_SCOPE = "DEFERRED_SCOPE"
+_KNOWN_STATUSES = STRICT_BLOCKING | {"IMPLEMENTED", "OBSOLETE_SPEC", DEFERRED_SCOPE}
 
 
 @dataclass(frozen=True)
@@ -67,7 +70,7 @@ def _statuses_in_report(report_path: Path) -> set[str]:
         r"^(?:FR|AC|US|NFR|REQ|EDGE|SC|CONSTRAINT)[A-Za-z0-9_.:-]*$"
     )
     summary_count = re.compile(
-        r"\b(?P<status>MISSING|PARTIAL|DEVIATED|UNVERIFIED)\s*(?::|=)?\s*(?P<count>\d+)\b"
+        r"\b(?P<status>MISSING|PARTIAL|DEVIATED|UNVERIFIED|DEFERRED_SCOPE)\s*(?::|=)?\s*(?P<count>\d+)\b"
     )
 
     for line in text.splitlines():
@@ -95,6 +98,69 @@ def fulfillment_has_blocking_gaps(report_path: Path, strict: bool = False) -> bo
     if not report_path.exists():
         return False
     return bool(_statuses_in_report(report_path) & blocking_statuses(strict))
+
+
+def apply_deferred_scope_to_report(report_path: Path, spec_dir: Path) -> tuple[str, ...]:
+    """Overlay active, explicitly deferred requirement IDs onto a report."""
+    entries_by_id = {
+        item_id: entry
+        for entry in active_entries(spec_dir)
+        for item_id in entry.selected_ids
+        if not item_id.startswith("T-")
+    }
+    if not entries_by_id:
+        return ()
+    changed: list[str] = []
+    lines: list[str] = []
+    for line in report_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        cells = _table_cells(line)
+        if cells is None or len(cells) < 3:
+            lines.append(line)
+            continue
+        entry = entries_by_id.get(cells[0])
+        if entry is None:
+            lines.append(line)
+            continue
+        cells[1] = DEFERRED_SCOPE
+        cells[2] = f"defer:{entry.entry_id}: {_escape_table_cell(entry.reason)}"
+        lines.append("| " + " | ".join(cells) + " |")
+        changed.append(cells[0])
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return tuple(changed)
+
+
+def validate_deferred_scope_rows(report_path: Path, spec_dir: Path) -> list[str]:
+    """Return unsupported DEFERRED_SCOPE rows without treating prose as rows."""
+    active_ids = {
+        item_id
+        for entry in active_entries(spec_dir)
+        for item_id in entry.selected_ids
+        if not item_id.startswith("T-")
+    }
+    issues: list[str] = []
+    for line in report_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        cells = _table_cells(line)
+        if cells is None or len(cells) < 2 or cells[1] != DEFERRED_SCOPE:
+            continue
+        if cells[0] not in active_ids:
+            issues.append(f"{cells[0]} has no active defer entry")
+    return issues
+
+
+def _table_cells(line: str) -> list[str] | None:
+    stripped = line.strip()
+    if not stripped.startswith("|"):
+        return None
+    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+    if not cells or cells[0] in {"ID", "Requirement", "Status"}:
+        return None
+    if set(cells[0]) <= {"-", ":"}:
+        return None
+    return cells
+
+
+def _escape_table_cell(value: str) -> str:
+    return value.replace("|", "\\|")
 
 
 def read_fulfillment_metadata(report_path: Path) -> dict[str, Any]:
@@ -189,7 +255,7 @@ def fulfillment_table_ids(markdown: str) -> set[str]:
 def _summary_status_counts(markdown: str) -> dict[str, set[int]]:
     counts: dict[str, set[int]] = {status: set() for status in _KNOWN_STATUSES}
     inline_count = re.compile(
-        r"\b(?P<status>IMPLEMENTED|PARTIAL|UNVERIFIED|MISSING|DEVIATED|OBSOLETE_SPEC)"
+        r"\b(?P<status>IMPLEMENTED|PARTIAL|UNVERIFIED|MISSING|DEVIATED|OBSOLETE_SPEC|DEFERRED_SCOPE)"
         r"\s*(?::|=)?\s*(?P<count>\d+)\b"
     )
 

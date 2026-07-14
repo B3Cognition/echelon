@@ -21,6 +21,7 @@ Subcommands:
   write-codegraph-evidence-map — write deterministic requirement-to-CodeGraph map
   write-requirement-audit — write deterministic requirement audit from canonical inventory
   validate-fulfillment-artifacts — validate fulfillment report row-set integrity
+  apply-deferred-scope — overlay committed deferred scope onto fulfillment report
   inspect-fulfillment-report — print deterministic fulfillment report metadata JSON
   verify-docs — write deterministic README/CHANGELOG verification report
   migrate-tasks — migrate legacy tasks.md markers to canonical rows
@@ -433,6 +434,35 @@ def _assemble_fulfillment_report() -> None:
             },
         )
     print(f"OK: assembled fulfillment report at {Path(sys.argv[5]).resolve()}")
+
+
+def _apply_deferred_scope() -> None:
+    if len(sys.argv) not in {4, 5}:
+        print(
+            "Usage: python -m harness apply-deferred-scope <spec-dir> <fulfillment-report.md> [state.json]",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from kernel.fulfillment import apply_deferred_scope_to_report, validate_deferred_scope_rows
+
+    spec_dir = Path(sys.argv[2]).resolve()
+    report_path = Path(sys.argv[3]).resolve()
+    changed = apply_deferred_scope_to_report(report_path, spec_dir)
+    issues = validate_deferred_scope_rows(report_path, spec_dir)
+    if issues:
+        print(f"invalid deferred scope: {'; '.join(issues)}", file=sys.stderr)
+        sys.exit(1)
+    if len(sys.argv) == 5:
+        state_path = Path(sys.argv[4]).resolve()
+        _require_existing_json_state_file(state_path)
+        _stamp_verify_spec_state(
+            state_path.parent,
+            {"deferred_scope_rows": list(changed)},
+        )
+    print(f"OK: applied deferred scope to {len(changed)} fulfillment row{'s' if len(changed) != 1 else ''}")
 
 
 def _write_fallback_fulfillment_template() -> None:
@@ -1272,6 +1302,8 @@ def main() -> None:
         _write_fallback_fulfillment_template()
     elif subcommand == "assemble-fulfillment-report":
         _assemble_fulfillment_report()
+    elif subcommand == "apply-deferred-scope":
+        _apply_deferred_scope()
     elif subcommand == "validate-fulfillment-artifacts":
         _validate_fulfillment_artifacts()
     elif subcommand == "write-codegraph-evidence":
@@ -1300,7 +1332,7 @@ def main() -> None:
             "'init-verify-spec-run', 'write-canonical-requirements', "
             "'write-requirement-audit', 'write-judgment-prepass', "
             "'write-fallback-fulfillment-template', "
-            "'assemble-fulfillment-report', 'validate-fulfillment-artifacts', "
+            "'assemble-fulfillment-report', 'apply-deferred-scope', 'validate-fulfillment-artifacts', "
             "'write-codegraph-evidence', "
             "'write-codegraph-evidence-map', 'inspect-fulfillment-report', "
             "'verify-docs', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",

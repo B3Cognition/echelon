@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 from kernel.fulfillment import (
+    apply_deferred_scope_to_report,
     NON_STRICT_BLOCKING,
     STRICT_BLOCKING,
     blocking_statuses,
@@ -14,7 +15,9 @@ from kernel.fulfillment import (
     make_verify_spec_run_dir,
     stamp_fulfillment_report,
     validate_fulfillment_artifacts,
+    validate_deferred_scope_rows,
 )
+from harness.deferred_scope import apply_defer
 
 
 def _run_harness(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -181,6 +184,43 @@ def test_zero_fulfillment_summary_counts_are_not_blocking(tmp_path):
 def test_blocking_statuses_returns_expected_sets():
     assert blocking_statuses() == NON_STRICT_BLOCKING
     assert blocking_statuses(strict=True) == STRICT_BLOCKING
+
+
+def test_deferred_scope_replaces_only_ledger_backed_requirement_rows(tmp_path: Path):
+    spec_dir = tmp_path / "specs" / "906-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("NFR-008\n", encoding="utf-8")
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=NFR-008 depends=none\n",
+        encoding="utf-8",
+    )
+    apply_defer(spec_dir, ["NFR-008"], reason="contradictory contrast rule")
+    report = spec_dir / "fulfillment-report.md"
+    report.write_text(
+        "| ID | Status | Evidence |\n| --- | --- | --- |\n"
+        "| NFR-008 | DEVIATED | no valid palette |\n",
+        encoding="utf-8",
+    )
+
+    changed = apply_deferred_scope_to_report(report, spec_dir)
+
+    assert changed == ("NFR-008",)
+    assert "| NFR-008 | DEFERRED_SCOPE | defer:defer-001: contradictory contrast rule |" in report.read_text(encoding="utf-8")
+    assert fulfillment_has_blocking_gaps(report) is False
+    assert validate_deferred_scope_rows(report, spec_dir) == []
+
+
+def test_deferred_scope_row_without_active_ledger_entry_is_invalid(tmp_path: Path):
+    report = tmp_path / "fulfillment-report.md"
+    report.write_text(
+        "| ID | Status | Evidence |\n| --- | --- | --- |\n"
+        "| NFR-008 | DEFERRED_SCOPE | defer:defer-001: reason |\n",
+        encoding="utf-8",
+    )
+
+    assert validate_deferred_scope_rows(report, tmp_path) == [
+        "NFR-008 has no active defer entry"
+    ]
 
 
 def test_stamp_fulfillment_report_records_commit_metadata(tmp_path):
