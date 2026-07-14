@@ -70,6 +70,33 @@ def write_verified_ledger(path: Path, ledger: VerifiedFulfillmentLedger) -> None
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def read_verified_ledger(path: Path) -> VerifiedFulfillmentLedger:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    rows: list[VerifiedLedgerRow] = []
+    for item in data.get("rows", []):
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            VerifiedLedgerRow(
+                requirement_id=_string(item.get("requirement_id")),
+                status=_string(item.get("status")).upper(),
+                evidence_refs=tuple(str(ref) for ref in item.get("evidence_refs", [])),
+                verified_commit=_string(item.get("verified_commit")),
+                verified_at=_string(item.get("verified_at")),
+                spec_input_hash=_string(item.get("spec_input_hash")),
+                implementation_input_hash=_string(item.get("implementation_input_hash")),
+                artifact_hashes={
+                    str(key): str(value)
+                    for key, value in dict(item.get("artifact_hashes", {})).items()
+                },
+                verifier_version=_string(item.get("verifier_version")),
+                verify_scope=_string(item.get("verify_scope")),
+                source_report_path=_string(item.get("source_report_path")),
+            )
+        )
+    return VerifiedFulfillmentLedger(rows=tuple(rows))
+
+
 def build_verified_ledger(
     *,
     report_path: Path,

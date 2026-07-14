@@ -985,6 +985,73 @@ class TestFulfillmentRunner:
         assert "| FR-001 | IMPLEMENTED | src/a.swift | high | keep |" in text
         assert "| FR-002 | IMPLEMENTED | src/b.swift | high | fixed |" in text
 
+    def test_scoped_refresh_rechecks_unresolved_ledger_rows_only(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "a.swift").write_text("let a = 1\n", encoding="utf-8")
+        (tmp_path / "src" / "b.swift").write_text("let b = 1\n", encoding="utf-8")
+        report = spec_dir / "fulfillment-report.md"
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_full_report(_worktree_path: str, _prompt: str) -> int:
+            report.write_text(
+                "| ID | Status | Evidence | Confidence | Notes |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| FR-001 | IMPLEMENTED | src/a.swift | high | reusable |\n"
+                "| FR-002 | UNVERIFIED | src/b.swift | low | needs proof |\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        def write_scoped_report(_worktree_path: str, _prompt: str) -> int:
+            report.write_text(
+                "| ID | Status | Evidence | Confidence | Notes |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| FR-002 | IMPLEMENTED | src/b.swift | high | measured |\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        calls = 0
+
+        def exec_prompt(worktree_path: str, prompt: str) -> int:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return write_full_report(worktree_path, prompt)
+            return write_scoped_report(worktree_path, prompt)
+
+        provider.exec_prompt.side_effect = exec_prompt
+        runner = FulfillmentRunner(provider)
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="head456"):
+            full = runner.refresh(str(tmp_path), "spec-001")
+            scoped = runner.refresh(
+                str(tmp_path),
+                "spec-001",
+                scope="scoped",
+                completed_task_ids=[],
+            )
+
+        assert full.status == "refreshed"
+        assert scoped.status == "refreshed"
+        assert scoped.verified_ledger == {
+            "reused": 1,
+            "rechecked": 1,
+            "invalidated": 0,
+            "unresolved": 1,
+        }
+        _worktree_path, prompt = provider.exec_prompt.call_args.args
+        assert "scope=scoped" in prompt
+        assert "scoped_ids=FR-002" in prompt
+        assert "scoped_ids=FR-001" not in prompt
+        text = report.read_text(encoding="utf-8")
+        assert "| FR-001 | IMPLEMENTED | src/a.swift | high | reusable |" in text
+        assert "| FR-002 | IMPLEMENTED | src/b.swift | high | measured |" in text
+
     def test_scoped_refresh_skips_provider_when_no_impacted_ids(self, tmp_path):
         _write_verify_skill(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"

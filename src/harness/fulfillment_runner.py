@@ -18,8 +18,10 @@ from harness.scoped_verify import (
 from harness.skill_loader import build_skill_prompt, find_skill
 from harness.spec_frontmatter import find_spec_dir
 from harness.verified_fulfillment_ledger import (
+    VerifiedLedgerReusePlan,
     build_verified_ledger,
     plan_verified_ledger_reuse,
+    read_verified_ledger,
     verified_fulfillment_ledger_path,
     write_verified_ledger,
 )
@@ -165,6 +167,8 @@ class FulfillmentRunner:
                 report_path=report_path,
                 completed_task_ids=completed_task_ids or [],
                 changed_files=changed_files or [],
+                spec_input_hash=spec_input_hash,
+                implementation_input_hash=implementation_input_hash,
             )
         if _latest_full_report_matches_cache(
             worktree,
@@ -328,6 +332,8 @@ class FulfillmentRunner:
         report_path: str | None,
         completed_task_ids: list[str] | tuple[str, ...],
         changed_files: list[str] | tuple[str, ...],
+        spec_input_hash: str | None,
+        implementation_input_hash: str | None,
     ) -> FulfillmentRefreshResult:
         if spec_dir is None or commit is None:
             return FulfillmentRefreshResult(
@@ -342,7 +348,21 @@ class FulfillmentRunner:
             completed_task_ids=completed_task_ids,
             changed_files=changed_files,
         )
-        if not plan.impacted_requirement_ids:
+        ledger_plan = _verified_ledger_reuse_plan(
+            worktree,
+            spec_dir=spec_dir,
+            report=report,
+            spec_input_hash=spec_input_hash,
+            implementation_input_hash=implementation_input_hash,
+        )
+        impacted_requirement_ids = tuple(
+            sorted(set(plan.impacted_requirement_ids) | set(ledger_plan.rechecked_requirement_ids))
+        )
+        verified_ledger = _verified_ledger_summary(
+            ledger_plan,
+            rechecked_requirement_ids=impacted_requirement_ids,
+        )
+        if not impacted_requirement_ids:
             if report is None or not fulfillment_report_is_current(
                 report, current_commit=commit
             ):
@@ -359,6 +379,7 @@ class FulfillmentRunner:
                 scope="scoped",
                 reason="scoped verify-spec skipped; no impacted requirements",
                 report_path=report_path,
+                verified_ledger=verified_ledger,
             )
         if report is None:
             return FulfillmentRefreshResult(
@@ -383,7 +404,7 @@ class FulfillmentRunner:
                 report_path=report_path,
             )
 
-        scoped_ids = ",".join(plan.impacted_requirement_ids)
+        scoped_ids = ",".join(impacted_requirement_ids)
         arguments = (
             f"{spec_id} spec_dir={spec_dir} scope=scoped scoped_ids={scoped_ids}"
         )
@@ -449,10 +470,17 @@ class FulfillmentRunner:
                 base_report_path=base_snapshot,
                 scoped_report_path=scoped_report,
                 output_report_path=report,
-                impacted_requirement_ids=plan.impacted_requirement_ids,
+                impacted_requirement_ids=impacted_requirement_ids,
                 spec_id=spec_id,
                 commit=commit,
                 base_full_verify_commit=plan.base_full_verify_commit,
+            )
+            _write_verified_fulfillment_ledger(
+                worktree,
+                spec_dir=spec_dir,
+                report=report,
+                spec_input_hash=spec_input_hash,
+                implementation_input_hash=implementation_input_hash,
             )
             return FulfillmentRefreshResult(
                 status="refreshed",
@@ -460,6 +488,7 @@ class FulfillmentRunner:
                 scope="scoped",
                 reason="scoped verify-spec completed",
                 report_path=str(report),
+                verified_ledger=verified_ledger,
             )
 
 
@@ -682,6 +711,55 @@ def _write_verified_fulfillment_ledger(
     return {
         "reused": len(plan.reused_requirement_ids),
         "rechecked": len(plan.rechecked_requirement_ids),
+        "invalidated": len(plan.invalidated_requirement_ids),
+        "unresolved": len(plan.unresolved_requirement_ids),
+    }
+
+
+def _verified_ledger_reuse_plan(
+    worktree: Path,
+    *,
+    spec_dir: Path,
+    report: Path | None,
+    spec_input_hash: str | None,
+    implementation_input_hash: str | None,
+) -> VerifiedLedgerReusePlan:
+    if report is None or spec_input_hash is None or implementation_input_hash is None:
+        return VerifiedLedgerReusePlan(
+            reused_requirement_ids=(),
+            rechecked_requirement_ids=(),
+            invalidated_requirement_ids=(),
+            unresolved_requirement_ids=(),
+        )
+    artifact_hashes = _implementation_artifact_hashes(worktree)
+    ledger_path = verified_fulfillment_ledger_path(spec_dir)
+    if ledger_path.is_file():
+        ledger = read_verified_ledger(ledger_path)
+    else:
+        ledger = build_verified_ledger(
+            report_path=report,
+            spec_input_hash=spec_input_hash,
+            implementation_input_hash=implementation_input_hash,
+            artifact_hashes=artifact_hashes,
+            verifier_version=FULFILLMENT_VERIFIER_VERSION,
+        )
+    return plan_verified_ledger_reuse(
+        ledger,
+        current_spec_input_hash=spec_input_hash,
+        current_implementation_input_hash=implementation_input_hash,
+        current_artifact_hashes=artifact_hashes,
+        current_verifier_version=FULFILLMENT_VERIFIER_VERSION,
+    )
+
+
+def _verified_ledger_summary(
+    plan: VerifiedLedgerReusePlan,
+    *,
+    rechecked_requirement_ids: tuple[str, ...],
+) -> dict[str, int]:
+    return {
+        "reused": len(plan.reused_requirement_ids),
+        "rechecked": len(rechecked_requirement_ids),
         "invalidated": len(plan.invalidated_requirement_ids),
         "unresolved": len(plan.unresolved_requirement_ids),
     }
