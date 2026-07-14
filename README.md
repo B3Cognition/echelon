@@ -31,7 +31,7 @@ specify extension add --dev ~/echelon/extension
 | ---- | ------- |
 | `echelon` | Main CLI - workspace, spec, phase, RE publication, delivery, benchmark, stack |
 | `echelon delivery` | Build/delivery subcommands — init, run, resume, land |
-| `echelon spec` | Spec lifecycle subcommands — run, status, target, verify, reopen |
+| `echelon spec` | Spec lifecycle subcommands — run, status, target, verify, defer, plan, reopen |
 | `codegen` | SOAR codegen pipeline (also called by `echelon codegen`) |
 | `understanding` | Requirements quality metrics |
 
@@ -168,6 +168,14 @@ echelon spec continue                      # run the next no-input recovery/phas
 echelon spec resume "your clarification"   # answer a human-input block, then continue
 echelon spec rewind <phase-id>             # recover a safe Phase 3 checkpoint, then continue
 
+# Deliberately remove a requirement or task from the landing scope, without an LLM call
+echelon spec defer 001 NFR-008 --reason "Owner decision" --dry-run
+echelon spec defer 001 NFR-008 --reason "Owner decision"
+echelon spec continue
+
+# Return explicitly deferred work to the planned scope
+echelon spec plan 001 NFR-008
+
 # Phase B — build, verify in Docker, open PR
 echelon delivery run 001                    # echelon squad build (default)
 echelon delivery run 001 strategy=codegen   # SOAR pipeline build (alternative)
@@ -240,6 +248,25 @@ current slice did not require a full fulfillment refresh, or no requirements wer
 deterministically impacted. In short: full fulfillment evidence is still required before convergence or land.
 
 Harness `run` and `resume` also print `HARNESS HISTORY`: tracked runs, checkpoint state, and token/cost totals for the same spec so repeated resumes do not feel like a black box.
+
+### Explicit scope deferrals
+
+Use `echelon spec defer <id> <T-*|FR-*|NFR-*|AC-*|SC-*> --reason "..."` when an
+owner deliberately removes work from the current landing scope. `--dry-run` shows
+the direct tasks that will become deferred and any other requirements on those
+mixed tasks that remain active. The command writes the committed, auditable
+`specs/<id>-*/deferred-scope.json` ledger and marks directly mapped unfinished
+tasks `DEFERRED` in `tasks.md`.
+
+`echelon spec continue` then treats those selected requirement IDs and deferred
+tasks as intentionally out of scope. It does not suppress unrelated gaps or the
+other requirement IDs attached to a mixed task. Fulfillment reports record each
+selected requirement as `DEFERRED_SCOPE` with its ledger entry and reason; landing
+rejects a deferred row that is not backed by an active ledger entry.
+
+Use `echelon spec plan <id> <ID...>` to return a deferred requirement or task to
+planned work. The original ledger entry remains as history, its task statuses are
+restored, and the next verification again reports any fulfillment gap normally.
 
 ### Active run recovery
 
@@ -664,6 +691,8 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon codegen <id>` | `speckit.echelon.codegen` | Build phase via SOAR pipeline (alternative to build) |
 | `echelon review <id> [pr_url=…]` | `speckit.echelon.review` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
 | `echelon spec verify <id> [strict=true] [--reconcile] [--dry-run]` | `speckit.echelon.verify-spec` | Audit fulfillment; with `--reconcile`, apply deterministic task-progress bookkeeping fixes through harness helpers. Use `--reconcile --dry-run` to preview changes only |
+| `echelon spec defer <id> <ID...> --reason <reason> [--dry-run]` | — | Commit an auditable owner deferral for direct tasks or canonical FR/NFR/AC/SC requirements; displays mapped tasks and requirements that remain active |
+| `echelon spec plan <id> <ID...> [--dry-run]` | — | Restore matching deferred work to the planned scope, preserving the deferral ledger history |
 | `echelon spec reopen <id> [from=<report>]` | `speckit.echelon.reopen` | Reopen a spec from fulfillment gaps and append harness-ready `FG-T*` tasks |
 | `echelon spec change <id> "<desc>"` | `speckit.echelon.change` | Handle spec change during build |
 | `echelon cicd` | — | Retired; re-run `echelon delivery init` to auto-detect high-confidence `verify_command` |
