@@ -248,6 +248,7 @@ def published_source_is_current(
     source = index.sources.get(source_id)
     if not (
         source
+        and source.status == "complete"
         and source.source_path == source_path
         and source.fingerprint == fingerprint
         and source.profile_hash == profile_hash
@@ -268,7 +269,10 @@ def published_source_is_current(
         manifest = _read_object(manifest_path, "source manifest")
     except ReRegistryError:
         return False
-    return manifest.get("quality_contract_version") == quality_contract_version
+    return (
+        manifest.get("quality_contract_version") == quality_contract_version
+        and manifest.get("publication_status") in {None, "complete"}
+    )
 
 
 def _parse_index(raw: Any) -> PublishedReIndex:

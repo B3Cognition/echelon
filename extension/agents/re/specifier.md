@@ -14,6 +14,10 @@ NEVER write reverse-engineering artifacts to project-root `specs/` or another so
 ALWAYS cite concrete files in backticks as either source-root paths `` `owned/root/path/to/file:line` `` or paths relative to the owned domain root `` `path/to/file:line` ``; each must resolve inside the declared domain root.
 NEVER cite a sibling source file, a path outside the owned domain root, a Markdown-link citation, or a path without a line number as evidence in a source-owned spec.
 
+### Rule 2a - Source Supporting Artifacts
+ALWAYS follow a controller-owned `source-support` target by documenting every listed unowned configuration or test-support file in `supporting-artifacts.md` with valid source-root-relative evidence.
+NEVER use a supporting-artifacts target to rewrite a product-domain spec, cite files not listed by the controller, or bypass source coverage with an uncited path inventory.
+
 ### Rule 3 - Story Depth
 ALWAYS generate at least 5 user stories per domain at `logic` or `full` depth.
 NEVER return `DONE` with fewer than 5 user stories per domain at those depths.
@@ -21,6 +25,7 @@ NEVER return `DONE` with fewer than 5 user stories per domain at those depths.
 ### Rule 4 - Deep Specification Gate
 ALWAYS require `User Scenarios & Testing`, `Requirements (Functional)`, `Key Entities`, `Edge Cases`, and concrete `Source Evidence` at `logic` or `full` depth.
 NEVER accept an architecture summary as a deep domain spec.
+Do not return `DONE` with a `shallow_summary_only_spec`; the controller rejects it as incomplete.
 
 ### Rule 4a - Harness Repair Input
 ALWAYS read `$RE_OUTPUT_DIR/quality/deep-spec-gate.json` when the harness re-dispatches specification repair and correct the controller-owned failed target.
@@ -39,8 +44,8 @@ ALWAYS exclude every hidden directory beneath the source root from reverse-engin
 NEVER inspect, cite, summarize, or create a domain for files below a hidden directory, even when they use a source-code extension.
 
 ### Rule 4e - Prepared Target Artifact
-ALWAYS read the controller-prepared target `spec.md` before updating it; it may be empty for a newly discovered domain.
-NEVER create or replace the target with shell redirection, `cat`, `tee`, or another filesystem command.
+ALWAYS read the controller-prepared target `spec.md` or `supporting-artifacts.md` before updating it; it may be empty for a newly discovered target.
+NEVER create or replace the target with shell redirection, `cat`, `tee`, or another filesystem command; for a source-domain target, never create backup, temporary, alternate, or scratch files beside `spec.md`.
 
 ### Rule 5 - Workspace Synthesis
 ALWAYS synthesize workspace relationships and contracts from the complete input union in `re-workspace-inputs.json`.
@@ -105,6 +110,14 @@ Each domain spec must include:
 - Key Entities: attributes, constraints, relationships, and behaviors
 - Edge Cases: observed handling with source references
 - Success Criteria: measurable outcomes
+
+For a controller-owned `source-support` target, write only
+`$RE_OUTPUT_DIR/sources/{source-id}/supporting-artifacts.md`. Read the exact
+orphan list in the target prompt. For every listed file, explain its observed
+configuration, test-support, or runtime role and add a valid source-root-relative
+`path:line` citation. Do not create a product-domain spec for this target. Return
+`state_updates: {}` for this file-only target; source inventory and routing state
+are controller-owned.
 
 ### FULL-depth acceptance gate
 

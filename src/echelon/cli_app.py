@@ -72,6 +72,7 @@ spec_app = typer.Typer(
         "  run <description> [--mode semi|banzai|guided] [--reset]\n"
         "                    [--target <source-id-or-path>] [--init]\n"
         "                    [--re-policy none|cached-only|changed|target-changed|target-only|refresh-all]\n"
+        "                    [--re-max-inner <n>]\n"
         "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
         "  target <spec_id> <repo> <repo...> [--init]\n"
         "                    With --init, create/prepare target Git repo(s)."
@@ -905,6 +906,12 @@ def spec_run(
         "--re-policy",
         help="Reverse-engineering cache policy.",
     ),
+    re_max_inner: Optional[int] = typer.Option(
+        None,
+        "--re-max-inner",
+        min=1,
+        help="Raise source-local reverse-engineering repair budgets for this run.",
+    ),
 ) -> None:
     """Run Phase A squad spec authoring."""
     from echelon import cli as legacy_cli
@@ -922,6 +929,7 @@ def spec_run(
     _extend_option(args, "--next-phase", next_phase)
     _extend_option(args, "--target", target)
     _extend_option(args, "--re-policy", re_policy)
+    _extend_option(args, "--re-max-inner", re_max_inner)
     legacy_cli._cmd_spec_run(args)
 
 
@@ -942,12 +950,19 @@ def spec_status() -> None:
 def spec_continue(
     ctx: typer.Context,
     mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode override."),
+    re_max_inner: Optional[int] = typer.Option(
+        None,
+        "--re-max-inner",
+        min=1,
+        help="Raise source-local reverse-engineering repair budgets for this run.",
+    ),
 ) -> None:
     """Run the next no-input Phase A recovery action."""
     from echelon import cli as legacy_cli
 
     args = list(ctx.args)
     _extend_option(args, "--mode", mode)
+    _extend_option(args, "--re-max-inner", re_max_inner)
     legacy_cli._cmd_spec_continue(args)
 
 

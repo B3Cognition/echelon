@@ -357,6 +357,36 @@ def test_matching_publication_is_current_without_heavy_cache(tmp_path: Path) -> 
     assert not (root / "re/.cache/sources/api").exists()
 
 
+def test_partial_publication_is_refreshed_even_when_its_fingerprint_matches(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "api")
+    profile = ReFingerprintProfile()
+    _publish_source(root, "api", profile)
+    index_path = root / "re" / "index.json"
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    index["publication_status"] = "partial"
+    index["sources"]["api"]["status"] = "partial"
+    _write_json(index_path, index)
+    manifest_path = root / "re" / "sources" / "api" / "manifest.json"
+    published_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    published_manifest["publication_status"] = "partial"
+    _write_json(manifest_path, published_manifest)
+
+    plan = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest(root, "api"),
+        target_source="",
+        requested_policy="changed",
+        profile=profile,
+        published_index=load_published_index(root),
+    )
+
+    assert plan.sources[0].classification == "refresh"
+    assert plan.sources[0].action == "refresh"
+
+
 def test_changed_policy_refreshes_sources_published_under_an_old_quality_contract(
     tmp_path: Path,
 ) -> None:

@@ -418,8 +418,8 @@ def test_spec_run_help_declares_phase_a_options():
     assert "--message" in result.output
     assert "--next-phase" in result.output
     assert "--target" in result.output
-    assert "--target-source" in result.output
     assert "--re-policy" in result.output
+    assert "--re-max-inner" in result.output
 
 
 @pytest.mark.unit
@@ -445,6 +445,8 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "api",
         "--re-policy",
         "target-only",
+        "--re-max-inner",
+        "10",
     ])
 
     assert calls == [[
@@ -461,6 +463,8 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "api",
         "--re-policy",
         "target-only",
+        "--re-max-inner",
+        "10",
     ]]
 
 

@@ -9,7 +9,12 @@ import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from harness.re_domain_manifest import ReDomain, domain_manifest_path, load_domain_manifest
+from harness.re_domain_manifest import (
+    ReDomain,
+    domain_manifest_path,
+    load_domain_manifest,
+    source_files,
+)
 from harness.re_planner import ReExecutionPlan, RePlanSource
 from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
 
@@ -81,6 +86,49 @@ class ReQualityReport:
                 }
                 for failure in self.failures
             ],
+        }
+
+
+@dataclass(frozen=True)
+class ReSourceQualityReport:
+    """Deterministic coverage and deep-spec status for one refreshed source."""
+
+    source_id: str
+    eligible_file_count: int
+    covered_file_count: int
+    coverage_pct: float
+    coverage_threshold: int
+    orphan_paths: tuple[str, ...]
+    domain_failures: tuple[ReSpecQualityFailure, ...]
+    semantic_failures: tuple[ReSpecQualityFailure, ...] = ()
+
+    @property
+    def passed(self) -> bool:
+        return (
+            self.coverage_pct >= self.coverage_threshold
+            and not self.domain_failures
+            and not self.semantic_failures
+        )
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "quality_contract_version": QUALITY_CONTRACT_VERSION,
+            "source_id": self.source_id,
+            "eligible_file_count": self.eligible_file_count,
+            "covered_file_count": self.covered_file_count,
+            "coverage_pct": self.coverage_pct,
+            "coverage_threshold": self.coverage_threshold,
+            "orphan_paths": list(self.orphan_paths),
+            "domain_failures": [
+                {**asdict(failure), "spec_path": str(failure.spec_path)}
+                for failure in self.domain_failures
+            ],
+            "semantic_failures": [
+                {**asdict(failure), "spec_path": str(failure.spec_path)}
+                for failure in self.semantic_failures
+            ],
+            "passed": self.passed,
         }
 
 
@@ -317,6 +365,80 @@ def validate_staged_re_domain_quality(
     return ReQualityReport(passed=failure is None, failures=() if failure is None else (failure,))
 
 
+def measure_source_quality(
+    run_re_dir: Path,
+    plan: ReExecutionPlan,
+    source_id: str,
+    *,
+    coverage_threshold: int = 99,
+    semantic_failures: tuple[ReSpecQualityFailure, ...] = (),
+) -> ReSourceQualityReport:
+    """Measure one source from its visible file inventory and valid citations.
+
+    This is intentionally controller-owned: no agent-provided percentage is
+    accepted as an input to convergence routing.
+    """
+    if not 0 <= coverage_threshold <= 100:
+        raise ValueError("coverage_threshold must be between 0 and 100")
+    source = next((item for item in plan.refresh_sources if item.id == source_id), None)
+    if source is None:
+        raise ValueError(f"source is not refreshable: {source_id}")
+    manifest = load_domain_manifest(domain_manifest_path(run_re_dir, source_id))
+    if manifest.source_id != source.id or manifest.source_path != source.path:
+        raise ValueError(f"domain manifest source mismatch: {source_id}")
+
+    root = Path(source.absolute_path).resolve()
+    eligible = {
+        path.relative_to(root).as_posix()
+        for path in source_files(root)
+    }
+    covered: set[str] = set()
+    domain_owned: set[str] = set()
+    failures: list[ReSpecQualityFailure] = []
+    for domain in manifest.domains:
+        domain_owned.update(
+            path.relative_to(root).as_posix()
+            for path in source_files(root if domain.root == "." else root / domain.root)
+        )
+        failure = _domain_quality_failure(run_re_dir, source, domain)
+        if failure is not None:
+            failures.append(failure)
+        spec_path = run_re_dir / "sources" / source.id / "specs" / domain.domain_id / "spec.md"
+        if not spec_path.is_file():
+            continue
+        for path in _covered_source_paths(
+            spec_path.read_text(encoding="utf-8"),
+            source_root=root,
+            domain_root=domain.root,
+        ):
+            relative = path.relative_to(root).as_posix()
+            if relative in eligible:
+                covered.add(relative)
+
+    support_path = run_re_dir / "sources" / source.id / "supporting-artifacts.md"
+    if support_path.is_file():
+        for path in _covered_source_paths_in_source(
+            support_path.read_text(encoding="utf-8"), source_root=root
+        ):
+            relative = path.relative_to(root).as_posix()
+            if relative in eligible and relative not in domain_owned:
+                covered.add(relative)
+
+    covered &= eligible
+    count = len(eligible)
+    coverage = 100.0 if count == 0 else (len(covered) / count) * 100
+    return ReSourceQualityReport(
+        source_id=source.id,
+        eligible_file_count=count,
+        covered_file_count=len(covered),
+        coverage_pct=coverage,
+        coverage_threshold=coverage_threshold,
+        orphan_paths=tuple(sorted(eligible - covered)),
+        domain_failures=tuple(failures),
+        semantic_failures=semantic_failures,
+    )
+
+
 def _domain_quality_failure(
     run_re_dir: Path, source: RePlanSource, domain: ReDomain
 ) -> ReSpecQualityFailure | None:
@@ -519,6 +641,56 @@ def _validated_source_evidence(
     return valid, invalid
 
 
+def _covered_source_paths(
+    text: str, *, source_root: Path, domain_root: str
+) -> set[Path]:
+    """Resolve only valid, in-domain evidence references to source files."""
+    covered: set[Path] = set()
+    for match in SOURCE_REFERENCE.finditer(text):
+        raw_path = match.group("path").strip()
+        start = int(match.group("start"))
+        end = int(match.group("end") or start)
+        relative = Path(raw_path)
+        if (
+            not raw_path
+            or relative.is_absolute()
+            or ".." in relative.parts
+            or end < start
+        ):
+            continue
+        candidate = _resolve_domain_evidence_path(
+            relative, source_root=source_root, domain_root=domain_root
+        )
+        if candidate is not None and end <= _line_count(candidate):
+            covered.add(candidate)
+    return covered
+
+
+def _covered_source_paths_in_source(text: str, *, source_root: Path) -> set[Path]:
+    """Resolve valid source-root evidence for supporting artifacts only."""
+    covered: set[Path] = set()
+    for match in SOURCE_REFERENCE.finditer(text):
+        raw_path = match.group("path").strip()
+        start = int(match.group("start"))
+        end = int(match.group("end") or start)
+        relative = Path(raw_path)
+        if (
+            not raw_path
+            or relative.is_absolute()
+            or ".." in relative.parts
+            or end < start
+        ):
+            continue
+        candidate = (source_root / relative).resolve()
+        try:
+            candidate.relative_to(source_root)
+        except ValueError:
+            continue
+        if candidate.is_file() and end <= _line_count(candidate):
+            covered.add(candidate)
+    return covered
+
+
 def _resolve_domain_evidence_path(
     relative: Path, *, source_root: Path, domain_root: str
 ) -> Path | None:
@@ -564,6 +736,31 @@ def write_re_target_quality_report(
     """Persist the exact gate failure that a source-domain repair must address."""
     path = run_re_dir / "quality" / "targets" / source_id / f"{domain_id}.json"
     return _write_quality_report(path, report)
+
+
+def write_re_source_quality_report(
+    run_re_dir: Path, report: ReSourceQualityReport
+) -> Path:
+    """Persist one deterministic source-local convergence measurement."""
+    path = run_re_dir / "quality" / "sources" / f"{report.source_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}-", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(report.to_json_dict(), handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        Path(temporary).replace(path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+    return path
 
 
 def _write_quality_report(path: Path, report: ReQualityReport) -> Path:

@@ -8,6 +8,7 @@ import pytest
 from harness.re_domain_manifest import ReDomain, domain_manifest_path
 from harness.re_planner import ReExecutionPlan
 from harness.re_quality_gate import (
+    measure_source_quality,
     quality_target_for_domain,
     validate_semantic_quality_review,
     validate_staged_re_domain_quality,
@@ -107,6 +108,49 @@ def test_gate_accepts_domain_relative_source_evidence(tmp_path: Path) -> None:
 
     report = validate_staged_re_quality(run_dir / "re", _plan(run_dir))
 
+    assert report.passed
+
+
+@pytest.mark.unit
+def test_source_measurement_counts_only_visible_cited_source_files(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    source_root = tmp_path / "sources" / "api"
+    (source_root / "src" / "orphan.ts").write_text("export const orphan = true;\n")
+    hidden = source_root / ".github"
+    hidden.mkdir()
+    (hidden / "workflow.ts").write_text("export const ignored = true;\n")
+
+    report = measure_source_quality(run_dir / "re", _plan(run_dir), "api")
+
+    assert report.eligible_file_count == 6
+    assert report.covered_file_count == 5
+    assert report.coverage_pct == pytest.approx(83.3333333333)
+    assert report.orphan_paths == ("src/orphan.ts",)
+    assert not report.passed
+
+
+@pytest.mark.unit
+def test_source_measurement_counts_supporting_artifacts_for_unowned_files(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    source_root = tmp_path / "sources" / "api"
+    (source_root / "root-support.ts").write_text(
+        "export const runtimeSupport = true;\n", encoding="utf-8"
+    )
+    (run_dir / "re" / "sources" / "api" / "supporting-artifacts.md").write_text(
+        "# Supporting Artifacts\n\n"
+        "## Source Evidence\n\n"
+        "- `root-support.ts:1` configures runtime support.\n",
+        encoding="utf-8",
+    )
+
+    report = measure_source_quality(run_dir / "re", _plan(run_dir), "api")
+
+    assert report.eligible_file_count == 6
+    assert report.covered_file_count == 6
+    assert report.coverage_pct == 100
+    assert report.orphan_paths == ()
     assert report.passed
 
 

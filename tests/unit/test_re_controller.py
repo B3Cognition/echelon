@@ -8,6 +8,7 @@ import pytest
 
 from harness.re_controller import ReExtractionController
 from harness.re_domain_manifest import DOMAIN_PARTITION_VERSION
+from harness.re_planner import ReExecutionPlan
 from harness.squad_provider import SquadAgentResult
 from tests.unit.test_re_publication import _deep_spec, write_valid_re_run
 
@@ -106,6 +107,87 @@ def _extension_root(root: Path) -> Path:
 
 
 @pytest.mark.unit
+def test_workspace_source_convergence_migration_upgrades_legacy_quality_contract() -> None:
+    state = {
+        "mode": "workspace",
+        "coverage_threshold": 80,
+        "resolution_threshold": 80,
+        "max_verify_expand_iterations": 3,
+        "max_validate_iterations": 3,
+        "re_agent_result_detail": "stale previous dispatch failure",
+    }
+
+    assert ReExtractionController._migrate_workspace_source_convergence(state)
+
+    assert state["coverage_threshold"] == 99
+    assert state["resolution_threshold"] == 99
+    assert state["max_verify_expand_iterations"] == 5
+    assert state["max_validate_iterations"] == 5
+    assert state["re_source_convergence_quality_contract_version"] == 1
+    assert "re_agent_result_detail" not in state
+
+
+@pytest.mark.unit
+def test_source_convergence_quality_upgrade_applies_to_an_already_migrated_run() -> None:
+    state = {
+        "mode": "workspace",
+        "re_convergence_schema_version": 1,
+        "re_source_states": {},
+        "coverage_threshold": 80,
+        "resolution_threshold": 80,
+        "max_verify_expand_iterations": 3,
+        "max_validate_iterations": 3,
+    }
+
+    assert ReExtractionController._upgrade_source_convergence_quality_contract(state)
+
+    assert state["coverage_threshold"] == 99
+    assert state["resolution_threshold"] == 99
+    assert state["max_verify_expand_iterations"] == 5
+    assert state["max_validate_iterations"] == 5
+    assert state["re_source_convergence_quality_contract_version"] == 1
+
+
+@pytest.mark.unit
+def test_source_local_convergence_prints_source_start_and_ready_summary(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api", "web"))
+    _initialize_re_state(run_dir, max_repairs=1)
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "re_convergence_schema_version": 1,
+            "re_source_budgets": {
+                "max_source_cycles": 5,
+                "max_domain_repairs": 5,
+                "max_source_reanalysis": 5,
+            },
+            "re_source_states": {},
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    output = capsys.readouterr().out
+    assert "[re] source: api" in output
+    assert "[re] source measured: api - 100.0% coverage" in output
+    assert "[re] source ready: api" in output
+    assert "[re] source: web" in output
+    assert "[re] source measured: web - 100.0% coverage" in output
+    assert "[re] source ready: web" in output
+    assert "coverage (" in output
+
+
+@pytest.mark.unit
 def test_shallow_specification_runs_only_bounded_repair_before_blocking(
     tmp_path: Path,
 ) -> None:
@@ -133,6 +215,63 @@ def test_shallow_specification_runs_only_bounded_repair_before_blocking(
     assert state["re_target_quality_gate_report"].endswith(
         "quality/targets/api/001-re-domain.json"
     )
+
+
+@pytest.mark.unit
+def test_source_domain_target_cleans_agent_scratch_artifacts_without_blocking(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    target_dir = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain"
+    (target_dir / "stale-backup.md").write_text("stale\n", encoding="utf-8")
+
+    class ScratchWritingProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            phase = self.phases[-1]
+            if (
+                phase == "re-extract-2-specify"
+                and "Domain ID: `001-re-domain`" in prompt
+            ):
+                (target_dir / "spec_backup.md").write_text("scratch\n", encoding="utf-8")
+                scratch_dir = target_dir / "temporary"
+                scratch_dir.mkdir()
+                (scratch_dir / "notes.md").write_text("scratch\n", encoding="utf-8")
+            if phase == "re-extract-3-verify":
+                result.echelon_result["state_updates"] = {"coverage_pct": 100}
+            if phase == "re-extract-5-validate":
+                result.echelon_result["state_updates"] = {"resolution_pct": 100}
+            return result
+
+    result = ReExtractionController(
+        provider=ScratchWritingProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert sorted(path.name for path in target_dir.iterdir()) == ["spec.md"]
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    cleanup = state["re_target_artifact_cleanup"]
+    assert cleanup == [
+        {
+            "stage": "pre-dispatch",
+            "source_id": "api",
+            "domain_id": "001-re-domain",
+            "paths": ["sources/api/specs/001-re-domain/stale-backup.md"],
+        },
+        {
+            "stage": "post-dispatch",
+            "source_id": "api",
+            "domain_id": "001-re-domain",
+            "paths": [
+                "sources/api/specs/001-re-domain/spec_backup.md",
+                "sources/api/specs/001-re-domain/temporary",
+            ],
+        }
+    ]
 
 
 @pytest.mark.unit
@@ -209,6 +348,436 @@ def test_controller_passes_architecture_order_to_each_domain_specifier(
     assert "migration wave `1`" in specification_prompt
     assert (run_dir / "re" / "workspace" / "architecture-map.json").is_file()
     assert (run_dir / "re" / "workspace" / "domain-catalog.md").is_file()
+
+
+@pytest.mark.unit
+def test_source_local_convergence_measures_first_source_before_dispatching_second(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api", "web"))
+    _initialize_re_state(run_dir, max_repairs=1)
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "re_convergence_schema_version": 1,
+            "re_source_budgets": {
+                "max_source_cycles": 5,
+                "max_domain_repairs": 5,
+                "max_source_reanalysis": 5,
+            },
+            "re_source_states": {},
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    class SourceOrderProvider(_ShallowSpecifierProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.specifier_sources: list[str] = []
+
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            if "RE phase: re-extract-2-specify" in prompt and "Source ID: `" in prompt:
+                source_id = prompt.split("Source ID: `", 1)[1].split("`", 1)[0]
+                self.specifier_sources.append(source_id)
+                if source_id == "web":
+                    current = json.loads(state_path.read_text(encoding="utf-8"))
+                    assert current["re_source_states"]["api"]["status"] == "passed"
+                    assert (run_dir / "re" / "quality" / "sources" / "api.json").is_file()
+            return super().exec_agent(project_root, prompt)
+
+    provider = SourceOrderProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert provider.specifier_sources == ["api", "web"]
+
+
+@pytest.mark.unit
+def test_source_local_domain_budget_records_partial_quality_debt_instead_of_blocking(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=0)
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    spec.write_text("# Architecture summary\n", encoding="utf-8")
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "re_convergence_schema_version": 1,
+            "re_source_budgets": {
+                "max_source_cycles": 5,
+                "max_domain_repairs": 0,
+                "max_source_reanalysis": 5,
+            },
+            "re_source_states": {},
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["re_source_states"]["api"]["status"] == "partial_quality_debt"
+    assert state["re_quality_debt_sources"] == ["api"]
+
+
+@pytest.mark.unit
+def test_source_local_cycle_budget_records_uncited_files_as_quality_debt(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    (tmp_path / "sources" / "api" / "src" / "orphan.ts").write_text(
+        "export const orphan = true;\n", encoding="utf-8"
+    )
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "coverage_threshold": 99,
+            "re_convergence_schema_version": 1,
+            "re_source_budgets": {
+                "max_source_cycles": 0,
+                "max_domain_repairs": 5,
+                "max_source_reanalysis": 5,
+            },
+            "re_source_states": {},
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    source = state["re_source_states"]["api"]
+    assert source["status"] == "partial_quality_debt"
+    assert source["coverage_pct"] == pytest.approx(83.3333333333)
+    assert state["re_quality_debt_sources"] == ["api"]
+
+
+@pytest.mark.unit
+def test_source_coverage_repair_targets_receive_owned_and_unowned_orphans(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = ReExecutionPlan.from_json_dict(
+        json.loads((run_dir / "re" / "re-execution-plan.json").read_text(encoding="utf-8"))
+    )
+
+    targets = controller._source_repair_targets(
+        plan,
+        "api",
+        ("src/orphan.ts", "root-support.ts"),
+        (),
+    )
+
+    assert targets == [
+        {
+            "kind": "source-domain",
+            "source_id": "api",
+            "domain_id": "001-re-domain",
+            "root": "src",
+            "orphan_paths": ["src/orphan.ts"],
+        },
+        {
+            "kind": "source-support",
+            "source_id": "api",
+            "orphan_paths": ["root-support.ts"],
+        },
+    ]
+    domain_prompt = controller._specification_target_prompt(targets[0])
+    support_prompt = controller._specification_target_prompt(targets[1])
+    assert "Source coverage repair" in domain_prompt
+    assert "src/orphan.ts" in domain_prompt
+    assert "source supporting-artifacts register" in support_prompt
+    assert "root-support.ts" in support_prompt
+
+
+@pytest.mark.unit
+def test_source_coverage_repair_protocol_migrates_active_legacy_queue(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    (tmp_path / "sources" / "api" / "src" / "orphan.ts").write_text(
+        "export const orphan = true;\n", encoding="utf-8"
+    )
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = ReExecutionPlan.from_json_dict(
+        json.loads((run_dir / "re" / "re-execution-plan.json").read_text(encoding="utf-8"))
+    )
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    state.update(
+        {
+            "mode": "workspace",
+            "phase": "re-extract-2-specify",
+            "coverage_threshold": 99,
+            "re_convergence_schema_version": 1,
+            "re_source_states": {
+                "api": {
+                    "status": "active",
+                    "source_cycles": 4,
+                    "domain_repairs": {},
+                    "source_reanalysis": 0,
+                    "quality_report": str(
+                        run_dir / "re" / "quality" / "sources" / "api.json"
+                    ),
+                }
+            },
+            "re_source_order": ["api"],
+            "re_active_source_id": "api",
+            "re_specification_targets": [
+                {
+                    "kind": "source-domain",
+                    "source_id": "api",
+                    "domain_id": "001-re-domain",
+                    "root": "src",
+                }
+            ],
+        }
+    )
+
+    assert controller._upgrade_source_coverage_repair_protocol(state, plan)
+
+    assert state["re_source_coverage_repair_protocol_version"] == 1
+    assert state["re_specification_targets"][0]["orphan_paths"] == ["src/orphan.ts"]
+
+
+@pytest.mark.unit
+def test_source_coverage_repair_protocol_reclaims_legacy_quality_debt(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    (tmp_path / "sources" / "api" / "src" / "orphan.ts").write_text(
+        "export const orphan = true;\n", encoding="utf-8"
+    )
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = ReExecutionPlan.from_json_dict(
+        json.loads((run_dir / "re" / "re-execution-plan.json").read_text(encoding="utf-8"))
+    )
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    state.update(
+        {
+            "mode": "workspace",
+            "phase": "re-extract-2-specify",
+            "coverage_threshold": 99,
+            "re_convergence_schema_version": 1,
+            "re_source_states": {
+                "api": {
+                    "status": "partial_quality_debt",
+                    "source_cycles": 5,
+                    "domain_repairs": {"001-re-domain": 5},
+                    "source_reanalysis": 0,
+                }
+            },
+            "re_source_order": ["api"],
+            "re_quality_debt_sources": ["api"],
+            "re_specification_targets": [],
+        }
+    )
+
+    assert controller._upgrade_source_coverage_repair_protocol(state, plan)
+
+    source = state["re_source_states"]["api"]
+    assert source["status"] == "active"
+    assert source["source_cycles"] == 0
+    assert source["domain_repairs"] == {}
+    assert state["re_active_source_id"] == "api"
+    assert state["re_specification_targets"][0]["orphan_paths"] == ["src/orphan.ts"]
+    assert state["re_quality_debt_sources"] == []
+
+
+@pytest.mark.unit
+def test_source_coverage_repair_converges_domain_and_supporting_artifacts(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "coverage_threshold": 99,
+            "re_convergence_schema_version": 1,
+            "re_source_budgets": {
+                "max_source_cycles": 5,
+                "max_domain_repairs": 5,
+                "max_source_reanalysis": 5,
+            },
+            "re_source_states": {},
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    source_root = tmp_path / "sources" / "api"
+    (source_root / "src" / "orphan.ts").write_text(
+        "export const orphan = true;\n", encoding="utf-8"
+    )
+    (source_root / "root-support.ts").write_text(
+        "export const support = true;\n", encoding="utf-8"
+    )
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+
+    class CoverageRepairProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            if "Source coverage repair:" in prompt:
+                spec.write_text(
+                    spec.read_text(encoding="utf-8")
+                    + "\nAdditional source evidence: `src/orphan.ts:1`\n",
+                    encoding="utf-8",
+                )
+            if "Controller-Owned Source Supporting-Artifacts Target" in prompt:
+                (run_dir / "re" / "sources" / "api" / "supporting-artifacts.md").write_text(
+                    "# Supporting Artifacts\n\n"
+                    "## Source Evidence\n\n"
+                    "- `root-support.ts:1` provides runtime support.\n",
+                    encoding="utf-8",
+                )
+                result.echelon_result["state_updates"] = {"sources": ["support"]}
+            return result
+
+    result = ReExtractionController(
+        provider=CoverageRepairProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert state["re_source_states"]["api"]["status"] == "passed"
+    assert state["re_source_states"]["api"]["coverage_pct"] == 100
+    assert (run_dir / "re" / "sources" / "api" / "supporting-artifacts.md").is_file()
+    output = capsys.readouterr().out
+    assert "[re] source measured: api - " in output
+    assert "[re] source repair: api - cycle 1/5;" in output
+
+
+@pytest.mark.unit
+def test_re_max_inner_override_raises_all_source_local_budgets(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    outer_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    outer_state["re_max_inner"] = 10
+    (run_dir / "state.json").write_text(json.dumps(outer_state), encoding="utf-8")
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+
+    assert controller._apply_re_budget_override(state)
+    assert state["re_source_budgets"] == {
+        "max_source_cycles": 10,
+        "max_domain_repairs": 10,
+        "max_source_reanalysis": 10,
+    }
+
+
+@pytest.mark.unit
+def test_source_local_semantic_repair_requeues_only_the_failing_source(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api", "web"))
+    _initialize_re_state(run_dir, max_repairs=2)
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "re_convergence_schema_version": 1,
+            "re_source_budgets": {
+                "max_source_cycles": 5,
+                "max_domain_repairs": 5,
+                "max_source_reanalysis": 5,
+            },
+            "re_source_states": {},
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    class SemanticRepairProvider(_ShallowSpecifierProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.specifier_sources: list[str] = []
+
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
+            if phase == "re-extract-2-specify" and "Source ID: `" in prompt:
+                self.specifier_sources.append(
+                    prompt.split("Source ID: `", 1)[1].split("`", 1)[0]
+                )
+            result = super().exec_agent(project_root, prompt)
+            if phase == "re-extract-5-validate" and self.phases.count(phase) == 1:
+                result.echelon_result["semantic_quality_review"] = {
+                    "schema_version": 1,
+                    "domains": [
+                        {
+                            "source_id": "api",
+                            "domain_id": "001-re-domain",
+                            "verdict": "REPAIR",
+                            "findings": ["The observed retry behavior is not documented."],
+                            "source_evidence": ["`src/file-1.ts:1`"],
+                        },
+                        {
+                            "source_id": "web",
+                            "domain_id": "001-re-domain",
+                            "verdict": "PASS",
+                            "findings": [],
+                            "source_evidence": [],
+                        },
+                    ],
+                }
+            return result
+
+    provider = SemanticRepairProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert provider.specifier_sources == ["api", "web", "api"]
 
 
 @pytest.mark.unit

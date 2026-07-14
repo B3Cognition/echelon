@@ -55,7 +55,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.2.13"
+CLI_VERSION = "3.2.14"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -4700,6 +4700,7 @@ def _cmd_run(
     target_source = os.environ.get("ECHELON_TARGET_SOURCE", "").strip()
     init_target = False
     re_policy = os.environ.get("ECHELON_RE_POLICY", "").strip()
+    re_max_inner: int | None = None
     message_parts: list[str] = []
     i = 0
     while i < len(args):
@@ -4746,6 +4747,27 @@ def _cmd_run(
         elif args[i].startswith("--re-policy="):
             re_policy = args[i].split("=", 1)[1].strip()
             i += 1
+        elif args[i] == "--re-max-inner":
+            if i + 1 >= len(args):
+                print("✗ echelon spec run: --re-max-inner requires a positive integer", file=sys.stderr)
+                sys.exit(1)
+            try:
+                re_max_inner = int(args[i + 1])
+            except ValueError:
+                re_max_inner = 0
+            if re_max_inner < 1:
+                print("✗ echelon spec run: --re-max-inner requires a positive integer", file=sys.stderr)
+                sys.exit(1)
+            i += 2
+        elif args[i].startswith("--re-max-inner="):
+            try:
+                re_max_inner = int(args[i].split("=", 1)[1])
+            except ValueError:
+                re_max_inner = 0
+            if re_max_inner < 1:
+                print("✗ echelon spec run: --re-max-inner requires a positive integer", file=sys.stderr)
+                sys.exit(1)
+            i += 1
         else:
             message_parts.append(args[i])
             i += 1
@@ -4787,6 +4809,10 @@ def _cmd_run(
     config = load_config(project_root, squad_only=True)
     provider = SquadCliProvider(config)
     state_store = SquadStateStore(squad_dir)
+    if re_max_inner is not None:
+        state = state_store.load()
+        state["re_max_inner"] = re_max_inner
+        state_store.save(state)
     graph = PhaseGraph(
         ext_dir / "workflow/definition.yaml",
         ext_dir / "extension.yml",
@@ -5543,12 +5569,31 @@ def _cmd_continue(
 
     # Optionally accept --mode override
     mode_override = ""
+    re_max_inner: int | None = None
     i = 0
     while i < len(args):
         parsed_mode, next_i = _consume_mode_arg(args, i, command_name="echelon spec continue")
         if parsed_mode is not None:
             mode_override = parsed_mode
             i = next_i
+        elif args[i] == "--re-max-inner" and i + 1 < len(args):
+            try:
+                re_max_inner = int(args[i + 1])
+            except ValueError:
+                re_max_inner = 0
+            if re_max_inner < 1:
+                print("✗ echelon spec continue: --re-max-inner requires a positive integer", file=sys.stderr)
+                sys.exit(1)
+            i += 2
+        elif args[i].startswith("--re-max-inner="):
+            try:
+                re_max_inner = int(args[i].split("=", 1)[1])
+            except ValueError:
+                re_max_inner = 0
+            if re_max_inner < 1:
+                print("✗ echelon spec continue: --re-max-inner requires a positive integer", file=sys.stderr)
+                sys.exit(1)
+            i += 1
         else:
             i += 1
 
@@ -5622,7 +5667,10 @@ def _cmd_continue(
             f"[squad] Mode:  {mode}",
             flush=True,
         )
-        _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
+        run_args = [user_message, "--mode", mode]
+        if re_max_inner is not None:
+            run_args.extend(["--re-max-inner", str(re_max_inner)])
+        _cmd_run(run_args, project_root=project_root, ext_dir=ext_dir)
 
     pending_recovery_phase = _pending_re_recovery_phase(squad_dir, state)
     if pending_recovery_phase:

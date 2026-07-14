@@ -50,9 +50,9 @@ class TestInitReState:
 
     def test_default_thresholds(self):
         s = init_re_state()
-        assert s["coverage_threshold"] == 80
-        assert s["resolution_threshold"] == 80
-        assert s["max_validate_iterations"] == 3
+        assert s["coverage_threshold"] == 99
+        assert s["resolution_threshold"] == 99
+        assert s["max_validate_iterations"] == 5
 
     def test_custom_output_dir_reflected_in_artifacts(self):
         s = init_re_state(output_dir="/custom/path")
@@ -67,6 +67,17 @@ class TestInitReState:
     def test_max_verify_expand_iterations_custom(self):
         s = init_re_state(max_verify_expand_iterations=3)
         assert s["max_verify_expand_iterations"] == 3
+
+    def test_initializes_source_local_convergence_budgets(self):
+        state = init_re_state()
+
+        assert state["re_convergence_schema_version"] == 1
+        assert state["re_source_budgets"] == {
+            "max_source_cycles": 5,
+            "max_domain_repairs": 5,
+            "max_source_reanalysis": 5,
+        }
+        assert state["re_source_states"] == {}
 
 
 class TestWriteLastDispatch:

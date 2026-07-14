@@ -417,6 +417,11 @@ def _files_outside_roots(source_root: Path, roots: set[str]) -> bool:
     return False
 
 
+def source_files(root: Path) -> list[Path]:
+    """List analyzable source files using the domain-manifest inventory rules."""
+    return _source_files(root)
+
+
 def _source_files(root: Path) -> list[Path]:
     return [
         path

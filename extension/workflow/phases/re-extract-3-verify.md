@@ -11,13 +11,13 @@
 
 ## Dispatch Prompt
 
-Instruct RE-VERIFIER to enumerate files and compute coverage independently for every non-empty refresh source, reject shallow summaries at deep profiles, identify source-local orphan clusters, and use the minimum source score as aggregate `coverage_pct`.
+The harness enumerates files, validates citations, and writes the authoritative source-local quality reports. Instruct RE-VERIFIER only to explain an already written report when diagnostic prose is explicitly needed; it must not compute routing metrics.
 
 ## Expected Outputs
 
-- `{state.output_dir}/quality/{source-id}/coverage-report.md` for each non-empty refresh source
+- `{state.output_dir}/quality/sources/{source-id}.json` is controller-owned output for each non-empty refresh source
 
-Empty sources require no report. An all-empty workspace returns `coverage_pct: 100`.
+Empty sources require no report. An all-empty workspace is controller-complete.
 
 ## echelon_result Schema
 
@@ -25,10 +25,7 @@ Empty sources require no report. An all-empty workspace returns `coverage_pct: 1
 echelon_result:
   verdict: DONE | BLOCKED
   phase_id: re-extract-3-verify
-  state_updates:
-    coverage_pct: 72
-    source_coverage: {api: 72}
-    verify_expand_iterations: 2
+  state_updates: {}
   output_files:
     - "{state.output_dir}/quality/{source-id}/coverage-report.md"
   journal_entries:
