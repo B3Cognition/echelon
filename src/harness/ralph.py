@@ -59,6 +59,7 @@ from kernel.fulfillment import (
     fulfillment_report_is_current,
     latest_fulfillment_report,
     read_fulfillment_metadata,
+    validate_deferred_scope_rows,
 )
 from kernel.task_contract import TaskRow, parse_task_rows
 
@@ -1538,6 +1539,20 @@ class RalphController:
                     "Do not regenerate fulfillment artifacts in a build slice; "
                     "Ralph must refresh fulfillment evidence before convergence."
                 ),
+            )
+            return VerifyResult(
+                passed=False,
+                failures=[failure],
+                duration_s=verify_result.duration_s,
+                token_usage=verify_result.token_usage,
+            )
+
+        deferred_scope_issues = validate_deferred_scope_rows(report, spec_dir)
+        if deferred_scope_issues:
+            failure = FailureEntry(
+                category=FailureCategory.OTHER,
+                id="fulfillment-deferred-scope-invalid",
+                error="; ".join(deferred_scope_issues),
             )
             return VerifyResult(
                 passed=False,
@@ -3760,7 +3775,7 @@ class RalphController:
         return (
             summary.valid
             and summary.total_tasks > 0
-            and summary.completed_tasks >= summary.total_tasks
+            and summary.terminal_tasks >= summary.total_tasks
         )
 
     def _record_missing_marker_recovery(

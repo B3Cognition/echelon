@@ -24,7 +24,9 @@ from kernel.fulfillment import (
     fulfillment_has_blocking_gaps,
     latest_fulfillment_report,
     read_fulfillment_metadata,
+    validate_deferred_scope_rows,
 )
+from harness.deferred_scope import active_entries, ledger_path
 
 logger = logging.getLogger(__name__)
 
@@ -935,6 +937,24 @@ def _check_fulfillment_before_land(
             commit_ref=commit_ref,
         )
     if not fulfillment_warning:
+        spec_dir = find_spec_dir(spec_id, project_dir)
+        entries = active_entries(spec_dir) if spec_dir is not None else ()
+        if entries:
+            _banner(
+                "LAND — DEFERRED SCOPE",
+                [
+                    ("spec", spec_id),
+                    ("ledger", str(ledger_path(spec_dir))),
+                    (
+                        "deferred",
+                        "; ".join(
+                            f"{', '.join(entry.selected_ids)} ({entry.reason})"
+                            for entry in entries
+                        ),
+                    ),
+                ],
+                subtitle="Landing fulfilled scope with explicit owner deferrals.",
+            )
         return True
 
     if not options.allow_fulfillment_gaps:
@@ -1012,6 +1032,12 @@ def _fulfillment_warning(
             return (
                 f"latest fulfillment report is a scoped fulfillment report: {report}. "
                 f"Run full `echelon spec verify {spec_id}` before landing."
+            )
+
+        deferred_scope_issues = validate_deferred_scope_rows(report, spec_dir)
+        if deferred_scope_issues:
+            return "invalid deferred scope in fulfillment report: " + "; ".join(
+                deferred_scope_issues
             )
 
         if not fulfillment_has_blocking_gaps(report, strict=strict):

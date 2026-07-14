@@ -1419,6 +1419,31 @@ class TestOuterLoopConvergence:
         assert result.failures[0].id == "fulfillment-gaps"
         assert "UNVERIFIED" in result.failures[0].error
 
+    def test_fulfillment_gate_rejects_unledgered_deferred_scope_row(
+        self, tmp_path: Path
+    ) -> None:
+        """A DEFERRED_SCOPE report row must be backed by committed scope state."""
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        worktree = tmp_path / "worktree"
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | DEFERRED_SCOPE | defer:defer-001: owner decision | high | deferred |\n",
+            encoding="utf-8",
+        )
+        verify = VerifyResult(passed=True, failures=[])
+
+        result = controller._apply_fulfillment_gate(verify, str(worktree))
+
+        assert result.passed is False
+        assert result.failures[0].id == "fulfillment-deferred-scope-invalid"
+        assert "FR-001 has no active defer entry" in result.failures[0].error
+
     def test_fulfillment_gate_blocks_stale_report_for_current_head(
         self, tmp_path: Path
     ) -> None:

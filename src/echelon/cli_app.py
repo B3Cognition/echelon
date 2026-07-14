@@ -1193,8 +1193,9 @@ def _run_scope_change(
     typer.echo(heading)
     typer.echo(f"spec: {spec_id}")
     typer.echo(f"direct IDs: {', '.join(plan.selected_ids)}")
+    task_label = "deferred tasks" if action == "defer" else "planned tasks"
     typer.echo(
-        "deferred tasks: "
+        f"{task_label}: "
         + (", ".join(plan.derived_task_ids) if plan.derived_task_ids else "none")
     )
     for item_id in plan.related_active_ids:

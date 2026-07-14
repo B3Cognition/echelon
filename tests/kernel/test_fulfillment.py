@@ -17,7 +17,7 @@ from kernel.fulfillment import (
     validate_fulfillment_artifacts,
     validate_deferred_scope_rows,
 )
-from harness.deferred_scope import apply_defer
+from harness.deferred_scope import apply_defer, apply_restore
 
 
 def _run_harness(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -221,6 +221,37 @@ def test_deferred_scope_row_without_active_ledger_entry_is_invalid(tmp_path: Pat
     assert validate_deferred_scope_rows(report, tmp_path) == [
         "NFR-008 has no active defer entry"
     ]
+
+
+def test_planning_deferred_scope_restores_the_original_fulfillment_gap(
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "906-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("NFR-008\n", encoding="utf-8")
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=NFR-008 depends=none\n",
+        encoding="utf-8",
+    )
+    report = spec_dir / "fulfillment-report.md"
+    report.write_text(
+        "| ID | Status | Evidence |\n| --- | --- | --- |\n"
+        "| NFR-008 | DEVIATED | src/a.py |\n",
+        encoding="utf-8",
+    )
+
+    apply_defer(spec_dir, ["NFR-008"], reason="owner decision")
+    apply_deferred_scope_to_report(report, spec_dir)
+    assert fulfillment_has_blocking_gaps(report) is False
+
+    apply_restore(spec_dir, ["NFR-008"])
+    report.write_text(
+        "| ID | Status | Evidence |\n| --- | --- | --- |\n"
+        "| NFR-008 | DEVIATED | src/a.py |\n",
+        encoding="utf-8",
+    )
+
+    assert fulfillment_has_blocking_gaps(report) is True
 
 
 def test_stamp_fulfillment_report_records_commit_metadata(tmp_path):

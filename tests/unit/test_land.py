@@ -23,6 +23,7 @@ from harness.land import (
     land,
     resolve_land_repo,
 )
+from harness.deferred_scope import apply_defer
 
 
 def _write_state(state_dir: Path, spec_id: str, strategy: str, pr_url: str | None) -> None:
@@ -157,6 +158,41 @@ class TestLand:
 
         assert _fulfillment_warning("001", tmp_path, strict=False) is None
         assert _fulfillment_warning("001", tmp_path, strict=True) is not None
+
+    def test_fulfillment_warning_rejects_unbacked_deferred_scope_row(
+        self, tmp_path: Path
+    ) -> None:
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "| ID | Status | Evidence |\n|---|---|---|\n"
+            "| NFR-008 | DEFERRED_SCOPE | defer:defer-001: reason |\n",
+            encoding="utf-8",
+        )
+
+        warning = _fulfillment_warning("001", tmp_path)
+
+        assert warning is not None
+        assert "no active defer entry" in warning
+
+    def test_fulfillment_warning_accepts_ledger_backed_deferred_scope_row(
+        self, tmp_path: Path
+    ) -> None:
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("NFR-008\n", encoding="utf-8")
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=build req=NFR-008 depends=none\n",
+            encoding="utf-8",
+        )
+        apply_defer(spec_dir, ["NFR-008"], reason="owner decision")
+        (spec_dir / "fulfillment-report.md").write_text(
+            "| ID | Status | Evidence |\n|---|---|---|\n"
+            "| NFR-008 | DEFERRED_SCOPE | defer:defer-001: owner decision |\n",
+            encoding="utf-8",
+        )
+
+        assert _fulfillment_warning("001", tmp_path) is None
 
     def test_fulfillment_warning_rejects_scoped_report_for_landing(
         self, tmp_path: Path

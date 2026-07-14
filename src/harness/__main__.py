@@ -175,7 +175,7 @@ def _validate_task_progress() -> None:
 
     print(
         f"OK: {summary.completed_tasks}/{summary.total_tasks} tasks complete "
-        f"({summary.tasks_completed_pct}%)"
+        f"({summary.tasks_completed_pct}%); {summary.deferred_tasks} deferred"
     )
 
 
@@ -251,6 +251,8 @@ def _write_progress_integrity() -> None:
         "valid": summary.valid,
         "total_tasks": summary.total_tasks,
         "completed_tasks": summary.completed_tasks,
+        "deferred_tasks": summary.deferred_tasks,
+        "terminal_tasks": summary.terminal_tasks,
         "tasks_completed_pct": summary.tasks_completed_pct,
         "task_statuses": summary.task_statuses,
         "errors": summary.errors,
@@ -263,6 +265,8 @@ def _write_progress_integrity() -> None:
             "progress_integrity": "valid",
             "progress_integrity_total_tasks": summary.total_tasks,
             "progress_integrity_completed_tasks": summary.completed_tasks,
+            "progress_integrity_deferred_tasks": summary.deferred_tasks,
+            "progress_integrity_terminal_tasks": summary.terminal_tasks,
             "progress_integrity_tasks_completed_pct": summary.tasks_completed_pct,
         },
     )
@@ -581,6 +585,8 @@ def _progress_integrity_markdown(payload: dict[str, object]) -> str:
         f"Valid: {payload['valid']}\n\n"
         f"Completed: {payload['completed_tasks']}/{payload['total_tasks']} "
         f"({payload['tasks_completed_pct']}%)\n\n"
+        f"Deferred: {payload['deferred_tasks']}\n\n"
+        f"Terminal: {payload['terminal_tasks']}/{payload['total_tasks']}\n\n"
         "| Task | Status |\n"
         "| --- | --- |\n"
         f"{rows_text}\n"

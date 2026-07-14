@@ -160,13 +160,19 @@ class TestHarnessMainWriteProgressIntegrity:
         data = json.loads(out_json.read_text(encoding="utf-8"))
         assert data["valid"] is True
         assert data["completed_tasks"] == 1
+        assert data["deferred_tasks"] == 0
+        assert data["terminal_tasks"] == 1
         assert data["task_statuses"] == {"T-001": "DONE"}
         state_data = json.loads(state.read_text(encoding="utf-8"))
         assert state_data["progress_integrity"] == "valid"
         assert state_data["progress_integrity_total_tasks"] == 1
         assert state_data["progress_integrity_completed_tasks"] == 1
+        assert state_data["progress_integrity_deferred_tasks"] == 0
+        assert state_data["progress_integrity_terminal_tasks"] == 1
         markdown = out_md.read_text(encoding="utf-8")
         assert "# Progress Integrity" in markdown
+        assert "Deferred: 0" in markdown
+        assert "Terminal: 1/1" in markdown
         assert "| T-001 | DONE |" in markdown
         assert "OK: wrote progress integrity" in capsys.readouterr().out
 
