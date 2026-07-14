@@ -2,13 +2,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-RE_NODE_DIR="$ROOT/extension/scripts/node/re"
+CODEGRAPH_NODE_DIR="$ROOT/extension/scripts/node/codegraph"
 PACKAGE_NAME='@colbymchenry/codegraph'
 EXPECTED_VERSION='1.4.1'
 
-npm ci --prefix "$RE_NODE_DIR" --ignore-scripts --no-audit --no-fund >/dev/null
+npm ci --prefix "$CODEGRAPH_NODE_DIR" --ignore-scripts --no-audit --no-fund >/dev/null
 
-ACTUAL_VERSION="$(node -e "console.log(require('$RE_NODE_DIR/node_modules/$PACKAGE_NAME/package.json').version)")"
+ACTUAL_VERSION="$(node -e "console.log(require('$CODEGRAPH_NODE_DIR/node_modules/$PACKAGE_NAME/package.json').version)")"
 [[ "$ACTUAL_VERSION" == "$EXPECTED_VERSION" ]]
 
 TMP_DIR="$(mktemp -d)"
@@ -22,7 +22,7 @@ printf '%s\n' \
   '  return `hello ${name}`;' \
   '}' > "$PROJECT_DIR/example.ts"
 
-node "$RE_NODE_DIR/codegraph-bridge.js" analyze \
+node "$CODEGRAPH_NODE_DIR/codegraph-bridge.js" analyze \
   --repo-path "$PROJECT_DIR" \
   --output-path "$OUTPUT_PATH" \
   --languages typescript

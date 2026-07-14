@@ -574,7 +574,7 @@ def test_polyrepo_runtime_extension_real_tree_matches_delivery_surface_policy(
         "presets",
         "scripts/bash/re",
         "scripts/node/context7",
-        "scripts/node/re/vendor",
+        "scripts/node/codegraph/vendor",
         "scripts/python",
         "stacks",
     ]:

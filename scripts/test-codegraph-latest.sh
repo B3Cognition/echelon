@@ -11,8 +11,8 @@ PROJECT_DIR="$TMP_DIR/project"
 OUTPUT_PATH="$TMP_DIR/codegraph-analysis.json"
 
 mkdir -p "$RUNTIME_DIR" "$PROJECT_DIR"
-cp "$ROOT/extension/scripts/node/re/codegraph-bridge.js" "$RUNTIME_DIR/"
-cp "$ROOT/extension/scripts/node/re/codegraph-adapter.js" "$RUNTIME_DIR/"
+cp "$ROOT/extension/scripts/node/codegraph/codegraph-bridge.js" "$RUNTIME_DIR/"
+cp "$ROOT/extension/scripts/node/codegraph/codegraph-adapter.js" "$RUNTIME_DIR/"
 printf '%s\n' \
   '{' \
   '  "private": true,' \

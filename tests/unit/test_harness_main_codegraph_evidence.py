@@ -33,7 +33,7 @@ def _write_fake_bridge(project_root: Path) -> Path:
         / "echelon"
         / "scripts"
         / "node"
-        / "re"
+        / "codegraph"
         / "codegraph-bridge.js"
     )
     bridge_path.parent.mkdir(parents=True)
@@ -324,7 +324,7 @@ def test_write_codegraph_evidence_reports_missing_fixed_installed_bridge_path(
 
     assert result.returncode != 0
     error = (verify_run_dir / "codegraph-error.txt").read_text(encoding="utf-8")
-    assert ".specify/extensions/echelon/scripts/node/re/codegraph-bridge.js" in error
+    assert ".specify/extensions/echelon/scripts/node/codegraph/codegraph-bridge.js" in error
     assert "fixed installed extension path" in error
     summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())
     assert summary["structural_evidence"] == "degraded"

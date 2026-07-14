@@ -515,14 +515,14 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
     fi
     echo "" >&2
 
-    RE_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re"
-    BRIDGE_SCRIPT="$RE_NODE_DIR/codegraph-bridge.js"
-    NODE_MODULES_DIR="$RE_NODE_DIR/node_modules"
+    CODEGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/codegraph"
+    BRIDGE_SCRIPT="$CODEGRAPH_NODE_DIR/codegraph-bridge.js"
+    NODE_MODULES_DIR="$CODEGRAPH_NODE_DIR/node_modules"
     CODEGRAPH_AVAILABLE=false
     if command -v node >/dev/null 2>&1 && [[ -f "$BRIDGE_SCRIPT" ]]; then
         if [[ ! -d "$NODE_MODULES_DIR" ]]; then
             echo "⚠️  CodeGraph structural analysis skipped: node_modules not found." >&2
-            echo "   Run: npm ci --prefix \"$RE_NODE_DIR\"" >&2
+            echo "   Run: npm ci --prefix \"$CODEGRAPH_NODE_DIR\"" >&2
         else
             CODEGRAPH_AVAILABLE=true
         fi
@@ -791,13 +791,13 @@ jq -n \
     }' > "$OUTPUT_DIR/analysis.json"
 
 # Structural Code Intelligence (conditional — fail-open, non-blocking)
-RE_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re"
-BRIDGE_SCRIPT="$RE_NODE_DIR/codegraph-bridge.js"
-NODE_MODULES_DIR="$RE_NODE_DIR/node_modules"
+CODEGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/codegraph"
+BRIDGE_SCRIPT="$CODEGRAPH_NODE_DIR/codegraph-bridge.js"
+NODE_MODULES_DIR="$CODEGRAPH_NODE_DIR/node_modules"
 if command -v node >/dev/null 2>&1 && [[ -f "$BRIDGE_SCRIPT" ]]; then
     if [[ ! -d "$NODE_MODULES_DIR" ]]; then
         echo "⚠️  CodeGraph structural analysis skipped: node_modules not found." >&2
-        echo "   Run: npm ci --prefix \"$RE_NODE_DIR\"" >&2
+        echo "   Run: npm ci --prefix \"$CODEGRAPH_NODE_DIR\"" >&2
     else
         echo "Running structural analysis (CodeGraph)..." >&2
         run_codegraph_bridge "$BRIDGE_SCRIPT" "$OUTPUT_DIR/codegraph-analysis.json"

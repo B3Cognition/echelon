@@ -12,7 +12,7 @@ if str(EXT_ROOT) not in sys.path:
 from kernel.re_state import complete_dispatch, init_re_state, write_last_dispatch
 
 
-CODEGRAPH_RUNTIME_DIR = EXT_ROOT / "extension" / "scripts" / "node" / "re"
+CODEGRAPH_RUNTIME_DIR = EXT_ROOT / "extension" / "scripts" / "node" / "codegraph"
 CODEGRAPH_PACKAGE = "@colbymchenry/codegraph"
 CODEGRAPH_VERSION = "1.4.1"
 
@@ -20,8 +20,8 @@ CODEGRAPH_VERSION = "1.4.1"
 def test_install_script_installs_re_node_dependencies_with_npm_ci():
     install_script = (EXT_ROOT / "scripts" / "install.sh").read_text()
 
-    assert "RE_NODE_DIR=" in install_script
-    assert 'npm ci --prefix "$RE_NODE_DIR"' in install_script
+    assert "CODEGRAPH_NODE_DIR=" in install_script
+    assert 'npm ci --prefix "$CODEGRAPH_NODE_DIR"' in install_script
     assert "CodeGraph bridge" in install_script
 
 
@@ -61,9 +61,9 @@ def test_run_analysis_points_to_extension_node_install_path():
         EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"
     ).read_text()
 
-    assert 'RE_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/re"' in run_analysis
-    assert 'npm ci --prefix \\"$RE_NODE_DIR\\"' in run_analysis
-    assert "npm install --prefix scripts/node/re" not in run_analysis
+    assert 'CODEGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/codegraph"' in run_analysis
+    assert 'npm ci --prefix \\"$CODEGRAPH_NODE_DIR\\"' in run_analysis
+    assert "npm install --prefix scripts/node/codegraph" not in run_analysis
 
 
 def test_re_state_tracks_codegraph_analysis_artifact_by_default():
