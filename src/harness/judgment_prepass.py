@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from harness.deferred_scope import active_entries
+
 
 FULFILLMENT_STATUSES = {
     "IMPLEMENTED",
@@ -30,7 +32,12 @@ class JudgmentRow:
 
     @classmethod
     def mechanical_row(
-        cls, item_id: str, proposed_status: str, reason_code: str
+        cls,
+        item_id: str,
+        proposed_status: str,
+        reason_code: str,
+        *,
+        evidence: str | None = None,
     ) -> "JudgmentRow":
         return cls(
             id=item_id,
@@ -38,7 +45,9 @@ class JudgmentRow:
             proposed_status=proposed_status,
             reason_code=reason_code,
             fallback_reason=None,
-            report_row=_mechanical_report_row(item_id, proposed_status, reason_code),
+            report_row=_mechanical_report_row(
+                item_id, proposed_status, reason_code, evidence=evidence
+            ),
         )
 
     @classmethod
@@ -87,13 +96,31 @@ class _ImplementationRow:
 def build_judgment_prepass(
     *, spec_dir: Path, verify_run_dir: Path
 ) -> list[JudgmentRow]:
-    del spec_dir
     inventory_ids = _inventory_ids(verify_run_dir / "canonical-requirements.json")
     implementation_rows = _implementation_rows(verify_run_dir / "implementation-map.md")
     by_id = {row.id: row for row in implementation_rows}
+    deferred_entries_by_id = {
+        item_id: entry
+        for entry in active_entries(spec_dir)
+        for item_id in entry.selected_ids
+        if not item_id.startswith("T-")
+    }
 
     results: list[JudgmentRow] = []
     for item_id in inventory_ids:
+        deferred_entry = deferred_entries_by_id.get(item_id)
+        if deferred_entry is not None:
+            results.append(
+                JudgmentRow.mechanical_row(
+                    item_id,
+                    "DEFERRED_SCOPE",
+                    "active_deferred_scope",
+                    evidence=(
+                        f"defer:{deferred_entry.entry_id}: {deferred_entry.reason}"
+                    ),
+                )
+            )
+            continue
         row = by_id.get(item_id)
         if row is None:
             results.append(JudgmentRow.fallback_row(item_id, "missing_implementation_map_row"))
@@ -417,8 +444,14 @@ def _scoped_ids(path: Path | None) -> set[str] | None:
     return {str(item).strip() for item in raw_ids if str(item).strip()}
 
 
-def _mechanical_report_row(item_id: str, status: str, reason_code: str) -> str:
-    return f"| {item_id} | {status} | prepass:{reason_code} |"
+def _mechanical_report_row(
+    item_id: str,
+    status: str,
+    reason_code: str,
+    *,
+    evidence: str | None = None,
+) -> str:
+    return f"| {item_id} | {status} | {evidence or f'prepass:{reason_code}'} |"
 
 
 def _status_sort_key(status: str) -> tuple[int, str]:
