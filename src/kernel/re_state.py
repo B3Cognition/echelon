@@ -44,9 +44,9 @@ def resolve_re_output_dir(
 def init_re_state(
     output_dir: str = DEFAULT_RE_OUTPUT_DIR,
     mode: str = "single",
-    coverage_threshold: int = 80,
-    resolution_threshold: int = 80,
-    max_validate_iterations: int = 3,
+    coverage_threshold: int = 99,
+    resolution_threshold: int = 99,
+    max_validate_iterations: int = 5,
     max_verify_expand_iterations: int = 5,
 ) -> dict:
     """Return a fresh re/state.json dict."""
@@ -68,6 +68,15 @@ def init_re_state(
         "coverage_threshold": coverage_threshold,
         "verify_expand_iterations": 0,
         "max_verify_expand_iterations": max_verify_expand_iterations,
+        # Source-local convergence is controller-owned.  Agent result blocks
+        # must never update these counters or lifecycle records.
+        "re_convergence_schema_version": 1,
+        "re_source_budgets": {
+            "max_source_cycles": 5,
+            "max_domain_repairs": 5,
+            "max_source_reanalysis": 5,
+        },
+        "re_source_states": {},
         "resolution_pct": 0,
         "resolution_threshold": resolution_threshold,
         "validate_iterations": 0,

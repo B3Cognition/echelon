@@ -1812,8 +1812,8 @@ re:
     # Require confirmation before each phase
     require_confirmation: false
 
-    # Coverage threshold for verify/expand loop (0-100)
-    # Loop repeats until this coverage percentage is reached
+    # Coverage threshold for every refreshed source (0-100).
+    # A workspace cannot be complete while any refreshed source is below this.
     coverage_threshold: 99
 
     # Resolution threshold for validate loop (0-100)
@@ -1823,6 +1823,13 @@ re:
     # Max iterations for validate loop
     # Stops after this many iterations even if threshold not met
     max_validate_iterations: 5
+
+    # Bounded source-local convergence. A source follows
+    # analyze -> specify/repair -> measure until it passes or carries explicit
+    # quality debt. These are independently persisted per active RE run.
+    max_source_cycles: 5
+    max_domain_repairs: 5
+    max_source_reanalysis: 5
 
   # Polyrepo settings - for analyzing multiple repos under a top-level directory
   polyrepo:

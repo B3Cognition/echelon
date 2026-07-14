@@ -6,6 +6,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-136 RE target artifact containment** — source-domain dispatches now
+  retain only their canonical `spec.md`. The controller clears backup,
+  temporary, alternate, and scratch siblings before and after each agent call,
+  records cleanup in run state, and continues through the existing independent
+  quality gate. This keeps failed repair attempts from polluting staged RE
+  output without allowing a false `DONE` to advance the target.
+
 - **RE depth enforcement now validates legacy output before it can drain the
   queue** — interrupted runs created before target-level quality enforcement now
   receive a one-time deterministic scan on resume. Every shallow, missing, or

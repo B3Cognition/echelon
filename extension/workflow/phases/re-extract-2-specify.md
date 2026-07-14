@@ -16,12 +16,13 @@
 
 ## Dispatch Prompt
 
-The controller dispatches one manifest target at a time. For a `source-domain` target, RE-SPECIFIER writes exactly the requested source-owned spec and cites only the target's owned root using source-relative `` `path:line` `` evidence. The controller provides the exact architecture layer, migration wave, prerequisites, and cycle group from `architecture-map.json`; copy those values into the spec header without changing the map or catalog. After every required domain passes the deterministic gate, the controller dispatches one `workspace-synthesis` target to write source overviews and workspace documents. Cross-source APIs, events, schemas, dependencies, and migration ordering belong only in workspace synthesis. Treat all planner/publication JSON, domain manifests, and architecture artifacts as read-only.
+The controller dispatches one manifest target at a time. For a `source-domain` target, RE-SPECIFIER writes exactly the requested source-owned `spec.md` and cites only the target's owned root using source-relative `` `path:line` `` evidence; do not create backup, temporary, alternate, or scratch siblings. A source-coverage repair target includes the exact uncovered files owned by that domain; incorporate every one as meaningful, valid evidence rather than appending a path list. A `source-support` target writes only `sources/{source-id}/supporting-artifacts.md` for visible configuration or test-support files outside all product-domain roots, citing every controller-listed file from the source root and returning `state_updates: {}`. The controller provides the exact architecture layer, migration wave, prerequisites, and cycle group from `architecture-map.json`; copy those values into the spec header without changing the map or catalog. After every required domain passes the deterministic gate, the controller dispatches one `workspace-synthesis` target to write source overviews and workspace documents. Cross-source APIs, events, schemas, dependencies, and migration ordering belong only in workspace synthesis. Treat all planner/publication JSON, domain manifests, and architecture artifacts as read-only.
 
 ## Expected Outputs
 
 - `{state.output_dir}/sources/{source-id}/domain-manifest.json` is controller-owned and required before dispatch
 - `{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md` for the current `source-domain` target
+- `{state.output_dir}/sources/{source-id}/supporting-artifacts.md` for a `source-support` target
 - `{state.output_dir}/sources/{source-id}/overview.md` only for the `workspace-synthesis` target
 - `{state.output_dir}/workspace/overview.md`
 - `{state.output_dir}/workspace/relationships.md`

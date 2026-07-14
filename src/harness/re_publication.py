@@ -58,6 +58,7 @@ class RePublicationCandidate:
     plan: ReExecutionPlan
     refreshed_sources: tuple[str, ...]
     empty_sources: tuple[str, ...]
+    partial_sources: tuple[str, ...]
     removed_sources: tuple[str, ...]
     warnings: tuple[str, ...]
 
@@ -109,6 +110,11 @@ def validate_re_run(
         raise RePublicationValidationError(f"invalid RE execution plan: {exc}") from exc
     if not plan.publication_required:
         raise RePublicationValidationError("RE execution plan does not require publication")
+    partial_sources = _partial_quality_debt_sources(run_re, re_state, plan)
+    if status == "complete" and partial_sources:
+        raise RePublicationValidationError(
+            "complete RE publication cannot contain source quality debt"
+        )
 
     _validate_source_index(run_re / "re-source-index.json", plan)
     _validate_workspace_inputs(run_re / "re-workspace-inputs.json", plan)
@@ -132,9 +138,14 @@ def validate_re_run(
             _validate_current_source(source, current)
 
     quality_report = validate_staged_re_quality(run_re, plan)
-    if quality_report.failures:
-        _raise_quality_failure(quality_report.failures[0])
-    _validate_semantic_quality_report(run_re)
+    quality_failures = [
+        failure
+        for failure in quality_report.failures
+        if failure.source_id not in partial_sources
+    ]
+    if quality_failures:
+        _raise_quality_failure(quality_failures[0])
+    _validate_semantic_quality_report(run_re, partial_sources=partial_sources)
     try:
         validate_re_architecture_catalog(run_re, plan)
     except ValueError as exc:
@@ -166,22 +177,77 @@ def validate_re_run(
         plan=plan,
         refreshed_sources=tuple(sorted(refreshed)),
         empty_sources=tuple(sorted(empty)),
+        partial_sources=tuple(sorted(partial_sources)),
         removed_sources=tuple(sorted(plan.removed_sources)),
         warnings=warnings,
     )
 
 
-def _validate_semantic_quality_report(run_re: Path) -> None:
+def _validate_semantic_quality_report(
+    run_re: Path, *, partial_sources: set[str]
+) -> None:
     path = run_re / "quality" / "semantic-quality-review.json"
     report = _read_json(path, required=False)
     if report.get("quality_contract_version") != QUALITY_CONTRACT_VERSION:
         raise RePublicationValidationError(
             f"current semantic quality review is required before publication: {path}"
         )
-    if report.get("passed") is not True or report.get("failures"):
+    failures = report.get("failures")
+    if report.get("passed") is True and not failures:
+        return
+    if not isinstance(failures, list) or not failures:
         raise RePublicationValidationError(
             f"semantic quality review has unresolved findings: {path}"
         )
+    failure_sources = {
+        item.get("source_id")
+        for item in failures
+        if isinstance(item, dict) and isinstance(item.get("source_id"), str)
+    }
+    if not failure_sources or not failure_sources <= partial_sources:
+        raise RePublicationValidationError(
+            f"semantic quality review has unresolved findings: {path}"
+        )
+
+
+def _partial_quality_debt_sources(
+    run_re: Path,
+    re_state: dict[str, Any],
+    plan: ReExecutionPlan,
+) -> set[str]:
+    """Return only debt sources proven by controller-owned source reports."""
+    source_states = re_state.get("re_source_states")
+    if not isinstance(source_states, dict):
+        return set()
+    refresh_ids = {source.id for source in plan.refresh_sources}
+    reports_root = (run_re / "quality" / "sources").resolve()
+    partial: set[str] = set()
+    for source_id, source_state in source_states.items():
+        if source_id not in refresh_ids or not isinstance(source_state, dict):
+            continue
+        if source_state.get("status") != "partial_quality_debt":
+            continue
+        report_value = source_state.get("quality_debt_report")
+        if not isinstance(report_value, str) or not report_value:
+            raise RePublicationValidationError(
+                f"partial source has no quality debt report: {source_id}"
+            )
+        report_path = Path(report_value).resolve()
+        if not report_path.is_relative_to(reports_root):
+            raise RePublicationValidationError(
+                f"partial source quality debt report is outside RE quality output: {source_id}"
+            )
+        report = _read_json(report_path)
+        if (
+            report.get("source_id") != source_id
+            or report.get("passed") is not False
+            or report.get("quality_contract_version") != QUALITY_CONTRACT_VERSION
+        ):
+            raise RePublicationValidationError(
+                f"partial source quality debt report is invalid: {report_path}"
+            )
+        partial.add(source_id)
+    return partial
 
 
 def publish_re_run(
@@ -324,7 +390,9 @@ def _prepare_transaction(
                 f"re/sources/{source_id}/{path.relative_to(durable_source).as_posix()}"
                 for path in sorted((durable_source / "specs").glob("*/spec.md"))
             ]
-            source_status = candidate.status
+            source_status = (
+                "partial" if source_id in candidate.partial_sources else "complete"
+            )
             cache_stage = new_root / cache_relative
             _copy_heavy_source_artifacts(staged_source, cache_stage)
             _write_json_atomic(

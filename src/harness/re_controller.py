@@ -29,13 +29,16 @@ from harness.re_domain_manifest import (
 from harness.re_planner import ReExecutionPlan
 from harness.re_quality_gate import (
     ReQualityReport,
+    ReSourceQualityReport,
     quality_target_for_domain,
     validate_semantic_quality_review,
     validate_staged_re_domain_quality,
     validate_staged_re_quality,
     write_re_semantic_quality_report,
+    write_re_source_quality_report,
     write_re_target_quality_report,
     write_re_quality_report,
+    measure_source_quality,
 )
 from kernel.re_state import complete_dispatch, init_re_state, write_last_dispatch
 
@@ -100,6 +103,7 @@ class ReExtractionController:
         self._run_dir = run_dir.resolve()
         self._run_re_dir = self._run_dir / "re"
         self._extension_root = extension_root.resolve()
+        self._reported_source_id: str | None = None
 
     def run(self) -> ReControllerResult:
         try:
@@ -118,6 +122,14 @@ class ReExtractionController:
     def _run_locked(self) -> ReControllerResult:
         plan = self._load_plan()
         state = self._load_state()
+        if self._migrate_workspace_source_convergence(state):
+            self._save_state(state)
+        if self._upgrade_source_convergence_quality_contract(state):
+            self._save_state(state)
+        if self._upgrade_source_coverage_repair_protocol(state, plan):
+            self._save_state(state)
+        if self._apply_re_budget_override(state):
+            self._save_state(state)
         if (
             state.get("phase") == "re-extract-2-specify"
             and state.get("re_domain_partition_version") != DOMAIN_PARTITION_VERSION
@@ -177,9 +189,11 @@ class ReExtractionController:
                         return next_result
                     state = self._load_state()
                     continue
-                target_error = self._prepare_specification_target(target)
+                target_error = self._prepare_specification_target(state, target)
                 if target_error is not None:
                     return self._block(state, target_error)
+                if self._source_convergence_enabled(state):
+                    self._report_source_start(state, plan, target)
 
             state = write_last_dispatch(state, phase, _PHASES[phase])
             self._save_state(state)
@@ -193,6 +207,12 @@ class ReExtractionController:
                 result = self._provider.exec_agent(
                     str(self._project_root), self._prompt_for(phase, state, target)
                 )
+                if phase == "re-extract-2-specify" and target is not None:
+                    cleanup_error = self._clean_noncanonical_target_artifacts(
+                        state, target, stage="post-dispatch"
+                    )
+                    if cleanup_error is not None:
+                        return self._block(state, cleanup_error)
                 if result.blocked:
                     return self._block(state, "re_agent_dispatch_failed")
                 payload = result.echelon_result
@@ -204,7 +224,9 @@ class ReExtractionController:
                 )
                 return self._block(state, "re_agent_result_invalid")
             try:
-                state = complete_dispatch(state, self._agent_result_without_controller_keys(payload))
+                state = complete_dispatch(
+                    state, self._agent_result_without_controller_keys(payload, target)
+                )
             except (KeyError, ValueError) as exc:
                 state["re_agent_result_detail"] = str(exc)
                 return self._block(state, "re_agent_result_invalid")
@@ -230,6 +252,26 @@ class ReExtractionController:
                         state, target, target_report
                     )
                     state["re_target_quality_gate_report"] = str(report_path)
+                    if self._source_convergence_enabled(state):
+                        source_id = target.get("source_id")
+                        domain_id = target.get("domain_id")
+                        if isinstance(source_id, str) and isinstance(domain_id, str):
+                            source_state = self._source_state(state, source_id)
+                            repairs = source_state.get("domain_repairs")
+                            if not isinstance(repairs, dict):
+                                repairs = {}
+                                source_state["domain_repairs"] = repairs
+                            repair_count = self._metric(repairs, domain_id) + 1
+                            repairs[domain_id] = repair_count
+                            if repair_count > self._source_budget(
+                                state, "max_domain_repairs"
+                            ):
+                                self._mark_active_source_partial(
+                                    state, source_id, report_path
+                                )
+                                self._activate_next_source(state, plan)
+                                self._save_state(state)
+                                continue
                     if attempts > self._metric(state, "max_verify_expand_iterations"):
                         return self._block(state, "re_domain_deep_spec_gate_failed")
                     self._save_state(state)
@@ -254,6 +296,14 @@ class ReExtractionController:
                 )
                 state["re_semantic_quality_report"] = str(semantic_report_path)
                 if not semantic_report.passed:
+                    if self._source_convergence_enabled(state):
+                        scheduled = self._schedule_source_semantic_repair(
+                            state, plan, semantic_report
+                        )
+                        if scheduled is not None:
+                            return scheduled
+                        state = self._load_state()
+                        continue
                     state["re_quality_gate_report"] = str(semantic_report_path)
                     scheduled = self._schedule_quality_repair(state, semantic_report)
                     if scheduled is not None:
@@ -296,13 +346,18 @@ class ReExtractionController:
             if architecture_error is not None:
                 return self._block(state, architecture_error)
             state["re_domain_partition_version"] = DOMAIN_PARTITION_VERSION
-            state["re_specification_targets"] = self._initial_specification_targets(plan)
+            if self._source_convergence_enabled(state):
+                self._initialize_source_convergence(state, plan)
+            else:
+                state["re_specification_targets"] = self._initial_specification_targets(plan)
             state["re_target_quality_protocol_version"] = (
                 _TARGET_QUALITY_PROTOCOL_VERSION
             )
             state["re_workspace_synthesis_complete"] = False
             state["phase"] = "re-extract-2-specify"
         elif phase == "re-extract-2-specify":
+            if self._source_convergence_enabled(state):
+                return self._advance_source_convergence(state, plan)
             report = validate_staged_re_quality(self._run_re_dir, plan)
             report_path = write_re_quality_report(self._run_re_dir, report)
             state["re_quality_gate_report"] = str(report_path)
@@ -340,6 +395,542 @@ class ReExtractionController:
             state["status"] = "done"
             self._save_state(state)
             return ReControllerResult(completed=True)
+        self._save_state(state)
+        return None
+
+    @staticmethod
+    def _source_convergence_enabled(state: dict) -> bool:
+        return (
+            state.get("re_convergence_schema_version") == 1
+            and isinstance(state.get("re_source_states"), dict)
+        )
+
+    @staticmethod
+    def _migrate_workspace_source_convergence(state: dict) -> bool:
+        """Move active workspace runs from global RE routing to source-local state."""
+        if (
+            state.get("mode") != "workspace"
+            or ReExtractionController._source_convergence_enabled(state)
+        ):
+            return False
+        state["re_convergence_schema_version"] = 1
+        state["re_source_budgets"] = {
+            "max_source_cycles": 5,
+            "max_domain_repairs": 5,
+            "max_source_reanalysis": 5,
+        }
+        state["re_source_states"] = {}
+        # Existing active workspace runs predate the deep-by-default contract.
+        # Migration must not preserve their former shallow thresholds.
+        state["coverage_threshold"] = 99
+        state["resolution_threshold"] = 99
+        state["max_verify_expand_iterations"] = 5
+        state["max_validate_iterations"] = 5
+        state["re_source_convergence_quality_contract_version"] = 1
+        state["phase"] = "re-extract-1-analyze"
+        state["re_source_convergence_migrated"] = True
+        for key in (
+            "re_specification_targets",
+            "re_quality_repair_pending",
+            "re_quality_repair_snapshot",
+            "re_target_quality_repair_snapshot",
+            "re_domain_quality_attempts",
+            "re_target_quality_protocol_version",
+            "re_agent_result_detail",
+        ):
+            state.pop(key, None)
+        return True
+
+    @staticmethod
+    def _upgrade_source_convergence_quality_contract(state: dict) -> bool:
+        """Upgrade already-migrated runs from the former shallow defaults."""
+        if (
+            state.get("mode") != "workspace"
+            or not ReExtractionController._source_convergence_enabled(state)
+            or state.get("re_source_convergence_quality_contract_version") == 1
+        ):
+            return False
+        state["coverage_threshold"] = 99
+        state["resolution_threshold"] = 99
+        state["max_verify_expand_iterations"] = 5
+        state["max_validate_iterations"] = 5
+        state["re_source_convergence_quality_contract_version"] = 1
+        state.pop("re_agent_result_detail", None)
+        return True
+
+    def _initialize_source_convergence(
+        self, state: dict, plan: ReExecutionPlan
+    ) -> None:
+        """Initialize controller-owned source lifecycle records after analysis."""
+        source_states = state.get("re_source_states")
+        if not isinstance(source_states, dict):
+            source_states = {}
+            state["re_source_states"] = source_states
+        for source in plan.refresh_sources:
+            source_states.setdefault(
+                source.id,
+                {
+                    "status": "pending",
+                    "source_cycles": 0,
+                    "domain_repairs": {},
+                    "source_reanalysis": 0,
+                },
+            )
+        state["re_source_order"] = [source.id for source in plan.refresh_sources]
+        state["re_source_coverage_repair_protocol_version"] = 1
+        state.pop("re_active_source_id", None)
+        state["re_specification_targets"] = []
+        self._activate_next_source(state, plan)
+
+    def _apply_re_budget_override(self, state: dict) -> bool:
+        """Raise source-local budgets from the command-scoped squad setting."""
+        try:
+            outer_state = json.loads(
+                (self._run_dir / "state.json").read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError, json.JSONDecodeError):
+            return False
+        override = outer_state.get("re_max_inner")
+        if not isinstance(override, int) or isinstance(override, bool) or override < 1:
+            return False
+        budgets = state.get("re_source_budgets")
+        if not isinstance(budgets, dict):
+            budgets = {}
+            state["re_source_budgets"] = budgets
+        changed = False
+        for key in (
+            "max_source_cycles",
+            "max_domain_repairs",
+            "max_source_reanalysis",
+        ):
+            existing = budgets.get(key)
+            current = existing if isinstance(existing, int) and not isinstance(existing, bool) else 5
+            if override > current:
+                budgets[key] = override
+                changed = True
+        if changed:
+            state["re_source_budget_override"] = override
+        return changed
+
+    def _advance_source_convergence(
+        self, state: dict, plan: ReExecutionPlan
+    ) -> ReControllerResult | None:
+        """Measure the active source and route its exact next repair action."""
+        active_source_id = state.get("re_active_source_id")
+        if isinstance(active_source_id, str) and active_source_id:
+            report = measure_source_quality(
+                self._run_re_dir,
+                plan,
+                active_source_id,
+                coverage_threshold=self._metric(state, "coverage_threshold"),
+            )
+            report_path = write_re_source_quality_report(self._run_re_dir, report)
+            source_state = self._source_state(state, active_source_id)
+            source_state["quality_report"] = str(report_path)
+            source_state["coverage_pct"] = report.coverage_pct
+            self._report_source_measurement(report)
+            if report.passed:
+                source_state["status"] = "passed"
+                self._report_source_ready(report, active_source_id, plan)
+                state.pop("re_active_source_id", None)
+                self._activate_next_source(state, plan)
+                self._save_state(state)
+                return None
+
+            cycles = self._source_counter(source_state, "source_cycles")
+            if cycles >= self._source_budget(state, "max_source_cycles"):
+                self._report_source_quality_debt(report)
+                self._mark_active_source_partial(state, active_source_id, report_path)
+                self._activate_next_source(state, plan)
+                self._save_state(state)
+                return None
+
+            source_state["source_cycles"] = cycles + 1
+            state["re_specification_targets"] = self._source_repair_targets(
+                plan, active_source_id, report.orphan_paths, report.domain_failures
+            )
+            if not state["re_specification_targets"]:
+                return self._block(state, "re_source_quality_routing_failed")
+            self._report_source_repair(
+                active_source_id,
+                self._source_counter(source_state, "source_cycles"),
+                self._source_budget(state, "max_source_cycles"),
+                state["re_specification_targets"],
+            )
+            state["phase"] = "re-extract-2-specify"
+            self._save_state(state)
+            return None
+
+        if state.get("re_workspace_synthesis_complete"):
+            state["phase"] = "re-extract-5-validate"
+            self._save_state(state)
+            return None
+        self._activate_next_source(state, plan)
+        self._save_state(state)
+        return None
+
+    def _report_source_start(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+        target: dict[str, object],
+    ) -> None:
+        """Print one controller-owned progress marker for each source session."""
+        source_id = target.get("source_id")
+        if not isinstance(source_id, str) or source_id == self._reported_source_id:
+            return
+        source_state = self._source_state(state, source_id)
+        domain_count = len(self._source_targets(plan, source_id))
+        cycle = self._source_counter(source_state, "source_cycles") + 1
+        budget = self._source_budget(state, "max_source_cycles")
+        print(f"[re] source: {source_id}", flush=True)
+        print(
+            f"[re]   processing {domain_count} domain(s); source cycle {cycle}/{budget}",
+            flush=True,
+        )
+        self._reported_source_id = source_id
+
+    @staticmethod
+    def _report_source_measurement(report: ReSourceQualityReport) -> None:
+        """Print every deterministic source measurement, including failed ones."""
+        print(
+            "[re] source measured: "
+            f"{report.source_id} - {report.coverage_pct:.1f}% coverage "
+            f"({report.covered_file_count}/{report.eligible_file_count} files; "
+            f"threshold {report.coverage_threshold}%)",
+            flush=True,
+        )
+
+    @staticmethod
+    def _report_source_repair(
+        source_id: str,
+        cycle: int,
+        budget: int,
+        targets: list[dict[str, object]],
+    ) -> None:
+        """Make the next deterministic source repair visible in the terminal."""
+        domain_targets = sum(target.get("kind") == "source-domain" for target in targets)
+        support_targets = sum(target.get("kind") == "source-support" for target in targets)
+        details = [f"{domain_targets} domain repair target(s)"]
+        if support_targets:
+            details.append(f"{support_targets} support-artifact target(s)")
+        print(
+            "[re] source repair: "
+            f"{source_id} - cycle {cycle}/{budget}; "
+            + ", ".join(details),
+            flush=True,
+        )
+
+    def _report_source_ready(
+        self,
+        report: ReSourceQualityReport,
+        source_id: str,
+        plan: ReExecutionPlan,
+    ) -> None:
+        domain_count = len(self._source_targets(plan, source_id))
+        print(
+            "[re] source ready: "
+            f"{source_id} - {report.coverage_pct:.1f}% coverage "
+            f"({report.covered_file_count}/{report.eligible_file_count} files); "
+            f"{domain_count} domain spec(s) pass; semantic review pending",
+            flush=True,
+        )
+
+    @staticmethod
+    def _report_source_quality_debt(report: ReSourceQualityReport) -> None:
+        issues: list[str] = []
+        if report.orphan_paths:
+            issues.append(f"{len(report.orphan_paths)} uncovered file(s)")
+        if report.domain_failures:
+            issues.append(f"{len(report.domain_failures)} incomplete domain spec(s)")
+        detail = "; ".join(issues) if issues else "quality budget exhausted"
+        print(
+            "[re] source quality debt: "
+            f"{report.source_id} - {report.coverage_pct:.1f}% coverage "
+            f"({report.covered_file_count}/{report.eligible_file_count} files); {detail}",
+            flush=True,
+        )
+
+    def _activate_next_source(self, state: dict, plan: ReExecutionPlan) -> None:
+        """Queue domains for the next unfinished source, never a workspace union."""
+        source_states = state.get("re_source_states")
+        order = state.get("re_source_order")
+        if not isinstance(source_states, dict) or not isinstance(order, list):
+            return
+        for source_id in order:
+            if not isinstance(source_id, str):
+                continue
+            source_state = source_states.get(source_id)
+            if not isinstance(source_state, dict) or source_state.get("status") != "pending":
+                continue
+            source_state["status"] = "active"
+            state["re_active_source_id"] = source_id
+            state["re_specification_targets"] = self._source_targets(plan, source_id)
+            state["phase"] = "re-extract-2-specify"
+            return
+        state.pop("re_active_source_id", None)
+        if not state.get("re_workspace_synthesis_complete"):
+            state["re_specification_targets"] = [{"kind": "workspace-synthesis"}]
+            state["phase"] = "re-extract-2-specify"
+
+    def _source_targets(
+        self, plan: ReExecutionPlan, source_id: str
+    ) -> list[dict[str, object]]:
+        manifest = load_domain_manifest(domain_manifest_path(self._run_re_dir, source_id))
+        if not any(source.id == source_id for source in plan.refresh_sources):
+            raise ValueError(f"source is not refreshable: {source_id}")
+        return [
+            {
+                "kind": "source-domain",
+                "source_id": source_id,
+                "domain_id": domain.domain_id,
+                "root": domain.root,
+            }
+            for domain in manifest.domains
+        ]
+
+    def _source_repair_targets(
+        self,
+        plan: ReExecutionPlan,
+        source_id: str,
+        orphan_paths: tuple[str, ...],
+        failures: tuple[object, ...],
+    ) -> list[dict[str, object]]:
+        targets = self._source_targets(plan, source_id)
+        wanted = {
+            getattr(failure, "domain_id", None)
+            for failure in failures
+            if isinstance(getattr(failure, "domain_id", None), str)
+        }
+        owned_orphans: dict[str, list[str]] = {
+            str(target["domain_id"]): [] for target in targets
+        }
+        unowned_orphans: list[str] = []
+        for orphan in orphan_paths:
+            owners = [
+                target
+                for target in targets
+                if (
+                    str(target["root"]) == "."
+                    or orphan == str(target["root"])
+                    or orphan.startswith(str(target["root"]) + "/")
+                )
+            ]
+            if not owners:
+                unowned_orphans.append(orphan)
+                continue
+            owner = max(owners, key=lambda target: len(str(target["root"])))
+            domain_id = str(owner["domain_id"])
+            owned_orphans[domain_id].append(orphan)
+            wanted.add(domain_id)
+        selected: list[dict[str, object]] = []
+        for target in targets:
+            domain_id = str(target["domain_id"])
+            if domain_id not in wanted:
+                continue
+            repaired_target = dict(target)
+            if owned_orphans[domain_id]:
+                repaired_target["orphan_paths"] = owned_orphans[domain_id]
+            selected.append(repaired_target)
+        if unowned_orphans:
+            selected.append(
+                {
+                    "kind": "source-support",
+                    "source_id": source_id,
+                    "orphan_paths": unowned_orphans,
+                }
+            )
+        return selected or targets
+
+    def _upgrade_source_coverage_repair_protocol(
+        self, state: dict, plan: ReExecutionPlan
+    ) -> bool:
+        """Give active legacy repair queues the source evidence they lacked."""
+        if (
+            not self._source_convergence_enabled(state)
+            or state.get("re_source_coverage_repair_protocol_version") == 1
+        ):
+            return False
+        state["re_source_coverage_repair_protocol_version"] = 1
+        source_states = state.get("re_source_states")
+        order = state.get("re_source_order")
+        if isinstance(source_states, dict) and isinstance(order, list):
+            recovered: list[tuple[str, ReSourceQualityReport]] = []
+            for source_id in order:
+                if not isinstance(source_id, str):
+                    continue
+                source_state = source_states.get(source_id)
+                if not isinstance(source_state, dict) or source_state.get("status") not in {
+                    "passed",
+                    "partial_quality_debt",
+                }:
+                    continue
+                report = measure_source_quality(
+                    self._run_re_dir,
+                    plan,
+                    source_id,
+                    coverage_threshold=self._metric(state, "coverage_threshold"),
+                )
+                report_path = write_re_source_quality_report(self._run_re_dir, report)
+                source_state["quality_report"] = str(report_path)
+                source_state["coverage_pct"] = report.coverage_pct
+                if report.passed:
+                    source_state["status"] = "passed"
+                    continue
+                source_state["status"] = "pending"
+                source_state["source_cycles"] = 0
+                source_state["domain_repairs"] = {}
+                source_state["source_reanalysis"] = 0
+                recovered.append((source_id, report))
+            if recovered:
+                for source_id, _report in recovered:
+                    source_state = self._source_state(state, source_id)
+                    source_state["status"] = "pending"
+                active_source = state.get("re_active_source_id")
+                if isinstance(active_source, str):
+                    active_state = source_states.get(active_source)
+                    if isinstance(active_state, dict) and active_state.get("status") == "active":
+                        active_state["status"] = "pending"
+                first_source, first_report = recovered[0]
+                first_state = self._source_state(state, first_source)
+                first_state["status"] = "active"
+                state["re_active_source_id"] = first_source
+                state["re_specification_targets"] = self._source_repair_targets(
+                    plan,
+                    first_source,
+                    first_report.orphan_paths,
+                    first_report.domain_failures,
+                )
+                state["phase"] = "re-extract-2-specify"
+                debt_sources = state.get("re_quality_debt_sources")
+                if isinstance(debt_sources, list):
+                    state["re_quality_debt_sources"] = [
+                        source_id
+                        for source_id in debt_sources
+                        if source_id not in {source for source, _report in recovered}
+                    ]
+                return True
+        source_id = state.get("re_active_source_id")
+        if not isinstance(source_id, str):
+            return True
+        source_state = self._source_state(state, source_id)
+        if not isinstance(source_state.get("quality_report"), str):
+            return True
+        report = measure_source_quality(
+            self._run_re_dir,
+            plan,
+            source_id,
+            coverage_threshold=self._metric(state, "coverage_threshold"),
+        )
+        report_path = write_re_source_quality_report(self._run_re_dir, report)
+        source_state["quality_report"] = str(report_path)
+        source_state["coverage_pct"] = report.coverage_pct
+        if report.passed:
+            return True
+        targets = self._source_repair_targets(
+            plan, source_id, report.orphan_paths, report.domain_failures
+        )
+        if targets:
+            state["re_specification_targets"] = targets
+            state["phase"] = "re-extract-2-specify"
+        return True
+
+    @staticmethod
+    def _source_state(state: dict, source_id: str) -> dict:
+        source_states = state.get("re_source_states")
+        if not isinstance(source_states, dict):
+            raise ValueError("source convergence state is unavailable")
+        source_state = source_states.get(source_id)
+        if not isinstance(source_state, dict):
+            raise ValueError(f"source convergence state is unavailable: {source_id}")
+        return source_state
+
+    @staticmethod
+    def _source_counter(source_state: dict, key: str) -> int:
+        value = source_state.get(key, 0)
+        return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+    @staticmethod
+    def _source_budget(state: dict, key: str) -> int:
+        budgets = state.get("re_source_budgets")
+        value = budgets.get(key) if isinstance(budgets, dict) else None
+        return value if isinstance(value, int) and not isinstance(value, bool) else 5
+
+    def _mark_active_source_partial(
+        self, state: dict, source_id: str, report_path: Path
+    ) -> None:
+        source_state = self._source_state(state, source_id)
+        source_state["status"] = "partial_quality_debt"
+        source_state["quality_debt_report"] = str(report_path)
+        state["re_specification_targets"] = []
+        debt_sources = state.setdefault("re_quality_debt_sources", [])
+        if isinstance(debt_sources, list) and source_id not in debt_sources:
+            debt_sources.append(source_id)
+        for key in (
+            "re_quality_repair_pending",
+            "re_quality_repair_snapshot",
+            "re_target_quality_repair_snapshot",
+            "re_target_quality_gate_report",
+        ):
+            state.pop(key, None)
+        state.pop("re_active_source_id", None)
+
+    def _schedule_source_semantic_repair(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+        report: ReQualityReport,
+    ) -> ReControllerResult | None:
+        """Return semantic findings to their owning source before finalizing RE."""
+        source_states = state.get("re_source_states")
+        order = state.get("re_source_order")
+        if not isinstance(source_states, dict) or not isinstance(order, list):
+            return self._block(state, "re_source_semantic_routing_failed")
+        for source_id in order:
+            if not isinstance(source_id, str):
+                continue
+            source_state = source_states.get(source_id)
+            if not isinstance(source_state, dict) or source_state.get("status") == "partial_quality_debt":
+                continue
+            failures = tuple(
+                failure for failure in report.failures if failure.source_id == source_id
+            )
+            if not failures:
+                continue
+            targets = self._source_repair_targets(plan, source_id, (), failures)
+            repairs = source_state.get("domain_repairs")
+            if not isinstance(repairs, dict):
+                repairs = {}
+                source_state["domain_repairs"] = repairs
+            exhausted = False
+            for target in targets:
+                domain_id = str(target["domain_id"])
+                repair_count = self._metric(repairs, domain_id) + 1
+                repairs[domain_id] = repair_count
+                exhausted = exhausted or repair_count > self._source_budget(
+                    state, "max_domain_repairs"
+                )
+            if exhausted:
+                source_report = measure_source_quality(
+                    self._run_re_dir,
+                    plan,
+                    source_id,
+                    coverage_threshold=self._metric(state, "coverage_threshold"),
+                    semantic_failures=failures,
+                )
+                report_path = write_re_source_quality_report(
+                    self._run_re_dir, source_report
+                )
+                self._mark_active_source_partial(state, source_id, report_path)
+                return self._schedule_source_semantic_repair(state, plan, report)
+            source_state["status"] = "active"
+            state["re_active_source_id"] = source_id
+            state["re_specification_targets"] = targets
+            state["phase"] = "re-extract-2-specify"
+            self._reported_source_id = None
+            self._save_state(state)
+            return None
+        state["phase"] = "re-extract-6-checklist"
         self._save_state(state)
         return None
 
@@ -692,6 +1283,36 @@ class ReExtractionController:
                 "source-domain specs have already been dispatched independently. Do not "
                 "create, rename, or rewrite any source-domain spec.\n"
             )
+        if kind == "source-support":
+            source_id = target.get("source_id")
+            orphan_paths = target.get("orphan_paths")
+            if (
+                not isinstance(source_id, str)
+                or not source_id
+                or not isinstance(orphan_paths, list)
+                or not orphan_paths
+                or any(not isinstance(path, str) or not path for path in orphan_paths)
+            ):
+                raise ValueError("invalid source supporting-artifacts target")
+            support_path = (
+                self._run_re_dir / "sources" / source_id / "supporting-artifacts.md"
+            )
+            source_report = self._run_re_dir / "quality" / "sources" / f"{source_id}.json"
+            paths = "\n".join(f"- `{path}`" for path in orphan_paths)
+            return (
+                "\n## Controller-Owned Source Supporting-Artifacts Target\n"
+                f"Generate exactly one source supporting-artifacts register: `{support_path}`.\n"
+                f"Source ID: `{source_id}`\n"
+                f"Read `{source_report}`. The following visible source files are outside "
+                "every product-domain root, but remain required source evidence:\n"
+                f"{paths}\n"
+                "For every listed file, document its observed configuration, test-support, "
+                "or runtime role and cite it with a valid source-root-relative `path:line` "
+                "reference. Do not merely list paths. Do not create or modify a domain spec, "
+                "workspace synthesis, manifest, or planner artifact. Return DONE only after "
+                "every listed file is cited in this register. Return an `echelon_result` with "
+                "`state_updates: {}`; do not emit source inventory or other state updates.\n"
+            )
         source_id = target.get("source_id")
         domain_id = target.get("domain_id")
         root = target.get("root")
@@ -702,6 +1323,22 @@ class ReExtractionController:
         target_report = (
             self._run_re_dir / "quality" / "targets" / source_id / f"{domain_id}.json"
         )
+        source_report = self._run_re_dir / "quality" / "sources" / f"{source_id}.json"
+        orphan_paths = target.get("orphan_paths")
+        coverage_repair = ""
+        if isinstance(orphan_paths, list) and orphan_paths:
+            if any(not isinstance(path, str) or not path for path in orphan_paths):
+                raise ValueError("invalid source coverage repair paths")
+            paths = "\n".join(f"- `{path}`" for path in orphan_paths)
+            coverage_repair = (
+                "Source coverage repair: read the controller-owned source report "
+                f"`{source_report}`. The following files are inside this domain but still "
+                "lack valid evidence:\n"
+                f"{paths}\n"
+                "Extend this target spec with concrete, valid citations for every listed "
+                "file and integrate the observed behavior into its scenarios, requirements, "
+                "edge cases, or source-evidence explanation. Do not merely append a path list.\n"
+            )
         quality_contract = ""
         architecture_contract = self._architecture_target_context(source_id, domain_id)
         try:
@@ -737,8 +1374,10 @@ class ReExtractionController:
             "using either the source-root path or a path relative to the owned domain "
             "root; it must resolve within that domain. Never use Markdown-link citations. "
             "Include at least five distinct valid citations. Do not write another domain spec, "
-            "source overview, or workspace synthesis.\n"
-            "Before returning DONE, run this exact deterministic check from the "
+            "source overview, or workspace synthesis. Write only this target's `spec.md`; "
+            "never create backup, temporary, alternate, or scratch files beside it.\n"
+            + coverage_repair
+            + "Before returning DONE, run this exact deterministic check from the "
             "workspace root; it exits non-zero and prints the authoritative failures "
             "when the spec is not acceptable:\n"
             f"`cd {shlex.quote(str(self._project_root))} && echelon re check-domain "
@@ -814,20 +1453,77 @@ class ReExtractionController:
             "for the complete architecture view. Do not change either artifact.\n"
         )
 
-    def _prepare_specification_target(self, target: dict[str, object]) -> str | None:
+    def _prepare_specification_target(
+        self, state: dict, target: dict[str, object]
+    ) -> str | None:
         """Create the one writable target so constrained providers can edit it."""
-        if target.get("kind") != "source-domain":
+        kind = target.get("kind")
+        if kind not in {None, "source-domain", "source-support"}:
             return None
         source_id = target.get("source_id")
         domain_id = target.get("domain_id")
-        if not all(isinstance(value, str) and value for value in (source_id, domain_id)):
+        if not isinstance(source_id, str) or not source_id:
             return "re_specification_target_invalid"
-        path = self._run_re_dir / "sources" / source_id / "specs" / domain_id / "spec.md"
+        if kind != "source-support":
+            if not isinstance(domain_id, str) or not domain_id:
+                return "re_specification_target_invalid"
+            path = self._run_re_dir / "sources" / source_id / "specs" / domain_id / "spec.md"
+        else:
+            path = self._run_re_dir / "sources" / source_id / "supporting-artifacts.md"
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
+            cleanup_error = self._clean_noncanonical_target_artifacts(
+                state, target, stage="pre-dispatch"
+            )
+            if cleanup_error is not None:
+                return cleanup_error
             path.touch(exist_ok=True)
         except OSError as exc:
             return f"re_specification_target_prepare_failed: {exc}"
+        return None
+
+    def _clean_noncanonical_target_artifacts(
+        self,
+        state: dict,
+        target: dict[str, object],
+        *,
+        stage: str,
+    ) -> str | None:
+        """Keep a source-domain target directory to its canonical `spec.md` only."""
+        kind = target.get("kind")
+        if kind not in {None, "source-domain"}:
+            return None
+        source_id = target.get("source_id")
+        domain_id = target.get("domain_id")
+        if not isinstance(source_id, str) or not isinstance(domain_id, str):
+            return "re_specification_target_invalid"
+        target_dir = self._run_re_dir / "sources" / source_id / "specs" / domain_id
+        if not target_dir.is_dir():
+            return None
+        removed: list[str] = []
+        try:
+            for candidate in target_dir.iterdir():
+                if candidate.name == "spec.md":
+                    continue
+                relative = str(candidate.relative_to(self._run_re_dir))
+                if candidate.is_dir() and not candidate.is_symlink():
+                    shutil.rmtree(candidate)
+                else:
+                    candidate.unlink()
+                removed.append(relative)
+        except OSError as exc:
+            return f"re_target_artifact_cleanup_failed: {exc}"
+        if removed and state:
+            cleanup = state.setdefault("re_target_artifact_cleanup", [])
+            if isinstance(cleanup, list):
+                cleanup.append(
+                    {
+                        "stage": stage,
+                        "source_id": source_id,
+                        "domain_id": domain_id,
+                        "paths": sorted(removed),
+                    }
+                )
         return None
 
     def _run_analysis_script(self, plan: ReExecutionPlan) -> str | None:
@@ -1140,10 +1836,17 @@ class ReExtractionController:
         return ReControllerResult(completed=False, blocked_reason=reason)
 
     @staticmethod
-    def _agent_result_without_controller_keys(payload: dict) -> dict:
+    def _agent_result_without_controller_keys(
+        payload: dict, target: dict[str, object] | None = None
+    ) -> dict:
         updates = payload.get("state_updates")
         if not isinstance(updates, dict):
             return payload
+        if isinstance(target, dict) and target.get("kind") == "source-support":
+            # A supporting-artifacts target has no state transition. Providers
+            # sometimes report a descriptive `sources` list; never let that
+            # non-routing metadata block the deterministic coverage repair.
+            return {**payload, "state_updates": {}}
         controlled = {
             "max_validate_iterations",
             "max_verify_expand_iterations",

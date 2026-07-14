@@ -801,14 +801,38 @@ class PhaseExecutor(ABC):
                 timed_out=False,
             )
 
+        re_state_path = self._squad_dir / "re" / "state.json"
+        try:
+            import json
+
+            re_state = json.loads(re_state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            re_state = {}
+        source_states = re_state.get("re_source_states")
+        debt_sources = sorted(
+            source_id
+            for source_id, source_state in source_states.items()
+            if isinstance(source_id, str)
+            and isinstance(source_state, dict)
+            and source_state.get("status") == "partial_quality_debt"
+        ) if isinstance(source_states, dict) else []
+        status = "partial" if debt_sources else "complete"
+        notes = (
+            [
+                "Reverse engineering completed with unresolved source quality debt: "
+                + ", ".join(debt_sources)
+            ]
+            if debt_sources
+            else []
+        )
         return SquadAgentResult(
             exit_code=0,
             echelon_result={
                 "verdict": "DONE",
                 "state_updates": {
-                    "golddigger_status": "complete",
+                    "golddigger_status": status,
                     "golddigger_mode": "workspace-full-re",
-                    "golddigger_notes": [],
+                    "golddigger_notes": notes,
                 },
                 "journal_entries": [],
             },

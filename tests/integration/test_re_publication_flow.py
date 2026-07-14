@@ -329,7 +329,6 @@ def test_mode1_controller_rebuilds_missing_state_and_specs_before_publication(
     assert provider.phases == [
         "re-extract-2-specify",
         "re-extract-2-specify",
-        "re-extract-3-verify",
         "re-extract-5-validate",
         "re-extract-6-checklist",
         "re-extract-7-constitute",

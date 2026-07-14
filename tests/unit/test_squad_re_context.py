@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from harness.re_fingerprint import ReFingerprintProfile, fingerprint_source
+from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
 from harness.re_registry import ensure_re_layout
 from harness.squad import ReGenerationMismatch, SquadController, assert_re_generation
 from harness.squad_state import SquadStateStore
@@ -55,6 +56,7 @@ def _publish_source(root: Path, source_id: str, profile: ReFingerprintProfile) -
             "source_fingerprint": fingerprint.value,
             "profile": profile.to_json_dict(),
             "profile_hash": fingerprint.profile_hash,
+            "quality_contract_version": QUALITY_CONTRACT_VERSION,
             "publication_status": "complete",
             "overview": f"re/sources/{source_id}/overview.md",
             "specs": [f"re/sources/{source_id}/specs/domain/spec.md"],
