@@ -326,6 +326,12 @@ For the condensed build flow reference, load `workflow/phases/appendices/build-8
 
 If the environment variable `HARNESS_BUILD_STATUS_FILE` is set, write the build outcome so the Python harness can detect whether this invocation completed cleanly. Under harness, this means the current bounded progress slice completed cleanly; it does not mean the whole MVP is complete:
 
+This marker is the only delivery return channel. Do not return, read, recreate,
+or write `echelon_result.json`; Ralph intentionally deletes that legacy fallback
+before each slice to prevent stale results from another spec being reused.
+Ignore generic `echelon_result` and `state_updates` instructions in role files
+while `HARNESS_BUILD_STATUS_FILE` is set.
+
 **On useful verified progress, even when the overall spec remains incomplete:**
 
 ```bash

@@ -24,12 +24,18 @@ Ralph owns verification, commit, and the next build invocation. Stop without a
 `done` marker only on a real BLOCKED or ERROR condition, and write the matching
 status marker before stopping.
 
+In this delivery mode, do not return, read, recreate, or write
+`echelon_result.json`. That is a legacy fallback deliberately cleared between
+build slices; generic `echelon_result`/`state_updates` instructions apply only
+to standalone squad execution. `$HARNESS_BUILD_STATUS_FILE` is the sole build
+return channel.
+
 ## 1. Initialization (BUILD_INIT)
 
 **Build Start State Update (mandatory, runs once before first task):**
 
-1. Count only canonical task rows in `{spec_dir}/tasks.md` (top-level rows with `T-###`, or `T-S##` / `T-S##x` for spike/user-decision tasks) and include the count in `echelon_result.state_updates.build.total_tasks`. Acceptance-criteria checkboxes are not tasks.
-2. Return the full initialized `build` object in one `echelon_result.state_updates.build` value; the harness applies it to `state.json`.
+1. Count only canonical task rows in `{spec_dir}/tasks.md` (top-level rows with `T-###`, or `T-S##` / `T-S##x` for spike/user-decision tasks). Acceptance-criteria checkboxes are not tasks.
+2. In delivery mode, do not write or return a `build` state object; Ralph owns state and derives progress from the final status marker.
 
 ### 1.0 Anchor Project Root
 

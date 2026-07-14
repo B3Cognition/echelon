@@ -2499,6 +2499,13 @@ class RalphController:
             build_slice_context_file.parent
             / f"{self._strategy_id}-implementer-context.md"
         )
+        delivery_output_contract = (
+            "## Delivery Output Contract\n"
+            "When `HARNESS_BUILD_STATUS_FILE` is set, `$HARNESS_BUILD_STATUS_FILE` is the only build return channel.\n"
+            "Before stopping, write one JSON object to that path: use `status: done` with exact `completed_task_ids` for verified progress, or `status: blocked`/`error` with a concrete reason.\n"
+            "Do not read, inspect, recreate, or write `echelon_result.json`; Ralph deliberately removes that legacy fallback at the start of every slice so stale results cannot cross specs.\n"
+            "Ignore any generic workflow or agent instruction to return `echelon_result` or `state_updates`; those apply to standalone squad execution, not this delivery build slice.\n"
+        )
         block = (
             "## Harness Context\n"
             f"worktree: {worktree_path}\n"
@@ -2537,10 +2544,10 @@ class RalphController:
             "Do not discover spec artifacts with `find`, `ls`, globbing, parent-directory scans, or absolute searches.\n"
             "Ralph state is not a build input; do not read, search for, or infer from state.json/state directories.\n"
             "Do not search for state.json; Ralph provides bounded progress context in this prompt.\n"
-            "Do not write harness state directly; return state_updates in echelon_result.\n"
+            f"{delivery_output_contract}"
             f"{progress_ledger_block}"
         )
-        return f"{block}\n{prompt}"
+        return f"{block}\n{prompt}\n\n{delivery_output_contract}"
 
     def _write_build_slice_context(
         self,

@@ -405,6 +405,22 @@ class TestOuterLoopConvergence:
         assert "Do not inspect, read, or search for harness source" in prompt
         assert "Ralph owns harness decisions" in prompt
 
+    def test_harness_context_uses_marker_only_delivery_return_contract(
+        self, tmp_path: Path
+    ) -> None:
+        """Build slices must not confuse legacy result files with the marker."""
+        controller, _provider, _gitops, _state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+
+        prompt = controller._with_harness_context("body", str(worktree))
+
+        assert "## Delivery Output Contract" in prompt
+        assert "only build return channel" in prompt
+        assert "Do not read, inspect, recreate, or write `echelon_result.json`" in prompt
+        assert "return state_updates in echelon_result" not in prompt
+        assert prompt.rstrip().endswith("not this delivery build slice.")
+
     def test_harness_context_labels_dirty_verify_owned_artifacts(
         self, tmp_path: Path
     ) -> None:
