@@ -111,6 +111,22 @@ def _suggested_answer_lines(escalation_file: object, spec_id: str) -> list[str]:
     return lines if len(lines) > 1 else []
 
 
+def _verified_ledger_line(info: dict[str, Any]) -> str:
+    refresh = info.get("fulfillment_refresh")
+    if not isinstance(refresh, dict):
+        return ""
+    ledger = refresh.get("verified_ledger")
+    if not isinstance(ledger, dict):
+        return ""
+    return (
+        "verified ledger: "
+        f"reused {int(ledger.get('reused') or 0)}, "
+        f"rechecked {int(ledger.get('rechecked') or 0)}, "
+        f"invalidated {int(ledger.get('invalidated') or 0)}, "
+        f"unresolved {int(ledger.get('unresolved') or 0)}"
+    )
+
+
 def _print_delivery_summary(
     intent: Any,
     result_map: Dict[str, Any],
@@ -225,6 +241,9 @@ def _print_delivery_summary(
                 lines.append("verify: skipped (no sandbox / project type undetected)")
             if fulfillment_recommendation and _has_fulfillment_gap_failure(result):
                 lines.append(f"recommended action: {fulfillment_recommendation}")
+            verified_ledger = _verified_ledger_line(info)
+            if verified_ledger:
+                lines.append(verified_ledger)
             lines.extend(_suggested_answer_lines(info.get("escalation_file"), intent.spec_id))
 
         fields.append((sid, "\n".join(lines)))

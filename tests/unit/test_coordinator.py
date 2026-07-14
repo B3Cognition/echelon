@@ -161,6 +161,48 @@ class TestCompareResults:
             == "/tmp/escalations/001-default.md"
         )
 
+    def test_compare_results_includes_fulfillment_refresh_from_state(
+        self, tmp_path: Path
+    ) -> None:
+        coord = _make_coordinator(tmp_path)
+        state_store = StateStore(tmp_path / "runs" / "build-test" / "state", "001", "default")
+        state_store.initialize("run-1", "semi")
+        coord._state_stores["default"] = state_store
+        state = state_store.read()
+        state["fulfillment_refresh"] = {
+            "status": "cached",
+            "verified_ledger": {
+                "reused": 70,
+                "rechecked": 5,
+                "invalidated": 1,
+                "unresolved": 2,
+            },
+        }
+        state_store.write(state)
+        results = {
+            "default": LoopResult(
+                status="failed",
+                termination_reason="outer_cap",
+                outer_iterations=1,
+                inner_iterations=3,
+                pr_url=None,
+                tokens_used=100,
+                final_verify=None,
+            )
+        }
+
+        comparison = coord.compare_results(results)
+
+        assert comparison["strategies"]["default"]["fulfillment_refresh"] == {
+            "status": "cached",
+            "verified_ledger": {
+                "reused": 70,
+                "rechecked": 5,
+                "invalidated": 1,
+                "unresolved": 2,
+            },
+        }
+
 
 from harness.ralph import RalphController
 

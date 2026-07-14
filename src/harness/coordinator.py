@@ -244,6 +244,7 @@ class StrategyCoordinator:
                 "salvage_branch": state.get("salvage_branch"),
                 "salvage_verified": state.get("salvage_verified"),
                 "escalation_file": state.get("escalation_file"),
+                "fulfillment_refresh": state.get("fulfillment_refresh"),
             }
 
         # Summary
