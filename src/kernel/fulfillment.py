@@ -130,9 +130,9 @@ def apply_deferred_scope_to_report(report_path: Path, spec_dir: Path) -> tuple[s
 
 
 def validate_deferred_scope_rows(report_path: Path, spec_dir: Path) -> list[str]:
-    """Return unsupported DEFERRED_SCOPE rows without treating prose as rows."""
-    active_ids = {
-        item_id
+    """Return deferred rows that lack an active, correctly cited ledger entry."""
+    entries_by_id = {
+        item_id: entry
         for entry in active_entries(spec_dir)
         for item_id in entry.selected_ids
         if not item_id.startswith("T-")
@@ -142,8 +142,16 @@ def validate_deferred_scope_rows(report_path: Path, spec_dir: Path) -> list[str]
         cells = _table_cells(line)
         if cells is None or len(cells) < 2 or cells[1] != DEFERRED_SCOPE:
             continue
-        if cells[0] not in active_ids:
+        entry = entries_by_id.get(cells[0])
+        if entry is None:
             issues.append(f"{cells[0]} has no active defer entry")
+            continue
+        evidence = cells[2] if len(cells) >= 3 else ""
+        expected = f"defer:{entry.entry_id}: {_escape_table_cell(entry.reason)}"
+        if evidence != expected:
+            issues.append(
+                f"{cells[0]} does not cite active defer entry {entry.entry_id}"
+            )
     return issues
 
 
@@ -151,7 +159,7 @@ def _table_cells(line: str) -> list[str] | None:
     stripped = line.strip()
     if not stripped.startswith("|"):
         return None
-    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+    cells = [cell.strip() for cell in re.split(r"(?<!\\)\|", stripped.strip("|"))]
     if not cells or cells[0] in {"ID", "Requirement", "Status"}:
         return None
     if set(cells[0]) <= {"-", ":"}:

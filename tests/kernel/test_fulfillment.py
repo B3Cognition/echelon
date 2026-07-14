@@ -223,6 +223,27 @@ def test_deferred_scope_row_without_active_ledger_entry_is_invalid(tmp_path: Pat
     ]
 
 
+def test_deferred_scope_row_must_cite_its_active_ledger_entry(tmp_path: Path):
+    spec_dir = tmp_path / "specs" / "906-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("NFR-008\n", encoding="utf-8")
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=NFR-008 depends=none\n",
+        encoding="utf-8",
+    )
+    apply_defer(spec_dir, ["NFR-008"], reason="owner decision")
+    report = spec_dir / "fulfillment-report.md"
+    report.write_text(
+        "| ID | Status | Evidence |\n| --- | --- | --- |\n"
+        "| NFR-008 | DEFERRED_SCOPE | defer:defer-999: other reason |\n",
+        encoding="utf-8",
+    )
+
+    assert validate_deferred_scope_rows(report, spec_dir) == [
+        "NFR-008 does not cite active defer entry defer-001"
+    ]
+
+
 def test_planning_deferred_scope_restores_the_original_fulfillment_gap(
     tmp_path: Path,
 ) -> None:
