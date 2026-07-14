@@ -9,7 +9,7 @@ CODEGRAPH_CLI_VERSION="1.4.1"
 SOAR_DIR="$HOME/.echelon/soar"
 VENV_DIR="$HOME/.echelon/venv"
 MEMORY_DIR="$HOME/.echelon/memory"
-RE_NODE_DIR="$ECHELON_DIR/extension/scripts/node/re"
+CODEGRAPH_NODE_DIR="$ECHELON_DIR/extension/scripts/node/codegraph"
 CTX7_NODE_DIR="$ECHELON_DIR/extension/scripts/node/context7"
 
 echo ""
@@ -134,16 +134,16 @@ echo "  ✓ journal-entry-types.json generated"
 # ── 3. RE CodeGraph bridge dependencies ─────────────────────────────────────
 echo "▶ Installing RE CodeGraph bridge dependencies..."
 if ! command -v node &>/dev/null; then
-  echo "  ⚠ Node.js not found; RE CodeGraph structural analysis will be skipped."
-  echo "    Install Node.js, then run: npm ci --prefix \"$RE_NODE_DIR\""
+  echo "  ⚠ Node.js not found; CodeGraph structural analysis will be skipped."
+  echo "    Install Node.js, then run: npm ci --prefix \"$CODEGRAPH_NODE_DIR\""
 elif ! command -v npm &>/dev/null; then
-  echo "  ⚠ npm not found; RE CodeGraph structural analysis will be skipped."
-  echo "    Install npm, then run: npm ci --prefix \"$RE_NODE_DIR\""
-elif [ ! -f "$RE_NODE_DIR/package-lock.json" ]; then
-  echo "  ⚠ package-lock.json not found at $RE_NODE_DIR; skipping RE CodeGraph bridge deps."
+  echo "  ⚠ npm not found; CodeGraph structural analysis will be skipped."
+  echo "    Install npm, then run: npm ci --prefix \"$CODEGRAPH_NODE_DIR\""
+elif [ ! -f "$CODEGRAPH_NODE_DIR/package-lock.json" ]; then
+  echo "  ⚠ package-lock.json not found at $CODEGRAPH_NODE_DIR; skipping CodeGraph bridge deps."
 else
-  npm ci --prefix "$RE_NODE_DIR" --silent
-  echo "  ✓ CodeGraph bridge dependencies installed → $RE_NODE_DIR/node_modules"
+  npm ci --prefix "$CODEGRAPH_NODE_DIR" --silent
+  echo "  ✓ CodeGraph bridge dependencies installed → $CODEGRAPH_NODE_DIR/node_modules"
 fi
 
 # ── 3b. Optional upstream CodeGraph CLI ─────────────────────────────────────
@@ -224,10 +224,10 @@ echo "  echelon       → $VENV_DIR/bin/echelon"
 echo "  codegen       → $VENV_DIR/bin/codegen"
 echo "  understanding → $VENV_DIR/bin/understanding"
 echo "  harness       → $VENV_DIR/bin/harness"
-if [ -d "$RE_NODE_DIR/node_modules" ]; then
-  echo "  CodeGraph bridge → $RE_NODE_DIR/node_modules"
+if [ -d "$CODEGRAPH_NODE_DIR/node_modules" ]; then
+  echo "  CodeGraph bridge → $CODEGRAPH_NODE_DIR/node_modules"
 else
-  echo "  CodeGraph bridge → not ready (run: npm ci --prefix \"$RE_NODE_DIR\")"
+  echo "  CodeGraph bridge → not ready (run: npm ci --prefix \"$CODEGRAPH_NODE_DIR\")"
 fi
 if command -v codegraph &>/dev/null; then
   echo "  CodeGraph CLI    → $(command -v codegraph)"

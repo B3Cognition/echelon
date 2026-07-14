@@ -22,6 +22,7 @@ from harness.exec_result import ExecResult
 from harness.loop_result import LoopResult
 from harness.provider import SandboxHandle, SandboxProvider, SandboxSpec
 from harness.run_intent import RunIntent
+from harness.state import StateStore
 
 
 class MockProvider(SandboxProvider):
@@ -132,6 +133,33 @@ class TestCompareResults:
         assert comparison["summary"]["converged"] == 1
         assert comparison["summary"]["failed"] == 1
         assert comparison["summary"]["total_tokens"] == 130000
+
+    def test_compare_results_includes_escalation_file_from_state(self, tmp_path: Path) -> None:
+        coord = _make_coordinator(tmp_path)
+        state_store = StateStore(tmp_path / "runs" / "build-test" / "state", "001", "default")
+        state_store.initialize("run-1", "semi")
+        coord._state_stores["default"] = state_store
+        state = state_store.read()
+        state["escalation_file"] = "/tmp/escalations/001-default.md"
+        state_store.write(state)
+        results = {
+            "default": LoopResult(
+                status="blocked",
+                termination_reason="blocker_escalation",
+                outer_iterations=1,
+                inner_iterations=3,
+                pr_url=None,
+                tokens_used=100,
+                final_verify=None,
+            )
+        }
+
+        comparison = coord.compare_results(results)
+
+        assert (
+            comparison["strategies"]["default"]["escalation_file"]
+            == "/tmp/escalations/001-default.md"
+        )
 
 
 from harness.ralph import RalphController

@@ -45,10 +45,6 @@ logger = logging.getLogger(__name__)
 GIT_CMD_TIMEOUT = 120
 RUNTIME_EXTENSION_REL = Path(".specify") / "extensions" / "echelon"
 RUNTIME_EXTENSION_SOURCE_REQUIRED = (
-    Path("agents") / "control" / "commander.md",
-    Path("workflow") / "definition.yaml",
-)
-RUNTIME_EXTENSION_READY_REQUIRED = (
     Path("workflow") / "definition.yaml",
 )
 RUNTIME_EXTENSION_EXCLUDE = ".specify/extensions/echelon/"
@@ -62,7 +58,7 @@ RUNTIME_EXTENSION_EXCLUDED_PATHS = (
     Path("scripts") / "python",
     Path("scripts") / "bash" / "re",
     Path("scripts") / "node" / "context7",
-    Path("scripts") / "node" / "re" / "vendor",
+    Path("scripts") / "node" / "codegraph" / "vendor",
     Path("stacks"),
 )
 RUNTIME_EXTENSION_EXCLUDED_NAMES = (
@@ -73,21 +69,77 @@ RUNTIME_EXTENSION_EXCLUDED_NAMES = (
 )
 
 
-def sync_codegraph_node_modules(source: Path, dest: Path) -> None:
-    """Copy the vendored CodeGraph runtime deps omitted from extension syncs."""
-    relative = Path("scripts/node/re/node_modules")
-    source_node_modules = source / relative
-    if not source_node_modules.exists():
-        return
+CODEGRAPH_RUNTIME_REL = Path("scripts") / "node" / "codegraph"
+CODEGRAPH_RUNTIME_TIMEOUT_SECONDS = 300
+
+
+def copy_runtime_extension(source: Path, dest: Path) -> None:
+    """Replace a generated runtime extension with a filtered source copy."""
+    if dest.is_symlink() or dest.is_file():
+        dest.unlink()
+    elif dest.exists():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(
-        source_node_modules,
-        dest / relative,
-        dirs_exist_ok=True,
-        ignore=shutil.ignore_patterns(
-            ".cache",
-            ".bin",
-        ),
+        source,
+        dest,
+        ignore=runtime_extension_copy_ignore(source),
     )
+
+
+def prepare_codegraph_runtime(extension_root: Path) -> None:
+    """Install the locked CodeGraph SDK inside one delivery worktree."""
+    runtime_dir = extension_root / CODEGRAPH_RUNTIME_REL
+    lockfile = runtime_dir / "package-lock.json"
+    if not runtime_dir.is_dir():
+        raise GitOpsError(
+            f"CodeGraph runtime is missing at {runtime_dir}. "
+            "Update the installed Echelon extension before starting delivery.",
+            command="prepare_codegraph_runtime",
+        )
+    if not lockfile.is_file():
+        raise GitOpsError(
+            f"CodeGraph package-lock.json is missing at {lockfile}.",
+            command="prepare_codegraph_runtime",
+        )
+
+    node = shutil.which("node")
+    npm = shutil.which("npm")
+    if node is None or npm is None:
+        raise GitOpsError(
+            "CodeGraph delivery runtime requires Node.js and npm on PATH.",
+            command="prepare_codegraph_runtime",
+        )
+
+    try:
+        completed = subprocess.run(
+            [
+                npm,
+                "ci",
+                "--prefix",
+                str(runtime_dir),
+                "--ignore-scripts",
+                "--no-audit",
+                "--no-fund",
+                "--prefer-offline",
+            ],
+            cwd=str(runtime_dir),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=CODEGRAPH_RUNTIME_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise GitOpsError(
+            f"CodeGraph runtime preparation could not start: {exc}",
+            command="prepare_codegraph_runtime",
+        ) from exc
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise GitOpsError(
+            f"CodeGraph runtime preparation failed (exit {completed.returncode}): {detail}",
+            command="prepare_codegraph_runtime",
+        )
 
 
 def runtime_extension_copy_ignore(source_root: Path):
@@ -362,6 +414,7 @@ class GitOpsManager:
         outer_iter: int,
         base_branch: Optional[str] = None,
         build_id: str = "",
+        prepare_codegraph: bool = False,
     ) -> str:
         """Create ephemeral worktree from mirror.
 
@@ -477,7 +530,10 @@ class GitOpsManager:
                                 )
                             except GitOpsError as e:
                                 logger.warning("Could not update upstream URL: %s", e)
-                        self.sync_runtime_extension(Path(existing_path))
+                        self.sync_runtime_extension(
+                            Path(existing_path),
+                            prepare_codegraph=prepare_codegraph,
+                        )
                         return existing_path
                 else:
                     raise
@@ -572,7 +628,10 @@ class GitOpsManager:
             except GitOpsError as e:
                 logger.warning("Could not set receive.denyCurrentBranch on %s: %s", target_url, e)
 
-        self.sync_runtime_extension(worktree_dir)
+        self.sync_runtime_extension(
+            worktree_dir,
+            prepare_codegraph=prepare_codegraph,
+        )
         return str(worktree_dir)
 
     def _is_harness_runs_worktree(self, worktree_path: str) -> bool:
@@ -647,7 +706,12 @@ class GitOpsManager:
             return previous_branch
         return default_branch
 
-    def sync_runtime_extension(self, worktree_dir: str | Path) -> None:
+    def sync_runtime_extension(
+        self,
+        worktree_dir: str | Path,
+        *,
+        prepare_codegraph: bool = False,
+    ) -> None:
         """Make Echelon's local runtime prompts available inside a harness worktree.
 
         Installed Spec-Kit extensions are often local, untracked project files. Git
@@ -660,32 +724,18 @@ class GitOpsManager:
         source = self._base_dir / RUNTIME_EXTENSION_REL
         dest = worktree / RUNTIME_EXTENSION_REL
 
-        if self._runtime_extension_ready(dest):
-            if source.exists():
-                self._sync_codegraph_node_modules(source, dest)
-            prune_delivery_workflow_definition(dest / "workflow" / "definition.yaml")
-            self._sync_provider_runtime_shims(dest, worktree)
-            self._exclude_runtime_extension(worktree)
-            return
-
         if not source.exists() or not self._runtime_extension_source_ready(source):
             raise GitOpsError(
                 "Harness runtime extension is missing. Expected "
-                f"{source / 'agents' / 'control' / 'commander.md'} and "
                 f"{source / 'workflow' / 'definition.yaml'}. "
                 "Run `echelon workspace init` from the project root before `echelon delivery run`.",
                 command="sync_runtime_extension",
             )
 
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(
-            source,
-            dest,
-            dirs_exist_ok=True,
-            ignore=runtime_extension_copy_ignore(source),
-        )
+        copy_runtime_extension(source, dest)
         prune_delivery_workflow_definition(dest / "workflow" / "definition.yaml")
-        self._sync_codegraph_node_modules(source, dest)
+        if prepare_codegraph:
+            prepare_codegraph_runtime(dest)
         self._sync_provider_runtime_shims(dest, worktree)
         self._exclude_runtime_extension(worktree)
         logger.info("Synced runtime Echelon extension into worktree at %s", dest)
@@ -698,15 +748,6 @@ class GitOpsManager:
             worktree=worktree,
             exclude_line=lambda line: self._exclude_provider_scaffold_line(worktree, line),
         )
-
-    @staticmethod
-    def _sync_codegraph_node_modules(source: Path, dest: Path) -> None:
-        """Copy vendored CodeGraph runtime deps ignored by the broad extension sync."""
-        sync_codegraph_node_modules(source, dest)
-
-    @staticmethod
-    def _runtime_extension_ready(path: Path) -> bool:
-        return all((path / required).exists() for required in RUNTIME_EXTENSION_READY_REQUIRED)
 
     @staticmethod
     def _runtime_extension_source_ready(path: Path) -> bool:

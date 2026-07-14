@@ -2943,6 +2943,46 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
+    def test_llm_build_blocked_reports_the_agent_blocker(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An explicit build blocker must not be flattened to incomplete work."""
+        from harness.build_result import BuildResult
+
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="blocked",
+            impasse_file=None,
+            reason="NFR-008 requires an owner spec decision",
+            stdout="",
+            stderr="",
+            duration_ms=1000,
+        )
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+
+        result = controller.run_loop(
+            max_outer=5,
+            max_inner=3,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "build_blocked"
+        captured = capsys.readouterr()
+        assert "HARNESS — BUILD BLOCKED" in captured.err
+        assert "NFR-008 requires an owner spec decision" in captured.err
+        state = state_store.read()
+        assert state["build_status"] == "blocked"
+        assert state["build_reason"] == "NFR-008 requires an owner spec decision"
+        assert provider.destroyed is True
+        gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
     def test_llm_build_done_without_task_ids_blocks_for_task_backed_spec(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

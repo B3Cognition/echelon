@@ -11,7 +11,7 @@ import yaml
 
 from harness.config import HarnessConfig
 from harness.errors import GitOpsError
-from harness.gitops import GitOpsManager, _clean_branch_listing
+from harness.gitops import GitOpsManager, _clean_branch_listing, prepare_codegraph_runtime
 from harness.runtime_surface import (
     DELIVERY_AGENT_DIRS,
     DELIVERY_BASH_FILES,
@@ -86,54 +86,37 @@ def test_sync_runtime_extension_copies_untracked_project_extension(tmp_path):
     assert ".specify/extensions/echelon/" in exclude.read_text(encoding="utf-8")
 
 
-def test_sync_runtime_extension_copies_codegraph_node_runtime_deps(tmp_path):
-    """Harness worktrees keep CodeGraph Node deps required by the vendored bridge."""
+def test_prepare_codegraph_runtime_runs_locked_npm_ci(tmp_path, monkeypatch):
+    """Delivery worktrees install the locked CodeGraph SDK without source copies."""
     source = tmp_path / ".specify" / "extensions" / "echelon"
-    (source / "agents" / "control").mkdir(parents=True)
-    (source / "workflow").mkdir()
-    (source / "scripts" / "node" / "re" / "node_modules" / "picomatch").mkdir(parents=True)
-    (source / "agents" / "control" / "commander.md").write_text("commander\n", encoding="utf-8")
-    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
-    (
-        source
-        / "scripts"
-        / "node"
-        / "re"
-        / "node_modules"
-        / "picomatch"
-        / "package.json"
-    ).write_text('{"name":"picomatch"}\n', encoding="utf-8")
-
-    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
-    worktree.mkdir(parents=True)
-    exclude = tmp_path / "git-exclude"
-
-    gitops = _make_gitops(tmp_path)
-    with patch("harness.gitops._run_git") as run_git:
-        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
-        gitops.sync_runtime_extension(worktree)
-
-    copied = (
-        worktree
-        / ".specify"
-        / "extensions"
-        / "echelon"
-        / "scripts"
-        / "node"
-        / "re"
-        / "node_modules"
-        / "picomatch"
-        / "package.json"
+    runtime = source / "scripts" / "node" / "codegraph"
+    runtime.mkdir(parents=True)
+    (runtime / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "harness.gitops.shutil.which", lambda name: f"/usr/bin/{name}"
     )
-    assert copied.read_text(encoding="utf-8") == '{"name":"picomatch"}\n'
+    with patch("harness.gitops.subprocess.run") as run:
+        run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+        prepare_codegraph_runtime(source)
+
+    assert run.call_args.args[0] == [
+        "/usr/bin/npm",
+        "ci",
+        "--prefix",
+        str(runtime),
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--prefer-offline",
+    ]
 
 
-def test_sync_runtime_extension_copies_codegraph_bridge_and_locked_runtime(tmp_path):
-    """Delivery worktrees must carry the executable CodeGraph bridge and deps."""
+def test_sync_runtime_extension_copies_codegraph_source_without_node_modules(tmp_path):
+    """Delivery worktrees keep CodeGraph source but never copied dependencies."""
     source = tmp_path / ".specify" / "extensions" / "echelon"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
-    (source / "scripts" / "node" / "re" / "node_modules" / "picomatch").mkdir(
+    (source / "scripts" / "node" / "codegraph" / "node_modules" / "picomatch").mkdir(
         parents=True
     )
     (source / "scripts" / "node" / "context7").mkdir(parents=True)
@@ -141,14 +124,17 @@ def test_sync_runtime_extension_copies_codegraph_bridge_and_locked_runtime(tmp_p
         "commander\n", encoding="utf-8"
     )
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
-    (source / "scripts" / "node" / "re" / "codegraph-bridge.js").write_text(
+    (source / "scripts" / "node" / "codegraph" / "codegraph-bridge.js").write_text(
         "console.log('bridge')\n", encoding="utf-8"
     )
-    (source / "scripts" / "node" / "re" / "package.json").write_text(
-        '{"name":"re"}\n', encoding="utf-8"
+    (source / "scripts" / "node" / "codegraph" / "package.json").write_text(
+        '{"name":"codegraph"}\n', encoding="utf-8"
     )
-    (source / "scripts" / "node" / "re" / "vendor").mkdir()
-    (source / "scripts" / "node" / "re" / "vendor" / "legacy.js").write_text(
+    (source / "scripts" / "node" / "codegraph" / "package-lock.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    (source / "scripts" / "node" / "codegraph" / "vendor").mkdir()
+    (source / "scripts" / "node" / "codegraph" / "vendor" / "legacy.js").write_text(
         "legacy\n", encoding="utf-8"
     )
     (source / "scripts" / "node" / "context7" / "package.json").write_text(
@@ -158,7 +144,7 @@ def test_sync_runtime_extension_copies_codegraph_bridge_and_locked_runtime(tmp_p
         source
         / "scripts"
         / "node"
-        / "re"
+        / "codegraph"
         / "node_modules"
         / "picomatch"
         / "package.json"
@@ -174,37 +160,31 @@ def test_sync_runtime_extension_copies_codegraph_bridge_and_locked_runtime(tmp_p
         gitops.sync_runtime_extension(worktree)
 
     runtime_node = worktree / ".specify" / "extensions" / "echelon" / "scripts" / "node"
-    assert (runtime_node / "re" / "codegraph-bridge.js").exists()
-    assert (runtime_node / "re" / "package.json").exists()
-    assert not (runtime_node / "re" / "vendor").exists()
+    assert (runtime_node / "codegraph" / "codegraph-bridge.js").exists()
+    assert (runtime_node / "codegraph" / "package.json").exists()
+    assert (runtime_node / "codegraph" / "package-lock.json").exists()
+    assert not (runtime_node / "codegraph" / "vendor").exists()
     assert not (runtime_node / "context7").exists()
-    assert (
-        runtime_node / "re" / "node_modules" / "picomatch" / "package.json"
-    ).exists()
+    assert not (runtime_node / "codegraph" / "node_modules").exists()
 
 
-def test_sync_runtime_extension_repairs_missing_codegraph_deps_when_runtime_ready(tmp_path):
-    """Stale ready worktrees still get CodeGraph Node deps refreshed."""
+def test_sync_runtime_extension_refreshes_codegraph_source_when_runtime_ready(tmp_path):
+    """Ready worktrees still receive an updated CodeGraph bridge and lockfile."""
     source = tmp_path / ".specify" / "extensions" / "echelon"
     (source / "agents" / "control").mkdir(parents=True)
     (source / "workflow").mkdir()
-    (source / "scripts" / "node" / "re" / "node_modules" / "web-tree-sitter").mkdir(
-        parents=True
-    )
+    (source / "scripts" / "node" / "codegraph").mkdir(parents=True)
     (source / "agents" / "control" / "commander.md").write_text(
         "commander\n",
         encoding="utf-8",
     )
     (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
     (
-        source
-        / "scripts"
-        / "node"
-        / "re"
-        / "node_modules"
-        / "web-tree-sitter"
-        / "package.json"
-    ).write_text('{"name":"web-tree-sitter"}\n', encoding="utf-8")
+        source / "scripts" / "node" / "codegraph" / "codegraph-bridge.js"
+    ).write_text("fresh bridge\n", encoding="utf-8")
+    (source / "scripts" / "node" / "codegraph" / "package-lock.json").write_text(
+        "fresh lock\n", encoding="utf-8"
+    )
 
     worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
     dest = worktree / ".specify" / "extensions" / "echelon"
@@ -218,6 +198,10 @@ def test_sync_runtime_extension_repairs_missing_codegraph_deps_when_runtime_read
         "stale workflow\n",
         encoding="utf-8",
     )
+    (dest / "scripts" / "node" / "codegraph").mkdir(parents=True)
+    (dest / "scripts" / "node" / "codegraph" / "codegraph-bridge.js").write_text(
+        "stale bridge\n", encoding="utf-8"
+    )
     exclude = tmp_path / "git-exclude"
 
     gitops = _make_gitops(tmp_path)
@@ -225,16 +209,13 @@ def test_sync_runtime_extension_repairs_missing_codegraph_deps_when_runtime_read
         run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
         gitops.sync_runtime_extension(worktree)
 
-    copied = (
-        dest
-        / "scripts"
-        / "node"
-        / "re"
-        / "node_modules"
-        / "web-tree-sitter"
-        / "package.json"
-    )
-    assert copied.read_text(encoding="utf-8") == '{"name":"web-tree-sitter"}\n'
+    assert (
+        dest / "scripts" / "node" / "codegraph" / "codegraph-bridge.js"
+    ).read_text(encoding="utf-8") == "fresh bridge\n"
+    assert (
+        dest / "scripts" / "node" / "codegraph" / "package-lock.json"
+    ).read_text(encoding="utf-8") == "fresh lock\n"
+    assert not (dest / "agents" / "control" / "commander.md").exists()
 
 
 def test_sync_runtime_extension_excludes_python_migration_helpers(tmp_path):
@@ -800,7 +781,7 @@ def test_sync_runtime_extension_real_tree_matches_delivery_surface_policy(tmp_pa
         "presets",
         "scripts/bash/re",
         "scripts/node/context7",
-        "scripts/node/re/vendor",
+        "scripts/node/codegraph/vendor",
         "scripts/python",
         "stacks",
     ]:
@@ -1006,7 +987,7 @@ def test_create_worktree_removes_stale_runs_checkout_before_retry(tmp_path):
         ["worktree", "add", str(expected), "001-feature"],
         str(mirror),
     ) in calls
-    sync_runtime.assert_called_once_with(expected)
+    sync_runtime.assert_called_once_with(expected, prepare_codegraph=False)
 
 
 def test_create_worktree_removes_stale_legacy_runs_checkout_before_retry(tmp_path):
@@ -1055,7 +1036,7 @@ def test_create_worktree_removes_stale_legacy_runs_checkout_before_retry(tmp_pat
         str(mirror),
     ) in calls
     assert calls.count((["worktree", "add", str(expected), branch_name], str(mirror))) == 2
-    sync_runtime.assert_called_once_with(expected)
+    sync_runtime.assert_called_once_with(expected, prepare_codegraph=False)
 
 
 def test_create_worktree_bases_legacy_iteration_on_previous_iteration_branch(tmp_path):

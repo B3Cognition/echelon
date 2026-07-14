@@ -11,6 +11,7 @@ from kernel.task_contract import TASK_ID_PATTERN
 
 # Filename written by build-8-finalize (and codegen-7-deliver) to signal build outcome.
 BUILD_STATUS_FILENAME = ".harness-build-status.json"
+ECHELON_RESULT_FILENAME = "echelon_result.json"
 
 _DONE_STATUS_ALIASES = {
     "build_done",
@@ -90,16 +91,12 @@ class BuildResult:
             data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 raise ValueError("status file must be a JSON object")
-            return cls(
+            return cls._from_status_payload(
+                data,
                 exit_code=exit_code,
-                status=str(data.get("status", "unknown")),
-                impasse_file=data.get("impasse_file"),
-                reason=data.get("reason"),
-                task_ids=_task_ids(data),
                 stdout=stdout,
                 stderr=stderr,
                 duration_ms=duration_ms,
-                token_usage=0,
             )
         except Exception:
             return cls(
@@ -113,6 +110,78 @@ class BuildResult:
                 duration_ms=duration_ms,
                 token_usage=0,
             )
+
+    @classmethod
+    def from_echelon_result_file(
+        cls,
+        path: Path,
+        *,
+        exit_code: int,
+        stdout: str,
+        stderr: str,
+        duration_ms: int,
+    ) -> "BuildResult":
+        """Recover only an explicit legacy blocker from an otherwise untrusted file."""
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if (
+                not isinstance(data, dict)
+                or str(data.get("verdict") or "").strip().upper() != "BLOCKED"
+            ):
+                raise ValueError("echelon result must explicitly report BLOCKED")
+            return cls._from_status_payload(
+                data,
+                exit_code=exit_code,
+                stdout=stdout,
+                stderr=stderr,
+                duration_ms=duration_ms,
+            )
+        except Exception:
+            return cls(
+                exit_code=exit_code,
+                status="unknown",
+                impasse_file=None,
+                reason=None,
+                task_ids=None,
+                stdout=stdout,
+                stderr=stderr,
+                duration_ms=duration_ms,
+                token_usage=0,
+            )
+
+    @classmethod
+    def _from_status_payload(
+        cls,
+        data: dict[str, object],
+        *,
+        exit_code: int,
+        stdout: str,
+        stderr: str,
+        duration_ms: int,
+    ) -> "BuildResult":
+        verdict = str(data.get("verdict") or "").strip().upper()
+        state_updates = data.get("state_updates")
+        if not isinstance(state_updates, dict):
+            state_updates = {}
+        reason = data.get("reason")
+        if verdict == "BLOCKED":
+            reason = (
+                reason
+                or state_updates.get("blocked_reason")
+                or state_updates.get("fulfillment_gap_blocked")
+                or "build agent reported a blocker"
+            )
+        return cls(
+            exit_code=exit_code,
+            status="blocked" if verdict == "BLOCKED" else str(data.get("status", "unknown")),
+            impasse_file=data.get("impasse_file"),
+            reason=str(reason) if reason is not None else None,
+            task_ids=_task_ids(data),
+            stdout=stdout,
+            stderr=stderr,
+            duration_ms=duration_ms,
+            token_usage=0,
+        )
 
 
 def _task_ids(data: dict[str, object]) -> list[str]:

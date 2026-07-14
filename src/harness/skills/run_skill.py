@@ -7,6 +7,7 @@ Acquires lock, runs GC, launches coordinator, prints results.
 from __future__ import annotations
 
 import logging
+import json
 import re
 import sys
 from pathlib import Path
@@ -59,6 +60,55 @@ def _has_fulfillment_gap_failure(result: Any) -> bool:
         getattr(failure, "id", "") == "fulfillment-gaps"
         for failure in (getattr(verify_result, "failures", None) or [])
     )
+
+
+def _json_section(text: str, heading: str) -> dict[str, Any]:
+    marker = f"## {heading}"
+    start = text.find(marker)
+    if start == -1:
+        return {}
+    fence_start = text.find("```json", start)
+    if fence_start == -1:
+        return {}
+    fence_start += len("```json")
+    fence_end = text.find("```", fence_start)
+    if fence_end == -1:
+        return {}
+    try:
+        payload = json.loads(text[fence_start:fence_end].strip())
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _suggested_answer_lines(escalation_file: object, spec_id: str) -> list[str]:
+    path_text = str(escalation_file or "").strip()
+    if not path_text:
+        return []
+    try:
+        text = Path(path_text).read_text(encoding="utf-8")
+    except OSError:
+        return []
+    metadata = _json_section(text, "Decision Metadata")
+    suggestions = metadata.get("suggested_answers")
+    if not isinstance(suggestions, list):
+        return []
+
+    lines = ["suggested answers:"]
+    for raw in suggestions:
+        if not isinstance(raw, dict):
+            continue
+        label = str(raw.get("label") or "").strip()
+        answer = str(raw.get("answer") or "").strip()
+        consequence = str(raw.get("consequence") or "").strip()
+        if not label or not answer:
+            continue
+        marker = " (recommended)" if bool(raw.get("recommended")) else ""
+        safe_answer = answer.replace("\\", "\\\\").replace('"', '\\"')
+        lines.append(f"- {label}{marker}: echelon delivery resume {spec_id} \"{safe_answer}\"")
+        if consequence:
+            lines.append(f"  {consequence}")
+    return lines if len(lines) > 1 else []
 
 
 def _print_delivery_summary(
@@ -175,6 +225,7 @@ def _print_delivery_summary(
                 lines.append("verify: skipped (no sandbox / project type undetected)")
             if fulfillment_recommendation and _has_fulfillment_gap_failure(result):
                 lines.append(f"recommended action: {fulfillment_recommendation}")
+            lines.extend(_suggested_answer_lines(info.get("escalation_file"), intent.spec_id))
 
         fields.append((sid, "\n".join(lines)))
 

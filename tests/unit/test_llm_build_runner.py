@@ -210,6 +210,59 @@ class TestLlmBuildRunner:
         assert result.status == "unknown"
         assert result.succeeded is False
 
+    def test_exec_build_recovers_blocked_legacy_echelon_result_marker(self, tmp_path):
+        executor = _executor()
+
+        def write_legacy_result(worktree_path, _prompt, *, extra_env=None):
+            del extra_env
+            (Path(worktree_path) / "echelon_result.json").write_text(
+                json.dumps(
+                    {
+                        "status": "partial",
+                        "verdict": "BLOCKED",
+                        "completed_task_ids": ["T-001", "T-002"],
+                        "state_updates": {
+                            "fulfillment_gap_blocked": "NFR-008 requires an owner spec decision"
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return 0
+
+        executor.exec_prompt.side_effect = write_legacy_result
+
+        result = LlmBuildRunner(executor).exec_build(str(tmp_path), "build this")
+
+        assert result.status == "blocked"
+        assert result.succeeded is False
+        assert result.task_ids == ["T-001", "T-002"]
+        assert result.reason == "NFR-008 requires an owner spec decision"
+
+    def test_exec_build_does_not_treat_nonblocking_echelon_result_as_completion(self, tmp_path):
+        executor = _executor()
+
+        def write_legacy_result(worktree_path, _prompt, *, extra_env=None):
+            del extra_env
+            (Path(worktree_path) / "echelon_result.json").write_text(
+                json.dumps(
+                    {
+                        "status": "partial",
+                        "verdict": "DONE",
+                        "completed_task_ids": ["T-001"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return 0
+
+        executor.exec_prompt.side_effect = write_legacy_result
+
+        result = LlmBuildRunner(executor).exec_build(str(tmp_path), "build this")
+
+        assert result.status == "unknown"
+        assert result.succeeded is False
+
     def test_exec_build_preserves_provider_output_when_status_file_missing(self, tmp_path):
         executor = _executor(returncode=1)
         executor.last_stdout = "You've hit your session limit"

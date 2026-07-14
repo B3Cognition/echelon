@@ -111,7 +111,7 @@ Aggregate:
 
 ### Step 6: CodeGraph (Optional)
 
-`run-analysis.sh` automatically runs the CodeGraph bridge when Node.js and `scripts/node/re/codegraph-bridge.js` are available.
+`run-analysis.sh` automatically runs the CodeGraph bridge when Node.js and `scripts/node/codegraph/codegraph-bridge.js` are available.
 
 **If `$RE_OUTPUT_DIR/codegraph-analysis.json` was produced**, include in the summary:
 - Total symbols: `.index_stats.total_symbols`

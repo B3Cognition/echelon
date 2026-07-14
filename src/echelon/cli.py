@@ -27,7 +27,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from harness.gitops import runtime_extension_copy_ignore, sync_codegraph_node_modules
+from harness.gitops import copy_runtime_extension
 from harness.runtime_surface import prune_delivery_workflow_definition
 from harness.phase_a_readiness import validate_phase_a_readiness
 
@@ -1482,14 +1482,7 @@ def _sync_polyrepo_runtime_extension(polyrepo_root: Path, harness_base_dir: Path
             file=sys.stderr,
         )
         sys.exit(1)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(
-        source,
-        dest,
-        dirs_exist_ok=True,
-        ignore=runtime_extension_copy_ignore(source),
-    )
-    sync_codegraph_node_modules(source, dest)
+    copy_runtime_extension(source, dest)
     prune_delivery_workflow_definition(dest / "workflow" / "definition.yaml")
 
 
@@ -2470,6 +2463,17 @@ def _cmd_harness_resume(
         *continuation_reasons,
         *retryable_error_reasons,
     }:
+        if termination_reason == "build_blocked":
+            build_reason = str(state.get("build_reason") or "the build agent reported a blocker")
+            print(
+                f"✗ Spec {spec_id!r} is blocked by the build agent.\n"
+                f"  Blocker: {build_reason}\n"
+                "  Resolve the blocker; do not retry delivery until it is resolved.\n"
+                f"  For a spec decision: echelon spec reopen {spec_id}\n"
+                f"  Then start a new delivery run: echelon delivery run {spec_id}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         print(
             f"✗ Spec {spec_id!r} is blocked for unsupported resume reason: {termination_reason!r}.\n"
             f"  This is delivery state, not spec-planning state.\n"
@@ -3821,6 +3825,9 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
         if build_status == "provider_session_limit":
             fields.append(("next", f"wait for provider reset, then echelon delivery continue {spec_id}"))
             subtitle = "HARNESS PROVIDER SESSION LIMIT"
+        elif termination_reason == "build_blocked":
+            fields.append(("next", f"resolve the reported blocker, then echelon spec reopen {spec_id}"))
+            subtitle = "HARNESS BUILD BLOCKED"
         elif is_checkpoint:
             if _has_tracked_checkout_changes(project_root):
                 fields.append(

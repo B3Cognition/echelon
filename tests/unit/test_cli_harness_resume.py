@@ -132,6 +132,29 @@ class TestCmdHarnessResume:
         assert "delivery state" in err
         assert "Use 'echelon delivery run <spec_id>' to resume" not in err
 
+    def test_build_blocked_requires_resolving_the_reported_blocker(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "build_blocked",
+            "build_status": "blocked",
+            "build_reason": "NFR-008 requires an owner spec decision",
+        })
+
+        rc = self._call(["001"], tmp_path)
+
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "requires an owner spec decision" in err
+        assert "do not retry delivery until it is resolved" in err
+        assert "echelon spec reopen 001" in err
+        assert "echelon delivery continue 001" not in err
+
     def test_verify_command_still_missing_exits_1(self, tmp_path: Path, capsys) -> None:
         _make_echelon_yml(tmp_path)   # no verify_command
         sd = _setup_build(tmp_path, "001")

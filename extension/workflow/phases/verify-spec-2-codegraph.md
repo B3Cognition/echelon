@@ -21,7 +21,7 @@ The harness command owns the installed extension path and writes the normalized
 artifacts. It also updates `{verify_run_dir}/state.json` with
 `structural_evidence: ready` on success or `structural_evidence: degraded` on
 degradation. The bridge path is fixed relative to `project_root`:
-`.specify/extensions/echelon/scripts/node/re/codegraph-bridge.js`.
+`.specify/extensions/echelon/scripts/node/codegraph/codegraph-bridge.js`.
 
 Write:
 - `{verify_run_dir}/codegraph-analysis.json`

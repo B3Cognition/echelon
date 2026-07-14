@@ -459,7 +459,13 @@ def init_harness(
 
     # Step 7: Create worktree for fingerprinting
     try:
-        worktree_path = mgr.create_worktree("init", "fingerprint", 0, build_id="init")
+        worktree_path = mgr.create_worktree(
+            "init",
+            "fingerprint",
+            0,
+            build_id="init",
+            prepare_codegraph=False,
+        )
     except GitOpsError as e:
         raise InitError(f"Failed to create worktree for fingerprinting: {e}")
 

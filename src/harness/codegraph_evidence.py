@@ -10,7 +10,7 @@ import subprocess
 
 
 FIXED_BRIDGE_RELATIVE = Path(
-    ".specify/extensions/echelon/scripts/node/re/codegraph-bridge.js"
+    ".specify/extensions/echelon/scripts/node/codegraph/codegraph-bridge.js"
 )
 
 

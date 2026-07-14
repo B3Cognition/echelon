@@ -24,6 +24,7 @@ VALID_TERMINATION_REASONS = {
     "same_failure_threshold",
     "budget_exhausted",
     "build_incomplete",
+    "build_blocked",
     "blocker_escalation",
     "user_cancel",
     "killed_by_coordinator",
