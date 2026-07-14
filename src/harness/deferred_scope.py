@@ -9,6 +9,11 @@ from typing import Iterable, Sequence
 
 from harness.canonical_requirements import extract_canonical_requirements
 from kernel.task_contract import parse_task_rows, validate_tasks_markdown
+from harness.task_progress import (
+    is_completed_status,
+    summarize_task_progress,
+    update_task_progress_markdown,
+)
 
 
 LEDGER_FILENAME = "deferred-scope.json"
@@ -33,6 +38,7 @@ class DeferredScopeEntry:
     status: str
     selected_ids: tuple[str, ...]
     derived_task_ids: tuple[str, ...]
+    prior_task_statuses: tuple[tuple[str, str], ...]
     reason: str
     deferred_at: str
     planned_at: str | None
@@ -50,6 +56,7 @@ class DeferredScopeEntry:
             status=status,
             selected_ids=_id_tuple(payload.get("selected_ids"), "selected_ids"),
             derived_task_ids=_id_tuple(payload.get("derived_task_ids"), "derived_task_ids"),
+            prior_task_statuses=_task_status_pairs(payload.get("prior_task_statuses")),
             reason=_required_text(payload, "reason"),
             deferred_at=_required_text(payload, "deferred_at"),
             planned_at=_optional_text(payload.get("planned_at")),
@@ -61,6 +68,7 @@ class DeferredScopeEntry:
             "status": self.status,
             "selected_ids": list(self.selected_ids),
             "derived_task_ids": list(self.derived_task_ids),
+            "prior_task_statuses": dict(self.prior_task_statuses),
             "reason": self.reason,
             "deferred_at": self.deferred_at,
             "planned_at": self.planned_at,
@@ -139,16 +147,30 @@ def plan_defer(spec_dir: Path, ids: Sequence[str], *, reason: str) -> DeferredSc
 def apply_defer(spec_dir: Path, ids: Sequence[str], *, reason: str) -> DeferredScopePlan:
     plan = plan_defer(spec_dir, ids, reason=reason)
     ledger = read_ledger(spec_dir)
+    tasks_path = spec_dir / "tasks.md"
+    tasks_markdown = tasks_path.read_text(encoding="utf-8", errors="replace")
+    summary = summarize_task_progress(tasks_markdown)
+    prior_task_statuses = {
+        task_id: summary.task_statuses[task_id]
+        for task_id in plan.derived_task_ids
+        if not is_completed_status(summary.task_statuses[task_id])
+    }
+    updated_tasks = tasks_markdown
+    for task_id in prior_task_statuses:
+        updated_tasks = update_task_progress_markdown(updated_tasks, task_id, "DEFERRED")
     entry = DeferredScopeEntry(
         entry_id=f"defer-{len(ledger.entries) + 1:03d}",
         status="deferred",
         selected_ids=plan.selected_ids,
         derived_task_ids=plan.derived_task_ids,
+        prior_task_statuses=tuple(sorted(prior_task_statuses.items())),
         reason=str(reason).strip(),
         deferred_at=_timestamp(),
         planned_at=None,
     )
     _write_ledger(spec_dir, DeferredScopeLedger(entries=(*ledger.entries, entry)))
+    if updated_tasks != tasks_markdown:
+        tasks_path.write_text(updated_tasks, encoding="utf-8")
     return plan
 
 
@@ -171,17 +193,25 @@ def apply_restore(spec_dir: Path, ids: Sequence[str]) -> DeferredScopePlan:
     selected_ids = set(plan.selected_ids)
     changed = False
     entries: list[DeferredScopeEntry] = []
+    restored_task_statuses: dict[str, str] = {}
     for entry in ledger.entries:
         if entry.status == "deferred" and selected_ids.intersection(
             set(entry.selected_ids) | set(entry.derived_task_ids)
         ):
             entries.append(replace(entry, status="planned", planned_at=_timestamp()))
+            restored_task_statuses.update(dict(entry.prior_task_statuses))
             changed = True
         else:
             entries.append(entry)
     if not changed:
         raise DeferredScopeError(f"no active deferral for: {', '.join(plan.selected_ids)}")
+    tasks_path = spec_dir / "tasks.md"
+    tasks_markdown = tasks_path.read_text(encoding="utf-8", errors="replace")
+    for task_id, status in restored_task_statuses.items():
+        tasks_markdown = update_task_progress_markdown(tasks_markdown, task_id, status)
     _write_ledger(spec_dir, DeferredScopeLedger(entries=tuple(entries)))
+    if restored_task_statuses:
+        tasks_path.write_text(tasks_markdown, encoding="utf-8")
     return plan
 
 
@@ -269,6 +299,19 @@ def _id_tuple(value: object, key: str) -> tuple[str, ...]:
     if not isinstance(value, list):
         raise DeferredScopeError(f"deferred-scope entry {key} must be a list")
     return tuple(str(item).strip() for item in value if str(item).strip())
+
+
+def _task_status_pairs(value: object) -> tuple[tuple[str, str], ...]:
+    if not isinstance(value, dict):
+        raise DeferredScopeError("deferred-scope entry prior_task_statuses must be an object")
+    pairs = tuple(
+        sorted(
+            (str(task_id).strip(), str(status).strip().upper())
+            for task_id, status in value.items()
+            if str(task_id).strip() and str(status).strip()
+        )
+    )
+    return pairs
 
 
 def _timestamp() -> str:

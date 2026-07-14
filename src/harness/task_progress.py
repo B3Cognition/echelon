@@ -19,8 +19,10 @@ _TASK_ROW_RE = re.compile(
 )
 _STATUS_RE = re.compile(r"^\s+\*\*Status:\*\*\s*(?P<status>[A-Z_]+)\s*$")
 _COMPLETED_STATUSES = {"DONE", "DONE_WITH_CONCERNS", "DEGRADED"}
+_DEFERRED_STATUSES = {"DEFERRED"}
 _OPEN_STATUSES = {"BLOCKED", "PENDING"}
-_ALLOWED_STATUSES = _COMPLETED_STATUSES | _OPEN_STATUSES
+_TERMINAL_STATUSES = _COMPLETED_STATUSES | _DEFERRED_STATUSES
+_ALLOWED_STATUSES = _TERMINAL_STATUSES | _OPEN_STATUSES
 
 
 class TaskProgressError(RuntimeError):
@@ -32,9 +34,16 @@ class TaskProgressSummary:
     valid: bool
     total_tasks: int
     completed_tasks: int
+    deferred_tasks: int
+    terminal_tasks: int
     tasks_completed_pct: int
     task_statuses: dict[str, str]
     errors: list[str]
+
+
+def is_completed_status(status: str) -> bool:
+    """Return whether a task status represents completed implementation work."""
+    return status.strip().upper() in _COMPLETED_STATUSES
 
 
 def update_task_progress_markdown(markdown: str, task_id: str, status: str) -> str:
@@ -76,15 +85,19 @@ def summarize_task_progress(
     errors = list(validation.errors)
     task_statuses: dict[str, str] = {}
     completed = 0
+    deferred = 0
 
     lines = markdown.splitlines()
     for index, match in _iter_task_rows(lines):
         task_id = match.group("task_id")
         checked = match.group("status").lower() == "x"
-        if checked:
-            completed += 1
         block_end = _find_next_task_row(lines, index + 1) or len(lines)
-        task_statuses[task_id] = _status_for_block(lines[index + 1:block_end], checked)
+        status = _status_for_block(lines[index + 1:block_end], checked)
+        task_statuses[task_id] = status
+        if is_completed_status(status):
+            completed += 1
+        elif status in _DEFERRED_STATUSES:
+            deferred += 1
 
     total = validation.task_count
     pct = _pct(completed, total)
@@ -94,6 +107,8 @@ def summarize_task_progress(
         valid=not errors,
         total_tasks=total,
         completed_tasks=completed,
+        deferred_tasks=deferred,
+        terminal_tasks=completed + deferred,
         tasks_completed_pct=pct,
         task_statuses=task_statuses,
         errors=errors,

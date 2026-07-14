@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from harness.progress_reconciliation import reconcile_progress
+from harness.task_progress import update_task_progress_markdown
 
 
 def _tasks_md() -> str:
@@ -164,6 +165,36 @@ def test_apply_skips_task_with_open_dependency(tmp_path: Path) -> None:
         encoding="utf-8"
     )
     assert "open dependency" in applied_md
+
+
+def test_apply_allows_task_after_deferred_dependency(tmp_path: Path) -> None:
+    candidate = _candidate()
+    candidate["safe_task_updates"] = [
+        {
+            "task_id": "T-002",
+            "status": "DONE",
+            "evidence": "fulfillment-report.md#FR-002",
+            "reason": "Dependent rule is implemented",
+        }
+    ]
+    tasks_path, candidate_path, out_dir = _write_inputs(tmp_path, candidate)
+    tasks_path.write_text(
+        update_task_progress_markdown(tasks_path.read_text(encoding="utf-8"), "T-001", "DEFERRED"),
+        encoding="utf-8",
+    )
+
+    result = reconcile_progress(
+        tasks_path=tasks_path,
+        candidate_path=candidate_path,
+        out_plan_json=out_dir / "progress-reconciliation-plan.json",
+        out_plan_md=out_dir / "progress-reconciliation-plan.md",
+        out_applied_json=out_dir / "progress-reconciliation-applied.json",
+        out_applied_md=out_dir / "progress-reconciliation-applied.md",
+        dry_run=False,
+    )
+
+    assert result.applied_count == 1
+    assert "**Status:** DONE" in tasks_path.read_text(encoding="utf-8")
 
 
 def test_reports_ambiguous_and_manual_followup_paths(tmp_path: Path) -> None:

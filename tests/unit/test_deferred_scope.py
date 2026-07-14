@@ -49,3 +49,17 @@ def test_restore_preserves_deferral_history(tmp_path: Path) -> None:
     assert entry.status == "planned"
     assert entry.reason == "owner decision"
     assert entry.planned_at is not None
+
+
+def test_defer_marks_derived_pending_task_and_plan_restores_it(tmp_path: Path) -> None:
+    spec_dir = _spec(
+        tmp_path,
+        tasks="- [ ] T-001 complexity=standard phase=build req=NFR-008 depends=none\n",
+        requirements="NFR-008\n",
+    )
+
+    apply_defer(spec_dir, ["NFR-008"], reason="owner decision")
+    assert "**Status:** DEFERRED" in (spec_dir / "tasks.md").read_text(encoding="utf-8")
+
+    apply_restore(spec_dir, ["NFR-008"])
+    assert "**Status:** PENDING" in (spec_dir / "tasks.md").read_text(encoding="utf-8")

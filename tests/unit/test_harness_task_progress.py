@@ -49,6 +49,17 @@ class TestTaskProgress:
         assert "  **Status:** BLOCKED" in updated
         assert "  - [ ] Core flow works" in updated
 
+    def test_deferred_task_is_terminal_but_not_completed(self) -> None:
+        updated = update_task_progress_markdown(TASKS, "T-001", "DEFERRED")
+
+        summary = summarize_task_progress(updated)
+
+        assert "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none" in updated
+        assert "  **Status:** DEFERRED" in updated
+        assert summary.completed_tasks == 0
+        assert summary.deferred_tasks == 1
+        assert summary.terminal_tasks == 1
+
     def test_update_replaces_existing_status_idempotently(self) -> None:
         first = update_task_progress_markdown(TASKS, "T-001", "DONE")
         second = update_task_progress_markdown(first, "T-001", "DEGRADED")

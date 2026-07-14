@@ -236,6 +236,7 @@ def _skip_reason(
             "DONE",
             "DONE_WITH_CONCERNS",
             "DEGRADED",
+            "DEFERRED",
         }:
             return f"open dependency: {dependency}"
     return None
