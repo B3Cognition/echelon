@@ -2487,6 +2487,12 @@ class TestOuterLoopConvergence:
             reason="full verify-spec cache hit",
             cache_key="cache123",
             report_path=str(report),
+            verified_ledger={
+                "reused": 70,
+                "rechecked": 5,
+                "invalidated": 0,
+                "unresolved": 2,
+            },
         )
         controller, _provider, gitops, state_store = _make_controller(
             tmp_path,
@@ -2507,9 +2513,16 @@ class TestOuterLoopConvergence:
         assert refresh["scope"] == "full"
         assert refresh["cache_key"] == "cache123"
         assert refresh["report_path"] == str(report)
+        assert refresh["verified_ledger"] == {
+            "reused": 70,
+            "rechecked": 5,
+            "invalidated": 0,
+            "unresolved": 2,
+        }
         captured = capsys.readouterr()
         assert "fulfillment refresh: cached" in captured.err
         assert "full verify-spec cache hit" in captured.err
+        assert "verified ledger: reused 70, rechecked 5, invalidated 0, unresolved 2" in captured.err
 
     def test_refreshed_equals_style_fulfillment_report_blocks_convergence(
         self, tmp_path: Path

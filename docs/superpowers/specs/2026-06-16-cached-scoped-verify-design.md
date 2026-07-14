@@ -16,6 +16,8 @@ real fulfillment blockers.
 - Make every fulfillment refresh decision visible in logs and state.
 - Prevent dirty verify-owned artifacts from confusing the next build slice.
 - Establish the path to true scoped verify-spec without making row drift worse.
+- Reuse previously verified requirement rows when their source, spec, evidence,
+  artifact, and verifier-policy inputs are unchanged.
 
 ## Non-Goals
 
@@ -100,6 +102,50 @@ The scoped report should preserve the last full report's unaffected rows, stamp
 metadata with `verify_scope=scoped`, and include `base_full_verify_commit`.
 Before land, Ralph must require a current full verify report or run one.
 
+### Stage 5: Requirement-Level Verified Evidence Ledger
+
+Full-report caching is too coarse for delivery resumes. A small set of unresolved
+or changed rows should not force another provider-backed proof pass over rows
+whose evidence has already been verified against unchanged inputs.
+
+Ralph should maintain a Python-owned verified-evidence ledger keyed by canonical
+requirement ID. Each ledger row should record:
+
+- `requirement_id`
+- `status`
+- `evidence_refs`
+- `verified_commit`
+- `verified_at`
+- `spec_input_hash`
+- `implementation_input_hash`
+- `artifact_hashes`
+- `verifier_version`
+- `verify_scope`
+- `source_report_path`
+
+On resume, Ralph should reuse a ledger row only when all of its validity inputs
+still match the current run. A row must be rechecked when:
+
+- its requirement text, task mapping, or spec input hash changed
+- any cited source/test/build/test-result artifact changed
+- the verifier version or fulfillment status policy changed
+- the row status is unresolved, including `MISSING`, `PARTIAL`, `DEVIATED`, or
+  `UNVERIFIED`
+- the row is new, unmapped, or lacks ledger provenance
+
+The refresh result should report the row-level plan:
+
+- `reused`: trusted from the ledger without provider rejudgment
+- `rechecked`: selected for deterministic or provider-backed judgment
+- `unresolved`: still blocking or requiring defer/reopen/waiver handling
+- `invalidated`: previously verified but no longer trustable for this run
+
+Reconciliation should consume the ledger for task-progress bookkeeping. It must
+not treat bookkeeping reconciliation as fulfillment acceptance, and it must not
+recommend bypassing the delivery workflow. If unresolved fulfillment rows remain,
+reconciliation can update safe task rows but cannot make delivery landable by
+itself.
+
 ## Data Flow
 
 1. Build slice writes `.harness-build-status.json` with `completed_task_ids`.
@@ -113,6 +159,9 @@ Before land, Ralph must require a current full verify report or run one.
    - cached/full report with blocking statuses remains a verification failure
    - deferred refresh reports a controlled failure only at convergence boundary
    - land still blocks stale or unresolved full fulfillment reports
+6. For ledger-backed scoped refreshes, Ralph reuses unchanged verified rows,
+   rechecks only invalidated or unresolved rows, and writes the reused/rechecked
+   row counts to state and the delivery summary.
 
 ## Logging and State
 
@@ -123,6 +172,10 @@ Each outer/inner loop should record:
 - `fulfillment_refresh.scope`
 - `fulfillment_refresh.cache_key` when available
 - `fulfillment_refresh.report_path` when available
+- `fulfillment_refresh.verified_ledger.reused`
+- `fulfillment_refresh.verified_ledger.rechecked`
+- `fulfillment_refresh.verified_ledger.invalidated`
+- `fulfillment_refresh.verified_ledger.unresolved`
 
 The user-facing output should include a one-line decision such as:
 
@@ -130,6 +183,7 @@ The user-facing output should include a one-line decision such as:
 fulfillment refresh: deferred (banzai slice; full verify required before convergence)
 fulfillment refresh: cached (HEAD/spec inputs unchanged)
 fulfillment refresh: full (semi mode after task slice)
+verified ledger: reused 70, rechecked 5, invalidated 0, unresolved 2
 ```
 
 ## Error Handling
@@ -170,6 +224,18 @@ Stage 4 tests should cover:
 - scoped reports preserve unaffected rows.
 - land rejects scoped-only verification.
 
+Stage 5 tests should cover:
+
+- verified ledger rows are reused when source/spec/evidence/artifact/verifier
+  fingerprints match.
+- changed source, test, measured artifact, spec text, task mapping, or verifier
+  policy invalidates only the affected rows.
+- unresolved rows are always selected for recheck or explicit defer/reopen/waiver
+  handling.
+- delivery summaries show reused, rechecked, invalidated, and unresolved counts.
+- reconciliation consumes ledger-backed IMPLEMENTED rows for safe task-progress
+  updates but does not resolve open fulfillment gaps.
+
 ## Rollout
 
 Implement in order:
@@ -178,6 +244,10 @@ Implement in order:
 2. Stage 2: verify-artifact containment.
 3. Stage 3: canonical inventory.
 4. Stage 4: true scoped verify.
+5. Stage 5: requirement-level verified evidence ledger.
 
 This order gives immediate token savings while keeping release safety tied to
 full verify-spec until row-set determinism is strong enough for scoped judgment.
+Stage 5 is the major token-savings step for repeated resumes because it turns
+verified rows into reusable evidence instead of making each refresh re-prove the
+same stable requirements.

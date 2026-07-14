@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from unittest.mock import MagicMock
 from unittest.mock import patch
@@ -232,6 +233,50 @@ class TestFulfillmentRunner:
         assert isinstance(metadata["spec_input_hash"], str)
         assert isinstance(metadata["implementation_input_hash"], str)
         assert isinstance(metadata["verify_cache_key"], str)
+
+    def test_refresh_writes_verified_fulfillment_ledger_on_success(self, tmp_path):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "a.py").write_text("print('ok')\n", encoding="utf-8")
+        (tmp_path / "test-results").mkdir()
+        (tmp_path / "test-results" / "runtime.json").write_text(
+            '{"ok": false}\n',
+            encoding="utf-8",
+        )
+        report = spec_dir / "fulfillment-report.md"
+
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_report(_worktree_path: str, _prompt: str) -> int:
+            report.write_text(
+                "| ID | Status | Evidence | Confidence | Notes |\n"
+                "|---|---|---|---|---|\n"
+                "| FR-001 | IMPLEMENTED | src/a.py | high | ok |\n"
+                "| FR-002 | UNVERIFIED | test-results/runtime.json | low | no gate |\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="abc123"):
+            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+
+        ledger_path = spec_dir / "verified-fulfillment-ledger.json"
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        assert result.verified_ledger == {
+            "reused": 1,
+            "rechecked": 1,
+            "invalidated": 0,
+            "unresolved": 1,
+        }
+        assert ledger["schema_version"] == 1
+        assert [row["requirement_id"] for row in ledger["rows"]] == ["FR-001", "FR-002"]
+        assert ledger["rows"][0]["artifact_hashes"]["src/a.py"]
+        assert ledger["rows"][1]["status"] == "UNVERIFIED"
 
     def test_refresh_rejects_mapping_artifacts_written_outside_verify_roots(
         self, tmp_path
@@ -719,6 +764,12 @@ class TestFulfillmentRunner:
         assert second.reason == "full verify-spec cache hit"
         assert second.report_path == str(report)
         assert isinstance(second.cache_key, str)
+        assert second.verified_ledger == {
+            "reused": 1,
+            "rechecked": 0,
+            "invalidated": 0,
+            "unresolved": 0,
+        }
         assert second.exit_code == 0
         assert second.used_cache is True
         provider.exec_prompt.assert_called_once()

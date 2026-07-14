@@ -1876,6 +1876,7 @@ class RalphController:
                 "scope": getattr(refresh_result, "scope", "full"),
                 "cache_key": getattr(refresh_result, "cache_key", None),
                 "report_path": getattr(refresh_result, "report_path", None),
+                "verified_ledger": getattr(refresh_result, "verified_ledger", None),
             }
         )
         if exit_code == 0:
@@ -2017,10 +2018,19 @@ class RalphController:
             "cache_key": data.get("cache_key"),
             "report_path": data.get("report_path"),
         }
+        verified_ledger = data.get("verified_ledger")
+        if isinstance(verified_ledger, dict):
+            state["fulfillment_refresh"]["verified_ledger"] = {
+                "reused": int(verified_ledger.get("reused") or 0),
+                "rechecked": int(verified_ledger.get("rechecked") or 0),
+                "invalidated": int(verified_ledger.get("invalidated") or 0),
+                "unresolved": int(verified_ledger.get("unresolved") or 0),
+            }
         self._state_store.write(state)
         self._print_fulfillment_refresh_decision(
             status=str(state["fulfillment_refresh"]["status"]),
             reason=str(state["fulfillment_refresh"]["reason"]),
+            verified_ledger=state["fulfillment_refresh"].get("verified_ledger"),
         )
 
     def _last_fulfillment_refresh_reason(self) -> str:
@@ -2048,8 +2058,23 @@ class RalphController:
             return False
         return after > before
 
-    def _print_fulfillment_refresh_decision(self, *, status: str, reason: str) -> None:
+    def _print_fulfillment_refresh_decision(
+        self,
+        *,
+        status: str,
+        reason: str,
+        verified_ledger: object = None,
+    ) -> None:
         print(f"fulfillment refresh: {status} ({reason})", file=sys.stderr)
+        if isinstance(verified_ledger, dict):
+            print(
+                "verified ledger: "
+                f"reused {int(verified_ledger.get('reused') or 0)}, "
+                f"rechecked {int(verified_ledger.get('rechecked') or 0)}, "
+                f"invalidated {int(verified_ledger.get('invalidated') or 0)}, "
+                f"unresolved {int(verified_ledger.get('unresolved') or 0)}",
+                file=sys.stderr,
+            )
 
     def _exec_verify_locally(self, worktree_path: str) -> VerifyResult:
         """Run verification locally on the host when LLM provider is active.

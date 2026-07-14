@@ -17,6 +17,12 @@ from harness.scoped_verify import (
 )
 from harness.skill_loader import build_skill_prompt, find_skill
 from harness.spec_frontmatter import find_spec_dir
+from harness.verified_fulfillment_ledger import (
+    build_verified_ledger,
+    plan_verified_ledger_reuse,
+    verified_fulfillment_ledger_path,
+    write_verified_ledger,
+)
 from kernel.fulfillment import (
     fulfillment_table_ids,
     fulfillment_report_is_current,
@@ -48,6 +54,8 @@ IMPLEMENTATION_INPUT_DIRS = (
 MEASURED_EVIDENCE_INPUT_DIRS = (
     "test-results",
 )
+
+FULFILLMENT_VERIFIER_VERSION = "verified-ledger-v1"
 
 IMPLEMENTATION_INPUT_FILES = (
     "pyproject.toml",
@@ -81,6 +89,7 @@ class FulfillmentRefreshResult:
     reason: str = ""
     cache_key: str | None = None
     report_path: str | None = None
+    verified_ledger: Mapping[str, int] | None = None
 
     @property
     def ok(self) -> bool:
@@ -166,6 +175,13 @@ class FulfillmentRunner:
             implementation_input_hash=implementation_input_hash,
             cache_key=cache_key,
         ):
+            verified_ledger = _write_verified_fulfillment_ledger(
+                worktree,
+                spec_dir=resolved_spec_dir,
+                report=report,
+                spec_input_hash=spec_input_hash,
+                implementation_input_hash=implementation_input_hash,
+            )
             return FulfillmentRefreshResult(
                 status="cached",
                 exit_code=0,
@@ -174,6 +190,7 @@ class FulfillmentRunner:
                 reason="full verify-spec cache hit",
                 cache_key=cache_key,
                 report_path=report_path,
+                verified_ledger=verified_ledger,
             )
 
         skill_path = find_skill(
@@ -274,6 +291,13 @@ class FulfillmentRunner:
                     cache_key=cache_key,
                     report_path=report_path,
                 )
+            verified_ledger = _write_verified_fulfillment_ledger(
+                worktree,
+                spec_dir=resolved_spec_dir,
+                report=report,
+                spec_input_hash=spec_input_hash,
+                implementation_input_hash=implementation_input_hash,
+            )
             return FulfillmentRefreshResult(
                 status="refreshed",
                 exit_code=0,
@@ -281,6 +305,7 @@ class FulfillmentRunner:
                 reason="full verify-spec completed",
                 cache_key=cache_key,
                 report_path=report_path,
+                verified_ledger=verified_ledger,
             )
         return FulfillmentRefreshResult(
             status="failed",
@@ -608,6 +633,58 @@ def _implementation_input_hash(worktree: Path) -> str:
             digest.update(b"<unreadable>")
         digest.update(b"\0")
     return digest.hexdigest()
+
+
+def _implementation_artifact_hashes(worktree: Path) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for path in _implementation_input_paths(worktree):
+        rel = path.relative_to(worktree).as_posix()
+        digest = hashlib.sha256()
+        try:
+            digest.update(path.read_bytes())
+        except OSError:
+            digest.update(b"<unreadable>")
+        hashes[rel] = digest.hexdigest()
+    return hashes
+
+
+def _write_verified_fulfillment_ledger(
+    worktree: Path,
+    *,
+    spec_dir: Path | None,
+    report: Path | None,
+    spec_input_hash: str | None,
+    implementation_input_hash: str | None,
+) -> dict[str, int] | None:
+    if (
+        spec_dir is None
+        or report is None
+        or spec_input_hash is None
+        or implementation_input_hash is None
+    ):
+        return None
+    artifact_hashes = _implementation_artifact_hashes(worktree)
+    ledger = build_verified_ledger(
+        report_path=report,
+        spec_input_hash=spec_input_hash,
+        implementation_input_hash=implementation_input_hash,
+        artifact_hashes=artifact_hashes,
+        verifier_version=FULFILLMENT_VERIFIER_VERSION,
+    )
+    write_verified_ledger(verified_fulfillment_ledger_path(spec_dir), ledger)
+    plan = plan_verified_ledger_reuse(
+        ledger,
+        current_spec_input_hash=spec_input_hash,
+        current_implementation_input_hash=implementation_input_hash,
+        current_artifact_hashes=artifact_hashes,
+        current_verifier_version=FULFILLMENT_VERIFIER_VERSION,
+    )
+    return {
+        "reused": len(plan.reused_requirement_ids),
+        "rechecked": len(plan.rechecked_requirement_ids),
+        "invalidated": len(plan.invalidated_requirement_ids),
+        "unresolved": len(plan.unresolved_requirement_ids),
+    }
 
 
 def _implementation_input_paths(worktree: Path) -> list[Path]:
