@@ -13,6 +13,7 @@ from harness.judgment_prepass import (
     write_fallback_fulfillment_template,
     write_judgment_prepass,
 )
+from harness.deferred_scope import apply_defer
 
 
 def _run_harness(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -75,6 +76,40 @@ def test_write_judgment_prepass_emits_rows_and_fallback_summary(tmp_path: Path):
     by_id = {row["id"]: row for row in payload["rows"]}
     assert by_id["FR-001"]["proposed_status"] == "IMPLEMENTED"
     assert by_id["NFR-002"]["proposed_status"] == "UNVERIFIED"
+
+
+def test_prepass_excludes_active_deferred_scope_from_llm_fallback(tmp_path: Path):
+    spec_dir = tmp_path / "specs" / "906-demo"
+    verify_run_dir = tmp_path / "runs" / "verify-spec-906-demo-1"
+    spec_dir.mkdir(parents=True)
+    verify_run_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("NFR-008\n", encoding="utf-8")
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=NFR-008 depends=none\n",
+        encoding="utf-8",
+    )
+    apply_defer(spec_dir, ["NFR-008"], reason="owner decision")
+    (verify_run_dir / "canonical-requirements.json").write_text(
+        json.dumps({"requirements": [{"id": "NFR-008"}]}),
+        encoding="utf-8",
+    )
+    (verify_run_dir / "implementation-map.md").write_text(
+        "# Implementation Map\n\n"
+        "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
+        encoding="utf-8",
+    )
+
+    result = write_judgment_prepass(spec_dir=spec_dir, verify_run_dir=verify_run_dir)
+
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+    row = payload["rows"][0]
+    assert payload["summary"]["fallback_ids"] == []
+    assert row["mechanical"] is True
+    assert row["proposed_status"] == "DEFERRED_SCOPE"
+    assert row["report_row"] == (
+        "| NFR-008 | DEFERRED_SCOPE | defer:defer-001: owner decision |"
+    )
 
 
 def test_write_judgment_prepass_cli_stamps_success_state(tmp_path: Path):

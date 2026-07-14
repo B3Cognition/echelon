@@ -8,6 +8,7 @@ Provide IMPLEMENTATION-MAPPER with:
 - `{verify_run_dir}/canonical-requirements.json`
 - `{verify_run_dir}/canonical-requirements.md`
 - fulfillment checklist
+- `{spec_dir}/deferred-scope.json` when present
 - current source tree and tests
 - verification `state.json`
 - `{verify_run_dir}/codegraph-summary.json`
@@ -47,6 +48,12 @@ IMPLEMENTATION-MAPPER until the required input exists.
 
 Map checklist items to concrete source, test, route, UI, configuration, and
 CodeGraph evidence.
+
+When `{spec_dir}/deferred-scope.json` has active entries, selected requirement
+IDs are explicitly out of the current fulfillment scope. Do not manually
+inspect those IDs or characterize them as deviations or gaps; the deterministic
+judgment pre-pass owns their `DEFERRED_SCOPE` rows. Continue mapping every
+remaining canonical requirement normally.
 
 Use `{verify_run_dir}/canonical-requirements.json` as the row-set boundary.
 Map only canonical IDs from that inventory. If source inspection reveals a

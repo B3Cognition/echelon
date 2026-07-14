@@ -14,6 +14,7 @@ Provide SPEC-GUARD with:
 - implementation evidence map
 - `spec.md`
 - `tasks.md`
+- `{spec_dir}/deferred-scope.json` when present
 - `progress-integrity.json`
 - `progress-integrity.md`
 - verification `state.json`
@@ -76,6 +77,10 @@ Run SPEC-GUARD in fulfillment mode. Assign exactly one status per item:
 Python owns mechanical judgments and the final report row set. SPEC-GUARD must
 judge only IDs listed in `fallback_ids` from `judgment-prepass.json`.
 SPEC-GUARD must not emit rows for mechanically decided IDs.
+
+Active ledger-backed deferrals are already mechanical `DEFERRED_SCOPE` rows and
+must not appear in the fallback queue. Do not inspect, debate, or describe them
+as implementation gaps.
 
 Use `{verify_run_dir}/canonical-requirements.json` as the only allowed
 requirement row set. Judge every canonical ID exactly once. Do not add report
