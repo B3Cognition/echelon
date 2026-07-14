@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-137 verified fulfillment ledger reuse** — full fulfillment refreshes now
+  write a Python-owned per-requirement ledger with evidence fingerprints.
+  Scoped delivery refreshes reuse unchanged ledger rows, recheck unresolved or
+  invalidated rows only, and can restamp scoped evidence when the commit changes
+  but row inputs do not. Ralph records and prints reused, rechecked,
+  invalidated, and unresolved ledger counts, and the delivery summary surfaces
+  the same counts.
+
 - **EGR-136 RE target artifact containment** — source-domain dispatches now
   retain only their canonical `spec.md`. The controller clears backup,
   temporary, alternate, and scratch siblings before and after each agent call,
