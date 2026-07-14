@@ -1134,6 +1134,75 @@ def spec_reopen(
     legacy_cli._dispatch_skill_command("reopen", args)
 
 
+@spec_app.command("defer")
+def spec_defer(
+    spec_id: str = typer.Argument(..., help="Spec id whose scope is being deferred."),
+    ids: list[str] = typer.Argument(..., help="Canonical task or requirement IDs to defer."),
+    reason: str = typer.Option(..., "--reason", help="Owner reason for removing the scope."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the defer without writing files."),
+) -> None:
+    """Defer explicit spec scope without invoking an LLM."""
+    _run_scope_change(spec_id, ids, action="defer", reason=reason, dry_run=dry_run)
+
+
+@spec_app.command("plan")
+def spec_plan(
+    spec_id: str = typer.Argument(..., help="Spec id whose deferred scope is being restored."),
+    ids: list[str] = typer.Argument(..., help="Deferred task or requirement IDs to plan."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview the restore without writing files."),
+) -> None:
+    """Return deferred spec scope to planned work without invoking an LLM."""
+    _run_scope_change(spec_id, ids, action="plan", dry_run=dry_run)
+
+
+def _run_scope_change(
+    spec_id: str,
+    ids: list[str],
+    *,
+    action: str,
+    dry_run: bool,
+    reason: str | None = None,
+) -> None:
+    from harness.deferred_scope import (
+        DeferredScopeError,
+        apply_defer,
+        apply_restore,
+        ledger_path,
+        plan_defer,
+        plan_restore,
+    )
+    from harness.spec_frontmatter import find_spec_dir
+
+    spec_dir = find_spec_dir(spec_id, Path.cwd())
+    if spec_dir is None:
+        raise typer.BadParameter(f"spec not found: {spec_id}")
+    try:
+        if action == "defer":
+            plan = (
+                plan_defer(spec_dir, ids, reason=reason or "")
+                if dry_run
+                else apply_defer(spec_dir, ids, reason=reason or "")
+            )
+            heading = "DEFERRED SCOPE"
+        else:
+            plan = plan_restore(spec_dir, ids) if dry_run else apply_restore(spec_dir, ids)
+            heading = "PLANNED SCOPE"
+    except DeferredScopeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    typer.echo(heading)
+    typer.echo(f"spec: {spec_id}")
+    typer.echo(f"direct IDs: {', '.join(plan.selected_ids)}")
+    typer.echo(
+        "deferred tasks: "
+        + (", ".join(plan.derived_task_ids) if plan.derived_task_ids else "none")
+    )
+    for item_id in plan.related_active_ids:
+        typer.echo(f"{item_id} remains active")
+    typer.echo(f"ledger: {ledger_path(spec_dir)}")
+    typer.echo("status: dry run" if dry_run else "status: applied")
+
+
 @spec_app.command(
     "bugfix",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
