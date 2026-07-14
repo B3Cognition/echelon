@@ -188,6 +188,31 @@ def test_next_steps_report_provider_session_limit_as_first_class_block(
     assert "wait for provider reset, then echelon delivery continue 001-demo" in captured.out
 
 
+def test_next_steps_report_build_blocker_without_recommending_a_retry(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_build_state(
+        tmp_path,
+        "build-20260606-221522-964255",
+        status="blocked",
+        spec_id="001-demo",
+        termination_reason="build_blocked",
+        extra={
+            "build_status": "blocked",
+            "build_reason": "NFR-008 requires an owner spec decision",
+        },
+    )
+
+    _print_next_steps(tmp_path, "done")
+
+    captured = capsys.readouterr()
+    assert "HARNESS BUILD BLOCKED" in captured.out
+    assert "NFR-008 requires an owner spec decision" in captured.out
+    assert "echelon spec reopen 001-demo" in captured.out
+    assert "echelon delivery continue 001-demo" not in captured.out
+
+
 def test_next_steps_labels_running_harness_build_as_in_progress(
     tmp_path: Path,
     capsys,

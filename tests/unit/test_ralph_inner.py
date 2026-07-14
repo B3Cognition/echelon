@@ -368,3 +368,51 @@ class TestInnerLoopTaskProgress:
         ctrl._try_checkpoint_progress_commit.assert_called_once()
         state = ctrl._state_store.read()
         assert state["build"]["task_results"]["T-002"]["status"] == "DONE"
+
+    def test_explicit_feedback_blocker_stops_without_another_verify(self, tmp_path: Path) -> None:
+        """A spec-governance blocker must not become another fulfillment-gap retry."""
+        ctrl = _make_controller(tmp_path, [])
+        entry = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    FailureCategory.OTHER,
+                    "fulfillment-gaps",
+                    "NFR-008 remains deviated",
+                )
+            ],
+        )
+        ctrl._exec_feedback = MagicMock(
+            return_value={
+                "exit_code": 0,
+                "passed": False,
+                "build_status": "blocked",
+                "build_reason": "NFR-008 requires an owner spec decision",
+                "duration_s": 0.0,
+                "tokens": 0,
+                "task_ids": [],
+            }
+        )
+        ctrl._try_checkpoint_progress_commit = MagicMock(return_value=None)
+        ctrl._exec_verify = MagicMock()
+
+        result = ctrl._run_inner_loop(
+            handle=ctrl._provider.create(None),
+            verify_result=entry,
+            outer_iter=0,
+            max_inner=3,
+            tokens_used=0,
+            token_budget=None,
+            state=ctrl._state_store.read(),
+            build_command="echelon build",
+            strategy_context="",
+            worktree_path="/tmp/wt",
+            build_prompt="build the next task",
+        )
+
+        assert result["blocked"] is True
+        assert result["blocked_reason"] == "build_blocked"
+        assert result["inner_count"] == 1
+        assert result["final_verify"].failures[0].id == "build-blocked"
+        assert "owner spec decision" in result["final_verify"].failures[0].error
+        ctrl._exec_verify.assert_not_called()

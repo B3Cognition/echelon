@@ -9,6 +9,7 @@ from typing import Mapping, Protocol
 
 from harness.build_result import (
     BUILD_STATUS_FILENAME,
+    ECHELON_RESULT_FILENAME,
     BuildResult,
     recover_done_result_from_output,
 )
@@ -89,14 +90,24 @@ class LlmBuildRunner:
             duration_ms=duration_ms,
         )
         if result.status == "unknown" and not status_file.exists():
-            recovered = recover_done_result_from_output(
-                stdout=stdout,
-                stderr=stderr,
-                exit_code=exit_code,
-                duration_ms=duration_ms,
-            )
-            if recovered is not None:
-                result = recovered
+            legacy_result_file = Path(worktree_path) / ECHELON_RESULT_FILENAME
+            if legacy_result_file.exists():
+                result = BuildResult.from_echelon_result_file(
+                    legacy_result_file,
+                    exit_code=exit_code,
+                    stdout=stdout,
+                    stderr=stderr,
+                    duration_ms=duration_ms,
+                )
+            if result.status == "unknown":
+                recovered = recover_done_result_from_output(
+                    stdout=stdout,
+                    stderr=stderr,
+                    exit_code=exit_code,
+                    duration_ms=duration_ms,
+                )
+                if recovered is not None:
+                    result = recovered
         result.token_usage = token_usage
         return result
 

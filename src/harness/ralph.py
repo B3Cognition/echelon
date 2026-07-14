@@ -29,7 +29,7 @@ from typing import Any, Dict, Iterable, List, Optional
 
 from echelon.artifact_index import write_artifact_index
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
-from harness.build_result import BUILD_STATUS_FILENAME
+from harness.build_result import BUILD_STATUS_FILENAME, ECHELON_RESULT_FILENAME
 from harness.config import HarnessConfig
 from harness.documentation_gate import evaluate_documentation_gate
 from harness.llm_provider import AICodingCliProvider
@@ -629,6 +629,12 @@ class RalphController:
                                     "COMMANDER reported completed task IDs, but Ralph could "
                                     "not update the canonical task ledger before verification"
                                 )
+                            elif build_status == "blocked":
+                                why = "build agent reported a blocker"
+                                meaning = (
+                                    "The build agent completed all safely resolvable work and "
+                                    "requires an owner decision before it can proceed"
+                                )
                             else:
                                 why = f"build reported status '{build_status}'"
                                 meaning = (
@@ -659,6 +665,8 @@ class RalphController:
                             next_action = (
                                 "resume after provider reset"
                                 if build_status == "provider_session_limit"
+                                else "resolve the reported blocker, then start a new delivery run"
+                                if build_status == "blocked"
                                 else "recover and finalize this build"
                             )
                             fields.extend(
@@ -673,6 +681,8 @@ class RalphController:
                             title = (
                                 "HARNESS — PROVIDER SESSION LIMIT"
                                 if build_status == "provider_session_limit"
+                                else "HARNESS — BUILD BLOCKED"
+                                if build_status == "blocked"
                                 else "HARNESS — BUILD DID NOT COMPLETE"
                             )
                             _ui_banner(title, fields, file=sys.stderr)
@@ -691,6 +701,8 @@ class RalphController:
                                 reason=(
                                     "provider_session_limit"
                                     if build_status == "provider_session_limit"
+                                    else "build_blocked"
+                                    if build_status == "blocked"
                                     else "build_incomplete"
                                 ),
                                 outer_iterations=outer_iter + 1,
@@ -1217,6 +1229,28 @@ class RalphController:
                 inner_iter=inner_iter,
                 phase="fix",
             )
+
+            if fix_result.get("build_status") == "blocked":
+                blocker = str(
+                    fix_result.get("build_reason") or "build agent reported a blocker"
+                )
+                return {
+                    "converged": False,
+                    "blocked": True,
+                    "blocked_reason": "build_blocked",
+                    "inner_count": inner_iter,
+                    "tokens_used": tokens_used,
+                    "final_verify": VerifyResult(
+                        passed=False,
+                        failures=[
+                            FailureEntry(
+                                FailureCategory.OTHER,
+                                "build-blocked",
+                                blocker,
+                            )
+                        ],
+                    ),
+                }
 
             # Check termination
             termination = self._check_termination(
@@ -4438,13 +4472,14 @@ def _print_blocked_banner(spec_id: str, strategy_id: str, escalation_file: str) 
 
 
 def _clear_build_status(worktree_path: str) -> None:
-    """Remove .harness-build-status.json before a build iteration.
+    """Remove stale build result markers before a build iteration.
 
     Prevents a status file committed from a prior build on this branch from
     being read back as a successful completion of the current build.
     """
     try:
         (Path(worktree_path) / BUILD_STATUS_FILENAME).unlink(missing_ok=True)
+        (Path(worktree_path) / ECHELON_RESULT_FILENAME).unlink(missing_ok=True)
     except Exception:
         pass
 
