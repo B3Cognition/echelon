@@ -128,7 +128,7 @@ class ReExtractionController:
             self._save_state(state)
         if self._upgrade_source_coverage_repair_protocol(state, plan):
             self._save_state(state)
-        if self._apply_re_budget_override(state):
+        if self._apply_re_budget_override(state, plan):
             self._save_state(state)
         if (
             state.get("phase") == "re-extract-2-specify"
@@ -287,10 +287,21 @@ class ReExtractionController:
                     else None,
                 )
                 if semantic_error is not None or semantic_report is None:
-                    state["re_agent_result_detail"] = (
-                        semantic_error or "semantic quality review was unavailable"
+                    error = semantic_error or "semantic quality review was unavailable"
+                    attempts = (
+                        self._metric(state, "re_semantic_review_invalid_attempts") + 1
                     )
-                    return self._block(state, "re_semantic_quality_review_invalid")
+                    state["re_semantic_review_invalid_attempts"] = attempts
+                    state["re_semantic_review_invalid_error"] = error
+                    state["re_agent_result_detail"] = error
+                    if attempts >= self._metric(state, "max_validate_iterations"):
+                        return self._block(state, "re_semantic_quality_review_invalid")
+                    self._save_state(state)
+                    continue
+                state.pop("re_semantic_review_invalid_attempts", None)
+                state.pop("re_semantic_review_invalid_error", None)
+                if semantic_report.passed:
+                    self._clear_semantic_quality_debt(state, plan)
                 semantic_report_path = write_re_semantic_quality_report(
                     self._run_re_dir, semantic_report
                 )
@@ -482,8 +493,8 @@ class ReExtractionController:
         state["re_specification_targets"] = []
         self._activate_next_source(state, plan)
 
-    def _apply_re_budget_override(self, state: dict) -> bool:
-        """Raise source-local budgets from the command-scoped squad setting."""
+    def _apply_re_budget_override(self, state: dict, plan: ReExecutionPlan) -> bool:
+        """Raise source-local budgets and resume debt only when the limit increases."""
         try:
             outer_state = json.loads(
                 (self._run_dir / "state.json").read_text(encoding="utf-8")
@@ -510,7 +521,99 @@ class ReExtractionController:
                 changed = True
         if changed:
             state["re_source_budget_override"] = override
+            self._reclaim_quality_debt_for_budget_override(state, plan)
         return changed
+
+    def _reclaim_quality_debt_for_budget_override(
+        self, state: dict, plan: ReExecutionPlan
+    ) -> None:
+        """Return still-failing debt sources to their exact source-local repair queue.
+
+        A higher `--re-max-inner` is an explicit operator decision to spend more
+        source-local budget. Preserve counters already consumed under the former
+        ceiling, measure the current staged output again, and queue only the
+        unresolved domains. This leaves passed sources untouched and prevents a
+        higher limit from silently restarting the whole workspace.
+        """
+        if not self._source_convergence_enabled(state):
+            return
+        source_states = state.get("re_source_states")
+        order = state.get("re_source_order")
+        if not isinstance(source_states, dict) or not isinstance(order, list):
+            return
+
+        pending_repairs = state.get("re_pending_source_repair_targets")
+        if not isinstance(pending_repairs, dict):
+            pending_repairs = {}
+            state["re_pending_source_repair_targets"] = pending_repairs
+        reclaimed: set[str] = set()
+        for source_id in order:
+            if not isinstance(source_id, str):
+                continue
+            source_state = source_states.get(source_id)
+            if (
+                not isinstance(source_state, dict)
+                or source_state.get("status") != "partial_quality_debt"
+            ):
+                continue
+            semantic_failures = self._quality_debt_semantic_failures(source_state)
+            report = measure_source_quality(
+                self._run_re_dir,
+                plan,
+                source_id,
+                coverage_threshold=self._metric(state, "coverage_threshold"),
+            )
+            report_path = write_re_source_quality_report(self._run_re_dir, report)
+            source_state["quality_report"] = str(report_path)
+            source_state["coverage_pct"] = report.coverage_pct
+            reclaimed.add(source_id)
+            if report.passed and not semantic_failures:
+                source_state["status"] = "passed"
+                continue
+
+            targets = self._source_repair_targets(
+                plan,
+                source_id,
+                report.orphan_paths,
+                semantic_failures or report.domain_failures,
+            )
+            if not targets:
+                continue
+            source_state["status"] = "pending"
+            source_state["source_cycles"] = (
+                self._source_counter(source_state, "source_cycles") + 1
+            )
+            source_state["quality_debt_reactivated_at_budget"] = self._source_budget(
+                state, "max_source_cycles"
+            )
+            pending_repairs[source_id] = targets
+            print(
+                "[re] source budget recovery: "
+                f"{source_id} - {report.coverage_pct:.1f}% coverage "
+                f"({report.covered_file_count}/{report.eligible_file_count} files); "
+                "resuming exact repair targets",
+                flush=True,
+            )
+
+        if not reclaimed:
+            return
+        debt_sources = state.get("re_quality_debt_sources")
+        if isinstance(debt_sources, list):
+            state["re_quality_debt_sources"] = [
+                source_id for source_id in debt_sources if source_id not in reclaimed
+            ]
+        if not pending_repairs:
+            state.pop("re_pending_source_repair_targets", None)
+            return
+        active_source_id = state.get("re_active_source_id")
+        active_state = (
+            source_states.get(active_source_id)
+            if isinstance(active_source_id, str)
+            else None
+        )
+        if not isinstance(active_state, dict) or active_state.get("status") != "active":
+            self._activate_next_source(state, plan)
+            self._reported_source_id = None
 
     def _advance_source_convergence(
         self, state: dict, plan: ReExecutionPlan
@@ -657,6 +760,7 @@ class ReExtractionController:
         order = state.get("re_source_order")
         if not isinstance(source_states, dict) or not isinstance(order, list):
             return
+        pending_repairs = state.get("re_pending_source_repair_targets")
         for source_id in order:
             if not isinstance(source_id, str):
                 continue
@@ -665,7 +769,16 @@ class ReExtractionController:
                 continue
             source_state["status"] = "active"
             state["re_active_source_id"] = source_id
-            state["re_specification_targets"] = self._source_targets(plan, source_id)
+            targets = (
+                pending_repairs.pop(source_id, None)
+                if isinstance(pending_repairs, dict)
+                else None
+            )
+            state["re_specification_targets"] = (
+                targets if isinstance(targets, list) else self._source_targets(plan, source_id)
+            )
+            if isinstance(pending_repairs, dict) and not pending_repairs:
+                state.pop("re_pending_source_repair_targets", None)
             state["phase"] = "re-extract-2-specify"
             return
         state.pop("re_active_source_id", None)
@@ -698,9 +811,16 @@ class ReExtractionController:
     ) -> list[dict[str, object]]:
         targets = self._source_targets(plan, source_id)
         wanted = {
-            getattr(failure, "domain_id", None)
+            domain_id
             for failure in failures
-            if isinstance(getattr(failure, "domain_id", None), str)
+            if isinstance(
+                domain_id := (
+                    failure.get("domain_id")
+                    if isinstance(failure, dict)
+                    else getattr(failure, "domain_id", None)
+                ),
+                str,
+            )
         }
         owned_orphans: dict[str, list[str]] = {
             str(target["domain_id"]): [] for target in targets
@@ -741,6 +861,42 @@ class ReExtractionController:
                 }
             )
         return selected or targets
+
+    def _quality_debt_semantic_failures(self, source_state: dict) -> tuple[dict, ...]:
+        """Load semantic debt recorded by current or pre-upgrade controller runs."""
+        raw_failures = source_state.get("re_quality_debt_semantic_failures")
+        if isinstance(raw_failures, list):
+            return tuple(
+                item
+                for item in raw_failures
+                if isinstance(item, dict) and isinstance(item.get("domain_id"), str)
+            )
+        report_path = source_state.get("quality_debt_report")
+        if not isinstance(report_path, str):
+            return ()
+        try:
+            report = json.loads(Path(report_path).read_text(encoding="utf-8"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            return ()
+        raw_failures = report.get("semantic_failures") if isinstance(report, dict) else None
+        if not isinstance(raw_failures, list):
+            return ()
+        return tuple(
+            item
+            for item in raw_failures
+            if isinstance(item, dict) and isinstance(item.get("domain_id"), str)
+        )
+
+    def _clear_semantic_quality_debt(
+        self, state: dict, plan: ReExecutionPlan
+    ) -> None:
+        source_states = state.get("re_source_states")
+        if not isinstance(source_states, dict):
+            return
+        for source in plan.refresh_sources:
+            source_state = source_states.get(source.id)
+            if isinstance(source_state, dict):
+                source_state.pop("re_quality_debt_semantic_failures", None)
 
     def _upgrade_source_coverage_repair_protocol(
         self, state: dict, plan: ReExecutionPlan
@@ -857,11 +1013,22 @@ class ReExtractionController:
         return value if isinstance(value, int) and not isinstance(value, bool) else 5
 
     def _mark_active_source_partial(
-        self, state: dict, source_id: str, report_path: Path
+        self,
+        state: dict,
+        source_id: str,
+        report_path: Path,
+        *,
+        semantic_failures: tuple[ReSpecQualityFailure, ...] = (),
     ) -> None:
         source_state = self._source_state(state, source_id)
         source_state["status"] = "partial_quality_debt"
         source_state["quality_debt_report"] = str(report_path)
+        if semantic_failures:
+            source_state["re_quality_debt_semantic_failures"] = [
+                {"domain_id": failure.domain_id, "reason": failure.reason}
+                for failure in semantic_failures
+                if failure.domain_id
+            ]
         state["re_specification_targets"] = []
         debt_sources = state.setdefault("re_quality_debt_sources", [])
         if isinstance(debt_sources, list) and source_id not in debt_sources:
@@ -921,7 +1088,12 @@ class ReExtractionController:
                 report_path = write_re_source_quality_report(
                     self._run_re_dir, source_report
                 )
-                self._mark_active_source_partial(state, source_id, report_path)
+                self._mark_active_source_partial(
+                    state,
+                    source_id,
+                    report_path,
+                    semantic_failures=failures,
+                )
                 return self._schedule_source_semantic_repair(state, plan, report)
             source_state["status"] = "active"
             state["re_active_source_id"] = source_id
@@ -1024,6 +1196,18 @@ class ReExtractionController:
             )
         if phase == "re-extract-2-specify" and target is not None:
             prompt += self._specification_target_prompt(target)
+        if phase == "re-extract-5-validate":
+            semantic_error = state.get("re_semantic_review_invalid_error")
+            if isinstance(semantic_error, str) and semantic_error:
+                prompt += (
+                    "\n## Controller Validation Feedback\n"
+                    "Your previous semantic_quality_review was rejected: "
+                    f"{semantic_error}\n"
+                    "Regenerate the complete review. Each REPAIR finding requires "
+                    "valid owned-domain source evidence in exact `path:line` or "
+                    "`path:start-end` form; path-only prose is invalid. Return DONE "
+                    "only after the complete review satisfies this contract.\n"
+                )
         return prompt
 
     def _synchronize_domain_manifests(

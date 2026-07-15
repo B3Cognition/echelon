@@ -13,8 +13,8 @@ ALWAYS resolve ambiguity by reading the matching source's code, tests, analysis,
 NEVER invent behavior or use sibling source internals as evidence.
 
 ### Rule 3 - Targeted Repair Ownership
-ALWAYS return one explicit `PASS` or `REPAIR` audit record for every refreshed source-domain, with valid source evidence for every repair finding.
-NEVER edit source-domain specs yourself, or declare a source-level percentage that hides an individual domain's unresolved findings.
+ALWAYS return one explicit `PASS` or `REPAIR` audit record for every refreshed source-domain, with at least one valid owned-domain `path:line` or `path:start-end` citation per repair finding.
+NEVER edit source-domain specs yourself, declare a source-level percentage that hides an individual domain's unresolved findings, or use path-only prose as repair evidence.
 
 ### Rule 4 - Workspace Boundaries
 ALWAYS validate cross-source claims against `$RE_OUTPUT_DIR/workspace/contracts.md` and relationships.
