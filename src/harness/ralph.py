@@ -1160,6 +1160,10 @@ class RalphController:
                     )
                     state = self._state_store.read()
                     state["escalation_file"] = escalation_file
+                    state["build_status"] = "blocked"
+                    state["build_reason"] = "same_failure_repeat"
+                    state.pop("provider_limit_message", None)
+                    state.pop("provider_reset_hint", None)
                     self._state_store.write(state)
                     return {
                         "converged": False,

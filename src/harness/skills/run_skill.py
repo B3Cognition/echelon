@@ -62,6 +62,19 @@ def _has_fulfillment_gap_failure(result: Any) -> bool:
     )
 
 
+def _is_provider_limited_summary_row(info: dict[str, Any], result: Any = None) -> bool:
+    reason = (
+        getattr(result, "termination_reason", None)
+        if result is not None
+        else info.get("termination_reason")
+    )
+    return (
+        not info.get("converged", False)
+        and str(reason or "") == "provider_session_limit"
+        and str(info.get("build_status") or "") == "provider_session_limit"
+    )
+
+
 def _json_section(text: str, heading: str) -> dict[str, Any]:
     marker = f"## {heading}"
     start = text.find(marker)
@@ -154,7 +167,7 @@ def _print_delivery_summary(
         converged = info.get("converged", False)
         reason = getattr(result, "termination_reason", None) if result is not None else info.get("termination_reason")
         build_status = str(info.get("build_status") or "")
-        provider_limited = (not converged) and build_status == "provider_session_limit"
+        provider_limited = _is_provider_limited_summary_row(info, result)
         checkpointed = (not converged) and reason in _CHECKPOINT_REASONS and not provider_limited
         if converged:
             status_icon = "✓"
@@ -263,9 +276,8 @@ def _print_delivery_summary(
     )
     n_provider_limited = sum(
         1
-        for info in comparison.get("strategies", {}).values()
-        if not info.get("converged", False)
-        and info.get("build_status") == "provider_session_limit"
+        for sid, info in comparison.get("strategies", {}).items()
+        if _is_provider_limited_summary_row(info, result_map.get(sid))
     )
     raw_failed = summary.get("failed", 0)
     n_failed = max(0, raw_failed - n_checkpointed - n_provider_limited)

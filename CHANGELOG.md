@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Delivery summary stale provider-limit state** — repeated-failure
+  escalations now clear stale provider session-limit fields before writing Ralph
+  state, and delivery summaries classify a strategy as provider-limited only
+  when both the build status and termination reason say `provider_session_limit`.
+
 - **EGR-136 / #160 GOLDDIGGER nested result recovery** — Mode 1 discovery now
   detects when a nested `re-extract-*` `echelon_result` is forwarded as the
   outer GOLDDIGGER result, performs the bounded recovery prompt for the required

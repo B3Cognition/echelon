@@ -366,6 +366,7 @@ class TestRunSkillAutoLand:
 
         intent = RunIntent(spec_id="001-demo", mode="semi")
         result = _make_checkpoint_result()
+        result.termination_reason = "provider_session_limit"
         comparison = {
             "strategies": {
                 "default": {
@@ -406,6 +407,62 @@ class TestRunSkillAutoLand:
         assert "continue: echelon delivery continue 001-demo" in captured.err
         assert "0 converged, 0 failed, 1 provider-limited" in captured.err
         assert "CHECKPOINTED" not in captured.err
+
+    def test_delivery_summary_ignores_stale_provider_status_for_escalation(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        intent = RunIntent(spec_id="906", mode="semi")
+        result = LoopResult(
+            status="blocked",
+            termination_reason="blocker_escalation",
+            outer_iterations=1,
+            inner_iterations=3,
+            pr_url=None,
+            tokens_used=100,
+            final_verify=VerifyResult(
+                passed=False,
+                failures=[
+                    FailureEntry(
+                        category=FailureCategory.OTHER,
+                        id="fulfillment-gaps",
+                        error="fulfillment report has unresolved statuses",
+                    )
+                ],
+            ),
+        )
+        comparison = {
+            "strategies": {
+                "default": {
+                    "status": result.status,
+                    "termination_reason": result.termination_reason,
+                    "outer_iterations": result.outer_iterations,
+                    "inner_iterations": result.inner_iterations,
+                    "tokens_used": result.tokens_used,
+                    "pr_url": result.pr_url,
+                    "converged": False,
+                    "build_status": "provider_session_limit",
+                    "provider_limit_message": "stale provider limit text",
+                }
+            },
+            "summary": {"converged": 0, "failed": 1, "total_tokens": 100},
+        }
+
+        _print_delivery_summary(
+            intent,
+            {"default": result},
+            comparison,
+            base_dir="/tmp/nonexistent",
+        )
+
+        captured = capsys.readouterr()
+        assert "PROVIDER SESSION LIMIT" not in captured.err
+        assert "provider: stale provider limit text" not in captured.err
+        assert "provider-limited" not in captured.err
+        assert "fulfillment report has unresolved statuses" in captured.err
 
     def test_delivery_summary_renders_deferred_outer_cap_as_checkpointed(
         self,

@@ -110,6 +110,13 @@ class TestSameFailureEscalation:
             # Inner 3 re-verify: same failure (threshold=3 reached at this point)
             {"passed": False, "failures": [same_failure]},
         ])
+        state = ctrl._state_store.read()
+        state["build_status"] = "provider_session_limit"
+        state["build_reason"] = "stale provider limit"
+        state["provider_limit_message"] = "stale provider limit text"
+        state["provider_reset_hint"] = "2:30am"
+        ctrl._state_store.write(state)
+
         result = ctrl.run_loop(max_outer=1, max_inner=5)
         assert result.status == "blocked"
         assert result.termination_reason == "blocker_escalation"
@@ -121,6 +128,9 @@ class TestSameFailureEscalation:
         assert "1 time(s)" not in escalation_text
         state = ctrl._state_store.read()
         assert state["escalation_file"] == str(escalation_file)
+        assert state.get("build_status") != "provider_session_limit"
+        assert "provider_limit_message" not in state
+        assert "provider_reset_hint" not in state
         assert "suggested_answers" in escalation_text
 
     def test_same_failure_2x_does_not_trigger(self, tmp_path: Path) -> None:
