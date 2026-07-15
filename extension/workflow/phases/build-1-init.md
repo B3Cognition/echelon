@@ -24,6 +24,12 @@ Ralph owns verification, commit, and the next build invocation. Stop without a
 `done` marker only on a real BLOCKED or ERROR condition, and write the matching
 status marker before stopping.
 
+If all canonical task rows are already complete at invocation start, continue to
+the non-task finalization gates before writing the `done` marker. Missing or
+invalid `documentation-impact-report.md` and `docs-verification-report.md` means
+TECH WRITER and DOCS VERIFIER still need to run; completed task IDs do not waive
+documentation convergence.
+
 In this delivery mode, do not return, read, recreate, or write
 `echelon_result.json`. That is a legacy fallback deliberately cleared between
 build slices; generic `echelon_result`/`state_updates` instructions apply only

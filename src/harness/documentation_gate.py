@@ -24,6 +24,35 @@ class DocumentationGateResult:
     failure: FailureEntry | None = None
 
 
+def write_not_applicable_documentation_impact_report(
+    spec_dir: Path | str,
+    *,
+    reason: str,
+) -> Path:
+    """Write Ralph-owned no-impact docs report for a no-op delivery slice."""
+    spec = Path(spec_dir)
+    spec.mkdir(parents=True, exist_ok=True)
+    report = spec / REPORT_NAME
+    metadata = {
+        "docs_required": False,
+        "readme_updated": False,
+        "changelog_updated": False,
+        "changelog_format": "not_required",
+        "not_applicable_reason": reason,
+    }
+    report.write_text(
+        "---\n"
+        f"{yaml.safe_dump(metadata, sort_keys=False)}"
+        "---\n"
+        "# Documentation Impact Report\n\n"
+        "Ralph generated this report because the delivery slice made no target "
+        "source or documentation changes and only needed harness-owned "
+        "verification bookkeeping.\n",
+        encoding="utf-8",
+    )
+    return report
+
+
 def evaluate_documentation_gate(
     worktree_path: Path | str,
     spec_dir: Path | str,

@@ -38,7 +38,7 @@ from harness.provider import (
 from harness import ralph
 from harness.ralph import RalphController
 from harness.state import StateStore
-from harness.verify_result import VerifyResult
+from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 
 
 def test_tool_access_classifier_uses_categorized_filesystem_commands() -> None:
@@ -519,10 +519,10 @@ class TestOuterLoopConvergence:
         assert f"tasks_file: {tasks_file}" in prompt
         assert "spec_dir: MISSING" not in prompt
 
-    def test_external_harness_context_keeps_spec_artifacts_read_only(
+    def test_external_harness_context_allows_documentation_phase_outputs(
         self, tmp_path: Path
     ) -> None:
-        """Target builds must report task IDs instead of editing external tasks.md."""
+        """Target builds report progress through Ralph but write docs phase outputs."""
         controller, _provider, _gitops, state_store = _make_controller(tmp_path)
         spec_dir = tmp_path / "workspace" / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
@@ -545,8 +545,12 @@ class TestOuterLoopConvergence:
         assert "read-only inputs" in prompt
         assert "Do not edit `tasks_file`" in prompt
         assert "completed_task_ids" in prompt
+        assert "TECH WRITER" in prompt
+        assert "documentation-impact-report.md" in prompt
+        assert "DOCS VERIFIER" in prompt
+        assert "docs-verification-report.md" in prompt
         assert "progress/report updates" not in prompt
-        assert "external `spec_dir` path" not in prompt
+        assert "external spec artifacts are read-only inputs; never write to them from the build agent" not in prompt
 
     def test_harness_context_names_workspace_and_source_roots(self, tmp_path: Path) -> None:
         """Build prompts must distinguish orchestration workspace from source root."""
@@ -1612,6 +1616,57 @@ class TestOuterLoopConvergence:
 
         assert result.passed
 
+    def test_documentation_gate_writes_not_applicable_report_for_noop_slice(
+        self, tmp_path: Path
+    ) -> None:
+        controller, *_ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("# Target\n", encoding="utf-8")
+        _commit_all(worktree)
+        subprocess.run(["git", "checkout", "-b", "feature"], cwd=worktree, check=True)
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        verify = VerifyResult(passed=True, failures=[], duration_s=0.1, token_usage=0)
+
+        result = controller._apply_documentation_gate(
+            verify,
+            str(worktree),
+            changed_files=[],
+        )
+
+        assert result.passed
+        report = spec_dir / "documentation-impact-report.md"
+        text = report.read_text(encoding="utf-8")
+        assert "docs_required: false" in text
+        assert "Ralph" in text
+
+    def test_documentation_gate_blocks_when_prior_branch_commit_changed_target(
+        self, tmp_path: Path
+    ) -> None:
+        controller, *_ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("# Target\n", encoding="utf-8")
+        _commit_all(worktree)
+        subprocess.run(["git", "checkout", "-b", "feature"], cwd=worktree, check=True)
+        (worktree / "src").mkdir()
+        (worktree / "src" / "cli.js").write_text("console.log('styled')\n", encoding="utf-8")
+        _commit_all(worktree, "implement cli styling")
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        verify = VerifyResult(passed=True, failures=[], duration_s=0.1, token_usage=0)
+
+        result = controller._apply_documentation_gate(
+            verify,
+            str(worktree),
+            changed_files=[],
+        )
+
+        assert not result.passed
+        assert result.failures[0].id == "documentation-impact-report-missing"
+        assert not (spec_dir / "documentation-impact-report.md").exists()
+
     def test_documentation_gate_receives_delivery_slice_changed_files(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1641,70 +1696,27 @@ class TestOuterLoopConvergence:
         assert seen["spec_dir"] == spec_dir
         assert seen["changed_files"] == ["README.md", "CHANGELOG.md"]
 
-    def test_external_missing_documentation_report_blocks_without_inner_fix(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    def test_missing_documentation_report_is_repairable_by_tech_writer(
+        self, tmp_path: Path
     ) -> None:
-        """External spec artifacts are Ralph-owned, not target build fixes."""
-        from harness.build_result import BuildResult
-
-        llm_build_runner = MagicMock()
-        llm_build_runner.exec_build.return_value = BuildResult(
-            exit_code=0,
-            status="done",
-            impasse_file=None,
-            stdout="",
-            stderr="",
-            duration_ms=100,
-            task_ids=["T-001"],
-        )
-        llm_build_runner.exec_feedback.return_value = BuildResult(
-            exit_code=0,
-            status="done",
-            impasse_file=None,
-            stdout="",
-            stderr="",
-            duration_ms=100,
-        )
-        controller, _provider, gitops, state_store = _make_controller(
-            tmp_path,
-            verify_results=[{"passed": True, "failures": []}],
-            llm_build_runner=llm_build_runner,
-        )
-        workspace = tmp_path / "workspace"
-        worktree = workspace / "runs" / "targets" / "target" / "worktree"
-        _init_git_repo(worktree)
-        (worktree / "README.md").write_text("# Target\n", encoding="utf-8")
-        _commit_all(worktree)
-        spec_dir = workspace / "specs" / "spec-001-demo"
-        spec_dir.mkdir(parents=True)
-        (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
-        (spec_dir / "tasks.md").write_text(
-            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none\n",
-            encoding="utf-8",
-        )
+        """TECH WRITER owns docs artifacts even when spec artifacts are external."""
+        controller, *_rest, state_store = _make_controller(tmp_path)
         state = state_store.read()
-        state["target_repo"] = "target"
-        state["target_path"] = str(workspace / "sources" / "target")
-        state["spec_dir"] = str(spec_dir)
-        state["spec_file"] = str(spec_dir / "spec.md")
-        state["tasks_file"] = str(spec_dir / "tasks.md")
+        state["target_repo"] = "target-app"
+        state["target_path"] = str(tmp_path / "target-app")
         state_store.write(state)
-        gitops.base_dir = workspace
-        gitops.create_worktree.return_value = str(worktree)
-        controller._config.verify_command = f"{sys.executable} -c pass"
-        controller._fulfillment_runner = None
-
-        result = controller.run_loop(
-            max_outer=1,
-            max_inner=3,
-            build_prompt="implement T-001",
+        verify = VerifyResult(
+            passed=False,
+            failures=[
+                FailureEntry(
+                    FailureCategory.OTHER,
+                    "documentation-impact-report-missing",
+                    "missing documentation-impact-report.md",
+                )
+            ],
         )
 
-        assert result.status == "blocked"
-        assert result.termination_reason == "external_spec_artifact_missing"
-        llm_build_runner.exec_feedback.assert_not_called()
-        captured = capsys.readouterr()
-        assert "Ralph-owned external spec artifact" in captured.err
+        assert controller._is_external_spec_artifact_failure(verify) is False
 
     def test_task_progress_gap_turns_passing_verify_into_failure(self, tmp_path: Path) -> None:
         """Ralph does not converge when state progress disagrees with tasks.md."""
