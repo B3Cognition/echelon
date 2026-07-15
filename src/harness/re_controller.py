@@ -2205,6 +2205,10 @@ class ReExtractionController:
             # Repair metadata is useful in the agent transcript but is not a
             # RE-state transition. Treat it as controller-owned diagnostics.
             "repair_action",
+            # RE lifecycle status is controller-owned. The controller marks
+            # extraction done only after the current phase result has passed
+            # validation and deterministic routing.
+            "status",
         }
         filtered = {key: value for key, value in updates.items() if key not in controlled}
         return {**payload, "state_updates": filtered}

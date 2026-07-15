@@ -18,6 +18,11 @@
 
 Instruct RE-CONSTITUTER to synthesize evidence-backed strategy from the complete workspace union, including current, refreshed, empty, unavailable retained, and removed sources. Mark undecidable target-state choices `[REQUIRES INPUT]`. Write only under workspace strategy staging.
 
+If a strategy output already exists from a previous blocked or interrupted
+attempt, RE-CONSTITUTER must read it before updating it. This phase is
+rerunnable: never create backup, temporary, alternate, or shell-generated
+strategy files to bypass write guards.
+
 ## Expected Outputs
 
 - `{state.output_dir}/workspace/strategy/constitution.md`
@@ -32,8 +37,7 @@ Instruct RE-CONSTITUTER to synthesize evidence-backed strategy from the complete
 echelon_result:
   verdict: DONE | BLOCKED
   phase_id: re-extract-7-constitute
-  state_updates:
-    status: done
+  state_updates: {}
   output_files:
     - "{state.output_dir}/workspace/strategy/constitution.md"
     - "{state.output_dir}/workspace/strategy/migration-strategy.md"
@@ -47,3 +51,7 @@ echelon_result:
         summary: "Generated workspace strategy"
   blocked_reason: null
 ```
+
+The RE controller owns the final `status: done` transition after this phase
+passes. RE-CONSTITUTER must not return `status`, `phase`, counters, or other
+controller-owned lifecycle fields in `state_updates`.

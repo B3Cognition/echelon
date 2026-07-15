@@ -692,6 +692,7 @@ class SquadController:
                 result,
                 allowed_state_update_keys=node.allowed_state_updates,
             )
+            self._clear_stale_re_failure_context_after_success()
             self._checkpoint_successful_phase(phase, next_phase)
             self._refresh_run_context(f"phase advance {phase} -> {next_phase}")
 
@@ -916,6 +917,7 @@ class SquadController:
             allowed_state_update_keys=node.allowed_state_updates,
             manual_phase_run=True,
         )
+        self._clear_stale_re_failure_context_after_success()
         self._checkpoint_successful_phase(phase, next_phase)
         self._refresh_run_context(f"manual phase advance {phase} -> {next_phase}")
         print(f"[squad] ✓ {node.id}  → {next_phase}  (stopped)", flush=True)
@@ -1025,6 +1027,7 @@ class SquadController:
                 allowed_state_update_keys=node.allowed_state_updates,
                 manual_phase_run=manual_phase_run,
             )
+            self._clear_stale_re_failure_context_after_success()
             self._checkpoint_successful_phase(node.id, next_phase)
             self._refresh_run_context(f"phase skip {node.id} -> {next_phase}")
             suffix = "  (stopped)" if manual_phase_run else ""
@@ -1306,6 +1309,18 @@ class SquadController:
             )
         except Exception as exc:
             logger.warning("Could not create phase checkpoint for %s: %s", phase, exc)
+
+    def _clear_stale_re_failure_context_after_success(self) -> None:
+        state = self._state_store.load()
+        if state.get("status") == "blocked" or state.get("blocked_reason"):
+            return
+        changed = False
+        for key in ("re_agent_result_detail", "re_publication_error"):
+            if key in state:
+                state.pop(key, None)
+                changed = True
+        if changed:
+            self._state_store.save(state)
 
     def _published_phase_a_spec_dir(self, state: dict, active_spec_dir: Path) -> Path:
         published_ref = str(state.get("published_spec_dir") or "").strip()

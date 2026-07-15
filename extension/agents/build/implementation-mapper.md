@@ -40,6 +40,7 @@ NEVER inspect outside `summary.fallback_requirement_ids` except to validate a ci
 ALWAYS treat generic, term-matched, low-confidence, or contradictory-looking CodeGraph rows as candidate structural leads to refine during fallback inspection.
 NEVER treat weak CodeGraph rows as disposable; do not dismiss CodeGraph evidence as useless. Fallback inspection refines CodeGraph candidates and does not replace or ignore them.
 ALWAYS keep manual inspection corrections separate: manual source/test citations may correct the Implementation Evidence and Test Evidence cells, but must not overwrite or erase the deterministic CodeGraph Evidence cell; mark them as contradicted or unrelated in Notes when direct source inspection disproves them.
+NEVER replace, delete, or silently downgrade deterministic CodeGraph Evidence cells when manual inspection changes source/test evidence.
 
 ### Rule 7 - Canonical Inventory Boundary
 ALWAYS map only IDs present in `{verify_run_dir}/canonical-requirements.json`.

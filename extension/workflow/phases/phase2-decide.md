@@ -40,7 +40,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are GATEKEEPER. Read agents/feasibility/gatekeeper.md for your complete protocol.
-  Evaluate feasibility (can this be built within constraints?). Estimate effort using Function Point Analysis adjusted by calibration data. Prioritize features with Kano + RICE. Scope MVP. **Kill gate:** if unfeasible or all low-priority, produce a kill report using `extension/templates/kill-report.md`. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
+  Evaluate feasibility (can this be built within constraints?). Estimate effort using Function Point Analysis adjusted by calibration data. Prioritize features with Kano + RICE. Scope MVP. **Kill gate:** if unfeasible or all low-priority, produce a kill report using `extension/templates/kill-report.md`. Produce outputs in `{spec_dir}/` using the provided templates. If any output already exists from a prior interrupted attempt, read it before updating it; never create backup, temporary, alternate, or shell-written files to bypass write guards. Return the gate decision as the top-level `echelon_result.verdict` only (`PASS`, `KILL`, or `DEFER`); do not return `gate_decision` or `phase_recommendation` in `state_updates` for this first-pass phase. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

@@ -1434,6 +1434,43 @@ def test_controller_ignores_non_routing_repair_metadata_from_a_done_agent(
 
 
 @pytest.mark.unit
+def test_controller_ignores_agent_status_updates_for_re_lifecycle(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+
+    class LifecycleStatusProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            phase = self.phases[-1]
+            updates: dict[str, object] = {"status": "done"}
+            if phase == "re-extract-3-verify":
+                updates["coverage_pct"] = 80
+            if phase == "re-extract-5-validate":
+                updates["resolution_pct"] = 80
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={**result.echelon_result, "state_updates": updates},
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    result = ReExtractionController(
+        provider=LifecycleStatusProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert result.completed
+    assert state["status"] == "done"
+    assert state["phase"] == "re-extract-7-constitute"
+
+
+@pytest.mark.unit
 def test_semantic_quality_repair_returns_only_the_failed_domain_to_specifier(
     tmp_path: Path,
 ) -> None:

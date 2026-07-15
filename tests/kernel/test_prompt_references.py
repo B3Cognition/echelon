@@ -311,6 +311,34 @@ def test_re_extract_command_uses_declared_phase_sequence():
     assert "Then read `workflow/definition.yaml`" not in text
 
 
+def test_re_constituter_contract_is_controller_owned_and_rerunnable():
+    phase = (
+        EXTENSION_ROOT / "workflow/phases/re-extract-7-constitute.md"
+    ).read_text()
+    agent = (EXTENSION_ROOT / "agents/re/constituter.md").read_text()
+
+    assert "state_updates: {}" in phase
+    assert "state_updates: {}" in agent
+    assert not re.search(r"state_updates:\n\s+status:\s+done", phase)
+    assert not re.search(r"state_updates:\n\s+status:\s+done", agent)
+    assert "read an existing strategy output before updating it" in agent
+    assert "read it before updating it" in phase
+    assert "shell redirection" in agent
+    assert "backup, temporary, alternate" in phase
+
+
+def test_gatekeeper_contract_is_rerunnable_for_existing_assessment_files():
+    phase = (EXTENSION_ROOT / "workflow/phases/phase2-decide.md").read_text()
+    agent = (EXTENSION_ROOT / "agents/feasibility/gatekeeper.md").read_text()
+
+    assert "read existing assessment outputs before updating them" in agent
+    assert "read it before updating it" in phase
+    assert "shell redirection" in agent
+    assert "shell-written files" in phase
+    assert "Return the first-pass gate decision as the top-level `verdict` only" in agent
+    assert "do not return `gate_decision` or `phase_recommendation`" in phase
+
+
 def test_re_plan_all_command_uses_declared_phase_sequence():
     text = (EXTENSION_ROOT / "commands" / "echelon.re-plan-all.md").read_text()
 

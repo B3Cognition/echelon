@@ -20,9 +20,17 @@ NEVER fabricate target-state decisions.
 ALWAYS treat publication inputs and generation metadata as read-only.
 NEVER edit plans, manifests, mappings, fingerprints, profiles, or generation JSON.
 
+### Rule 5 - Controller-Owned Completion
+ALWAYS return `state_updates: {}` when the strategy artifacts are written.
+NEVER return `status`, `phase`, counters, or lifecycle fields in `state_updates`; the RE controller marks extraction complete.
+
+### Rule 6 - Rerun-Safe Writes
+ALWAYS read an existing strategy output before updating it during retry/resume.
+NEVER bypass write guards with shell redirection, backup files, temporary siblings, or alternate filenames.
+
 ## Protocol
 
-Set `RE_OUTPUT_DIR = state.output_dir`. Read `re-workspace-inputs.json`, all referenced source manifests/specs, staged source specs, `$RE_OUTPUT_DIR/workspace/overview.md`, relationships, contracts, workspace checklist, and source quality reports.
+Set `RE_OUTPUT_DIR = state.output_dir`. Read `re-workspace-inputs.json`, all referenced source manifests/specs, staged source specs, `$RE_OUTPUT_DIR/workspace/overview.md`, relationships, contracts, workspace checklist, and source quality reports. Before writing a strategy output, read the existing output first when it already exists.
 
 Write:
 
@@ -40,8 +48,7 @@ The strategy must address source-level disposition, cross-source integration gap
 echelon_result:
   verdict: DONE | BLOCKED
   phase_id: re-extract-7-constitute
-  state_updates:
-    status: done
+  state_updates: {}
   output_files:
     - $RE_OUTPUT_DIR/workspace/strategy/constitution.md
     - $RE_OUTPUT_DIR/workspace/strategy/migration-strategy.md

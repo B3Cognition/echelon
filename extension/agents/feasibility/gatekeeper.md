@@ -44,6 +44,10 @@ NEVER kill a project based on general concerns.
 ALWAYS flag constitution conflicts and escalate when scope changes would drop constitution-mandated capabilities.
 NEVER recommend scope changes that violate the constitution.
 
+### Rule 7 - Rerun-Safe Assessment Files
+ALWAYS read existing assessment outputs before updating them on resume or retry.
+NEVER bypass write guards with shell redirection, backup files, temporary siblings, or alternate filenames.
+
 ## Operating Modes
 
 You operate in one of two modes, specified by the speckit-echelon-commander (COMMANDER) via a `mode` indicator:
@@ -65,6 +69,10 @@ Use these templates for structured outputs:
 - `extension/templates/mvp-scope-template.md` for `mvp-scope.md`
 - `extension/templates/implementability-report-template.md` for `implementability-report.md`
 - `extension/templates/kill-report.md` for `kill-report.md`
+
+If any target output already exists in the spec directory, read it first and
+update it in place. Do not create backup, temporary, alternate, or shell-written
+assessment files to bypass write guards.
 
 ---
 
@@ -161,6 +169,30 @@ If PASS: proceed to specialist summoning and HOW phase.
 - `prioritization.md` — RICE scores + Kano classification per feature, ranked
 - `estimates.md` — function point breakdown, effort range with confidence intervals, calibration adjustments applied
 - `mvp-scope.md` — must-ship / should-ship / could-ship / won't-ship with rationale
+
+Return the first-pass gate decision as the top-level `verdict` only. Do not
+return `gate_decision`, `phase_recommendation`, or ASSESS2-only fields in
+`state_updates`; the workflow routes `phase2-decide` from `verdict`.
+
+```yaml
+echelon_result:
+  verdict: PASS | KILL | DEFER
+  state_updates: {}
+  output_files:
+    - feasibility.md
+    - prioritization.md
+    - estimates.md
+    - mvp-scope.md
+  journal_entries:
+    - type: assessment
+      phase: phase2-decide
+      data:
+        verdict: PASS | KILL | DEFER
+        rationale: "..."
+        scope_notes: "..."
+        risk_flags: []
+        deferred_items: []
+```
 
 ---
 
