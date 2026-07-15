@@ -51,6 +51,7 @@ class ReAgentProvider(Protocol):
 class ReControllerResult:
     completed: bool
     blocked_reason: str | None = None
+    blocked_detail: str | None = None
 
 
 _PHASES = {
@@ -85,6 +86,7 @@ _ARCHITECTURE_OVERLAY_OUTPUTS = frozenset(
     }
 )
 _TARGET_QUALITY_PROTOCOL_VERSION = 1
+_SEMANTIC_QUALITY_REVIEW_PROTOCOL_VERSION = 2
 
 
 class ReExtractionController:
@@ -127,6 +129,8 @@ class ReExtractionController:
         if self._upgrade_source_convergence_quality_contract(state):
             self._save_state(state)
         if self._upgrade_source_coverage_repair_protocol(state, plan):
+            self._save_state(state)
+        if self._upgrade_semantic_quality_review_protocol(state):
             self._save_state(state)
         if self._apply_re_budget_override(state, plan):
             self._save_state(state)
@@ -205,7 +209,7 @@ class ReExtractionController:
                 payload = self._analysis_result()
             else:
                 result = self._provider.exec_agent(
-                    str(self._project_root), self._prompt_for(phase, state, target)
+                    str(self._project_root), self._prompt_for(phase, state, plan, target)
                 )
                 if phase == "re-extract-2-specify" and target is not None:
                     cleanup_error = self._clean_noncanonical_target_artifacts(
@@ -213,14 +217,58 @@ class ReExtractionController:
                     )
                     if cleanup_error is not None:
                         return self._block(state, cleanup_error)
-                if result.blocked:
+                if result.timed_out or result.exit_code != 0:
+                    state["re_agent_result_detail"] = self._dispatch_failure_detail(
+                        result.timed_out, result.exit_code
+                    )
                     return self._block(state, "re_agent_dispatch_failed")
                 payload = result.echelon_result
-            if not isinstance(payload, dict) or payload.get("verdict") != "DONE":
+            if not isinstance(payload, dict):
+                state["re_agent_result_detail"] = "missing result object"
+                return self._block(state, "re_agent_result_invalid")
+            if payload.get("verdict") == "BLOCKED":
+                agent_block_detail = self._agent_block_detail(payload)
+                state["re_agent_result_detail"] = agent_block_detail
+                try:
+                    # A parseable BLOCKED response completed the dispatch. Do
+                    # not leave the compaction sentinel false and redispatch it
+                    # as though the provider died mid-call.
+                    state = complete_dispatch(state, {"state_updates": {}})
+                except (KeyError, ValueError) as exc:
+                    state["re_agent_result_detail"] = str(exc)
+                    return self._block(state, "re_agent_result_invalid")
+                print(
+                    f"[re] agent blocked: {phase}; {agent_block_detail}",
+                    flush=True,
+                )
+                if phase == "re-extract-2-specify" and target is not None:
+                    for snapshot_key in (
+                        "re_quality_repair_snapshot",
+                        "re_target_quality_repair_snapshot",
+                    ):
+                        if snapshot_key not in state:
+                            continue
+                        snapshot_reason = self._repair_snapshot_failure(
+                            state, snapshot_key
+                        )
+                        if snapshot_reason is not None:
+                            return self._block(state, snapshot_reason)
+                    target_result = self._evaluate_specification_target(
+                        state,
+                        plan,
+                        target,
+                        agent_block_detail=agent_block_detail,
+                    )
+                    if target_result is not None:
+                        return target_result
+                    self._save_state(state)
+                    continue
+                return self._block(
+                    state, self._agent_blocked_reason(agent_block_detail)
+                )
+            if payload.get("verdict") != "DONE":
                 state["re_agent_result_detail"] = (
-                    "missing result object"
-                    if not isinstance(payload, dict)
-                    else f"unexpected verdict: {payload.get('verdict')!r}"
+                    f"unexpected verdict: {payload.get('verdict')!r}"
                 )
                 return self._block(state, "re_agent_result_invalid")
             try:
@@ -230,6 +278,7 @@ class ReExtractionController:
             except (KeyError, ValueError) as exc:
                 state["re_agent_result_detail"] = str(exc)
                 return self._block(state, "re_agent_result_invalid")
+            state.pop("re_agent_result_detail", None)
             if phase == "re-extract-2-specify":
                 for snapshot_key in (
                     "re_quality_repair_snapshot",
@@ -241,43 +290,11 @@ class ReExtractionController:
                     if snapshot_reason is not None:
                         return self._block(state, snapshot_reason)
             if phase == "re-extract-2-specify" and target is not None:
-                target_report = self._target_quality_report(plan, target)
-                if target_report is not None and not target_report.passed:
-                    source_id = str(target["source_id"])
-                    domain_id = str(target["domain_id"])
-                    report_path = write_re_target_quality_report(
-                        self._run_re_dir, source_id, domain_id, target_report
-                    )
-                    attempts = self._record_target_quality_failure(
-                        state, target, target_report
-                    )
-                    state["re_target_quality_gate_report"] = str(report_path)
-                    if self._source_convergence_enabled(state):
-                        source_id = target.get("source_id")
-                        domain_id = target.get("domain_id")
-                        if isinstance(source_id, str) and isinstance(domain_id, str):
-                            source_state = self._source_state(state, source_id)
-                            repairs = source_state.get("domain_repairs")
-                            if not isinstance(repairs, dict):
-                                repairs = {}
-                                source_state["domain_repairs"] = repairs
-                            repair_count = self._metric(repairs, domain_id) + 1
-                            repairs[domain_id] = repair_count
-                            if repair_count > self._source_budget(
-                                state, "max_domain_repairs"
-                            ):
-                                self._mark_active_source_partial(
-                                    state, source_id, report_path
-                                )
-                                self._activate_next_source(state, plan)
-                                self._save_state(state)
-                                continue
-                    if attempts > self._metric(state, "max_verify_expand_iterations"):
-                        return self._block(state, "re_domain_deep_spec_gate_failed")
-                    self._save_state(state)
-                    continue
-                self._clear_target_quality_failure(state, target)
-                self._complete_specification_target(state, target)
+                target_result = self._evaluate_specification_target(state, plan, target)
+                if target_result is not None:
+                    return target_result
+                self._save_state(state)
+                continue
             if phase == "re-extract-5-validate":
                 semantic_report, semantic_error = validate_semantic_quality_review(
                     self._run_re_dir,
@@ -467,6 +484,24 @@ class ReExtractionController:
         state["max_validate_iterations"] = 5
         state["re_source_convergence_quality_contract_version"] = 1
         state.pop("re_agent_result_detail", None)
+        return True
+
+    @staticmethod
+    def _upgrade_semantic_quality_review_protocol(state: dict) -> bool:
+        """Clear stale validator-format failures after the evidence contract changes."""
+        if state.get("re_semantic_quality_review_protocol_version") == (
+            _SEMANTIC_QUALITY_REVIEW_PROTOCOL_VERSION
+        ):
+            return False
+        state["re_semantic_quality_review_protocol_version"] = (
+            _SEMANTIC_QUALITY_REVIEW_PROTOCOL_VERSION
+        )
+        for key in (
+            "re_semantic_review_invalid_attempts",
+            "re_semantic_review_invalid_error",
+            "re_agent_result_detail",
+        ):
+            state.pop(key, None)
         return True
 
     def _initialize_source_convergence(
@@ -1173,6 +1208,7 @@ class ReExtractionController:
         self,
         phase: str,
         state: dict,
+        plan: ReExecutionPlan,
         target: dict[str, object] | None = None,
     ) -> str:
         agent = _PHASES[phase]
@@ -1197,6 +1233,7 @@ class ReExtractionController:
         if phase == "re-extract-2-specify" and target is not None:
             prompt += self._specification_target_prompt(target)
         if phase == "re-extract-5-validate":
+            prompt += self._semantic_domain_inventory_prompt(plan)
             semantic_error = state.get("re_semantic_review_invalid_error")
             if isinstance(semantic_error, str) and semantic_error:
                 prompt += (
@@ -1209,6 +1246,24 @@ class ReExtractionController:
                     "only after the complete review satisfies this contract.\n"
                 )
         return prompt
+
+    def _semantic_domain_inventory_prompt(self, plan: ReExecutionPlan) -> str:
+        lines = [
+            "\n## Required Semantic Domain Inventory",
+            "Your final echelon_result.semantic_quality_review.domains list must contain exactly one record for each source/domain below. Do not return only the currently failing domain.",
+            "Do not write RE_VALIDATOR_RESULT.yaml, semantic-quality-review-validator.json, ECHELON_RESULT.yaml, or any other sidecar result file. The controller reads only the final echelon_result block in your response.",
+        ]
+        for source in plan.refresh_sources:
+            try:
+                manifest = load_domain_manifest(
+                    domain_manifest_path(self._run_re_dir, source.id)
+                )
+            except ValueError:
+                continue
+            for domain in manifest.domains:
+                lines.append(f"- {source.id}/{domain.domain_id}")
+        lines.append("")
+        return "\n".join(lines)
 
     def _synchronize_domain_manifests(
         self, plan: ReExecutionPlan
@@ -1398,6 +1453,109 @@ class ReExtractionController:
         del targets[0]
         if target.get("kind") == "workspace-synthesis":
             state["re_workspace_synthesis_complete"] = True
+
+    def _evaluate_specification_target(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+        target: dict[str, object],
+        *,
+        agent_block_detail: str | None = None,
+    ) -> ReControllerResult | None:
+        """Route one specification target from deterministic evidence, not verdict alone.
+
+        A specifier can report BLOCKED after its own check-domain command fails.
+        The controller owns that gate and must turn the observed incomplete
+        artifact into the same bounded repair work as a DONE response with an
+        incomplete artifact. A BLOCKED response with a passing target remains
+        an explicit agent blocker instead of being silently accepted.
+        """
+        target_report = self._target_quality_report(plan, target)
+        if target_report is not None and not target_report.passed:
+            source_id = str(target["source_id"])
+            domain_id = str(target["domain_id"])
+            report_path = write_re_target_quality_report(
+                self._run_re_dir, source_id, domain_id, target_report
+            )
+            attempts = self._record_target_quality_failure(state, target, target_report)
+            state["re_target_quality_gate_report"] = str(report_path)
+            self._report_target_quality_failure(
+                source_id,
+                domain_id,
+                attempts,
+                self._metric(state, "max_verify_expand_iterations"),
+                agent_block_detail,
+            )
+            if self._source_convergence_enabled(state):
+                source_id = target.get("source_id")
+                domain_id = target.get("domain_id")
+                if isinstance(source_id, str) and isinstance(domain_id, str):
+                    source_state = self._source_state(state, source_id)
+                    repairs = source_state.get("domain_repairs")
+                    if not isinstance(repairs, dict):
+                        repairs = {}
+                        source_state["domain_repairs"] = repairs
+                    repair_count = self._metric(repairs, domain_id) + 1
+                    repairs[domain_id] = repair_count
+                    if repair_count > self._source_budget(
+                        state, "max_domain_repairs"
+                    ):
+                        self._mark_active_source_partial(state, source_id, report_path)
+                        self._activate_next_source(state, plan)
+                        return None
+            if attempts > self._metric(state, "max_verify_expand_iterations"):
+                return self._block(state, "re_domain_deep_spec_gate_failed")
+            return None
+
+        self._clear_target_quality_failure(state, target)
+        if agent_block_detail is not None:
+            return self._block(state, self._agent_blocked_reason(agent_block_detail))
+        self._complete_specification_target(state, target)
+        return None
+
+    @staticmethod
+    def _dispatch_failure_detail(timed_out: bool, exit_code: int) -> str:
+        details: list[str] = []
+        if timed_out:
+            details.append("agent timed out")
+        if exit_code != 0:
+            details.append(f"agent exited with code {exit_code}")
+        return "; ".join(details) or "agent dispatch failed"
+
+    @staticmethod
+    def _agent_block_detail(payload: dict) -> str:
+        candidates = (
+            payload.get("blocked_reason"),
+            (payload.get("state_updates") or {}).get("blocked_reason")
+            if isinstance(payload.get("state_updates"), dict)
+            else None,
+        )
+        for candidate in candidates:
+            if isinstance(candidate, str):
+                detail = " ".join(candidate.split())
+                if detail:
+                    return detail[:500]
+        return "agent reported BLOCKED without a reason"
+
+    @staticmethod
+    def _agent_blocked_reason(detail: str) -> str:
+        return f"re_agent_blocked: {detail}"
+
+    @staticmethod
+    def _report_target_quality_failure(
+        source_id: str,
+        domain_id: str,
+        attempts: int,
+        budget: int,
+        agent_block_detail: str | None,
+    ) -> None:
+        message = (
+            "[re] target quality failed: "
+            f"{source_id}/{domain_id}; repair attempt {attempts}/{budget}"
+        )
+        if agent_block_detail is not None:
+            message += "; agent result routed into deterministic repair"
+        print(message, flush=True)
 
     def _target_quality_report(
         self, plan: ReExecutionPlan, target: dict[str, object]
@@ -2017,7 +2175,12 @@ class ReExtractionController:
         state["status"] = "blocked"
         state["blocked_reason"] = reason
         self._save_state(state)
-        return ReControllerResult(completed=False, blocked_reason=reason)
+        detail = state.get("re_agent_result_detail")
+        return ReControllerResult(
+            completed=False,
+            blocked_reason=reason,
+            blocked_detail=detail if isinstance(detail, str) and detail.strip() else None,
+        )
 
     @staticmethod
     def _agent_result_without_controller_keys(

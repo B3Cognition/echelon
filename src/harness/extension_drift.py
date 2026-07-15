@@ -21,6 +21,7 @@ IGNORED_NAMES = {
     "echelon-config.yml",
     "local-config.yml",
 }
+EXTENSION_IGNORE_FILE = ".extensionignore"
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,7 @@ def _file_hashes(root: Path) -> dict[str, str]:
 
 def _iter_shipped_files(root: Path) -> list[Path]:
     paths: list[Path] = []
+    extension_ignored_names = _extensionignore_names(root)
     for name in SHIPPED_FILES:
         path = root / name
         if path.is_file():
@@ -129,14 +131,27 @@ def _iter_shipped_files(root: Path) -> list[Path]:
             continue
         paths.extend(
             path for path in base.rglob("*")
-            if path.is_file() and not _ignored(path, root)
+            if path.is_file() and not _ignored(path, root, extension_ignored_names)
         )
     return sorted(paths, key=lambda path: path.relative_to(root).as_posix())
 
 
-def _ignored(path: Path, root: Path) -> bool:
+def _ignored(path: Path, root: Path, extension_ignored_names: set[str]) -> bool:
     rel_parts = path.relative_to(root).parts
-    return any(part in IGNORED_NAMES for part in rel_parts)
+    return any(part in IGNORED_NAMES or part in extension_ignored_names for part in rel_parts)
+
+
+def _extensionignore_names(root: Path) -> set[str]:
+    ignore_path = root / EXTENSION_IGNORE_FILE
+    if not ignore_path.is_file():
+        return set()
+    ignored: set[str] = set()
+    for raw_line in ignore_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or any(ch in line for ch in "*?[]"):
+            continue
+        ignored.add(line.strip("/"))
+    return ignored
 
 
 def _source_from_marker(marker_path: Path) -> Path | None:

@@ -1090,6 +1090,49 @@ def test_blocked_golddigger_result_never_publishes(tmp_path, monkeypatch):
     publish.assert_not_called()
 
 
+def test_blocked_golddigger_result_preserves_re_detail(tmp_path, monkeypatch):
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\n")
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("run-test", "brownfield", "msg", 0, "phase1-discover")
+    state = state_store.load()
+    state.update({"re_refresh_sources": ["api"], "re_publication_required": True})
+    state_store.save(state)
+    _stub_mode1_controller(
+        monkeypatch,
+        ReControllerResult(
+            completed=False,
+            blocked_reason="re_semantic_quality_review_invalid",
+            blocked_detail=(
+                "semantic quality review invalid for api/001-re-domain: "
+                "invalid source_evidence `sources/api/specs/001-re-domain/spec.md:10-12`"
+            ),
+        ),
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/golddigger.md"
+    executor = AgentExecutor(MagicMock(), graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[
+            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+        ],
+    )
+
+    result = executor._run_pre_dispatch(node, state_store.load(), state_store)
+
+    assert result is not None and result.blocked
+    assert result.state_updates["blocked_reason"] == "re_semantic_quality_review_invalid"
+    assert "api/001-re-domain" in result.state_updates["re_agent_result_detail"]
+
+
 def test_golddigger_no_refresh_still_dispatches_for_workspace_synthesis(tmp_path):
     executor = _executor(tmp_path)
 

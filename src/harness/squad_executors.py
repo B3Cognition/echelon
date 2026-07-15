@@ -786,14 +786,17 @@ class PhaseExecutor(ABC):
         )
         outcome = controller.run()
         if not outcome.completed:
+            state_updates = {
+                "blocked_reason": outcome.blocked_reason
+                or "re_controller_failed",
+            }
+            if outcome.blocked_detail:
+                state_updates["re_agent_result_detail"] = outcome.blocked_detail
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "BLOCKED",
-                    "state_updates": {
-                        "blocked_reason": outcome.blocked_reason
-                        or "re_controller_failed",
-                    },
+                    "state_updates": state_updates,
                     "journal_entries": [],
                 },
                 raw_output="",
