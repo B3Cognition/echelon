@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-115 / #140 fulfillment refresh ownership** — scoped fulfillment refresh
+  fallback now preserves the authoritative resolved `spec_dir` when it must
+  rerun full verification, avoiding a return to spec discovery in workspace
+  delivery. Full fulfillment refresh can also assemble, validate, stamp, and
+  ledger a report directly from existing deterministic verify artifacts when
+  the judgment prepass has no fallback rows and every row is a no-gap
+  mechanical judgment, bypassing another LLM provider turn.
+
 - **Delivery summary stale provider-limit state** — repeated-failure
   escalations now clear stale provider session-limit fields before writing Ralph
   state, and delivery summaries classify a strategy as provider-limited only

@@ -278,6 +278,55 @@ class TestFulfillmentRunner:
         assert ledger["rows"][0]["artifact_hashes"]["src/a.py"]
         assert ledger["rows"][1]["status"] == "UNVERIFIED"
 
+    def test_refresh_assembles_no_fallback_report_without_provider_when_artifacts_exist(
+        self, tmp_path
+    ):
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        verify_run_dir = tmp_path / "runs" / "verify-spec-spec-001-20260715"
+        verify_run_dir.mkdir(parents=True)
+        (verify_run_dir / "state.json").write_text("{}", encoding="utf-8")
+        (verify_run_dir / "canonical-requirements.json").write_text(
+            json.dumps({"requirements": [{"id": "FR-001"}]}),
+            encoding="utf-8",
+        )
+        (verify_run_dir / "requirement-audit.md").write_text(
+            "# Requirement Audit\n\n"
+            "| ID | Category | Source | Requirement | Acceptance Signal |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| FR-001 | functional | spec.md | Build one thing | Test one thing |\n",
+            encoding="utf-8",
+        )
+        (verify_run_dir / "implementation-map.md").write_text(
+            "# Implementation Map\n\n"
+            "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+            "| FR-001 | src/a.py | tests/test_a.py::test_a | app.a | source_and_test | strong | false | high | |\n",
+            encoding="utf-8",
+        )
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text(
+            "---\nverified_commit: old123\nverify_scope: full\n---\n"
+            "| ID | Status | Evidence |\n"
+            "| --- | --- | --- |\n"
+            "| FR-001 | IMPLEMENTED | stale |\n",
+            encoding="utf-8",
+        )
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="head456"):
+            result = FulfillmentRunner(provider).refresh(str(tmp_path), "spec-001")
+
+        assert result.status == "refreshed"
+        assert result.reason == "full verify-spec completed from deterministic artifacts"
+        provider.exec_prompt.assert_not_called()
+        text = report.read_text(encoding="utf-8")
+        assert "| FR-001 | IMPLEMENTED | prepass:source_and_test_strong |" in text
+        metadata = read_fulfillment_metadata(report)
+        assert metadata["verified_commit"] == "head456"
+        assert metadata["verify_scope"] == "full"
+
     def test_refresh_rejects_mapping_artifacts_written_outside_verify_roots(
         self, tmp_path
     ):
@@ -1176,3 +1225,45 @@ class TestFulfillmentRunner:
         metadata = read_fulfillment_metadata(report)
         assert metadata["verified_commit"] == "head456"
         assert metadata["verify_scope"] == "full"
+
+    def test_scoped_refresh_preserves_explicit_spec_dir_when_falling_back_to_full(
+        self, tmp_path
+    ):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "authoritative-spec-root" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text(
+            "---\nverify_scope: full\nverified_commit: old123\n---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| FR-001 | IMPLEMENTED | src/a.swift | high | keep |\n",
+            encoding="utf-8",
+        )
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_full_report(_worktree_path: str, prompt: str) -> int:
+            assert "scope=scoped" not in prompt
+            assert f"spec_dir={spec_dir}" in prompt
+            report.write_text(
+                "| ID | Status | Evidence | Confidence | Notes |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| FR-001 | IMPLEMENTED | src/a.swift | high | refreshed |\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_full_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="head456"):
+            result = FulfillmentRunner(provider).refresh(
+                str(tmp_path),
+                "spec-001",
+                spec_dir=spec_dir,
+                scope="scoped",
+                completed_task_ids=[],
+            )
+
+        assert result.status == "refreshed"
+        assert result.scope == "full"

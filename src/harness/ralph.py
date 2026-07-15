@@ -31,7 +31,11 @@ from echelon.artifact_index import write_artifact_index
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from harness.build_result import BUILD_STATUS_FILENAME, ECHELON_RESULT_FILENAME
 from harness.config import HarnessConfig
-from harness.documentation_gate import evaluate_documentation_gate
+from harness.documentation_gate import (
+    DocumentationGateResult,
+    evaluate_documentation_gate,
+    write_not_applicable_documentation_impact_report,
+)
 from harness.llm_provider import AICodingCliProvider
 from harness.escalation import EscalationHandler
 from harness.exec_result import ExecResult
@@ -74,17 +78,7 @@ _BANZAI_MILESTONE_DEFER_REASON = (
     "banzai milestone defers full verify until task completion"
 )
 _SCOPED_REFRESH_DEFER_REASON = "scoped fulfillment refresh completed"
-_EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS = {
-    "documentation-impact-report-missing",
-    "documentation-impact-report-invalid",
-    "documentation-not-applicable-without-reason",
-    "documentation-required-report-incomplete",
-    "changelog-format-not-declared",
-    "readme-command-claim-unsupported",
-    "docs-verification-report-missing",
-    "docs-verification-report-invalid",
-    "docs-verification-report-failed",
-}
+_EXTERNAL_SPEC_ARTIFACT_FAILURE_IDS: set[str] = set()
 
 
 def _current_git_commit(worktree: Path) -> str | None:
@@ -1604,6 +1598,25 @@ class RalphController:
             spec_dir,
             changed_files=changed_files,
         )
+        if self._can_write_noop_documentation_report(
+            gate,
+            changed_files,
+            Path(worktree_path),
+        ):
+            write_not_applicable_documentation_impact_report(
+                spec_dir,
+                reason=(
+                    "No target source, README, CHANGELOG, API, setup, config, "
+                    "operations, or significant performance changes were made in "
+                    "this delivery slice; Ralph refreshed harness-owned "
+                    "verification evidence only."
+                ),
+            )
+            gate = evaluate_documentation_gate(
+                Path(worktree_path),
+                spec_dir,
+                changed_files=changed_files,
+            )
         if gate.passed:
             return verify_result
 
@@ -1614,6 +1627,47 @@ class RalphController:
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
         )
+
+    def _can_write_noop_documentation_report(
+        self,
+        gate: DocumentationGateResult,
+        changed_files: Optional[List[str]],
+        worktree_path: Path,
+    ) -> bool:
+        """Allow Ralph to repair a missing docs impact report for no-op slices."""
+        if gate.failure is None or gate.failure.id != "documentation-impact-report-missing":
+            return False
+        if changed_files is None:
+            return False
+        if _has_target_delivery_changes(changed_files):
+            return False
+        cumulative_changes = self._cumulative_target_delivery_changes(worktree_path)
+        if cumulative_changes is None:
+            return False
+        return not cumulative_changes
+
+    def _cumulative_target_delivery_changes(self, worktree_path: Path) -> Optional[List[str]]:
+        """Return target changes on this branch relative to the default branch."""
+        if not worktree_path.is_dir():
+            return None
+        default_branch = str(getattr(self._config, "target_default_branch", "") or "main")
+        for ref in (
+            f"upstream/{default_branch}",
+            f"origin/{default_branch}",
+            default_branch,
+        ):
+            base = _git_merge_base(worktree_path, "HEAD", ref)
+            if base is None:
+                continue
+            changed = _git_changed_files_between(worktree_path, base, "HEAD")
+            if changed is None:
+                continue
+            return [
+                path
+                for path in changed
+                if not _is_harness_or_spec_artifact(path)
+            ]
+        return None
 
     def _is_external_spec_artifact_failure(self, verify_result: VerifyResult) -> bool:
         """Return True when a verifier failure points at Ralph-owned spec artifacts."""
@@ -2564,12 +2618,15 @@ class RalphController:
             f"{forbidden_source_roots_instruction}"
             "Do not search for the application repo; it is named here and mirrored by `worktree`.\n"
             "Use `workspace_root` only for Echelon/spec orchestration unless `source_root` is the same path.\n"
-            "Use `spec_dir`, `spec_file`, and `tasks_file` as read-only inputs for understanding the requested work.\n"
+            "Use `spec_file` and `tasks_file` as read-only inputs for understanding the requested work.\n"
+            "Use `spec_dir` as read-only context except for the documentation phase outputs named below.\n"
             "Do not edit `tasks_file`, `spec_file`, or any file under `spec_dir` for progress tracking during a build slice.\n"
+            "TECH WRITER may write only `documentation-impact-report.md` under `spec_dir`; DOCS VERIFIER may write only `docs-verification-report.md` under `spec_dir`.\n"
+            "When all canonical task IDs are already complete but either documentation report is missing or invalid, run TECH WRITER and DOCS VERIFIER before writing a done marker.\n"
             "Report completed progress only by writing `completed_task_ids` to the harness build status marker; Ralph owns task progress writes.\n"
             "Do not inspect, read, or search for harness source, Ralph code, ralph.py, fulfillment_runner.py, or Echelon implementation internals. Ralph owns harness decisions and provides the only build-slice contract through this prompt, the named spec inputs, and the harness build status marker.\n"
             "When `spec_artifacts_mode` is `worktree`, inherited spec artifacts still remain Ralph-owned for progress writes.\n"
-            "When `spec_artifacts_mode` is `external`, external spec artifacts are read-only inputs; never write to them from the build agent.\n"
+            "When `spec_artifacts_mode` is `external`, external spec artifacts are read-only inputs except for TECH WRITER/DOCS VERIFIER documentation reports.\n"
             "Do not discover spec artifacts with `find`, `ls`, globbing, parent-directory scans, or absolute searches.\n"
             "Ralph state is not a build input; do not read, search for, or infer from state.json/state directories.\n"
             "Do not search for state.json; Ralph provides bounded progress context in this prompt.\n"
@@ -2679,6 +2736,9 @@ class RalphController:
                 "## Build Rules",
                 "- Read/search/edit/test inside `worktree`.",
                 "- Read spec inputs only for understanding; Ralph owns progress writes.",
+                "- TECH WRITER may write only `documentation-impact-report.md` under `spec_dir`.",
+                "- DOCS VERIFIER may write only `docs-verification-report.md` under `spec_dir`.",
+                "- If all task IDs are complete but documentation reports are missing, run the documentation phases before reporting done.",
                 "- Report completed progress through the harness build status marker.",
             ]
         )
@@ -4585,15 +4645,40 @@ def _detect_containment_violation(
     if after is None:
         return None
     before_lines = list(before.get("before_status") or [])
-    if after == before_lines:
+    changed_status = [
+        line
+        for line in _status_delta(before_lines, after)
+        if not _is_allowed_external_documentation_status(line)
+    ]
+    if not changed_status:
         return None
     return {
         "project_dir": str(project),
         "worktree_path": str(worktree_path),
         "before_status": before_lines,
         "after_status": after,
-        "changed_status": _status_delta(before_lines, after),
+        "changed_status": changed_status,
     }
+
+
+def _is_allowed_external_documentation_status(status_line: str) -> bool:
+    path = _status_path(status_line)
+    if not path.startswith("specs/"):
+        return False
+    return PurePosixPath(path).name in {
+        "documentation-impact-report.md",
+        "docs-verification-report.md",
+    }
+
+
+def _status_path(status_line: str) -> str:
+    line = status_line.strip()
+    if not line:
+        return ""
+    path = line[3:].strip() if len(status_line) >= 4 else line
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1]
+    return path.strip('"').replace("\\", "/")
 
 
 def _git_status_lines(project: Path) -> Optional[List[str]]:
@@ -4714,6 +4799,55 @@ def _is_markerless_recovery_ignored_artifact(path: str) -> bool:
     if PurePosixPath(posix).name == "echelon_result.json":
         return True
     return _is_verify_owned_artifact(posix)
+
+
+def _is_harness_or_spec_artifact(path: str) -> bool:
+    posix = path.replace("\\", "/").strip()
+    if _is_markerless_recovery_ignored_artifact(posix):
+        return True
+    return posix.startswith(("specs/", ".specify/", "runs/"))
+
+
+def _has_target_delivery_changes(paths: Iterable[str]) -> bool:
+    for raw_path in paths:
+        path = str(raw_path).strip()
+        if not path:
+            continue
+        if _is_harness_or_spec_artifact(path):
+            continue
+        return True
+    return False
+
+
+def _git_merge_base(worktree: Path, left: str, right: str) -> Optional[str]:
+    result = subprocess.run(
+        ["git", "merge-base", left, right],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return value or None
+
+
+def _git_changed_files_between(
+    worktree: Path,
+    base: str,
+    head: str,
+) -> Optional[List[str]]:
+    result = subprocess.run(
+        ["git", "diff", "--name-only", base, head],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
 def _status_delta(before: List[str], after: List[str]) -> List[str]:

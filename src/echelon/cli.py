@@ -25,7 +25,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from harness.gitops import copy_runtime_extension
 from harness.runtime_surface import prune_delivery_workflow_definition
@@ -2175,6 +2175,45 @@ def _harness_error_resume_blockers(*, project_root: Path, spec_id: str, spec_dir
     return blockers
 
 
+def _is_docs_report_only_containment_violation(state: dict) -> bool:
+    """Return True for legacy containment blocks caused only by docs reports."""
+    if state.get("termination_reason") != "containment_violation":
+        return False
+
+    violation = state.get("containment_violation")
+    if not isinstance(violation, dict):
+        return False
+
+    changed_status = violation.get("changed_status")
+    if not isinstance(changed_status, list) or not changed_status:
+        return False
+
+    return all(
+        _is_allowed_external_documentation_status(str(line))
+        for line in changed_status
+    )
+
+
+def _is_allowed_external_documentation_status(status_line: str) -> bool:
+    path = _status_path(status_line)
+    if not path.startswith("specs/"):
+        return False
+    return PurePosixPath(path).name in {
+        "documentation-impact-report.md",
+        "docs-verification-report.md",
+    }
+
+
+def _status_path(status_line: str) -> str:
+    line = status_line.strip()
+    if not line:
+        return ""
+    path = line[3:].strip() if len(status_line) >= 4 else line
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1]
+    return path.strip('"').replace("\\", "/")
+
+
 def _is_phase_a_build_incomplete_retry(state: dict) -> bool:
     """Return True when build_incomplete should retry without git recovery."""
     if state.get("termination_reason") != "build_incomplete":
@@ -2447,6 +2486,8 @@ def _cmd_harness_resume(
         "no_progress",
         "provider_session_limit",
     }
+    if _is_docs_report_only_containment_violation(state):
+        continuation_reasons.add("containment_violation")
     retryable_error_reasons = {"harness_error"}
 
     if current_status != "blocked" and termination_reason not in recoverable_reasons:

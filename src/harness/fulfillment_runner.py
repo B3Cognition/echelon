@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 from pathlib import Path
 import re
 import subprocess
@@ -11,6 +12,10 @@ import tempfile
 from typing import Mapping, Protocol
 
 from harness.canonical_requirements import INVENTORY_JSON
+from harness.judgment_prepass import (
+    assemble_fulfillment_report,
+    write_judgment_prepass,
+)
 from harness.scoped_verify import (
     build_scoped_verify_plan,
     merge_scoped_fulfillment_report,
@@ -26,11 +31,13 @@ from harness.verified_fulfillment_ledger import (
     write_verified_ledger,
 )
 from kernel.fulfillment import (
+    apply_deferred_scope_to_report,
     fulfillment_table_ids,
     fulfillment_report_is_current,
     latest_fulfillment_report,
     read_fulfillment_metadata,
     stamp_fulfillment_report,
+    validate_deferred_scope_rows,
     validate_fulfillment_artifacts,
 )
 
@@ -197,6 +204,25 @@ class FulfillmentRunner:
                 verified_ledger=verified_ledger,
             )
 
+        artifact_policy = _verify_spec_artifact_write_policy(
+            worktree=worktree,
+            spec_dir=resolved_spec_dir,
+            orchestration_root=orchestration_root,
+            spec_id=spec_id,
+        )
+        direct_result = _try_direct_no_fallback_refresh(
+            worktree=worktree,
+            spec_id=spec_id,
+            spec_dir=resolved_spec_dir,
+            artifact_policy=artifact_policy,
+            commit=commit,
+            spec_input_hash=spec_input_hash,
+            implementation_input_hash=implementation_input_hash,
+            cache_key=cache_key,
+        )
+        if direct_result is not None:
+            return direct_result
+
         skill_path = find_skill(
             "echelon.verify-spec",
             worktree,
@@ -218,12 +244,6 @@ class FulfillmentRunner:
 
         prompt = _build_verify_spec_prompt(worktree, skill_path, arguments)
         exit_code = self._prompt_executor.exec_prompt(worktree_path, prompt)
-        artifact_policy = _verify_spec_artifact_write_policy(
-            worktree=worktree,
-            spec_dir=resolved_spec_dir,
-            orchestration_root=orchestration_root,
-            spec_id=spec_id,
-        )
         artifact_write_violation = _verify_spec_artifact_write_violation(
             self._prompt_executor,
             policy=artifact_policy,
@@ -401,6 +421,7 @@ class FulfillmentRunner:
                 return self.refresh(
                     worktree_path,
                     spec_id,
+                    spec_dir=spec_dir,
                     orchestration_root=spec_dir.parent.parent,
                     scope="full",
                 )
@@ -657,6 +678,151 @@ def _latest_full_report_matches_cache(
     if metadata.get("verify_cache_key") != cache_key:
         return False
     return _latest_report_matches_latest_audit(worktree, spec_id, spec_dir=spec_dir)
+
+
+def _try_direct_no_fallback_refresh(
+    *,
+    worktree: Path,
+    spec_id: str,
+    spec_dir: Path | None,
+    artifact_policy: VerifySpecArtifactWritePolicy,
+    commit: str | None,
+    spec_input_hash: str | None,
+    implementation_input_hash: str,
+    cache_key: str | None,
+) -> FulfillmentRefreshResult | None:
+    if spec_dir is None or commit is None:
+        return None
+    verify_run_dir = _latest_verify_run_dir_with_artifacts(
+        artifact_policy.workspace_root,
+        spec_id,
+    )
+    if verify_run_dir is None:
+        return None
+
+    state_path = verify_run_dir / "state.json"
+    report = spec_dir / "fulfillment-report.md"
+    try:
+        prepass = write_judgment_prepass(
+            spec_dir=spec_dir,
+            verify_run_dir=verify_run_dir,
+        )
+        if prepass.fallback_count:
+            return None
+        if not _prepass_has_only_no_gap_mechanical_rows(prepass.json_path):
+            return None
+        assemble_fulfillment_report(
+            canonical_inventory_path=verify_run_dir / INVENTORY_JSON,
+            judgment_prepass_path=prepass.json_path,
+            fallback_report_path=report,
+            output_report_path=report,
+            state_path=state_path,
+        )
+        apply_deferred_scope_to_report(report, spec_dir)
+        deferred_scope_issues = validate_deferred_scope_rows(report, spec_dir)
+        if deferred_scope_issues:
+            return FulfillmentRefreshResult(
+                status="failed",
+                exit_code=2,
+                scope="full",
+                reason=(
+                    "invalid deferred scope: "
+                    + "; ".join(deferred_scope_issues)
+                ),
+                cache_key=cache_key,
+                report_path=str(report),
+            )
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+
+    if not _latest_report_matches_latest_audit(
+        worktree,
+        spec_id,
+        spec_dir=spec_dir,
+        artifact_root=artifact_policy.workspace_root,
+    ):
+        return FulfillmentRefreshResult(
+            status="failed",
+            exit_code=2,
+            scope="full",
+            reason="full verify-spec artifact validation failed",
+            cache_key=cache_key,
+            report_path=str(report),
+        )
+    _stamp_latest_report(
+        worktree,
+        spec_id,
+        spec_dir=spec_dir,
+        orchestration_root=artifact_policy.workspace_root,
+        commit=commit,
+        spec_input_hash=spec_input_hash,
+        implementation_input_hash=implementation_input_hash,
+        cache_key=cache_key,
+    )
+    if not fulfillment_report_is_current(report, current_commit=commit):
+        return FulfillmentRefreshResult(
+            status="failed",
+            exit_code=2,
+            scope="full",
+            reason="full verify-spec report was not stamped for current HEAD",
+            cache_key=cache_key,
+            report_path=str(report),
+        )
+    verified_ledger = _write_verified_fulfillment_ledger(
+        worktree,
+        spec_dir=spec_dir,
+        report=report,
+        spec_input_hash=spec_input_hash,
+        implementation_input_hash=implementation_input_hash,
+    )
+    return FulfillmentRefreshResult(
+        status="refreshed",
+        exit_code=0,
+        scope="full",
+        reason="full verify-spec completed from deterministic artifacts",
+        cache_key=cache_key,
+        report_path=str(report),
+        verified_ledger=verified_ledger,
+    )
+
+
+def _latest_verify_run_dir_with_artifacts(root: Path, spec_id: str) -> Path | None:
+    runs = root / "runs"
+    if not runs.exists():
+        return None
+    candidates = list(runs.glob(f"verify-spec-{spec_id}-*"))
+    candidates.extend(runs.glob(f"*/verify-spec/{spec_id}"))
+    required = (
+        INVENTORY_JSON,
+        "requirement-audit.md",
+        "implementation-map.md",
+        "state.json",
+    )
+    complete = [
+        path
+        for path in candidates
+        if path.is_dir() and all((path / name).is_file() for name in required)
+    ]
+    if not complete:
+        return None
+    return sorted(
+        complete,
+        key=lambda path: max((path / name).stat().st_mtime for name in required),
+    )[-1]
+
+
+def _prepass_has_only_no_gap_mechanical_rows(prepass_path: Path) -> bool:
+    payload = json.loads(prepass_path.read_text(encoding="utf-8"))
+    rows = payload.get("rows", [])
+    if not isinstance(rows, list) or not rows:
+        return False
+    return all(
+        isinstance(row, dict)
+        and bool(row.get("mechanical"))
+        and str(row.get("proposed_status") or "").strip()
+        in {"IMPLEMENTED", "DEFERRED_SCOPE"}
+        for row in rows
+    )
 
 
 def _spec_input_hash(spec_dir: Path | None) -> str | None:

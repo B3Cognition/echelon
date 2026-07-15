@@ -732,6 +732,74 @@ class TestRunSkillAutoLand:
         assert "bypass" not in captured.err.lower()
         assert "cherry-pick" not in captured.err.lower()
 
+    def test_delivery_summary_omits_stale_suggested_answers_for_non_escalation_stop(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import _print_delivery_summary
+
+        escalation_file = tmp_path / "runs" / "build-test" / "escalations" / "906-default.md"
+        escalation_file.parent.mkdir(parents=True)
+        escalation_file.write_text(
+            "# Escalation\n\n"
+            "## Decision Metadata\n\n"
+            "```json\n"
+            "{\n"
+            '  "suggested_answers": [\n'
+            "    {\n"
+            '      "label": "Continue implementing gaps",\n'
+            '      "answer": "Continue delivery using fulfillment-gaps.md.",\n'
+            '      "recommended": true\n'
+            "    }\n"
+            "  ]\n"
+            "}\n"
+            "```\n",
+            encoding="utf-8",
+        )
+        intent = RunIntent(spec_id="906", mode="semi")
+        result = LoopResult(
+            status="blocked",
+            termination_reason="external_spec_artifact_missing",
+            outer_iterations=1,
+            inner_iterations=0,
+            pr_url=None,
+            tokens_used=100,
+            final_verify=VerifyResult(
+                passed=False,
+                failures=[
+                    FailureEntry(
+                        category=FailureCategory.OTHER,
+                        id="documentation-impact-report-missing",
+                        error="missing documentation-impact-report.md",
+                    )
+                ],
+            ),
+        )
+        comparison = {
+            "strategies": {
+                "default": {
+                    "status": result.status,
+                    "termination_reason": result.termination_reason,
+                    "outer_iterations": result.outer_iterations,
+                    "inner_iterations": result.inner_iterations,
+                    "tokens_used": result.tokens_used,
+                    "pr_url": result.pr_url,
+                    "converged": False,
+                    "escalation_file": str(escalation_file),
+                }
+            },
+            "summary": {"converged": 0, "failed": 1, "total_tokens": 100},
+        }
+
+        _print_delivery_summary(intent, {"default": result}, comparison, str(tmp_path))
+
+        captured = capsys.readouterr()
+        assert "stopped: external_spec_artifact_missing" in captured.err
+        assert "suggested answers:" not in captured.err
+        assert "Continue implementing gaps" not in captured.err
+
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")

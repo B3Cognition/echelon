@@ -62,6 +62,12 @@ def _has_fulfillment_gap_failure(result: Any) -> bool:
     )
 
 
+def _should_print_suggested_answers(reason: object, result: Any) -> bool:
+    if _has_fulfillment_gap_failure(result):
+        return True
+    return str(reason or "") == "blocker_escalation"
+
+
 def _is_provider_limited_summary_row(info: dict[str, Any], result: Any = None) -> bool:
     reason = (
         getattr(result, "termination_reason", None)
@@ -257,7 +263,10 @@ def _print_delivery_summary(
             verified_ledger = _verified_ledger_line(info)
             if verified_ledger:
                 lines.append(verified_ledger)
-            lines.extend(_suggested_answer_lines(info.get("escalation_file"), intent.spec_id))
+            if _should_print_suggested_answers(reason, result):
+                lines.extend(
+                    _suggested_answer_lines(info.get("escalation_file"), intent.spec_id)
+                )
 
         fields.append((sid, "\n".join(lines)))
 
