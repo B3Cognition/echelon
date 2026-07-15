@@ -32,6 +32,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   invalidated, and unresolved ledger counts, and the delivery summary surfaces
   the same counts.
 
+- **EGR-139 semantic-review recovery** — invalid semantic-audit payloads now
+  receive bounded controller-directed retries with the exact validation failure
+  in the next validator prompt. Strict owned-domain `path:line` evidence remains
+  required, and a repeated invalid audit still blocks only at the configured
+  validation limit.
+
+- **EGR-140 quality-debt budget recovery** — a genuinely higher
+  `--re-max-inner` now re-measures and reactivates only the unresolved
+  source-local debt it can afford to continue. It preserves previously consumed
+  counters, leaves passed sources untouched, and carries semantic debt forward
+  rather than treating coverage alone as a pass.
+
 - **EGR-138 RE target artifact containment** — source-domain dispatches now
   retain only their canonical `spec.md`. The controller clears backup,
   temporary, alternate, and scratch siblings before and after each agent call,

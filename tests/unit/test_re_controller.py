@@ -705,12 +705,176 @@ def test_re_max_inner_override_raises_all_source_local_budgets(tmp_path: Path) -
     )
     state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
 
-    assert controller._apply_re_budget_override(state)
+    plan = ReExecutionPlan.from_json_dict(
+        json.loads((run_dir / "re" / "re-execution-plan.json").read_text(encoding="utf-8"))
+    )
+
+    assert controller._apply_re_budget_override(state, plan)
     assert state["re_source_budgets"] == {
         "max_source_cycles": 10,
         "max_domain_repairs": 10,
         "max_source_reanalysis": 10,
     }
+
+
+@pytest.mark.unit
+def test_re_max_inner_override_reactivates_quality_debt_without_resetting_budget(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    (tmp_path / "sources" / "api" / "src" / "orphan.ts").write_text(
+        "export const orphan = true;\n", encoding="utf-8"
+    )
+    outer_state_path = run_dir / "state.json"
+    outer_state = json.loads(outer_state_path.read_text(encoding="utf-8"))
+    outer_state["re_max_inner"] = 10
+    outer_state_path.write_text(json.dumps(outer_state), encoding="utf-8")
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "mode": "workspace",
+            "status": "blocked",
+            "blocked_reason": "re_source_quality_debt",
+            "phase": "re-extract-5-validate",
+            "coverage_threshold": 99,
+            "resolution_threshold": 99,
+            "max_validate_iterations": 5,
+            "re_convergence_schema_version": 1,
+            "re_source_convergence_quality_contract_version": 1,
+            "re_source_coverage_repair_protocol_version": 1,
+            "re_target_quality_protocol_version": 1,
+            "re_source_budgets": {
+                "max_source_cycles": 5,
+                "max_domain_repairs": 5,
+                "max_source_reanalysis": 5,
+            },
+            "re_source_states": {
+                "api": {
+                    "status": "partial_quality_debt",
+                    "source_cycles": 5,
+                    "domain_repairs": {"001-re-domain": 5},
+                    "source_reanalysis": 5,
+                }
+            },
+            "re_source_order": ["api"],
+            "re_quality_debt_sources": ["api"],
+            "re_workspace_synthesis_complete": True,
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+
+    class BudgetRecoveryProvider(_ShallowSpecifierProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.repair_prompts: list[str] = []
+
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            phase = self.phases[-1]
+            if phase == "re-extract-2-specify" and "Source coverage repair:" in prompt:
+                self.repair_prompts.append(prompt)
+                spec.write_text(
+                    spec.read_text(encoding="utf-8")
+                    + "\nRecovered coverage evidence: `src/orphan.ts:1`\n",
+                    encoding="utf-8",
+                )
+            if phase == "re-extract-3-verify":
+                result.echelon_result["state_updates"] = {"coverage_pct": 99}
+            return result
+
+    provider = BudgetRecoveryProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert len(provider.repair_prompts) == 1
+    assert "`src/orphan.ts`" in provider.repair_prompts[0]
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["re_source_states"]["api"]["status"] == "passed"
+    assert state["re_source_states"]["api"]["source_cycles"] == 6
+    assert state["re_source_states"]["api"]["domain_repairs"] == {
+        "001-re-domain": 5
+    }
+    assert state["re_quality_debt_sources"] == []
+    assert "re_pending_source_repair_targets" not in state
+
+
+@pytest.mark.unit
+def test_re_max_inner_override_reclaims_semantic_debt_only_after_a_genuine_raise(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    outer_state_path = run_dir / "state.json"
+    outer_state = json.loads(outer_state_path.read_text(encoding="utf-8"))
+    outer_state["re_max_inner"] = 10
+    outer_state_path.write_text(json.dumps(outer_state), encoding="utf-8")
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = ReExecutionPlan.from_json_dict(
+        json.loads((run_dir / "re" / "re-execution-plan.json").read_text(encoding="utf-8"))
+    )
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    state.update(
+        {
+            "mode": "workspace",
+            "phase": "re-extract-5-validate",
+            "coverage_threshold": 99,
+            "re_convergence_schema_version": 1,
+            "re_source_budgets": {
+                "max_source_cycles": 10,
+                "max_domain_repairs": 10,
+                "max_source_reanalysis": 10,
+            },
+            "re_source_states": {
+                "api": {
+                    "status": "partial_quality_debt",
+                    "source_cycles": 5,
+                    "domain_repairs": {"001-re-domain": 5},
+                    "source_reanalysis": 5,
+                    "re_quality_debt_semantic_failures": [
+                        {
+                            "domain_id": "001-re-domain",
+                            "reason": "semantic_quality_incomplete",
+                        }
+                    ],
+                }
+            },
+            "re_source_order": ["api"],
+            "re_quality_debt_sources": ["api"],
+        }
+    )
+
+    assert not controller._apply_re_budget_override(state, plan)
+    assert state["re_source_states"]["api"]["status"] == "partial_quality_debt"
+    assert "re_specification_targets" not in state
+
+    outer_state["re_max_inner"] = 11
+    outer_state_path.write_text(json.dumps(outer_state), encoding="utf-8")
+
+    assert controller._apply_re_budget_override(state, plan)
+    assert state["re_source_states"]["api"]["status"] == "active"
+    assert state["re_source_states"]["api"]["source_cycles"] == 6
+    assert state["re_source_states"]["api"]["coverage_pct"] == 100
+    assert state["re_specification_targets"] == [
+        {
+            "kind": "source-domain",
+            "source_id": "api",
+            "domain_id": "001-re-domain",
+            "root": "src",
+        }
+    ]
 
 
 @pytest.mark.unit
@@ -1232,6 +1396,109 @@ def test_semantic_quality_repair_returns_only_the_failed_domain_to_specifier(
     state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
     assert state["re_quality_repair_attempts"] == 1
     assert state["re_semantic_quality_report"].endswith("quality/semantic-quality-review.json")
+
+
+@pytest.mark.unit
+def test_invalid_semantic_review_retries_with_controller_validation_feedback(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+
+    class InvalidThenValidSemanticReviewProvider(_ShallowSpecifierProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.semantic_prompts: list[str] = []
+
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            if self.phases[-1] == "re-extract-3-verify":
+                result.echelon_result["state_updates"] = {"coverage_pct": 80}
+            if self.phases[-1] != "re-extract-5-validate":
+                return result
+            self.semantic_prompts.append(prompt)
+            if len(self.semantic_prompts) == 1:
+                result.echelon_result["semantic_quality_review"] = {
+                    "schema_version": 1,
+                    "domains": [
+                        {
+                            "source_id": "api",
+                            "domain_id": "001-re-domain",
+                            "verdict": "REPAIR",
+                            "findings": ["FR-001 omits retry exhaustion."],
+                            "source_evidence": [
+                                "src/file-1.ts (path referenced but not validated)"
+                            ],
+                        }
+                    ],
+                }
+            return result
+
+    provider = InvalidThenValidSemanticReviewProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert len(provider.semantic_prompts) == 2
+    assert "## Controller Validation Feedback" in provider.semantic_prompts[1]
+    assert "REPAIR findings need valid source evidence" in provider.semantic_prompts[1]
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert "re_semantic_review_invalid_attempts" not in state
+    assert "re_semantic_review_invalid_error" not in state
+
+
+@pytest.mark.unit
+def test_invalid_semantic_review_blocks_only_after_validation_budget_exhausts(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["max_validate_iterations"] = 2
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    class AlwaysInvalidSemanticReviewProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            if self.phases[-1] == "re-extract-3-verify":
+                result.echelon_result["state_updates"] = {"coverage_pct": 80}
+            if self.phases[-1] == "re-extract-5-validate":
+                result.echelon_result["semantic_quality_review"] = {
+                    "schema_version": 1,
+                    "domains": [
+                        {
+                            "source_id": "api",
+                            "domain_id": "001-re-domain",
+                            "verdict": "REPAIR",
+                            "findings": ["FR-001 omits retry exhaustion."],
+                            "source_evidence": ["src/file-1.ts (not a citation)"],
+                        }
+                    ],
+                }
+            return result
+
+    provider = AlwaysInvalidSemanticReviewProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert not result.completed
+    assert result.blocked_reason == "re_semantic_quality_review_invalid"
+    assert provider.phases.count("re-extract-5-validate") == 2
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["re_semantic_review_invalid_attempts"] == 2
+    assert (
+        state["re_semantic_review_invalid_error"]
+        == "semantic quality review REPAIR findings need valid source evidence"
+    )
 
 
 @pytest.mark.unit
