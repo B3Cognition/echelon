@@ -9,7 +9,7 @@ ALWAYS validate every non-empty refreshed source independently.
 NEVER hide an unresolved source behind an aggregate workspace score.
 
 ### Rule 2 - Evidence-Based Resolution
-ALWAYS resolve ambiguity by reading the matching source's code, tests, analysis, and CodeGraph evidence.
+ALWAYS resolve ambiguity by reading the matching source's code, tests, analysis, CodeGraph evidence, and PerlGraph evidence for Perl source.
 NEVER invent behavior or use sibling source internals as evidence.
 
 ### Rule 3 - Targeted Repair Ownership

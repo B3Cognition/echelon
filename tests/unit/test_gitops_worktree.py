@@ -11,7 +11,12 @@ import yaml
 
 from harness.config import HarnessConfig
 from harness.errors import GitOpsError
-from harness.gitops import GitOpsManager, _clean_branch_listing, prepare_codegraph_runtime
+from harness.gitops import (
+    GitOpsManager,
+    _clean_branch_listing,
+    prepare_codegraph_runtime,
+    prepare_perlgraph_runtime,
+)
 from harness.runtime_surface import (
     DELIVERY_AGENT_DIRS,
     DELIVERY_BASH_FILES,
@@ -111,6 +116,39 @@ def test_prepare_codegraph_runtime_runs_locked_npm_ci(tmp_path, monkeypatch):
     ]
 
 
+def test_prepare_perlgraph_runtime_runs_locked_npm_ci_and_build(tmp_path, monkeypatch):
+    """Delivery worktrees install and build the locked PerlGraph runtime."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    runtime = source / "scripts" / "node" / "perlgraph"
+    runtime.mkdir(parents=True)
+    (runtime / "package-lock.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "harness.gitops.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
+    with patch("harness.gitops.subprocess.run") as run:
+        run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+        prepare_perlgraph_runtime(source)
+
+    assert run.call_args_list[0].args[0] == [
+        "/usr/bin/npm",
+        "ci",
+        "--prefix",
+        str(runtime),
+        "--include=dev",
+        "--no-audit",
+        "--no-fund",
+        "--prefer-offline",
+    ]
+    assert run.call_args_list[0].kwargs["env"]["CXXFLAGS"] == "-std=c++20"
+    assert run.call_args_list[1].args[0] == [
+        "/usr/bin/npm",
+        "run",
+        "build",
+        "--prefix",
+        str(runtime),
+    ]
+
+
 def test_sync_runtime_extension_copies_codegraph_source_without_node_modules(tmp_path):
     """Delivery worktrees keep CodeGraph source but never copied dependencies."""
     source = tmp_path / ".specify" / "extensions" / "echelon"
@@ -166,6 +204,59 @@ def test_sync_runtime_extension_copies_codegraph_source_without_node_modules(tmp
     assert not (runtime_node / "codegraph" / "vendor").exists()
     assert not (runtime_node / "context7").exists()
     assert not (runtime_node / "codegraph" / "node_modules").exists()
+
+
+def test_sync_runtime_extension_copies_perlgraph_source_without_build_artifacts(tmp_path):
+    """Delivery worktrees keep PerlGraph source but never copied dependencies/build output."""
+    source = tmp_path / ".specify" / "extensions" / "echelon"
+    (source / "agents" / "control").mkdir(parents=True)
+    (source / "workflow").mkdir()
+    (source / "scripts" / "node" / "perlgraph" / "node_modules" / "commander").mkdir(
+        parents=True
+    )
+    (source / "scripts" / "node" / "perlgraph" / "dist" / "cli").mkdir(parents=True)
+    (source / "agents" / "control" / "commander.md").write_text(
+        "commander\n", encoding="utf-8"
+    )
+    (source / "workflow" / "definition.yaml").write_text("workflow\n", encoding="utf-8")
+    (source / "scripts" / "node" / "perlgraph" / "package.json").write_text(
+        '{"name":"perlgraph"}\n', encoding="utf-8"
+    )
+    (source / "scripts" / "node" / "perlgraph" / "package-lock.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    (source / "scripts" / "node" / "perlgraph" / "src").mkdir()
+    (source / "scripts" / "node" / "perlgraph" / "src" / "index.ts").write_text(
+        "export {}\n", encoding="utf-8"
+    )
+    (
+        source
+        / "scripts"
+        / "node"
+        / "perlgraph"
+        / "node_modules"
+        / "commander"
+        / "package.json"
+    ).write_text('{"name":"commander"}\n', encoding="utf-8")
+    (
+        source / "scripts" / "node" / "perlgraph" / "dist" / "cli" / "perlgraph.js"
+    ).write_text("#!/usr/bin/env node\n", encoding="utf-8")
+
+    worktree = tmp_path / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    worktree.mkdir(parents=True)
+    exclude = tmp_path / "git-exclude"
+
+    gitops = _make_gitops(tmp_path)
+    with patch("harness.gitops._run_git") as run_git:
+        run_git.return_value = SimpleNamespace(stdout=str(exclude) + "\n")
+        gitops.sync_runtime_extension(worktree)
+
+    runtime_node = worktree / ".specify" / "extensions" / "echelon" / "scripts" / "node"
+    assert (runtime_node / "perlgraph" / "package.json").exists()
+    assert (runtime_node / "perlgraph" / "package-lock.json").exists()
+    assert (runtime_node / "perlgraph" / "src" / "index.ts").exists()
+    assert not (runtime_node / "perlgraph" / "node_modules").exists()
+    assert not (runtime_node / "perlgraph" / "dist").exists()
 
 
 def test_sync_runtime_extension_refreshes_codegraph_source_when_runtime_ready(tmp_path):

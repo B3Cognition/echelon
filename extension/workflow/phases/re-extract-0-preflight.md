@@ -93,6 +93,8 @@ if not state_path.exists():
                       'cross_repo': f'{output_dir}/cross-repo.json',
                       'codegraph_analysis': f'{output_dir}/codegraph-analysis.json',
                       'codegraph_summary': f'{output_dir}/codegraph-summary.json',
+                      'perlgraph_analysis': f'{output_dir}/perlgraph-analysis.json',
+                      'perlgraph_summary': f'{output_dir}/perlgraph-summary.json',
                       'sources_root': f'{output_dir}/sources',
                       'workspace_root': f'{output_dir}/workspace',
                       'quality_root': f'{output_dir}/quality'},

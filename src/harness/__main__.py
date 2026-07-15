@@ -18,6 +18,7 @@ Subcommands:
   plan-reopen-gaps — plan deterministic reopen work from fulfillment gaps
   init-verify-spec-run — create verify-spec runtime directory and state.json
   write-codegraph-evidence — write verify-spec CodeGraph evidence artifacts
+  write-perlgraph-evidence — write verify-spec PerlGraph evidence artifacts
   write-codegraph-evidence-map — write deterministic requirement-to-CodeGraph map
   write-requirement-audit — write deterministic requirement audit from canonical inventory
   validate-fulfillment-artifacts — validate fulfillment report row-set integrity
@@ -853,6 +854,52 @@ def _write_codegraph_evidence() -> None:
     print(f"OK: wrote CodeGraph evidence to {result.analysis_path}")
 
 
+def _write_perlgraph_evidence() -> None:
+    if len(sys.argv) < 5:
+        print(
+            "Usage: python -m harness write-perlgraph-evidence <project-root> <verify-run-dir> <spec-dir>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.perlgraph_evidence import (
+        PerlGraphEvidenceError,
+        write_perlgraph_evidence,
+    )
+
+    verify_run_dir = Path(sys.argv[3])
+    _require_verify_spec_state(verify_run_dir)
+    try:
+        result = write_perlgraph_evidence(
+            project_root=Path(sys.argv[2]),
+            verify_run_dir=verify_run_dir,
+            spec_dir=Path(sys.argv[4]),
+        )
+    except PerlGraphEvidenceError as exc:
+        _stamp_verify_spec_state(
+            verify_run_dir,
+            {
+                "perlgraph_evidence": "degraded",
+                "perlgraph_evidence_quality": "manual_fallback_required",
+                "perlgraph_summary_path": str(verify_run_dir / "perlgraph-summary.json"),
+                "perlgraph_error_path": str(exc),
+            },
+        )
+        print(f"PerlGraph evidence degraded; see {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    _stamp_verify_spec_state(
+        verify_run_dir,
+        {
+            "perlgraph_evidence": "ready",
+            "perlgraph_summary_path": str(result.summary_path),
+        },
+    )
+    print(f"OK: wrote PerlGraph evidence to {result.analysis_path}")
+
+
 def _stamp_verify_spec_state(verify_run_dir: "Path", updates: dict[str, object]) -> None:
     state_path = verify_run_dir / "state.json"
     _stamp_existing_json_state_file(state_path, updates)
@@ -1314,6 +1361,8 @@ def main() -> None:
         _validate_fulfillment_artifacts()
     elif subcommand == "write-codegraph-evidence":
         _write_codegraph_evidence()
+    elif subcommand == "write-perlgraph-evidence":
+        _write_perlgraph_evidence()
     elif subcommand == "write-codegraph-evidence-map":
         _write_codegraph_evidence_map()
     elif subcommand == "inspect-fulfillment-report":
@@ -1339,7 +1388,7 @@ def main() -> None:
             "'write-requirement-audit', 'write-judgment-prepass', "
             "'write-fallback-fulfillment-template', "
             "'assemble-fulfillment-report', 'apply-deferred-scope', 'validate-fulfillment-artifacts', "
-            "'write-codegraph-evidence', "
+            "'write-codegraph-evidence', 'write-perlgraph-evidence', "
             "'write-codegraph-evidence-map', 'inspect-fulfillment-report', "
             "'verify-docs', 'migrate-tasks', 'validate-plan', or 'migrate-plan'.",
             file=sys.stderr,

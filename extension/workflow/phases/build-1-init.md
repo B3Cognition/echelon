@@ -147,6 +147,7 @@ If user specified task IDs, filter to only those tasks. Verify dependencies are 
 ### 1.4 Initialize Build State
 
 Return these state updates in `echelon_result`; the harness applies them to `${SQUAD_DIR}/state.json`:
+use `echelon_result.state_updates` as the sole state update channel.
 
 ```yaml
 echelon_result:

@@ -496,6 +496,65 @@ write_polyrepo_codegraph_summary() {
         }' > "$summary_path"
 }
 
+run_perlgraph() {
+    local perlgraph_cli="$1"
+    local analysis_path="$2"
+    local summary_path="$3"
+
+    node "$perlgraph_cli" analyze \
+        --repo-path "$(pwd)" \
+        --output-path "$analysis_path" \
+        --summary-path "$summary_path" \
+        2>&1 | grep -v "^$" >&2 || true
+}
+
+write_polyrepo_perlgraph_summary() {
+    local output_dir="$1"
+    local manifest_path="$2"
+    local workspace_manifest="$3"
+    local source_output_root="$4"
+    local summary_path="$output_dir/perlgraph-summary.json"
+    local repo_summaries="[]"
+    local repo_count
+    local repo_name
+    local repo_summary
+    local index_state
+    local symbols
+
+    repo_count=$(manifest_source_count "$manifest_path" "$workspace_manifest")
+    for (( i=0; i<repo_count; i++ )); do
+        repo_name=$(manifest_source_name "$manifest_path" "$workspace_manifest" "$i")
+        repo_summary="$source_output_root/$repo_name/perlgraph-summary.json"
+        if [[ -f "$repo_summary" ]]; then
+            index_state=$(jq -r '.index_state // "unknown"' "$repo_summary" 2>/dev/null || echo "unknown")
+            symbols=$(jq -r '.index_stats.symbol_count // 0' "$repo_summary" 2>/dev/null || echo 0)
+            repo_summaries=$(echo "$repo_summaries" | jq \
+                --arg name "$repo_name" \
+                --arg path "${repo_summary#"$output_dir"/}" \
+                --arg state "$index_state" \
+                --argjson symbols "$symbols" \
+                '. + [{repo: $name, summary_path: $path, index_state: $state, symbols: $symbols}]')
+        fi
+    done
+
+    if [[ "$(echo "$repo_summaries" | jq 'length')" -eq 0 ]]; then
+        return 0
+    fi
+
+    jq -n \
+        --arg generated_at "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+        --argjson repo_count "$repo_count" \
+        --argjson repos "$repo_summaries" \
+        '{
+            "mode": "polyrepo",
+            "tool": "perlgraph",
+            "generated_at": $generated_at,
+            "index_state": "polyrepo",
+            "repo_count": $repo_count,
+            "repos": $repos
+        }' > "$summary_path"
+}
+
 # ---------- Manifest-driven mode (1 or more repos in subdirectories) ----------
 
 if [[ "$USE_MANIFEST" == "true" ]]; then
@@ -518,6 +577,9 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
     CODEGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/codegraph"
     BRIDGE_SCRIPT="$CODEGRAPH_NODE_DIR/codegraph-bridge.js"
     NODE_MODULES_DIR="$CODEGRAPH_NODE_DIR/node_modules"
+    PERLGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/perlgraph"
+    PERLGRAPH_CLI="$PERLGRAPH_NODE_DIR/dist/cli/perlgraph.js"
+    PERLGRAPH_NODE_MODULES_DIR="$PERLGRAPH_NODE_DIR/node_modules"
     CODEGRAPH_AVAILABLE=false
     if command -v node >/dev/null 2>&1 && [[ -f "$BRIDGE_SCRIPT" ]]; then
         if [[ ! -d "$NODE_MODULES_DIR" ]]; then
@@ -525,6 +587,15 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
             echo "   Run: npm ci --prefix \"$CODEGRAPH_NODE_DIR\"" >&2
         else
             CODEGRAPH_AVAILABLE=true
+        fi
+    fi
+    PERLGRAPH_AVAILABLE=false
+    if command -v node >/dev/null 2>&1 && [[ -f "$PERLGRAPH_CLI" ]]; then
+        if [[ ! -d "$PERLGRAPH_NODE_MODULES_DIR" ]]; then
+            echo "⚠️  PerlGraph structural analysis skipped: node_modules not found." >&2
+            echo "   Run: npm ci --prefix \"$PERLGRAPH_NODE_DIR\" && npm run build --prefix \"$PERLGRAPH_NODE_DIR\"" >&2
+        else
+            PERLGRAPH_AVAILABLE=true
         fi
     fi
 
@@ -562,7 +633,7 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
         (cd "$REPO_PATH" && "$SCRIPT_DIR/extract-configs.sh" "$REPO_OUTPUT/configs.json") 2>>"$REPO_LOG" || echo "  WARNING: extract-configs.sh failed for $REPO_NAME" >&2
 
         # Count source files and lines for this repo
-        SOURCE_EXTENSIONS="ts|tsx|js|jsx|py|go|rs|java|kt|cs|rb|php|swift|c|cpp|h|hpp"
+        SOURCE_EXTENSIONS="ts|tsx|js|jsx|py|go|rs|java|kt|cs|rb|php|swift|c|cpp|h|hpp|pl|pm|t|psgi"
         total_files=$(find "$REPO_PATH" -type f \
             -not -path '*/.*/*' \
             -not -path '*/.git/*' \
@@ -626,6 +697,10 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
             echo "  Running structural analysis (CodeGraph) for $REPO_NAME..." >&2
             (cd "$REPO_PATH" && run_codegraph_bridge "$BRIDGE_SCRIPT" "$REPO_OUTPUT/codegraph-analysis.json") 2>>"$REPO_LOG" || true
             write_codegraph_summary "$REPO_OUTPUT/codegraph-analysis.json" "$REPO_OUTPUT/codegraph-summary.json"
+        fi
+        if [[ "$PERLGRAPH_AVAILABLE" == "true" ]]; then
+            echo "  Running Perl structural analysis (PerlGraph) for $REPO_NAME..." >&2
+            (cd "$REPO_PATH" && run_perlgraph "$PERLGRAPH_CLI" "$REPO_OUTPUT/perlgraph-analysis.json" "$REPO_OUTPUT/perlgraph-summary.json") 2>>"$REPO_LOG" || true
         fi
 
         echo "" >&2
@@ -711,6 +786,7 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
     fi
 
     write_polyrepo_codegraph_summary "$OUTPUT_DIR" "$MANIFEST_PATH" "$WORKSPACE_MANIFEST" "$SOURCE_OUTPUT_ROOT"
+    write_polyrepo_perlgraph_summary "$OUTPUT_DIR" "$MANIFEST_PATH" "$WORKSPACE_MANIFEST" "$SOURCE_OUTPUT_ROOT"
 
     echo "Analysis complete! ($REPO_COUNT repo(s))" >&2
     echo "Per-source outputs in: $SOURCE_OUTPUT_ROOT/{source-id}/" >&2
@@ -732,7 +808,7 @@ echo "" >&2
 "$SCRIPT_DIR/extract-configs.sh" "$OUTPUT_DIR/configs.json"
 
 # Step 2: Count total source lines for metadata
-SOURCE_EXTENSIONS="ts|tsx|js|jsx|py|go|rs|java|kt|cs|rb|php|swift|c|cpp|h|hpp"
+SOURCE_EXTENSIONS="ts|tsx|js|jsx|py|go|rs|java|kt|cs|rb|php|swift|c|cpp|h|hpp|pl|pm|t|psgi"
 total_files=$(find . -type f \
     -not -path '*/.*/*' \
     -not -path './.git/*' \
@@ -802,6 +878,20 @@ if command -v node >/dev/null 2>&1 && [[ -f "$BRIDGE_SCRIPT" ]]; then
         echo "Running structural analysis (CodeGraph)..." >&2
         run_codegraph_bridge "$BRIDGE_SCRIPT" "$OUTPUT_DIR/codegraph-analysis.json"
         write_codegraph_summary "$OUTPUT_DIR/codegraph-analysis.json" "$OUTPUT_DIR/codegraph-summary.json"
+    fi
+fi
+
+# Perl Structural Code Intelligence (conditional — fail-open, non-blocking)
+PERLGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/perlgraph"
+PERLGRAPH_CLI="$PERLGRAPH_NODE_DIR/dist/cli/perlgraph.js"
+PERLGRAPH_NODE_MODULES_DIR="$PERLGRAPH_NODE_DIR/node_modules"
+if command -v node >/dev/null 2>&1 && [[ -f "$PERLGRAPH_CLI" ]]; then
+    if [[ ! -d "$PERLGRAPH_NODE_MODULES_DIR" ]]; then
+        echo "⚠️  PerlGraph structural analysis skipped: node_modules not found." >&2
+        echo "   Run: npm ci --prefix \"$PERLGRAPH_NODE_DIR\" && npm run build --prefix \"$PERLGRAPH_NODE_DIR\"" >&2
+    else
+        echo "Running Perl structural analysis (PerlGraph)..." >&2
+        run_perlgraph "$PERLGRAPH_CLI" "$OUTPUT_DIR/perlgraph-analysis.json" "$OUTPUT_DIR/perlgraph-summary.json"
     fi
 fi
 

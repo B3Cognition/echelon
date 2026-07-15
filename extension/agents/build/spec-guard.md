@@ -45,6 +45,13 @@ MUST NOT be marked `IMPLEMENTED` from `assertion_only`, source-symbol, or
 synthetic fixture evidence. Mark them `UNVERIFIED` unless the map cites measured
 CI/runtime artifacts satisfying the acceptance signal.
 
+For Perl fulfillment evidence, preserve the implementation map's PerlGraph
+uncertainty semantics. Treat low-confidence or dynamic PerlGraph edges and
+`unsupported_patterns` may explain why a row needs manual judgment, but they
+must not be marked `IMPLEMENTED` by themselves. Require concrete source and
+executable test evidence, or measured runtime evidence for runtime thresholds,
+before treating PerlGraph-adjacent rows as fulfilled.
+
 ## Verify-Spec Fulfillment Row-Set Contract
 
 When invoked for verify-spec fulfillment mode, read

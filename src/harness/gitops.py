@@ -59,6 +59,7 @@ RUNTIME_EXTENSION_EXCLUDED_PATHS = (
     Path("scripts") / "bash" / "re",
     Path("scripts") / "node" / "context7",
     Path("scripts") / "node" / "codegraph" / "vendor",
+    Path("scripts") / "node" / "perlgraph" / "dist",
     Path("stacks"),
 )
 RUNTIME_EXTENSION_EXCLUDED_NAMES = (
@@ -71,6 +72,8 @@ RUNTIME_EXTENSION_EXCLUDED_NAMES = (
 
 CODEGRAPH_RUNTIME_REL = Path("scripts") / "node" / "codegraph"
 CODEGRAPH_RUNTIME_TIMEOUT_SECONDS = 300
+PERLGRAPH_RUNTIME_REL = Path("scripts") / "node" / "perlgraph"
+PERLGRAPH_RUNTIME_TIMEOUT_SECONDS = 300
 
 
 def copy_runtime_extension(source: Path, dest: Path) -> None:
@@ -140,6 +143,73 @@ def prepare_codegraph_runtime(extension_root: Path) -> None:
             f"CodeGraph runtime preparation failed (exit {completed.returncode}): {detail}",
             command="prepare_codegraph_runtime",
         )
+
+
+def prepare_perlgraph_runtime(extension_root: Path) -> None:
+    """Install and build the locked PerlGraph runtime inside one delivery worktree."""
+    runtime_dir = extension_root / PERLGRAPH_RUNTIME_REL
+    lockfile = runtime_dir / "package-lock.json"
+    if not runtime_dir.is_dir():
+        raise GitOpsError(
+            f"PerlGraph runtime is missing at {runtime_dir}. "
+            "Update the installed Echelon extension before starting delivery.",
+            command="prepare_perlgraph_runtime",
+        )
+    if not lockfile.is_file():
+        raise GitOpsError(
+            f"PerlGraph package-lock.json is missing at {lockfile}.",
+            command="prepare_perlgraph_runtime",
+        )
+
+    node = shutil.which("node")
+    npm = shutil.which("npm")
+    if node is None or npm is None:
+        raise GitOpsError(
+            "PerlGraph delivery runtime requires Node.js and npm on PATH.",
+            command="prepare_perlgraph_runtime",
+        )
+
+    install_command = [
+        npm,
+        "ci",
+        "--prefix",
+        str(runtime_dir),
+        "--include=dev",
+        "--no-audit",
+        "--no-fund",
+        "--prefer-offline",
+    ]
+    build_command = [
+        npm,
+        "run",
+        "build",
+        "--prefix",
+        str(runtime_dir),
+    ]
+    env = os.environ.copy()
+    env.setdefault("CXXFLAGS", "-std=c++20")
+    for command in (install_command, build_command):
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=str(runtime_dir),
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=PERLGRAPH_RUNTIME_TIMEOUT_SECONDS,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise GitOpsError(
+                f"PerlGraph runtime preparation could not start: {exc}",
+                command="prepare_perlgraph_runtime",
+            ) from exc
+        if completed.returncode != 0:
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            raise GitOpsError(
+                f"PerlGraph runtime preparation failed (exit {completed.returncode}): {detail}",
+                command="prepare_perlgraph_runtime",
+            )
 
 
 def runtime_extension_copy_ignore(source_root: Path):
@@ -736,6 +806,7 @@ class GitOpsManager:
         prune_delivery_workflow_definition(dest / "workflow" / "definition.yaml")
         if prepare_codegraph:
             prepare_codegraph_runtime(dest)
+            prepare_perlgraph_runtime(dest)
         self._sync_provider_runtime_shims(dest, worktree)
         self._exclude_runtime_extension(worktree)
         logger.info("Synced runtime Echelon extension into worktree at %s", dest)

@@ -85,6 +85,8 @@ runs/<run-id>/re/                  # active echelon spec run
 ├── analysis.json                     # Structured codebase data (files, deps, git history, configs)
 ├── codegraph-analysis.json           # Optional full structural graph (Node.js + CodeGraph bridge)
 ├── codegraph-summary.json            # Optional compact graph summary for token-efficient agent reads
+├── perlgraph-analysis.json           # Optional full Perl structural graph (Node.js + PerlGraph)
+├── perlgraph-summary.json            # Optional compact Perl graph summary for agent reads
 ├── repos-manifest.json               # Polyrepo discovery manifest (present in polyrepo mode)
 └── {repo-name}/                      # Per-repo data in polyrepo mode
     ├── analysis.json

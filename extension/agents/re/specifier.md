@@ -83,7 +83,8 @@ Set `RE_OUTPUT_DIR = state.output_dir`, then read in this order:
 5. `$RE_OUTPUT_DIR/analysis.json` and `$RE_OUTPUT_DIR/cross-repo.json`
 6. `$RE_OUTPUT_DIR/sources/{source-id}/analysis.json`, structure, dependencies, git history, and configs for each `refresh` action
 7. `$RE_OUTPUT_DIR/sources/{source-id}/codegraph-summary.json`, then `$RE_OUTPUT_DIR/sources/{source-id}/codegraph-analysis.json` when deeper graph evidence is needed
-8. `$RE_OUTPUT_DIR/sources/{source-id}/domain-manifest.json` for every refresh source
+8. `$RE_OUTPUT_DIR/sources/{source-id}/perlgraph-summary.json`, then `$RE_OUTPUT_DIR/sources/{source-id}/perlgraph-analysis.json` when deeper Perl graph evidence is needed. Treat low-confidence or dynamic PerlGraph edges as uncertainty evidence, not proof of behavior. Treat `unsupported_patterns` as source-backed notes about dynamic Perl behavior and candidate future PerlGraph improvements; cite them as risk/uncertainty, not fulfilled implementation evidence.
+9. `$RE_OUTPUT_DIR/sources/{source-id}/domain-manifest.json` for every refresh source
 9. Canonical source manifests/specs referenced by `re-workspace-inputs.json` for `current` and retained `unavailable` decisions
 
 The root analysis is an aggregate index, not sufficient source evidence.

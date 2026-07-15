@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 3.2.14** — 55 registered agent roles across the Echelon architecture, with 46 active-routed manifest roles in the executable workflow, MemPalace requirements memory (wing-scoped, per-project, collision-safe), `echelon workspace init` wing provisioning, `codegen requirements mine/search/clean`, endocrine system fully enabled by default (all 6 hormones, phase 3), echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
+**Version 3.3.0** — 55 registered agent roles across the Echelon architecture, with 46 active-routed manifest roles in the executable workflow, MemPalace requirements memory (wing-scoped, per-project, collision-safe), `echelon workspace init` wing provisioning, `codegen requirements mine/search/clean`, endocrine system fully enabled by default (all 6 hormones, phase 3), echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -1270,7 +1270,7 @@ Echelon includes native brownfield extraction for reverse-engineering existing c
 
 | Command | Purpose |
 |---------|---------|
-| `speckit.echelon.re-analyze` | Extract selected sources to `runs/<run-id>/re/sources/<source-id>/` plus aggregate analysis and optional CodeGraph artifacts |
+| `speckit.echelon.re-analyze` | Extract selected sources to `runs/<run-id>/re/sources/<source-id>/` plus aggregate analysis and optional CodeGraph and PerlGraph artifacts |
 | `speckit.echelon.re-specify` | Generate domain specs with coverage tracking |
 | `speckit.echelon.re-verify` | Verify spec coverage; identify orphan files |
 | `speckit.echelon.re-expand` | Fill coverage gaps from orphan file clusters |

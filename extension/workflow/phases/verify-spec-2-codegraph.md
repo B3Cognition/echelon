@@ -31,6 +31,30 @@ If the command exits non-zero, do not attempt fallback discovery. Treat
 `{verify_run_dir}/codegraph-error.txt` as the diagnostic artifact and continue.
 Do not hand-edit `state.json`; the command already recorded degradation.
 
+Then run exactly:
+
+```bash
+python -m harness write-perlgraph-evidence "{project_root}" "{verify_run_dir}" "{spec_dir}"
+```
+
+ALWAYS use this deterministic harness command for verify-spec PerlGraph evidence.
+NEVER locate, inspect, or infer PerlGraph CLI invocation from the prompt.
+The harness command owns the installed extension path and writes normalized
+artifacts. It also updates `{verify_run_dir}/state.json` with
+`perlgraph_evidence: ready` on success or `perlgraph_evidence: degraded` on
+degradation. The CLI path is fixed relative to `project_root`:
+`.specify/extensions/echelon/scripts/node/perlgraph/dist/cli/perlgraph.js`.
+
+Write:
+- `{verify_run_dir}/perlgraph-analysis.json`
+- `{verify_run_dir}/perlgraph-summary.json`
+
+If the command exits non-zero, do not attempt fallback discovery. Treat
+`{verify_run_dir}/perlgraph-error.txt` as the diagnostic artifact and continue.
+PerlGraph evidence degraded means Perl-specific structural evidence is weaker,
+not that fulfillment failed. Do not hand-edit `state.json`; the command already
+recorded degradation.
+
 ## Output
 
 Proceed to `verify-spec-3-audit`.

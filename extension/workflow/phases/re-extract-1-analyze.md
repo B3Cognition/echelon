@@ -32,6 +32,8 @@ Instruct RE-ANALYZER to:
 | `{state.output_dir}/cross-repo.json` | Multiple selected sources only |
 | `{state.output_dir}/codegraph-analysis.json` | Optional (Node.js) |
 | `{state.output_dir}/codegraph-summary.json` | Optional (Node.js) |
+| `{state.output_dir}/perlgraph-analysis.json` | Optional (Node.js, Perl sources) |
+| `{state.output_dir}/perlgraph-summary.json` | Optional (Node.js, Perl sources) |
 
 ## echelon_result schema
 
@@ -50,11 +52,15 @@ echelon_result:
       cross_repo: null
       codegraph_analysis: "{state.output_dir}/codegraph-analysis.json" | null
       codegraph_summary: "{state.output_dir}/codegraph-summary.json" | null
+      perlgraph_analysis: "{state.output_dir}/perlgraph-analysis.json" | null
+      perlgraph_summary: "{state.output_dir}/perlgraph-summary.json" | null
   output_files:
     - "{state.output_dir}/analysis.json"
     # Include only when produced:
     - "{state.output_dir}/codegraph-analysis.json"
     - "{state.output_dir}/codegraph-summary.json"
+    - "{state.output_dir}/perlgraph-analysis.json"
+    - "{state.output_dir}/perlgraph-summary.json"
   journal_entries:
     - type: phase_complete
       phase: re-extract-1-analyze

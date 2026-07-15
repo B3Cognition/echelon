@@ -70,6 +70,18 @@ def test_verify_spec_codegraph_uses_deterministic_harness_command() -> None:
     assert "Do not hand-edit `state.json`" in text
 
 
+def test_verify_spec_runs_perlgraph_as_deterministic_structural_evidence() -> None:
+    text = (PHASE_DIR / "verify-spec-2-codegraph.md").read_text(encoding="utf-8")
+
+    assert (
+        'python -m harness write-perlgraph-evidence "{project_root}" '
+        '"{verify_run_dir}" "{spec_dir}"'
+    ) in text
+    assert "{verify_run_dir}/perlgraph-analysis.json" in text
+    assert "{verify_run_dir}/perlgraph-summary.json" in text
+    assert "PerlGraph evidence degraded" in text
+
+
 def test_verify_spec_codegraph_forbids_prompt_side_discovery() -> None:
     text = (PHASE_DIR / "verify-spec-2-codegraph.md").read_text(encoding="utf-8")
 
@@ -159,6 +171,32 @@ def test_verify_spec_stage4_forbids_broad_source_exploration() -> None:
     assert "summary.fallback_requirement_ids" in phase_text
     assert "bounded fallback queue" in lowered
     assert "do not inspect outside that queue" in lowered
+
+
+def test_verify_spec_stage4_includes_perlgraph_structural_context() -> None:
+    phase_text = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
+    mapper_text = (
+        ROOT / "extension" / "agents" / "build" / "implementation-mapper.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (phase_text, mapper_text):
+        assert "{verify_run_dir}/perlgraph-summary.json" in text
+        assert "{verify_run_dir}/perlgraph-analysis.json" in text
+        assert "PerlGraph" in text
+        assert "low-confidence or dynamic PerlGraph edges" in text
+        assert "unsupported_patterns" in text
+        assert "candidate future PerlGraph improvements" in text
+
+
+def test_spec_guard_preserves_perlgraph_uncertainty_semantics() -> None:
+    guard = (ROOT / "extension" / "agents" / "build" / "spec-guard.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "PerlGraph" in guard
+    assert "low-confidence or dynamic PerlGraph" in guard
+    assert "unsupported_patterns" in guard
+    assert "must not be marked `IMPLEMENTED`" in guard
 
 
 def test_verify_spec_stage5_references_judgment_prepass() -> None:

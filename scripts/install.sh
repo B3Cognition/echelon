@@ -10,6 +10,7 @@ SOAR_DIR="$HOME/.echelon/soar"
 VENV_DIR="$HOME/.echelon/venv"
 MEMORY_DIR="$HOME/.echelon/memory"
 CODEGRAPH_NODE_DIR="$ECHELON_DIR/extension/scripts/node/codegraph"
+PERLGRAPH_NODE_DIR="$ECHELON_DIR/extension/scripts/node/perlgraph"
 CTX7_NODE_DIR="$ECHELON_DIR/extension/scripts/node/context7"
 
 echo ""
@@ -176,7 +177,24 @@ else
   echo "    ECHELON_INSTALL_CODEGRAPH_CLI=1 bash scripts/install.sh"
 fi
 
-# ── 3c. Context7 documentation tool dependencies ────────────────────────────
+# ── 3c. RE PerlGraph runtime dependencies ───────────────────────────────────
+echo "▶ Installing RE PerlGraph runtime dependencies..."
+if ! command -v node &>/dev/null; then
+  echo "  ⚠ Node.js not found; PerlGraph structural analysis will be skipped."
+  echo "    Install Node.js, then run: npm ci --prefix \"$PERLGRAPH_NODE_DIR\" --include=dev && npm run build --prefix \"$PERLGRAPH_NODE_DIR\""
+elif ! command -v npm &>/dev/null; then
+  echo "  ⚠ npm not found; PerlGraph structural analysis will be skipped."
+  echo "    Install npm, then run: npm ci --prefix \"$PERLGRAPH_NODE_DIR\" --include=dev && npm run build --prefix \"$PERLGRAPH_NODE_DIR\""
+elif [ ! -f "$PERLGRAPH_NODE_DIR/package-lock.json" ]; then
+  echo "  ⚠ package-lock.json not found at $PERLGRAPH_NODE_DIR; skipping PerlGraph runtime deps."
+else
+  CXXFLAGS="${CXXFLAGS:--std=c++20}" npm ci --prefix "$PERLGRAPH_NODE_DIR" --include=dev --no-audit --no-fund --prefer-offline --silent
+  npm run build --prefix "$PERLGRAPH_NODE_DIR" --silent
+  echo "  ✓ PerlGraph runtime dependencies installed → $PERLGRAPH_NODE_DIR/node_modules"
+  echo "  ✓ PerlGraph CLI built → $PERLGRAPH_NODE_DIR/dist/cli/perlgraph.js"
+fi
+
+# ── 3d. Context7 documentation tool dependencies ────────────────────────────
 echo "▶ Installing Context7 documentation tool dependencies..."
 if ! command -v node &>/dev/null; then
   echo "  ⚠ Node.js not found; Context7 documentation lookups will be unavailable."
@@ -233,6 +251,11 @@ if command -v codegraph &>/dev/null; then
   echo "  CodeGraph CLI    → $(command -v codegraph)"
 else
   echo "  CodeGraph CLI    → optional (ECHELON_INSTALL_CODEGRAPH_CLI=1 bash scripts/install.sh)"
+fi
+if [ -x "$PERLGRAPH_NODE_DIR/dist/cli/perlgraph.js" ]; then
+  echo "  PerlGraph CLI  → $PERLGRAPH_NODE_DIR/dist/cli/perlgraph.js"
+else
+  echo "  PerlGraph CLI  → not ready (run: npm ci --prefix \"$PERLGRAPH_NODE_DIR\" --include=dev && npm run build --prefix \"$PERLGRAPH_NODE_DIR\")"
 fi
 if [ -x "$CTX7_NODE_DIR/node_modules/.bin/ctx7" ]; then
   echo "  Context7 CLI  → $CTX7_NODE_DIR/node_modules/.bin/ctx7"

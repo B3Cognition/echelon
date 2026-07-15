@@ -87,6 +87,8 @@ def init_re_state(
             "cross_repo": None,
             "codegraph_analysis": f"{output_dir}/codegraph-analysis.json",
             "codegraph_summary": f"{output_dir}/codegraph-summary.json",
+            "perlgraph_analysis": f"{output_dir}/perlgraph-analysis.json",
+            "perlgraph_summary": f"{output_dir}/perlgraph-summary.json",
         },
         "issues_log": [],
     }

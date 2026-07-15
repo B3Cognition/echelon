@@ -89,7 +89,7 @@ If `golddigger_artifacts.re_overview` exists, read it before synthesizing discov
 3. Read `golddigger_artifacts.re_overview`, `relationships`, and `contracts` using the exact registered paths.
 4. Read every path in `golddigger_artifacts.re_specs[]`; do not replace registered paths with project-root glob conventions.
 5. Read `golddigger_artifacts.cross_repo` for dependency links and shared technology when present.
-6. For refreshed sources, read per-source analysis and CodeGraph paths under `golddigger_artifacts.sources_root`. Treat a root CodeGraph summary as an aggregate index of per-source summaries.
+6. For refreshed sources, read per-source analysis, CodeGraph, and PerlGraph paths under `golddigger_artifacts.sources_root`. Treat a root CodeGraph summary as an aggregate index of per-source summaries; treat a root PerlGraph summary the same way for Perl structural evidence.
 7. For reused or retained sources, use canonical manifests/specs already listed in `re_artifacts` rather than reopening source roots.
 
 Prefer workspace-manifest.json when present. It defines the workspace root and implementation source roots. Use repos-manifest.json only as a compatibility fallback for older runs.

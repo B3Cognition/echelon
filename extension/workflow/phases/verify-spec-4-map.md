@@ -13,6 +13,8 @@ Provide IMPLEMENTATION-MAPPER with:
 - verification `state.json`
 - `{verify_run_dir}/codegraph-summary.json`
 - `{verify_run_dir}/codegraph-analysis.json`
+- `{verify_run_dir}/perlgraph-summary.json`
+- `{verify_run_dir}/perlgraph-analysis.json`
 - `{verify_run_dir}/codegraph-evidence-map.json`
 - `{verify_run_dir}/codegraph-evidence-map.md`
 
@@ -46,8 +48,8 @@ IMPLEMENTATION-MAPPER until the required input exists.
 
 ## Dispatch Prompt
 
-Map checklist items to concrete source, test, route, UI, configuration, and
-CodeGraph evidence.
+Map checklist items to concrete source, test, route, UI, configuration,
+CodeGraph evidence, and PerlGraph evidence for Perl source.
 
 When `{spec_dir}/deferred-scope.json` has active entries, selected requirement
 IDs are explicitly out of the current fulfillment scope. Do not manually
@@ -71,6 +73,18 @@ unless the cited source/test evidence is directly contradictory. Treat
 inspection. Inspect source/tests only for IDs in that queue, plus the cited
 files/symbols/tests of a `high` or `medium` deterministic row that appears
 contradictory. Do not inspect outside that queue or cited evidence set.
+
+Use `{verify_run_dir}/perlgraph-summary.json` and
+`{verify_run_dir}/perlgraph-analysis.json` as additional structural evidence for
+Perl source files. PerlGraph module, package, sub, method, and call edges may
+support the same implementation-map row when they cite concrete project files.
+Treat low-confidence or dynamic PerlGraph edges as uncertainty evidence, not
+proof of fulfillment, and keep affected IDs in the bounded fallback queue unless
+source and executable test evidence independently satisfy the requirement.
+Treat PerlGraph `unsupported_patterns` as source-backed notes about dynamic Perl
+behavior and candidate future PerlGraph improvements. They may explain why a
+row needs manual judgment, but they must not be converted into fulfilled
+implementation evidence by themselves.
 
 Distinguish source evidence from executable test evidence and measured
 CI/runtime artifacts. Do not rewrite assertion-gate functions or synthetic
