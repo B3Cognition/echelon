@@ -941,6 +941,106 @@ def test_golddigger_mode1_complete_publishes_canonical_context(tmp_path, monkeyp
     assert updated["re_workspace"] == canonical["workspace_manifest"]
 
 
+def test_golddigger_mode1_partial_publishes_canonical_context(tmp_path, monkeypatch):
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\n")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("run-test", "brownfield", "msg", 0, "phase1-discover")
+    state = state_store.load()
+    state.update(
+        {
+            "re_refresh_sources": ["api"],
+            "re_publication_required": True,
+            "re_generation": 1,
+            "re_artifacts": {"manifest": str(tmp_path / "re/index.json")},
+        }
+    )
+    state_store.save(state)
+    monkeypatch.setattr(
+        AgentExecutor,
+        "_run_golddigger_mode1_controller",
+        lambda _executor: SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {
+                    "golddigger_status": "partial",
+                    "golddigger_notes": ["quality debt remains: api"],
+                },
+                "journal_entries": [],
+            },
+            raw_output="",
+            duration_ms=1,
+            timed_out=False,
+        ),
+    )
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/golddigger.md"
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[
+            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
+        ],
+        allowed_state_updates=["golddigger_status"],
+    )
+
+    publish = MagicMock(
+        return_value=RePublicationResult(
+            generation=2,
+            status="partial",
+            index_path=tmp_path / "re/index.json",
+            changed_sources=("api",),
+            removed_sources=(),
+            warnings=("quality debt remains: api",),
+        )
+    )
+    canonical = {
+        "manifest": str(tmp_path / "re/index.json"),
+        "source_manifests": {"api": str(tmp_path / "re/sources/api/manifest.json")},
+        "workspace_manifest": str(tmp_path / "re/workspace/manifest.json"),
+        "re_overview": str(tmp_path / "re/workspace/overview.md"),
+        "re_specs": [str(tmp_path / "re/sources/api/specs/domain/spec.md")],
+    }
+    monkeypatch.setattr("harness.squad_executors.publish_re_run", publish)
+    monkeypatch.setattr(
+        "harness.squad_executors.load_published_index",
+        lambda _root: SimpleNamespace(generation=2),
+    )
+    monkeypatch.setattr(
+        "harness.squad_executors.canonical_re_artifacts",
+        lambda _root, _index: canonical,
+    )
+
+    result = executor._run_pre_dispatch(node, state_store.load(), state_store)
+
+    assert result is None
+    publish.assert_called_once_with(
+        tmp_path,
+        squad_dir,
+        allow_partial=True,
+        status_override="partial",
+        expected_generation=1,
+    )
+    updated = state_store.load()
+    assert updated["golddigger_status"] == "partial"
+    assert updated["re_generation"] == 2
+    assert updated["re_artifacts"] == canonical
+    assert updated["golddigger_artifacts"] == canonical
+    assert updated["re_publication_required"] is False
+
+
 def test_golddigger_publication_failure_blocks_and_preserves_context(tmp_path, monkeypatch):
     from harness.phase_graph import PhaseNode
 

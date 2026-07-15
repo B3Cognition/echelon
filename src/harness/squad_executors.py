@@ -897,7 +897,7 @@ class PhaseExecutor(ABC):
         """Publish validated Mode 1 output before applying agent state updates."""
         updates = result.state_updates
         status = str(updates.get("golddigger_status") or "").strip().lower()
-        if status != "complete":
+        if status not in {"complete", "partial"}:
             return None
 
         state = state_store.load()
@@ -913,8 +913,8 @@ class PhaseExecutor(ABC):
             publication = publish_re_run(
                 self._project_root,
                 self._squad_dir,
-                allow_partial=False,
-                status_override="complete",
+                allow_partial=status == "partial",
+                status_override=status,
                 expected_generation=expected_generation,
             )
             published_index = load_published_index(self._project_root)
@@ -963,7 +963,7 @@ class PhaseExecutor(ABC):
         )
         updates.update(
             {
-                "golddigger_status": "complete",
+                "golddigger_status": publication.status,
                 "golddigger_mode": "workspace-full-re",
                 "golddigger_artifacts": artifacts,
                 "golddigger_notes": notes,
