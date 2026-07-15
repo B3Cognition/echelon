@@ -20,7 +20,7 @@ Third, orchestration moved out of LLM judgment. The project externalized workflo
 
 Fourth, Echelon grew a build and delivery harness. The harness added isolated worktrees, Docker-compatible sandbox verification, GitOps, PR loops, review reentry, fulfillment checks, and land gates. This turned "the agent implemented it" into an evidence-based loop: build, verify, feed back failures, fix, re-verify, open PR, handle review, prove fulfillment, and land.
 
-Finally, the current version tightened contracts around machine-readable requirements, project topology, provider execution, and technology-stack guidance. Lexicon adds controlled grammar validation as a derived artifact beside human-readable `spec.md`. The workspace/source-root model makes single-repo, polyrepo, and planning-only layouts explicit. The AI CLI backend layer isolates Claude, Codex, GitHub Copilot, and Opencode behavior. Echelon Stacks add schema-backed, opt-in technology capability context with deterministic preflight and brownfield stack detection. Current README state identifies version 3.0.0, 54 registered agent roles, 46 active-routed manifest roles, Understanding gates, MemPalace/codegen integration, native brownfield extraction, delivery commands, and multi-LLM provider support.
+Finally, the current version tightened contracts around machine-readable requirements, project topology, provider execution, technology-stack guidance, reverse-engineering publication, and fulfillment evidence. Lexicon adds controlled grammar validation as a derived artifact beside human-readable `spec.md`. The workspace/source-root model makes single-repo, polyrepo, and planning-only layouts explicit. The AI CLI backend layer isolates Claude, Codex, GitHub Copilot, and Opencode behavior. Echelon Stacks add schema-backed, opt-in technology capability context with deterministic preflight and brownfield stack detection. Published workspace RE turns validated reverse-engineering output into durable `re/` knowledge. Deferred-scope and verified-fulfillment ledgers distinguish intentional scope decisions from missing work. CodeGraph and PerlGraph provide bounded structural candidates, not automatic proof. Current README state identifies version 3.3.3, 55 registered agent roles, 46 active-routed manifest roles, Understanding gates, MemPalace/codegen integration, native brownfield extraction, delivery commands, and multi-LLM provider support.
 
 The useful story for a brownbag is this: Echelon matured by repeatedly taking authority away from prompts where correctness mattered, and putting that authority into contracts, state, workflow definitions, harnesses, and verification loops.
 
@@ -260,6 +260,60 @@ Limitation exposed:
 
 - Stack recommendation needs governance: observed current stack evidence is not the same as a future modernization decision.
 
+### July 2026: Published Workspace Reverse Engineering
+
+Reverse engineering moved from run-local output to durable workspace knowledge. Instead of leaving successful GOLDDIGGER output only under `runs/<run-id>/re/`, Echelon now publishes validated generations under `re/`, with source-owned domain specs and workspace-level synthesis.
+
+This matters because brownfield knowledge is not just evidence for one run. It is reusable workspace context. Later feature runs can read canonical `re/` paths directly, unchanged sources can skip expensive regeneration, and partial or malformed RE output cannot silently replace the last-known-good generation.
+
+Problem solved:
+
+- Completed RE knowledge was too ephemeral and too hard to reuse across later feature work.
+
+Approach:
+
+- Add an atomic `re/` publication model with source IDs, manifests, ignored heavy cache/staging/locks, and explicit manual partial-publication override.
+
+Limitation exposed:
+
+- Publication now needs its own governance: source fingerprints, generation guards, locks, and clear rules for what becomes tracked handoff material.
+
+### July 2026: Scope Deferrals and Verified Fulfillment Ledger
+
+Fulfillment matured from "rerun verify-spec and inspect the latest report" toward ledger-backed evidence. Echelon added explicit `echelon spec defer` / `echelon spec plan` commands for owner-approved scope changes, plus a verified fulfillment ledger that lets scoped refreshes reuse proven rows when verifier version and evidence fingerprints still match.
+
+This is a practical distinction: intentionally deferred work should not look like a fulfillment failure, and previously verified work should not need to be re-proven from scratch every time.
+
+Problem solved:
+
+- Landing could not cleanly distinguish missing work, intentionally deferred work, and already-verified work.
+
+Approach:
+
+- Record deferred scope in an auditable ledger and reuse verified fulfillment rows only through fingerprinted, versioned evidence.
+
+Limitation exposed:
+
+- Ledger reuse is only safe when evidence semantics are stable; verifier-version changes must invalidate old proof.
+
+### July 2026: CodeGraph/PerlGraph Evidence Boundaries
+
+Echelon now treats structural graph evidence more carefully. CodeGraph and PerlGraph can identify candidate implementation/test paths, call edges, symbols, Perl modules, and unsupported patterns. But structural candidates are not the same as verified fulfillment proof.
+
+The July 15 CodeGraph candidate-evidence split makes this explicit: CodeGraph v2 emits candidates, IMPLEMENTATION-MAPPER uses them as search guidance, and verified implementation evidence must come from bounded source, tests, or measured runtime behavior. PerlGraph follows the same confidence discipline for Perl-specific relationships.
+
+Problem solved:
+
+- Broad term matches and low-confidence graph edges were too easy to mistake for implementation evidence.
+
+Approach:
+
+- Split candidate structural evidence from verified evidence and invalidate ledger reuse when verifier semantics change.
+
+Limitation exposed:
+
+- Structural analysis is powerful as a map, but it still needs verification before it becomes proof.
+
 ## Core Evolution Pattern
 
 The repeated pattern is:
@@ -282,6 +336,9 @@ Examples:
 - Dangerous LLM provider bypass behavior was too easy to enable implicitly, so host tool policy became fail-closed.
 - Provider CLI behavior was too scattered, so concrete AI CLI backends now isolate Claude/Codex/Copilot/Opencode differences.
 - Internal stack guidance was too informal, so Echelon Stacks now provide schema-backed capability context, preflight, and conservative detection.
+- Reverse-engineering output was too ephemeral, so successful generations now publish as durable workspace `re/` artifacts.
+- Scope exceptions were too informal, so deferrals now become explicit auditable ledger entries.
+- Structural graph evidence was too tempting to over-trust, so CodeGraph/PerlGraph candidates are separated from verified source/test/runtime proof.
 
 ## Four Engineering Tracks
 
@@ -305,7 +362,7 @@ This is the safety lesson: the LLM can propose and edit, but the harness owns mu
 
 ### Loop Engineering
 
-The final maturity layer is feedback and convergence: verify, diagnose, repair, re-verify, reconcile fulfillment, handle review comments, refresh evidence, block on gaps, and land only when the state machine allows it.
+The final maturity layer is feedback and convergence: verify, diagnose, repair, re-verify, reconcile fulfillment, reuse verified ledgers safely, handle explicit deferrals, handle review comments, refresh evidence, block on gaps, and land only when the state machine allows it.
 
 This is the reliability lesson: autonomous coding is less about one brilliant generation and more about a bounded loop with evidence and stop conditions.
 
@@ -319,7 +376,7 @@ This is the reliability lesson: autonomous coding is less about one brilliant ge
 | Unreliable phase routing | COMMANDER decides from prompt | Workflow graph plus Python state machine |
 | Brownfield separate from lifecycle | Standalone `revenge` extension | Native `re-*` commands and phase specs |
 | Build result over-trusted | Agent says implementation is done | Harness verify/fix loop |
-| Spec fulfillment unclear | Build passed | Fulfillment, task progress, CodeGraph evidence |
+| Spec fulfillment unclear | Build passed | Fulfillment, task progress, verified ledger, bounded structural evidence |
 | Human review disconnected | Manual PR comments | Review comments become rework tasks |
 | Markdown too soft for hard gates | `spec.md` only | Canonical `spec.md` plus derived Lexicon |
 | Repo topology implicit | Current directory assumptions | Workspace/source-root contract |
@@ -327,6 +384,9 @@ This is the reliability lesson: autonomous coding is less about one brilliant ge
 | Provider behavior scattered | One provider path with special cases | Concrete AI CLI backends |
 | Internal stack guidance informal | Prompt prose and repo inference | Schema-backed Echelon Stacks |
 | Brownfield stack selection manual | Narrative evidence in RE artifacts | Conservative `stack detect` reports |
+| Reverse-engineering output ephemeral | `runs/<run>/re/` only | Published workspace `re/` knowledge |
+| Scope exceptions informal | Manual edits or emergency overrides | Auditable deferred-scope ledger |
+| Structural evidence over-trusted | Graph matches read as proof | Candidate evidence separated from verified proof |
 | Delivery terminology scattered | harness/run/land variants | `echelon delivery ...` namespace |
 
 ## Talk Track
@@ -340,12 +400,15 @@ Use this as a 10-15 minute brownbag narrative.
 5. The second was deterministic orchestration: workflows and Python state machines took authority away from COMMANDER where correctness mattered.
 6. Brownfield `revenge` was absorbed into native `re-*` workflows so reverse engineering could feed the same spec/build lifecycle.
 7. The build harness made implementation operational: worktrees, sandbox verification, GitOps, PR loops, and review reentry.
-8. Fulfillment and CodeGraph evidence made "done" evidence-based rather than agent-declared.
+8. Fulfillment, verified ledgers, and bounded structural evidence made "done" evidence-based rather than agent-declared.
 9. Lexicon added a machine-checkable requirements lane while preserving human-readable `spec.md`.
 10. Workspace/source-root modeling made repo topology explicit, which is required for serious polyrepo and planning-only workflows.
 11. AI CLI backends made provider differences explicit without polluting workflow logic.
 12. Echelon Stacks made internal platform guidance schema-backed, preflightable, and detectable from brownfield evidence.
-13. The core lesson: as the stakes went up, Echelon kept the LLM for semantic work and moved correctness-critical authority into contracts, state, and tools.
+13. Published workspace RE made brownfield knowledge durable across runs.
+14. Scope deferrals and verified fulfillment ledgers separated owner decisions, cached proof, and real gaps.
+15. CodeGraph/PerlGraph evidence boundaries kept structural candidates useful without treating them as proof.
+16. The core lesson: as the stakes went up, Echelon kept the LLM for semantic work and moved correctness-critical authority into contracts, state, and tools.
 
 ## Suggested Slide Sequence
 
@@ -361,8 +424,11 @@ Use this as a 10-15 minute brownbag narrative.
 10. **Workspace Model:** explicit workspace and source roots.
 11. **AI CLI Backends:** Claude, Codex, Copilot, and Opencode behind one provider facade.
 12. **Echelon Stacks:** schema-backed platform context, preflight, and detection.
-13. **Current State:** version 3.0.0, delivery namespace, 54 registered roles, 46 routed roles.
-14. **Takeaway:** prompt engineering was the start; system engineering made it reliable.
+13. **Published RE:** stable workspace `re/` knowledge replaces run-local-only reverse engineering.
+14. **Fulfillment Ledgers:** explicit deferrals and verified evidence reuse.
+15. **Graph Evidence Boundaries:** CodeGraph/PerlGraph candidates guide inspection, not proof.
+16. **Current State:** version 3.3.3, delivery namespace, 55 registered roles, 46 routed roles.
+17. **Takeaway:** prompt engineering was the start; system engineering made it reliable.
 
 ## Source Map
 
@@ -377,6 +443,9 @@ Use these files when preparing slides or validating claims:
 - `docs/superpowers/plans/2026-07-05-egr-097-opencode-copilot-backends.md`: Opencode and GitHub Copilot backend implementation.
 - `docs/superpowers/specs/2026-07-05-echelon-stacks-design.md`: Echelon Stacks model.
 - `docs/superpowers/specs/2026-07-06-stack-detection-design.md`: deterministic stack detection.
+- `docs/superpowers/specs/2026-07-12-workspace-re-publication-design.md`: published workspace reverse engineering.
+- `docs/superpowers/specs/2026-07-14-echelons-perlgraph-runtime-design.md`: PerlGraph structural runtime.
+- `docs/superpowers/specs/2026-07-15-codegraph-candidate-evidence-split-design.md`: candidate-vs-verified evidence split.
 - `docs/superpowers/specs/2026-04-09-echelon-journal-refactor-design.md`: journal/context/state ownership refactor.
 - `docs/superpowers/specs/2026-04-15-codegen-echelon-integration-design.md`: SOAR/codegen integration.
 - `docs/superpowers/specs/2026-04-27-mempalace-integration-fix-design.md`: MemPalace integration.

@@ -10,12 +10,12 @@ The project solves a practical problem in AI-assisted engineering: getting from 
 
 Primary users are engineers using spec-kit, Claude Code, Copilot, Opencode, or Codex-based workflows. The system also supports automated terminal entry points, so it can run outside an interactive AI session.
 
-Current source snapshot: the repository now presents Echelon as version 3.0.0, with 54 registered agent roles and 46 active-routed manifest roles in the executable workflow. The current source also includes first-class AI CLI backends for Claude, Codex, GitHub Copilot, and Opencode, plus opt-in Echelon Stacks with deterministic stack resolution, preflight, and brownfield stack detection.
+Current source snapshot: the repository now presents Echelon as version 3.3.3, with 55 registered agent roles and 46 active-routed manifest roles in the executable workflow. The current source also includes first-class AI CLI backends for Claude, Codex, GitHub Copilot, and Opencode; opt-in Echelon Stacks with deterministic stack resolution, preflight, and brownfield stack detection; published workspace reverse engineering; explicit scope deferrals; a verified fulfillment ledger; and CodeGraph/PerlGraph structural evidence runtimes.
 
 The main inputs are:
 
 - A feature, bugfix, review, or brownfield-analysis request.
-- Existing project files, workspace metadata, run-local specs under `runs/<run>/specs/<id>`, and canonical published specs under `specs/<id>-*/`.
+- Existing project files, workspace metadata, run-local specs under `runs/<run>/specs/<id>`, canonical published specs under `specs/<id>-*/`, and published reverse-engineering knowledge under `re/`.
 - Echelon configuration in `echelon-config.yml`.
 - Optional target repository/source-root configuration, Docker or Podman sandbox configuration, CI/test commands, PR URL, Lexicon validation settings, Echelon stack selection/detection inputs, and MemPalace requirements memory.
 
@@ -23,7 +23,9 @@ The main outputs are:
 
 - Spec-kit artifacts such as `spec.md`, `plan.md`, `tasks.md`, `research.md`, contracts, test strategy, and artifact indexes.
 - Derived validation artifacts such as `requirements.lexicon.md` when the Lexicon gate is enabled.
+- Published reverse-engineering generations, source-owned domain specs, workspace-level RE synthesis, and structural evidence summaries.
 - Harness state, verification results, implementation runs, fulfillment reports, review-fix tasks, commits, branches, and PRs.
+- Deferred-scope ledgers and verified fulfillment ledgers that explain why work is out of scope or already proven.
 - Knowledge-base updates such as calibration, patterns, pitfalls, and internalization records.
 
 The project exists to make AI-assisted delivery less ad hoc: agents must provide structured results, COMMANDER owns the state machine, deterministic tools enforce quality and verification, and the harness runs implementation in controlled worktrees and Docker-compatible sandboxes.
@@ -43,6 +45,7 @@ Important external systems and dependencies:
 - Understanding CLI: requirements-quality scanner with 34 metrics.
 - Lexicon CLI: controlled grammar validation for specs, tasks, structural governance artifacts, source contracts, and derived machine-readable requirements.
 - Echelon Stacks: schema-backed capability/tool/context bundles for known technology stacks, with deterministic resolution, preflight, and source/RE-artifact detection.
+- CodeGraph and PerlGraph: pinned Node structural-analysis runtimes used by reverse engineering and verify-spec evidence mapping.
 - Python 3.11+, PyYAML, Typer, Rich, Lark, spaCy, Graphviz, Transformers, Torch.
 
 Runtime environment:
@@ -52,6 +55,7 @@ Runtime environment:
 - Harness state and runtime extension material under `.specify/extensions/echelon/` in target projects.
 - Worktrees, mirrors, strategy state, and build run state under `.specify/extensions/echelon/harness/` or related build directories.
 - Workspace-owned state under `.specify/`, `specs/`, and `runs/`, with implementation files living in one or more source roots.
+- Published workspace RE state under `re/`, with ignored heavy cache/staging/lock subdirectories.
 - Stack definitions under `extension/stacks/` and resolved stack context under `.echelon/context/stacks/`.
 
 Deployment target:
@@ -159,17 +163,18 @@ Configuration lives primarily in `extension/config-template.yml`, `extension/ext
 Important directories:
 
 - `extension/`: spec-kit extension contents. This is the prompt/workflow product: agents, commands, workflow definitions, phase specs, templates, presets, config, and scripts.
-- `extension/agents/`: 54 registered agent definitions grouped by layer: control, exploration, feasibility, solution, specialists, learning, and build. The README reports 46 active-routed manifest roles in the executable workflow.
+- `extension/agents/`: 55 registered agent definitions grouped by layer: control, exploration, feasibility, solution, specialists, learning, and build. The README reports 46 active-routed manifest roles in the executable workflow.
 - `extension/commands/`: thin command wrappers such as `echelon.run.md`, `echelon.build.md`, `echelon.codegen.md`, `echelon.review.md`, and re-* brownfield commands.
 - `extension/workflow/`: declarative workflow graph and phase-level prompt specs. `definition.yaml` is especially important.
 - `src/echelon/`: main CLI entry point, target detection, workspace/source-root model, migration helpers, UI helpers, orchestrator, artifact index.
-- `src/harness/`: build harness implementation. Key files include `coordinator.py`, `ralph.py`, `docker_provider.py`, `gitops.py`, `state.py`, `config.py`, `review_loop.py`, `visual_ralph.py`, `llm_provider.py`, and `ai_cli_backend.py`.
+- `src/harness/`: build harness implementation. Key files include `coordinator.py`, `ralph.py`, `docker_provider.py`, `gitops.py`, `state.py`, `config.py`, `review_loop.py`, `visual_ralph.py`, `llm_provider.py`, `ai_cli_backend.py`, `codegraph_evidence.py`, `perlgraph_evidence.py`, and `verified_fulfillment_ledger.py`.
 - `src/harness/ai_cli_backends/`: concrete Claude, Codex, GitHub Copilot, Opencode, and plain subprocess backend implementations.
 - `src/harness/stacks/`: Echelon stack schema, loader, resolver, renderer, preflight, deterministic detection, and source/RE-artifact evidence adapters.
 - `src/codegen/`: SOAR codegen pipeline, memory integration, phase gates, requirement mining/search, constitution extraction, security utilities, LSP gate, and CI helpers.
 - `src/understanding/`: requirements quality analyzer and metric modules.
 - `src/lexicon/`: grammar-backed parser, CLI, resolver, deterministic linter, validity/completeness scoring, tasks validation, structural governance validation, and source-contract checks.
 - `src/kernel/`: shared contracts and validation helpers for plans, tasks, fulfillment, state loading, schema validation, and accessors.
+- `src/echelon/benchmark.py`: experimental artifact-quality benchmark runner.
 - `src/hormone_calc/`: motivation/trigger calculation system used by the agent workflow.
 - `knowledge-base/`: calibration, patterns, pitfalls, marketplace index, estimates, prompt versions, feedback, evolution signals, and agent scores.
 - `templates/` and `extension/templates/`: reusable output formats and process templates.
@@ -178,6 +183,9 @@ Important directories:
 - `docs/pipeline-matrix.md`: current Phase A/Phase B strategy matrix, including canonical Markdown specs plus derived Lexicon artifacts.
 - `docs/superpowers/specs/2026-07-05-echelon-stacks-design.md`: Echelon Stacks design.
 - `docs/superpowers/specs/2026-07-06-stack-detection-design.md`: deterministic stack detection design.
+- `docs/superpowers/specs/2026-07-12-workspace-re-publication-design.md`: published workspace reverse-engineering design.
+- `docs/superpowers/specs/2026-07-14-echelons-perlgraph-runtime-design.md`: PerlGraph runtime integration design.
+- `docs/superpowers/specs/2026-07-15-codegraph-candidate-evidence-split-design.md`: CodeGraph candidate-vs-verified evidence split.
 - `docs/findings/`: Echelon Grounded Review findings and refreshes.
 - `specs/`: local specs for Echelon features and hardening work.
 - `tests/`: unit, integration, contract, kernel, e2e, shim, validation, benchmark, fixtures, mocks, and manual tests.
@@ -186,6 +194,7 @@ Important directories:
 - `network/`: Squid proxy configuration for sandbox network policy.
 - `scripts/`: install/uninstall, Docker sandbox/network/GC helpers, KB management, dry-run validation, internalization scripts.
 - `extension/stacks/`: bundled stack definitions and agent-readable stack context, currently including Stats Perform Playbook, MSA service, and Stark webapp stacks.
+- `extension/scripts/node/codegraph/` and `extension/scripts/node/perlgraph/`: pinned structural-analysis runtimes for delivery/RE/verify evidence.
 
 Entry points:
 
@@ -210,6 +219,9 @@ Most important files for quick understanding:
 - `src/harness/ai_cli_backends/*.py`: provider-specific CLI backends.
 - `src/harness/gitops.py`: mirror/worktree/branch/PR operations.
 - `src/harness/stacks/resolver.py`, `preflight.py`, and `detection.py`: stack capability resolution, environment/tool preflight, and brownfield stack detection.
+- `src/harness/codegraph_evidence.py` and `src/harness/codegraph_evidence_mapper.py`: CodeGraph structural evidence generation and candidate mapping.
+- `src/harness/perlgraph_evidence.py`: Perl-specific structural evidence generation.
+- `src/harness/verified_fulfillment_ledger.py`: verified fulfillment reuse and invalidation boundary.
 - `src/harness/phase_a_readiness.py`: readiness checks for Phase A artifacts and Lexicon integration.
 - `src/codegen/pipeline/pipeline_engine.py`: SOAR pipeline lifecycle.
 - `src/understanding/cli.py`: quality-gate metric surface.
@@ -293,6 +305,34 @@ Deterministic stack detection and preflight:
 - Likely reason: brownfield source trees and RE artifacts already contain stack evidence, but operators need conservative, machine-readable recommendations and readiness checks.
 - Trade-off: detection confidence and modernization recommendations must remain conservative; false-positive stack selection would be worse than asking the user.
 - Visible alternative: let SCOUT/GOLDDIGGER infer stacks narratively and leave tool readiness to build failures.
+
+Published workspace reverse engineering:
+
+- Decision: promote completed reverse-engineering knowledge from run-local `runs/<run>/re/` into a stable workspace-root `re/` publication tree.
+- Likely reason: later feature runs need durable, source-owned brownfield context without rediscovering unchanged code every time.
+- Trade-off: publication needs generation guards, source fingerprints, locks, staging, and explicit partial-publication rules.
+- Visible alternative: keep RE output run-local and copy/cache it opportunistically.
+
+Explicit scope deferrals:
+
+- Decision: add auditable `echelon spec defer` and `echelon spec plan` commands backed by `deferred-scope.json`.
+- Likely reason: owners sometimes intentionally remove work from a landing scope, and fulfillment/land must distinguish approved deferral from missing implementation.
+- Trade-off: mixed tasks and requirement/task mappings must stay precise, or deferral could hide unrelated gaps.
+- Visible alternative: let operators edit `tasks.md` manually or use `--allow-fulfillment-gaps`.
+
+Verified fulfillment ledger:
+
+- Decision: persist verified fulfillment rows with evidence fingerprints and verifier-version invalidation so scoped refreshes can reuse known-good proof.
+- Likely reason: full fulfillment refresh is expensive, but repeated runs should not lose already-verified evidence.
+- Trade-off: ledger reuse is only safe when verifier semantics, source artifacts, and evidence fingerprints still match.
+- Visible alternative: always rerun full verification or trust stale reports manually.
+
+CodeGraph and PerlGraph evidence boundaries:
+
+- Decision: treat CodeGraph/PerlGraph structural output as bounded candidate evidence, not fulfillment proof by itself.
+- Likely reason: broad term matches and low-confidence dynamic edges can guide source inspection but should not mechanically satisfy requirements.
+- Trade-off: agents or deterministic prepass must still verify implementation/test/runtime evidence after using structural candidates.
+- Visible alternative: either remove structural graph evidence or over-trust graph matches as proof.
 
 Git mirror and worktree model:
 
@@ -443,6 +483,24 @@ Fulfillment refresh policy:
 - Why interesting: it turns "use our internal stack" from informal prompt text into a schema-backed context and readiness contract.
 - How it works: selected stack IDs load from config, resolve implied/conflicting capabilities, render machine YAML plus agent-readable Markdown, check required commands/tools, and detect observed/matching/modernization stack evidence from source trees or RE artifacts.
 
+`src/harness/verified_fulfillment_ledger.py`:
+
+- What it does: persists verified fulfillment rows for reuse across scoped refreshes.
+- Why interesting: it makes incremental verification cheaper without turning old reports into unbounded truth.
+- How it works: stores evidence fingerprints and verifier metadata, then invalidates reuse when source artifacts or verifier semantics change.
+
+`src/harness/codegraph_evidence_mapper.py`:
+
+- What it does: maps CodeGraph structural data into verify-spec evidence artifacts.
+- Why interesting: the current design explicitly separates structural candidates from verified implementation evidence.
+- How it works: CodeGraph candidates narrow where IMPLEMENTATION-MAPPER should inspect, but verified cells must come from bounded source/test/runtime evidence.
+
+`src/harness/perlgraph_evidence.py` and `extension/scripts/node/perlgraph/`:
+
+- What it does: adds a pinned Perl-specific structural-analysis runtime.
+- Why interesting: it extends evidence mapping for Perl projects while preserving confidence boundaries for dynamic/low-confidence edges.
+- How it works: RE and verify-spec can emit PerlGraph analysis/summary artifacts; failures degrade without blocking unrelated non-Perl projects, while delivery runtime preparation fails closed if the copied runtime cannot build.
+
 `src/harness/review_loop.py`:
 
 - What it does: automates PR review feedback handling.
@@ -563,15 +621,15 @@ Visible test structure:
 
 Approximate discovered test file distribution from the current source tree:
 
-- 299 unit test files
-- 74 integration test files
-- 23 e2e files
-- 20 kernel files
+- 332 unit test files
+- 79 integration test files
+- 24 e2e files
+- 21 kernel files
 - 8 contract files
 - 7 shim files
 - 6 validation files
 - 2 benchmark files
-- 103 fixture files
+- 105 fixture files
 
 Quality mechanisms:
 
@@ -584,6 +642,8 @@ Quality mechanisms:
 - CodeGraph evidence mapping and fulfillment refresh policies strengthen source-grounded convergence checks.
 - AI CLI backend fixtures and tests cover provider-specific command/output parsing for Codex, Opencode, and Copilot.
 - Stack resolver, schema, preflight, detection, prompt-context, and CLI tests cover the new stack subsystem.
+- CodeGraph and PerlGraph contract tests cover pinned runtime provenance and evidence integration boundaries.
+- Verified fulfillment ledger and deferred-scope tests cover scoped refresh reuse and deliberate out-of-scope work.
 - Spec artifact indexes make missing lifecycle artifacts visible.
 
 Testing gaps or weak areas visible from the repo:
@@ -638,7 +698,7 @@ Secrets/configuration management:
 
 Versioning:
 
-- `README.md`, `pyproject.toml`, and `src/echelon/cli.py` now align on version 3.0.0.
+- `README.md`, `pyproject.toml`, and `src/echelon/cli.py` now align on version 3.3.3.
 - The current CLI surface also includes deterministic repair/replay commands such as `echelon rewind <phase-id>`, `echelon phase list`, and `echelon phase run <phase-id> [--spec <id>]`.
 
 ## 10. Observability and Operations
@@ -828,9 +888,9 @@ June 8-12, 2026: recovery and convergence tighten further.
 - Problems being solved: edge cases where work existed but markers were missing, paths were ambiguous, builds partially succeeded, tasks were reported without stable IDs, or fulfillment summaries were absent.
 - Approach shift: every successful run needs durable markers and auditable evidence, not merely side effects in a worktree.
 
-June 14-17, 2026: fulfillment refresh, CodeGraph evidence, and version 3.0.0.
+June 14-17, 2026: fulfillment refresh, CodeGraph evidence, and release alignment.
 
-- Recent history adds fulfillment refresh hardening, caching, scoped verification, canonical requirement inventory, CodeGraph CLI integration, and a 3.0.0 version alignment.
+- Recent history adds fulfillment refresh hardening, caching, scoped verification, canonical requirement inventory, CodeGraph CLI integration, and explicit version alignment.
 - Problems being solved: verify-spec was valuable but could become expensive; evidence needed to connect source changes to requirements more directly; package/CLI/readme version drift made operator expectations fuzzy.
 - Approach shift: convergence evidence becomes more source-grounded and cost-aware, while public versioning becomes a clearer release signal.
 
@@ -859,6 +919,18 @@ July 5-6, 2026: AI CLI backends and Echelon Stacks.
 - Problems being solved: provider behavior was too scattered for serious multi-CLI support; internal technology-stack guidance was living in prose/inference rather than deterministic capability context; brownfield stack evidence needed conservative recommendations instead of silent config mutation.
 - Approach shift: provider choice and stack choice become explicit, testable subsystems rather than ambient assumptions inside prompts.
 
+July 10-12, 2026: containment, source-scoped RE, and published workspace reverse engineering.
+
+- Current history adds delivery/runtime containment policies, transcript-level containment detection, tighter verify-spec path containment, source-root sync, source-scoped RE cache behavior, and a first-class `re/` publication model.
+- Problems being solved: delivery agents could inspect or leak into sibling source roots or host Echelon internals; reverse-engineering output was run-local and hard to reuse; source ownership in multi-repo RE needed to remain explicit.
+- Approach shift: runtime boundaries become machine-readable and enforced, while brownfield knowledge becomes durable workspace knowledge rather than ephemeral run output.
+
+July 14-15, 2026: scope deferrals, verified ledgers, PerlGraph, and CodeGraph evidence split.
+
+- Current history adds auditable `echelon spec defer` / `spec plan`, deferred-scope ledgers, verified fulfillment ledgers, scoped-refresh reuse, delivery summary surfacing, CodeGraph runtime preparation in delivery worktrees, PerlGraph 0.1.0 runtime integration, and the CodeGraph candidate-vs-verified evidence split.
+- Problems being solved: intentional scope decisions looked like missing work; scoped verification needed durable proof reuse; Perl projects needed a structural runtime; CodeGraph candidates were too easy to mistake for implementation proof.
+- Approach shift: fulfillment becomes ledger-backed and verifier-versioned, and structural graph evidence is treated as a search aid until verified by source/test/runtime evidence.
+
 ### Evolution Pattern
 
 The repeated pattern is:
@@ -882,6 +954,9 @@ Examples:
 - Unsafe host tool bypass behavior was too important to hide in provider defaults, so the harness added explicit fail-closed tool policy.
 - Provider command handling was too scattered, so Claude/Codex/Copilot/Opencode behavior moved behind concrete AI CLI backend classes.
 - Internal stack guidance was too easy to bury in prompt prose, so Echelon Stacks became schema-backed, preflighted, and rendered into deterministic context.
+- Reverse-engineering knowledge was too transient, so validated RE generations became published workspace artifacts under `re/`.
+- Scope exceptions were too informal, so deferrals became explicit ledger entries that fulfillment and land can audit.
+- Structural graph evidence was too easy to over-trust, so CodeGraph/PerlGraph outputs now stay candidate/degraded unless independently verified.
 - Spec folders became hard to review, so artifact indexing became deterministic and regenerated without LLM tokens.
 - Landing could leave users in unsafe merge states, so `echelon land` gained a state machine with prepare, verify, push, continue, and conflict policies.
 
@@ -899,7 +974,7 @@ Making long-running AI work resumable:
 
 Turning "done" into evidence:
 
-- The history moves from agent verdicts toward progress integrity, fulfillment reports, task contracts, implementation maps, CodeGraph evidence, Lexicon validation, source contracts, and blocking gates.
+- The history moves from agent verdicts toward progress integrity, fulfillment reports, task contracts, implementation maps, CodeGraph/PerlGraph candidate evidence, verified source/test/runtime evidence, Lexicon validation, source contracts, and blocking gates.
 - Meetup angle: "A build is not complete because the agent says it is complete; it is complete when the evidence connects spec, tasks, code, and verification."
 
 Handling brownfield and polyrepo reality:
@@ -914,7 +989,7 @@ Improving human operability:
 
 ### Suggested Narrative Arc for the Meetup
 
-The clean story is not "we built 54 agents." The stronger story is:
+The clean story is not "we built 55 agents." The stronger story is:
 
 1. We started by splitting AI engineering work into specialized agents.
 2. That exposed the real problem: coordination, memory, state, and verification.
@@ -998,7 +1073,7 @@ Complexity is high:
 
 - Anthropic recommends starting with the simplest solution and adding agentic complexity only when it pays for itself. Echelon has many agents, workflows, config values, templates, and state files.
 - For a meetup, this should be framed honestly: the current architecture is justified by complex software-delivery workflows, but the same pattern would be too heavy for many simpler automation tasks.
-- Version 3.0.0 makes that complexity more explicit through workspace modeling, Lexicon gates, fulfillment refresh policies, and phase replay commands. These are useful controls, but they increase the onboarding surface.
+- Version 3.3.3 makes that complexity more explicit through workspace modeling, Lexicon gates, fulfillment ledgers, scope deferrals, published RE, structural evidence runtimes, and phase replay commands. These are useful controls, but they increase the onboarding surface.
 
 Some prompts are still large:
 
@@ -1067,7 +1142,7 @@ Harness engineering: from "agent runs commands" to controlled execution substrat
 Loop engineering: from one-shot generation to measured convergence.
 
 - Early phase: success could be interpreted as an agent verdict or a build command result.
-- Improvements: outer/inner Ralph loop, same-failure detection, no-progress escalation, fulfillment refresh policies, progress integrity, review-fix reentry, verify-spec reconciliation, CodeGraph evidence, Lexicon validation, artifact refresh on convergence, block-on-summary-table gates.
+- Improvements: outer/inner Ralph loop, same-failure detection, no-progress escalation, fulfillment refresh policies, verified fulfillment ledger, deferred-scope ledger, progress integrity, review-fix reentry, verify-spec reconciliation, CodeGraph/PerlGraph candidate evidence, Lexicon validation, artifact refresh on convergence, block-on-summary-table gates.
 - Good: Echelon turns AI coding into a feedback system.
 - Risk: loops need strong stopping criteria; otherwise they can spend tokens without meaningful progress.
 - Meetup artifact to show: a failed verify result feeding the next iteration, a fulfillment report blocking land, a `HARNESS HISTORY` refresh decision, or a review comment becoming `review-fix-{n}.md`.
@@ -1218,7 +1293,7 @@ Show:
 
 Avoid:
 
-- Listing all 54 agents in detail.
+- Listing all 55 agents in detail.
 - Over-selling full autonomy.
 
 ### Angle 2: "Building a Safe Autonomous Build Loop"
