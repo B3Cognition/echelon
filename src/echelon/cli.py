@@ -55,7 +55,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.3.6"
+CLI_VERSION = "3.3.7"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -5272,6 +5272,12 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
                     or current_state.get("convergence_detected")
                 )
             ):
+                completed = current_state.get("completed_phases")
+                next_solution_phase = _next_incomplete_solution_phase(
+                    completed if isinstance(completed, list) else []
+                )
+                if next_solution_phase is not None:
+                    return next_solution_phase
                 if _phase_a_ready_to_build(project_root, current_state):
                     return None
                 if current_state.get("status") == "done":
@@ -5280,6 +5286,12 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         except Exception:
             current_state = {}
     active_spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
+    completed = current_state.get("completed_phases")
+    completed_phases = completed if isinstance(completed, list) else []
+    next_solution_phase = _next_incomplete_solution_phase(completed_phases)
+    if next_solution_phase is not None:
+        return next_solution_phase
+
     if current_state.get("status") == "done" and _phase_a_ready_to_build(project_root, current_state):
         if _explicit_run_local_spec_needs_publication(
             project_root,
@@ -5299,8 +5311,6 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         return None
 
     # 0. Constitution phase provenance first, artifact integrity second.
-    completed = current_state.get("completed_phases")
-    completed_phases = completed if isinstance(completed, list) else []
     if "phase1-constitution" not in completed_phases:
         return "phase1-constitution"
     const_path = project_root / ".specify" / "memory" / "constitution.md"
@@ -5448,6 +5458,29 @@ def _needs_phase3_specialists_recovery(
     if not (active_spec_dir / "intent-alignment-check.md").exists():
         return False
     return (active_spec_dir / "spec.md").exists()
+
+
+def _next_incomplete_solution_phase(completed_phases: list) -> str | None:
+    """Return the next required solution phase after tracker alignment.
+
+    Older interrupted runs can have stale plan/task artifacts from a previous
+    attempt. Once tracker alignment has completed, phase history is a stronger
+    signal than file existence: missing recorded solution phases mean those
+    artifacts have not been freshly regenerated for this run.
+    """
+
+    if "phase2-tracker-alignment" not in completed_phases:
+        return None
+    for phase_id in (
+        "phase3-specialists",
+        "phase3-how",
+        "phase3-sentinel",
+        "phase3-plan",
+        "phase3-consensus",
+    ):
+        if phase_id not in completed_phases:
+            return phase_id
+    return None
 
 
 def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:

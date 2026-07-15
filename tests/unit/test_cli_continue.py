@@ -68,6 +68,68 @@ def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path
     assert _next_continue_phase(tmp_path) is None
 
 
+def test_continue_ignores_stale_ready_files_when_solution_phases_were_skipped(
+    tmp_path: Path,
+) -> None:
+    _write_real_constitution(tmp_path)
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "done",
+            "phase": "done",
+            "spec_id": "001-demo",
+            "published_spec_dir": "specs/001-demo",
+            "completed_phases": [
+                "init",
+                "phase1-constitution",
+                "phase1-what",
+                "phase1-why2",
+                "phase2-decide",
+                "phase2-strategic-overview",
+                "phase2-tracker-alignment",
+                "phase4-document",
+            ],
+        },
+    )
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "quality-gates.md").write_text("# Quality Gates\n\n## Verdict: PASS\n")
+    (spec_dir / "constitution.md").write_text("# Constitution\n\nReal project rules.\n")
+    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+        (spec_dir / name).write_text(f"# stale {name}\n", encoding="utf-8")
+
+    assert _next_continue_phase(tmp_path) == "phase3-specialists"
+
+
+def test_continue_resumes_next_missing_solution_phase_even_with_ready_files(
+    tmp_path: Path,
+) -> None:
+    _write_real_constitution(tmp_path)
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "done",
+            "phase": "done",
+            "spec_id": "001-demo",
+            "published_spec_dir": "specs/001-demo",
+            "completed_phases": [
+                "phase1-constitution",
+                "phase2-tracker-alignment",
+                "phase3-specialists",
+                "phase4-document",
+            ],
+        },
+    )
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "quality-gates.md").write_text("# Quality Gates\n\n## Verdict: PASS\n")
+    (spec_dir / "constitution.md").write_text("# Constitution\n\nReal project rules.\n")
+    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+        (spec_dir / name).write_text(f"# stale {name}\n", encoding="utf-8")
+
+    assert _next_continue_phase(tmp_path) == "phase3-how"
+
+
 def test_continue_reopens_done_run_to_publish_complete_run_local_artifacts(
     tmp_path: Path,
 ) -> None:

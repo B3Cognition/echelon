@@ -926,9 +926,15 @@ def test_source_local_semantic_repair_requeues_only_the_failing_source(
         def __init__(self) -> None:
             super().__init__()
             self.specifier_sources: list[str] = []
+            self.workspace_synthesis_count = 0
 
         def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
             phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
+            if (
+                phase == "re-extract-2-specify"
+                and "Generate source overviews and workspace synthesis only" in prompt
+            ):
+                self.workspace_synthesis_count += 1
             if phase == "re-extract-2-specify" and "Source ID: `" in prompt:
                 self.specifier_sources.append(
                     prompt.split("Source ID: `", 1)[1].split("`", 1)[0]
@@ -966,6 +972,7 @@ def test_source_local_semantic_repair_requeues_only_the_failing_source(
 
     assert result.completed
     assert provider.specifier_sources == ["api", "web", "api"]
+    assert provider.workspace_synthesis_count == 2
 
 
 @pytest.mark.unit

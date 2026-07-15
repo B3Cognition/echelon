@@ -1064,6 +1064,7 @@ class ReExtractionController:
                 for failure in semantic_failures
                 if failure.domain_id
             ]
+        state["re_workspace_synthesis_complete"] = False
         state["re_specification_targets"] = []
         debt_sources = state.setdefault("re_quality_debt_sources", [])
         if isinstance(debt_sources, list) and source_id not in debt_sources:
@@ -1133,6 +1134,7 @@ class ReExtractionController:
             source_state["status"] = "active"
             state["re_active_source_id"] = source_id
             state["re_specification_targets"] = targets
+            state["re_workspace_synthesis_complete"] = False
             state["phase"] = "re-extract-2-specify"
             self._reported_source_id = None
             self._save_state(state)
