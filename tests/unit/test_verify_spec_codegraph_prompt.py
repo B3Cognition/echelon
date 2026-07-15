@@ -173,6 +173,32 @@ def test_verify_spec_stage4_forbids_broad_source_exploration() -> None:
     assert "do not inspect outside that queue" in lowered
 
 
+def test_verify_spec_stage4_preserves_weak_codegraph_as_candidate_evidence() -> None:
+    phase_text = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
+    mapper_text = (
+        ROOT / "extension" / "agents" / "build" / "implementation-mapper.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (phase_text, mapper_text):
+        lowered = " ".join(text.lower().split())
+        assert "do not dismiss codegraph evidence as useless" in lowered
+        assert "fallback inspection refines codegraph candidates" in lowered
+        assert "does not replace or ignore them" in lowered
+
+
+def test_verify_spec_stage4_separates_manual_evidence_from_codegraph_evidence() -> None:
+    phase_text = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
+    mapper_text = (
+        ROOT / "extension" / "agents" / "build" / "implementation-mapper.md"
+    ).read_text(encoding="utf-8")
+
+    for text in (phase_text, mapper_text):
+        lowered = " ".join(text.lower().split())
+        assert "manual source/test citations may correct the implementation evidence and test evidence cells" in lowered
+        assert "must not overwrite or erase the deterministic codegraph evidence cell" in lowered
+        assert "mark them as contradicted or unrelated in notes" in lowered
+
+
 def test_verify_spec_stage4_includes_perlgraph_structural_context() -> None:
     phase_text = (PHASE_DIR / "verify-spec-4-map.md").read_text(encoding="utf-8")
     mapper_text = (

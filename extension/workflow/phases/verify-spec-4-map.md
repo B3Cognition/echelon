@@ -73,6 +73,17 @@ unless the cited source/test evidence is directly contradictory. Treat
 inspection. Inspect source/tests only for IDs in that queue, plus the cited
 files/symbols/tests of a `high` or `medium` deterministic row that appears
 contradictory. Do not inspect outside that queue or cited evidence set.
+Do not dismiss CodeGraph evidence as useless when its cited symbols are generic,
+term-matched, low-confidence, or contradictory-looking. Low-confidence
+CodeGraph rows are candidate structural leads, not fulfillment proof; fallback
+inspection refines CodeGraph candidates and does not replace or ignore them.
+Carry the cited candidate symbols into the implementation map's CodeGraph
+Evidence or Notes cells unless source inspection proves they are unrelated.
+Manual source/test citations may correct the Implementation Evidence and Test
+Evidence cells, but must not overwrite or erase the deterministic CodeGraph
+Evidence cell. When CodeGraph candidates are generic term matches or conflict
+with direct source inspection, keep their symbols in CodeGraph Evidence and mark
+them as contradicted or unrelated in Notes.
 
 Use `{verify_run_dir}/perlgraph-summary.json` and
 `{verify_run_dir}/perlgraph-analysis.json` as additional structural evidence for

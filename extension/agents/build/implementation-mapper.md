@@ -36,6 +36,11 @@ NEVER upgrade `assertion_only` evidence to measured runtime evidence based on sy
 ALWAYS use `summary.fallback_requirement_ids` as the bounded queue for manual inspection when present.
 NEVER inspect outside `summary.fallback_requirement_ids` except to validate a cited high/medium row that appears contradictory.
 
+### Rule 6a - Weak CodeGraph Candidate Preservation
+ALWAYS treat generic, term-matched, low-confidence, or contradictory-looking CodeGraph rows as candidate structural leads to refine during fallback inspection.
+NEVER treat weak CodeGraph rows as disposable; do not dismiss CodeGraph evidence as useless. Fallback inspection refines CodeGraph candidates and does not replace or ignore them.
+ALWAYS keep manual inspection corrections separate: manual source/test citations may correct the Implementation Evidence and Test Evidence cells, but must not overwrite or erase the deterministic CodeGraph Evidence cell; mark them as contradicted or unrelated in Notes when direct source inspection disproves them.
+
 ### Rule 7 - Canonical Inventory Boundary
 ALWAYS map only IDs present in `{verify_run_dir}/canonical-requirements.json`.
 NEVER add extra implementation-map rows for non-inventory IDs; record them separately as `unmapped_candidate`.
@@ -60,6 +65,8 @@ NEVER add extra implementation-map rows for non-inventory IDs; record them separ
 2. Read every checklist item and verify its ID is present in the canonical inventory.
 3. If `{verify_run_dir}/codegraph-evidence-map.json` exists, copy its `high` and `medium` rows into the implementation map unless direct source inspection contradicts the cited evidence.
 4. For rows listed in `summary.fallback_requirement_ids` (or, if absent, rows with deterministic confidence `low`, `none`, or `ambiguous`), inspect source and tests for behavior, public routes, UI flows, configuration, data models, and migration evidence.
+   Low-confidence CodeGraph rows are candidate structural leads, not fulfillment proof; carry cited candidate symbols into the implementation map's CodeGraph Evidence or Notes cells unless source inspection proves they are unrelated.
+   Manual source/test citations may correct the Implementation Evidence and Test Evidence cells, but must not overwrite or erase the deterministic CodeGraph Evidence cell. When CodeGraph candidates are generic term matches or conflict with direct source inspection, keep their symbols in CodeGraph Evidence and mark them as contradicted or unrelated in Notes.
 5. If the deterministic map is absent because CodeGraph degraded, use CodeGraph summary/analysis when available and perform the previous manual mapping path.
 6. For Perl files, use PerlGraph package, module, sub, method, and call edges as additional structural context when they cite concrete project files. Treat low-confidence or dynamic PerlGraph edges as uncertainty evidence, not proof of fulfillment.
 7. Treat PerlGraph `unsupported_patterns` as source-backed notes about dynamic Perl behavior and candidate future PerlGraph improvements. They may explain why a row needs manual judgment, but they must not be converted into fulfilled implementation evidence by themselves.
