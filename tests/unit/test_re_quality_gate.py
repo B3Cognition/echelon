@@ -247,6 +247,43 @@ def test_semantic_review_requires_complete_domain_audit_and_evidence(
 
 
 @pytest.mark.unit
+def test_semantic_review_rejects_invalid_repair_evidence_with_domain_detail(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    payload = {
+        "schema_version": 1,
+        "domains": [
+            {
+                "source_id": "api",
+                "domain_id": "001-re-domain",
+                "verdict": "REPAIR",
+                "findings": [
+                    "The retry exhaustion behavior is absent from the failure scenarios.",
+                    "The timeout behavior is absent from the failure scenarios.",
+                ],
+                "source_evidence": [
+                    "`src/file-1.ts:1`",
+                    "`sources/api/specs/001-re-domain/spec.md:10-12`",
+                    "`runs/run-test/re/quality/sources/api.json` (coverage_pct: 59.15)",
+                ],
+            }
+        ],
+    }
+
+    report, error = validate_semantic_quality_review(
+        run_dir / "re", _plan(run_dir), payload
+    )
+
+    assert report is None
+    assert error is not None
+    assert "api/001-re-domain" in error
+    assert "needs 2 valid source citation(s), found 1" in error
+    assert "`sources/api/specs/001-re-domain/spec.md:10-12`" in error
+    assert "`runs/run-test/re/quality/sources/api.json`" in error
+
+
+@pytest.mark.unit
 def test_semantic_review_rejects_an_incomplete_domain_inventory(tmp_path: Path) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",))
 
@@ -255,4 +292,7 @@ def test_semantic_review_rejects_an_incomplete_domain_inventory(tmp_path: Path) 
     )
 
     assert report is None
-    assert error == "semantic quality review did not audit every refreshed domain"
+    assert error is not None
+    assert "semantic quality review did not audit every refreshed domain" in error
+    assert "missing 1" in error
+    assert "api/001-re-domain" in error

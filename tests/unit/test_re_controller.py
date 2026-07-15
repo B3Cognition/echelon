@@ -149,6 +149,30 @@ def test_source_convergence_quality_upgrade_applies_to_an_already_migrated_run()
 
 
 @pytest.mark.unit
+def test_semantic_quality_review_protocol_upgrade_clears_stale_invalid_attempts() -> None:
+    state = {
+        "phase": "re-extract-5-validate",
+        "status": "blocked",
+        "blocked_reason": "re_semantic_quality_review_invalid",
+        "re_semantic_review_invalid_attempts": 5,
+        "re_semantic_review_invalid_error": (
+            "semantic quality review REPAIR findings need valid source evidence"
+        ),
+        "re_agent_result_detail": (
+            "semantic quality review REPAIR findings need valid source evidence"
+        ),
+    }
+
+    assert ReExtractionController._upgrade_semantic_quality_review_protocol(state)
+
+    assert state["re_semantic_quality_review_protocol_version"] == 2
+    assert "re_semantic_review_invalid_attempts" not in state
+    assert "re_semantic_review_invalid_error" not in state
+    assert "re_agent_result_detail" not in state
+    assert state["blocked_reason"] == "re_semantic_quality_review_invalid"
+
+
+@pytest.mark.unit
 def test_source_local_convergence_prints_source_start_and_ready_summary(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -945,7 +969,7 @@ def test_source_local_semantic_repair_requeues_only_the_failing_source(
 
 
 @pytest.mark.unit
-def test_controller_initializes_missing_re_state_before_first_dispatch(
+def test_controller_preserves_agent_block_reason_after_initializing_re_state(
     tmp_path: Path,
 ) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",))
@@ -961,6 +985,7 @@ def test_controller_initializes_missing_re_state_before_first_dispatch(
                     "verdict": "BLOCKED",
                     "state_updates": {},
                     "journal_entries": [],
+                    "blocked_reason": "source analysis required before specification",
                 },
                 raw_output="",
                 duration_ms=1,
@@ -975,14 +1000,18 @@ def test_controller_initializes_missing_re_state_before_first_dispatch(
         extension_root=_extension_root(tmp_path),
     ).run()
 
-    assert result.blocked_reason == "re_agent_dispatch_failed"
+    assert result.blocked_reason == (
+        "re_agent_blocked: source analysis required before specification"
+    )
     state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
     assert state["phase"] == "re-extract-2-specify"
     assert state["status"] == "blocked"
+    assert state["re_agent_result_detail"] == "source analysis required before specification"
+    assert state["last_dispatch"]["post_dispatch_complete"] is True
 
 
 @pytest.mark.unit
-def test_controller_reinitializes_legacy_state_before_first_dispatch(
+def test_controller_keeps_transport_failure_separate_from_agent_block(
     tmp_path: Path,
 ) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",))
@@ -992,12 +1021,8 @@ def test_controller_reinitializes_legacy_state_before_first_dispatch(
             phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
             self.phases.append(phase)
             return SquadAgentResult(
-                exit_code=0,
-                echelon_result={
-                    "verdict": "BLOCKED",
-                    "state_updates": {},
-                    "journal_entries": [],
-                },
+                exit_code=1,
+                echelon_result=None,
                 raw_output="",
                 duration_ms=1,
                 timed_out=False,
@@ -1017,6 +1042,82 @@ def test_controller_reinitializes_legacy_state_before_first_dispatch(
     state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
     assert state["run_id"] == run_dir.name
     assert state["phase"] == "re-extract-2-specify"
+    assert state["last_dispatch"]["post_dispatch_complete"] is False
+
+
+@pytest.mark.unit
+def test_agent_blocked_deep_spec_gate_failure_enters_bounded_repair_loop(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "mode": "workspace",
+            "re_convergence_schema_version": 1,
+            "re_source_budgets": {
+                "max_source_cycles": 5,
+                "max_domain_repairs": 5,
+                "max_source_reanalysis": 5,
+            },
+            "re_source_states": {},
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    spec.write_text("# Architecture summary\n", encoding="utf-8")
+
+    class GateBlockingProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            phase = self.phases[-1]
+            if phase == "re-extract-2-specify" and self.phases.count(phase) == 1:
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "BLOCKED",
+                        "state_updates": {},
+                        "journal_entries": [],
+                        "blocked_reason": "deterministic deep-spec gate reported missing evidence",
+                    },
+                    raw_output="",
+                    duration_ms=1,
+                    timed_out=False,
+                )
+            if phase == "re-extract-2-specify" and self.phases.count(phase) == 2:
+                spec.write_text(_deep_spec("api", "v1"), encoding="utf-8")
+            updates: dict[str, int] = {}
+            if phase == "re-extract-3-verify":
+                updates["coverage_pct"] = 80
+            if phase == "re-extract-5-validate":
+                updates["resolution_pct"] = 80
+            return SquadAgentResult(
+                exit_code=result.exit_code,
+                echelon_result={**result.echelon_result, "state_updates": updates},
+                raw_output=result.raw_output,
+                duration_ms=result.duration_ms,
+                timed_out=result.timed_out,
+            )
+
+    provider = GateBlockingProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    # Two source-domain attempts plus the mandatory workspace-synthesis target.
+    assert provider.phases.count("re-extract-2-specify") == 3
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["re_source_states"]["api"]["domain_repairs"] == {
+        "001-re-domain": 1
+    }
+    assert "re_agent_result_detail" not in state
+    assert state["last_dispatch"]["post_dispatch_complete"] is True
 
 
 @pytest.mark.unit
@@ -1445,10 +1546,49 @@ def test_invalid_semantic_review_retries_with_controller_validation_feedback(
     assert result.completed
     assert len(provider.semantic_prompts) == 2
     assert "## Controller Validation Feedback" in provider.semantic_prompts[1]
-    assert "REPAIR findings need valid source evidence" in provider.semantic_prompts[1]
+    assert "semantic quality review invalid for api/001-re-domain" in (
+        provider.semantic_prompts[1]
+    )
+    assert "src/file-1.ts (path referenced but not validated)" in (
+        provider.semantic_prompts[1]
+    )
     state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
     assert "re_semantic_review_invalid_attempts" not in state
     assert "re_semantic_review_invalid_error" not in state
+
+
+@pytest.mark.unit
+def test_semantic_validator_prompt_lists_required_domain_inventory(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=1)
+
+    class CapturingProvider(_ShallowSpecifierProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.semantic_prompt = ""
+
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            if self.phases[-1] == "re-extract-3-verify":
+                result.echelon_result["state_updates"] = {"coverage_pct": 80}
+            if self.phases[-1] == "re-extract-5-validate":
+                self.semantic_prompt = prompt
+            return result
+
+    provider = CapturingProvider()
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert "## Required Semantic Domain Inventory" in provider.semantic_prompt
+    assert "- api/001-re-domain" in provider.semantic_prompt
+    assert "Do not write RE_VALIDATOR_RESULT.yaml" in provider.semantic_prompt
 
 
 @pytest.mark.unit
@@ -1492,13 +1632,17 @@ def test_invalid_semantic_review_blocks_only_after_validation_budget_exhausts(
 
     assert not result.completed
     assert result.blocked_reason == "re_semantic_quality_review_invalid"
+    assert result.blocked_detail is not None
+    assert "semantic quality review invalid for api/001-re-domain" in (
+        result.blocked_detail
+    )
     assert provider.phases.count("re-extract-5-validate") == 2
     state = json.loads(state_path.read_text(encoding="utf-8"))
     assert state["re_semantic_review_invalid_attempts"] == 2
-    assert (
+    assert "semantic quality review invalid for api/001-re-domain" in (
         state["re_semantic_review_invalid_error"]
-        == "semantic quality review REPAIR findings need valid source evidence"
     )
+    assert "src/file-1.ts (not a citation)" in state["re_semantic_review_invalid_error"]
 
 
 @pytest.mark.unit

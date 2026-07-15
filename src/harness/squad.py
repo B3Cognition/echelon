@@ -1417,6 +1417,11 @@ class SquadController:
         publication_error = (result.state_updates or {}).get("re_publication_error")
         if isinstance(publication_error, str) and publication_error.strip():
             state["re_publication_error"] = publication_error
+        re_detail = (result.state_updates or {}).get("re_agent_result_detail")
+        if isinstance(re_detail, str) and re_detail.strip():
+            state["re_agent_result_detail"] = re_detail.strip()
+        else:
+            state.pop("re_agent_result_detail", None)
         state["last_dispatch"] = {
             "phase_id": phase,
             "verdict": result.verdict,

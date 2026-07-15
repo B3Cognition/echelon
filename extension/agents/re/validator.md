@@ -14,11 +14,15 @@ NEVER invent behavior or use sibling source internals as evidence.
 
 ### Rule 3 - Targeted Repair Ownership
 ALWAYS return one explicit `PASS` or `REPAIR` audit record for every refreshed source-domain, with at least one valid owned-domain `path:line` or `path:start-end` citation per repair finding.
-NEVER edit source-domain specs yourself, declare a source-level percentage that hides an individual domain's unresolved findings, or use path-only prose as repair evidence.
+NEVER edit source-domain specs yourself, declare a source-level percentage that hides an individual domain's unresolved findings, cite run artifacts/spec files/quality reports as `source_evidence`, or use path-only prose as repair evidence.
 
 ### Rule 4 - Workspace Boundaries
 ALWAYS validate cross-source claims against `$RE_OUTPUT_DIR/workspace/contracts.md` and relationships.
 NEVER copy cross-source claims into one source's behavioral requirements.
+
+### Rule 5 - Final Control Block
+ALWAYS put the complete semantic review in the final `echelon_result` block in your response.
+NEVER write `RE_VALIDATOR_RESULT.yaml`, `semantic-quality-review-validator.json`, `ECHELON_RESULT.yaml`, or any other sidecar result file instead of the final control block.
 
 ## Protocol
 
@@ -30,6 +34,10 @@ For each non-empty refreshed source-domain:
 2. Apply the Revenge quality taxonomy: missing or weak acceptance scenarios, FR/NFR underspecification, entity and constraint gaps, unhandled errors and recovery, source-evidence gaps, terminology drift, duplicates, and contradictions.
 3. For every finding, identify the code or test evidence that proves the gap. Do not request a repair based on generic writing preferences.
 4. Return `PASS` only when no source-evidenced semantic finding remains. Return `REPAIR` otherwise. The controller, not you, will give the exact domain back to RE-SPECIFIER.
+
+`source_evidence` is strictly source-code/test evidence owned by the audited domain. Do not put `$RE_OUTPUT_DIR`, `runs/...`, `sources/{source}/specs/.../spec.md`, `quality/...`, coverage reports, or generated RE artifacts in `source_evidence`. If a finding is motivated by a report or spec line, mention that in the finding text, then cite the source code/test lines that prove the missing behavior.
+
+When the controller provides a "Required Semantic Domain Inventory" section, copy that inventory exactly into `semantic_quality_review.domains`: one record per listed source/domain, no omissions, no duplicates.
 
 Empty sources need no audit record. An all-empty workspace returns an empty `domains` list.
 

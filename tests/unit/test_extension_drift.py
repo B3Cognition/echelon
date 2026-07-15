@@ -59,6 +59,24 @@ def test_assess_extension_drift_ignores_project_local_config(tmp_path: Path) -> 
     assert report.drifted is False
 
 
+def test_assess_extension_drift_honors_extensionignore(tmp_path: Path) -> None:
+    source = tmp_path / "source" / "extension"
+    installed = tmp_path / "project" / ".specify" / "extensions" / "echelon"
+    _write(source / ".extensionignore", "docs/\ntests/\n")
+    _write(source / "extension.yml", "name: echelon\n")
+    _write(source / "scripts" / "node" / "tool" / "docs" / "notes.md", "ignored\n")
+    _write(source / "scripts" / "node" / "tool" / "tests" / "tool.test.ts", "ignored\n")
+    _write(source / "scripts" / "node" / "tool" / "dist" / "tool.js", "ship\n")
+    _write(installed / "extension.yml", "name: echelon\n")
+    _write(installed / "scripts" / "node" / "tool" / "dist" / "tool.js", "ship\n")
+
+    report = assess_extension_drift(source, installed)
+
+    assert report.status == "in_sync"
+    assert report.drifted is False
+    assert report.missing_files == []
+
+
 def test_resolve_extension_source_dir_uses_explicit_env_repo_root(
     tmp_path: Path,
 ) -> None:

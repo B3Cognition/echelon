@@ -8,3 +8,4 @@ specs/
 .specify
 .claude
 memory/
+node_modules/

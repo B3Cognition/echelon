@@ -201,12 +201,28 @@ def validate_semantic_quality_review(
             source_root=Path(source.absolute_path),
             domain_root=domain.root,
         )
+        unmatched_evidence = tuple(
+            reference for reference in evidence if not SOURCE_REFERENCE.search(reference)
+        )
+        invalid_source_evidence = tuple(sorted(invalid_evidence)) + unmatched_evidence
         if verdict == "REPAIR" and (
-            invalid_evidence or len(valid_evidence) < len(findings)
+            invalid_source_evidence or len(valid_evidence) < len(findings)
         ):
-            return None, "semantic quality review REPAIR findings need valid source evidence"
-        if invalid_evidence:
-            return None, "semantic quality review contains invalid source evidence"
+            return None, _semantic_review_evidence_error(
+                source_id=source_id,
+                domain_id=domain_id,
+                valid_count=len(valid_evidence),
+                required_count=len(findings),
+                invalid_evidence=invalid_source_evidence,
+            )
+        if invalid_source_evidence:
+            return None, _semantic_review_evidence_error(
+                source_id=source_id,
+                domain_id=domain_id,
+                valid_count=len(valid_evidence),
+                required_count=0,
+                invalid_evidence=invalid_source_evidence,
+            )
         seen.add(key)
         if verdict == "REPAIR":
             failures.append(
@@ -228,8 +244,47 @@ def validate_semantic_quality_review(
                 )
             )
     if seen != set(expected):
-        return None, "semantic quality review did not audit every refreshed domain"
+        missing = sorted(set(expected) - seen)
+        extra = sorted(seen - set(expected))
+        parts = ["semantic quality review did not audit every refreshed domain"]
+        if missing:
+            preview = ", ".join(f"{source}/{domain}" for source, domain in missing[:10])
+            if len(missing) > 10:
+                preview += f", ... +{len(missing) - 10} more"
+            parts.append(f"missing {len(missing)}: {preview}")
+        if extra:
+            preview = ", ".join(f"{source}/{domain}" for source, domain in extra[:10])
+            if len(extra) > 10:
+                preview += f", ... +{len(extra) - 10} more"
+            parts.append(f"unexpected {len(extra)}: {preview}")
+        return None, "; ".join(parts)
     return ReQualityReport(passed=not failures, failures=tuple(failures)), None
+
+
+def _semantic_review_evidence_error(
+    *,
+    source_id: str,
+    domain_id: str,
+    valid_count: int,
+    required_count: int,
+    invalid_evidence: tuple[str, ...],
+) -> str:
+    parts = [
+        f"semantic quality review invalid for {source_id}/{domain_id}:",
+    ]
+    if required_count:
+        parts.append(
+            f"REPAIR needs {required_count} valid source citation(s), "
+            f"found {valid_count}"
+        )
+    else:
+        parts.append("source_evidence contains invalid source citation(s)")
+    if invalid_evidence:
+        preview = ", ".join(invalid_evidence[:5])
+        if len(invalid_evidence) > 5:
+            preview += f", ... +{len(invalid_evidence) - 5} more"
+        parts.append(f"invalid source_evidence: {preview}")
+    return " ".join(parts)
 
 
 def validate_staged_re_quality(

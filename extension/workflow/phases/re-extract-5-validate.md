@@ -13,7 +13,7 @@
 
 ## Dispatch Prompt
 
-Instruct RE-VALIDATOR to audit every refreshed source-domain independently against its owned code and tests. It must apply the ambiguity, underspecification, consistency, source-evidence, error/recovery, FR, NFR, and acceptance-scenario taxonomy. It must return one complete `semantic_quality_review` record per refreshed domain: `PASS` with no findings, or `REPAIR` with at least one valid owned-domain backticked `path:line` or `path:start-end` citation per finding. It must not edit any spec; the controller routes repair domains to RE-SPECIFIER. Path-only prose, unverifiable locations, and evidence from another domain are invalid.
+Instruct RE-VALIDATOR to audit every refreshed source-domain independently against its owned code and tests. It must apply the ambiguity, underspecification, consistency, source-evidence, error/recovery, FR, NFR, and acceptance-scenario taxonomy. It must return one complete `semantic_quality_review` record per refreshed domain: `PASS` with no findings, or `REPAIR` with at least one valid owned-domain backticked `path:line` or `path:start-end` citation per finding. It must not edit any spec; the controller routes repair domains to RE-SPECIFIER. Path-only prose, unverifiable locations, generated spec paths, quality reports, run artifacts, and evidence from another domain are invalid as `source_evidence`.
 
 ## Expected Outputs
 

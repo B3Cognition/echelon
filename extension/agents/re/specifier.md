@@ -124,6 +124,9 @@ are controller-owned.
 
 Before returning `DONE`, run the controller-appended `echelon re check-domain` command. It verifies the target spec meets the controller-provided adaptive scenario/FR/NFR counts, every listed item has the required valid evidence, every scenario includes Given/When/Then, and the spec contains at least five concrete backticked `path:line` references. Each reference may be source-root or domain-root relative, but must resolve inside its owned root and line range. On failure fix the reported target and run the command again; do not return `DONE`.
 
+ALWAYS return `verdict: BLOCKED` with the concise `echelon re check-domain` failure in top-level `blocked_reason` when the gate still fails after a repair attempt; leave the canonical target spec available for controller measurement.
+NEVER replace a deterministic target-quality failure with a generic dispatch failure, delete the target spec, or return `DONE` while the gate fails.
+
 ## Workspace Synthesis Protocol
 
 Only when the controller target says `workspace-synthesis`, build the workspace union from current published sources, refreshed staged sources, empty sources, unavailable retained sources, and explicit removals in `re-workspace-inputs.json`. That target also writes source overviews; it must not modify any source-domain spec.
