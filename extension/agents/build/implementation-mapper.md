@@ -24,9 +24,9 @@ NEVER reuse stale brownfield RE artifacts when verify-spec produced fresh CodeGr
 ALWAYS use `{verify_run_dir}/perlgraph-summary.json` and `{verify_run_dir}/perlgraph-analysis.json` as additional structural evidence for Perl source files.
 NEVER convert low-confidence or dynamic PerlGraph edges or `unsupported_patterns` into fulfilled implementation evidence by themselves.
 
-### Rule 4 - Deterministic Map Preservation
-ALWAYS preserve `high` and `medium` rows from `codegraph-evidence-map.json` unless direct source inspection contradicts them.
-NEVER perform broad LLM/source exploration for rows already resolved by deterministic CodeGraph evidence.
+### Rule 4 - Deterministic Candidate Preservation
+ALWAYS preserve `codegraph_candidates` from `codegraph-evidence-map.json` as candidate leads with a disposition.
+NEVER treat CodeGraph candidates as verified implementation or test evidence until direct source/test inspection confirms them.
 
 ### Rule 5 - Evidence Semantics Preservation
 ALWAYS preserve each row's `evidence_kind`, `evidence_strength`, and `runtime_threshold` fields in the implementation map.
@@ -39,8 +39,8 @@ NEVER inspect outside `summary.fallback_requirement_ids` except to validate a ci
 ### Rule 6a - Weak CodeGraph Candidate Preservation
 ALWAYS treat generic, term-matched, low-confidence, or contradictory-looking CodeGraph rows as candidate structural leads to refine during fallback inspection.
 NEVER treat weak CodeGraph rows as disposable; do not dismiss CodeGraph evidence as useless. Fallback inspection refines CodeGraph candidates and does not replace or ignore them.
-ALWAYS keep manual inspection corrections separate: manual source/test citations may correct the Implementation Evidence and Test Evidence cells, but must not overwrite or erase the deterministic CodeGraph Evidence cell; mark them as contradicted or unrelated in Notes when direct source inspection disproves them.
-NEVER replace, delete, or silently downgrade deterministic CodeGraph Evidence cells when manual inspection changes source/test evidence.
+ALWAYS keep manual inspection corrections separate: manual source/test citations belong in Verified Implementation Evidence and Verified Test Evidence cells, while deterministic leads stay in CodeGraph Candidates with Candidate Disposition `accepted`, `candidate_only`, `contradicted`, `unrelated`, or `none`.
+NEVER replace, delete, silently downgrade, or copy deterministic CodeGraph Candidates into verified evidence cells unless direct source/test inspection confirms them.
 
 ### Rule 7 - Canonical Inventory Boundary
 ALWAYS map only IDs present in `{verify_run_dir}/canonical-requirements.json`.
@@ -64,10 +64,10 @@ NEVER add extra implementation-map rows for non-inventory IDs; record them separ
 
 1. Read `{verify_run_dir}/canonical-requirements.json`; this is the authoritative row set.
 2. Read every checklist item and verify its ID is present in the canonical inventory.
-3. If `{verify_run_dir}/codegraph-evidence-map.json` exists, copy its `high` and `medium` rows into the implementation map unless direct source inspection contradicts the cited evidence.
-4. For rows listed in `summary.fallback_requirement_ids` (or, if absent, rows with deterministic confidence `low`, `none`, or `ambiguous`), inspect source and tests for behavior, public routes, UI flows, configuration, data models, and migration evidence.
-   Low-confidence CodeGraph rows are candidate structural leads, not fulfillment proof; carry cited candidate symbols into the implementation map's CodeGraph Evidence or Notes cells unless source inspection proves they are unrelated.
-   Manual source/test citations may correct the Implementation Evidence and Test Evidence cells, but must not overwrite or erase the deterministic CodeGraph Evidence cell. When CodeGraph candidates are generic term matches or conflict with direct source inspection, keep their symbols in CodeGraph Evidence and mark them as contradicted or unrelated in Notes.
+3. If `{verify_run_dir}/codegraph-evidence-map.json` exists, copy each row's `codegraph_candidates` into the implementation map as candidate evidence only; also preserve `evidence_kind`, `evidence_strength`, `runtime_threshold`, and `confidence`.
+4. For rows listed in `summary.fallback_requirement_ids` (or, if absent, rows with deterministic confidence `low`, `none`, or `ambiguous`), rows with empty CodeGraph candidates, and cited high/medium candidate rows that appear contradictory, inspect source and tests for behavior, public routes, UI flows, configuration, data models, and migration evidence.
+   CodeGraph rows are candidate structural leads, not fulfillment proof. Fallback inspection refines CodeGraph candidates and does not replace or ignore them.
+   Manual source/test citations must go only into the Verified Implementation Evidence and Verified Test Evidence cells. CodeGraph candidates must stay in the CodeGraph Candidates cell with Candidate Disposition `accepted`, `candidate_only`, `contradicted`, `unrelated`, or `none`. When CodeGraph has no evidence for a requirement, use source/test inspection to fill verified evidence and leave CodeGraph Candidates blank with Candidate Disposition `none`.
 5. If the deterministic map is absent because CodeGraph degraded, use CodeGraph summary/analysis when available and perform the previous manual mapping path.
 6. For Perl files, use PerlGraph package, module, sub, method, and call edges as additional structural context when they cite concrete project files. Treat low-confidence or dynamic PerlGraph edges as uncertainty evidence, not proof of fulfillment.
 7. Treat PerlGraph `unsupported_patterns` as source-backed notes about dynamic Perl behavior and candidate future PerlGraph improvements. They may explain why a row needs manual judgment, but they must not be converted into fulfilled implementation evidence by themselves.
@@ -78,14 +78,23 @@ NEVER add extra implementation-map rows for non-inventory IDs; record them separ
 ## Parser Contract
 
 `{verify_run_dir}/implementation-map.md` is read by a deterministic Python
-prepass. Write exactly this 9-column table schema:
+prepass. Write `schema_version: 2` and exactly this 10-column table schema:
 
 ```markdown
-| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |
-|----|-------------------------|---------------|--------------------|---------------|-------------------|-------------------|------------|-------|
-| FR-001 | src/file.ts:function | tests/file.test.ts::case | module.symbol | source_and_test | strong | false | high | ... |
+schema_version: 2
+
+| ID | Verified Implementation Evidence | Verified Test Evidence | CodeGraph Candidates | Candidate Disposition | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |
+|----|----------------------------------|------------------------|----------------------|-----------------------|---------------|-------------------|-------------------|------------|-------|
+| FR-001 | src/file.ts:function | tests/file.test.ts::case | module.symbol | accepted | source_and_test | strong | false | high | ... |
 ```
 
+- Verified evidence cells must cite direct source/test inspection. Do not copy
+  CodeGraph candidates into them unless the cited files/symbols were inspected
+  and verified.
+- CodeGraph Candidates is a deterministic lead/audit column, not fulfillment
+  proof by itself.
+- Candidate Disposition must be one of `accepted`, `candidate_only`,
+  `contradicted`, `unrelated`, or `none`.
 - `Evidence Kind` must be one of `source_and_test`, `source_only`,
   `test_only`, `measured_runtime`, `assertion_only`, `missing`, or `meta`.
 - `Evidence Strength` must be `strong`, `medium`, `weak`, or `none`; do not write `source_and_test_strong` in `Evidence Strength`. Use `Evidence Kind=source_and_test` plus `Evidence Strength=strong` instead.
@@ -101,9 +110,11 @@ Write `{verify_run_dir}/implementation-map.md`:
 ```markdown
 # Implementation Map
 
-| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |
-|----|-------------------------|---------------|--------------------|---------------|-------------------|-------------------|------------|-------|
-| FR-001 | src/file.ts:function | tests/file.test.ts::case | module.symbol | source_and_test | strong | false | high | ... |
+schema_version: 2
+
+| ID | Verified Implementation Evidence | Verified Test Evidence | CodeGraph Candidates | Candidate Disposition | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |
+|----|----------------------------------|------------------------|----------------------|-----------------------|---------------|-------------------|-------------------|------------|-------|
+| FR-001 | src/file.ts:function | tests/file.test.ts::case | module.symbol | accepted | source_and_test | strong | false | high | ... |
 ```
 
 Return `verdict: DONE` when every checklist item has been mapped or explicitly recorded as no evidence found.

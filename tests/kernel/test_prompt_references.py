@@ -125,6 +125,9 @@ def test_verify_spec_map_runs_deterministic_codegraph_evidence_map_first():
     assert "{verify_run_dir}/codegraph-evidence-map.json" in text
     assert "{verify_run_dir}/codegraph-evidence-map.md" in text
     assert "fallback_requirement_ids" in text
+    assert "schema_version: 2" in text
+    assert "Verified Implementation Evidence" in text
+    assert "CodeGraph Candidates" in text
     assert "`Confidence` must be `high`, `medium`, `low`, or `none`" in text
 
 
@@ -185,12 +188,14 @@ def test_build_command_forbids_hand_editing_verify_spec_reports():
 def test_implementation_mapper_respects_deterministic_codegraph_boundary():
     prompt = EXTENSION_ROOT / "agents" / "build" / "implementation-mapper.md"
     text = prompt.read_text()
+    lowered = " ".join(text.lower().split())
 
     assert "{verify_run_dir}/codegraph-evidence-map.json" in text
-    assert "preserve `high` and `medium` rows" in text.lower()
+    assert "preserve `codegraph_candidates`" in text
+    assert "candidate leads with a disposition" in lowered
     assert "fallback_requirement_ids" in text
     assert "low`, `none`, or `ambiguous`" in text
-    assert "NEVER perform broad LLM/source exploration" in text
+    assert "never treat codegraph candidates as verified implementation or test evidence" in lowered
 
 
 def test_sage_uses_appendix_for_decision_calibration_reference():

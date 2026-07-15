@@ -16,6 +16,13 @@ from harness.judgment_prepass import (
 from harness.deferred_scope import apply_defer
 
 
+IMPLEMENTATION_MAP_V2_HEADER = (
+    "schema_version: 2\n\n"
+    "| ID | Verified Implementation Evidence | Verified Test Evidence | CodeGraph Candidates | Candidate Disposition | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+)
+
+
 def _run_harness(args: list[str]) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     src_path = str(Path(__file__).resolve().parents[2] / "src")
@@ -60,10 +67,9 @@ def test_write_judgment_prepass_emits_rows_and_fallback_summary(tmp_path: Path):
     )
     (verify_run_dir / "implementation-map.md").write_text(
         "# Implementation Map\n\n"
-        "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
-        "| FR-001 | app.py:start | tests/test_app.py::test_start | app.start | source_and_test | strong | false | high | |\n"
-        "| NFR-002 | perf.py | tests/test_perf.py::test_budget | perf.metric | assertion_only | strong | true | high | |\n",
+        + IMPLEMENTATION_MAP_V2_HEADER
+        + "| FR-001 | app.py:start | tests/test_app.py::test_start | app.start | accepted | source_and_test | strong | false | high | |\n"
+        + "| NFR-002 | perf.py | tests/test_perf.py::test_budget | perf.metric | accepted | assertion_only | strong | true | high | |\n",
         encoding="utf-8",
     )
     (verify_run_dir / "state.json").write_text("{}", encoding="utf-8")
@@ -76,6 +82,64 @@ def test_write_judgment_prepass_emits_rows_and_fallback_summary(tmp_path: Path):
     by_id = {row["id"]: row for row in payload["rows"]}
     assert by_id["FR-001"]["proposed_status"] == "IMPLEMENTED"
     assert by_id["NFR-002"]["proposed_status"] == "UNVERIFIED"
+
+
+def test_write_judgment_prepass_rejects_legacy_implementation_map_schema(
+    tmp_path: Path,
+):
+    spec_dir = tmp_path / "specs" / "001-demo"
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
+    spec_dir.mkdir(parents=True)
+    verify_run_dir.mkdir(parents=True)
+    (verify_run_dir / "canonical-requirements.json").write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}]}),
+        encoding="utf-8",
+    )
+    (verify_run_dir / "implementation-map.md").write_text(
+        "# Implementation Map\n\n"
+        "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        "| FR-001 | src/a.py:start | tests/test_a.py::test_start | app.start | source_and_test | strong | false | high | |\n",
+        encoding="utf-8",
+    )
+
+    try:
+        write_judgment_prepass(spec_dir=spec_dir, verify_run_dir=verify_run_dir)
+    except ValueError as exc:
+        assert "expected schema_version: 2" in str(exc)
+    else:
+        raise AssertionError("old implementation-map schema was accepted")
+
+
+def test_write_judgment_prepass_uses_verified_evidence_not_candidates(
+    tmp_path: Path,
+):
+    spec_dir = tmp_path / "specs" / "001-demo"
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
+    spec_dir.mkdir(parents=True)
+    verify_run_dir.mkdir(parents=True)
+    (verify_run_dir / "canonical-requirements.json").write_text(
+        json.dumps({"requirements": [{"id": "FR-001"}, {"id": "FR-002"}]}),
+        encoding="utf-8",
+    )
+    (verify_run_dir / "implementation-map.md").write_text(
+        "# Implementation Map\n\n"
+        "schema_version: 2\n\n"
+        "| ID | Verified Implementation Evidence | Verified Test Evidence | CodeGraph Candidates | Candidate Disposition | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        "| FR-001 | src/a.py:start | tests/test_a.py::test_start |  | none | source_and_test | strong | false | high | manual evidence found |\n"
+        "| FR-002 |  |  | src/generic.py::Registry | candidate_only | source_and_test | strong | false | high | candidate not verified |\n",
+        encoding="utf-8",
+    )
+
+    result = write_judgment_prepass(spec_dir=spec_dir, verify_run_dir=verify_run_dir)
+
+    payload = json.loads(result.json_path.read_text(encoding="utf-8"))
+    by_id = {row["id"]: row for row in payload["rows"]}
+    assert by_id["FR-001"]["mechanical"] is True
+    assert by_id["FR-001"]["proposed_status"] == "IMPLEMENTED"
+    assert by_id["FR-002"]["mechanical"] is False
+    assert by_id["FR-002"]["fallback_reason"] == "confidence_or_semantics_require_judgment"
 
 
 def test_prepass_excludes_active_deferred_scope_from_llm_fallback(tmp_path: Path):
@@ -95,8 +159,7 @@ def test_prepass_excludes_active_deferred_scope_from_llm_fallback(tmp_path: Path
     )
     (verify_run_dir / "implementation-map.md").write_text(
         "# Implementation Map\n\n"
-        "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
+        + IMPLEMENTATION_MAP_V2_HEADER,
         encoding="utf-8",
     )
 
@@ -124,9 +187,8 @@ def test_write_judgment_prepass_cli_stamps_success_state(tmp_path: Path):
     )
     (verify_run_dir / "implementation-map.md").write_text(
         "# Implementation Map\n\n"
-        "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
-        "| FR-001 | app.py:start | tests/test_app.py::test_start | app.start | source_and_test | strong | false | high | |\n",
+        + IMPLEMENTATION_MAP_V2_HEADER
+        + "| FR-001 | app.py:start | tests/test_app.py::test_start | app.start | accepted | source_and_test | strong | false | high | |\n",
         encoding="utf-8",
     )
     (verify_run_dir / "state.json").write_text("{}", encoding="utf-8")
@@ -154,9 +216,8 @@ def test_write_judgment_prepass_cli_requires_state_before_writing(tmp_path: Path
     )
     (verify_run_dir / "implementation-map.md").write_text(
         "# Implementation Map\n\n"
-        "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
-        "| FR-001 | app.py:start | tests/test_app.py::test_start | app.start | source_and_test | strong | false | high | |\n",
+        + IMPLEMENTATION_MAP_V2_HEADER
+        + "| FR-001 | app.py:start | tests/test_app.py::test_start | app.start | accepted | source_and_test | strong | false | high | |\n",
         encoding="utf-8",
     )
 
@@ -194,7 +255,7 @@ def test_write_judgment_prepass_cli_reports_missing_map_without_traceback(
 def test_prepass_marks_blank_evidence_rows_missing(tmp_path: Path):
     rows = _build_rows(
         tmp_path,
-        implementation_row="| FR-010 |  |  |  | source_only | weak | false | none | |",
+        implementation_row="| FR-010 |  |  |  | none | source_only | weak | false | none | |",
         requirement_id="FR-010",
     )
     assert rows[0].proposed_status == "MISSING"
@@ -204,7 +265,7 @@ def test_prepass_marks_blank_evidence_rows_missing(tmp_path: Path):
 def test_prepass_falls_back_when_notes_signal_partial_or_ambiguous(tmp_path: Path):
     rows = _build_rows(
         tmp_path,
-        implementation_row="| FR-011 | app.py:run | tests/test_app.py::test_run | app.run | source_and_test | strong | false | high | partial coverage remains |",
+        implementation_row="| FR-011 | app.py:run | tests/test_app.py::test_run | app.run | accepted | source_and_test | strong | false | high | partial coverage remains |",
         requirement_id="FR-011",
     )
     assert rows[0].mechanical is False
@@ -230,9 +291,8 @@ def _build_rows(tmp_path: Path, *, implementation_row: str, requirement_id: str)
     )
     (verify_run_dir / "implementation-map.md").write_text(
         "# Implementation Map\n\n"
-        "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
-        f"{implementation_row}\n",
+        + IMPLEMENTATION_MAP_V2_HEADER
+        + f"{implementation_row}\n",
         encoding="utf-8",
     )
     (verify_run_dir / "state.json").write_text("{}", encoding="utf-8")
@@ -448,17 +508,19 @@ def test_large_map_produces_small_fallback_queue(tmp_path: Path):
     lines = [
         "# Implementation Map",
         "",
-        "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "schema_version: 2",
+        "",
+        "| ID | Verified Implementation Evidence | Verified Test Evidence | CodeGraph Candidates | Candidate Disposition | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in requirement_rows[:18]:
         lines.append(
-            f"| {row['id']} | app.py:{row['id']} | tests/test_app.py::{row['id']} | app.{row['id']} | source_and_test | strong | false | high | |"
+            f"| {row['id']} | app.py:{row['id']} | tests/test_app.py::{row['id']} | app.{row['id']} | accepted | source_and_test | strong | false | high | |"
         )
     lines.append(
-        "| FR-019 | perf.py |  | perf.metric | source_only | medium | false | medium | ambiguous |"
+        "| FR-019 | perf.py |  | perf.metric | candidate_only | source_only | medium | false | medium | ambiguous |"
     )
-    lines.append("| FR-020 |  |  |  | source_only | weak | false | none | |")
+    lines.append("| FR-020 |  |  |  | none | source_only | weak | false | none | |")
     (verify_run_dir / "implementation-map.md").write_text(
         "\n".join(lines) + "\n", encoding="utf-8"
     )
