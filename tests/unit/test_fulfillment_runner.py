@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from harness.fulfillment_runner import FulfillmentRunner
+from harness.fulfillment_runner import FULFILLMENT_VERIFIER_VERSION, FulfillmentRunner
 from kernel.fulfillment import read_fulfillment_metadata
 
 
@@ -51,6 +51,9 @@ def _write_matching_report(report) -> None:
 
 @pytest.mark.unit
 class TestFulfillmentRunner:
+    def test_verifier_version_invalidates_pre_split_ledgers(self):
+        assert FULFILLMENT_VERIFIER_VERSION == "verified-ledger-v2-codegraph-candidates"
+
     def test_refresh_builds_verify_spec_prompt_and_runs_provider(self, tmp_path):
         _write_verify_skill(tmp_path)
         spec_dir = tmp_path / "specs" / "spec-001-demo"
@@ -299,9 +302,10 @@ class TestFulfillmentRunner:
         )
         (verify_run_dir / "implementation-map.md").write_text(
             "# Implementation Map\n\n"
-            "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
-            "| FR-001 | src/a.py | tests/test_a.py::test_a | app.a | source_and_test | strong | false | high | |\n",
+            "schema_version: 2\n\n"
+            "| ID | Verified Implementation Evidence | Verified Test Evidence | CodeGraph Candidates | Candidate Disposition | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |\n"
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+            "| FR-001 | src/a.py | tests/test_a.py::test_a | app.a | accepted | source_and_test | strong | false | high | |\n",
             encoding="utf-8",
         )
         report = spec_dir / "fulfillment-report.md"

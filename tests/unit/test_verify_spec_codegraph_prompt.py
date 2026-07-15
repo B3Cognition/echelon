@@ -151,13 +151,14 @@ def test_verify_spec_stage4_states_parser_conformant_map_schema() -> None:
 
     for text in (phase_text, mapper_text):
         assert (
-            "| ID | Implementation Evidence | Test Evidence | CodeGraph Evidence | "
-            "Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |"
+            "| ID | Verified Implementation Evidence | Verified Test Evidence | CodeGraph Candidates | "
+            "Candidate Disposition | Evidence Kind | Evidence Strength | Runtime Threshold | Confidence | Notes |"
         ) in text
+        assert "schema_version: 2" in text
         assert "Evidence Strength` must be `strong`, `medium`, `weak`, or `none`" in text
         assert "do not write `source_and_test_strong` in `Evidence Strength`" in text
         assert "`Evidence Kind=source_and_test` plus `Evidence Strength=strong`" in text
-        assert "| FR-001 | src/file.ts:function | tests/file.test.ts::case | module.symbol | source_and_test | strong | false | high | ... |" in text
+        assert "| FR-001 | src/file.ts:function | tests/file.test.ts::case | module.symbol | accepted | source_and_test | strong | false | high | ... |" in text
         assert "Do not inspect Echelon source code to discover this schema" in text
         assert "moderate" not in text
 
@@ -184,6 +185,7 @@ def test_verify_spec_stage4_preserves_weak_codegraph_as_candidate_evidence() -> 
         assert "do not dismiss codegraph evidence as useless" in lowered
         assert "fallback inspection refines codegraph candidates" in lowered
         assert "does not replace or ignore them" in lowered
+        assert "candidate structural leads, not fulfillment proof" in lowered
 
 
 def test_verify_spec_stage4_separates_manual_evidence_from_codegraph_evidence() -> None:
@@ -194,9 +196,25 @@ def test_verify_spec_stage4_separates_manual_evidence_from_codegraph_evidence() 
 
     for text in (phase_text, mapper_text):
         lowered = " ".join(text.lower().split())
-        assert "manual source/test citations may correct the implementation evidence and test evidence cells" in lowered
-        assert "must not overwrite or erase the deterministic codegraph evidence cell" in lowered
-        assert "mark them as contradicted or unrelated in notes" in lowered
+        assert "manual source/test citations" in lowered
+        assert "verified implementation evidence and verified test evidence" in lowered
+        assert "codegraph candidates must stay in the codegraph candidates cell" in lowered
+        assert "candidate disposition" in lowered
+
+
+def test_verify_spec_stage5_treats_codegraph_candidates_as_context_only() -> None:
+    judge_text = (PHASE_DIR / "verify-spec-5-judge.md").read_text(encoding="utf-8")
+    guard_text = (ROOT / "extension" / "agents" / "build" / "spec-guard.md").read_text(
+        encoding="utf-8"
+    )
+
+    for text in (judge_text, guard_text):
+        lowered = " ".join(text.lower().split())
+        assert "verified implementation evidence" in lowered
+        assert "verified test evidence" in lowered
+        assert "codegraph candidates" in lowered
+        assert "structural leads" in lowered
+        assert "do not prove fulfillment" in lowered
 
 
 def test_verify_spec_stage4_includes_perlgraph_structural_context() -> None:

@@ -139,30 +139,40 @@ def test_codegraph_evidence_map_prefers_structural_evidence(tmp_path: Path):
     payload = json.loads(out_json.read_text(encoding="utf-8"))
     by_id = {entry["id"]: entry for entry in payload["requirements"]}
 
+    assert payload["schema_version"] == 2
     assert result.counts["high"] == 0
     assert result.counts["medium"] == 1
     assert payload["summary"]["fallback_requirement_ids"] == ["FR-029", "FR-999"]
+    assert "codegraph_candidates" in by_id["FR-004"]
+    assert "implementation_evidence" not in by_id["FR-004"]
+    assert "test_evidence" not in by_id["FR-004"]
+    assert by_id["FR-004"]["candidate_summary"]["source_candidate_count"] >= 1
+    assert by_id["FR-004"]["candidate_summary"]["test_candidate_count"] >= 1
     assert by_id["FR-004"]["confidence"] == "medium"
     assert by_id["FR-004"]["evidence_kind"] == "source_and_test"
-    assert by_id["FR-004"]["evidence_strength"] == "moderate"
+    assert by_id["FR-004"]["evidence_strength"] == "medium"
     assert by_id["FR-004"]["task_ids"] == ["T-004"]
-    assert "RouteResolver::resolve" in by_id["FR-004"]["implementation_evidence"][0]["symbol"]
+    assert "RouteResolver::resolve" in [
+        candidate["symbol"] for candidate in by_id["FR-004"]["codegraph_candidates"]
+    ]
     assert (
         "EngineWiringTests::test_routeResolver_drawsKeysFromDeck_FR004"
-        in by_id["FR-004"]["test_evidence"][0]["symbol"]
+        in [candidate["symbol"] for candidate in by_id["FR-004"]["codegraph_candidates"]]
     )
 
     assert by_id["FR-029"]["confidence"] == "low"
-    assert by_id["FR-029"]["implementation_evidence"]
-    assert by_id["FR-029"]["test_evidence"] == []
+    assert by_id["FR-029"]["codegraph_candidates"]
+    assert by_id["FR-029"]["candidate_summary"]["test_candidate_count"] == 0
 
     assert by_id["FR-999"]["confidence"] == "none"
-    assert by_id["FR-999"]["implementation_evidence"] == []
+    assert by_id["FR-999"]["evidence_kind"] == "missing"
+    assert by_id["FR-999"]["codegraph_candidates"] == []
     assert by_id["FR-999"]["negative_evidence"]
 
     markdown = out_md.read_text(encoding="utf-8")
-    assert "| FR-004 | medium | source_and_test | moderate | False |" in markdown
-    assert "| FR-999 | none | none | none | False |" in markdown
+    assert "| ID | Candidate Confidence | Manual Review | Source Candidates | Test Candidates | Candidate Reasons | Notes |" in markdown
+    assert "| FR-004 | medium | False |" in markdown
+    assert "| FR-999 | none | True |" in markdown
 
 
 def test_codegraph_evidence_map_does_not_substring_match_short_acronyms(tmp_path: Path):
@@ -224,7 +234,7 @@ def test_codegraph_evidence_map_does_not_substring_match_short_acronyms(tmp_path
     entry = json.loads(out_json.read_text(encoding="utf-8"))["requirements"][0]
     assert entry["id"] == "FR-042"
     assert entry["confidence"] == "none"
-    assert entry["implementation_evidence"] == []
+    assert entry["codegraph_candidates"] == []
 
 
 def test_term_match_only_source_and_test_stays_in_fallback_queue(tmp_path: Path):
@@ -362,8 +372,13 @@ def test_requirement_anchored_test_lifts_called_implementation_symbol(tmp_path: 
     entry = json.loads(out_json.read_text(encoding="utf-8"))["requirements"][0]
     assert entry["confidence"] == "medium"
     assert entry["evidence_kind"] == "source_and_test"
-    assert entry["implementation_evidence"][0]["symbol"] == "asciianim.engine.Engine::run"
-    assert entry["implementation_evidence"][0]["reasons"] == [
+    source_candidates = [
+        candidate
+        for candidate in entry["codegraph_candidates"]
+        if candidate["symbol_role"] == "source"
+    ]
+    assert source_candidates[0]["symbol"] == "asciianim.engine.Engine::run"
+    assert source_candidates[0]["match_reasons"] == [
         "call_graph_from_test:tests.test_cli::test_FR021_piped_duration"
     ]
 
@@ -599,6 +614,7 @@ def test_write_codegraph_evidence_map_cli_skips_when_codegraph_degraded(
     assert completed.returncode == 0, completed.stderr
     assert "skipped degraded CodeGraph evidence map" in completed.stdout
     payload = json.loads(out_json.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 2
     assert payload["status"] == "skipped_degraded_codegraph"
     assert "CodeGraph evidence was degraded" in out_md.read_text(encoding="utf-8")
     state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))

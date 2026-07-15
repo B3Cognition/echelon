@@ -83,9 +83,10 @@ class JudgmentPrepassResult:
 @dataclass(frozen=True)
 class _ImplementationRow:
     id: str
-    implementation_evidence: str
-    test_evidence: str
-    codegraph_evidence: str
+    verified_implementation_evidence: str
+    verified_test_evidence: str
+    codegraph_candidates: str
+    candidate_disposition: str
     evidence_kind: str
     evidence_strength: str
     runtime_threshold: bool
@@ -276,8 +277,8 @@ def _classify_row(row: _ImplementationRow) -> JudgmentRow:
             row.id, "UNVERIFIED", "threshold_assertion_only"
         )
     if (
-        not row.implementation_evidence.strip()
-        and not row.test_evidence.strip()
+        not row.verified_implementation_evidence.strip()
+        and not row.verified_test_evidence.strip()
         and row.confidence == "none"
     ):
         return JudgmentRow.mechanical_row(row.id, "MISSING", "no_evidence")
@@ -287,8 +288,8 @@ def _classify_row(row: _ImplementationRow) -> JudgmentRow:
         not row.runtime_threshold
         and row.confidence == "high"
         and row.evidence_strength == "strong"
-        and row.implementation_evidence.strip()
-        and row.test_evidence.strip()
+        and row.verified_implementation_evidence.strip()
+        and row.verified_test_evidence.strip()
     ):
         return JudgmentRow.mechanical_row(
             row.id, "IMPLEMENTED", "source_and_test_strong"
@@ -361,26 +362,56 @@ def _judgment_rows(path: Path) -> list[JudgmentRow]:
 
 
 def _implementation_rows(path: Path) -> list[_ImplementationRow]:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if "schema_version: 2" not in text:
+        raise ValueError(
+            "implementation-map.md uses unsupported schema; "
+            "expected schema_version: 2 with Verified Implementation Evidence columns"
+        )
     rows: list[_ImplementationRow] = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    expected_header = [
+        "ID",
+        "Verified Implementation Evidence",
+        "Verified Test Evidence",
+        "CodeGraph Candidates",
+        "Candidate Disposition",
+        "Evidence Kind",
+        "Evidence Strength",
+        "Runtime Threshold",
+        "Confidence",
+        "Notes",
+    ]
+    saw_header = False
+    for line in text.splitlines():
         stripped = line.strip()
         if not stripped.startswith("|"):
             continue
         cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if len(cells) != 9 or cells[0] in {"ID", "---"}:
+        if cells == expected_header:
+            saw_header = True
+            continue
+        if cells and all(set(cell) <= {"-"} for cell in cells):
+            continue
+        if len(cells) != 10 or cells[0] == "ID":
             continue
         rows.append(
             _ImplementationRow(
                 id=cells[0],
-                implementation_evidence=cells[1],
-                test_evidence=cells[2],
-                codegraph_evidence=cells[3],
-                evidence_kind=cells[4],
-                evidence_strength=cells[5],
-                runtime_threshold=cells[6].lower() == "true",
-                confidence=cells[7].lower(),
-                notes=cells[8],
+                verified_implementation_evidence=cells[1],
+                verified_test_evidence=cells[2],
+                codegraph_candidates=cells[3],
+                candidate_disposition=cells[4].lower(),
+                evidence_kind=cells[5],
+                evidence_strength=cells[6],
+                runtime_threshold=cells[7].lower() == "true",
+                confidence=cells[8].lower(),
+                notes=cells[9],
             )
+        )
+    if not saw_header:
+        raise ValueError(
+            "implementation-map.md uses unsupported schema; "
+            "expected schema_version: 2 with Verified Implementation Evidence columns"
         )
     return rows
 

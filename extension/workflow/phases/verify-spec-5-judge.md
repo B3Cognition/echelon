@@ -98,9 +98,15 @@ judgment extends. Do not summarize a scoped run as a replacement for full
 land-time verification.
 
 Judge item fulfillment from the implementation evidence map and the requirement's
-acceptance signal. Task progress is bookkeeping integrity evidence only. SPEC-GUARD
-MUST NOT downgrade an item from `IMPLEMENTED` to `PARTIAL`, `UNVERIFIED`, or
-`MISSING` solely because `tasks.md` marks the related task pending, when source and executable test evidence satisfy the requirement and acceptance signal.
+acceptance signal. Use Verified Implementation Evidence and Verified Test
+Evidence as fulfillment evidence. Treat CodeGraph Candidates as structural
+leads and audit context only; candidates do not prove fulfillment unless direct
+inspection has also placed the verified source/test citations in the verified
+evidence columns. Task progress is bookkeeping integrity evidence only.
+SPEC-GUARD MUST NOT downgrade an item from `IMPLEMENTED` to `PARTIAL`,
+`UNVERIFIED`, or `MISSING` solely because `tasks.md` marks the related task
+pending, when source and executable test evidence satisfy the requirement and
+acceptance signal.
 
 Evidence-strength rule: runtime threshold requirements, especially `NFR-*`,
 `SC-*`, latency, frame-rate, crash-free-rate, retention, cloud-cost, privacy

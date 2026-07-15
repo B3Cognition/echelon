@@ -164,7 +164,7 @@ def write_codegraph_evidence_map(
     ]
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "source_files": {
             "requirement_audit": str(requirement_audit_path),
             "codegraph_analysis": str(codegraph_analysis_path),
@@ -303,7 +303,7 @@ def _map_requirement(
         coverage_match = bool(coverage_text and row.id in coverage_text and symbol.file_path in coverage_text)
         if not direct_id and not token_match and not coverage_match:
             continue
-        evidence = _symbol_evidence(
+        evidence = _candidate_evidence(
             symbol,
             reasons=_match_reasons(direct_id, token_match, coverage_match, overlap),
         )
@@ -338,8 +338,10 @@ def _map_requirement(
         "requirement": row.requirement,
         "acceptance_signal": row.acceptance_signal,
         "task_ids": task_ids,
-        "implementation_evidence": implementation,
-        "test_evidence": tests,
+        "codegraph_candidates": implementation + tests,
+        "candidate_summary": _candidate_summary(implementation + tests),
+        "candidate_confidence": confidence,
+        "manual_review_required": confidence in {"low", "none", "ambiguous"},
         "negative_evidence": negative_evidence,
         "evidence_kind": evidence_kind,
         "evidence_strength": evidence_strength,
@@ -364,7 +366,7 @@ def _called_implementation_evidence(
                 if symbol.is_test:
                     continue
                 evidence.append(
-                    _symbol_evidence(
+                    _candidate_evidence(
                         symbol,
                         reasons=[f"call_graph_from_test:{test_symbol}"],
                     )
@@ -411,7 +413,7 @@ def _all_evidence_term_match_only(evidence_items: list[dict[str, Any]]) -> bool:
     if not evidence_items:
         return False
     for item in evidence_items:
-        reasons = [str(reason) for reason in item.get("reasons") or []]
+        reasons = [str(reason) for reason in item.get("match_reasons") or item.get("reasons") or []]
         if not reasons or any(not reason.startswith("term_match:") for reason in reasons):
             return False
     return True
@@ -434,18 +436,18 @@ def _evidence_kind(
     runtime_threshold: bool,
 ) -> str:
     if not implementation and not tests:
-        return "none"
+        return "missing"
     all_evidence = implementation + tests
     files = " ".join(str(item.get("file") or "") for item in all_evidence).lower()
     symbols = " ".join(str(item.get("symbol") or "") for item in all_evidence).lower()
     reasons = " ".join(
-        " ".join(str(reason) for reason in item.get("reasons") or [])
+        " ".join(str(reason) for reason in item.get("match_reasons") or item.get("reasons") or [])
         for item in all_evidence
     ).lower()
     combined = " ".join([files, symbols, reasons])
 
-    if any(term in combined for term in ("ci/", ".github/", "artifact", "metric", "telemetrysample", "runtime")):
-        return "measured_runtime" if runtime_threshold else "integration_test"
+    if runtime_threshold and any(term in combined for term in ("ci/", ".github/", "artifact", "metric", "telemetrysample", "runtime")):
+        return "measured_runtime"
     if (
         "releasecandidategate" in combined
         or "acceptancegate" in combined
@@ -456,30 +458,56 @@ def _evidence_kind(
     if implementation and tests:
         return "source_and_test"
     if tests:
-        return "unit_test"
-    return "source_capability"
+        return "test_only"
+    return "source_only"
 
 
 def _evidence_strength(evidence_kind: str) -> str:
     return {
         "measured_runtime": "strong",
-        "integration_test": "strong",
-        "source_and_test": "moderate",
-        "unit_test": "moderate",
-        "source_capability": "weak",
+        "source_and_test": "medium",
+        "test_only": "medium",
+        "source_only": "weak",
         "assertion_only": "weak",
-        "none": "none",
+        "missing": "none",
     }.get(evidence_kind, "weak")
 
 
-def _symbol_evidence(symbol: SymbolRecord, reasons: list[str]) -> dict[str, Any]:
+def _candidate_evidence(symbol: SymbolRecord, reasons: list[str]) -> dict[str, Any]:
     return {
         "symbol": symbol.symbol,
         "kind": symbol.kind,
         "file": symbol.file_path,
         "line_start": symbol.line_start,
         "line_end": symbol.line_end,
-        "reasons": reasons,
+        "symbol_role": "test" if symbol.is_test else "source",
+        "match_reasons": reasons,
+        "candidate_strength": _candidate_strength(reasons),
+    }
+
+
+def _candidate_strength(reasons: list[str]) -> str:
+    if any(reason in {"direct_requirement_id_match", "coverage_map_path_match"} for reason in reasons):
+        return "strong"
+    if any(reason.startswith("call_graph_from_test:") for reason in reasons):
+        return "medium"
+    return "weak"
+
+
+def _candidate_summary(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    reasons = [
+        str(reason)
+        for candidate in candidates
+        for reason in candidate.get("match_reasons") or []
+    ]
+    return {
+        "source_candidate_count": sum(1 for candidate in candidates if candidate.get("symbol_role") == "source"),
+        "test_candidate_count": sum(1 for candidate in candidates if candidate.get("symbol_role") == "test"),
+        "term_match_only": bool(candidates)
+        and all(reason.startswith("term_match:") for reason in reasons),
+        "has_requirement_anchor": "direct_requirement_id_match" in reasons,
+        "has_coverage_anchor": "coverage_map_path_match" in reasons,
+        "has_call_graph_anchor": any(reason.startswith("call_graph_from_test:") for reason in reasons),
     }
 
 
@@ -563,11 +591,12 @@ def _dedupe_evidence(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         key = (str(item["symbol"]), str(item["file"]), item.get("line_start"))
         if key in by_key:
             existing = by_key[key]
-            reasons = list(existing.get("reasons") or [])
-            for reason in item.get("reasons") or []:
+            reasons = list(existing.get("match_reasons") or existing.get("reasons") or [])
+            for reason in item.get("match_reasons") or item.get("reasons") or []:
                 if reason not in reasons:
                     reasons.append(reason)
-            existing["reasons"] = reasons
+            existing["match_reasons"] = reasons
+            existing["candidate_strength"] = _candidate_strength(reasons)
             continue
         by_key[key] = dict(item)
     return list(by_key.values())
@@ -600,23 +629,22 @@ def _render_markdown(payload: dict[str, Any]) -> str:
             else "(none)"
         ),
         "",
-        "| ID | Confidence | Evidence Kind | Evidence Strength | Runtime Threshold | Task IDs | Implementation Evidence | Test Evidence | Notes |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "| ID | Candidate Confidence | Manual Review | Source Candidates | Test Candidates | Candidate Reasons | Notes |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for entry in payload["requirements"]:
-        impl = _evidence_cell(entry["implementation_evidence"])
-        tests = _evidence_cell(entry["test_evidence"])
-        task_ids = ", ".join(entry["task_ids"]) if entry["task_ids"] else ""
+        candidates = entry.get("codegraph_candidates") or []
+        sources = _candidate_cell(candidates, role="source")
+        tests = _candidate_cell(candidates, role="test")
+        reasons = _candidate_reasons_cell(candidates)
         lines.append(
-            "| {id} | {confidence} | {kind} | {strength} | {runtime} | {task_ids} | {impl} | {tests} | {notes} |".format(
+            "| {id} | {confidence} | {manual_review} | {sources} | {tests} | {reasons} | {notes} |".format(
                 id=_md(entry["id"]),
-                confidence=_md(entry["confidence"]),
-                kind=_md(entry.get("evidence_kind", "")),
-                strength=_md(entry.get("evidence_strength", "")),
-                runtime=_md(entry.get("runtime_threshold", "")),
-                task_ids=_md(task_ids),
-                impl=_md(impl),
+                confidence=_md(entry.get("candidate_confidence", entry.get("confidence", ""))),
+                manual_review=_md(entry.get("manual_review_required", "")),
+                sources=_md(sources),
                 tests=_md(tests),
+                reasons=_md(reasons),
                 notes=_md(entry["notes"]),
             )
         )
@@ -624,12 +652,22 @@ def _render_markdown(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _evidence_cell(items: list[dict[str, Any]]) -> str:
-    if not items:
+def _candidate_cell(items: list[dict[str, Any]], *, role: str) -> str:
+    filtered = [item for item in items if item.get("symbol_role") == role]
+    if not filtered:
         return ""
     return "; ".join(
-        f"{item['file']}::{item['symbol']}" for item in items[:3]
+        f"{item['file']}::{item['symbol']}" for item in filtered[:3]
     )
+
+
+def _candidate_reasons_cell(items: list[dict[str, Any]]) -> str:
+    reasons: list[str] = []
+    for item in items:
+        for reason in item.get("match_reasons") or []:
+            if reason not in reasons:
+                reasons.append(str(reason))
+    return ", ".join(reasons[:6])
 
 
 def _md(value: object) -> str:
