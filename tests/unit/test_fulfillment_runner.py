@@ -1176,3 +1176,45 @@ class TestFulfillmentRunner:
         metadata = read_fulfillment_metadata(report)
         assert metadata["verified_commit"] == "head456"
         assert metadata["verify_scope"] == "full"
+
+    def test_scoped_refresh_preserves_explicit_spec_dir_when_falling_back_to_full(
+        self, tmp_path
+    ):
+        _write_verify_skill(tmp_path)
+        spec_dir = tmp_path / "authoritative-spec-root" / "spec-001-demo"
+        _write_spec_inputs(spec_dir)
+        report = spec_dir / "fulfillment-report.md"
+        report.write_text(
+            "---\nverify_scope: full\nverified_commit: old123\n---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| FR-001 | IMPLEMENTED | src/a.swift | high | keep |\n",
+            encoding="utf-8",
+        )
+        provider = MagicMock()
+        provider.cli = "claude"
+
+        def write_full_report(_worktree_path: str, prompt: str) -> int:
+            assert "scope=scoped" not in prompt
+            assert f"spec_dir={spec_dir}" in prompt
+            report.write_text(
+                "| ID | Status | Evidence | Confidence | Notes |\n"
+                "| --- | --- | --- | --- | --- |\n"
+                "| FR-001 | IMPLEMENTED | src/a.swift | high | refreshed |\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        provider.exec_prompt.side_effect = write_full_report
+
+        with patch("harness.fulfillment_runner._current_git_commit", return_value="head456"):
+            result = FulfillmentRunner(provider).refresh(
+                str(tmp_path),
+                "spec-001",
+                spec_dir=spec_dir,
+                scope="scoped",
+                completed_task_ids=[],
+            )
+
+        assert result.status == "refreshed"
+        assert result.scope == "full"

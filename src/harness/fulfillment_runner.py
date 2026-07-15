@@ -401,6 +401,7 @@ class FulfillmentRunner:
                 return self.refresh(
                     worktree_path,
                     spec_id,
+                    spec_dir=spec_dir,
                     orchestration_root=spec_dir.parent.parent,
                     scope="full",
                 )
