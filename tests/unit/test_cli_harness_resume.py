@@ -132,6 +132,58 @@ class TestCmdHarnessResume:
         assert "delivery state" in err
         assert "Use 'echelon delivery run <spec_id>' to resume" not in err
 
+    def test_docs_report_only_containment_violation_resumes(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "containment_violation",
+            "containment_violation": {
+                "changed_status": [
+                    "?? specs/001-demo/documentation-impact-report.md",
+                    "?? specs/001-demo/docs-verification-report.md",
+                ],
+            },
+        })
+
+        with patch("pathlib.Path.cwd", return_value=tmp_path), \
+             patch("harness.skills.run_skill.run") as mock_run, \
+             patch("harness.docker_provider.DockerWorktreeProvider.__init__", return_value=None), \
+             patch("harness.gitops.GitOpsManager.__init__", return_value=None):
+            from echelon.cli import _cmd_harness_continue
+            _cmd_harness_continue(["001"])
+
+        mock_run.assert_called_once()
+        assert mock_run.call_args.kwargs["resume_build_id"] == _TEST_BUILD_ID
+
+    def test_non_docs_containment_violation_stays_unsupported(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        _make_echelon_yml(tmp_path, verify_command="pytest")
+        sd = _setup_build(tmp_path, "001")
+        _write_state(sd, "001", "default", {
+            "status": "blocked",
+            "termination_reason": "containment_violation",
+            "containment_violation": {
+                "changed_status": [
+                    "?? specs/001-demo/documentation-impact-report.md",
+                    " M src/index.ts",
+                ],
+            },
+        })
+
+        rc = self._call(["001"], tmp_path)
+
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "unsupported resume reason" in err
+        assert "containment_violation" in err
+
     def test_build_blocked_requires_resolving_the_reported_blocker(
         self,
         tmp_path: Path,
