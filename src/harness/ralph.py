@@ -4645,15 +4645,40 @@ def _detect_containment_violation(
     if after is None:
         return None
     before_lines = list(before.get("before_status") or [])
-    if after == before_lines:
+    changed_status = [
+        line
+        for line in _status_delta(before_lines, after)
+        if not _is_allowed_external_documentation_status(line)
+    ]
+    if not changed_status:
         return None
     return {
         "project_dir": str(project),
         "worktree_path": str(worktree_path),
         "before_status": before_lines,
         "after_status": after,
-        "changed_status": _status_delta(before_lines, after),
+        "changed_status": changed_status,
     }
+
+
+def _is_allowed_external_documentation_status(status_line: str) -> bool:
+    path = _status_path(status_line)
+    if not path.startswith("specs/"):
+        return False
+    return PurePosixPath(path).name in {
+        "documentation-impact-report.md",
+        "docs-verification-report.md",
+    }
+
+
+def _status_path(status_line: str) -> str:
+    line = status_line.strip()
+    if not line:
+        return ""
+    path = line[3:].strip() if len(status_line) >= 4 else line
+    if " -> " in path:
+        path = path.split(" -> ", 1)[1]
+    return path.strip('"').replace("\\", "/")
 
 
 def _git_status_lines(project: Path) -> Optional[List[str]]:

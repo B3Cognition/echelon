@@ -3349,6 +3349,37 @@ class TestOuterLoopConvergence:
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
+    def test_containment_allows_external_documentation_reports_only(
+        self, tmp_path: Path
+    ) -> None:
+        """TECH WRITER/DOCS VERIFIER may write their external docs artifacts."""
+        project = tmp_path / "project"
+        project.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=project, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=project, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=project, check=True)
+        (project / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=project, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=project, check=True)
+        worktree = project / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree.mkdir(parents=True)
+        before = ralph._snapshot_project_status(project, str(worktree))
+        spec_dir = project / "specs" / "906-cli-output-styling"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "documentation-impact-report.md").write_text("impact\n", encoding="utf-8")
+        (spec_dir / "docs-verification-report.md").write_text("verify\n", encoding="utf-8")
+
+        assert ralph._detect_containment_violation(before, project, str(worktree)) is None
+
+        (spec_dir / "tasks.md").write_text("task mutation\n", encoding="utf-8")
+        violation = ralph._detect_containment_violation(before, project, str(worktree))
+
+        assert violation is not None
+        assert "tasks.md" in "\n".join(violation["changed_status"])
+        assert "documentation-impact-report.md" not in "\n".join(
+            violation["changed_status"]
+        )
+
     def test_llm_build_blocks_when_transcript_touches_forbidden_source_root(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
