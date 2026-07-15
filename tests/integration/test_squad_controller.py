@@ -77,7 +77,12 @@ def _mark_constitution_complete(tmp_path: Path, store: SquadStateStore) -> None:
     store.save(state)
 
 
-def _write_re_index_generation(root: Path, generation: int) -> None:
+def _write_re_index_generation(
+    root: Path,
+    generation: int,
+    *,
+    published_from_run: str = "fixture",
+) -> None:
     path = root / "re" / "index.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -87,7 +92,7 @@ def _write_re_index_generation(root: Path, generation: int) -> None:
                 "generation": generation,
                 "publication_status": "complete",
                 "published_at": "2026-07-12T12:00:00+00:00",
-                "published_from_run": "fixture",
+                "published_from_run": published_from_run,
                 "sources": {},
                 "workspace": {
                     "manifest": "re/workspace/manifest.json",
@@ -347,6 +352,47 @@ class TestAgentResultIntegrity:
         assert (published_dir / "run-history.json").exists()
         assert state["published_spec_dir"] == "specs/001-themed-ascii-animation"
 
+    def test_done_run_reconciles_newer_run_local_artifacts_to_published_spec(
+        self, tmp_path,
+    ):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "DONE", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+
+        active_spec_dir = tmp_path / "squad" / "run-test" / "specs" / "001-demo"
+        active_spec_dir.mkdir(parents=True)
+        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+            (active_spec_dir / name).write_text(f"# active {name}\n", encoding="utf-8")
+        (active_spec_dir / "user-intent.md").write_text(
+            "# User Intent\n\nfresh run-local artifact\n",
+            encoding="utf-8",
+        )
+
+        published_dir = tmp_path / "specs" / "001-demo"
+        published_dir.mkdir(parents=True)
+        (published_dir / "spec.md").write_text("# stale spec\n", encoding="utf-8")
+
+        state = store.load()
+        state["status"] = "done"
+        state["spec_id"] = "001-demo"
+        state["spec_dir"] = "squad/run-test/specs/001-demo"
+        state["published_spec_dir"] = "specs/001-demo"
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai")
+        state = store.load()
+
+        assert result.status == "done"
+        assert (published_dir / "spec.md").read_text(encoding="utf-8") == "# active spec.md\n"
+        assert (published_dir / "user-intent.md").read_text(encoding="utf-8") == (
+            "# User Intent\n\nfresh run-local artifact\n"
+        )
+        assert (published_dir / "ARTIFACTS.md").exists()
+        assert (published_dir / "squad-report.md").exists()
+        history = json.loads((published_dir / "run-history.json").read_text(encoding="utf-8"))
+        assert history["runs"][-1]["run_id"] == "r"
+        assert state["published_spec_dir"] == "specs/001-demo"
+
     def test_checkpoint_plan_auto_routes_without_commander_judgment(self, tmp_path):
         provider = MagicMock()
         provider.exec_agent.side_effect = AssertionError(
@@ -407,6 +453,7 @@ class TestSquadControllerBasics:
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
+        _mark_constitution_complete(tmp_path, store)
         state = store.load()
         state["re_generation"] = 1
         store.save(state)
@@ -426,6 +473,7 @@ class TestSquadControllerBasics:
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
+        _mark_constitution_complete(tmp_path, store)
         state = store.load()
         state["re_generation"] = 1
         store.save(state)
@@ -439,6 +487,30 @@ class TestSquadControllerBasics:
         assert state["re_generation_expected"] == 1
         assert state["re_generation_actual"] == 2
         provider.exec_agent.assert_not_called()
+
+    def test_generation_change_from_same_run_publication_synchronizes_state(self, tmp_path):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
+        _mark_constitution_complete(tmp_path, store)
+        state = store.load()
+        state["re_generation"] = 1
+        store.save(state)
+        _write_re_index_generation(
+            tmp_path,
+            2,
+            published_from_run=ctrl._squad_dir.name,
+        )
+
+        result = ctrl.run("msg", "banzai")
+
+        assert result.status != "blocked"
+        state = store.load()
+        assert state["re_generation"] == 2
+        assert state.get("blocked_reason") is None
+        assert "re_generation_expected" not in state
+        assert "re_generation_actual" not in state
+        assert provider.exec_agent.called
 
     def test_fresh_run_detects_project_mode_separately_from_autonomy_mode(self, tmp_path):
         for i in range(6):

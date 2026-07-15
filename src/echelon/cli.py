@@ -55,7 +55,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.3.5"
+CLI_VERSION = "3.3.6"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -3028,6 +3028,38 @@ def _pending_re_recovery_phase(squad_dir: Path, run_state: dict) -> str | None:
     return None
 
 
+def _sync_same_run_re_generation_for_continue(
+    project_root: Path,
+    squad_dir: Path,
+    run_state: dict,
+) -> dict:
+    if (
+        run_state.get("status") != "blocked"
+        or run_state.get("blocked_reason") != "re_generation_mismatch"
+    ):
+        return run_state
+    try:
+        from harness.re_registry import load_published_index
+    except Exception:
+        return run_state
+    try:
+        index = load_published_index(project_root)
+    except Exception:
+        return run_state
+    if index is None or index.published_from_run != squad_dir.name:
+        return run_state
+    updated = dict(run_state)
+    updated["status"] = "done"
+    updated["phase"] = "DONE"
+    updated["re_generation"] = index.generation
+    updated["re_publication_required"] = False
+    updated["blocked_reason"] = None
+    updated.pop("blocked_phase", None)
+    updated.pop("re_generation_expected", None)
+    updated.pop("re_generation_actual", None)
+    return updated
+
+
 def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
     status = str(run_state.get("status") or "").strip()
     reason = str(run_state.get("blocked_reason") or "").strip()
@@ -5249,6 +5281,13 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
             current_state = {}
     active_spec_dir = _active_continue_spec_dir(project_root, current_state, run_dir)
     if current_state.get("status") == "done" and _phase_a_ready_to_build(project_root, current_state):
+        if _explicit_run_local_spec_needs_publication(
+            project_root,
+            current_state,
+            active_spec_dir,
+            _published_continue_spec_dir(project_root, current_state),
+        ):
+            return "phase4-document"
         return None
 
     action = _classify_run_recovery(current_state)
@@ -5345,6 +5384,53 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
         return "phase1-what"
 
     return None  # build is ready
+
+
+def _explicit_run_local_spec_needs_publication(
+    project_root: Path,
+    current_state: dict,
+    active_spec_dir: Path | None,
+    published_spec_dir: Path | None,
+) -> bool:
+    spec_ref = str(current_state.get("spec_dir") or "").strip()
+    if not spec_ref or active_spec_dir is None or published_spec_dir is None:
+        return False
+    explicit_spec_dir = Path(spec_ref)
+    if not explicit_spec_dir.is_absolute():
+        explicit_spec_dir = project_root / explicit_spec_dir
+    if not explicit_spec_dir.exists() or not published_spec_dir.exists():
+        return False
+    try:
+        if explicit_spec_dir.resolve() == published_spec_dir.resolve():
+            return False
+    except OSError:
+        return False
+    try:
+        explicit_spec_dir.relative_to(project_root / "runs")
+    except ValueError:
+        return False
+    if not validate_phase_a_readiness(current_state, [explicit_spec_dir]).ready:
+        return False
+    return _spec_tree_differs(explicit_spec_dir, published_spec_dir)
+
+
+def _spec_tree_differs(source: Path, destination: Path) -> bool:
+    for path in source.rglob("*"):
+        if not path.is_file():
+            continue
+        try:
+            rel = path.relative_to(source)
+        except ValueError:
+            continue
+        target = destination / rel
+        if not target.exists() or not target.is_file():
+            return True
+        try:
+            if path.read_bytes() != target.read_bytes():
+                return True
+        except OSError:
+            return True
+    return False
 
 
 def _needs_phase3_specialists_recovery(
@@ -5682,6 +5768,11 @@ def _cmd_continue(
     )
     if prepared_state != state:
         state = prepared_state
+        (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
+
+    synced_state = _sync_same_run_re_generation_for_continue(project_root, squad_dir, state)
+    if synced_state != state:
+        state = synced_state
         (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
 
     phase_labels = {

@@ -94,6 +94,136 @@ def test_continue_reopens_done_run_to_publish_complete_run_local_artifacts(
     assert _next_continue_phase(tmp_path) == "phase4-document"
 
 
+def test_continue_reopens_done_run_when_explicit_run_local_spec_has_unpublished_artifact(
+    tmp_path: Path,
+) -> None:
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "done",
+            "phase": "DONE",
+            "spec_id": "001-demo",
+            "spec_dir": "runs/spec-test/specs/001-demo",
+            "published_spec_dir": "specs/001-demo",
+            "completed_phases": ["phase1-constitution"],
+        },
+    )
+    active_spec_dir = run_dir / "specs" / "001-demo"
+    active_spec_dir.mkdir(parents=True)
+    for name in (
+        "spec.md",
+        "plan.md",
+        "research.md",
+        "data-model.md",
+        "tasks.md",
+        "constitution.md",
+    ):
+        (active_spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+    (active_spec_dir / "user-intent.md").write_text("# User Intent\n", encoding="utf-8")
+
+    published_spec_dir = tmp_path / "specs" / "001-demo"
+    published_spec_dir.mkdir(parents=True)
+    for name in (
+        "spec.md",
+        "plan.md",
+        "research.md",
+        "data-model.md",
+        "tasks.md",
+        "constitution.md",
+    ):
+        (published_spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    assert _next_continue_phase(tmp_path) == "phase4-document"
+
+
+def test_continue_clears_same_run_re_generation_block_before_phase_a_publish(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "re_generation_mismatch",
+            "spec_id": "001-demo",
+            "spec_dir": "runs/spec-test/specs/001-demo",
+            "published_spec_dir": "specs/001-demo",
+            "re_generation": 0,
+            "re_generation_expected": 0,
+            "re_generation_actual": 1,
+            "completed_phases": ["phase1-constitution"],
+            "user_message": "build the dashboard",
+            "autonomy_mode": "banzai",
+        },
+    )
+    (tmp_path / "re").mkdir()
+    (tmp_path / "re" / "index.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "generation": 1,
+                "publication_status": "partial",
+                "published_at": "2026-07-15T12:00:00+00:00",
+                "published_from_run": run_dir.name,
+                "sources": {},
+                "workspace": {
+                    "manifest": "re/workspace/manifest.json",
+                    "overview": "re/workspace/overview.md",
+                    "relationships": "re/workspace/relationships.md",
+                    "contracts": "re/workspace/contracts.md",
+                },
+                "warnings": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    active_spec_dir = run_dir / "specs" / "001-demo"
+    active_spec_dir.mkdir(parents=True)
+    for name in (
+        "spec.md",
+        "plan.md",
+        "research.md",
+        "data-model.md",
+        "tasks.md",
+        "constitution.md",
+    ):
+        (active_spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+    (active_spec_dir / "user-intent.md").write_text("# User Intent\n", encoding="utf-8")
+
+    published_spec_dir = tmp_path / "specs" / "001-demo"
+    published_spec_dir.mkdir(parents=True)
+    for name in (
+        "spec.md",
+        "plan.md",
+        "research.md",
+        "data-model.md",
+        "tasks.md",
+        "constitution.md",
+    ):
+        (published_spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    calls: list[list[str]] = []
+
+    def fake_cmd_run(args, project_root, ext_dir):
+        calls.append(args)
+
+    monkeypatch.setattr("echelon.cli._cmd_run", fake_cmd_run)
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "running"
+    assert state["phase"] == "phase4-document"
+    assert state["re_generation"] == 1
+    assert state["blocked_reason"] is None
+    assert "re_generation_expected" not in state
+    assert "re_generation_actual" not in state
+    assert calls == [["build the dashboard", "--mode", "banzai"]]
+
+
 def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
     tmp_path: Path,
 ) -> None:

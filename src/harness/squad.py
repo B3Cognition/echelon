@@ -561,6 +561,16 @@ class SquadController:
 
         # (keep all recovery blocks exactly as-is above this point)
 
+        if existing and existing_status == "done" and str(existing.get("phase") or "") in TERMINAL_PHASES:
+            readiness = self._publish_terminal_phase_a_artifacts_if_available()
+            if readiness is not None and not readiness.ready:
+                self._block_after_phase_a_readiness_failure(readiness)
+            else:
+                state = self._state_store.load()
+                state["status"] = "done"
+                self._state_store.save(state)
+            return SquadResult.from_state(self._state_store.load())
+
         # Fresh start if no state or not resumable
         # The correct squad dir was already selected by _cmd_run before creating this controller.
         if not existing or existing_status not in ("running", "in_progress"):
@@ -601,6 +611,10 @@ class SquadController:
                 # Preserve "blocked" status set by guards (e.g. consecutive-fail).
                 # Only write "done" when not already in a terminal-blocked state.
                 if state.get("status") != "blocked":
+                    readiness = self._publish_terminal_phase_a_artifacts_if_available()
+                    if readiness is not None and not readiness.ready:
+                        self._block_after_phase_a_readiness_failure(readiness)
+                        return SquadResult.from_state(self._state_store.load())
                     state["status"] = "done"
                     self._state_store.save(state)
                 return SquadResult.from_state(self._state_store.load())
@@ -932,6 +946,8 @@ class SquadController:
         try:
             assert_re_generation(self._project_root, expected)
         except ReGenerationMismatch as exc:
+            if self._sync_re_generation_from_same_run_publication(state, exc.actual):
+                return True
             state["status"] = "blocked"
             state["phase"] = PHASE_TERMINAL_BLOCKED
             state["blocked_reason"] = "re_generation_mismatch"
@@ -945,6 +961,31 @@ class SquadController:
                 flush=True,
             )
             return False
+        return True
+
+    def _sync_re_generation_from_same_run_publication(
+        self,
+        state: dict,
+        actual_generation: int,
+    ) -> bool:
+        index = load_published_index(self._project_root)
+        if index is None:
+            return False
+        if index.generation != actual_generation:
+            return False
+        if index.published_from_run != self._squad_dir.name:
+            return False
+        state["re_generation"] = actual_generation
+        state["re_publication_required"] = False
+        state["blocked_reason"] = None
+        state.pop("re_generation_expected", None)
+        state.pop("re_generation_actual", None)
+        self._state_store.save(state)
+        print(
+            f"[squad] RE generation synchronized from same run publication: "
+            f"{actual_generation}",
+            flush=True,
+        )
         return True
 
     def _reset_discovery_dispatches_for_pending_recovery(self, phase: str) -> None:
@@ -1063,6 +1104,21 @@ class SquadController:
             write_artifact_index(spec_dir)
         except OSError:
             logger.warning("Could not refresh artifact index for %s", spec_dir)
+
+    def _publish_terminal_phase_a_artifacts_if_available(
+        self,
+    ) -> PhaseAReadinessResult | None:
+        """Reconcile completed run-local Phase A artifacts into project specs.
+
+        A resumed run can reach DONE with newer artifacts in runs/<id>/specs/<id>
+        than the project-visible specs/<id> directory. Terminal return is the
+        last deterministic chance to publish that tree.
+        """
+        state = self._state_store.load()
+        active_spec_dir = self._active_phase_a_spec_dir(state)
+        if active_spec_dir is None or not active_spec_dir.exists():
+            return None
+        return self._publish_phase_a_artifacts_for_build()
 
     def _phase_a_readiness_candidate_dirs(self) -> list[Path]:
         state = self._state_store.load()
