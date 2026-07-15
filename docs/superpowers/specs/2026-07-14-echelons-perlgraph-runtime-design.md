@@ -6,7 +6,7 @@ Add PerlGraph to Echelon as a separate, pinned structural-analysis runtime for P
 
 ## Scope
 
-PerlGraph is sourced from `git@github.com:B3Cognition/perlgraph.git` at the initial `0.0.1` package release. Because PerlGraph is not currently a published npm package, the Git commit and package lockfile are the provenance authority. If PerlGraph is later published to npm, Echelon can switch to npm tarball integrity the way CodeGraph does.
+PerlGraph is sourced from `git@github.com:B3Cognition/perlgraph.git` at the `0.1.0` package release. Because PerlGraph is not currently a published npm package, the Git commit and package lockfile are the provenance authority. If PerlGraph is later published to npm, Echelon can switch to npm tarball integrity the way CodeGraph does.
 
 The integration includes:
 
@@ -47,7 +47,7 @@ Delivery runtime preparation fails closed before LLM dispatch if a copied PerlGr
 Coverage should include:
 
 - install script has a PerlGraph runtime path and preparation commands
-- runtime package is pinned to `0.0.1` with a lockfile and provenance metadata
+- runtime package is pinned to `0.1.0` with a lockfile and provenance metadata
 - RE analysis writes PerlGraph artifacts in single-repo and per-source modes
 - delivery sync copies PerlGraph runtime source without `node_modules` or generated build output
 - delivery preparation runs `npm ci` and `npm run build`

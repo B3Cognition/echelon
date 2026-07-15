@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Runtime source path: `extension/scripts/node/perlgraph`.
-- Provenance source: `git@github.com:B3Cognition/perlgraph.git`, package version `0.0.1`, pinned by commit metadata and `package-lock.json`.
+- Provenance source: `git@github.com:B3Cognition/perlgraph.git`, package version `0.1.0`, pinned by commit metadata and `package-lock.json`.
 - PerlGraph preparation uses `npm ci --no-audit --no-fund --prefer-offline` followed by `npm run build`.
 - Do not use `--ignore-scripts` for PerlGraph because Tree-sitter native dependencies need install/build scripts.
 - Never copy `node_modules` or generated `dist` through runtime extension synchronization.
@@ -30,7 +30,7 @@
 **Interfaces:**
 - Produces runtime CLI: `extension/scripts/node/perlgraph/dist/cli/perlgraph.js` after preparation.
 
-- [ ] Write failing contract tests that assert the runtime path, package version `0.0.1`, lockfile presence, provenance doc, and installer preparation commands.
+- [ ] Write failing contract tests that assert the runtime path, package version `0.1.0`, lockfile presence, provenance doc, and installer preparation commands.
 - [ ] Copy PerlGraph source from the pinned upstream checkout into `extension/scripts/node/perlgraph`, excluding `.git`, `node_modules`, and `dist`.
 - [ ] Add install script preparation for `PERLGRAPH_NODE_DIR`.
 - [ ] Run `pytest -q tests/kernel/test_perlgraph_integration_contract.py`.

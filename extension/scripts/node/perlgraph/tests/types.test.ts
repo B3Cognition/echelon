@@ -21,10 +21,12 @@ describe('PerlGraphAnalysis type contract', () => {
       module_graph: [],
       unsupported_patterns: [],
       parse_failures: [],
+      parse_diagnostics: [],
       index_stats: {
         total_files: 0,
         parsed_files: 0,
         failed_files: 0,
+        parse_error_count: 0,
         symbol_count: 0,
         relationship_count: 0,
         dynamic_pattern_count: 0,

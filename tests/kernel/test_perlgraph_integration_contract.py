@@ -13,7 +13,7 @@ from kernel.re_state import complete_dispatch, init_re_state, write_last_dispatc
 
 
 PERLGRAPH_RUNTIME_DIR = EXT_ROOT / "extension" / "scripts" / "node" / "perlgraph"
-PERLGRAPH_VERSION = "0.0.1"
+PERLGRAPH_VERSION = "0.1.0"
 
 
 def test_install_script_prepares_perlgraph_runtime() -> None:
@@ -28,7 +28,7 @@ def test_install_script_prepares_perlgraph_runtime() -> None:
     assert "--ignore-scripts" not in _perlgraph_install_section(install_script)
 
 
-def test_perlgraph_runtime_is_pinned_to_initial_release() -> None:
+def test_perlgraph_runtime_is_pinned_to_release() -> None:
     package = json.loads((PERLGRAPH_RUNTIME_DIR / "package.json").read_text())
     lock = json.loads((PERLGRAPH_RUNTIME_DIR / "package-lock.json").read_text())
     provenance = (PERLGRAPH_RUNTIME_DIR / "ECHELON-PROVENANCE.md").read_text()
@@ -37,8 +37,8 @@ def test_perlgraph_runtime_is_pinned_to_initial_release() -> None:
     assert package["version"] == PERLGRAPH_VERSION
     assert lock["packages"][""]["version"] == PERLGRAPH_VERSION
     assert "git@github.com:B3Cognition/perlgraph.git" in provenance
-    assert "364d1a8" in provenance
-    assert "package version `0.0.1`" in provenance
+    assert "34efe5d" in provenance
+    assert "package version `0.1.0`" in provenance
 
 
 def test_re_state_tracks_perlgraph_artifacts_by_default() -> None:

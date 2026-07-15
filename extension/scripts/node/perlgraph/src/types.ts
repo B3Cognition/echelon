@@ -48,11 +48,23 @@ export interface PerlRelationship {
 }
 
 export interface UnsupportedPattern {
-  kind: 'autoload' | 'eval_string' | 'symbolic_ref' | 'dynamic_require' | 'glob_assignment';
+  kind:
+    | 'autoload'
+    | 'eval_string'
+    | 'dynamic_use'
+    | 'symbolic_ref'
+    | 'dynamic_require'
+    | 'glob_assignment'
+    | 'dynamic_method'
+    | 'symbolic_method_receiver'
+    | 'autoload_dispatch_map'
+    | 'moose_around_orig'
+    | 'moose_modifier';
   file_path: string;
   line_start: number;
   snippet: string;
   notes: string;
+  targets?: string[];
 }
 
 export interface ParseFailure {
@@ -60,10 +72,17 @@ export interface ParseFailure {
   error: string;
 }
 
+export interface ParseDiagnostic {
+  file_path: string;
+  error_count: number;
+  notes: string;
+}
+
 export interface IndexStats {
   total_files: number;
   parsed_files: number;
   failed_files: number;
+  parse_error_count: number;
   symbol_count: number;
   relationship_count: number;
   dynamic_pattern_count: number;
@@ -92,6 +111,7 @@ export interface PerlGraphAnalysis {
   module_graph: ModuleGraphEntry[];
   unsupported_patterns: UnsupportedPattern[];
   parse_failures: ParseFailure[];
+  parse_diagnostics: ParseDiagnostic[];
   index_stats: IndexStats;
 }
 
@@ -107,8 +127,16 @@ export interface PerlGraphSummary {
   top_callers: Array<{ symbol: string; outgoing_calls: number }>;
   top_callees: Array<{ symbol: string; incoming_calls: number }>;
   top_modules: Array<{ module: string; outgoing_dependencies: number }>;
+  confidence_audit: {
+    relationships: Array<{ confidence: Confidence; count: number }>;
+    examples: Array<Pick<PerlRelationship, 'source' | 'target' | 'kind' | 'confidence' | 'provenance' | 'notes'>>;
+  };
+  framework_evidence: {
+    modifiers: Array<Pick<UnsupportedPattern, 'file_path' | 'line_start' | 'snippet' | 'notes'>>;
+  };
   dynamic_risk: {
     count: number;
     patterns: Array<{ kind: UnsupportedPattern['kind']; count: number }>;
+    examples: Array<Pick<UnsupportedPattern, 'kind' | 'file_path' | 'line_start' | 'snippet' | 'notes'>>;
   };
 }

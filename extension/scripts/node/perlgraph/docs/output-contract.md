@@ -28,3 +28,48 @@ Required top-level fields:
 - `dynamic`: runtime behavior that cannot be safely resolved statically
 
 Consumers must not treat low-confidence or dynamic edges as proof of behavior.
+
+## Resolved Static Patterns
+
+PerlGraph resolves these patterns when the target symbol or module is visible
+in the repository:
+
+- `use`, `require`, `use parent`, and `use base` module dependencies
+- static `require "My/Module.pm"` and static quoted-string concatenations
+- Moose/Moo `extends`, `with`, `requires`, and `has` declarations
+- direct package calls such as `My::Service::run()` and `My::Service->new()`
+- `$self->method` / `$class->method` in the current package
+- inherited `$self->method` / `$class->method`, including transitive static parents
+- role-provided `$self->method` / `$class->method` from static Moose/Moo roles
+- local receiver flow from `Class->new`, static class aliases, and simple local
+  factory subs that return `Class->new`
+
+## Diagnostic Patterns
+
+These patterns remain evidence of uncertainty unless a narrower static rule
+explicitly resolves them:
+
+- `AUTOLOAD`
+- AUTOLOAD dispatch maps
+- dynamic `require $module`
+- string `eval`
+- typeglob assignment
+- symbolic references
+- dynamic method names such as `$obj->$method()`
+- symbolic method receivers such as `${$pkg}->method()`
+- Moose/Moo method modifiers such as `before`, `after`, and `around`
+
+## Provenance
+
+Common provenance values:
+
+- `tree-sitter`: source parsed with tree-sitter-perl
+- `line-scan`: lightweight extraction from source text
+- `module-resolution`: module target checked against repository files
+- `name-resolution`: lexical/package call matched a known symbol
+- `self-method-resolution`: `$self` / `$class` matched the current package
+- `inheritance-method-resolution`: method matched a static parent chain
+- `role-method-resolution`: method matched a static Moose/Moo role
+- `local-constructor-flow`: receiver type inferred from local constructor flow
+- `moose-moo-role`, `moose-moo-attribute`, `moose-moo-requires`: explicit
+  framework rules, not generic Perl inference

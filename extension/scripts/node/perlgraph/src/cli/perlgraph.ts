@@ -2,13 +2,14 @@
 import { Command } from 'commander';
 import { analyzeRepository } from '../analysis/analyze.js';
 import { renderSummary, writeJsonAtomic } from '../output/writer.js';
+import { packageVersion } from '../version.js';
 
 const program = new Command();
 
 program
   .name('perlgraph')
   .description('Static structural graph extraction for Perl repositories')
-  .version('0.1.0');
+  .version(packageVersion());
 
 program
   .command('analyze')

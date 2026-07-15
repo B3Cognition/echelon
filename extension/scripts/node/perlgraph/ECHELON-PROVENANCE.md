@@ -4,9 +4,9 @@ This directory contains the PerlGraph runtime used by Echelon reverse
 engineering and verify-spec structural evidence.
 
 - Source repository: `git@github.com:B3Cognition/perlgraph.git`
-- Source commit: `364d1a8 chore: release 0.0.1`
+- Source commit: `34efe5d chore: prepare 0.1.0 release`
 - Package name: `perlgraph`
-- Authority: source commit `364d1a8` with package version `0.0.1`
+- Authority: source commit `34efe5d` with package version `0.1.0`
 - Lockfile: `package-lock.json`
 - License evidence: the repository includes `LICENSE`.
 
@@ -19,7 +19,7 @@ preparation intentionally runs npm install scripts and then builds the
 TypeScript CLI:
 
 ```bash
-CXXFLAGS="${CXXFLAGS:--std=c++20}" npm ci --prefix "$PERLGRAPH_NODE_DIR" --no-audit --no-fund --prefer-offline
+CXXFLAGS="${CXXFLAGS:--std=c++20}" npm ci --prefix "$PERLGRAPH_NODE_DIR" --include=dev --no-audit --no-fund --prefer-offline
 npm run build --prefix "$PERLGRAPH_NODE_DIR"
 ```
 

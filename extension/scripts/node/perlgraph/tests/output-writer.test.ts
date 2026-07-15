@@ -19,7 +19,8 @@ function analysis(): PerlGraphAnalysis {
     ],
     relationships: [
       { source: 'My::App::run', target: 'My::Service::execute', kind: 'calls', file_path: 'lib/My/App.pm', line_start: 5, confidence: 'high', provenance: ['tree-sitter'] },
-      { source: 'My::App', target: 'My::Service', kind: 'imports', file_path: 'lib/My/App.pm', line_start: 2, confidence: 'high', provenance: ['use-resolution'] }
+      { source: 'My::App', target: 'My::Service', kind: 'imports', file_path: 'lib/My/App.pm', line_start: 2, confidence: 'high', provenance: ['use-resolution'] },
+      { source: 'My::App::run', target: 'maybe', kind: 'calls', file_path: 'lib/My/App.pm', line_start: 6, confidence: 'low', provenance: ['unresolved-call'], notes: 'Call expression maybe did not resolve to a known symbol' }
     ],
     call_graph: [
       { source: 'My::App::run', target: 'My::Service::execute', confidence: 'high', provenance: ['tree-sitter'] }
@@ -28,13 +29,16 @@ function analysis(): PerlGraphAnalysis {
       { source_module: 'My::App', target_module: 'My::Service', source_file: 'lib/My/App.pm', target_file: 'lib/My/Service.pm', kind: 'use', confidence: 'high' }
     ],
     unsupported_patterns: [
-      { kind: 'eval_string', file_path: 'lib/My/App.pm', line_start: 7, snippet: 'eval $code', notes: 'String eval cannot be statically resolved' }
+      { kind: 'eval_string', file_path: 'lib/My/App.pm', line_start: 7, snippet: 'eval $code', notes: 'String eval cannot be statically resolved' },
+      { kind: 'moose_modifier', file_path: 'lib/My/App.pm', line_start: 8, snippet: 'around run => sub { };', notes: 'Moose/Moo method modifier changes dispatch semantics' }
     ],
     parse_failures: [],
+    parse_diagnostics: [],
     index_stats: {
       total_files: 1,
       parsed_files: 1,
       failed_files: 0,
+      parse_error_count: 0,
       symbol_count: 2,
       relationship_count: 2,
       dynamic_pattern_count: 1,
@@ -52,12 +56,46 @@ describe('output writer', () => {
       { kind: 'sub', count: 1 }
     ]);
     expect(summary.relationship_kinds).toEqual([
-      { kind: 'calls', count: 1 },
+      { kind: 'calls', count: 2 },
       { kind: 'imports', count: 1 }
     ]);
     expect(summary.top_callers).toEqual([{ symbol: 'My::App::run', outgoing_calls: 1 }]);
     expect(summary.top_callees).toEqual([{ symbol: 'My::Service::execute', incoming_calls: 1 }]);
-    expect(summary.dynamic_risk.patterns).toEqual([{ kind: 'eval_string', count: 1 }]);
+    expect(summary.confidence_audit.relationships).toEqual([
+      { confidence: 'high', count: 2 },
+      { confidence: 'low', count: 1 }
+    ]);
+    expect(summary.confidence_audit.examples).toEqual([{
+      source: 'My::App::run',
+      target: 'maybe',
+      kind: 'calls',
+      confidence: 'low',
+      provenance: ['unresolved-call'],
+      notes: 'Call expression maybe did not resolve to a known symbol'
+    }]);
+    expect(summary.dynamic_risk.patterns).toEqual([
+      { kind: 'eval_string', count: 1 },
+      { kind: 'moose_modifier', count: 1 }
+    ]);
+    expect(summary.framework_evidence.modifiers).toEqual([{
+      file_path: 'lib/My/App.pm',
+      line_start: 8,
+      snippet: 'around run => sub { };',
+      notes: 'Moose/Moo method modifier changes dispatch semantics'
+    }]);
+    expect(summary.dynamic_risk.examples).toEqual([{
+      kind: 'eval_string',
+      file_path: 'lib/My/App.pm',
+      line_start: 7,
+      snippet: 'eval $code',
+      notes: 'String eval cannot be statically resolved'
+    }, {
+      kind: 'moose_modifier',
+      file_path: 'lib/My/App.pm',
+      line_start: 8,
+      snippet: 'around run => sub { };',
+      notes: 'Moose/Moo method modifier changes dispatch semantics'
+    }]);
   });
 
   it('writes stable pretty JSON', async () => {

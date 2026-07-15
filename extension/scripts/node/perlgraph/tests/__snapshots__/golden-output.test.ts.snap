@@ -1,0 +1,394 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`golden CodeGraph compatibility output > emits stable analysis and summary shapes for a representative Perl repo 1`] = `
+{
+  "call_graph": [
+    {
+      "confidence": "medium",
+      "provenance": [
+        "tree-sitter",
+        "self-method-resolution",
+      ],
+      "source": "My::App::run",
+      "target": "My::App::service",
+    },
+  ],
+  "generated_at": "<generated_at>",
+  "index_stats": {
+    "dynamic_pattern_count": 0,
+    "failed_files": 0,
+    "index_state": "ready",
+    "parse_error_count": 0,
+    "parsed_files": 3,
+    "relationship_count": 5,
+    "symbol_count": 10,
+    "total_files": 3,
+  },
+  "language_coverage": {
+    ".pl": "supported",
+    ".pm": "supported",
+    ".psgi": "supported",
+    ".t": "supported",
+  },
+  "module_graph": [
+    {
+      "confidence": "low",
+      "kind": "use",
+      "source_file": "lib/My/App.pm",
+      "source_module": "My::App",
+      "target_module": "Moo",
+    },
+    {
+      "confidence": "high",
+      "kind": "use",
+      "source_file": "lib/My/App.pm",
+      "source_module": "My::App",
+      "target_file": "lib/My/Service.pm",
+      "target_module": "My::Service",
+    },
+    {
+      "confidence": "low",
+      "kind": "use",
+      "source_file": "lib/My/Role.pm",
+      "source_module": "My::Role",
+      "target_module": "Moo::Role",
+    },
+  ],
+  "parse_diagnostics": [],
+  "parse_failures": [],
+  "relationships": [
+    {
+      "confidence": "low",
+      "file_path": "lib/My/App.pm",
+      "kind": "imports",
+      "line_start": 2,
+      "notes": "Module Moo did not resolve to a repository file",
+      "provenance": [
+        "tree-sitter",
+        "module-resolution",
+      ],
+      "source": "My::App",
+      "target": "Moo",
+    },
+    {
+      "confidence": "high",
+      "file_path": "lib/My/App.pm",
+      "kind": "imports",
+      "line_start": 3,
+      "provenance": [
+        "tree-sitter",
+        "module-resolution",
+      ],
+      "source": "My::App",
+      "target": "My::Service",
+    },
+    {
+      "confidence": "high",
+      "file_path": "lib/My/App.pm",
+      "kind": "uses_role",
+      "line_start": 4,
+      "provenance": [
+        "moose-moo-role",
+        "module-resolution",
+      ],
+      "source": "My::App",
+      "target": "My::Role",
+    },
+    {
+      "confidence": "low",
+      "file_path": "lib/My/Role.pm",
+      "kind": "imports",
+      "line_start": 2,
+      "notes": "Module Moo::Role did not resolve to a repository file",
+      "provenance": [
+        "tree-sitter",
+        "module-resolution",
+      ],
+      "source": "My::Role",
+      "target": "Moo::Role",
+    },
+    {
+      "confidence": "medium",
+      "file_path": "lib/My/App.pm",
+      "kind": "calls",
+      "line_start": 8,
+      "provenance": [
+        "tree-sitter",
+        "self-method-resolution",
+      ],
+      "source": "My::App::run",
+      "target": "My::App::service",
+    },
+  ],
+  "repo_path": "<repo_path>",
+  "schema_version": 1,
+  "supported": true,
+  "symbols": [
+    {
+      "file_path": "lib/My/App.pm",
+      "kind": "file",
+      "language": "perl",
+      "line_end": 10,
+      "line_start": 1,
+      "name": "lib/My/App.pm",
+      "provenance": [
+        "file-discovery",
+      ],
+      "qualified_name": "lib/My/App.pm",
+    },
+    {
+      "file_path": "lib/My/App.pm",
+      "kind": "package",
+      "language": "perl",
+      "line_end": 1,
+      "line_start": 1,
+      "name": "My::App",
+      "provenance": [
+        "tree-sitter",
+        "line-scan",
+      ],
+      "qualified_name": "My::App",
+    },
+    {
+      "file_path": "lib/My/App.pm",
+      "kind": "method",
+      "language": "perl",
+      "line_end": 5,
+      "line_start": 5,
+      "name": "service",
+      "provenance": [
+        "moose-moo-attribute",
+        "line-scan",
+      ],
+      "qualified_name": "My::App::service",
+      "signature": "has service",
+    },
+    {
+      "file_path": "lib/My/App.pm",
+      "kind": "method",
+      "language": "perl",
+      "line_end": 10,
+      "line_start": 6,
+      "name": "run",
+      "provenance": [
+        "tree-sitter",
+        "line-scan",
+      ],
+      "qualified_name": "My::App::run",
+      "signature": "sub run",
+    },
+    {
+      "file_path": "lib/My/Role.pm",
+      "kind": "file",
+      "language": "perl",
+      "line_end": 4,
+      "line_start": 1,
+      "name": "lib/My/Role.pm",
+      "provenance": [
+        "file-discovery",
+      ],
+      "qualified_name": "lib/My/Role.pm",
+    },
+    {
+      "file_path": "lib/My/Role.pm",
+      "kind": "package",
+      "language": "perl",
+      "line_end": 1,
+      "line_start": 1,
+      "name": "My::Role",
+      "provenance": [
+        "tree-sitter",
+        "line-scan",
+      ],
+      "qualified_name": "My::Role",
+    },
+    {
+      "file_path": "lib/My/Role.pm",
+      "kind": "sub",
+      "language": "perl",
+      "line_end": 4,
+      "line_start": 3,
+      "name": "provided",
+      "provenance": [
+        "tree-sitter",
+        "line-scan",
+      ],
+      "qualified_name": "My::Role::provided",
+      "signature": "sub provided",
+    },
+    {
+      "file_path": "lib/My/Service.pm",
+      "kind": "file",
+      "language": "perl",
+      "line_end": 3,
+      "line_start": 1,
+      "name": "lib/My/Service.pm",
+      "provenance": [
+        "file-discovery",
+      ],
+      "qualified_name": "lib/My/Service.pm",
+    },
+    {
+      "file_path": "lib/My/Service.pm",
+      "kind": "package",
+      "language": "perl",
+      "line_end": 1,
+      "line_start": 1,
+      "name": "My::Service",
+      "provenance": [
+        "tree-sitter",
+        "line-scan",
+      ],
+      "qualified_name": "My::Service",
+    },
+    {
+      "file_path": "lib/My/Service.pm",
+      "kind": "sub",
+      "language": "perl",
+      "line_end": 3,
+      "line_start": 2,
+      "name": "execute",
+      "provenance": [
+        "tree-sitter",
+        "line-scan",
+      ],
+      "qualified_name": "My::Service::execute",
+      "signature": "sub execute",
+    },
+  ],
+  "tool": "perlgraph",
+  "unsupported_patterns": [],
+}
+`;
+
+exports[`golden CodeGraph compatibility output > emits stable analysis and summary shapes for a representative Perl repo 2`] = `
+{
+  "confidence_audit": {
+    "examples": [
+      {
+        "confidence": "low",
+        "kind": "imports",
+        "notes": "Module Moo did not resolve to a repository file",
+        "provenance": [
+          "tree-sitter",
+          "module-resolution",
+        ],
+        "source": "My::App",
+        "target": "Moo",
+      },
+      {
+        "confidence": "low",
+        "kind": "imports",
+        "notes": "Module Moo::Role did not resolve to a repository file",
+        "provenance": [
+          "tree-sitter",
+          "module-resolution",
+        ],
+        "source": "My::Role",
+        "target": "Moo::Role",
+      },
+      {
+        "confidence": "medium",
+        "kind": "calls",
+        "provenance": [
+          "tree-sitter",
+          "self-method-resolution",
+        ],
+        "source": "My::App::run",
+        "target": "My::App::service",
+      },
+    ],
+    "relationships": [
+      {
+        "confidence": "high",
+        "count": 2,
+      },
+      {
+        "confidence": "low",
+        "count": 2,
+      },
+      {
+        "confidence": "medium",
+        "count": 1,
+      },
+    ],
+  },
+  "dynamic_risk": {
+    "count": 0,
+    "examples": [],
+    "patterns": [],
+  },
+  "framework_evidence": {
+    "modifiers": [],
+  },
+  "generated_at": "<generated_at>",
+  "index_state": "ready",
+  "index_stats": {
+    "dynamic_pattern_count": 0,
+    "failed_files": 0,
+    "index_state": "ready",
+    "parse_error_count": 0,
+    "parsed_files": 3,
+    "relationship_count": 5,
+    "symbol_count": 10,
+    "total_files": 3,
+  },
+  "relationship_kinds": [
+    {
+      "count": 3,
+      "kind": "imports",
+    },
+    {
+      "count": 1,
+      "kind": "calls",
+    },
+    {
+      "count": 1,
+      "kind": "uses_role",
+    },
+  ],
+  "repo_path": "<repo_path>",
+  "schema_version": 1,
+  "symbol_kinds": [
+    {
+      "count": 3,
+      "kind": "file",
+    },
+    {
+      "count": 3,
+      "kind": "package",
+    },
+    {
+      "count": 2,
+      "kind": "method",
+    },
+    {
+      "count": 2,
+      "kind": "sub",
+    },
+  ],
+  "tool": "perlgraph",
+  "top_callees": [
+    {
+      "incoming_calls": 1,
+      "symbol": "My::App::service",
+    },
+  ],
+  "top_callers": [
+    {
+      "outgoing_calls": 1,
+      "symbol": "My::App::run",
+    },
+  ],
+  "top_modules": [
+    {
+      "module": "My::App",
+      "outgoing_dependencies": 2,
+    },
+    {
+      "module": "My::Role",
+      "outgoing_dependencies": 1,
+    },
+  ],
+}
+`;
