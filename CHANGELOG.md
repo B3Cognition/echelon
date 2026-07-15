@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-136 / #160 GOLDDIGGER nested result recovery** — Mode 1 discovery now
+  detects when a nested `re-extract-*` `echelon_result` is forwarded as the
+  outer GOLDDIGGER result, performs the bounded recovery prompt for the required
+  outer `golddigger_status`, and then applies normal allowlist validation.
+
 - **EGR-137 verified fulfillment ledger reuse** — full fulfillment refreshes now
   write a Python-owned per-requirement ledger with evidence fingerprints.
   Scoped delivery refreshes reuse unchanged ledger rows, recheck unresolved or
@@ -14,7 +19,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   invalidated, and unresolved ledger counts, and the delivery summary surfaces
   the same counts.
 
-- **EGR-136 RE target artifact containment** — source-domain dispatches now
+- **EGR-138 RE target artifact containment** — source-domain dispatches now
   retain only their canonical `spec.md`. The controller clears backup,
   temporary, alternate, and scratch siblings before and after each agent call,
   records cleanup in run state, and continues through the existing independent
