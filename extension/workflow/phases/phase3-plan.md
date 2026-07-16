@@ -35,6 +35,8 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol.
+  Treat IMPLEMENTATION_TARGETS from the squad context as authoritative. Every canonical task row must include exactly one `target=<declared-target>` value, and every file path must be valid for that target. Split cross-target work into dependency-linked tasks. Never infer or declare a target from generated file paths.
+  When Product Input Contract paths are present, map every included `IN-REQ-*` unit to canonical `req=` task rows and their declared `target=` values. Return those task IDs and targets in `echelon_result.product_input_updates`; the controller writes the canonical ledger.
   Treat `constitution.md` as read-only governance context. Every task decomposition and risk/dependency decision must respect its non-negotiable principles. Do not edit, rewrite, append to, or output `constitution.md`.
   Break the architecture into executable tasks (foundation, features, polish). Use the provided planning templates; every executable task must start with a canonical task row. Use `T-###` for normal tasks and `T-S##` / `T-S##x` only for spike or user-decision tasks. Identify the critical path. Map task dependencies and parallelization. Assess risk per task. Include test tasks from test-strategy.md. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
@@ -71,7 +73,13 @@ Also verify `tasks.md` uses canonical task rows:
 
 ```bash
 python -m harness validate-tasks "{spec_dir}/tasks.md"
+python -m harness validate-task-targets "{spec_dir}"
 ```
+
+`validate-task-targets` reads the targets declared by the run and validates
+every task's explicit `target=` metadata plus its `**Files:**` paths. It never
+writes `targets.yml`. Missing, undeclared, mismatched, or cross-target ownership
+must be repaired or split before transitioning.
 
 **MANDATORY — run before transitioning to phase3-consensus:**
 

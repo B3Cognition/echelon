@@ -161,6 +161,57 @@ class TestRunMultiTarget:
         assert captured["env"]["ECHELON_WORKSPACE_ROOT"] == str(tmp_path)
         assert captured["env"]["ECHELON_SOURCE_ROOT"] == str(target.resolve())
         assert captured["env"]["ECHELON_SOURCE_ID"] == "r"
+        assert "ECHELON_TARGET_TASK_IDS" not in captured["env"]
+
+    def test_multi_target_delivery_is_dependency_ordered_and_task_scoped(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        sources = tmp_path / "sources"
+        api = sources / "api"
+        web = sources / "web"
+        api.mkdir(parents=True)
+        web.mkdir()
+        spec_dir = tmp_path / "specs" / "001-dashboard"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=api req=FR-001 depends=none target=sources/api\n\n"
+            "  **Files:**\n"
+            "  - `sources/api/src/dashboard.ts` — backend\n\n"
+            "- [ ] T-002 complexity=standard phase=web req=FR-002 depends=T-001 target=sources/web\n\n"
+            "  **Files:**\n"
+            "  - `sources/web/src/dashboard.tsx` — frontend\n\n"
+            "- [ ] T-003 complexity=standard phase=web req=FR-003 depends=T-002 target=sources/web\n\n"
+            "  **Files:**\n"
+            "  - `sources/web/src/dashboard.test.tsx` — frontend test\n",
+            encoding="utf-8",
+        )
+        calls: list[dict[str, object]] = []
+
+        def fake_popen(cmd, cwd, stdout, stderr, text, env=None):
+            calls.append({"cmd": cmd, "cwd": cwd, "env": env})
+            mock = MagicMock()
+            mock.stdout = iter([])
+            mock.returncode = 0
+            mock.wait.return_value = None
+            return mock
+
+        with patch("subprocess.Popen", side_effect=fake_popen):
+            rc = run_multi_target(
+                "001",
+                [web, api],
+                [],
+                echelon_bin="echelon",
+                workspace_root=tmp_path,
+            )
+
+        assert rc == 0
+        assert [Path(str(call["cwd"])).name for call in calls] == ["api", "web"]
+        assert calls[0]["env"]["ECHELON_TARGET_TASK_IDS"] == "T-001"
+        assert calls[1]["env"]["ECHELON_TARGET_TASK_IDS"] == "T-002,T-003"
+        assert calls[0]["env"]["ECHELON_IMPLEMENTATION_TARGET"] == "sources/api"
+        assert calls[1]["env"]["ECHELON_IMPLEMENTATION_TARGET"] == "sources/web"
+        assert calls[0]["env"]["ECHELON_DECLARED_TARGETS"] == "sources/web,sources/api"
 
     def test_nested_target_metadata_keeps_workspace_root_and_source_id(
         self, tmp_path: Path

@@ -787,6 +787,30 @@ def test_pre_dispatch_prompt_includes_re_execution_context(tmp_path):
     assert "re-workspace-inputs.json" in prompt
     assert "FORBIDDEN_SOURCE_ROOTS:" in prompt
     assert str(tmp_path / "sources" / "original-a") in prompt
+    assert "RE_TARGET_SOURCE" not in prompt
+
+
+def test_agent_prompt_includes_authoritative_implementation_target_contract(tmp_path):
+    from harness.phase_graph import PhaseNode
+
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    node = PhaseNode(id="phase3-plan", type="agent")
+    state = {
+        "squad_dir": str(squad_dir),
+        "staging_dir": str(squad_dir / "staging"),
+        "implementation_targets": ["sources/web", "sources/api"],
+    }
+
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "## Implementation Target Contract" in prompt
+    assert "IMPLEMENTATION_TARGETS:" in prompt
+    assert "- sources/web" in prompt
+    assert "- sources/api" in prompt
+    assert "Only these repositories are writable implementation destinations" in prompt
+    assert "Do not infer or add another implementation target" in prompt
 
 
 def test_golddigger_mode1_skips_when_re_plan_has_no_refresh_sources(tmp_path):

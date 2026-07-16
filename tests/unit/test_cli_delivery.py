@@ -63,12 +63,11 @@ def test_spec_help_lists_current_run_and_target_options(
 
     captured = capsys.readouterr()
     assert "run <description> [--mode semi|banzai|guided] [--reset]" in captured.out
-    assert "[--target <source-id-or-path>]" in captured.out
+    assert "[--target <source-id-or-path>]..." in captured.out
     assert "--re-policy" in captured.out
-    assert "none|cached-only|changed|target-changed|target-only|refresh-all" in captured.out
+    assert "none|cached-only|changed|refresh-all" in captured.out
     assert "checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]" in captured.out
-    assert "target <spec_id> <repo> <repo...> [--init]" in captured.out
-    assert "With --init, create/prepare target Git repo(s)." in captured.out
+    assert "target <spec_id>" not in captured.out
 
 
 @pytest.mark.unit
@@ -240,7 +239,7 @@ def test_delivery_init_rejects_target_argument(
     assert exc.value.code == 1
     captured = capsys.readouterr()
     assert "no longer accepts a target repository" in captured.err
-    assert "echelon spec target <spec_id> <source-path>" in captured.err
+    assert "echelon spec run <description> --target <source-path>" in captured.err
 
 
 @pytest.mark.unit
@@ -316,13 +315,10 @@ def test_delivery_run_multiple_source_roots_reports_delivery_rerun_command(
     with pytest.raises(SystemExit) as exc:
         main()
 
-    assert exc.value.code == 2
+    assert exc.value.code == 1
     err = capsys.readouterr().err
-    assert "Multiple source roots found; choose one before running delivery" in err
-    assert "For a new implementation repo:" in err
-    assert "echelon spec target 001-feature sources/<new-repo> --init" in err
-    assert "echelon spec target 001-feature <source-path>" in err
-    assert "Then rerun:  echelon delivery run 001-feature --mode=banzai" in err
+    assert "has no implementation target" in err
+    assert "echelon spec run <description> --target <source-path>" in err
     assert "echelon harness run" not in err
 
 

@@ -35,7 +35,7 @@ from harness.re_materializer import materialize_re_run_context
 from harness.re_planner import build_re_execution_plan
 from harness.re_registry import load_published_index
 from harness.run_history import append_phase_a_run
-from harness.spec_frontmatter import find_spec_dir
+from harness.spec_frontmatter import find_spec_dir, write_targets
 from harness.squad_executors import (
     AgentExecutor,
     CommanderInternalExecutor,
@@ -271,7 +271,8 @@ class SquadController:
         max_iterations: int = 5,
         squad_dir: Optional[Path] = None,
         re_policy: str = "",
-        target_source: str = "",
+        implementation_targets: list[str] | None = None,
+        product_inputs: object | None = None,
     ) -> None:
         self._provider = provider
         self._state_store = state_store
@@ -282,7 +283,8 @@ class SquadController:
         self._max_iterations = max_iterations
         self._squad_dir = squad_dir or state_store.squad_dir
         self._re_policy = re_policy
-        self._target_source = target_source
+        self._implementation_targets = list(implementation_targets or [])
+        self._product_inputs = product_inputs
         self._evaluator = ConditionEvaluator()
         self._gate_config_cache: Optional[dict] = None
         self._gov_config_cache: Optional[dict] = None
@@ -585,6 +587,12 @@ class SquadController:
                 entry_phase=entry_phase,
                 max_iterations=self._max_iterations,
                 autonomy_mode=mode,
+                implementation_targets=self._implementation_targets,
+                product_inputs=(
+                    self._product_inputs.state_payload(self._project_root)
+                    if self._product_inputs is not None
+                    else None
+                ),
             )
             self._initialize_re_context()
             if self._state_store.load().get("status") == "blocked":
@@ -692,6 +700,10 @@ class SquadController:
             if blocked_result:
                 self._block_after_executor_failure(phase, blocked_result, result)
                 return SquadResult.from_state(self._state_store.load())
+            product_input_error = self._apply_product_input_updates(result)
+            if product_input_error:
+                self._block_after_executor_failure(phase, product_input_error, result)
+                return SquadResult.from_state(self._state_store.load())
 
             next_phase = self._evaluate_transitions(node, result)
             if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
@@ -776,7 +788,7 @@ class SquadController:
             plan = build_re_execution_plan(
                 project_root=self._project_root,
                 manifest=manifest,
-                target_source=self._target_source,
+                target_source="",
                 requested_policy=self._re_policy,
                 profile=profile,
                 published_index=published_index,
@@ -913,6 +925,10 @@ class SquadController:
         blocked_result = self._blocked_executor_reason(result)
         if blocked_result:
             self._block_after_executor_failure(phase, blocked_result, result)
+            return SquadResult.from_state(self._state_store.load())
+        product_input_error = self._apply_product_input_updates(result)
+        if product_input_error:
+            self._block_after_executor_failure(phase, product_input_error, result)
             return SquadResult.from_state(self._state_store.load())
 
         next_phase = self._evaluate_transitions(node, result)
@@ -1151,6 +1167,7 @@ class SquadController:
         return candidates
 
     def _publish_phase_a_artifacts_for_build(self) -> PhaseAReadinessResult:
+        self._materialize_implementation_targets()
         state = self._state_store.load()
         active_spec_dir = self._active_phase_a_spec_dir(state)
         if active_spec_dir is None or not active_spec_dir.exists():
@@ -1165,6 +1182,14 @@ class SquadController:
                 self._copy_spec_tree(active_spec_dir, published_spec_dir)
             else:
                 published_spec_dir.mkdir(parents=True, exist_ok=True)
+            input_blockers = self._publish_product_input_evidence(published_spec_dir, state)
+            if input_blockers:
+                return PhaseAReadinessResult(
+                    ready=False,
+                    blockers=input_blockers,
+                    missing={},
+                    ready_spec_dir=None,
+                )
             self._publish_constitution_snapshot(published_spec_dir)
             self._write_phase_a_finalization_outputs(published_spec_dir, state)
             write_artifact_index(published_spec_dir)
@@ -1184,6 +1209,31 @@ class SquadController:
         updated["published_spec_dir"] = self._repo_relative_or_absolute(published_spec_dir)
         self._state_store.save(updated)
         return validate_phase_a_readiness(updated, [published_spec_dir])
+
+    def _publish_product_input_evidence(self, published_spec_dir: Path, state: dict) -> list[str]:
+        """Publish safe run-local evidence and enforce the normative input chain."""
+        metadata = state.get("product_inputs")
+        if not isinstance(metadata, dict) or not metadata:
+            return []
+        inputs_ref = str(metadata.get("inputs_dir") or "").strip()
+        if not inputs_ref:
+            return ["product input evidence path is missing from run state"]
+        source = Path(inputs_ref)
+        if not source.is_absolute():
+            source = self._project_root / source
+        if not source.is_dir():
+            return [f"product input evidence directory is missing: {source}"]
+        destination = published_spec_dir / "inputs"
+        if destination.exists():
+            shutil.rmtree(destination)
+        shutil.copytree(source, destination)
+        from echelon.product_inputs import validate_product_input_traceability
+        targets = [
+            str(value).strip()
+            for value in state.get("implementation_targets", [])
+            if str(value).strip()
+        ]
+        return validate_product_input_traceability(published_spec_dir, targets)
 
     def _write_phase_a_finalization_outputs(
         self,
@@ -1350,6 +1400,7 @@ class SquadController:
         return None
 
     def _checkpoint_successful_phase(self, phase: str, next_phase: str) -> None:
+        self._materialize_implementation_targets()
         state = self._state_store.load()
         spec_dir = self._active_phase_a_spec_dir(state)
         if spec_dir is None or not spec_dir.exists():
@@ -1365,6 +1416,54 @@ class SquadController:
             )
         except Exception as exc:
             logger.warning("Could not create phase checkpoint for %s: %s", phase, exc)
+
+    def _materialize_implementation_targets(self) -> None:
+        """Write authoritative run targets once an active spec exists."""
+        state = self._state_store.load()
+        targets = [
+            str(value).strip()
+            for value in (
+                state.get("implementation_targets")
+                or getattr(self, "_implementation_targets", [])
+            )
+            if str(value).strip()
+        ]
+        if not targets:
+            return
+        spec_dir = self._active_phase_a_spec_dir(state)
+        if (
+            spec_dir is None
+            or not spec_dir.exists()
+            or not (spec_dir / "spec.md").is_file()
+        ):
+            return
+        try:
+            write_targets(spec_dir, targets)
+        except (OSError, ValueError) as exc:
+            logger.warning("Could not materialize implementation targets: %s", exc)
+
+    def _apply_product_input_updates(self, result: SquadAgentResult) -> str | None:
+        """Validate and persist agent proposals through the controller-owned ledger."""
+        payload = result.echelon_result or {}
+        updates = payload.get("product_input_updates")
+        if not updates:
+            return None
+        state = self._state_store.load()
+        metadata = state.get("product_inputs")
+        if not isinstance(metadata, dict):
+            return "product_input_updates received without declared product inputs"
+        traceability_ref = str(metadata.get("traceability") or "").strip()
+        if not traceability_ref:
+            return "product input traceability path is missing from run state"
+        traceability_path = Path(traceability_ref)
+        if not traceability_path.is_absolute():
+            traceability_path = self._project_root / traceability_path
+        try:
+            from echelon.product_inputs import ProductInputError, apply_product_input_updates
+            apply_product_input_updates(traceability_path, updates)
+        except (OSError, ProductInputError) as exc:
+            return f"invalid product input updates: {exc}"
+        return None
 
     def _clear_stale_re_failure_context_after_success(self) -> None:
         state = self._state_store.load()

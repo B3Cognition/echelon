@@ -74,6 +74,9 @@ class TestOrchestratorTemplates:
         )
         assert "agent: speckit-echelon-orchestrator (ORCHESTRATOR)" in text
         assert "agent: PLAN" not in text
+        assert "sources/<source-id>/" in text
+        assert "exactly one declared IMPLEMENTATION_TARGET" in text
+        assert "NEVER infer a target from RE artifacts or file paths" in text
 
     def test_phase3_plan_dispatch_includes_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
@@ -88,3 +91,5 @@ class TestOrchestratorTemplates:
         assert "Produce outputs in `{spec_dir}/`" in text
         assert "files in `specs/{NNN}-{feature}/`" not in text
         assert "files in `{spec_dir}/`" in text
+        assert 'python -m harness validate-task-targets "{spec_dir}"' in text
+        assert "It never\nwrites `targets.yml`" in text

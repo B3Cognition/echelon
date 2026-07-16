@@ -1184,8 +1184,8 @@ stacks:
 
 harness:
   # Implementation targets are declared in spec frontmatter, not here:
-  #   echelon spec target <spec_id> <source-path>
-  #   echelon spec target <spec_id> sources/<new-repo> --init
+  #   echelon spec run <description> --target <source-path>
+  #   echelon spec run <description> --target sources/<new-repo> --init
 
   # Sandbox provider
   # Phase 1: "docker" (production-ready)

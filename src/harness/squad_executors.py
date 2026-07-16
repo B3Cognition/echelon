@@ -187,6 +187,52 @@ def _workspace_source_roots_context(project_root: Path) -> str:
     return "\n".join(lines)
 
 
+def _render_implementation_target_context(state: dict) -> str:
+    """Render the immutable Phase A implementation boundary."""
+    targets = [
+        str(value).strip()
+        for value in (state.get("implementation_targets") or [])
+        if str(value).strip()
+    ]
+    if not targets:
+        return ""
+    lines = [
+        "## Implementation Target Contract",
+        "IMPLEMENTATION_TARGETS:",
+        *(f"- {target}" for target in targets),
+        "- Only these repositories are writable implementation destinations for this specification.",
+        "- Other workspace sources are read-only evidence and reference context.",
+        "- Do not infer or add another implementation target from source similarity, RE artifacts, file paths, or architecture preferences.",
+        "- If required work cannot be assigned to one declared target, return BLOCKED and identify the missing target instead of changing scope.",
+        "- Architecture, contracts, plans, tests, estimates, and tasks must use these targets consistently.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _render_product_input_context(state: dict) -> str:
+    """Render immutable product evidence pointers without embedding the corpus."""
+    inputs = state.get("product_inputs")
+    if not isinstance(inputs, dict) or not inputs:
+        return ""
+    required = ("manifest", "catalog", "traceability", "requirement_context", "reference_context")
+    if not all(str(inputs.get(key) or "").strip() for key in required):
+        return ""
+    return "\n".join([
+        "## Product Input Contract",
+        f"PRODUCT_INPUT_MANIFEST={inputs['manifest']}",
+        f"PRODUCT_INPUT_CATALOG={inputs['catalog']}",
+        f"PRODUCT_INPUT_TRACEABILITY={inputs['traceability']}",
+        f"REQUIREMENT_INPUTS={inputs['requirement_context']}",
+        f"REFERENCE_INPUTS={inputs['reference_context']}",
+        "- Requirement inputs are normative; reference inputs are informative and cannot override them.",
+        "- Read only immutable snapshot paths named by the manifest and catalog. Do not add undeclared inputs.",
+        "- Cite stable input unit IDs when adopting or challenging product evidence.",
+        "- Propose ledger changes only in echelon_result.product_input_updates; the controller validates and writes the canonical ledger.",
+        "",
+    ])
+
+
 def _render_re_execution_context(state: dict) -> str:
     """Render source-scoped RE plan details for agent prompts."""
     if "re_execution_plan" not in state and "re_artifacts" not in state:
@@ -255,7 +301,6 @@ def _render_re_execution_context(state: dict) -> str:
     lines = [
         "## Reverse Engineering Execution Plan",
         f"RE_POLICY={state.get('re_policy') or ''}",
-        f"RE_TARGET_SOURCE={state.get('target_source') or ''}",
         "RE_REFRESH_SOURCES=" + (", ".join(refresh_sources) if refresh_sources else "(none)"),
         "RE_MISSING_SOURCES=" + (", ".join(missing_sources) if missing_sources else "(none)"),
         "RE_EMPTY_SOURCES=" + (", ".join(empty_sources) if empty_sources else "(none)"),
@@ -655,6 +700,8 @@ class PhaseExecutor(ABC):
             f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n"
             f"{_workspace_source_roots_context(self._project_root)}"
+            f"{_render_implementation_target_context(state)}"
+            f"{_render_product_input_context(state)}"
             f"{_render_re_execution_context(state)}"
             f"{self._extension_path_context()}"
         )
@@ -1191,6 +1238,8 @@ class PhaseExecutor(ABC):
                 + f"CONTEXT_DIR={context_dir_str}\n"
                 + f"PROJECT_ROOT={self._project_root}\n"
                 + _workspace_source_roots_context(self._project_root)
+                + _render_implementation_target_context(state)
+                + _render_product_input_context(state)
                 + _render_re_execution_context(state)
                 + self._extension_path_context()
                 + "<context>\n"
@@ -1217,6 +1266,8 @@ class PhaseExecutor(ABC):
             + f"CONTEXT_DIR={context_dir_str}\n"
             + f"PROJECT_ROOT={self._project_root}\n"
             + _workspace_source_roots_context(self._project_root)
+            + _render_implementation_target_context(state)
+            + _render_product_input_context(state)
             + _render_re_execution_context(state)
             + self._extension_path_context()
             + _allowed_state_updates_contract(allowed_state_updates)
@@ -1268,6 +1319,8 @@ class PhaseExecutor(ABC):
             + f"CONTEXT_DIR={context_dir_str}\n"
             + f"PROJECT_ROOT={self._project_root}\n"
             + _workspace_source_roots_context(self._project_root)
+            + _render_implementation_target_context(state)
+            + _render_product_input_context(state)
             + self._extension_path_context()
             + "\n".join(context_lines)
             + "\n\n<instructions>\n"
@@ -1527,6 +1580,8 @@ class StagedParallelExecutor(PhaseExecutor):
             f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n\n"
             f"{_workspace_source_roots_context(self._project_root)}"
+            f"{_render_implementation_target_context(state)}"
+            f"{_render_product_input_context(state)}"
             f"Operate in **{mode_label}** mode.\n\n"
         )
 
@@ -1548,6 +1603,7 @@ class StagedParallelExecutor(PhaseExecutor):
         stage2_agents = [a for a in node.agents if a.get("stage", 1) == 2]
 
         stage1_results: dict[str, SquadAgentResult] = {}
+        product_input_updates: list[dict] = []
         state = state_store.load()
 
         # Stage 1: run in parallel
@@ -1574,6 +1630,8 @@ class StagedParallelExecutor(PhaseExecutor):
                 if result.blocked:
                     return result
                 stage1_results[label] = result
+                payload = result.echelon_result or {}
+                product_input_updates.extend(payload.get("product_input_updates") or [])
 
         # Write stage-1 verdicts, journal entries, and cost to state (serial — after join)
         for label, result in stage1_results.items():
@@ -1613,6 +1671,8 @@ class StagedParallelExecutor(PhaseExecutor):
             stage2_result = self._validate_result_state_updates(node, stage2_result)
             if stage2_result.blocked:
                 return stage2_result
+            stage2_payload = stage2_result.echelon_result or {}
+            product_input_updates.extend(stage2_payload.get("product_input_updates") or [])
             self._write_journal_entries(stage2_result, node.id)
             state_store.increment_cost(stage2_result.cost_usd)
             state = state_store.load()
@@ -1628,6 +1688,7 @@ class StagedParallelExecutor(PhaseExecutor):
             echelon_result={
                 "verdict": "PASS" if all_pass else "FAIL",
                 "state_updates": {},
+                "product_input_updates": product_input_updates,
             },
             raw_output="",
             duration_ms=0,
@@ -1660,6 +1721,7 @@ class ConditionalSequentialExecutor(PhaseExecutor):
                     prompt = (
                         _shared_agent_contract()
                         + path.read_text()
+                        + _render_product_input_context(state)
                         + _allowed_state_updates_contract(node.allowed_state_updates)
                         + _canonical_echelon_result_contract(self._ext_dir)
                     )

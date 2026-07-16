@@ -1,5 +1,13 @@
 # EGR-123 Source-Scoped RE Cache Design
 
+> **Superseded by EGR-147 (2026-07-16):** This document is retained as design
+> history. Its reuse of Phase A `--target` and `target_source` for RE selection
+> is no longer a public or runtime contract. `echelon spec run --target` now
+> means implementation destination only; reverse engineering remains
+> workspace-scoped and uses target-independent `none`, `cached-only`, `changed`,
+> or `refresh-all` policies. The `target-only` and `target-changed` CLI policies
+> are retired.
+
 ## Problem
 
 `echelon spec run` currently treats source presence as a run-wide brownfield

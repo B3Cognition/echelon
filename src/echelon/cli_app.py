@@ -70,12 +70,11 @@ spec_app = typer.Typer(
         "Phase A/spec lifecycle commands.\n\n"
         "Common forms:\n"
         "  run <description> [--mode semi|banzai|guided] [--reset]\n"
-        "                    [--target <source-id-or-path>] [--init]\n"
-        "                    [--re-policy none|cached-only|changed|target-changed|target-only|refresh-all]\n"
+        "                    [--target <source-id-or-path>]... [--init]\n"
+        "                    [--re-policy none|cached-only|changed|refresh-all]\n"
         "                    [--re-max-inner <n>]\n"
         "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
-        "  target <spec_id> <repo> <repo...> [--init]\n"
-        "                    With --init, create/prepare target Git repo(s)."
+        "  targets <spec_id>  Display every task grouped by delivery target."
     ),
     rich_markup_mode=None,
     no_args_is_help=True,
@@ -380,11 +379,10 @@ def root_run(
     init: bool = typer.Option(False, "--init", help="Create or prepare the targeted source root."),
     message: Optional[str] = typer.Option(None, "--message", help="Additional run message."),
     next_phase: Optional[str] = typer.Option(None, "--next-phase", help="Resume at an explicit workflow phase."),
-    target: Optional[str] = typer.Option(
+    target: Optional[list[str]] = typer.Option(
         None,
         "--target",
-        "--target-source",
-        help="Implementation source id or path to reverse-engineer.",
+        help="Implementation source id or path; repeat for multi-repo delivery.",
     ),
     re_policy: Optional[str] = typer.Option(None, "--re-policy", help="Reverse-engineering cache policy."),
 ) -> None:
@@ -782,7 +780,6 @@ def _merge_run_args(
     *,
     mode: str | None,
     strategy: str | None,
-    target: str | None,
     max_outer: int | None,
     max_inner: int | None,
     token_budget: int | None,
@@ -795,7 +792,6 @@ def _merge_run_args(
         _option_pairs(
             mode=mode,
             strategy=strategy,
-            target=target,
             max_outer=max_outer,
             max_inner=max_inner,
             token_budget=token_budget,
@@ -815,7 +811,6 @@ def _display_run_args(
     *,
     mode: str | None,
     strategy: str | None,
-    target: str | None,
     max_outer: int | None,
     max_inner: int | None,
     token_budget: int | None,
@@ -828,8 +823,6 @@ def _display_run_args(
         args.append(f"--mode={mode}")
     if strategy is not None:
         args.append(f"--strategy={strategy}")
-    if target is not None:
-        args.append(f"--target={target}")
     if max_outer is not None:
         args.append(f"--max-outer={max_outer}")
     if max_inner is not None:
@@ -895,11 +888,15 @@ def spec_run(
     init: bool = typer.Option(False, "--init", help="Create or prepare the targeted source root."),
     message: Optional[str] = typer.Option(None, "--message", help="Additional run message."),
     next_phase: Optional[str] = typer.Option(None, "--next-phase", help="Resume at an explicit workflow phase."),
-    target: Optional[str] = typer.Option(
+    target: Optional[list[str]] = typer.Option(
         None,
         "--target",
-        "--target-source",
-        help="Implementation source id or path to reverse-engineer.",
+        help="Implementation source id or path; repeat for multi-repo delivery.",
+    ),
+    input_values: Optional[list[str]] = typer.Option(
+        None,
+        "--input",
+        help="Product input as requirement:<path> or reference:<path>; repeat as needed.",
     ),
     re_policy: Optional[str] = typer.Option(
         None,
@@ -927,7 +924,8 @@ def spec_run(
         args.append("--init")
     _extend_option(args, "--message", message)
     _extend_option(args, "--next-phase", next_phase)
-    _extend_option(args, "--target", target)
+    _extend_repeated_option(args, "--target", target)
+    _extend_repeated_option(args, "--input", input_values)
     _extend_option(args, "--re-policy", re_policy)
     _extend_option(args, "--re-max-inner", re_max_inner)
     legacy_cli._cmd_spec_run(args)
@@ -1072,6 +1070,7 @@ def spec_checkpoint_commit(
 @spec_app.command(
     "target",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    hidden=True,
 )
 def spec_target(
     ctx: typer.Context,
@@ -1086,6 +1085,16 @@ def spec_target(
     if init:
         args.append("--init")
     legacy_cli._cmd_spec_target(args)
+
+
+@spec_app.command("targets")
+def spec_targets(
+    spec_id: str = typer.Argument(..., help="Spec id to inspect."),
+) -> None:
+    """Display every task grouped by delivery target."""
+    from echelon import cli as legacy_cli
+
+    legacy_cli._cmd_spec_targets([spec_id])
 
 
 @spec_app.command(
@@ -1321,11 +1330,6 @@ def delivery_run(
         "--strategy",
         help="Build strategy, usually default or codegen.",
     ),
-    target: Optional[str] = typer.Option(
-        None,
-        "--target",
-        help="Implementation source id or path to run delivery against.",
-    ),
     max_outer: Optional[int] = typer.Option(
         None,
         "--max-outer",
@@ -1366,7 +1370,6 @@ def delivery_run(
             list(ctx.args),
             mode=mode,
             strategy=strategy,
-            target=target,
             max_outer=max_outer,
             max_inner=max_inner,
             token_budget=token_budget,
@@ -1380,7 +1383,6 @@ def delivery_run(
             list(ctx.args),
             mode=mode,
             strategy=strategy,
-            target=target,
             max_outer=max_outer,
             max_inner=max_inner,
             token_budget=token_budget,
@@ -1400,7 +1402,6 @@ def harness_run(
     spec_id: str,
     mode: Optional[str] = typer.Option(None, "--mode"),
     strategy: Optional[str] = typer.Option(None, "--strategy"),
-    target: Optional[str] = typer.Option(None, "--target"),
     max_outer: Optional[int] = typer.Option(None, "--max-outer"),
     max_inner: Optional[int] = typer.Option(None, "--max-inner"),
     token_budget: Optional[int] = typer.Option(None, "--token-budget"),
@@ -1417,7 +1418,6 @@ def harness_run(
             list(ctx.args),
             mode=mode,
             strategy=strategy,
-            target=target,
             max_outer=max_outer,
             max_inner=max_inner,
             token_budget=token_budget,
@@ -1431,7 +1431,6 @@ def harness_run(
             list(ctx.args),
             mode=mode,
             strategy=strategy,
-            target=target,
             max_outer=max_outer,
             max_inner=max_inner,
             token_budget=token_budget,

@@ -84,8 +84,6 @@ def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
         "2",
         "--token-budget",
         "1000",
-        "--target",
-        "api",
         "--no-auto-merge",
         "--kill-losers",
         "--reset",
@@ -95,7 +93,6 @@ def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
         "001",
         "mode=banzai",
         "strategy=codegen",
-        "target=api",
         "max_outer=3",
         "max_inner=2",
         "token_budget=1000",
@@ -201,7 +198,7 @@ def test_delivery_run_declares_canonical_flags():
     assert "--mode" in declared_options
     assert "--strategy" in declared_options
     assert "--max-outer" in declared_options
-    assert "--target" in declared_options
+    assert "--target" not in declared_options
 
 
 @pytest.mark.unit
@@ -341,9 +338,9 @@ def test_hidden_top_level_alias_still_routes(monkeypatch):
     calls: list[list[str]] = []
     monkeypatch.setattr("echelon.cli._cmd_harness_run", lambda args, **_kwargs: calls.append(args))
 
-    run(["harness", "run", "001", "--target", "api"])
+    run(["harness", "run", "001", "--mode", "banzai"])
 
-    assert calls == [["001", "target=api"]]
+    assert calls == [["001", "mode=banzai"]]
 
 
 @pytest.mark.unit
@@ -370,6 +367,24 @@ def test_spec_help_uses_typer_front_door():
     assert "run" in result.output
     assert "status" in result.output
     assert "Usage: echelon spec <subcommand>" not in result.output
+
+
+@pytest.mark.unit
+def test_spec_targets_declares_argument_and_routes(monkeypatch):
+    from echelon.cli_app import run
+
+    result = invoke_help("spec", "targets")
+
+    assert result.exit_code == 0
+    assert "SPEC_ID" in result.output
+    assert "Display every task grouped by delivery target" in result.output
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_spec_targets", lambda args: calls.append(args))
+
+    run(["spec", "targets", "001"])
+
+    assert calls == [["001"]]
 
 
 @pytest.mark.unit
@@ -418,8 +433,18 @@ def test_spec_run_help_declares_phase_a_options():
     assert "--message" in result.output
     assert "--next-phase" in result.output
     assert "--target" in result.output
+    assert "--input" in result.output
     assert "--re-policy" in result.output
     assert "--re-max-inner" in result.output
+
+
+@pytest.mark.unit
+def test_spec_help_does_not_offer_post_hoc_target_mutation():
+    result = invoke_help("spec")
+
+    assert result.exit_code == 0
+    assert "target <spec_id>" not in result.output
+    assert "targets <spec_id>" in result.output
 
 
 @pytest.mark.unit
@@ -443,8 +468,14 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "phase2-model",
         "--target",
         "api",
+        "--target",
+        "web",
+        "--input",
+        "requirement:sources/PBS-E-45",
+        "--input",
+        "reference:sources/provision",
         "--re-policy",
-        "target-only",
+        "changed",
         "--re-max-inner",
         "10",
     ])
@@ -461,8 +492,14 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "phase2-model",
         "--target",
         "api",
+        "--target",
+        "web",
+        "--input",
+        "requirement:sources/PBS-E-45",
+        "--input",
+        "reference:sources/provision",
         "--re-policy",
-        "target-only",
+        "changed",
         "--re-max-inner",
         "10",
     ]]

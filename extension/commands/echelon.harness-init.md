@@ -28,9 +28,9 @@ If `$ARGUMENTS` is non-empty, report:
 
 ```
 Harness init no longer accepts a target repository.
-Set implementation targets per spec:
-  echelon spec target <spec_id> <source-path>
-  echelon spec target <spec_id> sources/<new-repo> --init
+Set implementation targets when Phase A starts:
+  echelon spec run <description> --target <source-path>
+  echelon spec run <description> --target sources/<new-repo> --init
 Then rerun: echelon delivery init
 ```
 
@@ -74,7 +74,7 @@ Harness initialized.
   Provider: {provider}
 
 Next:
-  echelon spec target <spec_id> <source-path>
+  echelon spec run <description> --target <source-path>
   echelon delivery run <spec_id>
 ```
 

@@ -72,21 +72,21 @@ The splitter keeps `.specify`, `specs`, `runs`, and root `.gitignore` at the wor
 
 Do not use a branchless workspace for new runs. Echelon only allows branchless workspaces for legacy recovery.
 
-When a workspace has multiple source roots, select the implementation target before harness build:
+When a workspace has multiple source roots, declare every implementation target before Phase A dispatches any agent:
 
 ```bash
-echelon spec target 001-feature og-platform
+echelon spec run "Describe the feature" --target og-platform
 echelon delivery target 001-feature
 echelon delivery run 001-feature
 ```
 
-Use the source path in `echelon spec target`. A source id may be displayed for readability, but the stored target is the path relative to the workspace root in `specs/<id>/targets.yml`. Run `echelon delivery target <id>` after setting the target so Echelon records target-scoped delivery metadata such as the detected `verify_command`.
+Repeat `--target` for multi-repo work. Echelon resolves source ids to paths relative to the workspace root, persists them before target-dependent planning, and writes them to `specs/<id>/targets.yml`. Run `echelon delivery target <id>` afterward so Echelon records target-scoped delivery metadata such as the detected `verify_command`. Delivery validates this declaration and never infers or rewrites it.
 
 For a new implementation repo, let Echelon prepare the target directory, Git
 repository, initial commit, and feature branch:
 
 ```bash
-echelon spec target 001-feature sources/new-tool --init
+echelon spec run "Create the new tool" --target sources/new-tool --init
 echelon delivery target 001-feature
 echelon delivery run 001-feature --mode=banzai
 ```

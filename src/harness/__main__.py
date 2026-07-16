@@ -5,6 +5,7 @@ Subcommands:
   resume  — resume a blocked loop with an answer (reads HARNESS_* env vars)
   gitops  — GitOps operations (find-branch, create-worktree, commit-push, open-pr, merge-pr, local-merge)
   validate-tasks — validate canonical tasks.md rows
+  validate-task-targets — validate explicit task ownership against targets.yml
   validate-task-progress — reconcile canonical tasks.md progress with state.json
   mark-task-progress — update one canonical tasks.md row and status
   write-progress-integrity — write deterministic progress integrity artifacts
@@ -144,6 +145,65 @@ def _validate_tasks() -> None:
         sys.exit(1)
 
     print(f"OK: {result.task_count} canonical tasks")
+
+
+def _validate_task_targets() -> None:
+    if len(sys.argv) < 3:
+        print(
+            "Usage: python -m harness validate-task-targets <spec-dir>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    from pathlib import Path
+
+    from harness.spec_frontmatter import read_targets
+    from harness.task_targets import validate_task_targets
+
+    spec_dir = Path(sys.argv[2])
+    tasks_path = spec_dir / "tasks.md"
+    if not tasks_path.is_file():
+        print(f"tasks.md not found: {tasks_path}", file=sys.stderr)
+        sys.exit(1)
+
+    declared = read_targets(spec_dir)
+    result = validate_task_targets(
+        tasks_path.read_text(encoding="utf-8", errors="replace"),
+        declared_targets=declared,
+        allow_legacy_single_target=False,
+    )
+    if not result.valid:
+        details: list[str] = []
+        if result.missing_targets:
+            details.append("undeclared targets: " + ", ".join(result.missing_targets))
+        if result.unreferenced_targets:
+            details.append("unused declared targets: " + ", ".join(result.unreferenced_targets))
+        if result.unowned_tasks:
+            details.append("tasks without target=: " + ", ".join(result.unowned_tasks))
+        if result.cross_target_tasks:
+            details.append(
+                "cross-target tasks: "
+                + ", ".join(sorted(result.cross_target_tasks))
+            )
+        if result.path_target_mismatches:
+            details.append(
+                "target/file mismatches: "
+                + ", ".join(sorted(result.path_target_mismatches))
+            )
+        print(
+            "invalid task target ownership: " + "; ".join(details),
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(
+        "OK: validated explicit task targets: "
+        + ", ".join(sorted(result.target_tasks))
+    )
+
+
+def _sync_task_targets() -> None:
+    """Compatibility alias that validates and never mutates target metadata."""
+    _validate_task_targets()
 
 
 def _validate_task_progress() -> None:
@@ -1327,6 +1387,8 @@ def main() -> None:
         sys.exit(gitops_main(sys.argv[2:]))
     elif subcommand == "validate-tasks":
         _validate_tasks()
+    elif subcommand in {"validate-task-targets", "sync-task-targets"}:
+        _validate_task_targets()
     elif subcommand == "validate-task-progress":
         _validate_task_progress()
     elif subcommand == "mark-task-progress":
@@ -1378,7 +1440,7 @@ def main() -> None:
     else:
         print(
             f"Unknown subcommand: {subcommand!r}. Use 'run', 'resume', 'gitops', "
-            "'validate-tasks', 'validate-task-progress', 'mark-task-progress', "
+            "'validate-tasks', 'validate-task-targets', 'validate-task-progress', 'mark-task-progress', "
             "'write-progress-integrity', "
             "'write-task-requirement-mapping-candidates', "
             "'apply-task-requirement-mapping', "

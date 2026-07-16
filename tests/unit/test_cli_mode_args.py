@@ -132,10 +132,17 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
     assert "blocked  ·  2m 31s  ·  $0.1234" in out
 
 
-def test_cmd_run_passes_re_target_and_policy_to_squad_controller(
+def test_cmd_run_passes_repeatable_implementation_targets_independently_of_re_policy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    for source in ("api", "web"):
+        source_root = tmp_path / "sources" / source
+        source_root.mkdir(parents=True)
+        (source_root / "package.json").write_text("{}\n", encoding="utf-8")
+    product = tmp_path / "sources" / "PBS-E-45"
+    product.mkdir(parents=True)
+    (product / "requirements.md").write_text("# Product request\n", encoding="utf-8")
     squad_dir = tmp_path / "runs" / "spec-20260706-120000-000001"
     captured: dict[str, object] = {}
 
@@ -168,13 +175,45 @@ def test_cmd_run_passes_re_target_and_policy_to_squad_controller(
     monkeypatch.setattr("harness.squad.SquadController", FakeController)
 
     _cmd_run(
-        ["build notes", "--target", "prosaic", "--re-policy=target-only"],
+        [
+            "build notes",
+            "--target",
+            "sources/api",
+            "--target",
+            "sources/web",
+            "--re-policy=changed",
+            "--input=requirement:sources/PBS-E-45",
+        ],
         project_root=tmp_path,
         ext_dir=tmp_path / "ext",
     )
 
-    assert captured["target_source"] == "prosaic"
-    assert captured["re_policy"] == "target-only"
+    assert captured["implementation_targets"] == ["sources/api", "sources/web"]
+    assert "target_source" not in captured
+    assert captured["re_policy"] == "changed"
+    assert captured["product_inputs"].manifest_hash
+
+
+@pytest.mark.parametrize("policy", ["target-changed", "target-only"])
+def test_cmd_run_rejects_target_scoped_reverse_engineering_policies(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    policy: str,
+) -> None:
+    monkeypatch.setattr("echelon.cli._print_extension_drift_warning", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_run(
+            ["build notes", f"--re-policy={policy}"],
+            project_root=tmp_path,
+            ext_dir=tmp_path / "ext",
+        )
+
+    assert exc.value.code == 2
+    assert "Reverse engineering is workspace-scoped" in capsys.readouterr().err
 
 
 def test_cmd_run_target_init_prepares_target_and_syncs_workspace_sources(
@@ -227,7 +266,7 @@ def test_cmd_run_target_init_prepares_target_and_syncs_workspace_sources(
 
     target = tmp_path / "sources" / "optasearch-pro"
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    assert captured["target_source"] == "sources/optasearch-pro"
+    assert captured["implementation_targets"] == ["sources/optasearch-pro"]
     assert captured["user_message"] == "build notes"
     assert (target / ".git").exists()
     assert config["sources"] == [
@@ -254,3 +293,26 @@ def test_cmd_run_target_init_requires_target(
 
     assert exc.value.code == 1
     assert "--init requires --target" in capsys.readouterr().err
+
+
+def test_cmd_run_requires_targets_before_multi_source_phase_a(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    for source in ("api", "web"):
+        source_root = tmp_path / "sources" / source
+        source_root.mkdir(parents=True)
+        (source_root / "package.json").write_text("{}\n", encoding="utf-8")
+
+    monkeypatch.setattr("echelon.cli._print_extension_drift_warning", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._enforce_project_config_compatibility", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("echelon.cli._workspace_git_preflight", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_run(["build notes"], project_root=tmp_path, ext_dir=tmp_path / "ext")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "multiple source repositories" in err
+    assert "--target" in err

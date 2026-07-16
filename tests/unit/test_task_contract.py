@@ -44,6 +44,21 @@ class TestTaskContract:
         assert task.requirements == ["FR-002", "FR-003"]
         assert task.dependencies == ["T-001"]
 
+    def test_parse_task_rows_extracts_explicit_implementation_target(self) -> None:
+        task = parse_task_rows(
+            "- [ ] T-001 complexity=standard phase=core req=FR-001 "
+            "depends=none target=sources/api\n"
+        )[0]
+
+        assert task.target == "sources/api"
+
+    def test_parse_task_rows_keeps_legacy_targetless_rows_parseable(self) -> None:
+        task = parse_task_rows(
+            "- [ ] T-001 complexity=standard phase=core req=FR-001 depends=none\n"
+        )[0]
+
+        assert task.target is None
+
     def test_validation_accepts_canonical_tasks(self) -> None:
         result = validate_tasks_markdown(CANONICAL_TASKS)
 

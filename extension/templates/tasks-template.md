@@ -10,7 +10,7 @@
 Every executable task MUST start with one top-level canonical row:
 
 ```markdown
-- [ ] T-001 [P] complexity=standard phase=foundation req=FR-001 depends=none
+- [ ] T-001 [P] complexity=standard phase=foundation req=FR-001 depends=none target=sources/app
 ```
 
 Rules:
@@ -20,6 +20,7 @@ Rules:
 - `phase` is a lowercase token such as `foundation`, `core`, `integration`, `polish`.
 - `req` is one or more `FR-*` IDs separated by commas, or `INFRA` for infrastructure.
 - `depends` is `none` or comma-separated `T-###` IDs.
+- `target` is exactly one implementation target declared by `echelon spec run --target`.
 - Acceptance criteria checkboxes are nested under the task and MUST NOT be used as task counters.
 - **Test:** is a one-line description of how the task is verified (required when the tasks gate is enabled).
 
@@ -27,7 +28,7 @@ Rules:
 
 ## Phase: Foundation
 
-- [ ] T-001 [P] complexity=standard phase=foundation req=INFRA depends=none
+- [ ] T-001 [P] complexity=standard phase=foundation req=INFRA depends=none target=sources/app
 
   **Title:** Establish project structure
 
@@ -49,7 +50,7 @@ Rules:
 
 ## Phase: Core
 
-- [ ] T-002 complexity=standard phase=core req=FR-001 depends=T-001
+- [ ] T-002 complexity=standard phase=core req=FR-001 depends=T-001 target=sources/app
 
   **Title:** Implement primary requirement
 

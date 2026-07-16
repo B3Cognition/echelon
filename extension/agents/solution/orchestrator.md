@@ -40,6 +40,10 @@ NEVER edit `spec.md`, even to add a single requirement.
 ALWAYS use exactly these output filenames: `tasks.md`, `critical-path.md`, `risk-matrix.md`, `dependencies.md`.
 NEVER rename output files or produce variants such as `dependency-graph.md`, `task-list.md`, or `risks.md`.
 
+### Rule 8 - Workspace Source Ownership
+ALWAYS make every task belong to exactly one declared IMPLEMENTATION_TARGET by adding `target=<declared-target>` to its canonical row and qualifying every `**Files:**` path for that same target; split work that spans targets into dependency-linked tasks.
+NEVER infer a target from RE artifacts or file paths, use an undeclared target, omit `target=`, or place files from two implementation targets in one task.
+
 ## Spec-Kit Integration
 
 Instead of writing tasks.md from scratch, use spec-kit's task generation:
@@ -74,7 +78,7 @@ Use these templates for structured outputs:
 ALWAYS preserve the machine-readable task row format from `extension/templates/tasks-template.md`:
 
 ```markdown
-- [ ] T-001 [P] complexity=standard phase=foundation req=FR-001 depends=none
+- [ ] T-001 [P] complexity=standard phase=foundation req=FR-001 depends=none target=sources/app
 ```
 
 NEVER use acceptance-criteria checkboxes as executable task rows.
@@ -174,6 +178,11 @@ Each executable task MUST start with the canonical row from `extension/templates
 ```
 
 The `[P]` marker indicates the task can be executed in parallel with other `[P]` tasks in the same phase. Tasks WITHOUT `[P]` are sequential blockers.
+
+For a workspace with multiple source roots, `<exact/file/path.ext>` MUST start
+with `sources/<source-id>/`. Each task must reference exactly one implementation
+source root. Express cross-repo dependencies through `depends=` between separate
+tasks.
 
 **Required field — `complexity` label:**
 Every task in tasks.md MUST carry a `complexity` label. Omitting this field is a protocol violation.
@@ -302,6 +311,7 @@ Before writing final outputs, verify:
 - [ ] Critical path is calculated and bottlenecks identified
 - [ ] No circular dependencies exist in the task graph
 - [ ] Effort estimates are consistent with ASSESS's overall estimate
+- [ ] Every task row has exactly one declared `target=` and its file paths stay within that implementation target
 
 ---
 
@@ -357,7 +367,7 @@ If the output is `TASKS_GATE=off` (or the file/key is absent), this entire secti
 author `tasks.md` per the standard planning protocol above. Only when it reads `TASKS_GATE=on`
 do you enter Tasks Gate mode using the `spec_ref` / `max_repair` values printed above.
 
-If `TASKS_GATE=on`, author `tasks.md` in the **canonical row format** per `extension/templates/tasks-template.md` — one `- [ ] T-### [P] complexity= phase= req= depends=` row per task, each followed by nested `**Title:** / **Description:** / **Test:** / **Acceptance Criteria:**`. Then run the self-validation repair loop:
+If `TASKS_GATE=on`, author `tasks.md` in the **canonical row format** per `extension/templates/tasks-template.md` — one `- [ ] T-### [P] complexity= phase= req= depends= target=` row per task, each followed by nested `**Title:** / **Description:** / **Test:** / **Acceptance Criteria:**`. Then run the self-validation repair loop:
 
 ```bash
 LEXICON="lexicon"; command -v lexicon >/dev/null 2>&1 || LEXICON="python3 -m lexicon.cli"

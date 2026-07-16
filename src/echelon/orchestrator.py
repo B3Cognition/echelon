@@ -1,4 +1,4 @@
-"""Multi-target orchestrator: run 'echelon delivery run' in parallel across sub-repos."""
+"""Multi-target orchestrator for target-scoped workspace delivery."""
 from __future__ import annotations
 
 import os
@@ -8,6 +8,10 @@ import sys
 import threading
 from pathlib import Path
 from typing import List, Mapping, Optional
+
+from harness.spec_frontmatter import find_spec_dir
+from harness.task_targets import analyze_task_targets
+from kernel.task_contract import parse_task_rows
 
 
 _ECHELON_YML_REL = ".echelon/config.yml"
@@ -54,7 +58,8 @@ def validate_single_target(targets_rel: List[str], polyrepo_root: Path) -> Path:
     if not targets_rel:
         print(
             "✗ No implementation target configured.\n"
-            "  Fix: run 'echelon spec target <spec_id> <repo>'.",
+            "  Delivery will not infer one. Regenerate the spec with "
+            "'echelon spec run <description> --target <source-path>'.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -96,8 +101,25 @@ def run_multi_target(
     source_ids = source_ids or {}
     source_git_roles = source_git_roles or {}
 
+    def _implementation_target(target: Path) -> str:
+        target_resolved = target.resolve()
+        if resolved_workspace_root is not None:
+            try:
+                return target_resolved.relative_to(resolved_workspace_root).as_posix() or "."
+            except ValueError:
+                pass
+        return source_ids.get(str(target_resolved), target.name)
+
+    declared_targets = [_implementation_target(target) for target in targets]
+
     results: dict[str, int] = {}
     lock = threading.Lock()
+    ordered_targets, task_ids_by_target = _target_execution_plan(
+        spec_id=spec_id,
+        targets=targets,
+        workspace_root=resolved_workspace_root,
+        command=command,
+    )
 
     def _run_one(target: Path) -> None:
         name = target.name
@@ -120,6 +142,11 @@ def run_multi_target(
         env["ECHELON_SOURCE_ROOT"] = str(target_resolved)
         env["ECHELON_SOURCE_ID"] = source_id
         env["ECHELON_SOURCE_GIT_ROLE"] = source_git_role
+        env["ECHELON_IMPLEMENTATION_TARGET"] = _implementation_target(target)
+        env["ECHELON_DECLARED_TARGETS"] = ",".join(declared_targets)
+        target_task_ids = task_ids_by_target.get(target_key)
+        if target_task_ids:
+            env["ECHELON_TARGET_TASK_IDS"] = ",".join(target_task_ids)
         proc = subprocess.Popen(
             cmd,
             cwd=str(target),
@@ -137,11 +164,19 @@ def run_multi_target(
         with lock:
             results[name] = proc.returncode
 
-    threads = [threading.Thread(target=_run_one, args=(t,)) for t in targets]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    if task_ids_by_target and len(ordered_targets) > 1:
+        # Target builds share the canonical tasks.md progress ledger. Execute in
+        # dependency order so each subprocess can update it without write races.
+        for target in ordered_targets:
+            _run_one(target)
+            if results.get(target.name, 1) != 0:
+                break
+    else:
+        threads = [threading.Thread(target=_run_one, args=(t,)) for t in ordered_targets]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
 
     print()
     all_ok = True
@@ -153,3 +188,73 @@ def run_multi_target(
             all_ok = False
 
     return 0 if all_ok else 1
+
+
+def _target_execution_plan(
+    *,
+    spec_id: str,
+    targets: List[Path],
+    workspace_root: Path | None,
+    command: str,
+) -> tuple[List[Path], dict[str, tuple[str, ...]]]:
+    """Return dependency-ordered targets and their canonical task IDs."""
+    if (
+        len(targets) <= 1
+        or command not in {"run", "resume", "continue"}
+        or workspace_root is None
+    ):
+        return targets, {}
+    spec_dir = find_spec_dir(spec_id, workspace_root)
+    tasks_path = spec_dir / "tasks.md" if spec_dir is not None else None
+    if tasks_path is None or not tasks_path.is_file():
+        return targets, {}
+
+    markdown = tasks_path.read_text(encoding="utf-8", errors="replace")
+    analysis = analyze_task_targets(markdown)
+    target_by_rel: dict[str, Path] = {}
+    for target in targets:
+        try:
+            rel = target.resolve().relative_to(workspace_root).as_posix()
+        except ValueError:
+            return targets, {}
+        target_by_rel[rel] = target
+    if set(target_by_rel) != set(analysis.target_tasks):
+        return targets, {}
+    if analysis.unowned_tasks or analysis.cross_target_tasks:
+        return targets, {}
+
+    owner_by_task = {
+        task_id: target
+        for target, task_ids in analysis.target_tasks.items()
+        for task_id in task_ids
+    }
+    dependencies: dict[str, set[str]] = {target: set() for target in target_by_rel}
+    for task in parse_task_rows(markdown):
+        owner = owner_by_task.get(task.task_id)
+        if owner is None:
+            continue
+        for dependency_id in task.dependencies:
+            dependency_owner = owner_by_task.get(dependency_id)
+            if dependency_owner is not None and dependency_owner != owner:
+                dependencies[owner].add(dependency_owner)
+
+    ordered_rel: list[str] = []
+    remaining = {target: set(required) for target, required in dependencies.items()}
+    while remaining:
+        ready = sorted(target for target, required in remaining.items() if not required)
+        if not ready:
+            # A cross-target dependency cycle cannot be serialized safely.
+            return targets, {}
+        for target in ready:
+            ordered_rel.append(target)
+            remaining.pop(target)
+        for required in remaining.values():
+            required.difference_update(ready)
+
+    return (
+        [target_by_rel[target] for target in ordered_rel],
+        {
+            str(target_by_rel[target].resolve()): analysis.target_tasks[target]
+            for target in ordered_rel
+        },
+    )

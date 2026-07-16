@@ -15,7 +15,8 @@ _TASK_ROW_RE = re.compile(
     r"complexity=(?:trivial|standard|complex)\s+"
     r"phase=[A-Za-z0-9_.-]+\s+"
     r"req=[A-Za-z0-9_,.-]+\s+"
-    r"depends=(?:none|[A-Za-z0-9_,.-]+))$"
+    r"depends=(?:none|[A-Za-z0-9_,.-]+)"
+    r"(?:\s+target=[A-Za-z0-9_./-]+)?)$"
 )
 _STATUS_RE = re.compile(r"^\s+\*\*Status:\*\*\s*(?P<status>[A-Z_]+)\s*$")
 _COMPLETED_STATUSES = {"DONE", "DONE_WITH_CONCERNS", "DEGRADED"}
@@ -79,6 +80,8 @@ def update_task_progress_markdown(markdown: str, task_id: str, status: str) -> s
 def summarize_task_progress(
     markdown: str,
     build_state: dict[str, Any] | None = None,
+    *,
+    selected_task_ids: set[str] | None = None,
 ) -> TaskProgressSummary:
     """Return task progress and mismatches against a build state object."""
     validation = validate_tasks_markdown(markdown)
@@ -86,10 +89,14 @@ def summarize_task_progress(
     task_statuses: dict[str, str] = {}
     completed = 0
     deferred = 0
+    all_task_ids: set[str] = set()
 
     lines = markdown.splitlines()
     for index, match in _iter_task_rows(lines):
         task_id = match.group("task_id")
+        all_task_ids.add(task_id)
+        if selected_task_ids is not None and task_id not in selected_task_ids:
+            continue
         checked = match.group("status").lower() == "x"
         block_end = _find_next_task_row(lines, index + 1) or len(lines)
         status = _status_for_block(lines[index + 1:block_end], checked)
@@ -99,7 +106,13 @@ def summarize_task_progress(
         elif status in _DEFERRED_STATUSES:
             deferred += 1
 
-    total = validation.task_count
+    if selected_task_ids is None:
+        total = validation.task_count
+    else:
+        missing = sorted(selected_task_ids - all_task_ids)
+        if missing:
+            errors.append("selected task ids not found: " + ", ".join(missing))
+        total = len(task_statuses)
     pct = _pct(completed, total)
     _compare_build_state(build_state or {}, total, completed, pct, task_statuses, errors)
 

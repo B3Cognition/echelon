@@ -53,6 +53,11 @@ from harness.strategy_loader import StrategySpec, load_strategies
 logger = logging.getLogger(__name__)
 
 
+def _split_env_list(raw: str | None) -> list[str]:
+    """Parse a comma-separated orchestrator contract without empty entries."""
+    return [item.strip() for item in (raw or "").split(",") if item.strip()]
+
+
 
 class StrategyCoordinator:
     """Coordinates multiple strategy runs.
@@ -287,6 +292,9 @@ class StrategyCoordinator:
         source_root = os.environ.get("ECHELON_SOURCE_ROOT")
         source_id = os.environ.get("ECHELON_SOURCE_ID")
         source_git_role = os.environ.get("ECHELON_SOURCE_GIT_ROLE")
+        implementation_target = os.environ.get("ECHELON_IMPLEMENTATION_TARGET")
+        declared_targets = _split_env_list(os.environ.get("ECHELON_DECLARED_TARGETS"))
+        target_task_ids = _split_env_list(os.environ.get("ECHELON_TARGET_TASK_IDS"))
         spec_search_root = Path(os.environ.get("ECHELON_POLYREPO_ROOT") or self._base_dir).resolve()
         workspace_root = workspace_root or str(spec_search_root)
         source_root = source_root or target_repo_path or str(Path(self._base_dir).resolve())
@@ -341,6 +349,9 @@ class StrategyCoordinator:
                     source_root=source_root,
                     source_id=source_id,
                     source_git_role=source_git_role,
+                    implementation_target=implementation_target,
+                    declared_targets=declared_targets,
+                    target_task_ids=target_task_ids,
                     spec_dir=str(spec_dir) if spec_dir is not None else None,
                     spec_file=str(spec_file) if spec_file is not None else None,
                     tasks_file=str(tasks_file) if tasks_file is not None else None,

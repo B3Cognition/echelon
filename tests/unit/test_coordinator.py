@@ -636,6 +636,9 @@ class TestSmartResumeDetection:
         target.mkdir()
         monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "rbf-opta-points")
         monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+        monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "sources/rbf-opta-points")
+        monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "sources/rbf-opta-points,sources/api")
+        monkeypatch.setenv("ECHELON_TARGET_TASK_IDS", "T-011,T-012")
 
         coord = _make_coordinator(tmp_path, should_pass=True)
         intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=True)
@@ -657,6 +660,12 @@ class TestSmartResumeDetection:
         final_state = store.read()
         assert final_state["target_repo"] == "rbf-opta-points"
         assert final_state["target_path"] == str(target)
+        assert final_state["implementation_target"] == "sources/rbf-opta-points"
+        assert final_state["declared_targets"] == [
+            "sources/rbf-opta-points",
+            "sources/api",
+        ]
+        assert final_state["target_task_ids"] == ["T-011", "T-012"]
 
     def test_spec_artifact_paths_are_recorded_in_state(self, tmp_path: Path) -> None:
         """Harness Context must be populated from Python-owned spec paths."""

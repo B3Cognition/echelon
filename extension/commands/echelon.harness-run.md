@@ -28,15 +28,16 @@ The harness works **on the echelon feature branch** (e.g., `001-weather-dashboar
 
 Requires `echelon delivery init` to have been run first in the implementation repo.
 
-In a workspace/polyrepo root, the spec frontmatter `targets:` is authoritative.
-Normal implementation specs use exactly one source root. If `targets:` is
-missing, `echelon delivery run` resolves source roots before local harness
-checks: a single source root is used automatically; multiple source roots stop
-with deterministic candidates. Resolve the block with
-`echelon spec target <spec_id> <source-path>`. For a new implementation repo,
-use `echelon spec target <spec_id> sources/<new-repo> --init` so Echelon creates
-the target directory, Git repository, initial commit, and feature branch before
-delivery starts.
+In a workspace/polyrepo root, `targets.yml` is authoritative. A spec may own one
+or multiple implementation source roots. Every canonical task declares exactly
+one `target=<source-path>` from that file; `Files:` paths validate ownership but
+never establish it. Delivery validates this contract before launching a build
+agent, persists the current implementation target and assigned task IDs, and
+executes target slices in cross-target dependency order. If `targets.yml` is
+missing or inconsistent, delivery stops without inferring or rewriting it.
+Targets must be supplied when Phase A starts with repeatable
+`echelon spec run <description> --target <source-path>` options. Use `--init`
+on that command when creating a new implementation repository.
 
 ---
 
@@ -80,6 +81,9 @@ Extract from `$ARGUMENTS`:
 | `auto_merge` | `true` | Merge PR automatically on convergence |
 | `strategy` | `default` | `default` \| `codegen` — which build engine to use for Step 5 |
 | `spec_dir` | — | Optional. Authoritative spec artifact directory supplied by Python harness/CLI. |
+
+The implementation target is not a delivery argument. Use the persisted target
+contract supplied by Python; reject any request to override it in `$ARGUMENTS`.
 
 If `spec_id` is missing, ask: **"Which spec? Provide a spec ID (e.g., `001`)."** and stop.
 

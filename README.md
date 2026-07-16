@@ -180,12 +180,20 @@ echelon spec plan 001 NFR-008
 echelon delivery run 001                    # echelon squad build (default)
 echelon delivery run 001 strategy=codegen   # SOAR pipeline build (alternative)
 
-# Polyrepo/workspace: select and prepare the implementation source root before build
-echelon spec target 001 og-platform            # write specs/001-*/targets.yml
-echelon spec target 001 sources/new-tool --init # create/prepare a new target repo
+# Polyrepo/workspace: declare implementation roots before Phase A dispatches
+echelon spec run "Build dashboards" --target sources/api --target sources/web
+echelon spec run "Modernize search" --target og-platform
+echelon spec run "Create a tool" --target sources/new-tool --init
+# Normative product requirements and informative reference-product evidence
+echelon spec run "Add player connections" \
+  --target sources/pressbox-search \
+  --target sources/pressbox-search-api \
+  --input requirement:sources/PBS-E-45 \
+  --input reference:sources/provision
+echelon spec targets 001                        # display every task grouped by target
 echelon delivery target 001                     # detect target verify metadata from targets.yml
-echelon delivery run 001 mode=semi              # uses a single source root, blocks on multiple
-echelon delivery run 001 mode=banzai            # same deterministic source-root selection
+echelon delivery run 001 mode=semi              # validates and runs target-owned task slices
+echelon delivery run 001 mode=banzai            # same deterministic target/dependency selection
 
 # After build converges, fulfillment passes, and PR is open
 echelon delivery land 001                  # lands the target repo branch, then marks the spec landed
@@ -194,6 +202,15 @@ echelon delivery land 001                  # lands the target repo branch, then 
 # but can also be invoked directly:
 echelon review 001 pr_url=https://github.com/org/repo/pull/42
 ```
+
+`--input` is repeatable and has two explicit roles: `requirement:` is normative
+product intent, while `reference:` is informative only. Echelon snapshots accepted
+files under the run, excludes secret-like and hidden files, and publishes the safe
+manifest, catalog, snapshots, and traceability ledger at `specs/<id>/inputs/`.
+An offline Figma evidence bundle (`manifest.json`, `design.json`, frame assets) is
+supported; PNG/SVG/PDF exports are reduced-fidelity evidence. A Figma URL is
+resolved with `FIGMA_ACCESS_TOKEN` (or an offline bundle); the token is never placed
+in the run or spec evidence.
 
 Echelon models every project as a workspace with zero or more source roots. See [`docs/workspace-model.md`](docs/workspace-model.md) for single-repo, polyrepo, and lightweight workspace Git setup.
 
@@ -420,10 +437,10 @@ my-project/
   runs/                    ← mirrors, worktrees, and run state
 ```
 
-Set the implementation repo on the spec:
+Set the implementation repo when authoring begins:
 
 ```bash
-echelon spec target 001-feature sources/app
+echelon spec run "Describe the feature" --target sources/app
 ```
 
 ### How to read a spec folder
@@ -685,7 +702,7 @@ This keeps commands readable and makes individual phases independently editable 
 | Terminal | Spec-kit skill | Purpose |
 | -------- | -------------- | ------- |
 | `echelon workspace init [--allow-unsafe-host-execution]` | `speckit.echelon.init` | One-time project setup — `.echelon/config.yml`, local tool-policy approval, deploy infra, git hook |
-| `echelon spec run "<description>"` | `speckit.echelon.run` | Phase A: full squad run → spec.md, tasks.md, feature branch |
+| `echelon spec run "<description>" [--target <source-path>]... [--input <role:path>]... [--init]` | `speckit.echelon.run` | Phase A: resolve implementation targets and immutable product evidence first, then run the squad → spec.md, plan.md, tasks.md, targets.yml, feature branch |
 | `echelon spec bugfix <id> "<desc>"` | `speckit.echelon.bugfix` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
 | `echelon build <id>` | `speckit.echelon.build` | Build phase (agent-driven) |
 | `echelon codegen <id>` | `speckit.echelon.codegen` | Build phase via SOAR pipeline (alternative to build) |
@@ -697,6 +714,7 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon spec change <id> "<desc>"` | `speckit.echelon.change` | Handle spec change during build |
 | `echelon cicd` | — | Retired; re-run `echelon delivery init` to auto-detect high-confidence `verify_command` |
 | `echelon spec status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
+| `echelon spec targets <id>` | — | Read-only task ownership report: display every canonical task grouped by explicit `target=` ownership, including `UNOWNED`, `CROSS-TARGET`, and target/path mismatch diagnostics; exits nonzero when ownership is invalid |
 | `echelon spec artifacts <id>` | — | Generate or refresh `specs/<id>-*/ARTIFACTS.md`, the deterministic human map of spec-folder outputs |
 | `echelon spec continue` | — | Run the next no-input recovery action: resume an active/interrupted run, retry recoverable failed dispatches, or advance incomplete Phase A work |
 | `echelon spec resume "<answer>"` | `speckit.echelon.resume` | Provide an answer only when the squad asked for human input; after recording it, Echelon delegates back to continuation |
@@ -720,7 +738,7 @@ This keeps commands readable and makes individual phases independently editable 
 | -------- | -------------- | ------- |
 | `echelon delivery init` | `speckit.echelon.harness-init` | One-time workspace delivery setup — provider, sandbox, config defaults |
 | `echelon delivery target <id>` | — | Prepare target-scoped delivery metadata in `specs/<id>/targets.yml`, including high-confidence `verify_command` detection |
-| `echelon delivery run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy); in polyrepos, validates or infers the spec target before build; prints `HARNESS HISTORY` |
+| `echelon delivery run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy); validates persisted Phase A targets and target-owned task slices without inferring or rewriting them; prints `HARNESS HISTORY` |
 | `echelon delivery run <id> strategy=codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
 | `echelon delivery continue <id>` | `speckit.echelon.harness-resume <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, Docker/Podman outage recovery, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |
 | `echelon delivery resume <id> "<answer>"` | `speckit.echelon.harness-resume <id> <answer>` | Resume a blocked delivery loop by recording the human answer to a pending escalation, then continuing the loop |

@@ -147,16 +147,17 @@ def test_squad_initialization_materializes_re_plan_and_artifacts(tmp_path: Path)
         ext_dir=root / "ext",
         project_root=root,
         squad_dir=squad_dir,
-        target_source="prosaic",
+        implementation_targets=["sources/prosaic"],
     )
 
     result = controller.run(user_message="add prosaic feature")
 
     assert result.status == "done"
     state = store.load()
-    assert state["re_policy"] == "target-changed"
+    assert state["re_policy"] == "changed"
     assert state["requested_re_policy"] == ""
-    assert state["target_source"] == "prosaic"
+    assert state["implementation_targets"] == ["sources/prosaic"]
+    assert state["target_source"] == ""
     assert state["re_refresh_sources"] == ["prosaic"]
     assert state["re_missing_sources"] == []
     assert state["re_generation"] == 1
@@ -212,7 +213,7 @@ def test_squad_initialization_uses_resolved_re_profile_overrides(tmp_path: Path)
     }
 
 
-def test_squad_initialization_skips_empty_target_source_successfully(tmp_path: Path) -> None:
+def test_squad_initialization_does_not_use_implementation_target_as_re_scope(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
     _write_source(root, "original-a")
     _write_empty_source(root, "prosaic")
@@ -226,25 +227,62 @@ def test_squad_initialization_skips_empty_target_source_successfully(tmp_path: P
         ext_dir=root / "ext",
         project_root=root,
         squad_dir=squad_dir,
-        target_source="prosaic",
+        implementation_targets=["sources/prosaic"],
     )
 
     result = controller.run(user_message="add prosaic feature")
 
     assert result.status == "done"
     state = store.load()
-    assert state["re_policy"] == "target-changed"
-    assert state["target_source"] == "prosaic"
-    assert state["re_refresh_sources"] == []
+    assert state["re_policy"] == "changed"
+    assert state["target_source"] == ""
+    assert state["implementation_targets"] == ["sources/prosaic"]
+    assert state["re_refresh_sources"] == ["original-a"]
     assert state["re_missing_sources"] == []
     assert state["re_empty_sources"] == ["prosaic"]
     assert state["re_source_actions"] == {
-        "original-a": "exclude",
+        "original-a": "refresh",
         "prosaic": "skip-empty",
     }
 
     source_index = json.loads((squad_dir / "re" / "re-source-index.json").read_text())
     assert {source["id"]: source["action"] for source in source_index["sources"]} == {
-        "original-a": "exclude",
+        "original-a": "refresh",
         "prosaic": "skip-empty",
     }
+
+
+def test_squad_materializes_run_targets_into_active_spec_metadata(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    squad_dir = root / "runs" / "run-1"
+    spec_dir = squad_dir / "specs" / "001-dashboard"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Dashboard\n", encoding="utf-8")
+    store = SquadStateStore(squad_dir)
+    store.initialize(
+        "run-1",
+        "brownfield",
+        "add dashboard",
+        0,
+        "phase3-how",
+        implementation_targets=["sources/web", "sources/api"],
+    )
+    state = store.load()
+    state["spec_id"] = "001-dashboard"
+    state["spec_dir"] = str(spec_dir)
+    store.save(state)
+    controller = SquadController(
+        provider=object(),
+        state_store=store,
+        phase_graph=_TerminalGraph(),
+        ext_dir=root / "ext",
+        project_root=root,
+        squad_dir=squad_dir,
+        implementation_targets=["sources/web", "sources/api"],
+    )
+
+    controller._materialize_implementation_targets()
+
+    from harness.spec_frontmatter import read_targets
+
+    assert read_targets(spec_dir) == ["sources/web", "sources/api"]
