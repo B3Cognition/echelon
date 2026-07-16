@@ -74,7 +74,8 @@ spec_app = typer.Typer(
         "                    [--re-policy none|cached-only|changed|refresh-all]\n"
         "                    [--re-max-inner <n>]\n"
         "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
-        "  targets <spec_id>  Display every task grouped by delivery target."
+        "  targets <spec_id>  Display every task grouped by delivery target.\n"
+        "  Example: targets <spec_id>"
     ),
     rich_markup_mode=None,
     no_args_is_help=True,
