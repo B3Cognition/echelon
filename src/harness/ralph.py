@@ -1669,7 +1669,17 @@ class RalphController:
                 for path in changed
                 if not _is_harness_or_spec_artifact(path)
             ]
-        return None
+        first_commit = _git_first_commit(worktree_path)
+        if first_commit is None:
+            return None
+        changed = _git_changed_files_between(worktree_path, first_commit, "HEAD")
+        if changed is None:
+            return None
+        return [
+            path
+            for path in changed
+            if not _is_harness_or_spec_artifact(path)
+        ]
 
     def _is_external_spec_artifact_failure(self, verify_result: VerifyResult) -> bool:
         """Return True when a verifier failure points at Ralph-owned spec artifacts."""
@@ -4910,6 +4920,20 @@ def _git_merge_base(worktree: Path, left: str, right: str) -> Optional[str]:
         return None
     value = result.stdout.strip()
     return value or None
+
+
+def _git_first_commit(worktree: Path) -> Optional[str]:
+    result = subprocess.run(
+        ["git", "rev-list", "--max-parents=0", "HEAD"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    value = result.stdout.splitlines()
+    return value[-1].strip() if value else None
 
 
 def _git_changed_files_between(
