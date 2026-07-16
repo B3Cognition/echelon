@@ -73,15 +73,15 @@ class TestScoutTemplates:
         assert "NEVER recursively search `.specify/extensions/echelon` for `*-template.md`" in text
         assert "`extension/presets/` contains preset seed material" in text
 
-    def test_scout_prefers_explicit_reverse_engineering_specs(self) -> None:
+    def test_scout_prefers_explicit_published_reverse_engineering_paths(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
 
-        assert "golddigger_artifacts.re_overview" in text
-        assert "golddigger_artifacts.re_specs[]" in text
-        assert "using the exact registered paths" in text
-        assert "do not replace registered paths with project-root glob conventions" in text
+        assert "PUBLISHED_RE_ARTIFACTS" in text
+        assert "registered workspace overview" in text
+        assert "exact registered snapshot paths" in text
+        assert "do not replace them with project-root glob conventions" in text
         assert "specs/000-re-overview/overview.md" not in text
-        assert "treat the extraction as degraded-brownfield" in text
+        assert "NEVER run reverse engineering" in text
 
     def test_phase1_discover_dispatch_includes_scout_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")

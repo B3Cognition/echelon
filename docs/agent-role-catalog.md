@@ -16,10 +16,10 @@ Current grounded counts:
 | Surface | Count | Meaning |
 |---|---:|---|
 | Registered agent roles | 55 | `extension.yml` entries whose `file` is under `agents/` |
-| Active-routed manifest roles | 46 | Registered roles referenced by `definition.yaml` |
-| Manifest-only roles | 9 | Registered roles not currently referenced by `definition.yaml` |
+| Active-routed manifest roles | 45 | Registered roles referenced by `definition.yaml` |
+| Manifest-only roles | 10 | Registered roles not currently referenced by `definition.yaml` |
 | Workflow-only dispatch aliases | 1 | Dispatch identifiers in `definition.yaml` that are not separate manifest roles |
-| Support prompt files | 15 | Markdown appendices/templates under `extension/agents/` that are not agent entry points |
+| Support prompt files | 14 | Markdown appendices/templates under `extension/agents/` that are not agent entry points |
 
 The previous public agent-count phrasing was stale. It does not match the
 current source tree and appears closer to the number of command entries than the
@@ -30,7 +30,7 @@ number of agent roles.
 | Layer | Registered roles | Active-routed | Manifest-only |
 |---|---:|---:|---:|
 | Control | 6 | 5 | 1 |
-| Exploration | 6 | 6 | 0 |
+| Exploration | 6 | 5 | 1 |
 | Feasibility | 2 | 2 | 0 |
 | Solution | 3 | 3 | 0 |
 | Specialists | 6 | 6 | 0 |
@@ -45,7 +45,7 @@ These registered roles are referenced by `extension/workflow/definition.yaml`.
 | Layer | Roles |
 |---|---|
 | Control | COMMANDER, CHIEF, SCOREKEEPER, STRATEGIST, TRACKER |
-| Exploration | SCOUT, GOLDDIGGER, SYNTHESIZER, CARTOGRAPHER, SAGE, MODELER |
+| Exploration | SCOUT, SYNTHESIZER, CARTOGRAPHER, SAGE, MODELER |
 | Feasibility | GATEKEEPER, VALIDATOR |
 | Solution | ARCHITECT, ORCHESTRATOR, SENTINEL |
 | Specialists | INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK |
@@ -63,6 +63,7 @@ run.
 | Role | File | Current interpretation |
 |---|---|---|
 | CHECKPOINT | `agents/control/checkpoint.md` | Internalization quality assessor available outside the main workflow graph |
+| GOLDDIGGER | `agents/exploration/golddigger.md` | Standalone RE lifecycle agent; no longer dispatched by Phase A |
 | INTERNALIZER | `agents/learning/internalizer.md` | Internalization metrics role; registered but not active-routed |
 | ADAPTIVE | `agents/learning/adaptive.md` | Quality trajectory analysis role; registered but not active-routed |
 | MONITOR | `agents/learning/monitor.md` | Metacognition watchdog; registered but not active-routed |

@@ -71,6 +71,15 @@ NEVER run reverse engineering, write RE artifacts, or read the mutable canonical
 
 If the status is `absent` or `ignored`, continue with manual analysis in Steps 2-4.
 
+When attached: Prefer workspace-manifest.json as the registered workspace and
+source-root inventory. Use `repos-manifest.json` only as a compatibility fallback. Follow the exact registered snapshot paths; do not replace them with project-root glob conventions. Read registered workspace overview,
+relationships, contracts, and source specs before source-code fallback.
+
+CodeGraph and PerlGraph evidence is source-owned. Treat any root CodeGraph
+summary as an aggregate index of per-source summaries, and treat a root
+PerlGraph summary the same way. Read per-source summary or analysis paths only
+when they are present in `PUBLISHED_RE_ARTIFACTS`.
+
 ### Step 2: Structural Analysis
 
 1. **Map the directory tree** — identify major modules, services, packages. Look for separation patterns (monolith, monorepo, microservices).
