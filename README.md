@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 3.3.7** — 55 registered agent roles across the Echelon architecture, with 46 active-routed manifest roles in the executable workflow, MemPalace requirements memory (wing-scoped, per-project, collision-safe), `echelon workspace init` wing provisioning, `codegen requirements mine/search/clean`, endocrine system fully enabled by default (all 6 hormones, phase 3), echelon_result journal contracts, compaction-safe dispatch tracking, Understanding v3.8 Depth gate, BUILD/QA split workflow, brownfield extraction (GOLDDIGGER), internalization loop, terminal CLI entry points, multi-LLM provider support (Claude, Copilot, Opencode)
+**Version 3.3.8** — 55 registered agent roles across the Echelon architecture, with 46 active-routed manifest roles in the executable workflow, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -109,9 +109,11 @@ config, ignore runtime state, and stage the canonical workspace files.
 
 ### Published reverse engineering
 
-Reverse engineering is a first-class workspace artifact. Echelon keeps only the
-latest published generation under `re/`; runs stage candidate output under
-`runs/<run-id>/re/` and consume unchanged published documents directly.
+Reverse engineering is a first-class workspace lifecycle. Echelon keeps only the
+latest published generation under `re/`; active RE work is isolated under
+`runs/re-*/re/` and selected by `runs/.current-re`. Spec runs never execute or
+freshness-check RE. By default they take one immutable run-local snapshot of the
+latest publication; use `echelon spec run ... --ignore-re` to omit it.
 
 ```text
 re/
@@ -136,16 +138,19 @@ re/
 manifest records the matching `sources[].path`. Source content/fingerprint
 changes, dirty Git state, or any profile-hash change trigger refresh. The
 default profile remains `full` depth with `max_lines_per_file: 5000` and
-`git_history_limit: 2500`; `--re-policy` overrides selection without changing
-those depth defaults.
+`git_history_limit: 2500`; `echelon re run --re-policy` overrides selection
+without changing those depth defaults.
 
-A successful complete GOLDDIGGER workspace run publishes atomically and pins
-the active run to the new generation. Unchanged later runs skip GOLDDIGGER and
-read canonical `re/` paths. Empty declared sources publish an explicit `empty`
-manifest without inventing domain specs. Partial output is never published
-automatically.
+A successful complete `echelon re run` publishes atomically. A default
+`--re-policy changed` run makes zero provider calls when the publication is
+current. Empty declared sources publish an explicit `empty` manifest without
+inventing domain specs. Partial output never auto-publishes and remains blocked
+for inspection or explicit manual publication.
 
 ```bash
+echelon re run                               # changed policy; no-op when current
+echelon re continue --re-max-inner 10       # continue without a new answer
+echelon re resume "Use the v2 contract"     # answer a structured RE block
 echelon re publish <run-id>                   # publish a validated complete run
 echelon re publish <run-id> --allow-partial   # explicit structural override
 echelon re publish <run-id> --commit          # also make a local durable-RE commit
@@ -160,6 +165,9 @@ is never freshness or publication authority.
 ### Typical workflow
 
 ```bash
+# Optional — refresh published brownfield knowledge only when needed
+echelon re run --re-policy changed --re-max-inner 10
+
 # Phase A — spec authoring (default: Claude)
 echelon spec run "Build a photo album app with sharing and tagging"
 echelon spec status                        # re-orient: run state, artifacts, cost, next step
@@ -672,15 +680,11 @@ File: agents/exploration/scout.md
 
 ## Brownfield Support
 
-When analyzing existing source roots, the squad uses a workspace extraction pipeline:
-
-1. **GOLDDIGGER Mode 1 (Workspace Reverse Engineering)** runs `speckit.echelon.re-extract` at full depth for planner-selected sources, stages source-owned specs plus workspace synthesis, and atomically publishes a complete generation under `re/`.
-2. If `speckit.echelon.re-extract` skill invocation succeeds:
-   - **SCOUT** reads the exact canonical artifact paths from `state.json.golddigger_artifacts` as a head-start for domain mapping.
-   - **GOLDDIGGER Mode 2 (Focused Domain Deep Dive)** runs only for explicit queued domain requests and uses its separate focused cache.
-3. If brownfield extraction is not available, SCOUT proceeds with manual structural analysis
-
-Phase 1 agents (SCOUT, SYNTHESIZER, CARTOGRAPHER) can request Mode 2 deep dives by writing to `state.json.golddigger_requests`. COMMANDER processes the queue between agent dispatches.
+Run brownfield extraction explicitly with `echelon re run`. Complete results are
+published under `re/`; blocked work uses `echelon re continue` or `echelon re
+resume`. Phase A does not invoke GOLDDIGGER. SCOUT receives the immutable
+published snapshot when available and otherwise performs normal scoped manual
+analysis.
 
 ## Commands
 
@@ -702,7 +706,10 @@ This keeps commands readable and makes individual phases independently editable 
 | Terminal | Spec-kit skill | Purpose |
 | -------- | -------------- | ------- |
 | `echelon workspace init [--allow-unsafe-host-execution]` | `speckit.echelon.init` | One-time project setup — `.echelon/config.yml`, local tool-policy approval, deploy infra, git hook |
-| `echelon spec run "<description>" [--target <source-path>]... [--input <role:path>]... [--init]` | `speckit.echelon.run` | Phase A: resolve implementation targets and immutable product evidence first, then run the squad → spec.md, plan.md, tasks.md, targets.yml, feature branch |
+| `echelon spec run "<description>" [--target <source-path>]... [--input <role:path>]... [--init] [--ignore-re]` | `speckit.echelon.run` | Phase A: snapshot optional published RE and immutable product evidence, then run the squad → spec.md, plan.md, tasks.md, targets.yml, feature branch |
+| `echelon re run [--re-policy <policy>] [--re-max-inner <n>] [--reset]` | — | Start or reuse the independent workspace RE lifecycle; complete output publishes automatically |
+| `echelon re continue [--re-max-inner <n>]` | — | Continue the active RE run without supplying a new answer |
+| `echelon re resume "<answer>" [--re-max-inner <n>]` | — | Resolve a structured RE human-input block and continue |
 | `echelon spec bugfix <id> "<desc>"` | `speckit.echelon.bugfix` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
 | `echelon build <id>` | `speckit.echelon.build` | Build phase (agent-driven) |
 | `echelon codegen <id>` | `speckit.echelon.codegen` | Build phase via SOAR pipeline (alternative to build) |
@@ -1288,7 +1295,7 @@ Echelon includes native brownfield extraction for reverse-engineering existing c
 
 | Command | Purpose |
 |---------|---------|
-| `speckit.echelon.re-analyze` | Extract selected sources to `runs/<run-id>/re/sources/<source-id>/` plus aggregate analysis and optional CodeGraph and PerlGraph artifacts |
+| `speckit.echelon.re-analyze` | Extract selected sources to the active `runs/re-*/re/sources/<source-id>/` candidate plus aggregate analysis and optional CodeGraph and PerlGraph artifacts |
 | `speckit.echelon.re-specify` | Generate domain specs with coverage tracking |
 | `speckit.echelon.re-verify` | Verify spec coverage; identify orphan files |
 | `speckit.echelon.re-expand` | Fill coverage gaps from orphan file clusters |

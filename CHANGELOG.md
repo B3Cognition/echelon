@@ -6,6 +6,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **First-class reverse-engineering lifecycle** — `echelon re run`, `echelon re
+  continue`, and `echelon re resume` now own RE planning, bounded repair, and
+  structured recovery under an independent `runs/.current-re` marker. Complete
+  output publishes automatically; current `changed` runs avoid provider calls,
+  and partial output never auto-publishes. Spec authoring snapshots the latest
+  published generation as read-only context by default or records it as ignored
+  with `--ignore-re`. Embedded GOLDDIGGER Mode 1/Mode 2 execution and the mutable
+  generation guard have been removed from the Phase A workflow.
+
+  Migration:
+
+  ```text
+  before: echelon spec run "Build dashboards" --re-policy changed --re-max-inner 10
+  after:  echelon re run --re-policy changed --re-max-inner 10
+          echelon spec run "Build dashboards"
+  ```
+
 - **EGR-148 / #163 product input evidence** — `echelon spec run` now accepts repeatable
   `--input requirement:<path>` and `--input reference:<path>` declarations.
   Accepted local evidence is safely snapshotted before agent dispatch, carries

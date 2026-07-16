@@ -55,7 +55,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.3.7"
+CLI_VERSION = "3.3.8"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -79,7 +79,7 @@ Commands:
   spec run <description> [--mode semi|banzai|guided] [--reset]
                     [--message <text>] [--next-phase <id>]
                     [--target <source-id-or-path>]... [--init]
-                    [--re-policy none|cached-only|changed|refresh-all]
+                    [--ignore-re]
                                             Run Phase A squad spec authoring.
   spec status                               Show current run state, artifacts, cost, and next action.
   spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
@@ -100,6 +100,11 @@ Commands:
                     [--message <text>]
                                             Run one explicit phase through COMMANDER contracts.
 
+  re run [--re-policy none|cached-only|changed|refresh-all]
+                    [--re-max-inner <n>] [--reset]
+                                            Run or reuse workspace reverse engineering.
+  re continue [--re-max-inner <n>]           Continue the active RE run.
+  re resume <answer> [--re-max-inner <n>]    Resume blocked RE with a human answer.
   re publish <run-id> [--allow-partial] [--commit]
                                             Publish validated workspace RE output.
 
@@ -7233,7 +7238,7 @@ def _cmd_spec(args: list[str]) -> None:
             "  run <description> [--mode semi|banzai|guided] [--reset]\n"
             "                    [--message <text>] [--next-phase <id>]\n"
             "                    [--target <source-id-or-path>]... [--init]\n"
-            "                    [--re-policy none|cached-only|changed|refresh-all]\n"
+            "                    [--ignore-re]\n"
             "                                      Run Phase A squad spec authoring\n"
             "  status                              Show current run state and next action\n"
             "  continue [--mode semi|banzai|guided]\n"
