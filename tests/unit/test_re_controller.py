@@ -544,6 +544,27 @@ def test_source_coverage_repair_targets_receive_owned_and_unowned_orphans(
 
 
 @pytest.mark.unit
+def test_re_prompt_includes_pending_human_resume_answer(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = controller._load_plan()
+
+    prompt = controller._prompt_for(
+        "re-extract-1-analyze",
+        {"resume_answer": "Use the public v2 contract"},
+        plan,
+    )
+
+    assert "## Human Resume Answer" in prompt
+    assert "Use the public v2 contract" in prompt
+
+
+@pytest.mark.unit
 def test_source_coverage_repair_protocol_migrates_active_legacy_queue(
     tmp_path: Path,
 ) -> None:

@@ -2,16 +2,28 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
 
 from echelon.workspace_model import discover_workspace
+from harness.blocked_decision import (
+    ensure_blocked_decision,
+    mark_blocked_decision_resolved,
+)
 from harness.config import get_full_resolved_config
+from harness.re_controller import ReExtractionController
 from harness.re_fingerprint import ReFingerprintProfile
+from harness.re_materializer import materialize_re_run_context
 from harness.re_planner import build_re_execution_plan
+from harness.re_publication import RePublicationError, publish_re_run
 from harness.re_registry import load_published_index
+from kernel.re_state import init_re_state
 
 
 _SAFE_RUN_ID = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -110,6 +122,12 @@ class ReLifecycleController:
         if reset:
             marker = self._project_root / "runs" / ".current-re"
             marker.unlink(missing_ok=True)
+        else:
+            current = resolve_current_re_run(self._project_root)
+            if current is not None:
+                state = self._load_state(current)
+                if state.get("status") != "done":
+                    return self._execute_run(current, state, re_max_inner=re_max_inner)
 
         manifest = discover_workspace(self._project_root)
         profile = resolve_re_fingerprint_profile(self._project_root)
@@ -134,5 +152,273 @@ class ReLifecycleController:
                 generation=published.generation if published is not None else 0,
                 no_work=True,
             )
-        raise ReLifecycleError("work-bearing RE lifecycle execution is not initialized")
+        run_dir = self._create_run_dir()
+        expected_generation = published.generation if published is not None else 0
+        materialize_re_run_context(
+            project_root=self._project_root,
+            run_re_dir=run_dir / "re",
+            workspace_manifest=manifest,
+            plan=plan,
+            published_index=published,
+        )
+        state: dict[str, object] = {
+            "run_id": run_dir.name,
+            "run_kind": "re",
+            "status": "running",
+            "phase": "re-extract-0-preflight",
+            "requested_re_policy": policy,
+            "re_policy": plan.policy,
+            "expected_generation": expected_generation,
+            "extraction_complete": False,
+            "publication_complete": False,
+            "publication_pending": False,
+        }
+        if re_max_inner is not None:
+            state["re_max_inner"] = re_max_inner
+        self._save_state(run_dir, state)
+        self._initialize_controller_state(run_dir, re_max_inner)
+        return self._execute_run(run_dir, state, re_max_inner=re_max_inner)
 
+    def continue_run(self, re_max_inner: int | None = None) -> ReLifecycleResult:
+        if re_max_inner is not None and re_max_inner < 1:
+            raise ReLifecycleError("--re-max-inner requires a positive integer")
+        run_dir = resolve_current_re_run(self._project_root)
+        if run_dir is None:
+            raise ReLifecycleError("no active RE run; start one with echelon re run")
+        state = self._load_state(run_dir)
+        if state.get("status") == "done":
+            return ReLifecycleResult(
+                status="done",
+                run_id=run_dir.name,
+                generation=int(state.get("generation") or 0),
+                no_work=True,
+            )
+        decision = state.get("blocked_decision")
+        if (
+            state.get("status") == "blocked"
+            and isinstance(decision, dict)
+            and decision.get("status") == "pending"
+        ):
+            return ReLifecycleResult(
+                status="blocked",
+                run_id=run_dir.name,
+                phase=str(state.get("phase") or ""),
+                blocked_reason=str(state.get("blocked_reason") or "human input required"),
+            )
+        return self._execute_run(run_dir, state, re_max_inner=re_max_inner)
+
+    def resume(
+        self,
+        answer: str,
+        re_max_inner: int | None = None,
+    ) -> ReLifecycleResult:
+        answer = answer.strip()
+        if not answer:
+            raise ReLifecycleError("echelon re resume requires a non-empty answer")
+        run_dir = resolve_current_re_run(self._project_root)
+        if run_dir is None:
+            raise ReLifecycleError("no active RE run; start one with echelon re run")
+        state = self._load_state(run_dir)
+        ensure_blocked_decision(state)
+        decision = state.get("blocked_decision")
+        if not isinstance(decision, dict) or decision.get("status") != "pending":
+            raise ReLifecycleError("active RE run is not waiting for human input")
+        selected = _resolve_option(answer, decision.get("options"))
+        mark_blocked_decision_resolved(
+            state,
+            answer=answer,
+            selected_option=selected,
+            resumed_phase=str(decision.get("blocked_phase") or state.get("phase") or ""),
+        )
+        metadata = state.get("resume_metadata")
+        if isinstance(metadata, dict):
+            metadata["source"] = "echelon re resume"
+        state["resume_answer"] = answer
+        state["status"] = "running"
+        state.pop("blocked_reason", None)
+        self._save_state(run_dir, state)
+        re_state = self._load_json(run_dir / "re" / "state.json")
+        re_state["resume_answer"] = answer
+        self._save_json(run_dir / "re" / "state.json", re_state)
+        return self._execute_run(run_dir, state, re_max_inner=re_max_inner)
+
+    def _create_run_dir(self) -> Path:
+        runs = self._project_root / "runs"
+        runs.mkdir(parents=True, exist_ok=True)
+        gitignore = runs / ".gitignore"
+        if not gitignore.exists():
+            gitignore.write_text("*/state.json\n*/*.tmp\n.current*\n", encoding="utf-8")
+        run_id = datetime.now(timezone.utc).strftime("re-%Y%m%d-%H%M%S-%f")
+        run_dir = runs / run_id
+        run_dir.mkdir()
+        (runs / ".current-re").write_text(run_id + "\n", encoding="utf-8")
+        return run_dir
+
+    def _initialize_controller_state(
+        self,
+        run_dir: Path,
+        re_max_inner: int | None,
+    ) -> None:
+        state = init_re_state(
+            output_dir=f"runs/{run_dir.name}/re",
+            mode="workspace",
+        )
+        state["run_id"] = run_dir.name
+        if re_max_inner is not None:
+            state["re_max_inner"] = re_max_inner
+        self._save_json(run_dir / "re" / "state.json", state)
+
+    def _execute_run(
+        self,
+        run_dir: Path,
+        state: dict,
+        *,
+        re_max_inner: int | None,
+    ) -> ReLifecycleResult:
+        if re_max_inner is not None:
+            state["re_max_inner"] = re_max_inner
+            re_state = self._load_json(run_dir / "re" / "state.json")
+            re_state["re_max_inner"] = re_max_inner
+            self._save_json(run_dir / "re" / "state.json", re_state)
+            self._save_state(run_dir, state)
+
+        if not state.get("extraction_complete"):
+            outcome = ReExtractionController(
+                provider=self._provider_factory(),
+                project_root=self._project_root,
+                run_dir=run_dir,
+                extension_root=self._extension_root,
+            ).run()
+            if not outcome.completed:
+                state["status"] = "blocked"
+                state["blocked_reason"] = outcome.blocked_reason or "re_controller_failed"
+                state["phase"] = self._controller_phase(run_dir)
+                if outcome.blocked_detail:
+                    state["blocked_detail"] = outcome.blocked_detail
+                self._save_state(run_dir, state)
+                return ReLifecycleResult(
+                    status="blocked",
+                    run_id=run_dir.name,
+                    phase=str(state["phase"]),
+                    blocked_reason=str(state["blocked_reason"]),
+                )
+            state["extraction_complete"] = True
+            state["publication_pending"] = True
+            state["phase"] = self._controller_phase(run_dir)
+            self._save_state(run_dir, state)
+
+        if self._partial_debt_sources(run_dir):
+            debt = self._partial_debt_sources(run_dir)
+            state["status"] = "blocked"
+            state["blocked_reason"] = "re_source_quality_debt: " + ", ".join(debt)
+            self._save_state(run_dir, state)
+            return ReLifecycleResult(
+                status="blocked",
+                run_id=run_dir.name,
+                phase=str(state.get("phase") or ""),
+                blocked_reason=str(state["blocked_reason"]),
+            )
+
+        try:
+            publication = publish_re_run(
+                self._project_root,
+                run_dir,
+                expected_generation=int(state.get("expected_generation") or 0),
+            )
+        except RePublicationError as exc:
+            state["status"] = "blocked"
+            state["publication_pending"] = True
+            state["blocked_reason"] = f"re_publication_failed: {exc}"
+            self._save_state(run_dir, state)
+            return ReLifecycleResult(
+                status="blocked",
+                run_id=run_dir.name,
+                phase=str(state.get("phase") or ""),
+                blocked_reason=str(state["blocked_reason"]),
+            )
+
+        state["status"] = "done"
+        state["publication_pending"] = False
+        state["publication_complete"] = True
+        state["generation"] = publication.generation
+        state.pop("blocked_reason", None)
+        self._save_state(run_dir, state)
+        return ReLifecycleResult(
+            status="done",
+            run_id=run_dir.name,
+            phase=str(state.get("phase") or ""),
+            generation=publication.generation,
+        )
+
+    def _load_state(self, run_dir: Path) -> dict:
+        state = self._load_json(run_dir / "state.json")
+        if state.get("run_kind") != "re" or state.get("run_id") != run_dir.name:
+            raise ReLifecycleError(f"invalid RE lifecycle state: {run_dir}")
+        return state
+
+    def _save_state(self, run_dir: Path, state: dict) -> None:
+        self._save_json(run_dir / "state.json", state)
+
+    @staticmethod
+    def _load_json(path: Path) -> dict:
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ReLifecycleError(f"cannot read RE lifecycle state {path}: {exc}") from exc
+        if not isinstance(value, dict):
+            raise ReLifecycleError(f"RE lifecycle state must be an object: {path}")
+        return value
+
+    @staticmethod
+    def _save_json(path: Path, value: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(
+            dir=str(path.parent), prefix=f".{path.name}-", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(value, handle, indent=2, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            Path(temporary).replace(path)
+        except Exception:
+            Path(temporary).unlink(missing_ok=True)
+            raise
+
+    @staticmethod
+    def _controller_phase(run_dir: Path) -> str:
+        try:
+            state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return ""
+        return str(state.get("phase") or "") if isinstance(state, dict) else ""
+
+    @staticmethod
+    def _partial_debt_sources(run_dir: Path) -> list[str]:
+        try:
+            state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        sources = state.get("re_source_states") if isinstance(state, dict) else None
+        if not isinstance(sources, dict):
+            return []
+        return sorted(
+            str(source_id)
+            for source_id, source_state in sources.items()
+            if isinstance(source_state, dict)
+            and source_state.get("status") == "partial_quality_debt"
+        )
+
+
+def _resolve_option(answer: str, options: object) -> dict | None:
+    if not isinstance(options, list):
+        return None
+    normalized = answer.strip().casefold()
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        candidates = (option.get("id"), option.get("label"))
+        if any(isinstance(item, str) and item.strip().casefold() == normalized for item in candidates):
+            return option
+    return None
