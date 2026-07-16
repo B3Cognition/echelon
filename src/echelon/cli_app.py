@@ -173,6 +173,60 @@ def version_command() -> None:
     typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
 
 
+@re_app.command("run")
+def re_run(
+    re_policy: str = typer.Option(
+        "changed",
+        "--re-policy",
+        help="Workspace RE policy: none, cached-only, changed, or refresh-all.",
+    ),
+    re_max_inner: Optional[int] = typer.Option(
+        None,
+        "--re-max-inner",
+        min=1,
+        help="Raise source-local RE repair budgets.",
+    ),
+    reset: bool = typer.Option(False, "--reset", help="Abandon unfinished RE state and replan."),
+) -> None:
+    """Run or resume workspace reverse engineering and publish complete output."""
+    args = ["--re-policy", re_policy]
+    _extend_option(args, "--re-max-inner", re_max_inner)
+    if reset:
+        args.append("--reset")
+    _legacy_cli()._cmd_re_run(args)
+
+
+@re_app.command("continue")
+def re_continue(
+    re_max_inner: Optional[int] = typer.Option(
+        None,
+        "--re-max-inner",
+        min=1,
+        help="Raise source-local RE repair budgets before continuing.",
+    ),
+) -> None:
+    """Continue the active RE run without a human answer."""
+    args: list[str] = []
+    _extend_option(args, "--re-max-inner", re_max_inner)
+    _legacy_cli()._cmd_re_continue(args)
+
+
+@re_app.command("resume")
+def re_resume(
+    answer: str = typer.Argument(..., help="Answer to the active RE human blocker."),
+    re_max_inner: Optional[int] = typer.Option(
+        None,
+        "--re-max-inner",
+        min=1,
+        help="Raise source-local RE repair budgets before resuming.",
+    ),
+) -> None:
+    """Answer a typed human blocker and continue the active RE run."""
+    args = [answer]
+    _extend_option(args, "--re-max-inner", re_max_inner)
+    _legacy_cli()._cmd_re_resume(args)
+
+
 @re_app.command("publish")
 def re_publish(
     run_id: str = typer.Argument(..., help="Run id below runs/ or squad/."),
@@ -384,7 +438,11 @@ def root_run(
         "--target",
         help="Implementation source id or path; repeat for multi-repo delivery.",
     ),
-    re_policy: Optional[str] = typer.Option(None, "--re-policy", help="Reverse-engineering cache policy."),
+    ignore_re: bool = typer.Option(
+        False,
+        "--ignore-re",
+        help="Do not attach the latest published RE context.",
+    ),
 ) -> None:
     """Compatibility alias for spec run."""
     spec_run(
@@ -396,7 +454,8 @@ def root_run(
         message=message,
         next_phase=next_phase,
         target=target,
-        re_policy=re_policy,
+        input_values=None,
+        ignore_re=ignore_re,
     )
 
 
@@ -898,16 +957,10 @@ def spec_run(
         "--input",
         help="Product input as requirement:<path> or reference:<path>; repeat as needed.",
     ),
-    re_policy: Optional[str] = typer.Option(
-        None,
-        "--re-policy",
-        help="Reverse-engineering cache policy.",
-    ),
-    re_max_inner: Optional[int] = typer.Option(
-        None,
-        "--re-max-inner",
-        min=1,
-        help="Raise source-local reverse-engineering repair budgets for this run.",
+    ignore_re: bool = typer.Option(
+        False,
+        "--ignore-re",
+        help="Do not attach the latest published RE context.",
     ),
 ) -> None:
     """Run Phase A squad spec authoring."""
@@ -926,8 +979,8 @@ def spec_run(
     _extend_option(args, "--next-phase", next_phase)
     _extend_repeated_option(args, "--target", target)
     _extend_repeated_option(args, "--input", input_values)
-    _extend_option(args, "--re-policy", re_policy)
-    _extend_option(args, "--re-max-inner", re_max_inner)
+    if ignore_re:
+        args.append("--ignore-re")
     legacy_cli._cmd_spec_run(args)
 
 
@@ -948,19 +1001,12 @@ def spec_status() -> None:
 def spec_continue(
     ctx: typer.Context,
     mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode override."),
-    re_max_inner: Optional[int] = typer.Option(
-        None,
-        "--re-max-inner",
-        min=1,
-        help="Raise source-local reverse-engineering repair budgets for this run.",
-    ),
 ) -> None:
     """Run the next no-input Phase A recovery action."""
     from echelon import cli as legacy_cli
 
     args = list(ctx.args)
     _extend_option(args, "--mode", mode)
-    _extend_option(args, "--re-max-inner", re_max_inner)
     legacy_cli._cmd_spec_continue(args)
 
 

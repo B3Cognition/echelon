@@ -434,8 +434,9 @@ def test_spec_run_help_declares_phase_a_options():
     assert "--next-phase" in result.output
     assert "--target" in result.output
     assert "--input" in result.output
-    assert "--re-policy" in result.output
-    assert "--re-max-inner" in result.output
+    assert "--ignore-re" in result.output
+    assert "--re-policy" not in result.output
+    assert "--re-max-inner" not in result.output
 
 
 @pytest.mark.unit
@@ -474,10 +475,7 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "requirement:sources/PBS-E-45",
         "--input",
         "reference:sources/provision",
-        "--re-policy",
-        "changed",
-        "--re-max-inner",
-        "10",
+        "--ignore-re",
     ])
 
     assert calls == [[
@@ -498,10 +496,7 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "requirement:sources/PBS-E-45",
         "--input",
         "reference:sources/provision",
-        "--re-policy",
-        "changed",
-        "--re-max-inner",
-        "10",
+        "--ignore-re",
     ]]
 
 

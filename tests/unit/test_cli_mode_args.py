@@ -132,7 +132,7 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
     assert "blocked  ·  2m 31s  ·  $0.1234" in out
 
 
-def test_cmd_run_passes_repeatable_implementation_targets_independently_of_re_policy(
+def test_cmd_run_passes_repeatable_implementation_targets_and_ignore_re(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -181,7 +181,7 @@ def test_cmd_run_passes_repeatable_implementation_targets_independently_of_re_po
             "sources/api",
             "--target",
             "sources/web",
-            "--re-policy=changed",
+            "--ignore-re",
             "--input=requirement:sources/PBS-E-45",
         ],
         project_root=tmp_path,
@@ -190,12 +190,12 @@ def test_cmd_run_passes_repeatable_implementation_targets_independently_of_re_po
 
     assert captured["implementation_targets"] == ["sources/api", "sources/web"]
     assert "target_source" not in captured
-    assert captured["re_policy"] == "changed"
+    assert captured["ignore_re"] is True
     assert captured["product_inputs"].manifest_hash
 
 
-@pytest.mark.parametrize("policy", ["target-changed", "target-only"])
-def test_cmd_run_rejects_target_scoped_reverse_engineering_policies(
+@pytest.mark.parametrize("policy", ["changed", "target-changed", "target-only"])
+def test_cmd_run_rejects_moved_reverse_engineering_policies(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -213,7 +213,7 @@ def test_cmd_run_rejects_target_scoped_reverse_engineering_policies(
         )
 
     assert exc.value.code == 2
-    assert "Reverse engineering is workspace-scoped" in capsys.readouterr().err
+    assert "moved to 'echelon re run'" in capsys.readouterr().err
 
 
 def test_cmd_run_target_init_prepares_target_and_syncs_workspace_sources(

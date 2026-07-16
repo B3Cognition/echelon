@@ -4884,8 +4884,7 @@ def _cmd_run(
     ]
     product_input_values: list[str] = []
     init_target = False
-    re_policy = os.environ.get("ECHELON_RE_POLICY", "").strip()
-    re_max_inner: int | None = None
+    ignore_re = False
     message_parts: list[str] = []
     i = 0
     while i < len(args):
@@ -4926,51 +4925,29 @@ def _cmd_run(
         elif args[i].startswith("--input="):
             product_input_values.append(args[i].split("=", 1)[1].strip())
             i += 1
-        elif args[i] == "--re-policy":
-            if i + 1 >= len(args):
-                print(
-                    "✗ echelon spec run: --re-policy requires a policy name",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
-            re_policy = args[i + 1].strip()
-            i += 2
-        elif args[i].startswith("--re-policy="):
-            re_policy = args[i].split("=", 1)[1].strip()
+        elif args[i] == "--ignore-re":
+            ignore_re = True
             i += 1
-        elif args[i] == "--re-max-inner":
-            if i + 1 >= len(args):
-                print("✗ echelon spec run: --re-max-inner requires a positive integer", file=sys.stderr)
-                sys.exit(1)
-            try:
-                re_max_inner = int(args[i + 1])
-            except ValueError:
-                re_max_inner = 0
-            if re_max_inner < 1:
-                print("✗ echelon spec run: --re-max-inner requires a positive integer", file=sys.stderr)
-                sys.exit(1)
-            i += 2
-        elif args[i].startswith("--re-max-inner="):
-            try:
-                re_max_inner = int(args[i].split("=", 1)[1])
-            except ValueError:
-                re_max_inner = 0
-            if re_max_inner < 1:
-                print("✗ echelon spec run: --re-max-inner requires a positive integer", file=sys.stderr)
-                sys.exit(1)
-            i += 1
+        elif args[i] in {"--re-policy", "--re-max-inner"}:
+            moved = args[i]
+            print(
+                f"✗ echelon spec run: {moved} moved to 'echelon re run'.\n"
+                "  Run reverse engineering explicitly, then start the spec run.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        elif args[i].startswith("--re-policy=") or args[i].startswith("--re-max-inner="):
+            moved = args[i].split("=", 1)[0]
+            print(
+                f"✗ echelon spec run: {moved} moved to 'echelon re run'.\n"
+                "  Run reverse engineering explicitly, then start the spec run.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
         else:
             message_parts.append(args[i])
             i += 1
     message = " ".join(message_parts)
-    if re_policy in {"target-changed", "target-only"}:
-        print(
-            f"✗ echelon spec run: --re-policy {re_policy} is retired.\n"
-            "  Reverse engineering is workspace-scoped and independent of "
-            "implementation --target values. Use changed, cached-only, none, or refresh-all.",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
     if init_target and not implementation_targets:
         print(
             "✗ echelon spec run: --init requires --target <source id or path>",
@@ -5052,10 +5029,6 @@ def _cmd_run(
 
     config = load_config(project_root, squad_only=True)
     provider = SquadCliProvider(config)
-    if re_max_inner is not None:
-        state = state_store.load()
-        state["re_max_inner"] = re_max_inner
-        state_store.save(state)
     graph = PhaseGraph(
         ext_dir / "workflow/definition.yaml",
         ext_dir / "extension.yml",
@@ -5084,7 +5057,7 @@ def _cmd_run(
         token_budget=token_budget,
         max_iterations=max_iterations,
         squad_dir=squad_dir,
-        re_policy=re_policy,
+        ignore_re=ignore_re,
         implementation_targets=implementation_targets,
         product_inputs=product_inputs,
     )
@@ -5102,7 +5075,7 @@ def _cmd_run(
         ("Task", (message[:80] + "…") if len(message) > 80 else message),
         ("Dir", str(squad_dir.name)),
         ("Implementation targets", ", ".join(implementation_targets)),
-        ("RE policy", re_policy or "(default)"),
+        ("Published RE", "ignored" if ignore_re else "latest"),
     ])
 
     result = controller.run(user_message=message, mode=mode, next_phase_override=next_phase)
@@ -5114,7 +5087,7 @@ def _cmd_run(
         mode=mode,
         message=message,
         implementation_targets=implementation_targets,
-        re_policy=re_policy,
+        re_policy="",
     )
     _print_next_steps(project_root, result.status)
     if result.status != "done":
@@ -6976,7 +6949,145 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
     sys.exit(result.returncode)
 
 
-# ── RE publication subcommand ────────────────────────────────────────────────
+# ── RE lifecycle and publication subcommands ────────────────────────────────
+
+def _parse_re_lifecycle_options(
+    args: list[str],
+    *,
+    allow_policy: bool,
+    allow_reset: bool,
+) -> tuple[str, int | None, bool, list[str]]:
+    policy = "changed"
+    re_max_inner: int | None = None
+    reset = False
+    positional: list[str] = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--re-policy" and allow_policy:
+            if index + 1 >= len(args):
+                raise ValueError("--re-policy requires a policy name")
+            policy = args[index + 1].strip()
+            index += 2
+        elif arg.startswith("--re-policy=") and allow_policy:
+            policy = arg.split("=", 1)[1].strip()
+            index += 1
+        elif arg == "--re-max-inner":
+            if index + 1 >= len(args):
+                raise ValueError("--re-max-inner requires a positive integer")
+            try:
+                re_max_inner = int(args[index + 1])
+            except ValueError as exc:
+                raise ValueError("--re-max-inner requires a positive integer") from exc
+            index += 2
+        elif arg.startswith("--re-max-inner="):
+            try:
+                re_max_inner = int(arg.split("=", 1)[1])
+            except ValueError as exc:
+                raise ValueError("--re-max-inner requires a positive integer") from exc
+            index += 1
+        elif arg == "--reset" and allow_reset:
+            reset = True
+            index += 1
+        elif arg.startswith("-"):
+            raise ValueError(f"unknown option {arg!r}")
+        else:
+            positional.append(arg)
+            index += 1
+    if re_max_inner is not None and re_max_inner < 1:
+        raise ValueError("--re-max-inner requires a positive integer")
+    return policy, re_max_inner, reset, positional
+
+
+def _re_lifecycle_controller(project_root: Path):
+    from harness.config import load_config
+    from harness.re_lifecycle import ReLifecycleController
+    from harness.squad_provider import SquadCliProvider
+
+    extension_root = _installed_extension_or_exit(project_root)
+    config = load_config(project_root, squad_only=True)
+    return ReLifecycleController(
+        project_root=project_root,
+        extension_root=extension_root,
+        provider_factory=lambda: SquadCliProvider(config),
+    )
+
+
+def _print_re_lifecycle_result(result: object) -> None:
+    status = str(getattr(result, "status", "failed"))
+    run_id = str(getattr(result, "run_id", ""))
+    generation = int(getattr(result, "generation", 0) or 0)
+    no_work = bool(getattr(result, "no_work", False))
+    if status == "done":
+        if no_work:
+            print(f"RE publication is current (generation {generation}); no agent work required.")
+        else:
+            print(f"RE run {run_id} complete; published generation {generation}.")
+        return
+    reason = str(getattr(result, "blocked_reason", "RE lifecycle failed"))
+    print(f"RE run {run_id or '(not created)'} blocked: {reason}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def _cmd_re_run(args: list[str]) -> None:
+    from harness.re_lifecycle import ReLifecycleError
+
+    try:
+        policy, re_max_inner, reset, positional = _parse_re_lifecycle_options(
+            args,
+            allow_policy=True,
+            allow_reset=True,
+        )
+        if positional:
+            raise ValueError("echelon re run does not accept positional arguments")
+        result = _re_lifecycle_controller(Path.cwd()).run(
+            policy=policy,
+            re_max_inner=re_max_inner,
+            reset=reset,
+        )
+    except (ReLifecycleError, ValueError) as exc:
+        print(f"echelon re run: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    _print_re_lifecycle_result(result)
+
+
+def _cmd_re_continue(args: list[str]) -> None:
+    from harness.re_lifecycle import ReLifecycleError
+
+    try:
+        _policy, re_max_inner, _reset, positional = _parse_re_lifecycle_options(
+            args,
+            allow_policy=False,
+            allow_reset=False,
+        )
+        if positional:
+            raise ValueError("echelon re continue does not accept positional arguments")
+        result = _re_lifecycle_controller(Path.cwd()).continue_run(re_max_inner)
+    except (ReLifecycleError, ValueError) as exc:
+        print(f"echelon re continue: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    _print_re_lifecycle_result(result)
+
+
+def _cmd_re_resume(args: list[str]) -> None:
+    from harness.re_lifecycle import ReLifecycleError
+
+    try:
+        _policy, re_max_inner, _reset, positional = _parse_re_lifecycle_options(
+            args,
+            allow_policy=False,
+            allow_reset=False,
+        )
+        if len(positional) != 1:
+            raise ValueError('usage: echelon re resume "<answer>"')
+        result = _re_lifecycle_controller(Path.cwd()).resume(
+            positional[0],
+            re_max_inner,
+        )
+    except (ReLifecycleError, ValueError) as exc:
+        print(f"echelon re resume: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    _print_re_lifecycle_result(result)
 
 def _cmd_re_publish(args: list[str]) -> None:
     """Publish one validated run into the canonical workspace RE registry."""
