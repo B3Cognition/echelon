@@ -26,9 +26,18 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def _write_run(root: Path, run_id: str, status: str) -> Path:
+def _write_run(
+    root: Path,
+    run_id: str,
+    status: str,
+    *,
+    run_kind: str | None = None,
+) -> Path:
     run_dir = root / "runs" / run_id
-    _write_json(run_dir / "state.json", {"run_id": run_id, "status": status})
+    state: dict[str, object] = {"run_id": run_id, "status": status}
+    if run_kind is not None:
+        state["run_kind"] = run_kind
+    _write_json(run_dir / "state.json", state)
     return run_dir
 
 
@@ -102,13 +111,23 @@ def test_extractor_reclaims_dead_local_owner(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 def test_owner_run_is_excluded_but_another_active_run_blocks(tmp_path: Path) -> None:
-    owner = _write_run(tmp_path, "run-a", "running")
-    other = _write_run(tmp_path, "run-b", "in_progress")
+    owner = _write_run(tmp_path, "re-a", "running", run_kind="re")
+    other = _write_run(tmp_path, "re-b", "in_progress", run_kind="re")
     _write_run(tmp_path, "run-done", "done")
 
     assert find_other_active_runs(tmp_path, owner) == (other.resolve(),)
-    with pytest.raises(RePublicationActiveRun, match="run-b"):
-        RePublishLock.acquire(tmp_path, "run-a", owner)
+    with pytest.raises(RePublicationActiveRun, match="re-b"):
+        RePublishLock.acquire(tmp_path, "re-a", owner)
+
+
+@pytest.mark.unit
+def test_active_spec_run_does_not_block_re_publication(tmp_path: Path) -> None:
+    owner = _write_run(tmp_path, "re-a", "running", run_kind="re")
+    _write_run(tmp_path, "spec-a", "in_progress")
+
+    assert find_other_active_runs(tmp_path, owner) == ()
+    with RePublishLock.acquire(tmp_path, "re-a", owner):
+        pass
 
 
 @pytest.mark.unit

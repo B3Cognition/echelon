@@ -16,10 +16,15 @@ def test_spec_workflow_has_no_embedded_re_dispatches() -> None:
         encoding="utf-8"
     )
     init = (ROOT / "extension/workflow/phases/init.md").read_text(encoding="utf-8")
+    executors = (ROOT / "src/harness/squad_executors.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "golddigger_mode1" not in workflow
     assert "golddigger_mode2_queue" not in workflow
     assert "golddigger_requests" not in workflow
+    assert "ReExtractionController" not in executors
+    assert "golddigger_mode" not in executors
     assert "dispatch GOLDDIGGER" not in init
     assert "Never dispatch reverse engineering from the spec workflow" in init
 

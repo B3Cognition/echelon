@@ -16,7 +16,6 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.phase_graph import PhaseGraph, PhaseNode
-from harness.re_controller import ReControllerResult
 from harness.squad import (
     SquadController,
     SquadResult,
@@ -549,23 +548,8 @@ class TestSquadControllerBasics:
             squad_dir,
         )
 
-        controller_calls = []
-
-        class CompleteController:
-            def __init__(self, **kwargs):
-                controller_calls.append(kwargs)
-
-            def run(self):
-                return ReControllerResult(completed=True)
-
-        monkeypatch.setattr(
-            "harness.squad_executors.ReExtractionController",
-            CompleteController,
-        )
-
         executor.execute(graph.get("phase1-discover"), store)
 
-        assert controller_calls == []
         assert provider.exec_agent.call_count == 1
         state = store.load()
         assert "golddigger_status" not in state
@@ -632,18 +616,6 @@ class TestSquadControllerBasics:
             EXT_ROOT / "extension",
             tmp_path,
             squad_dir,
-        )
-
-        class CompleteController:
-            def __init__(self, **_kwargs):
-                pass
-
-            def run(self):
-                return ReControllerResult(completed=True)
-
-        monkeypatch.setattr(
-            "harness.squad_executors.ReExtractionController",
-            CompleteController,
         )
 
         executor.execute(graph.get("phase1-discover"), store)

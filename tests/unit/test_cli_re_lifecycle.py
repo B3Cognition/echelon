@@ -85,3 +85,23 @@ def test_legacy_spec_parser_rejects_moved_re_options(
     assert exc.value.code == 2
     assert "moved to 'echelon re run'" in capsys.readouterr().err
 
+
+@pytest.mark.unit
+def test_spec_continue_rejects_moved_re_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_continue
+
+    monkeypatch.setattr("echelon.cli._print_extension_drift_warning", lambda *a, **k: None)
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_continue(
+            ["--re-max-inner", "9"],
+            project_root=tmp_path,
+            ext_dir=tmp_path,
+        )
+
+    assert exc.value.code == 2
+    assert "moved to 'echelon re continue'" in capsys.readouterr().err

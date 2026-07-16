@@ -37,12 +37,12 @@ class ReExtractLocked(RuntimeError):
 
 
 class RePublicationActiveRun(RuntimeError):
-    """Raised when publication would change context for another active run."""
+    """Raised when another active RE lifecycle could publish stale output."""
 
     def __init__(self, runs: tuple[Path, ...]) -> None:
         self.runs = runs
         super().__init__(
-            "other active feature runs block RE publication: "
+            "other active RE runs block publication: "
             + ", ".join(path.name for path in runs)
         )
 
@@ -181,7 +181,11 @@ def find_other_active_runs(
     workspace_root: Path,
     owner_run_dir: Path | None,
 ) -> tuple[Path, ...]:
-    """Return active Phase A run directories other than the publisher owner."""
+    """Return active RE run directories other than the publisher owner.
+
+    Spec runs consume immutable snapshots, so their activity never blocks a new
+    publication.
+    """
     root = workspace_root.resolve()
     excluded = owner_run_dir.resolve() if owner_run_dir else None
     active: list[Path] = []
@@ -197,7 +201,10 @@ def find_other_active_runs(
             if resolved == excluded or resolved in seen:
                 continue
             state = _read_json(candidate / "state.json", required=False)
-            if state.get("status") in ACTIVE_RUN_STATUSES:
+            if (
+                state.get("run_kind") == "re"
+                and state.get("status") in ACTIVE_RUN_STATUSES
+            ):
                 seen.add(resolved)
                 active.append(resolved)
     return tuple(active)

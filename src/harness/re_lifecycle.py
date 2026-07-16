@@ -22,6 +22,11 @@ from harness.re_fingerprint import ReFingerprintProfile
 from harness.re_materializer import materialize_re_run_context
 from harness.re_planner import build_re_execution_plan
 from harness.re_publication import RePublicationError, publish_re_run
+from harness.re_lock import (
+    RePublicationActiveRun,
+    RePublishLocked,
+    RePublishRecoveryRequired,
+)
 from harness.re_registry import load_published_index
 from kernel.re_state import init_re_state
 
@@ -325,7 +330,12 @@ class ReLifecycleController:
                 run_dir,
                 expected_generation=int(state.get("expected_generation") or 0),
             )
-        except RePublicationError as exc:
+        except (
+            RePublicationError,
+            RePublicationActiveRun,
+            RePublishLocked,
+            RePublishRecoveryRequired,
+        ) as exc:
             state["status"] = "blocked"
             state["publication_pending"] = True
             state["blocked_reason"] = f"re_publication_failed: {exc}"

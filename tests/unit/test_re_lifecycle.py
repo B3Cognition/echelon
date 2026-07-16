@@ -270,7 +270,9 @@ def test_continue_retries_publication_without_repeating_extraction(
     def publish(*args: object, **kwargs: object) -> RePublicationResult:
         publication_calls.append(True)
         if len(publication_calls) == 1:
-            raise RePublicationError("transaction interrupted")
+            from harness.re_lock import RePublishLocked
+
+            raise RePublishLocked("re-other")
         return RePublicationResult(
             generation=1,
             status="complete",
@@ -291,7 +293,9 @@ def test_continue_retries_publication_without_repeating_extraction(
     second = controller.continue_run()
 
     assert first.status == "blocked"
-    assert first.blocked_reason == "re_publication_failed: transaction interrupted"
+    assert first.blocked_reason == (
+        "re_publication_failed: RE publication lock is owned by re-other"
+    )
     assert second.status == "done"
     assert extraction_calls == [True]
     assert publication_calls == [True, True]
