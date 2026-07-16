@@ -49,6 +49,20 @@ class TestTaskProgress:
         assert "  **Status:** BLOCKED" in updated
         assert "  - [ ] Core flow works" in updated
 
+    def test_progress_update_preserves_explicit_target_metadata(self) -> None:
+        tasks = TASKS.replace(
+            "depends=none",
+            "depends=none target=sources/app",
+            1,
+        )
+
+        updated = update_task_progress_markdown(tasks, "T-001", "DONE")
+
+        assert (
+            "- [x] T-001 complexity=standard phase=foundation req=INFRA "
+            "depends=none target=sources/app"
+        ) in updated
+
     def test_deferred_task_is_terminal_but_not_completed(self) -> None:
         updated = update_task_progress_markdown(TASKS, "T-001", "DEFERRED")
 
@@ -140,3 +154,17 @@ class TestTaskProgress:
         assert summary.valid is False
         assert "state completed_tasks=2 but tasks.md has 0 checked task rows" in summary.errors
         assert "state tasks_completed_pct=100 but tasks.md computes 0" in summary.errors
+
+    def test_summarize_can_scope_counts_to_delivery_target(self) -> None:
+        updated = update_task_progress_markdown(TASKS, "T-001", "DONE")
+
+        summary = summarize_task_progress(
+            updated,
+            selected_task_ids={"T-002"},
+        )
+
+        assert summary.valid is True
+        assert summary.total_tasks == 1
+        assert summary.completed_tasks == 0
+        assert summary.tasks_completed_pct == 0
+        assert summary.task_statuses == {"T-002": "PENDING"}

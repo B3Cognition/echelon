@@ -72,6 +72,16 @@ _ARTIFACTS = (
         "phase_a",
     ),
     ArtifactDefinition(
+        "inputs",
+        "Product input evidence",
+        "Immutable input manifest, snapshots, and requirement traceability ledger.",
+        "Phase A",
+        "Squad controller",
+        "Published from the immutable run-local input snapshot at Phase A finalization.",
+        "Spec authors, implementers, and auditors",
+        "phase_a",
+    ),
+    ArtifactDefinition(
         "research.md",
         "Research notes",
         "Captures discovery notes and external context.",

@@ -267,6 +267,9 @@ class StateStore:
         source_root: str | None = None,
         source_id: str | None = None,
         source_git_role: str | None = None,
+        implementation_target: str | None = None,
+        declared_targets: list[str] | None = None,
+        target_task_ids: list[str] | None = None,
     ) -> Dict[str, Any]:
         """Create initial state.
 
@@ -313,6 +316,9 @@ class StateStore:
             "source_root": source_root,
             "source_id": source_id,
             "source_git_role": source_git_role,
+            "implementation_target": implementation_target,
+            "declared_targets": list(declared_targets or []),
+            "target_task_ids": list(target_task_ids or []),
             "spec_dir": spec_dir,
             "spec_file": spec_file,
             "tasks_file": tasks_file,

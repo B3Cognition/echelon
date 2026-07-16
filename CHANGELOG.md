@@ -4,7 +4,50 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **First-class reverse-engineering lifecycle** — `echelon re run`, `echelon re
+  continue`, and `echelon re resume` now own RE planning, bounded repair, and
+  structured recovery under an independent `runs/.current-re` marker. Complete
+  output publishes automatically; current `changed` runs avoid provider calls,
+  and partial output never auto-publishes. Spec authoring snapshots the latest
+  published generation as read-only context by default or records it as ignored
+  with `--ignore-re`. Embedded GOLDDIGGER Mode 1/Mode 2 execution and the mutable
+  generation guard have been removed from the Phase A workflow.
+
+  Migration:
+
+  ```text
+  before: echelon spec run "Build dashboards" --re-policy changed --re-max-inner 10
+  after:  echelon re run --re-policy changed --re-max-inner 10
+          echelon spec run "Build dashboards"
+  ```
+
+- **EGR-148 / #163 product input evidence** — `echelon spec run` now accepts repeatable
+  `--input requirement:<path>` and `--input reference:<path>` declarations.
+  Accepted local evidence is safely snapshotted before agent dispatch, carries
+  stable unit IDs through a controller-owned traceability ledger, and is
+  published at `specs/<id>/inputs/`. Normative inputs now block Phase A
+  publication until included requirements reach canonical target-owned tasks.
+  Offline Figma bundles and reduced-fidelity design exports are supported;
+  direct Figma URLs use `FIGMA_ACCESS_TOKEN` without publishing credentials.
+
 ### Fixed
+
+- **EGR-147 / #162 authoritative implementation targets** — repeatable
+  `echelon spec run --target` values are now resolved and persisted before
+  Phase A dispatch, written to `targets.yml`, injected into architecture/task
+  prompts, and kept separate from workspace reverse engineering. Canonical
+  tasks declare `target=`, delivery validates rather than infers ownership, and
+  Ralph persists each target's assigned task IDs in build state and prompts.
+  Post-hoc `echelon spec target` mutation and delivery target overrides are
+  retired because they cannot safely repair target-dependent artifacts.
+
+- **EGR-143 / #161 task target inspection** — `echelon spec targets <id>`
+  now prints every canonical task exactly once, grouped by its explicit
+  `target=` delivery ownership. Unowned and cross-target tasks remain
+  visible in explicit groups, declared-target mismatches are reported, and an
+  invalid map exits nonzero only after the complete read-only report is shown.
 
 - **EGR-115 / #140 fulfillment refresh ownership** — scoped fulfillment refresh
   fallback now preserves the authoritative resolved `spec_dir` when it must

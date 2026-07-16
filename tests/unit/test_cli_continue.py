@@ -199,7 +199,7 @@ def test_continue_reopens_done_run_when_explicit_run_local_spec_has_unpublished_
     assert _next_continue_phase(tmp_path) == "phase4-document"
 
 
-def test_continue_clears_same_run_re_generation_block_before_phase_a_publish(
+def test_continue_does_not_apply_retired_re_generation_recovery(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -277,13 +277,11 @@ def test_continue_clears_same_run_re_generation_block_before_phase_a_publish(
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["status"] == "running"
-    assert state["phase"] == "phase4-document"
-    assert state["re_generation"] == 1
-    assert state["blocked_reason"] is None
-    assert "re_generation_expected" not in state
-    assert "re_generation_actual" not in state
-    assert calls == [["build the dashboard", "--mode", "banzai"]]
+    assert state["status"] == "blocked"
+    assert state["phase"] == "terminal-blocked"
+    assert state["re_generation"] == 0
+    assert state["blocked_reason"] == "re_generation_mismatch"
+    assert calls == []
 
 
 def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
@@ -711,7 +709,7 @@ def test_continue_retries_timeout_without_resume_dead_end(
     assert calls == [["make terminal ascii art", "--mode", "semi"]]
 
 
-def test_continue_prioritizes_blocked_re_over_outer_escalation(
+def test_continue_ignores_legacy_nested_re_state_during_outer_escalation(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -751,15 +749,14 @@ def test_continue_prioritizes_blocked_re_over_outer_escalation(
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["phase"] == "phase1-discover"
-    assert state["status"] == "running"
-    assert state["blocked_reason"] is None
-    assert state["escalation_question"] is None
-    assert 'echelon spec resume "<your answer>"' not in capsys.readouterr().out
-    assert calls == [["reverse engineer the workspace", "--mode", "banzai"]]
+    assert state["phase"] == "terminal-blocked"
+    assert state["status"] == "blocked"
+    assert state["blocked_reason"] == "phase_dispatch_limit"
+    assert 'echelon spec resume "<your answer>"' in capsys.readouterr().out
+    assert calls == []
 
 
-def test_continue_returns_to_discovery_when_bad_resume_skipped_blocked_re(
+def test_continue_ignores_legacy_nested_re_state_for_active_spec_run(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -789,7 +786,7 @@ def test_continue_returns_to_discovery_when_bad_resume_skipped_blocked_re(
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["phase"] == "phase1-discover"
+    assert state["phase"] == "phase1-what"
     assert calls == [["reverse engineer the workspace", "--mode", "banzai"]]
 
 

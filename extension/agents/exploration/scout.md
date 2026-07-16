@@ -58,53 +58,27 @@ You will receive a mode indicator from the MANAGER: either `greenfield` or `brow
 
 You are analyzing an existing codebase. Your goal is to extract understanding that goes far beyond what a directory listing provides.
 
-### Step 1: Check for speckit-echelon-golddigger (GOLDDIGGER) extraction artifacts
+### Step 1: Read Published RE Context When Attached
 
-Read `state.json` to check if speckit-echelon-golddigger (GOLDDIGGER) produced artifacts:
+Read the `Published Reverse Engineering Context` block in the dispatch prompt. If
+`PUBLISHED_RE_STATUS=attached`, read only the registered files under
+`PUBLISHED_RE_SNAPSHOT_ROOT` listed in `PUBLISHED_RE_ARTIFACTS`. Treat them as
+read-only evidence and a validated head start, not as a complete answer.
 
-```bash
-# WARNING: Always keep stdout JSON-only; do NOT add print() statements — they corrupt state.json
-python3 -c "
-import json
-with open('${SQUAD_DIR}/state.json', 'r') as f:
-    s = json.load(f)
-status = s.get('golddigger_status', 'absent')
-artifacts = s.get('golddigger_artifacts', {})
-print(json.dumps({'status': status, 'artifacts': artifacts}))
-"
-```
+ALWAYS enrich and validate published RE evidence against the current task.
+NEVER run reverse engineering, write RE artifacts, or read the mutable canonical
+`re/` tree during a spec run.
 
-**If `golddigger_status` is `complete` or `partial`:**
+If the status is `absent` or `ignored`, continue with manual analysis in Steps 2-4.
 
-Read the artifacts directly — no intermediate normalization layer.
+When attached: Prefer workspace-manifest.json as the registered workspace and
+source-root inventory. Use `repos-manifest.json` only as a compatibility fallback. Follow the exact registered snapshot paths; do not replace them with project-root glob conventions. Read registered workspace overview,
+relationships, contracts, and source specs before source-code fallback.
 
-If `golddigger_artifacts.source_index` exists, read it first. It is the run-local source-of-truth for which source roots were reused, refreshed, missing, or excluded. Respect any forbidden roots from the current prompt/state: do not list, read, search, or summarize excluded sibling source roots.
-
-If `golddigger_artifacts.re_overview` exists, read it before synthesizing discovery outputs. If `golddigger_artifacts.re_specs[]` exists, read each listed domain spec before falling back to glob discovery. If GOLDDIGGER reports `complete` but these reverse-engineering specs are absent, treat the extraction as degraded-brownfield, record the mismatch in `unknowns.md`, and continue from analysis/manifests without pretending RE specification is complete.
-
-**Workspace RE context** (if `golddigger_artifacts.manifest` exists):
-
-1. Read `golddigger_artifacts.source_index` when present for selected source roots and cache actions.
-2. Read `golddigger_artifacts.manifest` for the full source inventory.
-3. Read `golddigger_artifacts.re_overview`, `relationships`, and `contracts` using the exact registered paths.
-4. Read every path in `golddigger_artifacts.re_specs[]`; do not replace registered paths with project-root glob conventions.
-5. Read `golddigger_artifacts.cross_repo` for dependency links and shared technology when present.
-6. For refreshed sources, read per-source analysis, CodeGraph, and PerlGraph paths under `golddigger_artifacts.sources_root`. Treat a root CodeGraph summary as an aggregate index of per-source summaries; treat a root PerlGraph summary the same way for Perl structural evidence.
-7. For reused or retained sources, use canonical manifests/specs already listed in `re_artifacts` rather than reopening source roots.
-
-Prefer workspace-manifest.json when present. It defines the workspace root and implementation source roots. Use repos-manifest.json only as a compatibility fallback for older runs.
-
-Use the data to seed your output artifacts:
-- `workspace-manifest.json` → seeds **boundaries** (each source root is a top-level boundary)
-- `repos-manifest.json` → compatibility fallback for older runs
-- `cross-repo.json` → seeds **dependencies** between boundaries and **integration points**
-- Per-source `analysis.json` seeds **glossary** (tech stack, entry points) and **mental-model** (domain inventory, hotspots)
-- Registered source specs seed **assumptions** and **unknowns** with evidence
-- Workspace relationships and contracts seed boundary dependencies and integration points
-
-**If `golddigger_status` is `failed` or absent:** Proceed with manual analysis (Steps 2-4). Return a `journal_entries` item in `echelon_result`: "speckit-echelon-golddigger (GOLDDIGGER) artifacts not available — proceeding with manual structural analysis."
-
-Treat extraction artifacts as a validated head-start, not as a complete answer. Always enrich, validate, and extend every section — do not copy blindly.
+CodeGraph and PerlGraph evidence is source-owned. Treat any root CodeGraph
+summary as an aggregate index of per-source summaries, and treat a root
+PerlGraph summary the same way. Read per-source summary or analysis paths only
+when they are present in `PUBLISHED_RE_ARTIFACTS`.
 
 ### Step 2: Structural Analysis
 
@@ -142,40 +116,6 @@ Extract: Why was it built this way? What has been refactored? Where are the pain
 ### Step 5: Build Domain Map
 
 Synthesize all findings into the output artifacts (see Output Requirements below).
-
-### Step 6: Evaluate Domain Depth for Deep Dive Requests (brownfield only)
-
-If speckit-echelon-golddigger (GOLDDIGGER) artifacts were present, evaluate whether any domain needs deeper structural analysis via speckit-echelon-golddigger (GOLDDIGGER) Mode 2.
-
-speckit-echelon-golddigger (GOLDDIGGER) Mode 1 now provides function bodies, business logic, validation rules, and error handling patterns at 99% coverage. Mode 2 adds complete source file reading, deep data flow analysis, and test assertion extraction. The bar for requesting Mode 2 is higher than before — only request when Mode 1's `logic` depth is genuinely insufficient.
-
-For each domain, assess:
-
-- **Unresolvable entry points:** Does the domain have execution flows you cannot trace from function bodies alone — e.g., async chains, middleware stacks, or interceptors where the actual runtime path is not visible in the logic layer?
-- **Integration opacity:** Does the domain have external integrations (auth provider, message queue, third-party API) where the full interaction topology cannot be determined from function bodies, making it impossible to map failure modes and boundary conditions?
-
-**Always answer from existing artifacts when sufficient. Do NOT request Mode 2 for:**
-- Boundary ambiguity — `logic` depth provides sufficient signal for domain boundary detection
-- Hotspot complexity — function bodies and git history already expose complexity patterns
-- General uncertainty — if you can answer the question from existing artifacts, do so
-
-If a domain meets either trigger, read the existing `state.json.golddigger_requests` list and return the full updated Mode 2 request queue in `echelon_result.state_updates.golddigger_requests`:
-
-```yaml
-echelon_result:
-  state_updates:
-    golddigger_requests:
-      - domain: "<domain-name>"
-        repo: "<repo-name-or-null>"
-        requested_by: "speckit-echelon-scout (SCOUT)"
-        reason: "<specific reason, e.g. auth middleware execution path not traceable from function bodies>"
-```
-
-In polyrepo mode, always include the `repo` field. In single-repo mode, set `repo` to `null`.
-
-speckit-echelon-commander (COMMANDER) will process the queue before the next Phase 1 agent runs. Results will be at `$SQUAD_DIR/golddigger-cache/{repo}--{domain}.md` (polyrepo) or `$SQUAD_DIR/golddigger-cache/{domain}.md` (single-repo).
-
----
 
 ## Greenfield Mode — Domain Research Pipeline
 

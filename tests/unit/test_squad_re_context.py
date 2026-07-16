@@ -8,7 +8,7 @@ import pytest
 from harness.re_fingerprint import ReFingerprintProfile, fingerprint_source
 from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
 from harness.re_registry import ensure_re_layout
-from harness.squad import ReGenerationMismatch, SquadController, assert_re_generation
+from harness.squad import SquadController
 from harness.squad_state import SquadStateStore
 
 
@@ -101,40 +101,9 @@ def _publish_source(root: Path, source_id: str, profile: ReFingerprintProfile) -
     )
 
 
-def test_re_generation_guard_pins_zero_when_no_publication_exists(tmp_path: Path) -> None:
-    assert_re_generation(tmp_path, 0)
-
-    paths = ensure_re_layout(tmp_path)
-    _write_json(
-        paths.index,
-        {
-            "schema_version": 1,
-            "generation": 1,
-            "publication_status": "complete",
-            "published_at": "2026-07-12T12:00:00+00:00",
-            "published_from_run": "fixture",
-            "sources": {},
-            "workspace": {
-                "manifest": "re/workspace/manifest.json",
-                "overview": "re/workspace/overview.md",
-                "relationships": "re/workspace/relationships.md",
-                "contracts": "re/workspace/contracts.md",
-            },
-            "warnings": [],
-        },
-    )
-
-    with pytest.raises(ReGenerationMismatch) as exc_info:
-        assert_re_generation(tmp_path, 0)
-
-    assert exc_info.value.expected == 0
-    assert exc_info.value.actual == 1
-
-
-def test_squad_initialization_materializes_re_plan_and_artifacts(tmp_path: Path) -> None:
+def test_squad_initialization_attaches_published_re_snapshot(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
-    for source_id in ("original-a", "prosaic"):
-        _write_source(root, source_id)
+    _write_source(root, "original-a")
     profile = ReFingerprintProfile()
     _publish_source(root, "original-a", profile)
 
@@ -147,47 +116,28 @@ def test_squad_initialization_materializes_re_plan_and_artifacts(tmp_path: Path)
         ext_dir=root / "ext",
         project_root=root,
         squad_dir=squad_dir,
-        target_source="prosaic",
     )
 
-    result = controller.run(user_message="add prosaic feature")
+    result = controller.run(user_message="add feature")
 
     assert result.status == "done"
     state = store.load()
-    assert state["re_policy"] == "target-changed"
-    assert state["requested_re_policy"] == ""
-    assert state["target_source"] == "prosaic"
-    assert state["re_refresh_sources"] == ["prosaic"]
-    assert state["re_missing_sources"] == []
-    assert state["re_generation"] == 1
-    assert state["re_artifacts"]["manifest"] == str(root / "re/index.json")
-    assert state["re_artifacts"]["per_repo"] == [str(root / "re/sources/original-a")]
-    assert str(root / "re/sources/original-a/overview.md") in state["re_artifacts"]["re_contexts"]
-    assert not (squad_dir / "re" / "sources/original-a").exists()
-    assert not (squad_dir / "re" / "sources/prosaic").exists()
-
-    source_index = json.loads((squad_dir / "re" / "re-source-index.json").read_text())
-    assert {source["id"]: source["action"] for source in source_index["sources"]} == {
-        "original-a": "reuse",
-        "prosaic": "refresh",
-    }
+    context = state["published_re_context"]
+    assert context["status"] == "attached"
+    assert context["generation"] == 1
+    assert Path(context["snapshot_root"]) == squad_dir / "context/published-re"
+    assert context["artifacts"]["manifest"] == str(
+        squad_dir / "context/published-re/index.json"
+    )
+    assert (squad_dir / "context/published-re/sources/original-a/overview.md").exists()
+    assert "re_execution_plan" not in state
+    assert not (squad_dir / "re").exists()
 
 
-def test_squad_initialization_uses_resolved_re_profile_overrides(tmp_path: Path) -> None:
+def test_squad_initialization_can_ignore_published_re(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
     _write_source(root, "api")
-    config = root / ".echelon/config.yml"
-    config.parent.mkdir(parents=True)
-    config.write_text(
-        "re:\n"
-        "  profile: deep\n"
-        "  depth:\n"
-        "    level: logic\n"
-        "    max_lines_per_file: 3210\n"
-        "  sources:\n"
-        "    git_history_limit: 456\n",
-        encoding="utf-8",
-    )
+    _publish_source(root, "api", ReFingerprintProfile())
     squad_dir = root / "runs/run-1"
     store = SquadStateStore(squad_dir)
     controller = SquadController(
@@ -197,26 +147,22 @@ def test_squad_initialization_uses_resolved_re_profile_overrides(tmp_path: Path)
         ext_dir=root / "ext",
         project_root=root,
         squad_dir=squad_dir,
+        ignore_re=True,
     )
 
     result = controller.run(user_message="inspect api")
 
     assert result.status == "done"
-    profile = store.load()["re_execution_plan"]["profile"]
-    assert profile == {
-        "codegraph_version": None,
-        "depth": "logic",
-        "git_history_limit": 456,
-        "max_lines_per_file": 3210,
-        "profile": "deep",
+    assert store.load()["published_re_context"] == {
+        "status": "ignored",
+        "generation": 0,
+        "artifacts": {},
     }
+    assert not (squad_dir / "context/published-re").exists()
 
 
-def test_squad_initialization_skips_empty_target_source_successfully(tmp_path: Path) -> None:
+def test_squad_initialization_records_absent_re_without_blocking(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
-    _write_source(root, "original-a")
-    _write_empty_source(root, "prosaic")
-
     squad_dir = root / "runs" / "run-1"
     store = SquadStateStore(squad_dir)
     controller = SquadController(
@@ -226,25 +172,49 @@ def test_squad_initialization_skips_empty_target_source_successfully(tmp_path: P
         ext_dir=root / "ext",
         project_root=root,
         squad_dir=squad_dir,
-        target_source="prosaic",
     )
 
-    result = controller.run(user_message="add prosaic feature")
+    result = controller.run(user_message="new feature")
 
     assert result.status == "done"
-    state = store.load()
-    assert state["re_policy"] == "target-changed"
-    assert state["target_source"] == "prosaic"
-    assert state["re_refresh_sources"] == []
-    assert state["re_missing_sources"] == []
-    assert state["re_empty_sources"] == ["prosaic"]
-    assert state["re_source_actions"] == {
-        "original-a": "exclude",
-        "prosaic": "skip-empty",
+    assert store.load()["published_re_context"] == {
+        "status": "absent",
+        "generation": 0,
+        "artifacts": {},
     }
 
-    source_index = json.loads((squad_dir / "re" / "re-source-index.json").read_text())
-    assert {source["id"]: source["action"] for source in source_index["sources"]} == {
-        "original-a": "exclude",
-        "prosaic": "skip-empty",
-    }
+
+def test_squad_materializes_run_targets_into_active_spec_metadata(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    squad_dir = root / "runs" / "run-1"
+    spec_dir = squad_dir / "specs" / "001-dashboard"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Dashboard\n", encoding="utf-8")
+    store = SquadStateStore(squad_dir)
+    store.initialize(
+        "run-1",
+        "brownfield",
+        "add dashboard",
+        0,
+        "phase3-how",
+        implementation_targets=["sources/web", "sources/api"],
+    )
+    state = store.load()
+    state["spec_id"] = "001-dashboard"
+    state["spec_dir"] = str(spec_dir)
+    store.save(state)
+    controller = SquadController(
+        provider=object(),
+        state_store=store,
+        phase_graph=_TerminalGraph(),
+        ext_dir=root / "ext",
+        project_root=root,
+        squad_dir=squad_dir,
+        implementation_targets=["sources/web", "sources/api"],
+    )
+
+    controller._materialize_implementation_targets()
+
+    from harness.spec_frontmatter import read_targets
+
+    assert read_targets(spec_dir) == ["sources/web", "sources/api"]

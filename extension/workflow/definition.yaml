@@ -252,13 +252,6 @@ phases:
       - "{context_dir}/stale-memory-report.md"
       - calibration_map entry for speckit-echelon-scout (SCOUT)    # from init
     pre_dispatch:
-      - id: golddigger_mode1
-        label: "Dispatch GOLDDIGGER Mode 1 (brownfield only)"
-        condition: "mode = brownfield"
-        agent: speckit-echelon-golddigger (GOLDDIGGER)
-        mode: 1
-        block_until: complete
-        on_partial_or_failed: log_degraded_brownfield_continue
       - id: guardian_init
         label: "Dispatch GUARDIAN (always_on default)"
         condition: "guardian_mode = always_on"
@@ -273,12 +266,6 @@ phases:
       - unknowns.md
       - reference-architectures.md   # greenfield only
     allowed_state_updates:
-      - golddigger_requests
-      - golddigger_completed_domains
-      - golddigger_artifacts
-      - golddigger_status
-      - golddigger_mode
-      - golddigger_notes
       - shadow_output_recovered
     transitions:
       - to: phase1-synthesizer
@@ -306,7 +293,6 @@ phases:
       - contradictions-and-gaps.md
       - risks.md                 # synthesized risks
     allowed_state_updates:
-      - golddigger_requests
       - shadow_output_recovered
     transitions:
       - to: phase1-modeler
@@ -322,7 +308,7 @@ phases:
     condition: "mode = brownfield"
     context_pack:
       - all source files (brownfield path)
-      - golddigger artifacts (if available from state.json.golddigger_artifacts)
+      - published RE snapshot (if available from state.json.published_re_context)
       - "{context_dir}/prior-spec-context.md"
       - "{context_dir}/current-feature-context.md"
       - "{context_dir}/stale-memory-report.md"
@@ -451,29 +437,12 @@ phases:
       - "{context_dir}/stale-memory-report.md"
       - .specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-why1]
       - calibration_map entry for speckit-echelon-cartographer (CARTOGRAPHER)
-    pre_dispatch:
-      - id: golddigger_mode2_queue
-        label: "Process GOLDDIGGER Mode 2 queue"
-        action: >
-          For each pending entry in state.json.golddigger_requests:
-          check golddigger_completed_domains cache (verify file exists),
-          dispatch speckit-echelon-golddigger (GOLDDIGGER) Mode 2 if cache miss,
-          append domain to golddigger_completed_domains only when
-          golddigger_status is complete and the cache file exists,
-          preserve failed/partial requests for later retry,
-          include completed cached domain files in context pack.
     outputs:
       - spec.md
       - 00-overview.md
       - requirements.lexicon.md       # only when lexicon_gate.enabled; derived from spec.md
       - lexicon_pass → state.json        # only when lexicon_gate.enabled; drives the re-dispatch below
     allowed_state_updates:
-      - golddigger_requests
-      - golddigger_completed_domains
-      - golddigger_artifacts
-      - golddigger_status
-      - golddigger_mode
-      - golddigger_notes
       - spec_id
       - spec_dir
       - spec_status

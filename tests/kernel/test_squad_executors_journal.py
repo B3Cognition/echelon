@@ -17,8 +17,6 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.phase_graph import PhaseGraph
-from harness.re_controller import ReControllerResult
-from harness.re_publication import RePublicationResult, RePublicationValidationError
 from harness.squad_executors import (
     AgentExecutor,
     ConditionalSequentialExecutor,
@@ -59,17 +57,6 @@ def _result(entries=None, verdict="DONE") -> SquadAgentResult:
         duration_ms=0,
         timed_out=False,
     )
-
-
-def _stub_mode1_controller(monkeypatch, outcome=ReControllerResult(completed=True)):
-    class StubController:
-        def __init__(self, **_kwargs):
-            pass
-
-        def run(self):
-            return outcome
-
-    monkeypatch.setattr("harness.squad_executors.ReExtractionController", StubController)
 
 
 def _journal_entry(entry_type: str = "insight", **overrides) -> dict:
@@ -722,585 +709,45 @@ def test_assemble_prompt_includes_empty_allowed_state_updates(tmp_path):
 def test_pre_dispatch_prompt_includes_parent_allowed_state_updates(tmp_path):
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True)
-    agent_path = tmp_path / "golddigger.md"
-    agent_path.write_text("# GOLDDIGGER\n")
+    agent_path = tmp_path / "guardian.md"
+    agent_path.write_text("# GUARDIAN\n")
     ex = _executor(tmp_path, squad_dir=squad_dir)
     state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
 
     prompt = ex._assemble_pre_dispatch_prompt(
         agent_path,
-        {"id": "golddigger_mode1", "mode": 1},
+        {"id": "guardian_init"},
         state,
-        ["golddigger_status"],
+        ["guardian_status"],
     )
 
     assert "## Allowed state_updates for this dispatch" in prompt
-    assert "- `golddigger_status`" in prompt
+    assert "- `guardian_status`" in prompt
     assert f"EXTENSION_TEMPLATES_DIR={tmp_path / 'ext' / 'templates'}" in prompt
     assert "NEVER resolve it as `${EXTENSION_DIR}/extension/templates/foo.md`" in prompt
 
 
-def test_pre_dispatch_prompt_includes_re_execution_context(tmp_path):
+def test_agent_prompt_includes_authoritative_implementation_target_contract(tmp_path):
+    from harness.phase_graph import PhaseNode
+
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True)
-    agent_path = tmp_path / "golddigger.md"
-    agent_path.write_text("# GOLDDIGGER\n")
     ex = _executor(tmp_path, squad_dir=squad_dir)
+    node = PhaseNode(id="phase3-plan", type="agent")
     state = {
         "squad_dir": str(squad_dir),
         "staging_dir": str(squad_dir / "staging"),
-        "re_policy": "target-only",
-        "target_source": "prosaic",
-        "re_refresh_sources": ["prosaic"],
-        "re_missing_sources": [],
-        "re_empty_sources": [],
-        "re_unavailable_sources": ["archive"],
-        "re_execution_plan": {"removed_sources": ["retired"]},
-        "re_analysis_required": True,
-        "re_workspace_synthesis_required": True,
-        "re_publication_required": True,
-        "re_forbidden_source_roots": [str(tmp_path / "sources" / "original-a")],
-        "re_artifacts": {
-            "source_index": str(squad_dir / "re" / "re-source-index.json"),
-            "analysis_manifest": str(squad_dir / "re" / "re-analysis-manifest.json"),
-            "workspace_inputs": str(squad_dir / "re" / "re-workspace-inputs.json"),
-            "analysis": str(squad_dir / "re" / "analysis.json"),
-        },
+        "implementation_targets": ["sources/web", "sources/api"],
     }
 
-    prompt = ex._assemble_pre_dispatch_prompt(
-        agent_path,
-        {"id": "golddigger_mode1", "mode": 1},
-        state,
-        ["golddigger_status"],
-    )
+    prompt = ex._assemble_prompt(node, state)
 
-    assert "## Reverse Engineering Execution Plan" in prompt
-    assert "RE_POLICY=target-only" in prompt
-    assert "RE_REFRESH_SOURCES=prosaic" in prompt
-    assert "RE_UNAVAILABLE_SOURCES=archive" in prompt
-    assert "RE_REMOVED_SOURCES=retired" in prompt
-    assert "RE_ANALYSIS_REQUIRED=true" in prompt
-    assert "RE_WORKSPACE_SYNTHESIS_REQUIRED=true" in prompt
-    assert "RE_PUBLICATION_REQUIRED=true" in prompt
-    assert "re-analysis-manifest.json" in prompt
-    assert "re-workspace-inputs.json" in prompt
-    assert "FORBIDDEN_SOURCE_ROOTS:" in prompt
-    assert str(tmp_path / "sources" / "original-a") in prompt
-
-
-def test_golddigger_mode1_skips_when_re_plan_has_no_refresh_sources(tmp_path):
-    from harness.phase_graph import PhaseNode
-
-    squad_dir = tmp_path / "squad" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / "ext"
-    agent_dir = ext_dir / "agents"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nPre-dispatch agent.")
-
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("r", "greenfield", "msg", 0, "phase1-discover")
-    state = state_store.load()
-    state.update(
-        {
-            "re_policy": "changed",
-            "re_refresh_sources": [],
-            "re_missing_sources": [],
-            "re_artifacts": {
-                "analysis": str(squad_dir / "re" / "analysis.json"),
-                "source_index": str(squad_dir / "re" / "re-source-index.json"),
-                "per_repo": [str(squad_dir / "re" / "original-a")],
-            },
-        }
-    )
-    state_store.save(state)
-
-    provider = MagicMock()
-    graph = MagicMock()
-    graph.agent_file.return_value = "agents/golddigger.md"
-    graph.all_phase_ids.return_value = []
-    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
-    node = PhaseNode(
-        id="phase1-discover",
-        type="agent",
-        pre_dispatch=[
-            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
-        ],
-        allowed_state_updates=[
-            "golddigger_artifacts",
-            "golddigger_status",
-            "golddigger_mode",
-            "golddigger_notes",
-        ],
-    )
-
-    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
-
-    provider.exec_agent.assert_not_called()
-    assert result is None
-    updated = state_store.load()
-    assert updated["golddigger_status"] == "complete"
-    assert updated["golddigger_mode"] == "cached-re"
-    assert updated["golddigger_artifacts"]["source_index"] == str(
-        squad_dir / "re" / "re-source-index.json"
-    )
-
-
-def test_golddigger_mode1_complete_publishes_canonical_context(tmp_path, monkeypatch):
-    from harness.phase_graph import PhaseNode
-
-    squad_dir = tmp_path / "runs" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / "ext"
-    agent_dir = ext_dir / "agents"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\n")
-
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("run-test", "brownfield", "msg", 0, "phase1-discover")
-    state = state_store.load()
-    state.update(
-        {
-            "re_refresh_sources": ["api"],
-            "re_publication_required": True,
-            "re_generation": 1,
-            "re_artifacts": {"manifest": str(tmp_path / "re/index.json")},
-        }
-    )
-    state_store.save(state)
-    _stub_mode1_controller(monkeypatch)
-
-    provider = MagicMock()
-    provider.exec_agent.return_value = SquadAgentResult(
-        exit_code=0,
-        echelon_result={
-            "verdict": "DONE",
-            "state_updates": {"golddigger_status": "complete"},
-            "journal_entries": [],
-        },
-        raw_output="",
-        duration_ms=1,
-        timed_out=False,
-    )
-    graph = MagicMock()
-    graph.agent_file.return_value = "agents/golddigger.md"
-    graph.all_phase_ids.return_value = []
-    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
-    node = PhaseNode(
-        id="phase1-discover",
-        type="agent",
-        pre_dispatch=[
-            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
-        ],
-        allowed_state_updates=["golddigger_status"],
-    )
-
-    publish = MagicMock(
-        return_value=RePublicationResult(
-            generation=2,
-            status="complete",
-            index_path=tmp_path / "re/index.json",
-            changed_sources=("api",),
-            removed_sources=(),
-            warnings=(),
-        )
-    )
-    canonical = {
-        "manifest": str(tmp_path / "re/index.json"),
-        "source_manifests": {"api": str(tmp_path / "re/sources/api/manifest.json")},
-        "workspace_manifest": str(tmp_path / "re/workspace/manifest.json"),
-        "re_overview": str(tmp_path / "re/workspace/overview.md"),
-        "re_specs": [str(tmp_path / "re/sources/api/specs/domain/spec.md")],
-    }
-    monkeypatch.setattr("harness.squad_executors.publish_re_run", publish)
-    monkeypatch.setattr(
-        "harness.squad_executors.load_published_index",
-        lambda _root: SimpleNamespace(generation=2),
-    )
-    monkeypatch.setattr(
-        "harness.squad_executors.canonical_re_artifacts",
-        lambda _root, _index: canonical,
-    )
-
-    result = executor._run_pre_dispatch(node, state_store.load(), state_store)
-
-    assert result is None
-    publish.assert_called_once_with(
-        tmp_path,
-        squad_dir,
-        allow_partial=False,
-        status_override="complete",
-        expected_generation=1,
-    )
-    updated = state_store.load()
-    assert updated["re_generation"] == 2
-    assert updated["re_artifacts"] == canonical
-    assert updated["golddigger_artifacts"] == canonical
-    assert updated["re_sources"] == canonical["source_manifests"]
-    assert updated["re_workspace"] == canonical["workspace_manifest"]
-
-
-def test_golddigger_mode1_partial_publishes_canonical_context(tmp_path, monkeypatch):
-    from harness.phase_graph import PhaseNode
-
-    squad_dir = tmp_path / "runs" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / "ext"
-    agent_dir = ext_dir / "agents"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\n")
-
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("run-test", "brownfield", "msg", 0, "phase1-discover")
-    state = state_store.load()
-    state.update(
-        {
-            "re_refresh_sources": ["api"],
-            "re_publication_required": True,
-            "re_generation": 1,
-            "re_artifacts": {"manifest": str(tmp_path / "re/index.json")},
-        }
-    )
-    state_store.save(state)
-    monkeypatch.setattr(
-        AgentExecutor,
-        "_run_golddigger_mode1_controller",
-        lambda _executor: SquadAgentResult(
-            exit_code=0,
-            echelon_result={
-                "verdict": "DONE",
-                "state_updates": {
-                    "golddigger_status": "partial",
-                    "golddigger_notes": ["quality debt remains: api"],
-                },
-                "journal_entries": [],
-            },
-            raw_output="",
-            duration_ms=1,
-            timed_out=False,
-        ),
-    )
-
-    provider = MagicMock()
-    graph = MagicMock()
-    graph.agent_file.return_value = "agents/golddigger.md"
-    graph.all_phase_ids.return_value = []
-    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
-    node = PhaseNode(
-        id="phase1-discover",
-        type="agent",
-        pre_dispatch=[
-            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
-        ],
-        allowed_state_updates=["golddigger_status"],
-    )
-
-    publish = MagicMock(
-        return_value=RePublicationResult(
-            generation=2,
-            status="partial",
-            index_path=tmp_path / "re/index.json",
-            changed_sources=("api",),
-            removed_sources=(),
-            warnings=("quality debt remains: api",),
-        )
-    )
-    canonical = {
-        "manifest": str(tmp_path / "re/index.json"),
-        "source_manifests": {"api": str(tmp_path / "re/sources/api/manifest.json")},
-        "workspace_manifest": str(tmp_path / "re/workspace/manifest.json"),
-        "re_overview": str(tmp_path / "re/workspace/overview.md"),
-        "re_specs": [str(tmp_path / "re/sources/api/specs/domain/spec.md")],
-    }
-    monkeypatch.setattr("harness.squad_executors.publish_re_run", publish)
-    monkeypatch.setattr(
-        "harness.squad_executors.load_published_index",
-        lambda _root: SimpleNamespace(generation=2),
-    )
-    monkeypatch.setattr(
-        "harness.squad_executors.canonical_re_artifacts",
-        lambda _root, _index: canonical,
-    )
-
-    result = executor._run_pre_dispatch(node, state_store.load(), state_store)
-
-    assert result is None
-    publish.assert_called_once_with(
-        tmp_path,
-        squad_dir,
-        allow_partial=True,
-        status_override="partial",
-        expected_generation=1,
-    )
-    updated = state_store.load()
-    assert updated["golddigger_status"] == "partial"
-    assert updated["re_generation"] == 2
-    assert updated["re_artifacts"] == canonical
-    assert updated["golddigger_artifacts"] == canonical
-    assert updated["re_publication_required"] is False
-
-
-def test_golddigger_publication_failure_blocks_and_preserves_context(tmp_path, monkeypatch):
-    from harness.phase_graph import PhaseNode
-
-    squad_dir = tmp_path / "runs" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / "ext"
-    agent_dir = ext_dir / "agents"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\n")
-    old_context = {"manifest": str(tmp_path / "re/index.json"), "generation": 1}
-
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("run-test", "brownfield", "msg", 0, "phase1-discover")
-    state = state_store.load()
-    state.update(
-        {
-            "re_refresh_sources": ["api"],
-            "re_publication_required": True,
-            "re_generation": 1,
-            "re_artifacts": old_context,
-        }
-    )
-    state_store.save(state)
-    _stub_mode1_controller(monkeypatch)
-
-    provider = MagicMock()
-    provider.exec_agent.return_value = SquadAgentResult(
-        exit_code=0,
-        echelon_result={
-            "verdict": "DONE",
-            "state_updates": {"golddigger_status": "complete"},
-            "journal_entries": [],
-        },
-        raw_output="",
-        duration_ms=1,
-        timed_out=False,
-    )
-    graph = MagicMock()
-    graph.agent_file.return_value = "agents/golddigger.md"
-    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
-    node = PhaseNode(
-        id="phase1-discover",
-        type="agent",
-        pre_dispatch=[
-            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
-        ],
-        allowed_state_updates=["golddigger_status"],
-    )
-    monkeypatch.setattr(
-        "harness.squad_executors.publish_re_run",
-        MagicMock(side_effect=RePublicationValidationError("workspace mismatch")),
-    )
-
-    result = executor._run_pre_dispatch(node, state_store.load(), state_store)
-
-    assert result is not None and result.blocked
-    assert result.state_updates["blocked_reason"] == "re_publication_failed"
-    assert "workspace mismatch" in result.state_updates["re_publication_error"]
-    updated = state_store.load()
-    assert updated["re_generation"] == 1
-    assert updated["re_artifacts"] == old_context
-    assert "golddigger_status" not in updated
-
-
-def test_blocked_publication_error_is_persisted_in_squad_state(tmp_path):
-    ctrl, _provider = _squad_controller(tmp_path)
-    result = SquadAgentResult(
-        exit_code=0,
-        echelon_result={
-            "verdict": "BLOCKED",
-            "state_updates": {
-                "blocked_reason": "re_publication_failed",
-                "re_publication_error": "shallow reverse-engineering spec is not publishable",
-            },
-            "journal_entries": [],
-        },
-        raw_output="",
-        duration_ms=0,
-        timed_out=False,
-    )
-
-    ctrl._block_after_executor_failure("phase1-discover", "re_publication_failed", result)
-
-    state = ctrl._state_store.load()
-    assert state["blocked_reason"] == "re_publication_failed"
-    assert state["re_publication_error"] == (
-        "shallow reverse-engineering spec is not publishable"
-    )
-
-
-def test_blocked_golddigger_result_never_publishes(tmp_path, monkeypatch):
-    from harness.phase_graph import PhaseNode
-
-    squad_dir = tmp_path / "runs" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / "ext"
-    agent_dir = ext_dir / "agents"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\n")
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("run-test", "brownfield", "msg", 0, "phase1-discover")
-    state = state_store.load()
-    state.update(
-        {
-            "re_refresh_sources": ["api"],
-            "re_publication_required": True,
-            "re_generation": 0,
-        }
-    )
-    state_store.save(state)
-    _stub_mode1_controller(
-        monkeypatch,
-        ReControllerResult(completed=False, blocked_reason="re_agent_dispatch_failed"),
-    )
-    provider = MagicMock()
-    provider.exec_agent.return_value = SquadAgentResult(
-        exit_code=0,
-        echelon_result={
-            "verdict": "BLOCKED",
-            "state_updates": {
-                "blocked_reason": "agent blocked",
-                "golddigger_status": "complete",
-            },
-            "journal_entries": [],
-        },
-        raw_output="",
-        duration_ms=1,
-        timed_out=False,
-    )
-    graph = MagicMock()
-    graph.agent_file.return_value = "agents/golddigger.md"
-    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
-    node = PhaseNode(
-        id="phase1-discover",
-        type="agent",
-        pre_dispatch=[
-            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
-        ],
-        allowed_state_updates=["golddigger_status"],
-    )
-    publish = MagicMock()
-    monkeypatch.setattr("harness.squad_executors.publish_re_run", publish)
-
-    result = executor._run_pre_dispatch(node, state_store.load(), state_store)
-
-    assert result is not None and result.blocked
-    publish.assert_not_called()
-
-
-def test_blocked_golddigger_result_preserves_re_detail(tmp_path, monkeypatch):
-    from harness.phase_graph import PhaseNode
-
-    squad_dir = tmp_path / "runs" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / "ext"
-    agent_dir = ext_dir / "agents"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\n")
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("run-test", "brownfield", "msg", 0, "phase1-discover")
-    state = state_store.load()
-    state.update({"re_refresh_sources": ["api"], "re_publication_required": True})
-    state_store.save(state)
-    _stub_mode1_controller(
-        monkeypatch,
-        ReControllerResult(
-            completed=False,
-            blocked_reason="re_semantic_quality_review_invalid",
-            blocked_detail=(
-                "semantic quality review invalid for api/001-re-domain: "
-                "invalid source_evidence `sources/api/specs/001-re-domain/spec.md:10-12`"
-            ),
-        ),
-    )
-    graph = MagicMock()
-    graph.agent_file.return_value = "agents/golddigger.md"
-    executor = AgentExecutor(MagicMock(), graph, ext_dir, tmp_path, squad_dir)
-    node = PhaseNode(
-        id="phase1-discover",
-        type="agent",
-        pre_dispatch=[
-            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
-        ],
-    )
-
-    result = executor._run_pre_dispatch(node, state_store.load(), state_store)
-
-    assert result is not None and result.blocked
-    assert result.state_updates["blocked_reason"] == "re_semantic_quality_review_invalid"
-    assert "api/001-re-domain" in result.state_updates["re_agent_result_detail"]
-
-
-def test_golddigger_no_refresh_still_dispatches_for_workspace_synthesis(tmp_path):
-    executor = _executor(tmp_path)
-
-    assert not executor._golddigger_mode1_cache_hit(
-        {
-            "re_refresh_sources": [],
-            "re_publication_required": True,
-            "re_workspace_synthesis_required": True,
-        }
-    )
-
-
-def test_golddigger_mode1_skip_empty_sources_is_success(tmp_path):
-    from harness.phase_graph import PhaseNode
-
-    squad_dir = tmp_path / "squad" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / "ext"
-    agent_dir = ext_dir / "agents"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nPre-dispatch agent.")
-
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("r", "brownfield", "msg", 0, "phase1-discover")
-    state = state_store.load()
-    state.update(
-        {
-            "re_policy": "target-changed",
-            "target_source": "prosaic",
-            "re_refresh_sources": [],
-            "re_missing_sources": [],
-            "re_empty_sources": ["prosaic"],
-            "re_artifacts": {
-                "analysis": str(squad_dir / "re" / "analysis.json"),
-                "source_index": str(squad_dir / "re" / "re-source-index.json"),
-                "per_repo": [],
-            },
-        }
-    )
-    state_store.save(state)
-
-    provider = MagicMock()
-    graph = MagicMock()
-    graph.agent_file.return_value = "agents/golddigger.md"
-    graph.all_phase_ids.return_value = []
-    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
-    node = PhaseNode(
-        id="phase1-discover",
-        type="agent",
-        pre_dispatch=[
-            {"id": "golddigger_mode1", "agent": "speckit-echelon-golddigger"}
-        ],
-        allowed_state_updates=[
-            "golddigger_artifacts",
-            "golddigger_status",
-            "golddigger_mode",
-            "golddigger_notes",
-        ],
-    )
-
-    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
-
-    provider.exec_agent.assert_not_called()
-    assert result is None
-    updated = state_store.load()
-    assert updated["golddigger_status"] == "complete"
-    assert updated["golddigger_mode"] == "cached-re"
-    assert "empty source roots skipped: prosaic" in updated["golddigger_notes"][0]
+    assert "## Implementation Target Contract" in prompt
+    assert "IMPLEMENTATION_TARGETS:" in prompt
+    assert "- sources/web" in prompt
+    assert "- sources/api" in prompt
+    assert "Only these repositories are writable implementation destinations" in prompt
+    assert "Do not infer or add another implementation target" in prompt
 
 
 def test_pre_dispatch_blocks_unallowed_state_updates_before_mutation(tmp_path):
@@ -1312,7 +759,7 @@ def test_pre_dispatch_blocks_unallowed_state_updates_before_mutation(tmp_path):
     ext_dir = tmp_path / "ext"
     agent_dir = ext_dir / "agents"
     agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nPre-dispatch agent.")
+    (agent_dir / "guardian.md").write_text("# GUARDIAN\nPre-dispatch agent.")
 
     state_store = SquadStateStore(squad_dir)
     state_store.initialize("r", "greenfield", "msg", 0, "phase1-discover")
@@ -1330,14 +777,14 @@ def test_pre_dispatch_blocks_unallowed_state_updates_before_mutation(tmp_path):
         timed_out=False,
     )
     graph = MagicMock()
-    graph.agent_file.return_value = "agents/golddigger.md"
+    graph.agent_file.return_value = "agents/guardian.md"
     graph.all_phase_ids.return_value = []
     ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
     node = PhaseNode(
         id="phase1-discover",
         type="agent",
         pre_dispatch=[
-            {"id": "test_pre_dispatch", "agent": "speckit-echelon-golddigger"}
+            {"id": "test_pre_dispatch", "agent": "speckit-echelon-guardian"}
         ],
         allowed_state_updates=["allowed_key"],
     )
@@ -1406,7 +853,7 @@ def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
     ext_dir = tmp_path / "ext"
     agent_dir = ext_dir / "agents"
     agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nPre-dispatch agent.")
+    (agent_dir / "guardian.md").write_text("# GUARDIAN\nPre-dispatch agent.")
 
     state_store = SquadStateStore(squad_dir)
     state_store.initialize("r", "greenfield", "msg", 0, "phase1-discover")
@@ -1424,14 +871,14 @@ def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
         timed_out=False,
     )
     graph = MagicMock()
-    graph.agent_file.return_value = "agents/golddigger.md"
+    graph.agent_file.return_value = "agents/guardian.md"
     graph.all_phase_ids.return_value = []
     ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
     node = PhaseNode(
         id="phase1-discover",
         type="agent",
         pre_dispatch=[
-            {"id": "test_pre_dispatch", "agent": "speckit-echelon-golddigger"}
+            {"id": "test_pre_dispatch", "agent": "speckit-echelon-guardian"}
         ],
         allowed_state_updates=["allowed_key"],
     )
@@ -1440,392 +887,6 @@ def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
 
     assert result is None
     assert state_store.load()["allowed_key"] is True
-
-
-def test_golddigger_mode2_queue_dispatches_without_agent_field(tmp_path):
-    """Mode 2 queue entries run even when definition.yaml omits an agent field."""
-    from harness.phase_graph import PhaseNode
-
-    squad_dir = tmp_path / "squad" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / "ext"
-    agent_dir = ext_dir / "agents" / "exploration"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nDeep-dive agent.")
-
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("r", "brownfield", "msg", 0, "phase1-what")
-    state = state_store.load()
-    state["golddigger_requests"] = [
-        {
-            "domain": "auth",
-            "repo": None,
-            "requested_by": "test",
-            "reason": "need topology",
-        }
-    ]
-    state["golddigger_completed_domains"] = []
-    state_store.save(state)
-
-    provider = MagicMock()
-
-    def _exec_agent(project_root, prompt):
-        cache_dir = squad_dir / "golddigger-cache"
-        cache_dir.mkdir(parents=True)
-        (cache_dir / "auth.md").write_text("# Auth deep dive\n", encoding="utf-8")
-        return SquadAgentResult(
-            exit_code=0,
-            echelon_result={
-                "verdict": "COMPLETE",
-                "state_updates": {
-                    "golddigger_status": "complete",
-                    "golddigger_mode": "deep-dive",
-                },
-                "journal_entries": [],
-            },
-            raw_output="",
-            duration_ms=0,
-            timed_out=False,
-        )
-
-    provider.exec_agent.side_effect = _exec_agent
-    graph = MagicMock()
-    graph.agent_file.return_value = "agents/exploration/golddigger.md"
-    graph.all_phase_ids.return_value = []
-    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
-    node = PhaseNode(
-        id="phase1-what",
-        type="agent",
-        pre_dispatch=[{"id": "golddigger_mode2_queue", "action": "process"}],
-        allowed_state_updates=["golddigger_status", "golddigger_mode"],
-    )
-
-    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
-
-    updated = state_store.load()
-    assert result is None
-    provider.exec_agent.assert_called_once()
-    assert "Mode 2 (Deep Dive)" in provider.exec_agent.call_args.args[1]
-    assert updated["golddigger_requests"] == []
-    assert updated["golddigger_completed_domains"] == ["auth"]
-
-
-def test_golddigger_mode2_queue_respects_disabled_policy(tmp_path):
-    """Disabled policy leaves the queue untouched and skips Mode 2 dispatch."""
-    from harness.phase_graph import PhaseNode
-
-    squad_dir = tmp_path / "squad" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / "ext"
-    agent_dir = ext_dir / "agents" / "exploration"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nDeep-dive agent.")
-    config_dir = tmp_path / ".specify" / "extensions" / "echelon"
-    config_dir.mkdir(parents=True)
-    (config_dir / "echelon-config.yml").write_text(
-        "golddigger:\n  mode2_policy: disabled\n",
-        encoding="utf-8",
-    )
-
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("r", "brownfield", "msg", 0, "phase1-what")
-    state = state_store.load()
-    state["golddigger_requests"] = [
-        {
-            "domain": "auth",
-            "repo": None,
-            "requested_by": "test",
-            "reason": "need topology",
-        }
-    ]
-    state["golddigger_completed_domains"] = ["billing"]
-    state_store.save(state)
-
-    provider = MagicMock()
-    graph = MagicMock()
-    graph.agent_file.return_value = "agents/exploration/golddigger.md"
-    graph.all_phase_ids.return_value = []
-    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
-    node = PhaseNode(
-        id="phase1-what",
-        type="agent",
-        pre_dispatch=[{"id": "golddigger_mode2_queue", "action": "process"}],
-        allowed_state_updates=["golddigger_status", "golddigger_mode"],
-    )
-
-    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
-
-    updated = state_store.load()
-    assert result is None
-    provider.exec_agent.assert_not_called()
-    assert updated["golddigger_requests"] == [
-        {
-            "domain": "auth",
-            "repo": None,
-            "requested_by": "test",
-            "reason": "need topology",
-        }
-    ]
-    assert updated["golddigger_completed_domains"] == ["billing"]
-
-
-def test_golddigger_mode2_queue_preserves_blocked_request(tmp_path):
-    """A blocked deep-dive leaves the current and remaining requests queued."""
-    from harness.phase_graph import PhaseNode
-
-    squad_dir = tmp_path / "squad" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / "ext"
-    agent_dir = ext_dir / "agents" / "exploration"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nDeep-dive agent.")
-
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("r", "brownfield", "msg", 0, "phase1-what")
-    state = state_store.load()
-    state["golddigger_requests"] = [
-        {
-            "domain": "auth",
-            "repo": None,
-            "requested_by": "test",
-            "reason": "need auth topology",
-        },
-        {
-            "domain": "billing",
-            "repo": None,
-            "requested_by": "test",
-            "reason": "need billing topology",
-        },
-    ]
-    state["golddigger_completed_domains"] = []
-    state_store.save(state)
-
-    provider = MagicMock()
-    provider.exec_agent.return_value = SquadAgentResult(
-        exit_code=0,
-        echelon_result={
-            "verdict": "BLOCKED",
-            "state_updates": {"golddigger_status": "failed"},
-            "journal_entries": [],
-        },
-        raw_output="",
-        duration_ms=0,
-        timed_out=False,
-    )
-    graph = MagicMock()
-    graph.agent_file.return_value = "agents/exploration/golddigger.md"
-    graph.all_phase_ids.return_value = []
-    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
-    node = PhaseNode(
-        id="phase1-what",
-        type="agent",
-        pre_dispatch=[{"id": "golddigger_mode2_queue", "action": "process"}],
-        allowed_state_updates=["golddigger_status"],
-    )
-
-    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
-
-    updated = state_store.load()
-    assert result is not None
-    assert result.blocked is True
-    assert updated["golddigger_requests"] == [
-        {
-            "domain": "auth",
-            "repo": None,
-            "requested_by": "test",
-            "reason": "need auth topology",
-        },
-        {
-            "domain": "billing",
-            "repo": None,
-            "requested_by": "test",
-            "reason": "need billing topology",
-        },
-    ]
-    assert updated["golddigger_completed_domains"] == []
-
-
-def test_golddigger_mode2_queue_preserves_failed_clean_result(tmp_path):
-    """A clean failed/partial Mode 2 result is not marked completed or dequeued."""
-    from harness.phase_graph import PhaseNode
-
-    squad_dir = tmp_path / "squad" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / "ext"
-    agent_dir = ext_dir / "agents" / "exploration"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nDeep-dive agent.")
-
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("r", "brownfield", "msg", 0, "phase1-what")
-    request = {
-        "domain": "auth",
-        "repo": None,
-        "requested_by": "test",
-        "reason": "need auth topology",
-    }
-    state = state_store.load()
-    state["golddigger_requests"] = [request]
-    state["golddigger_completed_domains"] = []
-    state_store.save(state)
-
-    provider = MagicMock()
-    provider.exec_agent.return_value = SquadAgentResult(
-        exit_code=0,
-        echelon_result={
-            "verdict": "COMPLETE",
-            "state_updates": {"golddigger_status": "failed"},
-            "journal_entries": [],
-        },
-        raw_output="",
-        duration_ms=0,
-        timed_out=False,
-    )
-    graph = MagicMock()
-    graph.agent_file.return_value = "agents/exploration/golddigger.md"
-    graph.all_phase_ids.return_value = []
-    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
-    node = PhaseNode(
-        id="phase1-what",
-        type="agent",
-        pre_dispatch=[{"id": "golddigger_mode2_queue", "action": "process"}],
-        allowed_state_updates=["golddigger_status"],
-    )
-
-    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
-
-    updated = state_store.load()
-    assert result is None
-    assert updated["golddigger_requests"] == [request]
-    assert updated["golddigger_completed_domains"] == []
-    assert updated["golddigger_status"] == "failed"
-
-
-def test_golddigger_mode2_queue_blocks_complete_result_without_cache(tmp_path):
-    """A claimed complete deep-dive must produce its cache artifact."""
-    from harness.phase_graph import PhaseNode
-
-    squad_dir = tmp_path / "squad" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / "ext"
-    agent_dir = ext_dir / "agents" / "exploration"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nDeep-dive agent.")
-
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("r", "brownfield", "msg", 0, "phase1-what")
-    request = {
-        "domain": "auth",
-        "repo": None,
-        "requested_by": "test",
-        "reason": "need auth topology",
-    }
-    state = state_store.load()
-    state["golddigger_requests"] = [request]
-    state["golddigger_completed_domains"] = []
-    state_store.save(state)
-
-    provider = MagicMock()
-    provider.exec_agent.return_value = SquadAgentResult(
-        exit_code=0,
-        echelon_result={
-            "verdict": "COMPLETE",
-            "state_updates": {"golddigger_status": "complete"},
-            "journal_entries": [],
-        },
-        raw_output="",
-        duration_ms=0,
-        timed_out=False,
-    )
-    graph = MagicMock()
-    graph.agent_file.return_value = "agents/exploration/golddigger.md"
-    graph.all_phase_ids.return_value = []
-    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
-    node = PhaseNode(
-        id="phase1-what",
-        type="agent",
-        pre_dispatch=[{"id": "golddigger_mode2_queue", "action": "process"}],
-        allowed_state_updates=["golddigger_status"],
-    )
-
-    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
-
-    updated = state_store.load()
-    assert result is not None
-    assert result.blocked is True
-    assert result.state_updates["blocked_reason"] == "golddigger_mode2_missing_cache"
-    assert updated["golddigger_requests"] == [request]
-    assert updated["golddigger_completed_domains"] == []
-
-
-def test_golddigger_mode2_queue_blocks_harness_owned_state_updates(tmp_path):
-    """Mode 2 subagents cannot mutate harness-owned queue/cache state keys."""
-    from harness.phase_graph import PhaseNode
-
-    squad_dir = tmp_path / "squad" / "run-test"
-    squad_dir.mkdir(parents=True)
-    ext_dir = tmp_path / "ext"
-    agent_dir = ext_dir / "agents" / "exploration"
-    agent_dir.mkdir(parents=True)
-    (agent_dir / "golddigger.md").write_text("# GOLDDIGGER\nDeep-dive agent.")
-
-    state_store = SquadStateStore(squad_dir)
-    state_store.initialize("r", "brownfield", "msg", 0, "phase1-what")
-    original_request = {
-        "domain": "auth",
-        "repo": None,
-        "requested_by": "test",
-        "reason": "need topology",
-    }
-    state = state_store.load()
-    state["golddigger_requests"] = [original_request]
-    state["golddigger_completed_domains"] = ["billing"]
-    state_store.save(state)
-
-    provider = MagicMock()
-    provider.exec_agent.return_value = SquadAgentResult(
-        exit_code=0,
-        echelon_result={
-            "verdict": "COMPLETE",
-            "state_updates": {
-                "golddigger_requests": [],
-                "golddigger_completed_domains": ["auth"],
-            },
-            "journal_entries": [],
-        },
-        raw_output="",
-        duration_ms=0,
-        timed_out=False,
-    )
-    graph = MagicMock()
-    graph.agent_file.return_value = "agents/exploration/golddigger.md"
-    graph.all_phase_ids.return_value = []
-    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
-    node = PhaseNode(
-        id="phase1-what",
-        type="agent",
-        pre_dispatch=[{"id": "golddigger_mode2_queue", "action": "process"}],
-        allowed_state_updates=[
-            "golddigger_status",
-            "golddigger_requests",
-            "golddigger_completed_domains",
-        ],
-    )
-
-    result = ex._run_pre_dispatch(node, state_store.load(), state_store)
-
-    updated = state_store.load()
-    prompt = provider.exec_agent.call_args.args[1]
-    assert result is not None
-    assert result.blocked is True
-    assert "golddigger_requests" in result.state_updates["blocked_reason"]
-    assert "- `golddigger_status`" in prompt
-    assert "- `golddigger_requests`" not in prompt
-    assert "- `golddigger_completed_domains`" not in prompt
-    assert updated["golddigger_requests"] == [original_request]
-    assert updated["golddigger_completed_domains"] == ["billing"]
-    assert "golddigger_status" not in updated
-    assert not (squad_dir / "reasoning-journal.jsonl").exists()
 
 
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):

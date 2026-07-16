@@ -1247,6 +1247,14 @@ class ReExtractionController:
                     "`path:start-end` form; path-only prose is invalid. Return DONE "
                     "only after the complete review satisfies this contract.\n"
                 )
+        resume_answer = state.get("resume_answer")
+        if isinstance(resume_answer, str) and resume_answer.strip():
+            prompt += (
+                "\n## Human Resume Answer\n"
+                f"{resume_answer.strip()}\n"
+                "Use this answer only to resolve the blocker that requested it; "
+                "preserve all deterministic RE boundaries and validation rules.\n"
+            )
         return prompt
 
     def _semantic_domain_inventory_prompt(self, plan: ReExecutionPlan) -> str:

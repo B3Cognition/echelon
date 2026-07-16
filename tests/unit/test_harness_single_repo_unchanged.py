@@ -418,13 +418,13 @@ class TestSingleRepoPathUnchanged:
             from echelon.cli import _cmd_harness_run
             with pytest.raises(SystemExit) as exc:
                 _cmd_harness_run(["024"])
-            assert exc.value.code == 2
+            assert exc.value.code == 1
         finally:
             os.chdir(orig)
 
         err = capsys.readouterr().err
-        assert "Multiple source roots found" in err
-        assert "echelon spec target" in err
+        assert "has no implementation target" in err
+        assert "echelon spec run" in err
 
     def test_find_spec_dir_local_takes_precedence(self, tmp_path: Path) -> None:
         """Local spec shadows parent-level spec of same id."""

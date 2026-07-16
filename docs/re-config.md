@@ -2,6 +2,12 @@
 
 All brownfield extraction (re-* commands) configuration lives under the `re:` top-level key in your project's `echelon-config.yml`.
 
+Lifecycle controls are CLI-owned: `echelon re run --re-policy` selects
+`none`, `cached-only`, `changed`, or `refresh-all`; `--re-max-inner` raises the
+source-local repair budget for `run`, `continue`, or `resume`. These options are
+not accepted by `echelon spec run`. Spec authoring consumes the latest published
+snapshot by default and supports only `--ignore-re`.
+
 ## Key settings
 
 ### Analysis scope
@@ -15,7 +21,7 @@ All brownfield extraction (re-* commands) configuration lives under the `re:` to
 - `re.workflow.max_validate_iterations` — max validate iterations (default: 3)
 
 ### Output
-- `re.output.directory` — where standalone analysis artifacts land (default: `.specify/echelon/re`). During an active `echelon spec run`, the default is redirected to `runs/<run-id>/re` so run-local artifacts stay with the run.
+- `re.output.directory` — where legacy standalone extraction helpers place analysis artifacts (default: `.specify/echelon/re`). The first-class lifecycle always stages candidate state under `runs/re-*/re/` before publication.
 - `re.output.generate_spec` / `generate_plan` / `generate_tasks` — toggle artifact generation (all default: true)
 
 ### Sources
@@ -37,7 +43,10 @@ All brownfield extraction (re-* commands) configuration lives under the `re:` to
 
 ## Layer-2 overrides (GOLDDIGGER)
 
-When echelon's GOLDDIGGER agent runs brownfield extraction, it writes a temporary layer-2 override to `.specify/extensions/echelon/local-config.yml` under the `re:` key. This file is automatically removed after extraction completes. Do not manually create or modify this file during a GOLDDIGGER run.
+When the standalone RE lifecycle dispatches GOLDDIGGER, it may write a temporary
+layer-2 override to `.specify/extensions/echelon/local-config.yml` under the
+`re:` key. This file is automatically removed after extraction completes. Spec
+runs never create this override because they do not execute RE.
 
 ## Environment variable overrides
 

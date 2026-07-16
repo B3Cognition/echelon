@@ -153,4 +153,13 @@ def validate_echelon_result(
         )
     result.setdefault("journal_entries", [])
 
+    product_input_updates = result.get("product_input_updates")
+    if product_input_updates is not None:
+        if not isinstance(product_input_updates, list) or not all(
+            isinstance(item, dict) for item in product_input_updates
+        ):
+            raise EchelonResultValidationError(
+                "echelon_result.product_input_updates must be a list of objects"
+            )
+
     return result

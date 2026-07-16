@@ -38,42 +38,6 @@ def test_squad_records_checkpoint_after_successful_advance(
     assert calls[0]["spec_id"] == "001-demo"
 
 
-def test_squad_clears_stale_re_failure_context_after_success() -> None:
-    controller = object.__new__(SquadController)
-    state = {
-        "status": "running",
-        "blocked_reason": None,
-        "re_agent_result_detail": "previous RE block",
-        "re_publication_error": "previous publication block",
-    }
-    saved = []
-    controller._state_store = MagicMock()
-    controller._state_store.load.return_value = state
-    controller._state_store.save.side_effect = saved.append
-
-    controller._clear_stale_re_failure_context_after_success()
-
-    assert "re_agent_result_detail" not in state
-    assert "re_publication_error" not in state
-    assert saved == [state]
-
-
-def test_squad_preserves_re_failure_context_while_blocked() -> None:
-    controller = object.__new__(SquadController)
-    state = {
-        "status": "blocked",
-        "blocked_reason": "re_publication_failed",
-        "re_agent_result_detail": "active RE block",
-    }
-    controller._state_store = MagicMock()
-    controller._state_store.load.return_value = state
-
-    controller._clear_stale_re_failure_context_after_success()
-
-    assert state["re_agent_result_detail"] == "active RE block"
-    controller._state_store.save.assert_not_called()
-
-
 def test_squad_checkpoints_staging_spec_with_state_spec_id(
     monkeypatch,
     tmp_path: Path,

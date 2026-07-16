@@ -1,6 +1,7 @@
 """Phase executors for SquadController — one class per definition.yaml type."""
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -10,18 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from harness.quality_scores import normalize_why_quality_scores
-from harness.re_lock import (
-    RePublicationActiveRun,
-    RePublishLocked,
-    RePublishRecoveryRequired,
-)
-from harness.re_publication import RePublicationError, publish_re_run
-from harness.re_registry import (
-    ReRegistryError,
-    canonical_re_artifacts,
-    load_published_index,
-)
-from harness.re_controller import ReExtractionController
 
 if TYPE_CHECKING:
     from harness.phase_graph import PhaseGraph, PhaseNode
@@ -187,92 +176,82 @@ def _workspace_source_roots_context(project_root: Path) -> str:
     return "\n".join(lines)
 
 
-def _render_re_execution_context(state: dict) -> str:
-    """Render source-scoped RE plan details for agent prompts."""
-    if "re_execution_plan" not in state and "re_artifacts" not in state:
+def _render_implementation_target_context(state: dict) -> str:
+    """Render the immutable Phase A implementation boundary."""
+    targets = [
+        str(value).strip()
+        for value in (state.get("implementation_targets") or [])
+        if str(value).strip()
+    ]
+    if not targets:
         return ""
-
-    artifacts = state.get("re_artifacts")
-    artifact_lines: list[str] = []
-    if isinstance(artifacts, dict):
-        for key in (
-            "manifest",
-            "source_index",
-            "execution_plan",
-            "analysis_manifest",
-            "workspace_inputs",
-            "analysis",
-            "cross_repo",
-        ):
-            value = artifacts.get(key)
-            if isinstance(value, str) and value:
-                artifact_lines.append(f"- {key}: {value}")
-        per_repo = artifacts.get("per_repo")
-        if isinstance(per_repo, list) and per_repo:
-            artifact_lines.append("- per_repo:")
-            artifact_lines.extend(f"  - {item}" for item in per_repo if isinstance(item, str))
-        re_contexts = artifacts.get("re_contexts")
-        if isinstance(re_contexts, list) and re_contexts:
-            artifact_lines.append("- re_contexts:")
-            artifact_lines.extend(f"  - {item}" for item in re_contexts if isinstance(item, str))
-
-    refresh_sources = [
-        str(item)
-        for item in (state.get("re_refresh_sources") or [])
-        if str(item).strip()
-    ]
-    missing_sources = [
-        str(item)
-        for item in (state.get("re_missing_sources") or [])
-        if str(item).strip()
-    ]
-    empty_sources = [
-        str(item)
-        for item in (state.get("re_empty_sources") or [])
-        if str(item).strip()
-    ]
-    unavailable_sources = [
-        str(item)
-        for item in (state.get("re_unavailable_sources") or [])
-        if str(item).strip()
-    ]
-    execution_plan = state.get("re_execution_plan")
-    removed_sources = (
-        [
-            str(item)
-            for item in (execution_plan.get("removed_sources") or [])
-            if str(item).strip()
-        ]
-        if isinstance(execution_plan, dict)
-        else []
-    )
-    forbidden_roots = [
-        str(item)
-        for item in (state.get("re_forbidden_source_roots") or [])
-        if str(item).strip()
-    ]
-
     lines = [
-        "## Reverse Engineering Execution Plan",
-        f"RE_POLICY={state.get('re_policy') or ''}",
-        f"RE_TARGET_SOURCE={state.get('target_source') or ''}",
-        "RE_REFRESH_SOURCES=" + (", ".join(refresh_sources) if refresh_sources else "(none)"),
-        "RE_MISSING_SOURCES=" + (", ".join(missing_sources) if missing_sources else "(none)"),
-        "RE_EMPTY_SOURCES=" + (", ".join(empty_sources) if empty_sources else "(none)"),
-        "RE_UNAVAILABLE_SOURCES=" + (", ".join(unavailable_sources) if unavailable_sources else "(none)"),
-        "RE_REMOVED_SOURCES=" + (", ".join(removed_sources) if removed_sources else "(none)"),
-        f"RE_ANALYSIS_REQUIRED={str(bool(state.get('re_analysis_required'))).lower()}",
-        "RE_WORKSPACE_SYNTHESIS_REQUIRED="
-        + str(bool(state.get("re_workspace_synthesis_required"))).lower(),
-        f"RE_PUBLICATION_REQUIRED={str(bool(state.get('re_publication_required'))).lower()}",
+        "## Implementation Target Contract",
+        "IMPLEMENTATION_TARGETS:",
+        *(f"- {target}" for target in targets),
+        "- Only these repositories are writable implementation destinations for this specification.",
+        "- Other workspace sources are read-only evidence and reference context.",
+        "- Do not infer or add another implementation target from source similarity, RE artifacts, file paths, or architecture preferences.",
+        "- If required work cannot be assigned to one declared target, return BLOCKED and identify the missing target instead of changing scope.",
+        "- Architecture, contracts, plans, tests, estimates, and tasks must use these targets consistently.",
+        "",
     ]
-    if forbidden_roots:
-        lines.append("FORBIDDEN_SOURCE_ROOTS:")
-        lines.extend(f"- {root}" for root in forbidden_roots)
-        lines.append("Do not read, search, or summarize forbidden source roots for this run.")
-    if artifact_lines:
-        lines.append("RE_ARTIFACTS:")
-        lines.extend(artifact_lines)
+    return "\n".join(lines)
+
+
+def _render_product_input_context(state: dict) -> str:
+    """Render immutable product evidence pointers without embedding the corpus."""
+    inputs = state.get("product_inputs")
+    if not isinstance(inputs, dict) or not inputs:
+        return ""
+    required = ("manifest", "catalog", "traceability", "requirement_context", "reference_context")
+    if not all(str(inputs.get(key) or "").strip() for key in required):
+        return ""
+    return "\n".join([
+        "## Product Input Contract",
+        f"PRODUCT_INPUT_MANIFEST={inputs['manifest']}",
+        f"PRODUCT_INPUT_CATALOG={inputs['catalog']}",
+        f"PRODUCT_INPUT_TRACEABILITY={inputs['traceability']}",
+        f"REQUIREMENT_INPUTS={inputs['requirement_context']}",
+        f"REFERENCE_INPUTS={inputs['reference_context']}",
+        "- Requirement inputs are normative; reference inputs are informative and cannot override them.",
+        "- Read only immutable snapshot paths named by the manifest and catalog. Do not add undeclared inputs.",
+        "- Cite stable input unit IDs when adopting or challenging product evidence.",
+        "- Propose ledger changes only in echelon_result.product_input_updates; the controller validates and writes the canonical ledger.",
+        "",
+    ])
+
+
+def _render_published_re_context(state: dict) -> str:
+    """Render the immutable published RE snapshot attached to this spec run."""
+    context = state.get("published_re_context")
+    if not isinstance(context, dict):
+        return ""
+    status = str(context.get("status") or "absent")
+    lines = [
+        "## Published Reverse Engineering Context",
+        f"PUBLISHED_RE_STATUS={status}",
+        f"PUBLISHED_RE_GENERATION={context.get('generation', 0)}",
+    ]
+    snapshot_root = str(context.get("snapshot_root") or "").strip()
+    if snapshot_root:
+        lines.append(f"PUBLISHED_RE_SNAPSHOT_ROOT={snapshot_root}")
+    artifacts = context.get("artifacts")
+    if status == "attached" and isinstance(artifacts, dict):
+        lines.extend(
+            [
+                "PUBLISHED_RE_ARTIFACTS:",
+                "```json",
+                json.dumps(artifacts, indent=2, sort_keys=True),
+                "```",
+                "- Treat these run-local files as read-only evidence.",
+                "- Do not run reverse engineering or read the mutable canonical re/ tree.",
+            ]
+        )
+    elif status == "ignored":
+        lines.append("- RE context was explicitly ignored for this run.")
+    else:
+        lines.append("- No published RE context was available when this run started.")
     lines.append("")
     return "\n".join(lines)
 
@@ -282,12 +261,6 @@ _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
     "phase3-sentinel": ("test-strategy.md", "test-architecture.md", "coverage-map.md"),
     "phase3-plan": ("tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md"),
 }
-
-_GOLDDIGGER_HARNESS_STATE_KEYS = frozenset({
-    "golddigger_requests",
-    "golddigger_completed_domains",
-})
-_GOLDDIGGER_CACHE_CONTEXT_MAX_CHARS = 6000
 
 
 def _normalize_spec_dir_ref(spec_dir_ref: str, project_root: Path) -> str:
@@ -335,33 +308,6 @@ def _render_context_candidate(file_ref: str, candidate: Path) -> str:
             )
         return "\n".join(chunks)
     return f"\n---\n# {file_ref}\n{candidate.read_text(encoding='utf-8', errors='replace')}"
-
-
-def _completed_golddigger_cache_paths(state: dict, squad_dir: Path) -> list[Path]:
-    paths: list[Path] = []
-    seen: set[Path] = set()
-    for cache_key in state.get("golddigger_completed_domains") or []:
-        key = str(cache_key).strip()
-        if not key:
-            continue
-        path = squad_dir / "golddigger-cache" / f"{key}.md"
-        if path.exists() and path not in seen:
-            seen.add(path)
-            paths.append(path)
-    return paths
-
-
-def _render_golddigger_cache_context(state: dict, squad_dir: Path) -> str:
-    paths = _completed_golddigger_cache_paths(state, squad_dir)
-    if not paths:
-        return ""
-    chunks = ["\n---\n# GOLDDIGGER Mode 2 Cache"]
-    for path in paths:
-        text = path.read_text(encoding="utf-8", errors="replace")
-        if len(text) > _GOLDDIGGER_CACHE_CONTEXT_MAX_CHARS:
-            text = text[:_GOLDDIGGER_CACHE_CONTEXT_MAX_CHARS]
-        chunks.append(f"\n## {path.relative_to(squad_dir).as_posix()}\n{text}")
-    return "\n".join(chunks)
 
 
 def _routing_contract(node: "PhaseNode") -> str:
@@ -643,10 +589,6 @@ class PhaseExecutor(ABC):
         state_path = self._squad_dir / "state.json"
         if state_path.exists():
             dynamic_parts.append(f"\n---\n# Current state.json\n{state_path.read_text()}")
-        cache_context = _render_golddigger_cache_context(state, Path(squad_dir_str))
-        if cache_context:
-            dynamic_parts.append(cache_context)
-
         # Inject squad run context so agents know where to write
         context_preamble = (
             f"# Squad Run Context\n"
@@ -655,7 +597,9 @@ class PhaseExecutor(ABC):
             f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n"
             f"{_workspace_source_roots_context(self._project_root)}"
-            f"{_render_re_execution_context(state)}"
+            f"{_render_implementation_target_context(state)}"
+            f"{_render_product_input_context(state)}"
+            f"{_render_published_re_context(state)}"
             f"{self._extension_path_context()}"
         )
         if spec_dir_ref:
@@ -724,30 +668,6 @@ class PhaseExecutor(ABC):
             condition = entry.get("condition", "always")
             if ev.evaluate(condition, state) is not True:
                 continue
-            if entry.get("id") == "golddigger_mode2_queue":
-                result = self._process_golddigger_mode2_queue(node, state_store)
-                if result is not None and result.blocked:
-                    return result
-                continue
-            if entry.get("id") == "golddigger_mode1" and self._golddigger_mode1_cache_hit(state):
-                self._apply_golddigger_mode1_cache_hit(state_store)
-                continue
-            if entry.get("id") == "golddigger_mode1":
-                result = self._run_golddigger_mode1_controller()
-                if result.blocked:
-                    return result
-                publication_failure = self._publish_golddigger_mode1_complete(
-                    result,
-                    state_store,
-                )
-                if publication_failure is not None:
-                    return publication_failure
-                self._write_journal_entries(result, node.id)
-                for k, v in result.state_updates.items():
-                    s = state_store.load()
-                    s[k] = v
-                    state_store.save(s)
-                continue
             pre_agent = entry.get("agent", "").split(" ")[0]
             if not pre_agent:
                 continue
@@ -774,392 +694,6 @@ class PhaseExecutor(ABC):
                         state_store.save(s)
         return None
 
-    def _run_golddigger_mode1_controller(self) -> "SquadAgentResult":
-        """Run active workspace RE under the harness, then publish its result."""
-        from harness.squad_provider import SquadAgentResult
-
-        controller = ReExtractionController(
-            provider=self._provider,
-            project_root=self._project_root,
-            run_dir=self._squad_dir,
-            extension_root=self._ext_dir,
-        )
-        outcome = controller.run()
-        if not outcome.completed:
-            state_updates = {
-                "blocked_reason": outcome.blocked_reason
-                or "re_controller_failed",
-            }
-            if outcome.blocked_detail:
-                state_updates["re_agent_result_detail"] = outcome.blocked_detail
-            return SquadAgentResult(
-                exit_code=0,
-                echelon_result={
-                    "verdict": "BLOCKED",
-                    "state_updates": state_updates,
-                    "journal_entries": [],
-                },
-                raw_output="",
-                duration_ms=0,
-                timed_out=False,
-            )
-
-        re_state_path = self._squad_dir / "re" / "state.json"
-        try:
-            import json
-
-            re_state = json.loads(re_state_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, json.JSONDecodeError):
-            re_state = {}
-        source_states = re_state.get("re_source_states")
-        debt_sources = sorted(
-            source_id
-            for source_id, source_state in source_states.items()
-            if isinstance(source_id, str)
-            and isinstance(source_state, dict)
-            and source_state.get("status") == "partial_quality_debt"
-        ) if isinstance(source_states, dict) else []
-        status = "partial" if debt_sources else "complete"
-        notes = (
-            [
-                "Reverse engineering completed with unresolved source quality debt: "
-                + ", ".join(debt_sources)
-            ]
-            if debt_sources
-            else []
-        )
-        return SquadAgentResult(
-            exit_code=0,
-            echelon_result={
-                "verdict": "DONE",
-                "state_updates": {
-                    "golddigger_status": status,
-                    "golddigger_mode": "workspace-full-re",
-                    "golddigger_notes": notes,
-                },
-                "journal_entries": [],
-            },
-            raw_output="",
-            duration_ms=0,
-            timed_out=False,
-        )
-
-    def _golddigger_mode1_cache_hit(self, state: dict) -> bool:
-        """Return True when the RE plan says Mode 1 has no refresh work."""
-        if "re_refresh_sources" not in state:
-            return False
-        if state.get("re_publication_required") or state.get(
-            "re_workspace_synthesis_required"
-        ):
-            return False
-        refresh_sources = state.get("re_refresh_sources")
-        return isinstance(refresh_sources, list) and not refresh_sources
-
-    def _apply_golddigger_mode1_cache_hit(self, state_store: "SquadStateStore") -> None:
-        state = state_store.load()
-        artifacts = state.get("re_artifacts") if isinstance(state.get("re_artifacts"), dict) else {}
-        missing_sources = [
-            str(item)
-            for item in (state.get("re_missing_sources") or [])
-            if str(item).strip()
-        ]
-        empty_sources = [
-            str(item)
-            for item in (state.get("re_empty_sources") or [])
-            if str(item).strip()
-        ]
-        state["golddigger_artifacts"] = artifacts
-        state["golddigger_status"] = "partial" if missing_sources else "complete"
-        state["golddigger_mode"] = "cached-re"
-        notes = state.get("golddigger_notes")
-        if not isinstance(notes, list):
-            notes = []
-        if missing_sources:
-            notes.append(
-                "GOLDDIGGER Mode 1 skipped by RE policy; missing cached sources: "
-                + ", ".join(missing_sources)
-            )
-        elif empty_sources:
-            notes.append(
-                "GOLDDIGGER Mode 1 skipped; empty source roots skipped: "
-                + ", ".join(empty_sources)
-            )
-        else:
-            notes.append("GOLDDIGGER Mode 1 skipped; published RE artifacts reused.")
-        state["golddigger_notes"] = notes
-        state_store.save(state)
-
-    def _publish_golddigger_mode1_complete(
-        self,
-        result: "SquadAgentResult",
-        state_store: "SquadStateStore",
-    ) -> Optional["SquadAgentResult"]:
-        """Publish validated Mode 1 output before applying agent state updates."""
-        updates = result.state_updates
-        status = str(updates.get("golddigger_status") or "").strip().lower()
-        if status not in {"complete", "partial"}:
-            return None
-
-        state = state_store.load()
-        if not state.get("re_publication_required"):
-            return None
-        expected_generation = state.get("re_generation")
-        if not isinstance(expected_generation, int) or isinstance(
-            expected_generation, bool
-        ):
-            expected_generation = None
-
-        try:
-            publication = publish_re_run(
-                self._project_root,
-                self._squad_dir,
-                allow_partial=status == "partial",
-                status_override=status,
-                expected_generation=expected_generation,
-            )
-            published_index = load_published_index(self._project_root)
-            if (
-                published_index is None
-                or published_index.generation != publication.generation
-            ):
-                raise ReRegistryError(
-                    "published RE index does not match the completed generation"
-                )
-            artifacts = canonical_re_artifacts(
-                self._project_root,
-                published_index,
-            )
-        except (
-            RePublicationError,
-            RePublicationActiveRun,
-            RePublishLocked,
-            RePublishRecoveryRequired,
-            ReRegistryError,
-            OSError,
-        ) as exc:
-            from harness.squad_provider import SquadAgentResult
-
-            return SquadAgentResult(
-                exit_code=0,
-                echelon_result={
-                    "verdict": "BLOCKED",
-                    "state_updates": {
-                        "blocked_reason": "re_publication_failed",
-                        "re_publication_error": str(exc),
-                    },
-                    "journal_entries": [],
-                },
-                raw_output=result.raw_output,
-                duration_ms=result.duration_ms,
-                timed_out=result.timed_out,
-                cost_usd=result.cost_usd,
-            )
-
-        notes = updates.get("golddigger_notes")
-        if not isinstance(notes, list):
-            notes = []
-        notes.extend(
-            warning for warning in publication.warnings if warning not in notes
-        )
-        updates.update(
-            {
-                "golddigger_status": publication.status,
-                "golddigger_mode": "workspace-full-re",
-                "golddigger_artifacts": artifacts,
-                "golddigger_notes": notes,
-                "re_generation": publication.generation,
-                "re_index": str(publication.index_path),
-                "re_sources": artifacts.get("source_manifests", {}),
-                "re_workspace": artifacts.get("workspace_manifest"),
-                "re_artifacts": artifacts,
-                "re_analysis_required": False,
-                "re_workspace_synthesis_required": False,
-                "re_publication_required": False,
-            }
-        )
-        return None
-
-    def _normalize_golddigger_request(self, request: object) -> dict:
-        if isinstance(request, str):
-            return {
-                "domain": request,
-                "repo": None,
-                "requested_by": "unknown",
-                "reason": "",
-            }
-        if isinstance(request, dict):
-            normalized = dict(request)
-            normalized.setdefault("repo", None)
-            normalized.setdefault("requested_by", "unknown")
-            normalized.setdefault("reason", "")
-            return normalized
-        return {
-            "domain": "",
-            "repo": None,
-            "requested_by": "unknown",
-            "reason": "",
-        }
-
-    def _golddigger_cache_key(self, request: dict) -> str:
-        domain = str(request.get("domain") or "").strip()
-        repo = str(request.get("repo") or "").strip()
-        return f"{repo}--{domain}" if repo else domain
-
-    def _golddigger_cache_path(self, cache_key: str, state: dict) -> Path:
-        squad_dir = Path(state.get("squad_dir", str(self._squad_dir)))
-        return squad_dir / "golddigger-cache" / f"{cache_key}.md"
-
-    def _golddigger_artifact_paths(self, artifacts: object) -> list[str]:
-        paths: list[str] = []
-        seen: set[str] = set()
-
-        def _visit(value: object) -> None:
-            if isinstance(value, str):
-                candidate = value.strip()
-                if candidate and candidate not in seen:
-                    seen.add(candidate)
-                    paths.append(candidate)
-                return
-            if isinstance(value, dict):
-                for nested in value.values():
-                    _visit(nested)
-                return
-            if isinstance(value, list):
-                for nested in value:
-                    _visit(nested)
-
-        _visit(artifacts)
-        return paths
-
-    def _golddigger_mode2_policy(self) -> str:
-        """Resolve the Mode 2 queue policy, failing closed to requested_only."""
-        try:
-            from harness.config import get_full_resolved_config
-
-            full_config = get_full_resolved_config(self._project_root)
-        except Exception:
-            return "requested_only"
-
-        golddigger_config = full_config.get("golddigger")
-        if not isinstance(golddigger_config, dict):
-            return "requested_only"
-
-        policy = golddigger_config.get("mode2_policy")
-        if isinstance(policy, str) and policy.strip().lower() == "disabled":
-            return "disabled"
-        return "requested_only"
-
-    def _filtered_allowed_state_updates(
-        self,
-        node: "PhaseNode",
-        excluded_keys: set[str] | frozenset[str] = frozenset(),
-    ) -> object:
-        allowed_state_updates = getattr(node, "allowed_state_updates", None)
-        if allowed_state_updates is None:
-            return None
-        excluded = {str(key) for key in excluded_keys}
-        return [
-            key for key in allowed_state_updates if str(key) not in excluded
-        ]
-
-    def _process_golddigger_mode2_queue(
-        self,
-        node: "PhaseNode",
-        state_store: "SquadStateStore",
-    ) -> Optional["SquadAgentResult"]:
-        from harness.squad_provider import SquadAgentResult
-
-        state = state_store.load()
-        requests = list(state.get("golddigger_requests") or [])
-        if not requests:
-            return None
-        if self._golddigger_mode2_policy() == "disabled":
-            return None
-
-        rel = self._graph.agent_file("speckit-echelon-golddigger")
-        if not rel:
-            return None
-        agent_path = self._ext_dir / rel
-        if not agent_path.exists():
-            return None
-
-        allowed_state_updates = self._filtered_allowed_state_updates(
-            node,
-            excluded_keys=_GOLDDIGGER_HARNESS_STATE_KEYS,
-        )
-        completed_domains = list(state.get("golddigger_completed_domains") or [])
-
-        for index, raw_request in enumerate(requests):
-            request = self._normalize_golddigger_request(raw_request)
-            cache_key = self._golddigger_cache_key(request)
-            if not cache_key:
-                continue
-
-            cache_path = self._golddigger_cache_path(cache_key, state)
-            if cache_key in completed_domains and cache_path.exists():
-                continue
-            if cache_key in completed_domains and not cache_path.exists():
-                completed_domains = [key for key in completed_domains if key != cache_key]
-                state = state_store.load()
-                state["golddigger_completed_domains"] = completed_domains
-                state_store.save(state)
-
-            prompt = self._assemble_golddigger_mode2_prompt(
-                agent_path,
-                state_store.load(),
-                request,
-                allowed_state_updates,
-            )
-            result = self._provider.exec_agent(str(self._project_root), prompt)
-            result = self._validate_result_state_updates(
-                node,
-                result,
-                allowed_state_updates=allowed_state_updates,
-            )
-            if result.blocked:
-                state = state_store.load()
-                state["golddigger_requests"] = requests[index:]
-                state_store.save(state)
-                return result
-
-            self._write_journal_entries(result, node.id)
-            state = state_store.load()
-            for key, value in result.state_updates.items():
-                state[key] = value
-            golddigger_status = str(result.state_updates.get("golddigger_status") or "").strip().lower()
-            if golddigger_status == "complete" and not cache_path.exists():
-                state["golddigger_requests"] = requests[index:]
-                state_store.save(state)
-                return SquadAgentResult(
-                    exit_code=0,
-                    echelon_result={
-                        "verdict": "BLOCKED",
-                        "state_updates": {
-                            "blocked_reason": "golddigger_mode2_missing_cache",
-                            "missing_outputs": [str(cache_path)],
-                        },
-                        "journal_entries": [],
-                    },
-                    raw_output=result.raw_output,
-                    duration_ms=result.duration_ms,
-                    timed_out=result.timed_out,
-                    cost_usd=result.cost_usd,
-                )
-            if golddigger_status != "complete":
-                state["golddigger_requests"] = requests[index:]
-                state_store.save(state)
-                return None
-            completed_domains = list(state.get("golddigger_completed_domains") or [])
-            if cache_key not in completed_domains:
-                completed_domains.append(cache_key)
-            state["golddigger_completed_domains"] = completed_domains
-            state_store.save(state)
-
-        state = state_store.load()
-        state["golddigger_requests"] = []
-        state_store.save(state)
-        return None
-
     def _assemble_pre_dispatch_prompt(
         self,
         agent_path: Path,
@@ -1167,46 +701,11 @@ class PhaseExecutor(ABC):
         state: dict,
         allowed_state_updates: object = None,
     ) -> str:
-        """Build a real prompt for pre-dispatch agents.
-
-        Brownfield GOLDDIGGER dispatch needs explicit Mode 1 instructions and
-        squad context. Sending only the raw agent file leaves the dispatch
-        under-specified and causes silent fallback to SCOUT manual discovery.
-        """
+        """Build a real prompt for a generic pre-dispatch agent."""
         agent_text = agent_path.read_text()
         squad_dir_str = state.get("squad_dir", str(self._squad_dir))
         staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
         context_dir_str = state.get("context_dir", str(self._squad_dir / "context"))
-        run_id = state.get("run_id", "")
-        project_mode = state.get("mode", "")
-
-        if entry.get("id") == "golddigger_mode1":
-            return (
-                _shared_agent_contract()
-                + agent_text
-                + "\n\n"
-                + f"# Squad Run Context\n"
-                + f"SQUAD_DIR={squad_dir_str}\n"
-                + f"STAGING_DIR={staging_dir_str}\n"
-                + f"CONTEXT_DIR={context_dir_str}\n"
-                + f"PROJECT_ROOT={self._project_root}\n"
-                + _workspace_source_roots_context(self._project_root)
-                + _render_re_execution_context(state)
-                + self._extension_path_context()
-                + "<context>\n"
-                + f"project_root: {self._project_root}\n"
-                + f"run_id: {run_id}\n"
-                + f"mode: {project_mode}\n"
-                + "</context>\n\n"
-                + "<instructions>\n"
-                + "You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.\n"
-                + f"Run **Mode {entry.get('mode', 1)} (Workspace Reverse Engineering)** for target path `{self._project_root}`. "
-                + f"Your context: run_id is `{run_id}`, mode is {project_mode}.\n"
-                + "</instructions>\n"
-                + _allowed_state_updates_contract(allowed_state_updates)
-                + _canonical_echelon_result_contract(self._ext_dir)
-            )
-
         return (
             _shared_agent_contract()
             + agent_text
@@ -1217,70 +716,13 @@ class PhaseExecutor(ABC):
             + f"CONTEXT_DIR={context_dir_str}\n"
             + f"PROJECT_ROOT={self._project_root}\n"
             + _workspace_source_roots_context(self._project_root)
-            + _render_re_execution_context(state)
+            + _render_implementation_target_context(state)
+            + _render_product_input_context(state)
+            + _render_published_re_context(state)
             + self._extension_path_context()
             + _allowed_state_updates_contract(allowed_state_updates)
             + _canonical_echelon_result_contract(self._ext_dir)
         )
-
-    def _assemble_golddigger_mode2_prompt(
-        self,
-        agent_path: Path,
-        state: dict,
-        request: dict,
-        allowed_state_updates: object = None,
-    ) -> str:
-        agent_text = agent_path.read_text(encoding="utf-8")
-        squad_dir_str = state.get("squad_dir", str(self._squad_dir))
-        staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
-        context_dir_str = state.get("context_dir", str(self._squad_dir / "context"))
-        run_id = state.get("run_id", "")
-        project_mode = state.get("mode", "")
-        domain = str(request.get("domain") or "").strip()
-        repo = request.get("repo")
-        repo_str = str(repo).strip() if repo is not None else ""
-        cache_key = self._golddigger_cache_key(request)
-        cache_path = self._golddigger_cache_path(cache_key, state)
-        target_path = self._project_root / repo_str if repo_str else self._project_root
-        context_lines = [
-            "<context>",
-            f"run_id: {run_id}",
-            f"mode: {project_mode}",
-            f"domain: {domain}",
-            f"repo: {repo_str or 'N/A'}",
-            f"requested_by: {request.get('requested_by', 'unknown')}",
-            f"reason: {request.get('reason', '')}",
-            f"cache_key: {cache_key}",
-        ]
-        if cache_path.exists():
-            context_lines.append(f"existing_cache_path: {cache_path}")
-        for artifact_path in self._golddigger_artifact_paths(state.get("golddigger_artifacts")):
-            context_lines.append(f"artifact_path: {artifact_path}")
-        context_lines.append("</context>")
-
-        return (
-            _shared_agent_contract()
-            + agent_text
-            + "\n\n"
-            + "# Squad Run Context\n"
-            + f"SQUAD_DIR={squad_dir_str}\n"
-            + f"STAGING_DIR={staging_dir_str}\n"
-            + f"CONTEXT_DIR={context_dir_str}\n"
-            + f"PROJECT_ROOT={self._project_root}\n"
-            + _workspace_source_roots_context(self._project_root)
-            + self._extension_path_context()
-            + "\n".join(context_lines)
-            + "\n\n<instructions>\n"
-            + "You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.\n"
-            + f"Run **Mode 2 (Deep Dive)** for domain `{domain}` in repo `{repo_str or 'N/A'}` "
-            + f"at target path `{target_path}`.\n"
-            + "Return only your Mode 2 extraction status fields; the harness manages "
-            + "`golddigger_requests` and `golddigger_completed_domains`.\n"
-            + "</instructions>\n"
-            + _allowed_state_updates_contract(allowed_state_updates)
-            + _canonical_echelon_result_contract(self._ext_dir)
-        )
-
 
 class AgentExecutor(PhaseExecutor):
     """Handles type: agent phases — the common case."""
@@ -1515,10 +957,6 @@ class StagedParallelExecutor(PhaseExecutor):
                 dynamic_parts.append(
                     f"\n---\n# {extra_path.name}\n{extra_path.read_text()}"
                 )
-        cache_context = _render_golddigger_cache_context(state, Path(squad_dir_str))
-        if cache_context:
-            dynamic_parts.append(cache_context)
-
         # 4. Squad run context preamble + mode instruction
         preamble = (
             f"# Squad Run Context\n"
@@ -1527,6 +965,8 @@ class StagedParallelExecutor(PhaseExecutor):
             f"CONTEXT_DIR={context_dir_str}\n"
             f"PROJECT_ROOT={self._project_root}\n\n"
             f"{_workspace_source_roots_context(self._project_root)}"
+            f"{_render_implementation_target_context(state)}"
+            f"{_render_product_input_context(state)}"
             f"Operate in **{mode_label}** mode.\n\n"
         )
 
@@ -1548,6 +988,7 @@ class StagedParallelExecutor(PhaseExecutor):
         stage2_agents = [a for a in node.agents if a.get("stage", 1) == 2]
 
         stage1_results: dict[str, SquadAgentResult] = {}
+        product_input_updates: list[dict] = []
         state = state_store.load()
 
         # Stage 1: run in parallel
@@ -1574,6 +1015,8 @@ class StagedParallelExecutor(PhaseExecutor):
                 if result.blocked:
                     return result
                 stage1_results[label] = result
+                payload = result.echelon_result or {}
+                product_input_updates.extend(payload.get("product_input_updates") or [])
 
         # Write stage-1 verdicts, journal entries, and cost to state (serial — after join)
         for label, result in stage1_results.items():
@@ -1613,6 +1056,8 @@ class StagedParallelExecutor(PhaseExecutor):
             stage2_result = self._validate_result_state_updates(node, stage2_result)
             if stage2_result.blocked:
                 return stage2_result
+            stage2_payload = stage2_result.echelon_result or {}
+            product_input_updates.extend(stage2_payload.get("product_input_updates") or [])
             self._write_journal_entries(stage2_result, node.id)
             state_store.increment_cost(stage2_result.cost_usd)
             state = state_store.load()
@@ -1628,6 +1073,7 @@ class StagedParallelExecutor(PhaseExecutor):
             echelon_result={
                 "verdict": "PASS" if all_pass else "FAIL",
                 "state_updates": {},
+                "product_input_updates": product_input_updates,
             },
             raw_output="",
             duration_ms=0,
@@ -1660,6 +1106,7 @@ class ConditionalSequentialExecutor(PhaseExecutor):
                     prompt = (
                         _shared_agent_contract()
                         + path.read_text()
+                        + _render_product_input_context(state)
                         + _allowed_state_updates_contract(node.allowed_state_updates)
                         + _canonical_echelon_result_contract(self._ext_dir)
                     )

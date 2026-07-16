@@ -15,7 +15,8 @@ _TASK_ROW_RE = re.compile(
     r"complexity=(?P<complexity>trivial|standard|complex)\s+"
     r"phase=(?P<phase>[A-Za-z0-9_.-]+)\s+"
     r"req=(?P<requirements>[A-Za-z0-9_,.-]+)\s+"
-    r"depends=(?P<dependencies>none|[A-Za-z0-9_,.-]+)\s*$"
+    r"depends=(?P<dependencies>none|[A-Za-z0-9_,.-]+)"
+    r"(?:\s+target=(?P<target>[A-Za-z0-9_./-]+))?\s*$"
 )
 
 
@@ -28,6 +29,7 @@ class TaskRow:
     phase: str
     requirements: list[str]
     dependencies: list[str]
+    target: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,7 @@ def parse_task_rows(markdown: str) -> list[TaskRow]:
                 phase=data["phase"],
                 requirements=_split_csv(data["requirements"]),
                 dependencies=[] if data["dependencies"] == "none" else _split_csv(data["dependencies"]),
+                target=data.get("target") or None,
             )
         )
     return tasks

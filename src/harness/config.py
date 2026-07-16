@@ -367,8 +367,8 @@ def _reject_config_target_repo(data: Dict[str, Any]) -> None:
         return
     raise ValidationError(
         "harness.target_repo is no longer supported. "
-        "Set the implementation target in spec frontmatter instead: "
-        "echelon spec target <spec_id> <source-path>, then remove target_repo "
+        "Set implementation targets when Phase A begins instead: "
+        "echelon spec run <description> --target <source-path>, then remove target_repo "
         "from .echelon/config.yml.",
         field_path="target_repo",
     )

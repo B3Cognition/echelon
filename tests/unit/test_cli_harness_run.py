@@ -57,7 +57,7 @@ def _write_phase_a_build_inputs(spec_dir: Path) -> None:
         if name == "plan.md":
             content = VALID_PLAN
         elif name == "tasks.md":
-            content = "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n"
+            content = "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none target=.\n"
         elif name == "constitution.md":
             content = "# Constitution\n\nReal project rules.\n"
         elif name == "spec.md":
@@ -127,6 +127,44 @@ class TestHarnessRunArgParsing:
 
 @pytest.mark.unit
 class TestHarnessRunTaskFormatErrors:
+    def test_delivery_blocks_before_dispatch_when_tasks_reference_other_repos(
+        self,
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        spec_dir = tmp_path / "specs" / "001-dashboard"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=api req=FR-001 depends=none target=sources/api\n\n"
+            "  **Files:**\n"
+            "  - `sources/api/src/dashboard.ts` — backend\n\n"
+            "- [ ] T-002 complexity=standard phase=web req=FR-002 depends=T-001 target=sources/web\n\n"
+            "  **Files:**\n"
+            "  - `sources/web/src/dashboard.tsx` — frontend\n\n"
+            "- [ ] T-003 complexity=standard phase=test req=INFRA depends=T-002\n\n"
+            "  **Files:**\n"
+            "  - `e2e/dashboard.spec.ts` — unspecified target\n",
+            encoding="utf-8",
+        )
+
+        from echelon.cli import _block_if_spec_task_targets_mismatch
+
+        with pytest.raises(SystemExit) as exc:
+            _block_if_spec_task_targets_mismatch(
+                spec_dir,
+                ["sources/selected-web"],
+                "001-dashboard",
+            )
+
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "Task ownership does not match the spec delivery targets" in err
+        assert "declared: sources/selected-web" in err
+        assert "missing targets: sources/api, sources/web" in err
+        assert "unreferenced targets: sources/selected-web" in err
+        assert "tasks without explicit target= ownership: T-003" in err
+        assert "Regenerate target-dependent plan/tasks artifacts" in err
+
     def test_branchless_harness_run_blocks_with_full_rerun_command(
         self,
         tmp_path: Path,
@@ -160,7 +198,7 @@ class TestHarnessRunTaskFormatErrors:
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text(SPEC_WITH_LOCAL_TARGET, encoding="utf-8")
         (spec_dir / "tasks.md").write_text(
-            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none target=.\n",
             encoding="utf-8",
         )
 
@@ -274,7 +312,7 @@ class TestHarnessRunTaskFormatErrors:
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text(SPEC_WITH_LOCAL_TARGET, encoding="utf-8")
         (spec_dir / "tasks.md").write_text(
-            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n",
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none target=.\n",
             encoding="utf-8",
         )
         (spec_dir / "plan.md").write_text("# Plan\n\n## Summary\n", encoding="utf-8")
@@ -480,7 +518,7 @@ class TestHarnessTargetPreflight:
         assert target.source_id == "og-platform"
         assert target.source_git_role == "source"
 
-    def test_semi_mode_blocks_multiple_workspace_source_roots(
+    def test_delivery_without_declared_target_stops_before_source_detection(
         self,
         tmp_path: Path,
         monkeypatch,
@@ -516,13 +554,12 @@ class TestHarnessTargetPreflight:
         with pytest.raises(SystemExit) as exc:
             _cmd_harness_run(["001", "mode=semi"])
 
-        assert exc.value.code == 2
+        assert exc.value.code == 1
         err = capsys.readouterr().err
-        assert "Multiple source roots found" in err
-        assert "rbf-opta-points" in err
-        assert "qag-load-testing-framework" in err
+        assert "has no implementation target" in err
+        assert "echelon spec run <description> --target <source-path>" in err
 
-    def test_harness_run_uses_single_source_root(
+    def test_delivery_does_not_infer_sole_source_root(
         self,
         tmp_path: Path,
         monkeypatch,
@@ -549,11 +586,10 @@ class TestHarnessTargetPreflight:
             with pytest.raises(SystemExit) as exc:
                 _cmd_harness_run(["001", "mode=semi"])
 
-        assert exc.value.code == 0
-        mock_run.assert_called_once()
-        assert mock_run.call_args.args[1] == [target.resolve()]
+        assert exc.value.code == 1
+        mock_run.assert_not_called()
 
-    def test_existing_target_id_is_canonicalized_to_source_path_before_dispatch(
+    def test_noncanonical_declared_target_is_rejected_without_mutation(
         self,
         tmp_path: Path,
         monkeypatch,
@@ -593,12 +629,11 @@ class TestHarnessTargetPreflight:
             with pytest.raises(SystemExit) as exc:
                 _cmd_harness_run(["001", "mode=banzai"])
 
-        assert exc.value.code == 0
-        assert read_frontmatter(spec_dir)["targets"] == ["services/api"]
-        dispatched_targets = mock_run.call_args.args[1]
-        assert dispatched_targets == [target.resolve()]
+        assert exc.value.code == 2
+        assert read_frontmatter(spec_dir)["targets"] == ["api"]
+        mock_run.assert_not_called()
 
-    def test_explicit_target_argument_controls_delivery_run_dispatch(
+    def test_explicit_delivery_target_override_is_rejected(
         self,
         tmp_path: Path,
         monkeypatch,
@@ -617,24 +652,12 @@ class TestHarnessTargetPreflight:
         monkeypatch.chdir(root)
         from echelon.cli import HarnessWorkspaceTarget, _cmd_harness_run
 
-        def fake_resolve(project_root, explicit_target, **kwargs):
-            assert explicit_target == "api"
-            return HarnessWorkspaceTarget(
-                workspace_root=root.resolve(),
-                workspace_git_role="orchestration",
-                source_root=target.resolve(),
-                source_id="api",
-                source_git_role="source",
-            )
-
-        monkeypatch.setattr("echelon.cli._resolve_harness_workspace_target", fake_resolve)
         with patch("echelon.orchestrator.run_multi_target", return_value=0) as mock_run:
             with pytest.raises(SystemExit) as exc:
                 _cmd_harness_run(["001", "mode=banzai", "target=api"])
 
-        assert exc.value.code == 0
-        dispatched_targets = mock_run.call_args.args[1]
-        assert dispatched_targets == [target.resolve()]
+        assert exc.value.code == 2
+        mock_run.assert_not_called()
 
     def test_multiple_workspace_source_roots_stop_before_workspace_config(
         self,
@@ -667,14 +690,11 @@ class TestHarnessTargetPreflight:
             with pytest.raises(SystemExit) as exc:
                 _cmd_harness_run(["001", "mode=banzai"])
 
-        assert exc.value.code == 2
+        assert exc.value.code == 1
         mock_load_config.assert_not_called()
         err = capsys.readouterr().err
-        assert "Multiple source roots found" in err
-        assert "og-platform" in err
-        assert "pbg-api" in err
-        assert "echelon spec target 001-feature <source-path>" in err
-        assert "echelon spec target 001-feature sources/<new-repo> --init" in err
+        assert "has no implementation target" in err
+        assert "echelon spec run <description> --target <source-path>" in err
 
     def test_no_workspace_source_roots_stop_before_workspace_config(
         self,
@@ -702,7 +722,7 @@ class TestHarnessTargetPreflight:
             with pytest.raises(SystemExit) as exc:
                 _cmd_harness_run(["001"])
 
-        assert exc.value.code == 2
+        assert exc.value.code == 1
         mock_load_config.assert_not_called()
         err = capsys.readouterr().err
-        assert "No source roots found" in err
+        assert "has no implementation target" in err

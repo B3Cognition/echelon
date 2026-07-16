@@ -20,10 +20,7 @@ Read and include in the subagent prompt:
 - `extension/templates/assumptions-template.md`
 - `extension/templates/unknowns-template.md`
 - `extension/templates/reference-architectures-template.md`
-- If `state.json.golddigger_artifacts` exists: include artifact paths so the agent knows where to read brownfield data
-  - Polyrepo: include `repos-manifest.json` path, `cross-repo.json` path, per-repo directory paths
-  - Single-repo: include `analysis.json` path
-- If any `golddigger_completed_domains` have new entries since last dispatch: include the corresponding cache file paths
+- `state.json.published_re_context` and its immutable snapshot artifact paths
 
 ### Dispatch
 
@@ -33,7 +30,7 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include user input, knowledge-base/calibration-profile.yaml, scout output templates, previous run's evolution-report.md if re-run, state.json.golddigger_artifacts paths if available]
+  [include user input, knowledge-base/calibration-profile.yaml, scout output templates, previous run's evolution-report.md if re-run, and state.json.published_re_context]
   </context>
 
   <instructions>

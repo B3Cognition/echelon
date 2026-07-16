@@ -16,7 +16,6 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.phase_graph import PhaseGraph, PhaseNode
-from harness.re_controller import ReControllerResult
 from harness.squad import (
     SquadController,
     SquadResult,
@@ -449,7 +448,7 @@ class TestCartographerResumeGuard:
 
 
 class TestSquadControllerBasics:
-    def test_generation_change_blocks_before_normal_executor_dispatch(self, tmp_path):
+    def test_generation_change_does_not_mutate_attached_spec_context(self, tmp_path):
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
@@ -461,15 +460,13 @@ class TestSquadControllerBasics:
 
         result = ctrl.run("msg", "banzai")
 
-        assert result.status == "blocked"
+        assert result.status == "done"
         state = store.load()
-        assert state["blocked_reason"] == "re_generation_mismatch"
-        assert state["re_generation_expected"] == 1
-        assert state["re_generation_actual"] == 2
-        assert state.get("phase_dispatch_counts", {}).get("phase1-tracker", 0) == 0
-        provider.exec_agent.assert_not_called()
+        assert state.get("blocked_reason") is None
+        assert state["re_generation"] == 1
+        assert provider.exec_agent.called
 
-    def test_generation_change_blocks_manual_phase_before_executor_dispatch(self, tmp_path):
+    def test_generation_change_does_not_block_manual_spec_phase(self, tmp_path):
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
@@ -481,14 +478,13 @@ class TestSquadControllerBasics:
 
         result = ctrl.run_single_phase("phase1-tracker", "msg", "banzai")
 
-        assert result.status == "blocked"
+        assert result.status == "running"
         state = store.load()
-        assert state["blocked_reason"] == "re_generation_mismatch"
-        assert state["re_generation_expected"] == 1
-        assert state["re_generation_actual"] == 2
-        provider.exec_agent.assert_not_called()
+        assert state.get("blocked_reason") is None
+        assert state["re_generation"] == 1
+        assert provider.exec_agent.called
 
-    def test_generation_change_from_same_run_publication_synchronizes_state(self, tmp_path):
+    def test_legacy_generation_state_is_not_synchronized_during_spec_run(self, tmp_path):
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
@@ -506,7 +502,7 @@ class TestSquadControllerBasics:
 
         assert result.status != "blocked"
         state = store.load()
-        assert state["re_generation"] == 2
+        assert state["re_generation"] == 1
         assert state.get("blocked_reason") is None
         assert "re_generation_expected" not in state
         assert "re_generation_actual" not in state
@@ -525,7 +521,7 @@ class TestSquadControllerBasics:
         assert state["mode"] == "brownfield"
         assert state["autonomy_mode"] == "banzai"
 
-    def test_brownfield_discovery_runs_mode1_controller_before_scout(
+    def test_brownfield_discovery_does_not_run_re_controller(
         self,
         tmp_path,
         monkeypatch,
@@ -552,30 +548,13 @@ class TestSquadControllerBasics:
             squad_dir,
         )
 
-        controller_calls = []
-
-        class CompleteController:
-            def __init__(self, **kwargs):
-                controller_calls.append(kwargs)
-
-            def run(self):
-                return ReControllerResult(completed=True)
-
-        monkeypatch.setattr(
-            "harness.squad_executors.ReExtractionController",
-            CompleteController,
-        )
-
         executor.execute(graph.get("phase1-discover"), store)
 
-        assert len(controller_calls) == 1
-        assert controller_calls[0]["project_root"] == tmp_path
-        assert controller_calls[0]["run_dir"] == squad_dir
         assert provider.exec_agent.call_count == 1
         state = store.load()
-        assert state["golddigger_status"] == "complete"
+        assert "golddigger_status" not in state
 
-    def test_blocked_re_recovery_does_not_consume_discovery_dispatches(
+    def test_spec_controller_has_no_nested_re_dispatch_recovery(
         self, tmp_path
     ):
         ctrl, store = _controller(tmp_path)
@@ -595,9 +574,8 @@ class TestSquadControllerBasics:
             encoding="utf-8",
         )
 
-        ctrl._reset_discovery_dispatches_for_pending_recovery("phase1-discover")
-
-        assert store.get_phase_dispatch_count("phase1-discover") == 0
+        assert not hasattr(ctrl, "_reset_discovery_dispatches_for_pending_recovery")
+        assert store.get_phase_dispatch_count("phase1-discover") == 6
 
     def test_discovery_dispatch_count_remains_for_non_re_failure(self, tmp_path):
         ctrl, store = _controller(tmp_path)
@@ -610,11 +588,10 @@ class TestSquadControllerBasics:
             encoding="utf-8",
         )
 
-        ctrl._reset_discovery_dispatches_for_pending_recovery("phase1-discover")
-
+        assert not hasattr(ctrl, "_reset_discovery_dispatches_for_pending_recovery")
         assert store.get_phase_dispatch_count("phase1-discover") == 1
 
-    def test_golddigger_mode1_complete_is_preserved_when_publication_not_required(
+    def test_discovery_ignores_legacy_re_plan_state(
         self,
         tmp_path,
         monkeypatch,
@@ -641,21 +618,9 @@ class TestSquadControllerBasics:
             squad_dir,
         )
 
-        class CompleteController:
-            def __init__(self, **_kwargs):
-                pass
-
-            def run(self):
-                return ReControllerResult(completed=True)
-
-        monkeypatch.setattr(
-            "harness.squad_executors.ReExtractionController",
-            CompleteController,
-        )
-
         executor.execute(graph.get("phase1-discover"), store)
 
-        assert store.load()["golddigger_status"] == "complete"
+        assert "golddigger_status" not in store.load()
         assert provider.exec_agent.call_count == 1
 
     def test_starts_at_entry_phase(self, tmp_path):

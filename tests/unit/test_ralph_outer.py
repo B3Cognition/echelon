@@ -954,6 +954,110 @@ class TestOuterLoopConvergence:
         assert "- [ ] T-003 complexity=complex phase=ui req=FR-003,FR-004 depends=T-002" in context
         assert "- [x] T-001" not in context
 
+    def test_build_slice_context_only_exposes_current_target_tasks(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "sources" / "web"
+        spec_dir = workspace / "specs" / "001-dashboard"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=api req=FR-001 depends=none\n"
+            "- [ ] T-002 complexity=standard phase=web req=FR-002 depends=T-001\n"
+            "- [ ] T-003 complexity=standard phase=web req=FR-003 depends=T-002\n",
+            encoding="utf-8",
+        )
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(worktree)
+        state["target_path"] = str(worktree)
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+        monkeypatch.setenv("ECHELON_TARGET_TASK_IDS", "T-002,T-003")
+
+        controller._with_harness_context("body", str(worktree))
+
+        context_file = state_store.state_dir.parent / "context" / "default-build-slice-context.md"
+        context = context_file.read_text(encoding="utf-8")
+        assert "T-001 complexity=standard phase=api" not in context
+        assert "T-002 complexity=standard phase=web" in context
+        assert "T-003 complexity=standard phase=web" in context
+
+    def test_harness_prompt_uses_persisted_implementation_target_contract(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        workspace = tmp_path / "workspace"
+        worktree = workspace / "sources" / "web"
+        spec_dir = workspace / "specs" / "001-dashboard"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=api req=FR-001 depends=none target=sources/api\n"
+            "- [ ] T-002 complexity=standard phase=web req=FR-002 depends=T-001 target=sources/web\n",
+            encoding="utf-8",
+        )
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(worktree)
+        state["target_path"] = str(worktree)
+        state["spec_dir"] = str(spec_dir)
+        state["implementation_target"] = "sources/web"
+        state["declared_targets"] = ["sources/web", "sources/api"]
+        state["target_task_ids"] = ["T-002"]
+        state_store.write(state)
+        monkeypatch.delenv("ECHELON_TARGET_TASK_IDS", raising=False)
+
+        prompt = controller._with_harness_context("body", str(worktree))
+
+        assert "## Implementation Target Contract" in prompt
+        assert "implementation_target: sources/web" in prompt
+        assert "assigned_task_ids: T-002" in prompt
+        assert "forbidden_implementation_targets: sources/api" in prompt
+        context_file = state_store.state_dir.parent / "context" / "default-build-slice-context.md"
+        context = context_file.read_text(encoding="utf-8")
+        assert "T-001 complexity=standard phase=api" not in context
+        assert "T-002 complexity=standard phase=web" in context
+
+    def test_target_progress_completes_when_its_scoped_tasks_are_done(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "workspace" / "sources" / "api"
+        spec_dir = tmp_path / "workspace" / "specs" / "001-dashboard"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=api req=FR-001 depends=none\n"
+            "- [ ] T-002 complexity=standard phase=web req=FR-002 depends=T-001\n",
+            encoding="utf-8",
+        )
+        state = state_store.read()
+        state["spec_dir"] = str(spec_dir)
+        state["target_path"] = str(worktree)
+        state_store.write(state)
+        monkeypatch.setenv("ECHELON_TARGET_TASK_IDS", "T-001")
+
+        applied = controller._apply_build_task_progress(
+            worktree_path=str(worktree),
+            task_ids=["T-001"],
+        )
+
+        assert applied == ["T-001"]
+        build = state_store.read()["build"]
+        assert build["total_tasks"] == 1
+        assert build["completed_tasks"] == 1
+        assert build["tasks_completed_pct"] == 100
+        assert controller._all_canonical_tasks_complete(str(worktree)) is True
+
     def test_build_slice_context_includes_referenced_requirement_excerpts(
         self, tmp_path: Path
     ) -> None:
@@ -2371,6 +2475,42 @@ class TestOuterLoopConvergence:
         captured = capsys.readouterr()
         assert "fulfillment refresh: deferred" in captured.err
         assert "scoped fulfillment refresh completed" in captured.err
+
+    def test_multi_target_slice_accepts_scoped_fulfillment_at_target_boundary(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "workspace" / "sources" / "api"
+        spec_dir = tmp_path / "workspace" / "specs" / "001-dashboard"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "fulfillment-report.md").write_text(
+            "---\nverify_scope: scoped\n---\n"
+            "| ID | Status | Evidence | Confidence | Notes |\n"
+            "|---|---|---|---|---|\n"
+            "| FR-001 | IMPLEMENTED | src/api.ts | high | ok |\n",
+            encoding="utf-8",
+        )
+        state = state_store.read()
+        state["spec_dir"] = str(spec_dir)
+        state["build"] = {
+            "total_tasks": 1,
+            "completed_tasks": 1,
+            "tasks_completed_pct": 100,
+        }
+        state_store.write(state)
+        monkeypatch.setenv("ECHELON_TARGET_TASK_IDS", "T-001")
+
+        decision = controller._fulfillment_refresh_decision(str(worktree))
+        result = controller._apply_fulfillment_gate(
+            VerifyResult(passed=True, failures=[], duration_s=0),
+            str(worktree),
+        )
+
+        assert decision["action"] == "scoped"
+        assert result.passed is True
 
     def test_convergence_only_fulfillment_policy_skips_failed_slice_refresh(
         self, tmp_path: Path

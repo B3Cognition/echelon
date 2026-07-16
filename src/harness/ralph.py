@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import signal
@@ -1506,7 +1507,8 @@ class RalphController:
             return verify_result
 
         metadata = read_fulfillment_metadata(report)
-        if metadata.get("verify_scope") == "scoped":
+        target_scoped_delivery = self._target_task_ids() is not None
+        if metadata.get("verify_scope") == "scoped" and not target_scoped_delivery:
             failure = FailureEntry(
                 category=FailureCategory.OTHER,
                 id="fulfillment-report-scoped",
@@ -1729,6 +1731,7 @@ class RalphController:
         summary = summarize_task_progress(
             tasks_path.read_text(encoding="utf-8", errors="replace"),
             state.get("build") if isinstance(state.get("build"), dict) else {},
+            selected_task_ids=self._target_task_ids(),
         )
         if summary.valid:
             return verify_result
@@ -1767,7 +1770,13 @@ class RalphController:
         if not tasks_path.exists():
             return []
 
-        completed_ids = [str(task_id).strip() for task_id in task_ids if str(task_id).strip()]
+        target_task_ids = self._target_task_ids()
+        completed_ids = [
+            str(task_id).strip()
+            for task_id in task_ids
+            if str(task_id).strip()
+            and (target_task_ids is None or str(task_id).strip() in target_task_ids)
+        ]
         if not completed_ids:
             return []
 
@@ -1785,7 +1794,10 @@ class RalphController:
             return []
 
         tasks_path.write_text(markdown, encoding="utf-8")
-        summary = summarize_task_progress(markdown)
+        summary = summarize_task_progress(
+            markdown,
+            selected_task_ids=target_task_ids,
+        )
         state = self._state_store.read()
         build = state.get("build")
         if not isinstance(build, dict):
@@ -1831,7 +1843,8 @@ class RalphController:
             return
 
         summary = summarize_task_progress(
-            tasks_path.read_text(encoding="utf-8", errors="replace")
+            tasks_path.read_text(encoding="utf-8", errors="replace"),
+            selected_task_ids=self._target_task_ids(),
         )
         if summary.total_tasks <= 0:
             return
@@ -1941,6 +1954,8 @@ class RalphController:
             if decision.get("action") == "scoped" and getattr(
                 refresh_result, "scope", ""
             ) == "scoped":
+                if self._target_task_ids() is not None:
+                    return verify_result
                 self._record_fulfillment_refresh(
                     {
                         "status": "deferred",
@@ -2010,6 +2025,11 @@ class RalphController:
 
     def _fulfillment_refresh_decision(self, worktree_path: str) -> dict[str, object]:
         policy = self._config.fulfillment.refresh_policy
+        if self._target_task_ids() is not None:
+            return {
+                "action": "scoped",
+                "reason": "multi-target delivery uses target-owned task scope",
+            }
         total, completed = self._task_progress_counts()
         tasks_complete = total > 0 and completed >= total
         if policy == "scoped":
@@ -2561,6 +2581,7 @@ class RalphController:
                 + "Treat these as inherited verify-spec outputs. Do not hand-edit them in build slices; Ralph owns regeneration and commit/salvage.\n"
             )
         progress_ledger_block = self._delivery_progress_ledger_block(state)
+        implementation_target_contract = self._implementation_target_contract_block(state)
         build_slice_context_file = self._write_build_slice_context(
             worktree_path=worktree_path,
             workspace_root=workspace_root,
@@ -2576,6 +2597,7 @@ class RalphController:
             tasks_path=(spec_dir / "tasks.md" if spec_dir is not None else None),
             dirty_verify_block=dirty_verify_block,
             progress_ledger_block=progress_ledger_block,
+            implementation_target_contract=implementation_target_contract,
         )
         build_slice_context_index_file = build_slice_context_file.with_suffix(".json")
         build_implementer_context_file = (
@@ -2610,6 +2632,7 @@ class RalphController:
             f"spec_file: {spec_file_text}\n"
             f"tasks_file: {tasks_file_text}\n"
             f"{dirty_verify_block}"
+            f"{implementation_target_contract}"
             "Use `worktree` / `target_repo_worktree` for implementation reads, searches, edits, and tests.\n"
             "Read `build_implementer_context_file` before implementation; it is the Python-owned context pack for IMPLEMENTER work.\n"
             "Read `build_slice_context_file` before implementation; it is the Python-owned bounded context for this build slice.\n"
@@ -2652,6 +2675,7 @@ class RalphController:
         tasks_path: Path | None,
         dirty_verify_block: str,
         progress_ledger_block: str,
+        implementation_target_contract: str,
     ) -> Path:
         """Write bounded build context for LLM build and feedback turns."""
         context_dir = self._state_store.state_dir.parent / "context"
@@ -2729,6 +2753,8 @@ class RalphController:
             lines.extend(["## Last Verify Failures", *last_verify_failures, ""])
         if dirty_verify_block:
             lines.extend(["## Dirty Verify Artifacts", dirty_verify_block.strip(), ""])
+        if implementation_target_contract:
+            lines.extend([implementation_target_contract.strip(), ""])
         if progress_ledger_block:
             lines.extend([progress_ledger_block.strip(), ""])
         lines.extend(
@@ -3021,6 +3047,9 @@ class RalphController:
         current_task = str(build.get("current_task") or "").strip()
         if current_task and current_task not in task_ids:
             task_ids.append(current_task)
+        target_task_ids = self._target_task_ids()
+        if target_task_ids is not None:
+            task_ids = [task_id for task_id in task_ids if task_id in target_task_ids]
         phase_group = str(build.get("current_phase_group") or "").strip()
 
         lines: list[str] = []
@@ -3225,7 +3254,10 @@ class RalphController:
         except Exception:
             return set()
         requirement_ids: set[str] = set()
+        target_task_ids = self._target_task_ids()
         for task in tasks:
+            if target_task_ids is not None and task.task_id not in target_task_ids:
+                continue
             if task.status.strip().lower() == "x":
                 continue
             requirement_ids.update(
@@ -3245,7 +3277,10 @@ class RalphController:
         except Exception:
             return []
         rows: list[str] = []
+        target_task_ids = self._target_task_ids()
         for task in tasks:
+            if target_task_ids is not None and task.task_id not in target_task_ids:
+                continue
             if task.status.strip().lower() == "x":
                 continue
             rows.append(_render_canonical_task_row(task))
@@ -3673,6 +3708,49 @@ class RalphController:
             return "external"
         return "worktree"
 
+    def _target_task_ids(self) -> set[str] | None:
+        """Return the orchestrator-owned task scope for this source repo."""
+        persisted = self._state_store.read().get("target_task_ids")
+        if isinstance(persisted, list):
+            task_ids = {
+                str(task_id).strip()
+                for task_id in persisted
+                if str(task_id).strip()
+            }
+            if task_ids:
+                return task_ids
+        raw = os.environ.get("ECHELON_TARGET_TASK_IDS", "").strip()
+        if not raw:
+            return None
+        return {task_id.strip() for task_id in raw.split(",") if task_id.strip()}
+
+    def _implementation_target_contract_block(self, state: dict[str, object]) -> str:
+        """Render the persisted target boundary supplied by Phase A dispatch."""
+        implementation_target = str(state.get("implementation_target") or "").strip()
+        if not implementation_target:
+            return ""
+        raw_declared = state.get("declared_targets")
+        declared_targets = (
+            [str(target).strip() for target in raw_declared if str(target).strip()]
+            if isinstance(raw_declared, list)
+            else []
+        )
+        assigned_task_ids = sorted(self._target_task_ids() or set())
+        forbidden_targets = [
+            target for target in declared_targets if target != implementation_target
+        ]
+        return (
+            "## Implementation Target Contract\n"
+            f"implementation_target: {implementation_target}\n"
+            "declared_implementation_targets: "
+            f"{','.join(declared_targets) or implementation_target}\n"
+            f"assigned_task_ids: {','.join(assigned_task_ids) or 'none'}\n"
+            "forbidden_implementation_targets: "
+            f"{','.join(forbidden_targets) or 'none'}\n"
+            "Implement only the assigned task IDs in the implementation target. "
+            "Do not edit or implement work owned by another declared target.\n"
+        )
+
     def _make_iter_prompt(self, base: str, outer_iter: int, last_failures: str) -> str:
         """Augment base prompt with iteration context for outer loop."""
         if not base:
@@ -3866,7 +3944,8 @@ class RalphController:
         if not tasks_path.exists():
             return False
         summary = summarize_task_progress(
-            tasks_path.read_text(encoding="utf-8", errors="replace")
+            tasks_path.read_text(encoding="utf-8", errors="replace"),
+            selected_task_ids=self._target_task_ids(),
         )
         return (
             summary.valid
@@ -5480,9 +5559,10 @@ def _render_canonical_task_row(task: TaskRow) -> str:
     parallel = " [P]" if task.parallel else ""
     requirements = ",".join(task.requirements) if task.requirements else "UNMAPPED"
     dependencies = ",".join(task.dependencies) if task.dependencies else "none"
+    target = f" target={task.target}" if task.target else ""
     return (
         f"- [ ] {task.task_id}{parallel} complexity={task.complexity} "
-        f"phase={task.phase} req={requirements} depends={dependencies}"
+        f"phase={task.phase} req={requirements} depends={dependencies}{target}"
     )
 
 

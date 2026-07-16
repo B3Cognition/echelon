@@ -2,6 +2,35 @@
 
 Brownfield extraction reverse-engineers an existing codebase into spec-kit format artifacts — domain specs, quality checklists, and strategic migration documents. Use it when you need to understand, migrate, or modernize a legacy system before building with echelon's standard pipeline.
 
+## Lifecycle commands
+
+Reverse engineering runs independently from spec authoring:
+
+```bash
+echelon re run                                      # changed; no-op when current
+echelon re run --re-policy refresh-all --re-max-inner 10
+echelon re continue --re-max-inner 12              # continue without an answer
+echelon re resume "Use the v2 contract"             # answer a human-input block
+```
+
+RE state lives under `runs/re-*/` and uses the separate `runs/.current-re`
+marker. A complete result publishes automatically to the durable `re/` registry.
+Partial results do not auto-publish. `changed` is the default policy and creates
+no provider when every source is current.
+
+Spec runs do not fingerprint, plan, execute, repair, publish, or freshness-check
+RE. They snapshot the latest published generation into the spec run as read-only
+context by default. Pass `echelon spec run ... --ignore-re` to omit it. A later RE
+publication does not change an already-started spec run.
+
+Migration:
+
+```text
+before: echelon spec run "Build dashboards" --re-policy changed --re-max-inner 10
+after:  echelon re run --re-policy changed --re-max-inner 10
+        echelon spec run "Build dashboards"
+```
+
 ## Three-phase workflow
 
 ```text
@@ -77,11 +106,13 @@ Each validation iteration uses a progressively deeper search strategy:
 
 ## Output structure
 
-During an active `echelon spec run`, RE runtime artifacts are written under `runs/<run-id>/re/`. Standalone `re-*` commands use `.specify/echelon/re/` unless `re.output.directory` overrides it.
+First-class RE lifecycle candidates are written under `runs/re-<timestamp>/re/`.
+The durable latest publication lives under the workspace `re/` registry. Legacy
+standalone `re-*` skills may still use `.specify/echelon/re/` when invoked
+directly.
 
 ```text
-runs/<run-id>/re/                  # active echelon spec run
-# or .specify/echelon/re/          # standalone re-* default
+runs/re-<timestamp>/re/            # active echelon re run
 ├── analysis.json                     # Structured codebase data (files, deps, git history, configs)
 ├── codegraph-analysis.json           # Optional full structural graph (Node.js + CodeGraph bridge)
 ├── codegraph-summary.json            # Optional compact graph summary for token-efficient agent reads
@@ -91,6 +122,11 @@ runs/<run-id>/re/                  # active echelon spec run
 └── {repo-name}/                      # Per-repo data in polyrepo mode
     ├── analysis.json
     └── cross-repo.json               # Cross-repo shared-tech and dependency map
+
+re/                                  # latest durable published generation
+├── index.json
+├── sources/<source-id>/
+└── workspace/
 
 specs/
 ├── 000-re-overview/                  # Cross-domain summary (fixed ID 000)

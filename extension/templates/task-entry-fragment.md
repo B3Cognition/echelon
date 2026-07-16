@@ -1,4 +1,4 @@
-- [ ] T-000 [P] complexity=standard phase=foundation req=FR-000 depends=none
+- [ ] T-000 [P] complexity=standard phase=foundation req=FR-000 depends=none target=sources/app
 
   **Title:** {Task title}
 

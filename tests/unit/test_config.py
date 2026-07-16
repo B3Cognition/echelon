@@ -195,8 +195,8 @@ class TestParseConfigValid:
 
 @pytest.mark.unit
 class TestParseConfigInvalid:
-    def test_target_repo_is_rejected_with_spec_target_hint(self) -> None:
-        with pytest.raises(ValidationError, match="echelon spec target"):
+    def test_target_repo_is_rejected_with_spec_run_target_hint(self) -> None:
+        with pytest.raises(ValidationError, match="echelon spec run"):
             _parse_config({**MINIMAL, "target_repo": "git@example.com:app/repo.git"})
 
     def test_invalid_provider_raises(self) -> None:

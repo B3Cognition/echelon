@@ -55,7 +55,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.3.7"
+CLI_VERSION = "3.3.8"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -78,8 +78,8 @@ Commands:
 
   spec run <description> [--mode semi|banzai|guided] [--reset]
                     [--message <text>] [--next-phase <id>]
-                    [--target <source-id-or-path>] [--init]
-                    [--re-policy none|cached-only|changed|target-changed|target-only|refresh-all]
+                    [--target <source-id-or-path>]... [--init]
+                    [--ignore-re]
                                             Run Phase A squad spec authoring.
   spec status                               Show current run state, artifacts, cost, and next action.
   spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
@@ -87,9 +87,7 @@ Commands:
   spec rewind <phase-id>                    Rewind the active squad run to a safe checkpoint.
   spec checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]
                                             Manage Phase A/spec checkpoints.
-  spec target <spec_id> <repo> [repo...] [--init]
-                                            Set target repos in spec frontmatter.
-                                            With --init, create/prepare target Git repo(s).
+  spec targets <spec_id>                    Display every task grouped by delivery target.
   spec artifacts <spec_id>                  Generate specs/<id>/ARTIFACTS.md.
   spec verify <spec_id> [--reconcile] [--dry-run]
                                             Audit implementation against spec.
@@ -102,6 +100,11 @@ Commands:
                     [--message <text>]
                                             Run one explicit phase through COMMANDER contracts.
 
+  re run [--re-policy none|cached-only|changed|refresh-all]
+                    [--re-max-inner <n>] [--reset]
+                                            Run or reuse workspace reverse engineering.
+  re continue [--re-max-inner <n>]           Continue the active RE run.
+  re resume <answer> [--re-max-inner <n>]    Resume blocked RE with a human answer.
   re publish <run-id> [--allow-partial] [--commit]
                                             Publish validated workspace RE output.
 
@@ -1028,12 +1031,73 @@ def _print_harness_config_error(error: Exception) -> None:
 def _print_missing_spec_target_error(spec_id: str, *, command_prefix: str = "echelon delivery run") -> None:
     print(
         f"✗ Spec '{spec_id}' has no implementation target.\n\n"
-        "  Set the target in spec frontmatter:\n"
-        f"    echelon spec target {spec_id} <source-path>\n"
-        f"    echelon spec target {spec_id} sources/<new-repo> --init\n\n"
-        f"  Then rerun: {command_prefix} {spec_id}",
+        "  Implementation targets are fixed when Phase A begins. Start a new spec run with:\n"
+        "    echelon spec run <description> --target <source-path> "
+        "[--target <source-path> ...]\n\n"
+        f"  Delivery will not infer or mutate targets for spec '{spec_id}'.",
         file=sys.stderr,
     )
+
+
+def _block_if_spec_task_targets_mismatch(
+    spec_dir: Path,
+    declared_targets: list[str],
+    spec_id: str,
+) -> None:
+    """Fail before delivery spends tokens on tasks owned by other source repos."""
+    tasks_path = spec_dir / "tasks.md"
+    if not tasks_path.is_file() or not declared_targets:
+        return
+
+    from harness.task_targets import validate_task_targets
+
+    result = validate_task_targets(
+        tasks_path.read_text(encoding="utf-8", errors="replace"),
+        declared_targets=declared_targets,
+    )
+    if result.valid:
+        return
+
+    lines = [
+        "✗ Task ownership does not match the spec delivery targets.",
+        "",
+        "  Delivery is stopping before launching a build agent.",
+        "  declared: " + ", ".join(declared_targets),
+    ]
+    if result.missing_targets:
+        lines.append("  missing targets: " + ", ".join(result.missing_targets))
+    if result.unreferenced_targets:
+        lines.append(
+            "  unreferenced targets: " + ", ".join(result.unreferenced_targets)
+        )
+    if result.unowned_tasks:
+        lines.append(
+            "  tasks without explicit target= ownership: "
+            + ", ".join(result.unowned_tasks)
+        )
+    if result.cross_target_tasks:
+        rendered = ", ".join(
+            f"{task_id} ({' + '.join(targets)})"
+            for task_id, targets in result.cross_target_tasks.items()
+        )
+        lines.append("  tasks spanning multiple targets: " + rendered)
+    if result.path_target_mismatches:
+        rendered = ", ".join(
+            f"{task_id} (target={declared}; paths={' + '.join(paths)})"
+            for task_id, (declared, paths) in result.path_target_mismatches.items()
+        )
+        lines.append("  task target/path mismatches: " + rendered)
+
+    lines.extend(
+        [
+            "",
+            "  Every task must declare exactly one target=<source-path> from targets.yml.",
+            "  File paths validate ownership but never infer or replace it.",
+        ]
+    )
+    lines.append("  Regenerate target-dependent plan/tasks artifacts from a correctly targeted spec run.")
+    print("\n".join(lines), file=sys.stderr)
+    raise SystemExit(2)
 
 
 def _cmd_harness_init(
@@ -1048,9 +1112,9 @@ def _cmd_harness_init(
     if args:
         print(
             f"✗ {command_prefix} no longer accepts a target repository.\n\n"
-            "  Implementation targets are declared per spec:\n"
-            "    echelon spec target <spec_id> <source-path>\n"
-            "    echelon spec target <spec_id> sources/<new-repo> --init\n\n"
+            "  Implementation targets are declared when Phase A begins:\n"
+            "    echelon spec run <description> --target <source-path> "
+            "[--target <source-path> ...]\n\n"
             f"  Then rerun: {command_prefix}",
             file=sys.stderr,
         )
@@ -1116,7 +1180,7 @@ def _cmd_delivery_target(args: list[str]) -> None:
         print(
             "Usage: echelon delivery target <spec_id>\n\n"
             "Prepare target-scoped delivery metadata for the repo(s) declared by "
-            "`echelon spec target`.",
+            "the originating `echelon spec run --target` invocation.",
         )
         return
 
@@ -1137,10 +1201,17 @@ def _cmd_delivery_target(args: list[str]) -> None:
     if not targets:
         print(
             f"✗ Spec {spec_dir.name} has no delivery target.\n"
-            f"  Fix: echelon spec target {spec_dir.name} <source-path>",
+            "  Delivery will not infer or mutate targets. Regenerate the spec with "
+            "echelon spec run <description> --target <source-path>.",
             file=sys.stderr,
         )
         sys.exit(1)
+
+    _block_if_spec_task_targets_mismatch(
+        spec_dir,
+        [str(entry.get("path") or "").strip() for entry in targets],
+        spec_dir.name,
+    )
 
     spec_root = spec_dir.parent.parent
     fields: list[tuple[str, str]] = [("Spec", spec_dir.name)]
@@ -1154,14 +1225,16 @@ def _cmd_delivery_target(args: list[str]) -> None:
         if not target_path.exists():
             print(
                 f"✗ Target repo not found: {target_rel}\n"
-                f"  Fix: echelon spec target {spec_dir.name} {target_rel} --init",
+                "  Restore the declared repo, or regenerate the spec with "
+                f"--target {target_rel} --init.",
                 file=sys.stderr,
             )
             sys.exit(1)
         if not (target_path / ".git").exists():
             print(
                 f"✗ Target is not a Git repo: {target_rel}\n"
-                f"  Fix: echelon spec target {spec_dir.name} {target_rel} --init",
+                "  Initialize the declared repo, or regenerate the spec with "
+                f"--target {target_rel} --init.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -1570,7 +1643,7 @@ def _resolve_harness_workspace_target(
     new_repo_hint = (
         "\n\n"
         "  For a new implementation repo:\n"
-        f"    echelon spec target {spec_id or '<spec-id>'} sources/<new-repo> --init"
+        "    echelon spec run <description> --target sources/<new-repo> --init"
     )
 
     if result.decision == "no_source_roots":
@@ -1583,12 +1656,12 @@ def _resolve_harness_workspace_target(
         raise SystemExit(2)
 
     if result.decision == "multiple_source_roots_need_target":
-        spec_ref = spec_id or "<spec-id>"
         print(
             f"✗ Multiple source roots found; choose one before running {command_label}.\n\n"
             "  Source roots:\n"
             f"{_candidate_lines()}\n\n"
-            f"  Fix: run 'echelon spec target {spec_ref} <source-path>'."
+            "  Fix: start Phase A with repeatable "
+            "'echelon spec run <description> --target <source-path>' options."
             + new_repo_hint
             + (f"\n  Then rerun:  {rerun_command}" if rerun_command else ""),
             file=sys.stderr,
@@ -1596,16 +1669,15 @@ def _resolve_harness_workspace_target(
         raise SystemExit(2)
 
     if result.decision == "invalid_target":
-        spec_ref = spec_id or "<spec-id>"
         configured = f"\n  Configured target: {explicit_target}" if explicit_target else ""
         print(
             "✗ Configured implementation target does not match a workspace source root.\n"
             f"{configured}\n\n"
             "  Source roots:\n"
             f"{_candidate_lines()}\n\n"
-            f"  Fix: run 'echelon spec target {spec_ref} <source-path>'.\n"
-            f"       For a new repo: echelon spec target {spec_ref} "
-            "sources/<new-repo> --init"
+            "  Fix: regenerate with 'echelon spec run <description> "
+            "--target <source-path>'.\n"
+            "       For a new repo, add --init."
             + (f"\n  Then rerun:  {rerun_command}" if rerun_command else ""),
             file=sys.stderr,
         )
@@ -1614,7 +1686,8 @@ def _resolve_harness_workspace_target(
     if not result.recommended_target:
         print(
             "✗ No implementation target configured and target detection was ambiguous.\n"
-            f"  Fix: run 'echelon spec target {spec_id or '<spec-id>'} <repo>'.",
+            "  Fix: start Phase A with 'echelon spec run <description> "
+            "--target <source-path>'.",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -1691,10 +1764,17 @@ def _cmd_harness_run(
     strategy = kv.get("strategy", "default")
     mode = kv.get("mode", "semi")
     explicit_target = kv.get("target") or kv.get("target_source")
+    if explicit_target:
+        print(
+            f"✗ {command_prefix} no longer accepts a target override.\n"
+            "  Delivery consumes the implementation targets declared when Phase A began.\n"
+            "  Start a new spec with: echelon spec run <description> "
+            "--target <source-path> [--target <source-path> ...]",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
 
     parts = [f"spec {spec_id}", f"{mode} mode", f"strategies={strategy}"]
-    if explicit_target:
-        parts.append(f"target={explicit_target}")
     if kv.get("max_outer"):
         parts.append(f"max {kv['max_outer']} outer iterations")
     if kv.get("max_inner"):
@@ -1723,7 +1803,6 @@ def _cmd_harness_run(
         find_spec_dir,
         read_targets,
         write_status as _write_spec_status,
-        write_targets,
     )
     from harness.spec_snapshot import snapshot_spec_dir
     from echelon.orchestrator import (
@@ -1762,34 +1841,13 @@ def _cmd_harness_run(
                 file=sys.stderr,
             )
             sys.exit(1)
-        if explicit_target and not target_env:
-            workspace_target = _resolve_harness_workspace_target(
-                polyrepo_root,
-                explicit_target,
-                spec_dir=spec_dir,
-                spec_id=resolved_spec_id,
-                rerun_command=rerun_command,
-            )
-            target_rel = (
-                "."
-                if workspace_target.source_root == workspace_target.workspace_root
-                else workspace_target.source_root.relative_to(
-                    workspace_target.workspace_root
-                ).as_posix()
-            )
-            if workspace_target.source_root == workspace_target.workspace_root:
-                direct_target_path = workspace_target.source_root
-            else:
-                target = validate_single_target([target_rel], polyrepo_root)
-                _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
-                sys.exit(run_multi_target(
-                    spec_id,
-                    [target],
-                    args[1:],
-                    **_workspace_target_dispatch_metadata(workspace_target),
-                ))
         targets_rel: list[str] = read_targets(spec_dir)
         if targets_rel and not target_env:
+            _block_if_spec_task_targets_mismatch(
+                spec_dir,
+                targets_rel,
+                resolved_spec_id,
+            )
             if len(targets_rel) == 1:
                 workspace_target = _resolve_harness_workspace_target(
                     polyrepo_root,
@@ -1804,7 +1862,15 @@ def _cmd_harness_run(
                     else workspace_target.source_root.relative_to(workspace_target.workspace_root).as_posix()
                 )
                 if target_rel != targets_rel[0]:
-                    write_targets(spec_dir, [target_rel])
+                    print(
+                        "✗ Declared implementation target is not a canonical workspace source path.\n"
+                        f"  declared: {targets_rel[0]}\n"
+                        f"  resolved: {target_rel}\n"
+                        "  Delivery will not rewrite Phase A target metadata; regenerate the spec "
+                        "with the resolved --target path.",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(2)
                 if workspace_target.source_root == workspace_target.workspace_root:
                     direct_target_path = workspace_target.source_root
                 else:
@@ -1817,9 +1883,9 @@ def _cmd_harness_run(
                     ))
 
             else:
-                # A spec may declare multiple targets. Multiple targets dispatch
-                # to each sub-repo in parallel via run_multi_target (the polyrepo
-                # design documented in CLAUDE.md).
+                # A spec may declare multiple targets. run_multi_target assigns
+                # canonical task ownership and serializes cross-target dependency
+                # order so shared progress writes cannot race.
                 targets = validate_targets(targets_rel, polyrepo_root)
                 _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
                 source_ids: dict[str, str] = {}
@@ -1841,32 +1907,8 @@ def _cmd_harness_run(
                 sys.exit(run_multi_target(spec_id, targets, args[1:], **dispatch_metadata))
 
         if not target_env and direct_target_path is None:
-            workspace_target = _resolve_harness_workspace_target(
-                polyrepo_root,
-                None,
-                spec_dir=spec_dir,
-                spec_id=resolved_spec_id,
-                rerun_command=rerun_command,
-            )
-            if workspace_target.source_root != workspace_target.workspace_root:
-                target_rel = workspace_target.source_root.relative_to(
-                    workspace_target.workspace_root
-                ).as_posix()
-                if mode == "banzai":
-                    write_targets(spec_dir, [target_rel])
-                    print(f"✓ Wrote inferred implementation target: {target_rel}")
-                target = validate_single_target([target_rel], polyrepo_root)
-                _block_if_harness_phase_a_not_ready(spec_dir, resolved_spec_id)
-                sys.exit(run_multi_target(
-                    spec_id,
-                    [target],
-                    args[1:],
-                    **_workspace_target_dispatch_metadata(workspace_target),
-                ))
-
-            if direct_target_path is None:
-                _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
-                sys.exit(1)
+            _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
+            sys.exit(1)
 
     if not target_env and direct_target_path is None:
         _print_missing_spec_target_error(spec_id, command_prefix=command_prefix)
@@ -2331,6 +2373,11 @@ def _cmd_harness_resume(
         polyrepo_root = spec_dir.parent.parent
         targets_rel: list[str] = read_targets(spec_dir)
         if targets_rel:
+            _block_if_spec_task_targets_mismatch(
+                spec_dir,
+                targets_rel,
+                resolved_spec_id,
+            )
             if len(targets_rel) == 1:
                 workspace_target = _resolve_harness_workspace_target(
                     polyrepo_root,
@@ -3004,62 +3051,6 @@ def _interrupted_retry_phase(run_state: dict) -> str | None:
     return _last_incomplete_dispatch_phase(run_state)
 
 
-def _pending_re_recovery_phase(squad_dir: Path, run_state: dict) -> str | None:
-    """Return discovery when its nested GOLDDIGGER controller must resume.
-
-    RE is pre-dispatch work for phase1-discover. Its controller owns repair
-    retries and publication, so an outer escalation must never route around it
-    to constitution or WHAT.
-    """
-    if run_state.get("golddigger_status") == "complete":
-        return None
-    re_state_path = squad_dir / "re" / "state.json"
-    try:
-        re_state = json.loads(re_state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    phase = re_state.get("phase")
-    if (
-        re_state.get("status") == "blocked"
-        and isinstance(phase, str)
-        and phase.startswith("re-extract-")
-    ):
-        return "phase1-discover"
-    return None
-
-
-def _sync_same_run_re_generation_for_continue(
-    project_root: Path,
-    squad_dir: Path,
-    run_state: dict,
-) -> dict:
-    if (
-        run_state.get("status") != "blocked"
-        or run_state.get("blocked_reason") != "re_generation_mismatch"
-    ):
-        return run_state
-    try:
-        from harness.re_registry import load_published_index
-    except Exception:
-        return run_state
-    try:
-        index = load_published_index(project_root)
-    except Exception:
-        return run_state
-    if index is None or index.published_from_run != squad_dir.name:
-        return run_state
-    updated = dict(run_state)
-    updated["status"] = "done"
-    updated["phase"] = "DONE"
-    updated["re_generation"] = index.generation
-    updated["re_publication_required"] = False
-    updated["blocked_reason"] = None
-    updated.pop("blocked_phase", None)
-    updated.pop("re_generation_expected", None)
-    updated.pop("re_generation_actual", None)
-    return updated
-
-
 def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
     status = str(run_state.get("status") or "").strip()
     reason = str(run_state.get("blocked_reason") or "").strip()
@@ -3231,8 +3222,7 @@ def _print_squad_summary(
     *,
     mode: str,
     message: str,
-    target_source: str = "",
-    re_policy: str = "",
+    implementation_targets: list[str] | None = None,
 ) -> None:
     """Render a delivery-style Phase A/spec authoring summary."""
     import json as _json
@@ -3270,10 +3260,8 @@ def _print_squad_summary(
     if spec_id:
         fields.append(("spec", spec_id))
     fields.append(("mode", mode))
-    if target_source:
-        fields.append(("target", target_source))
-    if re_policy:
-        fields.append(("RE policy", re_policy))
+    if implementation_targets:
+        fields.append(("targets", ", ".join(implementation_targets)))
     if message:
         fields.append(("task", message))
 
@@ -4757,6 +4745,64 @@ def _consume_mode_arg(
     return mode, next_index
 
 
+def _resolve_spec_run_implementation_targets(
+    project_root: Path,
+    requested_targets: list[str],
+    *,
+    allow_missing: bool,
+) -> list[str]:
+    """Resolve Phase A implementation targets before any agent dispatch."""
+    from echelon.workspace_model import discover_workspace
+
+    root = project_root.resolve()
+    manifest = discover_workspace(root)
+    if not requested_targets:
+        if len(manifest.sources) > 1:
+            print(
+                "✗ echelon spec run: multiple source repositories were discovered.\n"
+                "  Declare every implementation destination with repeatable "
+                "--target <source-id-or-path> options.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if len(manifest.sources) == 1:
+            return [manifest.sources[0].path]
+        return ["."]
+
+    resolved: list[str] = []
+    by_id = {source.id: source.path for source in manifest.sources}
+    by_path = {source.path: source.path for source in manifest.sources}
+    for raw_target in requested_targets:
+        raw = raw_target.strip()
+        if not raw:
+            continue
+        path = Path(raw).expanduser()
+        if path.is_absolute():
+            try:
+                normalized = path.resolve().relative_to(root).as_posix()
+            except ValueError:
+                normalized = path.resolve().as_posix()
+        else:
+            normalized = path.as_posix().rstrip("/") or "."
+        target = by_id.get(raw) or by_path.get(normalized) or normalized
+        target_path = Path(target).expanduser()
+        if not target_path.is_absolute():
+            target_path = root if target == "." else root / target
+        if not allow_missing and not target_path.is_dir():
+            print(
+                f"✗ echelon spec run: implementation target not found: {raw}\n"
+                f"  Use --init to create it, or choose a configured workspace source.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if target not in resolved:
+            resolved.append(target)
+    if not resolved:
+        print("✗ echelon spec run: --target requires a source id or path", file=sys.stderr)
+        raise SystemExit(1)
+    return resolved
+
+
 def _cmd_run(
     args: list[str],
     project_root: Path,
@@ -4777,10 +4823,14 @@ def _cmd_run(
     mode = "semi"
     reset = False
     next_phase = ""
-    target_source = os.environ.get("ECHELON_TARGET_SOURCE", "").strip()
+    implementation_targets = [
+        value.strip()
+        for value in os.environ.get("ECHELON_IMPLEMENTATION_TARGETS", "").split(",")
+        if value.strip()
+    ]
+    product_input_values: list[str] = []
     init_target = False
-    re_policy = os.environ.get("ECHELON_RE_POLICY", "").strip()
-    re_max_inner: int | None = None
+    ignore_re = False
     message_parts: list[str] = []
     i = 0
     while i < len(args):
@@ -4800,58 +4850,61 @@ def _cmd_run(
         elif args[i] == "--next-phase" and i + 1 < len(args):
             next_phase = args[i + 1]
             i += 2
-        elif args[i] in {"--target", "--target-source"}:
+        elif args[i] == "--target":
             if i + 1 >= len(args):
                 print(
                     "✗ echelon spec run: --target requires a source id or path",
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            target_source = args[i + 1].strip()
+            implementation_targets.append(args[i + 1].strip())
             i += 2
         elif args[i].startswith("--target="):
-            target_source = args[i].split("=", 1)[1].strip()
+            implementation_targets.append(args[i].split("=", 1)[1].strip())
             i += 1
-        elif args[i].startswith("--target-source="):
-            target_source = args[i].split("=", 1)[1].strip()
-            i += 1
-        elif args[i] == "--re-policy":
+        elif args[i] == "--input":
             if i + 1 >= len(args):
-                print(
-                    "✗ echelon spec run: --re-policy requires a policy name",
-                    file=sys.stderr,
-                )
+                print("✗ echelon spec run: --input requires role:path", file=sys.stderr)
                 sys.exit(1)
-            re_policy = args[i + 1].strip()
+            product_input_values.append(args[i + 1].strip())
             i += 2
-        elif args[i].startswith("--re-policy="):
-            re_policy = args[i].split("=", 1)[1].strip()
+        elif args[i].startswith("--input="):
+            product_input_values.append(args[i].split("=", 1)[1].strip())
             i += 1
-        elif args[i] == "--re-max-inner":
-            if i + 1 >= len(args):
-                print("✗ echelon spec run: --re-max-inner requires a positive integer", file=sys.stderr)
-                sys.exit(1)
-            try:
-                re_max_inner = int(args[i + 1])
-            except ValueError:
-                re_max_inner = 0
-            if re_max_inner < 1:
-                print("✗ echelon spec run: --re-max-inner requires a positive integer", file=sys.stderr)
-                sys.exit(1)
-            i += 2
-        elif args[i].startswith("--re-max-inner="):
-            try:
-                re_max_inner = int(args[i].split("=", 1)[1])
-            except ValueError:
-                re_max_inner = 0
-            if re_max_inner < 1:
-                print("✗ echelon spec run: --re-max-inner requires a positive integer", file=sys.stderr)
-                sys.exit(1)
+        elif args[i] == "--ignore-re":
+            ignore_re = True
             i += 1
+        elif args[i] in {"--re-policy", "--re-max-inner"}:
+            moved = args[i]
+            print(
+                f"✗ echelon spec run: {moved} moved to 'echelon re run'.\n"
+                "  Run reverse engineering explicitly, then start the spec run.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        elif args[i].startswith("--re-policy=") or args[i].startswith("--re-max-inner="):
+            moved = args[i].split("=", 1)[0]
+            print(
+                f"✗ echelon spec run: {moved} moved to 'echelon re run'.\n"
+                "  Run reverse engineering explicitly, then start the spec run.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
         else:
             message_parts.append(args[i])
             i += 1
     message = " ".join(message_parts)
+    if init_target and not implementation_targets:
+        print(
+            "✗ echelon spec run: --init requires --target <source id or path>",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    implementation_targets = _resolve_spec_run_implementation_targets(
+        project_root,
+        implementation_targets,
+        allow_missing=init_target,
+    )
     _workspace_git_preflight_for_squad_run(
         project_root,
         command_name=_command_display("echelon spec run", args),
@@ -4871,28 +4924,57 @@ def _cmd_run(
         )
 
     if init_target:
-        if not target_source:
+        from echelon.workspace_sources import ensure_source_config_entry
+        for implementation_target in implementation_targets:
+            init_messages = _prepare_spec_target_repo(
+                project_root,
+                squad_dir,
+                implementation_target,
+            )
+            source_added = ensure_source_config_entry(project_root, implementation_target)
+            for init_message in init_messages:
+                print(init_message)
+            if source_added:
+                print(f"Added workspace source: {implementation_target}")
+
+    state_store = SquadStateStore(squad_dir)
+    product_inputs = None
+    existing_state = state_store.load()
+    existing_inputs = existing_state.get("product_inputs") if existing_state else None
+    if existing_inputs and not reset:
+        declared_before = existing_inputs.get("declarations") if isinstance(existing_inputs, dict) else None
+        declared_now: list[dict[str, str]] = []
+        if product_input_values:
+            from echelon.product_inputs import ProductInputError, parse_input_declaration
+            try:
+                declared_now = [
+                    {"role": value.role, "location": value.location}
+                    for value in (parse_input_declaration(raw) for raw in product_input_values)
+                ]
+            except ProductInputError as exc:
+                print(f"✗ echelon spec run: {exc}", file=sys.stderr)
+                raise SystemExit(1) from exc
+        if declared_now and declared_now != declared_before:
             print(
-                "✗ echelon spec run: --init requires --target <source id or path>",
+                "✗ echelon spec run: product inputs are immutable for an active run. "
+                "Start a new run with --reset to change --input declarations.",
                 file=sys.stderr,
             )
-            sys.exit(1)
-        init_messages = _prepare_spec_target_repo(project_root, squad_dir, target_source)
-        from echelon.workspace_sources import ensure_source_config_entry
-
-        source_added = ensure_source_config_entry(project_root, target_source)
-        for init_message in init_messages:
-            print(init_message)
-        if source_added:
-            print(f"Added workspace source: {target_source}")
+            raise SystemExit(1)
+    elif product_input_values:
+        from echelon.product_inputs import ProductInputError, parse_input_declaration, resolve_product_inputs
+        try:
+            product_inputs = resolve_product_inputs(
+                project_root,
+                squad_dir,
+                [parse_input_declaration(raw) for raw in product_input_values],
+            )
+        except ProductInputError as exc:
+            print(f"✗ echelon spec run: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
 
     config = load_config(project_root, squad_only=True)
     provider = SquadCliProvider(config)
-    state_store = SquadStateStore(squad_dir)
-    if re_max_inner is not None:
-        state = state_store.load()
-        state["re_max_inner"] = re_max_inner
-        state_store.save(state)
     graph = PhaseGraph(
         ext_dir / "workflow/definition.yaml",
         ext_dir / "extension.yml",
@@ -4921,8 +5003,9 @@ def _cmd_run(
         token_budget=token_budget,
         max_iterations=max_iterations,
         squad_dir=squad_dir,
-        re_policy=re_policy,
-        target_source=target_source,
+        ignore_re=ignore_re,
+        implementation_targets=implementation_targets,
+        product_inputs=product_inputs,
     )
 
     _print_cost_summary(project_root)
@@ -4937,8 +5020,8 @@ def _cmd_run(
         ("Mode", mode),
         ("Task", (message[:80] + "…") if len(message) > 80 else message),
         ("Dir", str(squad_dir.name)),
-        ("RE target", target_source or "(all sources)"),
-        ("RE policy", re_policy or "(default)"),
+        ("Implementation targets", ", ".join(implementation_targets)),
+        ("Published RE", "ignored" if ignore_re else "latest"),
     ])
 
     result = controller.run(user_message=message, mode=mode, next_phase_override=next_phase)
@@ -4949,8 +5032,7 @@ def _cmd_run(
         result,
         mode=mode,
         message=message,
-        target_source=target_source,
-        re_policy=re_policy,
+        implementation_targets=implementation_targets,
     )
     _print_next_steps(project_root, result.status)
     if result.status != "done":
@@ -5736,31 +5818,19 @@ def _cmd_continue(
 
     # Optionally accept --mode override
     mode_override = ""
-    re_max_inner: int | None = None
     i = 0
     while i < len(args):
         parsed_mode, next_i = _consume_mode_arg(args, i, command_name="echelon spec continue")
         if parsed_mode is not None:
             mode_override = parsed_mode
             i = next_i
-        elif args[i] == "--re-max-inner" and i + 1 < len(args):
-            try:
-                re_max_inner = int(args[i + 1])
-            except ValueError:
-                re_max_inner = 0
-            if re_max_inner < 1:
-                print("✗ echelon spec continue: --re-max-inner requires a positive integer", file=sys.stderr)
-                sys.exit(1)
-            i += 2
-        elif args[i].startswith("--re-max-inner="):
-            try:
-                re_max_inner = int(args[i].split("=", 1)[1])
-            except ValueError:
-                re_max_inner = 0
-            if re_max_inner < 1:
-                print("✗ echelon spec continue: --re-max-inner requires a positive integer", file=sys.stderr)
-                sys.exit(1)
-            i += 1
+        elif args[i] == "--re-max-inner" or args[i].startswith("--re-max-inner="):
+            print(
+                "✗ echelon spec continue: --re-max-inner moved to "
+                "'echelon re continue'.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
         else:
             i += 1
 
@@ -5803,11 +5873,6 @@ def _cmd_continue(
         state = prepared_state
         (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
 
-    synced_state = _sync_same_run_re_generation_for_continue(project_root, squad_dir, state)
-    if synced_state != state:
-        state = synced_state
-        (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
-
     phase_labels = {
         "phase1-discover":     "SCOUT (retry failed discovery dispatch)",
         "phase1-constitution": "CHIEF → speckit.constitution (creates constitution.md)",
@@ -5840,18 +5905,7 @@ def _cmd_continue(
             flush=True,
         )
         run_args = [user_message, "--mode", mode]
-        if re_max_inner is not None:
-            run_args.extend(["--re-max-inner", str(re_max_inner)])
         _cmd_run(run_args, project_root=project_root, ext_dir=ext_dir)
-
-    pending_recovery_phase = _pending_re_recovery_phase(squad_dir, state)
-    if pending_recovery_phase:
-        start_phase(
-            pending_recovery_phase,
-            verb="Resuming blocked reverse engineering from",
-            clear_recovery=True,
-        )
-        return
 
     action = _classify_run_recovery(state)
     if action.kind == "safe_rewind":
@@ -6561,8 +6615,12 @@ def _cmd_resume(
         token_budget=token_budget,
         max_iterations=max_iterations,
         squad_dir=squad_dir,
-        re_policy=str(state.get("requested_re_policy") or ""),
-        target_source=str(state.get("target_source") or ""),
+        ignore_re=(state.get("published_re_context") or {}).get("status") == "ignored",
+        implementation_targets=[
+            str(value)
+            for value in (state.get("implementation_targets") or [])
+            if str(value).strip()
+        ],
     )
     result = controller.run(
         user_message=state.get("user_message", ""),
@@ -6808,7 +6866,145 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
     sys.exit(result.returncode)
 
 
-# ── RE publication subcommand ────────────────────────────────────────────────
+# ── RE lifecycle and publication subcommands ────────────────────────────────
+
+def _parse_re_lifecycle_options(
+    args: list[str],
+    *,
+    allow_policy: bool,
+    allow_reset: bool,
+) -> tuple[str, int | None, bool, list[str]]:
+    policy = "changed"
+    re_max_inner: int | None = None
+    reset = False
+    positional: list[str] = []
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--re-policy" and allow_policy:
+            if index + 1 >= len(args):
+                raise ValueError("--re-policy requires a policy name")
+            policy = args[index + 1].strip()
+            index += 2
+        elif arg.startswith("--re-policy=") and allow_policy:
+            policy = arg.split("=", 1)[1].strip()
+            index += 1
+        elif arg == "--re-max-inner":
+            if index + 1 >= len(args):
+                raise ValueError("--re-max-inner requires a positive integer")
+            try:
+                re_max_inner = int(args[index + 1])
+            except ValueError as exc:
+                raise ValueError("--re-max-inner requires a positive integer") from exc
+            index += 2
+        elif arg.startswith("--re-max-inner="):
+            try:
+                re_max_inner = int(arg.split("=", 1)[1])
+            except ValueError as exc:
+                raise ValueError("--re-max-inner requires a positive integer") from exc
+            index += 1
+        elif arg == "--reset" and allow_reset:
+            reset = True
+            index += 1
+        elif arg.startswith("-"):
+            raise ValueError(f"unknown option {arg!r}")
+        else:
+            positional.append(arg)
+            index += 1
+    if re_max_inner is not None and re_max_inner < 1:
+        raise ValueError("--re-max-inner requires a positive integer")
+    return policy, re_max_inner, reset, positional
+
+
+def _re_lifecycle_controller(project_root: Path):
+    from harness.config import load_config
+    from harness.re_lifecycle import ReLifecycleController
+    from harness.squad_provider import SquadCliProvider
+
+    extension_root = _installed_extension_or_exit(project_root)
+    config = load_config(project_root, squad_only=True)
+    return ReLifecycleController(
+        project_root=project_root,
+        extension_root=extension_root,
+        provider_factory=lambda: SquadCliProvider(config),
+    )
+
+
+def _print_re_lifecycle_result(result: object) -> None:
+    status = str(getattr(result, "status", "failed"))
+    run_id = str(getattr(result, "run_id", ""))
+    generation = int(getattr(result, "generation", 0) or 0)
+    no_work = bool(getattr(result, "no_work", False))
+    if status == "done":
+        if no_work:
+            print(f"RE publication is current (generation {generation}); no agent work required.")
+        else:
+            print(f"RE run {run_id} complete; published generation {generation}.")
+        return
+    reason = str(getattr(result, "blocked_reason", "RE lifecycle failed"))
+    print(f"RE run {run_id or '(not created)'} blocked: {reason}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def _cmd_re_run(args: list[str]) -> None:
+    from harness.re_lifecycle import ReLifecycleError
+
+    try:
+        policy, re_max_inner, reset, positional = _parse_re_lifecycle_options(
+            args,
+            allow_policy=True,
+            allow_reset=True,
+        )
+        if positional:
+            raise ValueError("echelon re run does not accept positional arguments")
+        result = _re_lifecycle_controller(Path.cwd()).run(
+            policy=policy,
+            re_max_inner=re_max_inner,
+            reset=reset,
+        )
+    except (ReLifecycleError, ValueError) as exc:
+        print(f"echelon re run: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    _print_re_lifecycle_result(result)
+
+
+def _cmd_re_continue(args: list[str]) -> None:
+    from harness.re_lifecycle import ReLifecycleError
+
+    try:
+        _policy, re_max_inner, _reset, positional = _parse_re_lifecycle_options(
+            args,
+            allow_policy=False,
+            allow_reset=False,
+        )
+        if positional:
+            raise ValueError("echelon re continue does not accept positional arguments")
+        result = _re_lifecycle_controller(Path.cwd()).continue_run(re_max_inner)
+    except (ReLifecycleError, ValueError) as exc:
+        print(f"echelon re continue: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    _print_re_lifecycle_result(result)
+
+
+def _cmd_re_resume(args: list[str]) -> None:
+    from harness.re_lifecycle import ReLifecycleError
+
+    try:
+        _policy, re_max_inner, _reset, positional = _parse_re_lifecycle_options(
+            args,
+            allow_policy=False,
+            allow_reset=False,
+        )
+        if len(positional) != 1:
+            raise ValueError('usage: echelon re resume "<answer>"')
+        result = _re_lifecycle_controller(Path.cwd()).resume(
+            positional[0],
+            re_max_inner,
+        )
+    except (ReLifecycleError, ValueError) as exc:
+        print(f"echelon re resume: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+    _print_re_lifecycle_result(result)
 
 def _cmd_re_publish(args: list[str]) -> None:
     """Publish one validated run into the canonical workspace RE registry."""
@@ -7041,8 +7237,8 @@ def _cmd_spec(args: list[str]) -> None:
             "Usage: echelon spec <subcommand> [args...]\n\n"
             "  run <description> [--mode semi|banzai|guided] [--reset]\n"
             "                    [--message <text>] [--next-phase <id>]\n"
-            "                    [--target <source-id-or-path>] [--init]\n"
-            "                    [--re-policy none|cached-only|changed|target-changed|target-only|refresh-all]\n"
+            "                    [--target <source-id-or-path>]... [--init]\n"
+            "                    [--ignore-re]\n"
             "                                      Run Phase A squad spec authoring\n"
             "  status                              Show current run state and next action\n"
             "  continue [--mode semi|banzai|guided]\n"
@@ -7051,9 +7247,6 @@ def _cmd_spec(args: list[str]) -> None:
             "  rewind <phase-id>                   Rewind the active squad run to a checkpoint\n"
             "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
             "                                      Manage Phase A/spec checkpoints\n"
-            "  target <spec_id> <repo> [repo...] [--init]\n"
-            "                                      Set targets: in spec frontmatter\n"
-            "                                      With --init, create/prepare target Git repo(s).\n"
             "  artifacts <spec_id>                 Generate specs/<id>/ARTIFACTS.md\n"
             "  verify <spec_id> [--reconcile] [--dry-run]\n"
             "                                      Audit implementation against spec\n"
@@ -7243,77 +7436,153 @@ def _prepare_spec_target_repo(workspace_root: Path, spec_dir: Path, repo: str) -
 
 
 def _cmd_spec_target(args: list[str]) -> None:
-    if len(args) < 2:
+    print(
+        "✗ echelon spec target no longer mutates generated specifications.\n"
+        "  Implementation targets must be declared when authoring begins:\n"
+        "    echelon spec run <description> --target <source-path> "
+        "[--target <source-path> ...]\n"
+        "  Changing targets afterward invalidates target-dependent artifacts; "
+        "start a new spec run instead.",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+
+
+def _cmd_spec_targets(args: list[str]) -> None:
+    """Display every canonical task grouped by its explicit source target."""
+    if len(args) != 1:
         print(
-            "echelon spec target: usage: echelon spec target <spec_id> <repo> "
-            "[repo...] [--init]\n",
+            "echelon spec targets: usage: echelon spec targets <spec_id>",
             file=sys.stderr,
         )
         sys.exit(1)
+
+    from harness.spec_frontmatter import find_spec_dir, read_targets
+    from harness.task_targets import analyze_task_targets
 
     spec_id = args[0]
-    init_targets = False
-    repos: list[str] = []
-    for arg in args[1:]:
-        if arg == "--init":
-            init_targets = True
-        elif arg.startswith("--"):
-            print(f"echelon spec target: unknown option '{arg}'", file=sys.stderr)
-            sys.exit(1)
-        else:
-            repos.append(arg)
+    spec_dir = find_spec_dir(spec_id, Path.cwd())
+    if spec_dir is None:
+        print(f"✗ Spec '{spec_id}' not found (searched from {Path.cwd()})", file=sys.stderr)
+        sys.exit(1)
 
-    if not repos:
+    tasks_file = spec_dir / "tasks.md"
+    if not tasks_file.is_file():
         print(
-            "echelon spec target: usage: echelon spec target <spec_id> <repo> "
-            "[repo...] [--init]\n",
+            f"✗ Spec {spec_dir.name}: canonical tasks file not found: {tasks_file}",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    from harness.spec_frontmatter import find_spec_dir, write_targets
+    analysis = analyze_task_targets(tasks_file.read_text(encoding="utf-8"))
 
-    # Check for ambiguity: multiple specs/ dirs matching spec_id at the found level
-    start = Path.cwd()
-    current = start
-    while True:
-        matches = sorted(current.glob(f"specs/{spec_id}-*"))
-        if len(matches) > 1:
-            print(f"✗ Ambiguous spec id '{spec_id}': multiple matches:", file=sys.stderr)
-            for m in matches:
-                print(f"  {m}", file=sys.stderr)
-            sys.exit(1)
-        if matches:
-            break
-        parent = current.parent
-        if parent == current or (parent / ".git").exists():
-            break
-        current = parent
+    def normalize_target(value: str) -> str:
+        normalized = str(value).strip().replace("\\", "/")
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        return normalized.rstrip("/") or "."
 
-    spec_dir = find_spec_dir(spec_id, start)
-    if spec_dir is None:
-        print(f"✗ Spec '{spec_id}' not found (searched from {start})", file=sys.stderr)
-        sys.exit(1)
+    declared_targets = tuple(
+        sorted(
+            {
+                normalize_target(target)
+                for target in read_targets(spec_dir)
+                if str(target).strip()
+            }
+        )
+    )
+    declared_set = set(declared_targets)
+    referenced_targets = set(analysis.target_tasks)
+    for targets in analysis.cross_target_tasks.values():
+        referenced_targets.update(targets)
+    missing_targets = tuple(sorted(referenced_targets - declared_set))
+    unreferenced_targets = tuple(sorted(declared_set - referenced_targets))
 
-    init_messages: list[str] = []
-    if init_targets:
-        for repo in repos:
-            init_messages.extend(_prepare_spec_target_repo(start, spec_dir, repo))
+    def task_line(task_id: str, *, target_suffix: str = "") -> str:
+        title = analysis.task_titles.get(task_id, "")
+        label = f"{task_id}  {title}" if title else task_id
+        return f"  {label}{target_suffix}"
 
-    md = write_targets(spec_dir, repos)
-    try:
-        display = md.relative_to(start)
-    except ValueError:
-        display = md
-    for message in init_messages:
-        print(message)
-    print(f"Updated {display}")
-    print("  targets:")
-    for r in repos:
-        print(f"    - {r}")
-    if init_targets:
+    print(f"Spec: {spec_dir.name}")
+    print("Declared targets:")
+    if declared_targets:
+        for target in declared_targets:
+            print(f"  {target}")
+    else:
+        print("  (none)")
+
+    for target, task_ids in analysis.target_tasks.items():
+        status = "declared" if target in declared_set else "missing declaration"
         print()
-        print(f"Next: echelon delivery target {spec_dir.name}")
+        print(f"{target} [{status}]")
+        for task_id in task_ids:
+            print(task_line(task_id))
+
+    if analysis.unowned_tasks:
+        print()
+        print("UNOWNED")
+        for task_id in analysis.unowned_tasks:
+            print(task_line(task_id))
+
+    if analysis.cross_target_tasks:
+        print()
+        print("CROSS-TARGET")
+        for task_id, targets in analysis.cross_target_tasks.items():
+            print(task_line(task_id, target_suffix=f" [{', '.join(targets)}]"))
+
+    non_cross_path_mismatches = {
+        task_id: mismatch
+        for task_id, mismatch in analysis.path_target_mismatches.items()
+        if task_id not in analysis.cross_target_tasks
+    }
+    if non_cross_path_mismatches:
+        print()
+        print("TARGET/PATH MISMATCH")
+        for task_id, (target, paths) in non_cross_path_mismatches.items():
+            print(
+                f"  mismatch {task_id}: target={target}; paths={', '.join(paths)}"
+            )
+
+    if missing_targets:
+        print()
+        print("Missing declared targets:")
+        for target in missing_targets:
+            print(f"  {target}")
+
+    if unreferenced_targets:
+        print()
+        print("Declared but unreferenced targets:")
+        for target in unreferenced_targets:
+            print(f"  {target}")
+
+    assigned_count = sum(len(task_ids) for task_ids in analysis.target_tasks.values())
+    print()
+    print(
+        f"Tasks: {len(analysis.all_task_ids)} total; {assigned_count} assigned; "
+        f"{len(analysis.unowned_tasks)} unowned; "
+        f"{len(analysis.cross_target_tasks)} cross-target"
+    )
+
+    invalid_reasons: list[str] = []
+    if missing_targets:
+        invalid_reasons.append(f"{len(missing_targets)} missing declaration(s)")
+    if unreferenced_targets:
+        invalid_reasons.append(f"{len(unreferenced_targets)} unreferenced declaration(s)")
+    if analysis.unowned_tasks:
+        invalid_reasons.append(f"{len(analysis.unowned_tasks)} unowned task(s)")
+    if analysis.cross_target_tasks:
+        invalid_reasons.append(
+            f"{len(analysis.cross_target_tasks)} cross-target task(s)"
+        )
+    if analysis.path_target_mismatches:
+        invalid_reasons.append(
+            f"{len(analysis.path_target_mismatches)} target/path mismatch(es)"
+        )
+
+    if invalid_reasons:
+        print("Result: invalid — " + ", ".join(invalid_reasons))
+        sys.exit(2)
+    print("Result: valid")
 
 
 def _cmd_workspace(args: list[str]) -> None:

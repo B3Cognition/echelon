@@ -15,9 +15,7 @@ from typing import Optional
 
 from echelon.artifact_index import write_artifact_index
 from echelon.context_builder import build_run_context
-from echelon.workspace_model import discover_workspace
 from harness.condition_evaluator import ConditionEvaluator
-from harness.config import get_full_resolved_config
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
     validate_echelon_result,
@@ -30,12 +28,9 @@ from harness.phase_a_readiness import (
 )
 from harness.phase_checkpoints import create_phase_checkpoint
 from harness.quality_scores import normalize_why_quality_scores
-from harness.re_fingerprint import ReFingerprintProfile
-from harness.re_materializer import materialize_re_run_context
-from harness.re_planner import build_re_execution_plan
-from harness.re_registry import load_published_index
+from harness.published_re_context import attach_published_re_context
 from harness.run_history import append_phase_a_run
-from harness.spec_frontmatter import find_spec_dir
+from harness.spec_frontmatter import find_spec_dir, write_targets
 from harness.squad_executors import (
     AgentExecutor,
     CommanderInternalExecutor,
@@ -91,55 +86,6 @@ JUDGMENT_STATE_UPDATE_KEYS = frozenset(
 )
 
 logger = logging.getLogger(__name__)
-
-
-class ReGenerationMismatch(RuntimeError):
-    """Raised when a run's pinned RE generation is no longer current."""
-
-    def __init__(self, expected: int, actual: int) -> None:
-        self.expected = expected
-        self.actual = actual
-        super().__init__(
-            f"pinned RE generation {expected} does not match current generation {actual}"
-        )
-
-
-def assert_re_generation(workspace_root: Path, expected_generation: int) -> None:
-    """Require the workspace registry to match a run's pinned generation."""
-    index = load_published_index(workspace_root)
-    actual_generation = index.generation if index is not None else 0
-    if actual_generation != expected_generation:
-        raise ReGenerationMismatch(expected_generation, actual_generation)
-
-
-def _resolve_re_fingerprint_profile(project_root: Path) -> ReFingerprintProfile:
-    """Resolve extraction settings that affect published RE compatibility."""
-    config = get_full_resolved_config(project_root)
-    re_config = config.get("re") if isinstance(config.get("re"), dict) else {}
-    depth_config = (
-        re_config.get("depth") if isinstance(re_config.get("depth"), dict) else {}
-    )
-    sources_config = (
-        re_config.get("sources") if isinstance(re_config.get("sources"), dict) else {}
-    )
-    discovery_config = (
-        config.get("discovery") if isinstance(config.get("discovery"), dict) else {}
-    )
-    return ReFingerprintProfile.from_json_dict(
-        {
-            "profile": re_config.get("profile", "full"),
-            "depth": depth_config.get("level", "full"),
-            "max_lines_per_file": depth_config.get(
-                "max_lines_per_file",
-                discovery_config.get("max_lines_per_file", 5000),
-            ),
-            "git_history_limit": sources_config.get(
-                "git_history_limit",
-                discovery_config.get("git_history_limit", 2500),
-            ),
-            "codegraph_version": re_config.get("codegraph_version"),
-        }
-    )
 
 
 def _spec_id_from_phase_a_dir(spec_dir: Path) -> str:
@@ -270,8 +216,9 @@ class SquadController:
         token_budget: int = 0,
         max_iterations: int = 5,
         squad_dir: Optional[Path] = None,
-        re_policy: str = "",
-        target_source: str = "",
+        ignore_re: bool = False,
+        implementation_targets: list[str] | None = None,
+        product_inputs: object | None = None,
     ) -> None:
         self._provider = provider
         self._state_store = state_store
@@ -281,8 +228,9 @@ class SquadController:
         self._token_budget = token_budget
         self._max_iterations = max_iterations
         self._squad_dir = squad_dir or state_store.squad_dir
-        self._re_policy = re_policy
-        self._target_source = target_source
+        self._ignore_re = ignore_re
+        self._implementation_targets = list(implementation_targets or [])
+        self._product_inputs = product_inputs
         self._evaluator = ConditionEvaluator()
         self._gate_config_cache: Optional[dict] = None
         self._gov_config_cache: Optional[dict] = None
@@ -585,8 +533,14 @@ class SquadController:
                 entry_phase=entry_phase,
                 max_iterations=self._max_iterations,
                 autonomy_mode=mode,
+                implementation_targets=self._implementation_targets,
+                product_inputs=(
+                    self._product_inputs.state_payload(self._project_root)
+                    if self._product_inputs is not None
+                    else None
+                ),
             )
-            self._initialize_re_context()
+            self._attach_published_re_context()
             if self._state_store.load().get("status") == "blocked":
                 return SquadResult.from_state(self._state_store.load())
             self._refresh_run_context("fresh initialization")
@@ -642,11 +596,6 @@ class SquadController:
             if self._skip_phase_if_condition_false(node):
                 continue
 
-            if not self._guard_re_generation(phase):
-                return SquadResult.from_state(self._state_store.load())
-
-            self._reset_discovery_dispatches_for_pending_recovery(phase)
-
             # Per-phase dispatch cap — prevents runaway loops on any phase.
             # WHY phases use max_iterations as their cap (they legitimately iterate).
             # All other phases use MAX_PHASE_DISPATCHES.
@@ -692,6 +641,10 @@ class SquadController:
             if blocked_result:
                 self._block_after_executor_failure(phase, blocked_result, result)
                 return SquadResult.from_state(self._state_store.load())
+            product_input_error = self._apply_product_input_updates(result)
+            if product_input_error:
+                self._block_after_executor_failure(phase, product_input_error, result)
+                return SquadResult.from_state(self._state_store.load())
 
             next_phase = self._evaluate_transitions(node, result)
             if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
@@ -706,7 +659,6 @@ class SquadController:
                 result,
                 allowed_state_update_keys=node.allowed_state_updates,
             )
-            self._clear_stale_re_failure_context_after_success()
             self._checkpoint_successful_phase(phase, next_phase)
             self._refresh_run_context(f"phase advance {phase} -> {next_phase}")
 
@@ -766,73 +718,21 @@ class SquadController:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
                 continue
 
-    def _initialize_re_context(self) -> None:
-        """Plan and materialize run-local reverse-engineering context."""
+    def _attach_published_re_context(self) -> None:
+        """Snapshot the latest durable RE publication for this spec run."""
         state = self._state_store.load()
         try:
-            manifest = discover_workspace(self._project_root)
-            profile = _resolve_re_fingerprint_profile(self._project_root)
-            published_index = load_published_index(self._project_root)
-            plan = build_re_execution_plan(
-                project_root=self._project_root,
-                manifest=manifest,
-                target_source=self._target_source,
-                requested_policy=self._re_policy,
-                profile=profile,
-                published_index=published_index,
-            )
-            artifacts = materialize_re_run_context(
-                project_root=self._project_root,
-                run_re_dir=self._squad_dir / "re",
-                workspace_manifest=manifest,
-                plan=plan,
-                published_index=published_index,
+            context = attach_published_re_context(
+                self._project_root,
+                self._squad_dir,
+                ignore=self._ignore_re,
             )
         except Exception as exc:
             state["status"] = "blocked"
-            state["blocked_reason"] = f"re_context_initialization_failed: {exc}"
+            state["blocked_reason"] = f"published_re_context_failed: {exc}"
             self._state_store.save(state)
             return
-
-        state.update(
-            {
-                "re_policy": plan.policy,
-                "requested_re_policy": self._re_policy,
-                "target_source": plan.target_source,
-                "re_output_dir": str(self._squad_dir / "re"),
-                "re_execution_plan": plan.to_json_dict(),
-                "re_artifacts": artifacts,
-                "re_generation": published_index.generation if published_index else 0,
-                "re_index": str(self._project_root / "re" / "index.json"),
-                "re_sources": artifacts.get("source_manifests", {}),
-                "re_workspace": artifacts.get("workspace_manifest"),
-                "re_profile": profile.to_json_dict(),
-                "re_profile_hash": profile.profile_hash(),
-                "re_refresh_sources": [
-                    source.id for source in plan.sources if source.action == "refresh"
-                ],
-                "re_missing_sources": [
-                    source.id for source in plan.sources if source.action == "missing"
-                ],
-                "re_empty_sources": [
-                    source.id
-                    for source in plan.sources
-                    if source.classification == "empty"
-                ],
-                "re_unavailable_sources": [
-                    source.id
-                    for source in plan.sources
-                    if source.classification == "unavailable"
-                ],
-                "re_source_actions": {
-                    source.id: source.action for source in plan.sources
-                },
-                "re_forbidden_source_roots": plan.forbidden_source_roots,
-                "re_analysis_required": plan.analysis_required,
-                "re_workspace_synthesis_required": plan.workspace_synthesis_required,
-                "re_publication_required": plan.publication_required,
-            }
-        )
+        state["published_re_context"] = context
         self._state_store.save(state)
 
     def run_single_phase(
@@ -897,8 +797,6 @@ class SquadController:
         label = node.label or node.id
         if self._skip_phase_if_condition_false(node, manual_phase_run=True):
             return SquadResult.from_state(self._state_store.load())
-        if not self._guard_re_generation(phase):
-            return SquadResult.from_state(self._state_store.load())
         print(f"\n[squad] ▶ {node.id}  {label}  (manual phase run)", flush=True)
 
         executor = self._executors.get(node.type)
@@ -913,6 +811,10 @@ class SquadController:
         blocked_result = self._blocked_executor_reason(result)
         if blocked_result:
             self._block_after_executor_failure(phase, blocked_result, result)
+            return SquadResult.from_state(self._state_store.load())
+        product_input_error = self._apply_product_input_updates(result)
+        if product_input_error:
+            self._block_after_executor_failure(phase, product_input_error, result)
             return SquadResult.from_state(self._state_store.load())
 
         next_phase = self._evaluate_transitions(node, result)
@@ -931,91 +833,10 @@ class SquadController:
             allowed_state_update_keys=node.allowed_state_updates,
             manual_phase_run=True,
         )
-        self._clear_stale_re_failure_context_after_success()
         self._checkpoint_successful_phase(phase, next_phase)
         self._refresh_run_context(f"manual phase advance {phase} -> {next_phase}")
         print(f"[squad] ✓ {node.id}  → {next_phase}  (stopped)", flush=True)
         return SquadResult.from_state(self._state_store.load())
-
-    def _guard_re_generation(self, phase: str) -> bool:
-        """Block before dispatch when canonical RE context changed mid-run."""
-        state = self._state_store.load()
-        expected = state.get("re_generation", 0)
-        if not isinstance(expected, int) or isinstance(expected, bool):
-            expected = 0
-        try:
-            assert_re_generation(self._project_root, expected)
-        except ReGenerationMismatch as exc:
-            if self._sync_re_generation_from_same_run_publication(state, exc.actual):
-                return True
-            state["status"] = "blocked"
-            state["phase"] = PHASE_TERMINAL_BLOCKED
-            state["blocked_reason"] = "re_generation_mismatch"
-            state["blocked_phase"] = phase
-            state["re_generation_expected"] = exc.expected
-            state["re_generation_actual"] = exc.actual
-            self._state_store.save(state)
-            print(
-                f"[squad] RE generation changed: expected {exc.expected}, "
-                f"found {exc.actual}; blocking before {phase}",
-                flush=True,
-            )
-            return False
-        return True
-
-    def _sync_re_generation_from_same_run_publication(
-        self,
-        state: dict,
-        actual_generation: int,
-    ) -> bool:
-        index = load_published_index(self._project_root)
-        if index is None:
-            return False
-        if index.generation != actual_generation:
-            return False
-        if index.published_from_run != self._squad_dir.name:
-            return False
-        state["re_generation"] = actual_generation
-        state["re_publication_required"] = False
-        state["blocked_reason"] = None
-        state.pop("re_generation_expected", None)
-        state.pop("re_generation_actual", None)
-        self._state_store.save(state)
-        print(
-            f"[squad] RE generation synchronized from same run publication: "
-            f"{actual_generation}",
-            flush=True,
-        )
-        return True
-
-    def _reset_discovery_dispatches_for_pending_recovery(self, phase: str) -> None:
-        """Do not count a blocked nested RE retry as a SCOUT dispatch.
-
-        GOLDDIGGER runs as phase1-discover pre-dispatch work. When its controller
-        blocks, SCOUT has not run, but the outer phase used to consume one of the
-        five discovery attempts. That made a recoverable RE repair unreachable
-        through ``echelon spec continue``. The nested controller owns its own
-        bounded retry limits, so reset only this pre-dispatch accounting.
-        """
-        if phase != "phase1-discover":
-            return
-        re_state_path = self._squad_dir / "re" / "state.json"
-        try:
-            re_state = json.loads(re_state_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return
-        if re_state.get("status") != "blocked":
-            return
-        re_phase = re_state.get("phase")
-        if not isinstance(re_phase, str) or not re_phase.startswith("re-extract-"):
-            return
-        if self._state_store.get_phase_dispatch_count(phase) == 0:
-            return
-        self._state_store.reset_phase_dispatch_count(phase)
-        print(
-            "[squad] RE recovery pending; resetting discovery dispatch count",
-            flush=True,
-        )
 
     def _skip_phase_if_condition_false(
         self,
@@ -1068,7 +889,6 @@ class SquadController:
                 allowed_state_update_keys=node.allowed_state_updates,
                 manual_phase_run=manual_phase_run,
             )
-            self._clear_stale_re_failure_context_after_success()
             self._checkpoint_successful_phase(node.id, next_phase)
             self._refresh_run_context(f"phase skip {node.id} -> {next_phase}")
             suffix = "  (stopped)" if manual_phase_run else ""
@@ -1151,6 +971,7 @@ class SquadController:
         return candidates
 
     def _publish_phase_a_artifacts_for_build(self) -> PhaseAReadinessResult:
+        self._materialize_implementation_targets()
         state = self._state_store.load()
         active_spec_dir = self._active_phase_a_spec_dir(state)
         if active_spec_dir is None or not active_spec_dir.exists():
@@ -1165,6 +986,14 @@ class SquadController:
                 self._copy_spec_tree(active_spec_dir, published_spec_dir)
             else:
                 published_spec_dir.mkdir(parents=True, exist_ok=True)
+            input_blockers = self._publish_product_input_evidence(published_spec_dir, state)
+            if input_blockers:
+                return PhaseAReadinessResult(
+                    ready=False,
+                    blockers=input_blockers,
+                    missing={},
+                    ready_spec_dir=None,
+                )
             self._publish_constitution_snapshot(published_spec_dir)
             self._write_phase_a_finalization_outputs(published_spec_dir, state)
             write_artifact_index(published_spec_dir)
@@ -1184,6 +1013,31 @@ class SquadController:
         updated["published_spec_dir"] = self._repo_relative_or_absolute(published_spec_dir)
         self._state_store.save(updated)
         return validate_phase_a_readiness(updated, [published_spec_dir])
+
+    def _publish_product_input_evidence(self, published_spec_dir: Path, state: dict) -> list[str]:
+        """Publish safe run-local evidence and enforce the normative input chain."""
+        metadata = state.get("product_inputs")
+        if not isinstance(metadata, dict) or not metadata:
+            return []
+        inputs_ref = str(metadata.get("inputs_dir") or "").strip()
+        if not inputs_ref:
+            return ["product input evidence path is missing from run state"]
+        source = Path(inputs_ref)
+        if not source.is_absolute():
+            source = self._project_root / source
+        if not source.is_dir():
+            return [f"product input evidence directory is missing: {source}"]
+        destination = published_spec_dir / "inputs"
+        if destination.exists():
+            shutil.rmtree(destination)
+        shutil.copytree(source, destination)
+        from echelon.product_inputs import validate_product_input_traceability
+        targets = [
+            str(value).strip()
+            for value in state.get("implementation_targets", [])
+            if str(value).strip()
+        ]
+        return validate_product_input_traceability(published_spec_dir, targets)
 
     def _write_phase_a_finalization_outputs(
         self,
@@ -1350,6 +1204,7 @@ class SquadController:
         return None
 
     def _checkpoint_successful_phase(self, phase: str, next_phase: str) -> None:
+        self._materialize_implementation_targets()
         state = self._state_store.load()
         spec_dir = self._active_phase_a_spec_dir(state)
         if spec_dir is None or not spec_dir.exists():
@@ -1366,17 +1221,53 @@ class SquadController:
         except Exception as exc:
             logger.warning("Could not create phase checkpoint for %s: %s", phase, exc)
 
-    def _clear_stale_re_failure_context_after_success(self) -> None:
+    def _materialize_implementation_targets(self) -> None:
+        """Write authoritative run targets once an active spec exists."""
         state = self._state_store.load()
-        if state.get("status") == "blocked" or state.get("blocked_reason"):
+        targets = [
+            str(value).strip()
+            for value in (
+                state.get("implementation_targets")
+                or getattr(self, "_implementation_targets", [])
+            )
+            if str(value).strip()
+        ]
+        if not targets:
             return
-        changed = False
-        for key in ("re_agent_result_detail", "re_publication_error"):
-            if key in state:
-                state.pop(key, None)
-                changed = True
-        if changed:
-            self._state_store.save(state)
+        spec_dir = self._active_phase_a_spec_dir(state)
+        if (
+            spec_dir is None
+            or not spec_dir.exists()
+            or not (spec_dir / "spec.md").is_file()
+        ):
+            return
+        try:
+            write_targets(spec_dir, targets)
+        except (OSError, ValueError) as exc:
+            logger.warning("Could not materialize implementation targets: %s", exc)
+
+    def _apply_product_input_updates(self, result: SquadAgentResult) -> str | None:
+        """Validate and persist agent proposals through the controller-owned ledger."""
+        payload = result.echelon_result or {}
+        updates = payload.get("product_input_updates")
+        if not updates:
+            return None
+        state = self._state_store.load()
+        metadata = state.get("product_inputs")
+        if not isinstance(metadata, dict):
+            return "product_input_updates received without declared product inputs"
+        traceability_ref = str(metadata.get("traceability") or "").strip()
+        if not traceability_ref:
+            return "product input traceability path is missing from run state"
+        traceability_path = Path(traceability_ref)
+        if not traceability_path.is_absolute():
+            traceability_path = self._project_root / traceability_path
+        try:
+            from echelon.product_inputs import ProductInputError, apply_product_input_updates
+            apply_product_input_updates(traceability_path, updates)
+        except (OSError, ProductInputError) as exc:
+            return f"invalid product input updates: {exc}"
+        return None
 
     def _published_phase_a_spec_dir(self, state: dict, active_spec_dir: Path) -> Path:
         published_ref = str(state.get("published_spec_dir") or "").strip()
@@ -1484,15 +1375,6 @@ class SquadController:
         else:
             state.pop("provider_limit_message", None)
             state.pop("blocked_context", None)
-        state.pop("re_publication_error", None)
-        publication_error = (result.state_updates or {}).get("re_publication_error")
-        if isinstance(publication_error, str) and publication_error.strip():
-            state["re_publication_error"] = publication_error
-        re_detail = (result.state_updates or {}).get("re_agent_result_detail")
-        if isinstance(re_detail, str) and re_detail.strip():
-            state["re_agent_result_detail"] = re_detail.strip()
-        else:
-            state.pop("re_agent_result_detail", None)
         state["last_dispatch"] = {
             "phase_id": phase,
             "verdict": result.verdict,

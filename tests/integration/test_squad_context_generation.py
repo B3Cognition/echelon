@@ -210,7 +210,7 @@ def test_assemble_prompt_resolves_context_dir_context_pack_entries(tmp_path: Pat
     assert "Known feature history." in prompt
 
 
-def test_assemble_prompt_includes_completed_golddigger_cache_files(tmp_path: Path) -> None:
+def test_assemble_prompt_ignores_retired_golddigger_cache_state(tmp_path: Path) -> None:
     squad_dir = tmp_path / "runs" / "run-test"
     cache_dir = squad_dir / "golddigger-cache"
     cache_dir.mkdir(parents=True)
@@ -237,9 +237,9 @@ def test_assemble_prompt_includes_completed_golddigger_cache_files(tmp_path: Pat
 
     prompt = executor._assemble_prompt(node, state)
 
-    assert "# GOLDDIGGER Mode 2 Cache" in prompt
-    assert "golddigger-cache/auth.md" in prompt
-    assert "Token flow details." in prompt
+    assert "# GOLDDIGGER Mode 2 Cache" not in prompt
+    assert "golddigger-cache/auth.md" not in prompt
+    assert "Token flow details." not in prompt
 
 
 def test_run_context_refreshes_after_phase_updates_run_local_spec_artifacts(

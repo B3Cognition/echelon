@@ -81,6 +81,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **spec-validation mode** (WHY2 — post-WHAT).
+  When Product Input Contract paths are present, audit every `IN-REQ-*` mapping in the current traceability ledger against `spec.md`. Return corrective `product_input_updates` for any unsupported included mapping, unresolved question, or conflict; do not directly edit the ledger.
   Run Understanding `validate` against `spec.md` to get deterministic quality scores. After validation, also run per-requirement analysis with `--per-req --json --enhanced` and include the per-requirement failure list in issues.md for speckit-echelon-cartographer (CARTOGRAPHER) consumption. Challenge requirements for ambiguity, incompleteness, untestability. Hunt for missing edge cases, unstated assumptions, implicit requirements. Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50, behavioral >= 0.50, depth >= 0.30. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
