@@ -1,6 +1,7 @@
 """Phase executors for SquadController — one class per definition.yaml type."""
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -318,6 +319,40 @@ def _render_re_execution_context(state: dict) -> str:
     if artifact_lines:
         lines.append("RE_ARTIFACTS:")
         lines.extend(artifact_lines)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _render_published_re_context(state: dict) -> str:
+    """Render the immutable published RE snapshot attached to this spec run."""
+    context = state.get("published_re_context")
+    if not isinstance(context, dict):
+        return _render_re_execution_context(state)
+    status = str(context.get("status") or "absent")
+    lines = [
+        "## Published Reverse Engineering Context",
+        f"PUBLISHED_RE_STATUS={status}",
+        f"PUBLISHED_RE_GENERATION={context.get('generation', 0)}",
+    ]
+    snapshot_root = str(context.get("snapshot_root") or "").strip()
+    if snapshot_root:
+        lines.append(f"PUBLISHED_RE_SNAPSHOT_ROOT={snapshot_root}")
+    artifacts = context.get("artifacts")
+    if status == "attached" and isinstance(artifacts, dict):
+        lines.extend(
+            [
+                "PUBLISHED_RE_ARTIFACTS:",
+                "```json",
+                json.dumps(artifacts, indent=2, sort_keys=True),
+                "```",
+                "- Treat these run-local files as read-only evidence.",
+                "- Do not run reverse engineering or read the mutable canonical re/ tree.",
+            ]
+        )
+    elif status == "ignored":
+        lines.append("- RE context was explicitly ignored for this run.")
+    else:
+        lines.append("- No published RE context was available when this run started.")
     lines.append("")
     return "\n".join(lines)
 
@@ -702,7 +737,7 @@ class PhaseExecutor(ABC):
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_product_input_context(state)}"
-            f"{_render_re_execution_context(state)}"
+            f"{_render_published_re_context(state)}"
             f"{self._extension_path_context()}"
         )
         if spec_dir_ref:
@@ -1240,7 +1275,7 @@ class PhaseExecutor(ABC):
                 + _workspace_source_roots_context(self._project_root)
                 + _render_implementation_target_context(state)
                 + _render_product_input_context(state)
-                + _render_re_execution_context(state)
+                + _render_published_re_context(state)
                 + self._extension_path_context()
                 + "<context>\n"
                 + f"project_root: {self._project_root}\n"
@@ -1268,7 +1303,7 @@ class PhaseExecutor(ABC):
             + _workspace_source_roots_context(self._project_root)
             + _render_implementation_target_context(state)
             + _render_product_input_context(state)
-            + _render_re_execution_context(state)
+            + _render_published_re_context(state)
             + self._extension_path_context()
             + _allowed_state_updates_contract(allowed_state_updates)
             + _canonical_echelon_result_contract(self._ext_dir)

@@ -550,14 +550,6 @@ These are non-negotiable rules:
 
 ---
 
-## speckit-echelon-golddigger (GOLDDIGGER) Mode 2 Deep Dive Requests (brownfield only)
-
-Request GOLDDIGGER Mode 2 only for brownfield domains where complete source-file or integration-topology analysis is required to write testable acceptance criteria.
-
-Load `agents/exploration/appendices/cartographer-golddigger-deep-dive-reference.md` before requesting Mode 2. Do not request it for general uncertainty or when Mode 1 artifacts already answer the question.
-
----
-
 ## Process
 
 ### Step 1: Review All DISCOVER Artifacts

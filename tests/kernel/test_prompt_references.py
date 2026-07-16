@@ -214,14 +214,12 @@ def test_sage_uses_appendix_for_contradiction_detection_reference():
     assert "agents/exploration/appendices/sage-contradiction-detection-reference.md" in text
 
 
-def test_cartographer_uses_appendix_for_brownfield_deep_dive_reference():
+def test_cartographer_does_not_request_reverse_engineering_deep_dives():
     prompt = EXTENSION_ROOT / "agents" / "exploration" / "cartographer.md"
     text = prompt.read_text()
 
-    assert (
-        "agents/exploration/appendices/cartographer-golddigger-deep-dive-reference.md"
-        in text
-    )
+    assert "cartographer-golddigger-deep-dive-reference.md" not in text
+    assert "Mode 2 Deep Dive Requests" not in text
 
 
 def test_commands_use_jsonl_reasoning_journal_name():

@@ -16,7 +16,7 @@ Dispatch speckit-echelon-modeler (MODELER) to build the initial queryable codeba
 - `${STAGING_DIR}/contradictions-and-gaps.md` (cross-source contradiction and gap analysis)
 - `${STAGING_DIR}/` (all discovery and synthesis artifacts)
 - `extension/templates/mental-model-code-template.md`
-- Codebase file structure (from `state.json.mode`: for brownfield, also include `state.json.golddigger_artifacts`)
+- Codebase file structure (from `state.json.mode`; for brownfield, also include the immutable `state.json.published_re_context` snapshot when attached)
 
 **Output required:** `${STAGING_DIR}/mental-model-code.md` using the provided template — entity graph, contract map, data flow trace, and invariants list.
 

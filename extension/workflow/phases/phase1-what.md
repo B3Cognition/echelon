@@ -22,7 +22,7 @@ Read and include in the subagent prompt:
 
 ### 4.2 Dispatch speckit-echelon-cartographer (CARTOGRAPHER)
 
-speckit-echelon-cartographer (CARTOGRAPHER) calls `speckit.specify` itself (via Skill tool) on the first WHAT pass — just like speckit-echelon-golddigger (GOLDDIGGER) calls `speckit.echelon.re-extract` and speckit-echelon-sage (SAGE) calls Understanding via Skill tool. speckit-echelon-commander (COMMANDER) does NOT call `speckit.specify`.
+speckit-echelon-cartographer (CARTOGRAPHER) calls `speckit.specify` itself (via Skill tool) on the first WHAT pass, just as speckit-echelon-sage (SAGE) calls Understanding via Skill tool. speckit-echelon-commander (COMMANDER) does NOT call `speckit.specify`.
 
 On resumed/amendment passes, if `state.json.spec_dir` is set or the prompt includes `cartographer_resume_existing_spec: true`, speckit-echelon-cartographer (CARTOGRAPHER) MUST reuse that existing spec directory and MUST NOT call `speckit.specify`, `create-new-feature.sh`, `git checkout -b`, or any other branch-allocating command.
 

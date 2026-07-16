@@ -105,12 +105,7 @@ Create `${SQUAD_DIR}/state.json`:
   "dispatch_counters": {},
   "split_metrics": { "fallback_count": 0, "qa_coverage": 0.0, "rework_count": 0 },
   "fallback_mode": false,
-  "golddigger_status": null,
-  "golddigger_mode": null,
-  "golddigger_notes": null,
-  "golddigger_artifacts": null,
-  "golddigger_requests": [],
-  "golddigger_completed_domains": []
+  "published_re_context": null
 }
 ```
 
@@ -241,71 +236,11 @@ scripts/bash/kb-validate-evolution.sh --state ${SQUAD_DIR}/state.json
 - Exit 0: Continue
 - Exit 1: Log validation failures to `state.json.issues_log` with severity `MEDIUM`, continue execution (non-blocking — data quality issues should not prevent runs)
 
-### 1.8 speckit-echelon-golddigger (GOLDDIGGER) Mode 1 dispatch (brownfield path only)
+### 1.8 Published RE context (optional read-only input)
 
-If `detected_mode` is `brownfield`:
-
-**Always dispatch GOLDDIGGER immediately for brownfield structure discovery.** NEVER do your own filesystem exploration before dispatching GOLDDIGGER. Do not run `ls`, `find`, or any directory listing to understand the polyrepo structure before this dispatch — that is GOLDDIGGER's job.
-
-First, verify the echelon re-* commands are available (they are bundled with echelon):
-
-```bash
-specify extension info echelon
-```
-
-If this command exits non-zero (extension not installed): skip speckit-echelon-golddigger (GOLDDIGGER), proceed directly to DISCOVER. Always use `specify extension info <id>` as the authoritative source. Do NOT check `extensions.yml`'s `installed:` field — that file tracks hooks, not installed extensions.
-
-If echelon (with re-* commands) is installed:
-
-1. Dispatch speckit-echelon-golddigger (GOLDDIGGER) in Mode 1 (Full Reverse Engineering) before DISCOVER:
-   - Use the Agent tool
-   - `target_path` is `${PROJECT_ROOT}` (the absolute project root established in step 1.0 — the polyrepo root directory)
-   - `run_id` is `state.json.run_id`
-   - **prompt:**
-
-     ```xml
-     <context>
-     project_root: ${PROJECT_ROOT}
-     run_id: {run_id from state.json}
-     mode: brownfield
-     [include state.json.golddigger_artifacts paths if available]
-     </context>
-
-     <instructions>
-     You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.
-     Run **Mode 1 (Full Reverse Engineering)** for target path `${PROJECT_ROOT}`. Your context: run_id is `{run_id}`, mode is brownfield.
-     </instructions>
-     ```
-
-2. Block until speckit-echelon-golddigger (GOLDDIGGER) completes.
-3. Read `state.json.golddigger_status`:
-   - `complete`: proceed — speckit-echelon-scout (SCOUT) will read artifact paths from `state.json.golddigger_artifacts`
-   - `partial` or `failed`: log degraded-brownfield warning; proceed (speckit-echelon-scout (SCOUT) falls back to manual structural analysis)
-
-**speckit-echelon-golddigger (GOLDDIGGER) Mode 2 Queue (Phase 1 agents):**
-
-After each Phase 1 agent (DISCOVER/speckit-echelon-scout (SCOUT), speckit-echelon-synthesizer (SYNTHESIZER), WHY1/speckit-echelon-sage (SAGE), speckit-echelon-cartographer (CARTOGRAPHER), speckit-echelon-modeler (MODELER)) completes, before dispatching the next agent:
-
-1. Read `state.json.golddigger_requests` — if empty or absent, continue
-2. For each pending request entry (each entry is an object: `{domain, repo, requested_by, reason}`):
-   - **Backward compatibility:** If a `golddigger_requests` entry is a plain string (old format), treat it as `{domain: <string>, repo: null, requested_by: "unknown", reason: ""}`.
-   a. Compute the cache key: if `repo` is non-null → `"{repo}--{domain}"`, if `repo` is null → `"{domain}"`
-   b. Check `state.json.golddigger_completed_domains` — if the cache key is already listed, skip (cache hit; data is in `$SQUAD_DIR/golddigger-cache/{cache-key}.md`). Notify the requesting agent in its next context pack.
-   c. Otherwise: dispatch speckit-echelon-golddigger (GOLDDIGGER) in Mode 2 (Deep Dive) for that domain
-      - **prompt:**
-
-        ```xml
-        <context>
-        [include golddigger-cache/{cache-key}.md if available, state.json.golddigger_artifacts paths]
-        </context>
-
-        <instructions>
-        You are GOLDDIGGER. Read agents/exploration/golddigger.md for your complete protocol.
-        Run **Mode 2 (Deep Dive)** for domain `"{domain}"` in repo `"{repo}"` at target path `"{target_path}"`. If repo is null, target path is `"{target_path}"` (single-repo mode).
-        </instructions>
-        ```
-
-   d. After speckit-echelon-golddigger (GOLDDIGGER) completes: remove the entry from `state.json.golddigger_requests`, add the cache key to `state.json.golddigger_completed_domains`, include `$SQUAD_DIR/golddigger-cache/{cache-key}.md` in the requesting agent's next context pack.
-3. Continue to next Phase 1 agent dispatch.
+The harness records `state.json.published_re_context` before workflow dispatch.
+When its status is `attached`, include only its run-local snapshot paths in Phase 1
+context packs. Never dispatch reverse engineering from the spec workflow and never
+read the mutable canonical `re/` tree.
 
 **Transition:** `phases[phase1-discover]` — see `workflow/definition.yaml`

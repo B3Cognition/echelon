@@ -3046,62 +3046,6 @@ def _interrupted_retry_phase(run_state: dict) -> str | None:
     return _last_incomplete_dispatch_phase(run_state)
 
 
-def _pending_re_recovery_phase(squad_dir: Path, run_state: dict) -> str | None:
-    """Return discovery when its nested GOLDDIGGER controller must resume.
-
-    RE is pre-dispatch work for phase1-discover. Its controller owns repair
-    retries and publication, so an outer escalation must never route around it
-    to constitution or WHAT.
-    """
-    if run_state.get("golddigger_status") == "complete":
-        return None
-    re_state_path = squad_dir / "re" / "state.json"
-    try:
-        re_state = json.loads(re_state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    phase = re_state.get("phase")
-    if (
-        re_state.get("status") == "blocked"
-        and isinstance(phase, str)
-        and phase.startswith("re-extract-")
-    ):
-        return "phase1-discover"
-    return None
-
-
-def _sync_same_run_re_generation_for_continue(
-    project_root: Path,
-    squad_dir: Path,
-    run_state: dict,
-) -> dict:
-    if (
-        run_state.get("status") != "blocked"
-        or run_state.get("blocked_reason") != "re_generation_mismatch"
-    ):
-        return run_state
-    try:
-        from harness.re_registry import load_published_index
-    except Exception:
-        return run_state
-    try:
-        index = load_published_index(project_root)
-    except Exception:
-        return run_state
-    if index is None or index.published_from_run != squad_dir.name:
-        return run_state
-    updated = dict(run_state)
-    updated["status"] = "done"
-    updated["phase"] = "DONE"
-    updated["re_generation"] = index.generation
-    updated["re_publication_required"] = False
-    updated["blocked_reason"] = None
-    updated.pop("blocked_phase", None)
-    updated.pop("re_generation_expected", None)
-    updated.pop("re_generation_actual", None)
-    return updated
-
-
 def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
     status = str(run_state.get("status") or "").strip()
     reason = str(run_state.get("blocked_reason") or "").strip()
@@ -3274,7 +3218,6 @@ def _print_squad_summary(
     mode: str,
     message: str,
     implementation_targets: list[str] | None = None,
-    re_policy: str = "",
 ) -> None:
     """Render a delivery-style Phase A/spec authoring summary."""
     import json as _json
@@ -3314,8 +3257,6 @@ def _print_squad_summary(
     fields.append(("mode", mode))
     if implementation_targets:
         fields.append(("targets", ", ".join(implementation_targets)))
-    if re_policy:
-        fields.append(("RE policy", re_policy))
     if message:
         fields.append(("task", message))
 
@@ -5087,7 +5028,6 @@ def _cmd_run(
         mode=mode,
         message=message,
         implementation_targets=implementation_targets,
-        re_policy="",
     )
     _print_next_steps(project_root, result.status)
     if result.status != "done":
@@ -5873,31 +5813,19 @@ def _cmd_continue(
 
     # Optionally accept --mode override
     mode_override = ""
-    re_max_inner: int | None = None
     i = 0
     while i < len(args):
         parsed_mode, next_i = _consume_mode_arg(args, i, command_name="echelon spec continue")
         if parsed_mode is not None:
             mode_override = parsed_mode
             i = next_i
-        elif args[i] == "--re-max-inner" and i + 1 < len(args):
-            try:
-                re_max_inner = int(args[i + 1])
-            except ValueError:
-                re_max_inner = 0
-            if re_max_inner < 1:
-                print("✗ echelon spec continue: --re-max-inner requires a positive integer", file=sys.stderr)
-                sys.exit(1)
-            i += 2
-        elif args[i].startswith("--re-max-inner="):
-            try:
-                re_max_inner = int(args[i].split("=", 1)[1])
-            except ValueError:
-                re_max_inner = 0
-            if re_max_inner < 1:
-                print("✗ echelon spec continue: --re-max-inner requires a positive integer", file=sys.stderr)
-                sys.exit(1)
-            i += 1
+        elif args[i] == "--re-max-inner" or args[i].startswith("--re-max-inner="):
+            print(
+                "✗ echelon spec continue: --re-max-inner moved to "
+                "'echelon re continue'.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
         else:
             i += 1
 
@@ -5940,11 +5868,6 @@ def _cmd_continue(
         state = prepared_state
         (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
 
-    synced_state = _sync_same_run_re_generation_for_continue(project_root, squad_dir, state)
-    if synced_state != state:
-        state = synced_state
-        (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
-
     phase_labels = {
         "phase1-discover":     "SCOUT (retry failed discovery dispatch)",
         "phase1-constitution": "CHIEF → speckit.constitution (creates constitution.md)",
@@ -5977,18 +5900,7 @@ def _cmd_continue(
             flush=True,
         )
         run_args = [user_message, "--mode", mode]
-        if re_max_inner is not None:
-            run_args.extend(["--re-max-inner", str(re_max_inner)])
         _cmd_run(run_args, project_root=project_root, ext_dir=ext_dir)
-
-    pending_recovery_phase = _pending_re_recovery_phase(squad_dir, state)
-    if pending_recovery_phase:
-        start_phase(
-            pending_recovery_phase,
-            verb="Resuming blocked reverse engineering from",
-            clear_recovery=True,
-        )
-        return
 
     action = _classify_run_recovery(state)
     if action.kind == "safe_rewind":
@@ -6698,7 +6610,7 @@ def _cmd_resume(
         token_budget=token_budget,
         max_iterations=max_iterations,
         squad_dir=squad_dir,
-        re_policy=str(state.get("requested_re_policy") or ""),
+        ignore_re=(state.get("published_re_context") or {}).get("status") == "ignored",
         implementation_targets=[
             str(value)
             for value in (state.get("implementation_targets") or [])
