@@ -119,8 +119,6 @@ def prepare_codegraph_runtime(extension_root: Path) -> None:
             [
                 npm,
                 "ci",
-                "--prefix",
-                str(runtime_dir),
                 "--ignore-scripts",
                 "--no-audit",
                 "--no-fund",
@@ -172,8 +170,6 @@ def prepare_perlgraph_runtime(extension_root: Path) -> None:
     install_command = [
         npm,
         "ci",
-        "--prefix",
-        str(runtime_dir),
         "--include=dev",
         "--no-audit",
         "--no-fund",
@@ -183,8 +179,6 @@ def prepare_perlgraph_runtime(extension_root: Path) -> None:
         npm,
         "run",
         "build",
-        "--prefix",
-        str(runtime_dir),
     ]
     env = os.environ.copy()
     env.setdefault("CXXFLAGS", "-std=c++20")

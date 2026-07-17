@@ -947,6 +947,27 @@ def test_continue_manual_block_does_not_claim_human_resume(
     assert 'echelon spec resume "<your answer>"' not in captured.out
 
 
+def test_continue_traceability_readiness_failure_offers_traceability_repair(tmp_path: Path, capsys) -> None:
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_a_readiness_failed",
+            "phase_a_readiness_blockers": [
+                "IN-REQ-1: task T-001 does not reference the mapped specification IDs"
+            ],
+            "completed_phases": ["phase1-constitution", "phase3-plan", "phase3-consensus"],
+        },
+    )
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    captured = capsys.readouterr()
+    assert "echelon spec repair-traceability" in captured.out
+    assert "removes contextual task references" in captured.out
+
+
 def test_continue_retries_external_blocker_phase_after_fix(
     tmp_path: Path,
     monkeypatch,

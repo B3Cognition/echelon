@@ -370,6 +370,35 @@ def test_spec_help_uses_typer_front_door():
 
 
 @pytest.mark.unit
+def test_spec_switch_is_exposed_by_typer_front_door(monkeypatch, tmp_path):
+    from echelon.cli_app import app, run
+
+    help_result = CliRunner().invoke(app, ["spec", "switch", "--help"])
+
+    assert help_result.exit_code == 0
+    assert "SPEC_OR_RUN_ID" in help_result.output
+    assert "--stash" in help_result.output
+    assert "--discard" in help_result.output
+    assert "--restore-stash" in help_result.output
+
+    calls: list[tuple[list[str], Path]] = []
+
+    def fake_switch(args, *, project_root, **_kwargs):
+        calls.append((args, project_root))
+        return 0
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.spec_switch_cli.run_spec_switch_command",
+        fake_switch,
+    )
+
+    run(["spec", "switch", "001-demo", "--stash", "--restore-stash"])
+
+    assert calls == [(["001-demo", "--stash", "--restore-stash"], tmp_path)]
+
+
+@pytest.mark.unit
 def test_spec_targets_declares_argument_and_routes(monkeypatch):
     from echelon.cli_app import run
 
@@ -435,6 +464,9 @@ def test_spec_run_help_declares_phase_a_options():
     assert "--target" in result.output
     assert "--input" in result.output
     assert "--ignore-re" in result.output
+    assert "--stash" in result.output
+    assert "--discard" in result.output
+    assert "--confirm" in result.output
     assert "--re-policy" not in result.output
     assert "--re-max-inner" not in result.output
 
@@ -478,6 +510,7 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "--input",
         "reference:sources/provision",
         "--ignore-re",
+        "--stash",
     ])
 
     assert calls == [[
@@ -499,6 +532,7 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "--input",
         "reference:sources/provision",
         "--ignore-re",
+        "--stash",
     ]]
 
 

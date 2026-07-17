@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import signal
 import shutil
@@ -11,10 +12,16 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from echelon.artifact_index import write_artifact_index
 from echelon.context_builder import build_run_context
+from echelon.kb_proposals import accepted_kb_target_paths
+from echelon.spec_lifecycle import (
+    PhaseAExecutionLock,
+    SpecLifecycleLocked,
+    SpecRunExecutionLock,
+)
 from harness.condition_evaluator import ConditionEvaluator
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
@@ -360,7 +367,39 @@ class SquadController:
         except (Exception, SystemExit):
             return []
 
+    def _run_with_execution_lease(
+        self,
+        execute: Callable[[], SquadResult],
+    ) -> SquadResult:
+        """Serialize controller execution for this run before touching state."""
+
+        operation_id = f"squad-exec-{os.getpid()}"
+        try:
+            with PhaseAExecutionLock.acquire(self._project_root, operation_id):
+                with SpecRunExecutionLock.acquire(self._squad_dir, operation_id):
+                    return execute()
+        except SpecLifecycleLocked as exc:
+            state = self._state_store.load()
+            phase = str(state.get("phase") or "unknown")
+            run_id = str(state.get("run_id") or self._squad_dir.name)
+            logger.warning("Phase A run %s is already executing: %s", run_id, exc)
+            print(
+                f"[squad] run already active — refusing concurrent execution ({exc})",
+                flush=True,
+            )
+            return SquadResult(status="busy", phase=phase, run_id=run_id)
+
     def run(
+        self,
+        user_message: str = "",
+        mode: str = "semi",
+        next_phase_override: str = "",
+    ) -> SquadResult:
+        return self._run_with_execution_lease(
+            lambda: self._run_locked(user_message, mode, next_phase_override)
+        )
+
+    def _run_locked(
         self,
         user_message: str = "",
         mode: str = "semi",
@@ -538,7 +577,22 @@ class SquadController:
         # Fresh start if no state or not resumable
         # The correct squad dir was already selected by _cmd_run before creating this controller.
         if not existing or existing_status not in ("running", "in_progress"):
-            run_id = f"squad-{int(time.time())}"
+            prepared_identity = {
+                key: existing[key]
+                for key in (
+                    "run_id",
+                    "spec_id",
+                    "spec_number",
+                    "spec_dir",
+                    "published_spec_dir",
+                    "feature_branch",
+                    "phase_a_default_branch",
+                    "phase_a_base_commit",
+                    "specify_feature_directory",
+                )
+                if key in existing
+            }
+            run_id = str(prepared_identity.get("run_id") or f"squad-{int(time.time())}")
             entry_phase = next_phase_override or self._graph.entry_phase()
             project_mode = self._detect_project_mode(mode)
             self._state_store.initialize(
@@ -556,6 +610,10 @@ class SquadController:
                     else None
                 ),
             )
+            if prepared_identity:
+                initialized = self._state_store.load()
+                initialized.update(prepared_identity)
+                self._state_store.save(initialized)
             self._attach_published_re_context()
             if self._state_store.load().get("status") == "blocked":
                 return SquadResult.from_state(self._state_store.load())
@@ -659,7 +717,7 @@ class SquadController:
             if blocked_result:
                 self._block_after_executor_failure(phase, blocked_result, result)
                 return SquadResult.from_state(self._state_store.load())
-            product_input_error = self._apply_product_input_updates(result)
+            product_input_error = self._apply_product_input_updates(result, phase)
             if product_input_error:
                 self._block_after_executor_failure(phase, product_input_error, result)
                 return SquadResult.from_state(self._state_store.load())
@@ -677,7 +735,8 @@ class SquadController:
                 result,
                 allowed_state_update_keys=node.allowed_state_updates,
             )
-            self._checkpoint_successful_phase(phase, next_phase)
+            if not self._checkpoint_successful_phase(phase, next_phase):
+                return SquadResult.from_state(self._state_store.load())
             self._refresh_run_context(f"phase advance {phase} -> {next_phase}")
 
             # Enforce iteration increment for transitions that declare action: increment_iteration.
@@ -724,7 +783,8 @@ class SquadController:
                     s = self._state_store.load()
                     s["escalation_resolved"] = True
                     self._state_store.save(s)
-                    self._checkpoint_successful_phase(phase, phase)
+                    if not self._checkpoint_successful_phase(phase, phase):
+                        return SquadResult.from_state(self._state_store.load())
                     continue  # re-dispatch the same phase (e.g. phase1-why1) next iteration
                 else:
                     _blocked_banner(
@@ -759,6 +819,22 @@ class SquadController:
         self._state_store.save(state)
 
     def run_single_phase(
+        self,
+        phase_id: str,
+        user_message: str = "",
+        mode: str = "semi",
+        initial_state_updates: dict | None = None,
+    ) -> SquadResult:
+        return self._run_with_execution_lease(
+            lambda: self._run_single_phase_locked(
+                phase_id,
+                user_message,
+                mode,
+                initial_state_updates,
+            )
+        )
+
+    def _run_single_phase_locked(
         self,
         phase_id: str,
         user_message: str = "",
@@ -835,7 +911,7 @@ class SquadController:
         if blocked_result:
             self._block_after_executor_failure(phase, blocked_result, result)
             return SquadResult.from_state(self._state_store.load())
-        product_input_error = self._apply_product_input_updates(result)
+        product_input_error = self._apply_product_input_updates(result, phase)
         if product_input_error:
             self._block_after_executor_failure(phase, product_input_error, result)
             return SquadResult.from_state(self._state_store.load())
@@ -856,7 +932,8 @@ class SquadController:
             allowed_state_update_keys=node.allowed_state_updates,
             manual_phase_run=True,
         )
-        self._checkpoint_successful_phase(phase, next_phase)
+        if not self._checkpoint_successful_phase(phase, next_phase):
+            return SquadResult.from_state(self._state_store.load())
         self._refresh_run_context(f"manual phase advance {phase} -> {next_phase}")
         print(f"[squad] ✓ {node.id}  → {next_phase}  (stopped)", flush=True)
         return SquadResult.from_state(self._state_store.load())
@@ -912,7 +989,8 @@ class SquadController:
                 allowed_state_update_keys=node.allowed_state_updates,
                 manual_phase_run=manual_phase_run,
             )
-            self._checkpoint_successful_phase(node.id, next_phase)
+            if not self._checkpoint_successful_phase(node.id, next_phase):
+                return True
             self._refresh_run_context(f"phase skip {node.id} -> {next_phase}")
             suffix = "  (stopped)" if manual_phase_run else ""
             print(
@@ -1076,6 +1154,12 @@ class SquadController:
         state: dict,
     ) -> None:
         run_id = str(state.get("run_id") or "unknown")
+        try:
+            from echelon.kb_proposals import publish_kb_reports
+
+            publish_kb_reports(self._project_root, run_id, published_spec_dir)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not publish KB provenance reports: %s", exc)
         spec_status = str(state.get("spec_status") or "planned")
         constitution_hash = self._constitution_hash(published_spec_dir / "constitution.md")
         append_phase_a_run(
@@ -1234,12 +1318,25 @@ class SquadController:
                 return run_local
         return None
 
-    def _checkpoint_successful_phase(self, phase: str, next_phase: str) -> None:
+    def _checkpoint_successful_phase(self, phase: str, next_phase: str) -> bool:
         self._materialize_implementation_targets()
         state = self._state_store.load()
         spec_dir = self._active_phase_a_spec_dir(state)
         if spec_dir is None or not spec_dir.exists():
-            return
+            return True
+        additional_spec_dirs: tuple[Path, ...] = ()
+        additional_owned_paths: tuple[Path, ...] = ()
+        if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
+            published_spec_dir = self._published_phase_a_spec_dir(state, spec_dir)
+            if (
+                published_spec_dir.exists()
+                and published_spec_dir.resolve() != spec_dir.resolve()
+            ):
+                additional_spec_dirs = (published_spec_dir,)
+            additional_owned_paths = accepted_kb_target_paths(
+                self._project_root,
+                str(state.get("run_id") or ""),
+            )
         try:
             create_phase_checkpoint(
                 project_root=self._project_root,
@@ -1248,9 +1345,18 @@ class SquadController:
                 next_phase=next_phase,
                 run_id=str(state.get("run_id") or ""),
                 spec_id=_checkpoint_spec_id_from_state(state, spec_dir),
+                additional_spec_dirs=additional_spec_dirs,
+                additional_owned_paths=additional_owned_paths,
             )
         except Exception as exc:
-            logger.warning("Could not create phase checkpoint for %s: %s", phase, exc)
+            logger.error("Could not create required phase checkpoint for %s: %s", phase, exc)
+            blocked = self._state_store.load()
+            blocked["status"] = "blocked"
+            blocked["phase"] = PHASE_TERMINAL_BLOCKED
+            blocked["blocked_reason"] = f"phase_checkpoint_failed: {phase}: {exc}"
+            self._state_store.save(blocked)
+            return False
+        return True
 
     def _materialize_implementation_targets(self) -> None:
         """Write authoritative run targets once an active spec exists."""
@@ -1277,25 +1383,49 @@ class SquadController:
         except (OSError, ValueError) as exc:
             logger.warning("Could not materialize implementation targets: %s", exc)
 
-    def _apply_product_input_updates(self, result: SquadAgentResult) -> str | None:
+    def _apply_product_input_updates(self, result: SquadAgentResult, phase: str) -> str | None:
         """Validate and persist agent proposals through the controller-owned ledger."""
         payload = result.echelon_result or {}
         updates = payload.get("product_input_updates")
-        if not updates:
-            return None
         state = self._state_store.load()
         metadata = state.get("product_inputs")
-        if not isinstance(metadata, dict):
-            return "product_input_updates received without declared product inputs"
+        if not isinstance(metadata, dict) or not metadata:
+            return "product_input_updates received without declared product inputs" if updates else None
+        if not updates and not (
+            phase in {"phase3-plan", "phase3-consensus"}
+        ):
+            return None
         traceability_ref = str(metadata.get("traceability") or "").strip()
         if not traceability_ref:
             return "product input traceability path is missing from run state"
         traceability_path = Path(traceability_ref)
         if not traceability_path.is_absolute():
             traceability_path = self._project_root / traceability_path
+        active_spec_dir = self._active_phase_a_spec_dir(state)
+        enforce_direct_task_mappings = phase in {"phase3-plan", "phase3-consensus"}
+        tasks_path = active_spec_dir / "tasks.md" if enforce_direct_task_mappings and active_spec_dir else None
+        targets = [
+            str(value).strip()
+            for value in state.get("implementation_targets", [])
+            if str(value).strip()
+        ]
         try:
-            from echelon.product_inputs import ProductInputError, apply_product_input_updates
-            apply_product_input_updates(traceability_path, updates)
+            from echelon.product_inputs import (
+                ProductInputError,
+                apply_product_input_updates,
+                validate_product_input_traceability,
+            )
+            if updates:
+                apply_product_input_updates(
+                    traceability_path,
+                    updates,
+                    tasks_path=tasks_path,
+                    declared_targets=targets,
+                )
+            elif tasks_path is not None:
+                blockers = validate_product_input_traceability(active_spec_dir, targets)
+                if blockers:
+                    return "invalid product input task mappings: " + "; ".join(blockers)
         except (OSError, ProductInputError) as exc:
             return f"invalid product input updates: {exc}"
         return None
@@ -1338,7 +1468,14 @@ class SquadController:
 
     def _copy_spec_tree(self, source: Path, destination: Path) -> None:
         destination.mkdir(parents=True, exist_ok=True)
+        runtime_metadata = destination / ".echelon"
+        if runtime_metadata.is_dir():
+            shutil.rmtree(runtime_metadata)
+        elif runtime_metadata.exists():
+            runtime_metadata.unlink()
         for child in source.iterdir():
+            if child.name == ".echelon":
+                continue
             target = destination / child.name
             if child.is_dir():
                 if target.exists() and not target.is_dir():

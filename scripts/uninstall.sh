@@ -9,7 +9,8 @@ SOAR_DIR="$HOME/.echelon/soar"
 VENV_DIR="$HOME/.echelon/venv"
 MEMORY_DIR="$HOME/.echelon/memory"
 CONFIG_FILE="$HOME/.echelon/memory-config.yml"
-ECHELON_HOME="$HOME/.echelon"
+ECHELON_HOME="${ECHELON_HOME:-$HOME/.echelon}"
+NODE_RUNTIME_DIR="$ECHELON_HOME/node"
 MEMPALACE_DIR="$HOME/.mempalace"
 
 PURGE_MEMORY=false
@@ -51,7 +52,16 @@ else
   echo "  ✓ $VENV_DIR not found — skipping"
 fi
 
-# ── 3. memory-config.yml ─────────────────────────────────────────────────────
+# ── 3. Shared Node runtimes ──────────────────────────────────────────────────
+echo "▶ Removing shared Node runtimes..."
+if [ -d "$NODE_RUNTIME_DIR" ]; then
+  rm -rf "$NODE_RUNTIME_DIR"
+  echo "  ✓ Removed $NODE_RUNTIME_DIR"
+else
+  echo "  ✓ $NODE_RUNTIME_DIR not found — skipping"
+fi
+
+# ── 4. memory-config.yml ─────────────────────────────────────────────────────
 echo "▶ Removing memory-config.yml..."
 if [ -f "$CONFIG_FILE" ]; then
   rm -f "$CONFIG_FILE"
@@ -60,7 +70,7 @@ else
   echo "  ✓ $CONFIG_FILE not found — skipping"
 fi
 
-# ── 4. Memory (opt-in) ───────────────────────────────────────────────────────
+# ── 5. Memory (opt-in) ───────────────────────────────────────────────────────
 if [ "$PURGE_MEMORY" = true ]; then
   echo "▶ Purging memory (--purge-memory)..."
   if [ -d "$MEMORY_DIR" ]; then
@@ -79,13 +89,13 @@ else
   echo "  ℹ  Memory kept at $MEMORY_DIR (pass --purge-memory to delete)"
 fi
 
-# ── 5. Remove ~/.echelon if now empty ────────────────────────────────────────
+# ── 6. Remove ~/.echelon if now empty ────────────────────────────────────────
 if [ -d "$ECHELON_HOME" ] && [ -z "$(ls -A "$ECHELON_HOME")" ]; then
   rmdir "$ECHELON_HOME"
   echo "  ✓ Removed $ECHELON_HOME (was empty)"
 fi
 
-# ── 6. Remove PATH entries from shell RC ─────────────────────────────────────
+# ── 7. Remove PATH entries from shell RC ─────────────────────────────────────
 echo "▶ Cleaning PATH entries from $SHELL_RC..."
 CHANGED=false
 

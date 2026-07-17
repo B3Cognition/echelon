@@ -487,6 +487,9 @@ def root_run(
         "--ignore-re",
         help="Do not attach the latest published RE context.",
     ),
+    stash: bool = typer.Option(False, "--stash", help="Stash dirty outgoing spec changes."),
+    discard: bool = typer.Option(False, "--discard", help="Discard dirty changes to checkpoint."),
+    confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
 ) -> None:
     """Compatibility alias for spec run."""
     spec_run(
@@ -500,6 +503,9 @@ def root_run(
         target=target,
         input_values=None,
         ignore_re=ignore_re,
+        stash=stash,
+        discard=discard,
+        confirm=confirm,
     )
 
 
@@ -1037,6 +1043,9 @@ def spec_run(
         "--ignore-re",
         help="Do not attach the latest published RE context.",
     ),
+    stash: bool = typer.Option(False, "--stash", help="Stash dirty outgoing spec changes."),
+    discard: bool = typer.Option(False, "--discard", help="Discard dirty changes to checkpoint."),
+    confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
 ) -> None:
     """Run Phase A squad spec authoring."""
     from echelon import cli as legacy_cli
@@ -1056,6 +1065,12 @@ def spec_run(
     _extend_repeated_option(args, "--input", input_values)
     if ignore_re:
         args.append("--ignore-re")
+    if stash:
+        args.append("--stash")
+    if discard:
+        args.append("--discard")
+    if confirm:
+        args.append("--confirm")
     legacy_cli._cmd_spec_run(args)
 
 
@@ -1121,6 +1136,49 @@ def spec_rewind(
     if confirm:
         args.append("--confirm")
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())
+
+
+@spec_app.command("repair-traceability")
+def spec_repair_traceability(
+    confirm: bool = typer.Option(False, "--confirm", help="Apply the safe traceability repair."),
+) -> None:
+    """Repair safely-prunable product-input task mappings and resume finalization."""
+    from pathlib import Path
+
+    from echelon import cli as legacy_cli
+
+    legacy_cli._cmd_repair_traceability(
+        ["--confirm"] if confirm else [], project_root=Path.cwd()
+    )
+
+
+@spec_app.command("switch")
+def spec_switch(
+    spec_or_run_id: str = typer.Argument(..., help="Checkpointed spec id or Phase A run id."),
+    stash: bool = typer.Option(False, "--stash", help="Stash dirty outgoing spec changes."),
+    discard: bool = typer.Option(False, "--discard", help="Discard dirty changes to the checkpoint."),
+    confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
+    restore_stash: bool = typer.Option(
+        False,
+        "--restore-stash",
+        help="Restore this spec's managed stash after switching.",
+    ),
+) -> None:
+    """Select a checkpointed Phase A spec run."""
+    from echelon.spec_switch_cli import run_spec_switch_command
+
+    args = [spec_or_run_id]
+    if stash:
+        args.append("--stash")
+    if discard:
+        args.append("--discard")
+    if confirm:
+        args.append("--confirm")
+    if restore_stash:
+        args.append("--restore-stash")
+    exit_code = run_spec_switch_command(args, project_root=Path.cwd())
+    if exit_code:
+        raise typer.Exit(exit_code)
 
 
 @spec_app.command("drop-target")

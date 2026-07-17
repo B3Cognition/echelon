@@ -9,16 +9,57 @@ CODEGRAPH_CLI_VERSION="1.4.1"
 SOAR_DIR="$HOME/.echelon/soar"
 VENV_DIR="$HOME/.echelon/venv"
 MEMORY_DIR="$HOME/.echelon/memory"
-CODEGRAPH_NODE_DIR="$ECHELON_DIR/extension/scripts/node/codegraph"
-PERLGRAPH_NODE_DIR="$ECHELON_DIR/extension/scripts/node/perlgraph"
+NODE_RUNTIME_ROOT="${ECHELON_HOME:-$HOME/.echelon}/node"
+CODEGRAPH_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/codegraph"
+PERLGRAPH_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/perlgraph"
 CTX7_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/context7"
-CTX7_NODE_DIR="$HOME/.echelon/node/context7"
+CODEGRAPH_NODE_DIR="$NODE_RUNTIME_ROOT/codegraph"
+PERLGRAPH_NODE_DIR="$NODE_RUNTIME_ROOT/perlgraph"
+CTX7_NODE_DIR="$NODE_RUNTIME_ROOT/context7"
 
 echo ""
 echo "╔══════════════════════════════════════════╗"
 echo "║         echelon — installer              ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
+
+_refresh_node_runtime() {
+  local source_dir="$1"
+  local runtime_dir="$2"
+  shift 2
+
+  if [ ! -d "$source_dir" ]; then
+    echo "  ✗ Node runtime source not found: $source_dir" >&2
+    return 1
+  fi
+
+  rm -rf "$runtime_dir"
+  mkdir -p "$(dirname "$runtime_dir")"
+  cp -R "$source_dir" "$runtime_dir"
+  rm -rf "$runtime_dir/node_modules"
+  while [ "$#" -gt 0 ]; do
+    rm -rf "$runtime_dir/$1"
+    shift
+  done
+}
+
+_npm_ci_in_runtime() {
+  local runtime_dir="$1"
+  shift
+  (
+    cd "$runtime_dir"
+    npm ci "$@"
+  )
+}
+
+_npm_run_in_runtime() {
+  local runtime_dir="$1"
+  shift
+  (
+    cd "$runtime_dir"
+    npm run "$@"
+  )
+}
 
 # ── Shell RC detection ───────────────────────────────────────────────────────
 _detect_shell_rc() {
@@ -137,14 +178,15 @@ echo "  ✓ journal-entry-types.json generated"
 echo "▶ Installing RE CodeGraph bridge dependencies..."
 if ! command -v node &>/dev/null; then
   echo "  ⚠ Node.js not found; CodeGraph structural analysis will be skipped."
-  echo "    Install Node.js, then run: npm ci --prefix \"$CODEGRAPH_NODE_DIR\""
+  echo "    Install Node.js, then rerun this installer."
 elif ! command -v npm &>/dev/null; then
   echo "  ⚠ npm not found; CodeGraph structural analysis will be skipped."
-  echo "    Install npm, then run: npm ci --prefix \"$CODEGRAPH_NODE_DIR\""
-elif [ ! -f "$CODEGRAPH_NODE_DIR/package-lock.json" ]; then
-  echo "  ⚠ package-lock.json not found at $CODEGRAPH_NODE_DIR; skipping CodeGraph bridge deps."
+  echo "    Install npm, then rerun this installer."
+elif [ ! -f "$CODEGRAPH_SOURCE_DIR/package-lock.json" ]; then
+  echo "  ⚠ package-lock.json not found at $CODEGRAPH_SOURCE_DIR; skipping CodeGraph bridge deps."
 else
-  npm ci --prefix "$CODEGRAPH_NODE_DIR" --silent
+  _refresh_node_runtime "$CODEGRAPH_SOURCE_DIR" "$CODEGRAPH_NODE_DIR" vendor dist
+  _npm_ci_in_runtime "$CODEGRAPH_NODE_DIR" --ignore-scripts --no-audit --no-fund --prefer-offline --silent
   echo "  ✓ CodeGraph bridge dependencies installed → $CODEGRAPH_NODE_DIR/node_modules"
 fi
 
@@ -182,15 +224,16 @@ fi
 echo "▶ Installing RE PerlGraph runtime dependencies..."
 if ! command -v node &>/dev/null; then
   echo "  ⚠ Node.js not found; PerlGraph structural analysis will be skipped."
-  echo "    Install Node.js, then run: npm ci --prefix \"$PERLGRAPH_NODE_DIR\" --include=dev && npm run build --prefix \"$PERLGRAPH_NODE_DIR\""
+  echo "    Install Node.js, then rerun this installer."
 elif ! command -v npm &>/dev/null; then
   echo "  ⚠ npm not found; PerlGraph structural analysis will be skipped."
-  echo "    Install npm, then run: npm ci --prefix \"$PERLGRAPH_NODE_DIR\" --include=dev && npm run build --prefix \"$PERLGRAPH_NODE_DIR\""
-elif [ ! -f "$PERLGRAPH_NODE_DIR/package-lock.json" ]; then
-  echo "  ⚠ package-lock.json not found at $PERLGRAPH_NODE_DIR; skipping PerlGraph runtime deps."
+  echo "    Install npm, then rerun this installer."
+elif [ ! -f "$PERLGRAPH_SOURCE_DIR/package-lock.json" ]; then
+  echo "  ⚠ package-lock.json not found at $PERLGRAPH_SOURCE_DIR; skipping PerlGraph runtime deps."
 else
-  CXXFLAGS="${CXXFLAGS:--std=c++20}" npm ci --prefix "$PERLGRAPH_NODE_DIR" --include=dev --no-audit --no-fund --prefer-offline --silent
-  npm run build --prefix "$PERLGRAPH_NODE_DIR" --silent
+  _refresh_node_runtime "$PERLGRAPH_SOURCE_DIR" "$PERLGRAPH_NODE_DIR" dist
+  CXXFLAGS="${CXXFLAGS:--std=c++20}" _npm_ci_in_runtime "$PERLGRAPH_NODE_DIR" --include=dev --no-audit --no-fund --prefer-offline --silent
+  _npm_run_in_runtime "$PERLGRAPH_NODE_DIR" build --silent
   echo "  ✓ PerlGraph runtime dependencies installed → $PERLGRAPH_NODE_DIR/node_modules"
   echo "  ✓ PerlGraph CLI built → $PERLGRAPH_NODE_DIR/dist/cli/perlgraph.js"
 fi
@@ -206,9 +249,8 @@ elif ! command -v npm &>/dev/null; then
 elif [ ! -f "$CTX7_SOURCE_DIR/package-lock.json" ]; then
   echo "  ⚠ package-lock.json not found at $CTX7_SOURCE_DIR; skipping Context7 deps."
 else
-  mkdir -p "$CTX7_NODE_DIR"
-  cp "$CTX7_SOURCE_DIR/package.json" "$CTX7_SOURCE_DIR/package-lock.json" "$CTX7_NODE_DIR/"
-  npm ci --prefix "$CTX7_NODE_DIR" --silent
+  _refresh_node_runtime "$CTX7_SOURCE_DIR" "$CTX7_NODE_DIR" dist
+  _npm_ci_in_runtime "$CTX7_NODE_DIR" --silent
   echo "  ✓ Context7 CLI dependencies installed → $CTX7_NODE_DIR/node_modules"
 fi
 
@@ -248,7 +290,7 @@ echo "  harness       → $VENV_DIR/bin/harness"
 if [ -d "$CODEGRAPH_NODE_DIR/node_modules" ]; then
   echo "  CodeGraph bridge → $CODEGRAPH_NODE_DIR/node_modules"
 else
-  echo "  CodeGraph bridge → not ready (run: npm ci --prefix \"$CODEGRAPH_NODE_DIR\")"
+  echo "  CodeGraph bridge → not ready (rerun this installer after installing Node.js/npm)"
 fi
 if command -v codegraph &>/dev/null; then
   echo "  CodeGraph CLI    → $(command -v codegraph)"
@@ -258,7 +300,7 @@ fi
 if [ -x "$PERLGRAPH_NODE_DIR/dist/cli/perlgraph.js" ]; then
   echo "  PerlGraph CLI  → $PERLGRAPH_NODE_DIR/dist/cli/perlgraph.js"
 else
-  echo "  PerlGraph CLI  → not ready (run: npm ci --prefix \"$PERLGRAPH_NODE_DIR\" --include=dev && npm run build --prefix \"$PERLGRAPH_NODE_DIR\")"
+  echo "  PerlGraph CLI  → not ready (rerun this installer after installing Node.js/npm)"
 fi
 if [ -x "$CTX7_NODE_DIR/node_modules/.bin/ctx7" ]; then
   echo "  Context7 CLI  → $CTX7_NODE_DIR/node_modules/.bin/ctx7"

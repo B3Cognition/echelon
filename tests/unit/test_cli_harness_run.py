@@ -500,6 +500,55 @@ class TestHarnessRunTaskFormatErrors:
         assert "constitution.md contains unresolved template markers" in err
         assert "echelon spec continue" in err
 
+    def test_delivery_blocks_unready_requested_spec_before_runner(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        capsys,
+    ) -> None:
+        config_file = tmp_path / ".echelon" / "config.yml"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text("harness:\n  target_repo: .\n", encoding="utf-8")
+        (tmp_path / "package.json").write_text("{}\n", encoding="utf-8")
+        mirror = tmp_path / "runs" / "mirror.git"
+        mirror.mkdir(parents=True)
+
+        ready_spec = tmp_path / "specs" / "001-ready"
+        _write_phase_a_build_inputs(ready_spec)
+        unready_spec = tmp_path / "specs" / "002-unready"
+        unready_spec.mkdir(parents=True)
+        (unready_spec / "spec.md").write_text(SPEC_WITH_LOCAL_TARGET, encoding="utf-8")
+        (unready_spec / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none target=.\n",
+            encoding="utf-8",
+        )
+        active_run = tmp_path / "runs" / "run-ready"
+        active_run.mkdir(parents=True)
+        (active_run / "state.json").write_text(
+            '{"run_id":"ready","spec_id":"001-ready",'
+            '"feature_branch":"001-ready","spec_dir":"specs/001-ready"}',
+            encoding="utf-8",
+        )
+        (tmp_path / "runs" / ".current").write_text("run-ready", encoding="utf-8")
+
+        monkeypatch.chdir(tmp_path)
+        with patch("harness.config.load_config") as mock_cfg, \
+             patch("harness.paths.mirror_path", return_value=mirror), \
+             patch("harness.gitops.GitOpsManager"), \
+             patch("harness.docker_provider.DockerWorktreeProvider"), \
+             patch("harness.skills.run_skill.run") as mock_run:
+            mock_cfg.return_value = MagicMock(buffer_limit_bytes=1024 * 1024, target_repo=".")
+            from echelon.cli import _cmd_harness_run
+
+            with pytest.raises(SystemExit) as exc:
+                _cmd_harness_run(["002-unready"])
+
+        assert exc.value.code == 1
+        mock_run.assert_not_called()
+        err = capsys.readouterr().err
+        assert "Phase A build inputs are not ready" in err
+        assert "002-unready" in err
+
 
 @pytest.mark.unit
 class TestHarnessTargetPreflight:

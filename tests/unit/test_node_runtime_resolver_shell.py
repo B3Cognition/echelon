@@ -1,0 +1,135 @@
+"""Behavior tests for the extension-local Bash Node runtime resolver."""
+from __future__ import annotations
+
+import os
+import subprocess
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+RESOLVER = ROOT / "extension" / "scripts" / "bash" / "node-runtime-resolver.sh"
+
+
+def _run_resolver(
+    function: str,
+    local_node_root: Path,
+    *,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; "$2" "$3"',
+            "bash",
+            str(RESOLVER),
+            function,
+            str(local_node_root),
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+
+def _write_complete_codegraph(runtime: Path) -> None:
+    (runtime / "node_modules" / "@colbymchenry" / "codegraph").mkdir(
+        parents=True
+    )
+    (runtime / "codegraph-bridge.js").write_text("bridge\n", encoding="utf-8")
+    (runtime / "codegraph-adapter.js").write_text("adapter\n", encoding="utf-8")
+    (runtime / "node_modules/@colbymchenry/codegraph/package.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+
+
+def _write_complete_perlgraph(runtime: Path) -> None:
+    cli = runtime / "dist" / "cli" / "perlgraph.js"
+    cli.parent.mkdir(parents=True)
+    cli.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    cli.chmod(0o755)
+    (runtime / "node_modules").mkdir()
+
+
+def _write_complete_context7(runtime: Path) -> None:
+    cli = runtime / "node_modules" / ".bin" / "ctx7"
+    cli.parent.mkdir(parents=True)
+    cli.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+    cli.chmod(0o755)
+
+
+def test_codegraph_uses_shared_runtime_when_local_is_source_only(
+    tmp_path: Path,
+) -> None:
+    local_node_root = tmp_path / "project" / "scripts" / "node"
+    local = local_node_root / "codegraph"
+    local.mkdir(parents=True)
+    (local / "codegraph-bridge.js").write_text("source only\n", encoding="utf-8")
+    shared = tmp_path / "echelon-home" / "node" / "codegraph"
+    _write_complete_codegraph(shared)
+
+    result = _run_resolver(
+        "echelon_resolve_codegraph_runtime",
+        local_node_root,
+        env={**os.environ, "ECHELON_HOME": str(tmp_path / "echelon-home")},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()) == shared
+
+
+def test_perlgraph_complete_local_runtime_wins_over_shared(tmp_path: Path) -> None:
+    local_node_root = tmp_path / "project" / "scripts" / "node"
+    local = local_node_root / "perlgraph"
+    shared = tmp_path / "echelon-home" / "node" / "perlgraph"
+    _write_complete_perlgraph(local)
+    _write_complete_perlgraph(shared)
+
+    result = _run_resolver(
+        "echelon_resolve_perlgraph_runtime",
+        local_node_root,
+        env={**os.environ, "ECHELON_HOME": str(tmp_path / "echelon-home")},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()) == local
+
+
+def test_explicit_incomplete_codegraph_override_fails_without_fallback(
+    tmp_path: Path,
+) -> None:
+    local_node_root = tmp_path / "project" / "scripts" / "node"
+    incomplete = tmp_path / "incomplete-codegraph"
+    incomplete.mkdir()
+    shared = tmp_path / "echelon-home" / "node" / "codegraph"
+    _write_complete_codegraph(shared)
+
+    result = _run_resolver(
+        "echelon_resolve_codegraph_runtime",
+        local_node_root,
+        env={
+            **os.environ,
+            "ECHELON_HOME": str(tmp_path / "echelon-home"),
+            "ECHELON_CODEGRAPH_RUNTIME_DIR": str(incomplete),
+        },
+    )
+
+    assert result.returncode != 0
+    assert "ECHELON_CODEGRAPH_RUNTIME_DIR" in result.stderr
+    assert not result.stdout
+
+
+def test_echelon_home_relocates_context7_runtime(tmp_path: Path) -> None:
+    local_node_root = tmp_path / "project" / "scripts" / "node"
+    shared = tmp_path / "custom-home" / "node" / "context7"
+    _write_complete_context7(shared)
+
+    result = _run_resolver(
+        "echelon_resolve_context7_runtime",
+        local_node_root,
+        env={**os.environ, "ECHELON_HOME": str(tmp_path / "custom-home")},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()) == shared

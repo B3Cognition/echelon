@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import subprocess
+
+import pytest
+
 from harness.ai_cli_backend import CliRunResult
 from harness.config import HarnessConfig, LlmConfig
-from harness.squad_provider import SquadCliProvider
+from harness.squad_provider import PhaseAGitBoundaryError, SquadCliProvider
 
 
 def test_squad_provider_parses_codex_backend_echelon_result(monkeypatch, tmp_path) -> None:
@@ -193,3 +197,44 @@ def test_squad_provider_does_not_accept_failed_repair_invocation(monkeypatch, tm
     assert result.echelon_result is None
     assert result.echelon_result_repair_attempted is True
     assert result.echelon_result_repair_succeeded is False
+
+
+@pytest.mark.parametrize("mutation", ["branch", "commit"])
+def test_squad_provider_rejects_git_mutation_during_agent_boundary(
+    monkeypatch, tmp_path, mutation
+) -> None:
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Echelon Tests"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "echelon@example.test"], cwd=tmp_path, check=True
+    )
+    (tmp_path / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=tmp_path, check=True, capture_output=True)
+    config = HarnessConfig(
+        target_repo=".", target_default_branch="main", provider="docker", llm=LlmConfig(cli="codex")
+    )
+    provider = SquadCliProvider(config)
+
+    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+        if mutation == "branch":
+            subprocess.run(["git", "switch", "-c", "unexpected"], cwd=tmp_path, check=True)
+        else:
+            (tmp_path / "agent.txt").write_text("unexpected\n", encoding="utf-8")
+            subprocess.run(["git", "add", "agent.txt"], cwd=tmp_path, check=True)
+            subprocess.run(
+                ["git", "commit", "-m", "unexpected agent commit"],
+                cwd=tmp_path,
+                check=True,
+                capture_output=True,
+            )
+        return CliRunResult(
+            exit_code=0,
+            stdout="echelon_result:\n  verdict: PASS\n  state_updates: {}\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(provider, "run_agent_result", fake_run_agent_result)
+
+    with pytest.raises(PhaseAGitBoundaryError, match="mutated Git"):
+        provider.exec_agent(str(tmp_path), "prompt")

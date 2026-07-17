@@ -6,6 +6,7 @@ WHY3 + ASSESS2 (stage 1) before PLAN2 (stage 2) and before checkpoint-plan.
 """
 import sys
 import json
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,7 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.phase_checkpoints import PhaseCheckpointError
 from harness.squad import (
     SquadController,
     SquadResult,
@@ -43,6 +45,24 @@ def _mock_provider(verdict: str = "DONE") -> MagicMock:
 
 
 def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: Path = None):
+    if not (tmp_path / ".git").exists():
+        subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.name", "Echelon Tests"],
+            cwd=tmp_path,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "echelon@example.test"],
+            cwd=tmp_path,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "initial"],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
     if squad_dir is None:
         squad_dir = tmp_path / "squad" / "run-test"
         squad_dir.mkdir(parents=True, exist_ok=True)
@@ -106,6 +126,68 @@ def _write_re_index_generation(
         + "\n",
         encoding="utf-8",
     )
+
+
+def test_checkpoint_successful_phase_blocks_when_required_checkpoint_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize("spec-run", "greenfield", "msg", 0, "phase3-plan")
+    spec_dir = tmp_path / "squad" / "run-test" / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    state = store.load()
+    state["spec_id"] = "001-demo"
+    state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
+    store.save(state)
+
+    def fail_checkpoint(**_kwargs: object) -> None:
+        raise PhaseCheckpointError("simulated checkpoint failure")
+
+    monkeypatch.setattr("harness.squad.create_phase_checkpoint", fail_checkpoint)
+
+    assert ctrl._checkpoint_successful_phase("phase3-plan", "phase3-consensus") is False
+    state = store.load()
+    assert state["status"] == "blocked"
+    assert state["phase"] == "terminal-blocked"
+    assert state["blocked_reason"] == (
+        "phase_checkpoint_failed: phase3-plan: simulated checkpoint failure"
+    )
+
+
+def test_checkpoint_successful_phase_is_non_blocking_without_active_spec(
+    tmp_path: Path,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize("spec-run", "greenfield", "msg", 0, "phase1-discover")
+
+    assert ctrl._checkpoint_successful_phase("phase1-discover", "phase1-why1") is True
+    assert store.load()["status"] == "running"
+
+
+def test_checkpoint_successful_phase_returns_true_after_checkpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize("spec-run", "greenfield", "msg", 0, "phase1-what")
+    spec_dir = tmp_path / "squad" / "run-test" / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    state = store.load()
+    state["spec_id"] = "001-demo"
+    state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
+    store.save(state)
+    checkpoint_calls: list[dict[str, object]] = []
+
+    def record_checkpoint(**kwargs: object) -> object:
+        checkpoint_calls.append(kwargs)
+        return object()
+
+    monkeypatch.setattr("harness.squad.create_phase_checkpoint", record_checkpoint)
+
+    assert ctrl._checkpoint_successful_phase("phase1-what", "phase1-why2") is True
+    assert checkpoint_calls[0]["spec_dir"] == spec_dir
+    assert store.load()["status"] == "running"
 
 
 class TestConsensusCannotBeSkipped:
@@ -287,10 +369,16 @@ class TestAgentResultIntegrity:
             "test-strategy.md", "test-architecture.md", "coverage-map.md",
         ):
             (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        checkpoint_ledger = spec_dir / ".echelon" / "checkpoints.json"
+        checkpoint_ledger.parent.mkdir()
+        checkpoint_ledger.write_text("{\"checkpoints\": []}\n", encoding="utf-8")
         state = store.load()
         state["spec_id"] = "001-demo"
         state["spec_dir"] = "runs/run-test/specs/001-demo"
         store.save(state)
+        kb_report = tmp_path / "runs" / "r" / "kb-apply-report.yaml"
+        kb_report.parent.mkdir(parents=True)
+        kb_report.write_text("status: degraded\n", encoding="utf-8")
 
         result = ctrl.run("msg", "banzai")
 
@@ -304,6 +392,10 @@ class TestAgentResultIntegrity:
         ).read_text(encoding="utf-8") == "# Constitution\n\nReal project rules.\n"
         assert (published_dir / "ARTIFACTS.md").exists()
         assert (published_dir / "squad-report.md").exists()
+        assert not (published_dir / ".echelon").exists()
+        assert (published_dir / "kb" / "kb-apply-report.yaml").read_text(
+            encoding="utf-8"
+        ) == "status: degraded\n"
         history = json.loads((published_dir / "run-history.json").read_text(encoding="utf-8"))
         assert history["runs"][-1]["run_id"] == "r"
         assert history["runs"][-1]["phase"] == "A"

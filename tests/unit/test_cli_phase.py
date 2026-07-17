@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -13,6 +14,31 @@ from harness.squad_provider import SquadAgentResult
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 EXT_DIR = ROOT / "extension"
+
+
+def _initialize_active_run(project_root: Path) -> Path:
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "config", "user.name", "Echelon Tests"], cwd=project_root, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "echelon@example.test"],
+        cwd=project_root,
+        check=True,
+    )
+    (project_root / ".gitignore").write_text("/runs/.current\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".gitignore"], cwd=project_root, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "base"], cwd=project_root, check=True, capture_output=True
+    )
+    run_dir = project_root / "runs" / "run-active"
+    run_dir.mkdir(parents=True)
+    (run_dir / "staging").mkdir()
+    (project_root / "runs" / ".current").write_text("run-active\n", encoding="utf-8")
+    return run_dir
 
 
 def test_phase_list_prints_workflow_phases(tmp_path: Path, capsys) -> None:
@@ -53,6 +79,7 @@ def test_phase_run_constitution_does_not_require_task_lexicon_config(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _initialize_active_run(tmp_path)
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
@@ -111,6 +138,7 @@ def test_phase_run_records_manual_replay_and_targets_spec_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _initialize_active_run(tmp_path)
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
@@ -173,6 +201,7 @@ def test_phase_run_experimental_artifact_quality_phases(
     state_key: str,
     report_name: str,
 ) -> None:
+    _initialize_active_run(tmp_path)
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")

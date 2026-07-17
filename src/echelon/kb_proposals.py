@@ -332,6 +332,73 @@ def publish_kb_reports(project_root: Path, run_id: str, spec_dir: Path) -> Path 
     return out_dir
 
 
+def accepted_kb_target_paths(project_root: Path, run_id: str) -> tuple[Path, ...]:
+    """Return the canonical KB files successfully mutated by this run.
+
+    The persisted apply report is the commit authority.  It proves that the
+    deterministic applier completed the mutation; proposal files and the
+    pre-write mutation journal do not provide that guarantee.
+    """
+
+    root = Path(project_root).resolve()
+    report_path = root / "runs" / run_id / "kb-apply-report.yaml"
+    if not report_path.exists():
+        return ()
+    try:
+        import yaml
+
+        report = yaml.safe_load(report_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"cannot read KB apply report for run {run_id}: {exc}") from exc
+    if not isinstance(report, dict):
+        raise ValueError(f"KB apply report for run {run_id} must be a mapping")
+    outcomes = report.get("outcomes")
+    if not isinstance(outcomes, list):
+        # Older/degraded reports did not always persist outcome details.  They
+        # cannot prove any canonical mutation, so they authorize no KB paths.
+        return ()
+
+    accepted_outcomes = [
+        outcome
+        for outcome in outcomes
+        if isinstance(outcome, dict) and outcome.get("outcome") == "accepted"
+    ]
+    if not accepted_outcomes:
+        return ()
+    if str(report.get("run_id") or "") != run_id:
+        raise ValueError(f"KB apply report run_id does not match {run_id}")
+
+    known_targets = set().union(*PROPOSAL_TARGETS.values())
+    accepted: list[Path] = []
+    seen: set[Path] = set()
+    for index, outcome in enumerate(outcomes):
+        if not isinstance(outcome, dict):
+            raise ValueError(f"KB apply report outcome {index} must be a mapping")
+        if outcome.get("outcome") != "accepted":
+            continue
+        targets = outcome.get("targets")
+        if not isinstance(targets, list) or not targets:
+            raise ValueError(f"accepted KB apply report outcome {index} has no targets")
+        for target in targets:
+            if not isinstance(target, str) or target not in known_targets:
+                raise ValueError(
+                    f"accepted KB apply report outcome {index} has an unknown target"
+                )
+            target_path = (root / target).resolve()
+            try:
+                target_path.relative_to(root)
+            except ValueError as exc:
+                raise ValueError(
+                    f"accepted KB target must be inside the project root: {target}"
+                ) from exc
+            if not target_path.is_file():
+                raise ValueError(f"accepted KB target is not a file: {target}")
+            if target_path not in seen:
+                accepted.append(target_path)
+                seen.add(target_path)
+    return tuple(accepted)
+
+
 def _finalize_apply_report(
     run_id: str,
     report_path: Path,

@@ -56,7 +56,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.4.0"
+CLI_VERSION = "3.4.1"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -87,6 +87,8 @@ Commands:
   spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
   spec resume "<answers>"                   Answer escalation questions from a blocked run.
   spec rewind <phase-id>                    Rewind the active squad run to a safe checkpoint.
+  spec switch <spec-or-run-id> [--stash | --discard --confirm] [--restore-stash]
+                                            Select a checkpointed Phase A spec run.
   spec drop-target <spec_id> <target> --confirm
                                             Remove an unused target from an unfinished run.
   spec checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]
@@ -308,6 +310,16 @@ def _workspace_git_preflight_for_squad_run(
         return
 
     _workspace_git_preflight(project_root, command_name=command_name)
+
+
+def _require_phase_a_git_ownership(project_root: Path, *, command_name: str) -> None:
+    try:
+        from echelon.speckit_git import require_speckit_git_disabled
+
+        require_speckit_git_disabled(project_root)
+    except Exception as exc:
+        print(f"✗ {command_name}: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
 
 
 def _derive_wing_suggestion(project_dir: Path) -> str:
@@ -2950,15 +2962,29 @@ def _exit_if_provider_session_limited(state_store: object) -> None:
         raise SystemExit(2)
 
 
+_RUNS_GITIGNORE_PATTERNS = (
+    "**/.echelon/checkpoints.json",
+    "*/state.json",
+    "*/*.tmp",
+    ".current*",
+)
+
+
+def _ensure_runs_gitignore(gitignore: Path) -> None:
+    lines = gitignore.read_text(encoding="utf-8").splitlines() if gitignore.exists() else []
+    missing = [pattern for pattern in _RUNS_GITIGNORE_PATTERNS if pattern not in lines]
+    if not missing:
+        return
+    gitignore.write_text("\n".join([*lines, *missing]) + "\n", encoding="utf-8")
+
+
 def _setup_run_dir(project_root: Path, run_id: str) -> Path:
     """Create runs/<run_id>/ + staging/, write runs/.gitignore, update runs/.current."""
     from harness.paths import runs_dir
     runs_root = runs_dir(project_root)
     runs_root.mkdir(exist_ok=True)
 
-    gitignore = runs_root / ".gitignore"
-    if not gitignore.exists():
-        gitignore.write_text("*/state.json\n*/*.tmp\n.current*\n")
+    _ensure_runs_gitignore(runs_root / ".gitignore")
 
     run_dir = runs_root / run_id
     run_dir.mkdir(exist_ok=True)
@@ -3108,6 +3134,25 @@ def _blocked_failed_dispatch_phase(run_state: dict) -> str | None:
     return phase_id
 
 
+def _phase_a_readiness_traceability_blockers(run_state: dict) -> list[str]:
+    """Return product-input mapping blockers preserved by Phase A finalization."""
+    blockers = run_state.get("phase_a_readiness_blockers")
+    if not isinstance(blockers, list):
+        return []
+    markers = (
+        "product input traceability",
+        "included requirement has no specification IDs",
+        "included requirement has no task IDs",
+        "does not reference the mapped specification IDs",
+        "is not target-owned by a declared implementation target",
+    )
+    return [
+        str(blocker)
+        for blocker in blockers
+        if isinstance(blocker, str) and any(marker in blocker for marker in markers)
+    ]
+
+
 def _interrupted_retry_phase(run_state: dict) -> str | None:
     phase_id = str(run_state.get("interrupted_phase") or run_state.get("phase") or "").strip()
     if phase_id and phase_id not in {"DONE", "terminal-blocked"}:
@@ -3189,6 +3234,22 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
             command="echelon spec continue",
             note=note,
         )
+
+    if reason == "phase_a_readiness_failed":
+        traceability_blockers = _phase_a_readiness_traceability_blockers(run_state)
+        if traceability_blockers:
+            return _RunRecoveryAction(
+                "manual_recovery",
+                reason=reason,
+                command="echelon spec repair-traceability",
+                note=(
+                    "Preview a deterministic repair that removes contextual task references "
+                    "while preserving direct requirement mappings; it resumes finalization without "
+                    "re-running PLAN when safe. "
+                    f"{len(traceability_blockers)} traceability blocker(s) were recorded; "
+                    "each listed task must have a req= value that intersects its mapped spec_ids."
+                ),
+            )
 
     if "invalid next_phase" in reason:
         return _RunRecoveryAction(
@@ -3464,6 +3525,7 @@ def _reset_rewind_state(state: dict, phase: str, spec_dir_ref: str) -> dict:
     rewound["escalation_question"] = None
     rewound["escalation_resolved"] = False
     rewound["escalation_resolver"] = None
+    rewound.pop("phase_a_readiness_blockers", None)
     if phase in _REWIND_PHASE_ORDER:
         cutoff = _REWIND_PHASE_ORDER.index(phase)
         downstream = set(_REWIND_PHASE_ORDER[cutoff:])
@@ -4624,6 +4686,10 @@ def _select_squad_dir(
     project_root: Path,
     user_message: str,
     reset: bool = False,
+    *,
+    configured_default_branch: str = "",
+    dirty_action: str = "refuse",
+    confirm_discard: bool = False,
 ) -> tuple[Path, bool]:
     """Return (squad_dir, is_fresh_start).
 
@@ -4633,25 +4699,49 @@ def _select_squad_dir(
     import json as _json
     from harness.paths import make_spec_run_id
 
+    def start_fresh() -> tuple[Path, bool]:
+        from echelon.phase_a_start import PhaseAStartError, start_phase_a_spec
+
+        run_id = make_spec_run_id()
+        runs_gitignore = project_root / "runs" / ".gitignore"
+        runs_gitignore.parent.mkdir(exist_ok=True)
+        _ensure_runs_gitignore(runs_gitignore)
+        try:
+            outcome = start_phase_a_spec(
+                project_root,
+                run_id,
+                user_message,
+                configured_default_branch=configured_default_branch,
+                dirty_action=dirty_action,
+                confirm_discard=confirm_discard,
+            )
+        except PhaseAStartError as exc:
+            print(f"✗ echelon spec run: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        return outcome.run_dir, True
+
     if reset:
-        return _setup_run_dir(project_root, make_spec_run_id()), True
+        return start_fresh()
 
     existing_dir = _find_current_run_dir(project_root)
     if not existing_dir:
-        return _setup_run_dir(project_root, make_spec_run_id()), True
+        return start_fresh()
 
     try:
         state = _json.loads((existing_dir / "state.json").read_text())
     except Exception:
-        return _setup_run_dir(project_root, make_spec_run_id()), True
+        return start_fresh()
+
+    if state.get("status") == "preparing" and user_message == state.get("user_message"):
+        return existing_dir, True
 
     status = state.get("status")
     if status not in ("running", "in_progress"):
-        return _setup_run_dir(project_root, make_spec_run_id()), True
+        return start_fresh()
 
     # Different task → new run dir (preserves old one, doesn't overwrite)
     if user_message and user_message != state.get("user_message", ""):
-        return _setup_run_dir(project_root, make_spec_run_id()), True
+        return start_fresh()
 
     # Same task, resumable status → resume in existing dir
     return existing_dir, False
@@ -4936,6 +5026,7 @@ def _cmd_run(
     _print_extension_drift_warning(project_root, ext_dir)
     _enforce_project_config_compatibility(project_root)
     _workspace_git_preflight(project_root, command_name="echelon spec run")
+    _require_phase_a_git_ownership(project_root, command_name="echelon spec run")
 
     # Parse optional flags
     mode = "semi"
@@ -4949,6 +5040,8 @@ def _cmd_run(
     product_input_values: list[str] = []
     init_target = False
     ignore_re = False
+    dirty_action = "refuse"
+    confirm_discard = False
     message_parts: list[str] = []
     i = 0
     while i < len(args):
@@ -4992,6 +5085,21 @@ def _cmd_run(
         elif args[i] == "--ignore-re":
             ignore_re = True
             i += 1
+        elif args[i] == "--stash":
+            if dirty_action != "refuse":
+                print("✗ echelon spec run: choose only --stash or --discard", file=sys.stderr)
+                raise SystemExit(2)
+            dirty_action = "stash"
+            i += 1
+        elif args[i] == "--discard":
+            if dirty_action != "refuse":
+                print("✗ echelon spec run: choose only --stash or --discard", file=sys.stderr)
+                raise SystemExit(2)
+            dirty_action = "discard"
+            i += 1
+        elif args[i] == "--confirm":
+            confirm_discard = True
+            i += 1
         elif args[i] in {"--re-policy", "--re-max-inner"}:
             moved = args[i]
             print(
@@ -5030,8 +5138,16 @@ def _cmd_run(
         reset=reset,
     )
 
+    config = load_config(project_root, squad_only=True)
     prev_dir = _find_current_run_dir(project_root)
-    squad_dir, is_fresh = _select_squad_dir(project_root, message, reset=reset)
+    squad_dir, is_fresh = _select_squad_dir(
+        project_root,
+        message,
+        reset=reset,
+        configured_default_branch=str(getattr(config, "target_default_branch", "") or ""),
+        dirty_action=dirty_action,
+        confirm_discard=confirm_discard,
+    )
     if reset:
         print("[squad] state reset — starting fresh", flush=True)
     elif is_fresh and prev_dir is not None and prev_dir != squad_dir:
@@ -5091,7 +5207,6 @@ def _cmd_run(
             print(f"✗ echelon spec run: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
 
-    config = load_config(project_root, squad_only=True)
     provider = SquadCliProvider(config)
     graph = PhaseGraph(
         ext_dir / "workflow/definition.yaml",
@@ -5815,6 +5930,61 @@ def _print_roadmap(state: dict, workflow_path: Path | None = None) -> None:
     _banner("ROADMAP", fields, subtitle=f"{done_n}/{len(roadmap_phases)} phases complete ({pct}%)")
 
 
+def _print_active_spec_status(project_root: Path) -> None:
+    """Render the deterministic Phase A authoring selection, when one exists."""
+    from echelon.spec_lifecycle import (
+        SpecLifecycleError,
+        SpecRunNotFound,
+        discover_spec_runs,
+        resolve_active_spec_run,
+    )
+    from echelon.spec_switch import validate_spec_checkpoint
+
+    try:
+        active = resolve_active_spec_run(project_root)
+    except SpecRunNotFound:
+        return
+
+    fields: list[tuple[str, str]] = [
+        ("Run", active.run_dir_name),
+        ("Spec", active.spec_id),
+        ("Branch", active.feature_branch),
+    ]
+    try:
+        checkpoint = validate_spec_checkpoint(project_root, active)
+        fields.append(("Checkpoint", f"{checkpoint.checkpoint_id} ({checkpoint.phase})"))
+    except Exception as exc:
+        # Status is diagnostic: invalid Git/checkpoint state must not suppress
+        # the rest of the operator's orientation report.
+        fields.append(("Checkpoint", f"unavailable: {exc}"))
+
+    try:
+        state = json.loads((active.run_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        state = {}
+    managed_stash = state.get("phase_a_stash") if isinstance(state, dict) else None
+    if isinstance(managed_stash, dict):
+        stash_commit = managed_stash.get("commit")
+        if isinstance(stash_commit, str) and stash_commit.strip():
+            fields.append(("Managed stash", stash_commit.strip()))
+        else:
+            fields.append(("Managed stash", "recorded but malformed"))
+
+    try:
+        others = [
+            f"{run.spec_id} ({run.run_dir_name})"
+            for run in discover_spec_runs(project_root)
+            if run.run_dir != active.run_dir
+        ]
+    except SpecLifecycleError as exc:
+        fields.append(("Switchable", f"unavailable: {exc}"))
+    else:
+        if others:
+            fields.append(("Switchable", ", ".join(others)))
+
+    _banner("ACTIVE SPEC", fields)
+
+
 def _cmd_status(project_root: Path) -> None:
     """Print a concise orientation summary for the current project state.
 
@@ -5832,6 +6002,7 @@ def _cmd_status(project_root: Path) -> None:
         project_root / ".specify" / "extensions" / "echelon",
     )
     _print_project_config_compatibility_warning(project_root)
+    _print_active_spec_status(project_root)
 
     # ── Run state ───────────────────────────────────────────────────────────
     run_dir = _find_current_run_dir(project_root)
@@ -6039,13 +6210,16 @@ def _cmd_continue(
 
     action = _classify_run_recovery(state)
     if action.kind == "safe_rewind":
+        fields = [("blocked by", action.reason)]
+        if action.note:
+            fields.append(("why", action.note))
+        fields.extend([
+            ("recover with", action.command),
+            ("then", "echelon spec continue"),
+        ])
         _banner(
             "CHECKPOINT",
-            [
-                ("blocked by", action.reason),
-                ("recover with", action.command),
-                ("then", "echelon spec continue"),
-            ],
+            fields,
             subtitle="Run paused. Deterministic recovery required.",
         )
         return
@@ -6163,6 +6337,7 @@ def _cmd_rewind(
             result = prepare_rewind(
                 project_root=project_root,
                 spec=spec_dir.name,
+                spec_dir=spec_dir,
                 target=target,
                 confirm=confirm,
             )
@@ -6174,6 +6349,10 @@ def _cmd_rewind(
             print(result.message)
             return
 
+        removed = _cleanup_rewind_outputs(spec_dir, target, squad_dir)
+        rewound = _reset_rewind_state(state, target, spec_dir_ref)
+        store.save(rewound)
+
         _banner(
             "REWIND COMPLETE",
             [
@@ -6182,6 +6361,8 @@ def _cmd_rewind(
                 ("from", result.from_commit[:7]),
                 ("to", result.to_commit[:7]),
                 ("backup", result.backup_ref or "(none)"),
+                ("cleaned", ", ".join(removed) if removed else "(none)"),
+                ("next", "echelon spec continue"),
             ],
         )
         return
@@ -6221,6 +6402,61 @@ def _cmd_rewind(
         ("next step", "echelon spec continue"),
     ]
     _banner("REWIND PREPARED", details)
+
+
+def _cmd_repair_traceability(args: list[str], project_root: Path) -> None:
+    """Safely remove contextual task references from active product-input evidence."""
+    confirm = "--confirm" in args
+    if any(arg != "--confirm" for arg in args):
+        print("Usage: echelon spec repair-traceability [--confirm]", file=sys.stderr)
+        raise SystemExit(1)
+
+    squad_dir = _find_current_run_dir(project_root)
+    if squad_dir is None or not (squad_dir / "state.json").is_file():
+        print("✗ No active squad run found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    from harness.squad_state import SquadStateStore
+    from echelon.product_inputs import repair_product_input_traceability
+
+    store = SquadStateStore(squad_dir)
+    state = store.load()
+    if str(state.get("blocked_reason") or "") != "phase_a_readiness_failed":
+        print("✗ Traceability repair is available only for a Phase A readiness block.", file=sys.stderr)
+        raise SystemExit(1)
+    spec_dir, spec_dir_ref = _normalize_rewind_spec_dir(project_root, state)
+    inputs = state.get("product_inputs")
+    traceability_ref = str(inputs.get("traceability") or "").strip() if isinstance(inputs, dict) else ""
+    if spec_dir is None or spec_dir_ref is None or not traceability_ref:
+        print("✗ Active run lacks the spec or product-input evidence needed for repair.", file=sys.stderr)
+        raise SystemExit(1)
+    traceability_path = Path(traceability_ref)
+    if not traceability_path.is_absolute():
+        traceability_path = project_root / traceability_path
+    targets = [str(value).strip() for value in state.get("implementation_targets", []) if str(value).strip()]
+    repair = repair_product_input_traceability(
+        traceability_path, spec_dir / "tasks.md", targets, apply=confirm
+    )
+    if repair.blockers:
+        print("✗ Traceability cannot be repaired safely:", file=sys.stderr)
+        for blocker in repair.blockers:
+            print(f"  - {blocker}", file=sys.stderr)
+        print("  Re-plan with: echelon spec rewind phase3-plan", file=sys.stderr)
+        raise SystemExit(1)
+    if not repair.removed:
+        print("✗ No contextual task references were available to repair.", file=sys.stderr)
+        raise SystemExit(1)
+
+    rows = [("remove", f"{unit_id} → {task_id}") for unit_id, task_id in repair.removed]
+    if not confirm:
+        rows.append(("next", "echelon spec repair-traceability --confirm"))
+        _banner("TRACEABILITY REPAIR PREVIEW", rows, subtitle="No evidence or run state changed.")
+        return
+
+    repaired = _reset_rewind_state(state, "phase4-document", spec_dir_ref)
+    store.save(repaired)
+    rows.append(("next", "echelon spec continue"))
+    _banner("TRACEABILITY REPAIRED", rows, subtitle="Direct mappings preserved; finalization can resume.")
 
 
 def _cmd_drop_target(args: list[str], project_root: Path) -> None:
@@ -6626,6 +6862,9 @@ def _cmd_phase(
     if _phase_run_requires_task_lexicon_config(phase_id):
         _enforce_project_config_compatibility(project_root)
 
+    _workspace_git_preflight(project_root, command_name="echelon phase run")
+    _require_phase_a_git_ownership(project_root, command_name="echelon phase run")
+
     mode = "semi"
     spec_arg = ""
     message_parts: list[str] = []
@@ -6651,7 +6890,12 @@ def _cmd_phase(
             sys.exit(1)
     run_dir = _find_current_run_dir(project_root)
     if run_dir is None:
-        run_dir = _setup_run_dir(project_root, make_spec_run_id())
+        print(
+            "✗ echelon phase run requires an active spec run. "
+            "Start one with: echelon spec run <description>",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
     state_store = SquadStateStore(run_dir)
     current_state = state_store.load()
@@ -7601,13 +7845,16 @@ def _cmd_spec(args: list[str]) -> None:
             "  run <description> [--mode semi|banzai|guided] [--reset]\n"
             "                    [--message <text>] [--next-phase <id>]\n"
             "                    [--target <source-id-or-path>]... [--init]\n"
-            "                    [--ignore-re]\n"
+            "                    [--ignore-re] [--stash | --discard --confirm]\n"
             "                                      Run Phase A squad spec authoring\n"
             "  status                              Show current run state and next action\n"
             "  continue [--mode semi|banzai|guided]\n"
             "                                      Run the next no-input Phase A recovery action\n"
             "  resume <answers>                    Answer escalation questions from a blocked run\n"
             "  rewind <phase-id>                   Rewind the active squad run to a checkpoint\n"
+            "  repair-traceability [--confirm]     Remove safely-prunable contextual task references\n"
+            "  switch <spec-or-run-id> [--stash | --discard --confirm]\n"
+            "                    [--restore-stash] Select a checkpointed Phase A spec run\n"
             "  drop-target <spec_id> <target> --confirm\n"
             "                                      Remove an unused target and re-plan tasks\n"
             "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
@@ -7632,10 +7879,20 @@ def _cmd_spec(args: list[str]) -> None:
     elif subcmd == "resume":
         _cmd_spec_resume(args[1:])
     elif subcmd == "rewind":
+        _require_phase_a_git_ownership(Path.cwd(), command_name="echelon spec rewind")
         _cmd_rewind(args[1:], project_root=Path.cwd())
+    elif subcmd == "repair-traceability":
+        _cmd_repair_traceability(args[1:], project_root=Path.cwd())
+    elif subcmd == "switch":
+        from echelon.spec_switch_cli import run_spec_switch_command
+
+        exit_code = run_spec_switch_command(args[1:], project_root=Path.cwd())
+        if exit_code:
+            sys.exit(exit_code)
     elif subcmd == "drop-target":
         _cmd_drop_target(args[1:], project_root=Path.cwd())
     elif subcmd == "checkpoint":
+        _require_phase_a_git_ownership(Path.cwd(), command_name="echelon spec checkpoint")
         from echelon.checkpoint_cli import run_checkpoint_command
 
         run_checkpoint_command(args[1:], project_root=Path.cwd())
@@ -7644,6 +7901,10 @@ def _cmd_spec(args: list[str]) -> None:
     elif subcmd == "verify":
         _dispatch_skill_command("verify-spec", args[1:])
     elif subcmd in {"bugfix", "change", "reopen"}:
+        _require_phase_a_git_ownership(
+            Path.cwd(),
+            command_name=f"echelon spec {subcmd}",
+        )
         _dispatch_skill_command(subcmd, args[1:])
     else:
         print(f"echelon spec: unknown subcommand '{subcmd}'\n", file=sys.stderr)
@@ -7690,6 +7951,7 @@ def _cmd_spec_continue(args: list[str]) -> None:
     project_root = Path.cwd()
     ext_dir = _installed_extension_or_exit(project_root)
     _require_provider_capability("echelon spec continue", ProviderCapability.ARTIFACT, project_dir=project_root)
+    _require_phase_a_git_ownership(project_root, command_name="echelon spec continue")
     _cmd_continue(args, project_root=project_root, ext_dir=ext_dir)
 
 
@@ -7703,6 +7965,7 @@ def _cmd_spec_resume(args: list[str]) -> None:
     project_root = Path.cwd()
     ext_dir = _installed_extension_or_exit(project_root)
     _require_provider_capability("echelon spec resume", ProviderCapability.ARTIFACT, project_dir=project_root)
+    _require_phase_a_git_ownership(project_root, command_name="echelon spec resume")
     _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
 
 
@@ -8099,6 +8362,14 @@ def _cmd_workspace(args: list[str]) -> None:
             openai_api_key_env=openai_api_key_env,
         )
         _maybe_bootstrap_workspace_git(project_root)
+        try:
+            from echelon.speckit_git import disable_speckit_git
+
+            state = disable_speckit_git(project_root)
+        except Exception as exc:
+            print(f"✗ Could not establish exclusive Echelon Git ownership: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"✓ exclusive Git ownership established ({state.reason})")
         return
 
     if subcmd == "doctor":

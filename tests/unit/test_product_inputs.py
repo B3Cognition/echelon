@@ -170,6 +170,97 @@ def test_traceability_requires_target_owned_tasks(tmp_path: Path) -> None:
     ]
 
 
+def test_traceability_uses_canonical_task_rows_for_csv_requirements(tmp_path: Path) -> None:
+    """Examples and later prose must not overwrite a canonical task's metadata."""
+    from echelon.product_inputs import validate_product_input_traceability
+
+    spec = tmp_path / "specs" / "001-demo"
+    inputs = spec / "inputs"
+    inputs.mkdir(parents=True)
+    (inputs / "traceability.json").write_text(
+        json.dumps(
+            {
+                "requirements": [
+                    {
+                        "input_unit_id": "IN-REQ-1",
+                        "disposition": "included",
+                        "spec_ids": ["FR-140", "FR-141"],
+                        "task_ids": ["T-057"],
+                        "targets": ["sources/web"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (spec / "tasks.md").write_text(
+        """```markdown
+- [ ] T-057 complexity=standard phase=download req=FR-140,FR-141 depends=none target=sources/web
+```
+
+- [ ] T-057 complexity=standard phase=download req=FR-140,FR-141 depends=none target=sources/web
+
+T-057 is described above and must not be parsed as another task row.
+""",
+        encoding="utf-8",
+    )
+
+    assert validate_product_input_traceability(spec, ["sources/web"]) == []
+
+
+def test_traceability_repair_prunes_contextual_task_ids_only_when_direct_mappings_remain(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import repair_product_input_traceability
+
+    spec = tmp_path / "specs" / "001-demo"
+    inputs = spec / "inputs"
+    inputs.mkdir(parents=True)
+    traceability_path = inputs / "traceability.json"
+    traceability_path.write_text(
+        json.dumps(
+            {
+                "requirements": [
+                    {
+                        "input_unit_id": "IN-REQ-1",
+                        "disposition": "included",
+                        "spec_ids": ["FR-1"],
+                        "task_ids": ["T-001", "T-S01"],
+                        "targets": ["sources/web"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    tasks_path = spec / "tasks.md"
+    tasks_path.write_text(
+        "- [ ] T-001 complexity=standard phase=foundation req=FR-1 depends=none target=sources/web\n"
+        "- [ ] T-S01 complexity=standard phase=foundation req=INFRA depends=none target=sources/web\n",
+        encoding="utf-8",
+    )
+
+    preview = repair_product_input_traceability(
+        traceability_path, tasks_path, ["sources/web"], apply=False
+    )
+
+    assert preview.removed == (("IN-REQ-1", "T-S01"),)
+    assert preview.blockers == ()
+    assert json.loads(traceability_path.read_text(encoding="utf-8"))["requirements"][0]["task_ids"] == [
+        "T-001",
+        "T-S01",
+    ]
+
+    applied = repair_product_input_traceability(
+        traceability_path, tasks_path, ["sources/web"], apply=True
+    )
+
+    assert applied.removed == (("IN-REQ-1", "T-S01"),)
+    assert json.loads(traceability_path.read_text(encoding="utf-8"))["requirements"][0]["task_ids"] == [
+        "T-001"
+    ]
+
+
 def test_controller_applies_structured_traceability_updates(tmp_path: Path) -> None:
     from echelon.product_inputs import (
         apply_product_input_updates,
@@ -205,6 +296,108 @@ def test_controller_applies_structured_traceability_updates(tmp_path: Path) -> N
     assert ledger["requirements"][0]["task_ids"] == ["T-001"]
 
 
+def test_plan_updates_reject_contextual_task_ids_without_mutating_ledger(tmp_path: Path) -> None:
+    from echelon.product_inputs import (
+        ProductInputError,
+        apply_product_input_updates,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+
+    project = tmp_path / "workspace"
+    source = project / "requirements.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("A normative requirement.\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs" / "run-1",
+        [parse_input_declaration("requirement:requirements.md")],
+    )
+    unit_id = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))["units"][0]["id"]
+    tasks_path = project / "specs" / "001-demo" / "tasks.md"
+    tasks_path.parent.mkdir(parents=True)
+    tasks_path.write_text(
+        "- [ ] T-001 complexity=standard phase=foundation req=FR-1 depends=none target=sources/web\n"
+        "- [ ] T-S01 complexity=standard phase=foundation req=INFRA depends=none target=sources/web\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ProductInputError, match=rf"{unit_id}: task T-S01 does not reference"):
+        apply_product_input_updates(
+            resolution.traceability_path,
+            [{
+                "input_unit_id": unit_id,
+                "disposition": "included",
+                "rationale": "Mapped during planning.",
+                "spec_ids": ["FR-1"],
+                "task_ids": ["T-001", "T-S01"],
+                "targets": ["sources/web"],
+            }],
+            tasks_path=tasks_path,
+            declared_targets=["sources/web"],
+        )
+
+    ledger = json.loads(resolution.traceability_path.read_text(encoding="utf-8"))
+    assert ledger["requirements"][0]["disposition"] == "open_question"
+    assert ledger["requirements"][0]["task_ids"] == []
+
+
+def test_phase_plan_controller_rejects_bad_traceability_before_consensus(tmp_path: Path) -> None:
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from harness.squad import SquadController
+    from harness.squad_provider import SquadAgentResult
+    from harness.squad_state import SquadStateStore
+
+    project = tmp_path / "workspace"
+    source = project / "requirements.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("A normative requirement.\n", encoding="utf-8")
+    run_dir = project / "runs" / "run-1"
+    resolution = resolve_product_inputs(
+        project, run_dir, [parse_input_declaration("requirement:requirements.md")]
+    )
+    unit_id = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))["units"][0]["id"]
+    store = SquadStateStore(run_dir)
+    store.initialize(
+        "run-1", "greenfield", "demo", 0, "phase3-plan",
+        implementation_targets=["sources/web"],
+        product_inputs=resolution.state_payload(project),
+    )
+    spec = run_dir / "specs" / "001-demo"
+    spec.mkdir(parents=True)
+    (spec / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=foundation req=FR-1 depends=none target=sources/web\n"
+        "- [ ] T-S01 complexity=standard phase=foundation req=INFRA depends=none target=sources/web\n",
+        encoding="utf-8",
+    )
+    state = store.load()
+    state["spec_dir"] = str(spec.relative_to(project))
+    store.save(state)
+    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    result = SquadAgentResult(
+        exit_code=0,
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+        echelon_result={
+            "product_input_updates": [{
+                "input_unit_id": unit_id,
+                "disposition": "included",
+                "rationale": "Mapped during planning.",
+                "spec_ids": ["FR-1"],
+                "task_ids": ["T-001", "T-S01"],
+                "targets": ["sources/web"],
+            }]
+        },
+    )
+
+    error = controller._apply_product_input_updates(result, "phase3-plan")
+
+    assert error == f"invalid product input updates: {unit_id}: task T-S01 does not reference the mapped specification IDs"
+    ledger = json.loads(resolution.traceability_path.read_text(encoding="utf-8"))
+    assert ledger["requirements"][0]["disposition"] == "open_question"
+
+
 def test_prompt_contract_uses_snapshot_paths_and_structured_updates() -> None:
     from harness.squad_executors import _render_product_input_context
 
@@ -227,6 +420,16 @@ def test_prompt_contract_uses_snapshot_paths_and_structured_updates() -> None:
     assert "spec_ids: [FR-001, AC-001]" in prompt
     assert "task_ids: []" in prompt
     assert "targets: []" in prompt
+
+
+def test_plan_phase_requires_direct_product_input_task_mappings() -> None:
+    phase = (
+        Path(__file__).parents[2]
+        / "extension/workflow/phases/phase3-plan.md"
+    ).read_text(encoding="utf-8")
+
+    assert "directly intersect that unit's `spec_ids`" in phase
+    assert "Do not mark a contextual or illustrative unit `included` with empty" in phase
 
 
 def test_phase_a_publication_copies_evidence_only_after_traceability_is_ready(tmp_path: Path) -> None:

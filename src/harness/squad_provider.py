@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,50 @@ from harness.echelon_result_schema import (
     validate_echelon_result,
 )
 from harness.llm_provider import AICodingCliProvider
+
+
+class PhaseAGitBoundaryError(RuntimeError):
+    """Raised when an external Phase A provider mutates branch or HEAD."""
+
+
+def _git_boundary_snapshot(project_root: str) -> tuple[str, str] | None:
+    root = Path(project_root)
+    probe = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode != 0 or probe.stdout.strip() != "true":
+        return None
+    branch_result = subprocess.run(
+        ["git", "-C", str(root), "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    head_result = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD^{commit}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if branch_result.returncode != 0 or head_result.returncode != 0:
+        return ("<unreadable>", "<unreadable>")
+    branch = branch_result.stdout.strip()
+    head = head_result.stdout.strip()
+    return branch, head
+
+
+def _verify_git_boundary(project_root: str, before: tuple[str, str] | None) -> None:
+    if before is None:
+        return
+    after = _git_boundary_snapshot(project_root)
+    if after != before:
+        raise PhaseAGitBoundaryError(
+            "Phase A provider mutated Git branch or HEAD; Echelon must be the sole Git "
+            f"authority (before={before}, after={after})"
+        )
 
 
 @dataclass
@@ -278,11 +323,13 @@ class SquadCliProvider(AICodingCliProvider):
         timeout_ms: Optional[int] = None,
     ) -> SquadAgentResult:
         start = time.monotonic()
+        git_before = _git_boundary_snapshot(project_root)
         backend_result = self.run_agent_result(
             project_root,
             prompt,
             timeout_ms=timeout_ms,
         )
+        _verify_git_boundary(project_root, git_before)
         duration_ms = int((time.monotonic() - start) * 1000)
         exit_code = backend_result.exit_code
         raw = backend_result.stdout
@@ -313,11 +360,13 @@ class SquadCliProvider(AICodingCliProvider):
                 raw,
                 validation_reason,
             )
+            repair_git_before = _git_boundary_snapshot(project_root)
             repair_result = self.run_agent_result(
                 project_root,
                 repair_prompt,
                 timeout_ms=timeout_ms,
             )
+            _verify_git_boundary(project_root, repair_git_before)
             cost_usd += repair_result.cost_usd
             if repair_result.exit_code == 0 and not repair_result.timed_out:
                 repair_parsed = _extract_echelon_result(repair_result.stdout)

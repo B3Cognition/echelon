@@ -17,12 +17,23 @@ CODEGRAPH_PACKAGE = "@colbymchenry/codegraph"
 CODEGRAPH_VERSION = "1.4.1"
 
 
-def test_install_script_installs_re_node_dependencies_with_npm_ci():
+def test_install_script_installs_codegraph_in_shared_runtime_with_npm_ci():
     install_script = (EXT_ROOT / "scripts" / "install.sh").read_text()
 
-    assert "CODEGRAPH_NODE_DIR=" in install_script
-    assert 'npm ci --prefix "$CODEGRAPH_NODE_DIR"' in install_script
+    assert 'NODE_RUNTIME_ROOT="${ECHELON_HOME:-$HOME/.echelon}/node"' in install_script
+    assert (
+        'CODEGRAPH_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/codegraph"'
+        in install_script
+    )
+    assert 'CODEGRAPH_NODE_DIR="$NODE_RUNTIME_ROOT/codegraph"' in install_script
+    assert (
+        '_refresh_node_runtime "$CODEGRAPH_SOURCE_DIR" "$CODEGRAPH_NODE_DIR" vendor dist'
+        in install_script
+    )
+    assert '_npm_ci_in_runtime "$CODEGRAPH_NODE_DIR"' in install_script
     assert "CodeGraph bridge" in install_script
+    assert 'npm ci --prefix "$CODEGRAPH_NODE_DIR"' not in install_script
+    assert 'npm ci --prefix "$CODEGRAPH_SOURCE_DIR"' not in install_script
 
 
 def test_install_script_supports_optional_codegraph_cli_without_mcp_install():
@@ -33,6 +44,14 @@ def test_install_script_supports_optional_codegraph_cli_without_mcp_install():
     assert '"@colbymchenry/codegraph@$CODEGRAPH_CLI_VERSION"' in install_script
     assert "codegraph install" not in install_script
     assert 'command -v codegraph' in install_script
+
+
+def test_uninstall_script_removes_shared_node_runtimes() -> None:
+    uninstall_script = (EXT_ROOT / "scripts" / "uninstall.sh").read_text()
+
+    assert 'ECHELON_HOME="${ECHELON_HOME:-$HOME/.echelon}"' in uninstall_script
+    assert 'NODE_RUNTIME_DIR="$ECHELON_HOME/node"' in uninstall_script
+    assert 'rm -rf "$NODE_RUNTIME_DIR"' in uninstall_script
 
 
 def test_codegraph_runtime_is_pinned_to_current_supported_release():
@@ -56,13 +75,15 @@ def test_shell_ci_uses_a_node_runtime_supported_by_codegraph_sdk():
     assert 'node-version: "24"' in workflow
 
 
-def test_run_analysis_points_to_extension_node_install_path():
+def test_run_analysis_uses_shared_runtime_resolver_without_local_npm_repair():
     run_analysis = (
         EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"
     ).read_text()
 
-    assert 'CODEGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/codegraph"' in run_analysis
-    assert 'npm ci --prefix \\"$CODEGRAPH_NODE_DIR\\"' in run_analysis
+    assert "node-runtime-resolver.sh" in run_analysis
+    assert "echelon_resolve_codegraph_runtime" in run_analysis
+    assert 'CODEGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/codegraph"' not in run_analysis
+    assert 'npm ci --prefix \\"$CODEGRAPH_NODE_DIR\\"' not in run_analysis
     assert "npm install --prefix scripts/node/codegraph" not in run_analysis
 
 
@@ -142,6 +163,10 @@ def test_re_analyzer_uses_state_output_dir_instead_of_hardcoded_re_path():
     assert "workspace-manifest.json" in analyzer
     assert "RE_OUTPUT_DIR" in analyzer
     assert '"$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" \\' in analyzer
+    assert "ALWAYS invoke `run-analysis.sh`" in analyzer
+    assert "NEVER derive or invoke CodeGraph or PerlGraph runtime paths" in analyzer
+    assert "scripts/node/codegraph/codegraph-bridge.js" not in analyzer
+    assert "dist/cli/perlgraph.js" not in analyzer
     assert '--output "$RE_OUTPUT_DIR"' in analyzer
     assert '--manifest "$RE_ANALYSIS_MANIFEST"' in analyzer
     assert '--source-output-root "$RE_OUTPUT_DIR/sources"' in analyzer

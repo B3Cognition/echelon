@@ -6,6 +6,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-151 / #164 exclusive Phase A GitOps** — Echelon now owns Phase A
+  branch lifecycle end-to-end: workspace initialization disables competing
+  spec-kit Git hooks, fresh specs start as checkpoint-gated sibling branches
+  from the recorded default commit, and `echelon spec switch` safely selects
+  unfinished runs with clean, managed-stash, or confirmed-discard handling.
+  Delivery resolves its requested spec without changing the active authoring
+  checkout, landing refuses to disturb a different active spec, and terminal
+  Phase A finalization commits the validated run-local and published artifact
+  trees through Python-owned checkpoints. A live Phase A controller now owns a
+  deterministic execution lease, so duplicate resumes fail safely and a new
+  spec or switch cannot move the shared checkout underneath it.
+
 - **First-class reverse-engineering lifecycle** — `echelon re run`, `echelon re
   continue`, and `echelon re resume` now own RE planning, bounded repair, and
   structured recovery under an independent `runs/.current-re` marker. Complete
@@ -34,11 +46,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- **Context7 deployed-runtime discovery** — the installer now places the pinned
-  `ctx7` runtime under `~/.echelon/node/context7`, and deployed extension
-  wrappers fall back to that shared installation. Project-local extension copies
-  no longer fail merely because `specify extension add/update` excludes
-  `node_modules`.
+- **Shared Node runtime discovery** — the installer now refreshes the pinned
+  Context7, CodeGraph, and PerlGraph runtimes under
+  `${ECHELON_HOME:-$HOME/.echelon}/node`. Primary-workspace wrappers and harness
+  evidence commands prefer a complete deployed runtime, then fall back to that
+  shared installation, while delivery remains strict worktree-local. Agent
+  contracts invoke stable wrappers instead of physical runtime paths, and
+  uninstall removes the shared runtime tree.
 
 - **EGR-147 / #162 authoritative implementation targets** — repeatable
   `echelon spec run --target` values are now resolved and persisted before

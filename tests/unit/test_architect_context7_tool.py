@@ -14,6 +14,9 @@ ARCHITECT = ROOT / "extension" / "agents" / "solution" / "architect.md"
 PHASE = ROOT / "extension" / "workflow" / "phases" / "phase3-how.md"
 CTX7_NODE_DIR = ROOT / "extension" / "scripts" / "node" / "context7"
 CTX7_WRAPPER = ROOT / "extension" / "scripts" / "bash" / "context7-docs.sh"
+NODE_RUNTIME_RESOLVER = (
+    ROOT / "extension" / "scripts" / "bash" / "node-runtime-resolver.sh"
+)
 
 
 def test_context7_cli_runtime_is_pinned_and_extension_local() -> None:
@@ -30,10 +33,15 @@ def test_context7_cli_runtime_is_pinned_and_extension_local() -> None:
 def test_install_script_installs_context7_with_npm_ci() -> None:
     install_script = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
 
+    assert 'NODE_RUNTIME_ROOT="${ECHELON_HOME:-$HOME/.echelon}/node"' in install_script
     assert 'CTX7_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/context7"' in install_script
-    assert 'CTX7_NODE_DIR="$HOME/.echelon/node/context7"' in install_script
-    assert 'cp "$CTX7_SOURCE_DIR/package.json" "$CTX7_SOURCE_DIR/package-lock.json" "$CTX7_NODE_DIR/"' in install_script
-    assert 'npm ci --prefix "$CTX7_NODE_DIR"' in install_script
+    assert 'CTX7_NODE_DIR="$NODE_RUNTIME_ROOT/context7"' in install_script
+    assert (
+        '_refresh_node_runtime "$CTX7_SOURCE_DIR" "$CTX7_NODE_DIR" dist'
+        in install_script
+    )
+    assert '_npm_ci_in_runtime "$CTX7_NODE_DIR"' in install_script
+    assert 'npm ci --prefix "$CTX7_NODE_DIR"' not in install_script
     assert "Context7 CLI dependencies installed" in install_script
     assert "context7-mcp" not in install_script
 
@@ -43,9 +51,10 @@ def test_context7_wrapper_execs_extension_local_ctx7() -> None:
     mode = CTX7_WRAPPER.stat().st_mode
 
     assert mode & stat.S_IXUSR
+    assert "node-runtime-resolver.sh" in text
+    assert "echelon_resolve_context7_runtime" in text
     assert 'CTX7_NODE_DIR="$(dirname "$SCRIPT_DIR")/node/context7"' in text
-    assert 'LOCAL_CTX7_BIN="$CTX7_NODE_DIR/node_modules/.bin/ctx7"' in text
-    assert 'SHARED_CTX7_BIN="${ECHELON_HOME:-$HOME/.echelon}/node/context7/node_modules/.bin/ctx7"' in text
+    assert "SHARED_CTX7_BIN=" not in text
     assert "echelon.context7.v1" in text
     assert '"result": result' in text
     assert 'exec "$CTX7_BIN" "$@"' in text
@@ -136,6 +145,7 @@ def test_deployed_context7_wrapper_uses_shared_installed_runtime(tmp_path: Path)
     )
     deployed_wrapper.parent.mkdir(parents=True)
     shutil.copy2(CTX7_WRAPPER, deployed_wrapper)
+    shutil.copy2(NODE_RUNTIME_RESOLVER, deployed_wrapper.parent)
 
     shared_ctx7 = (
         tmp_path

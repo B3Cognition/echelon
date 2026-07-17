@@ -16,16 +16,27 @@ PERLGRAPH_RUNTIME_DIR = EXT_ROOT / "extension" / "scripts" / "node" / "perlgraph
 PERLGRAPH_VERSION = "0.1.0"
 
 
-def test_install_script_prepares_perlgraph_runtime() -> None:
+def test_install_script_prepares_perlgraph_in_shared_runtime() -> None:
     install_script = (EXT_ROOT / "scripts" / "install.sh").read_text()
 
-    assert "PERLGRAPH_NODE_DIR=" in install_script
-    assert 'npm ci --prefix "$PERLGRAPH_NODE_DIR"' in install_script
+    assert 'NODE_RUNTIME_ROOT="${ECHELON_HOME:-$HOME/.echelon}/node"' in install_script
+    assert (
+        'PERLGRAPH_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/perlgraph"'
+        in install_script
+    )
+    assert 'PERLGRAPH_NODE_DIR="$NODE_RUNTIME_ROOT/perlgraph"' in install_script
+    assert (
+        '_refresh_node_runtime "$PERLGRAPH_SOURCE_DIR" "$PERLGRAPH_NODE_DIR" dist'
+        in install_script
+    )
+    assert '_npm_ci_in_runtime "$PERLGRAPH_NODE_DIR"' in install_script
     assert '--include=dev' in _perlgraph_install_section(install_script)
-    assert 'npm run build --prefix "$PERLGRAPH_NODE_DIR"' in install_script
+    assert '_npm_run_in_runtime "$PERLGRAPH_NODE_DIR" build' in install_script
     assert 'CXXFLAGS="${CXXFLAGS:--std=c++20}"' in install_script
     assert "PerlGraph" in install_script
     assert "--ignore-scripts" not in _perlgraph_install_section(install_script)
+    assert 'npm ci --prefix "$PERLGRAPH_NODE_DIR"' not in install_script
+    assert 'npm ci --prefix "$PERLGRAPH_SOURCE_DIR"' not in install_script
 
 
 def test_perlgraph_runtime_is_pinned_to_release() -> None:
@@ -86,7 +97,10 @@ def test_run_analysis_writes_perlgraph_artifacts() -> None:
         EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"
     ).read_text()
 
-    assert 'PERLGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/perlgraph"' in run_analysis
+    assert "node-runtime-resolver.sh" in run_analysis
+    assert "echelon_resolve_perlgraph_runtime" in run_analysis
+    assert 'PERLGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/perlgraph"' not in run_analysis
+    assert 'npm ci --prefix \\"$PERLGRAPH_NODE_DIR\\"' not in run_analysis
     assert '"$REPO_OUTPUT/perlgraph-analysis.json"' in run_analysis
     assert '"$REPO_OUTPUT/perlgraph-summary.json"' in run_analysis
     assert '"$OUTPUT_DIR/perlgraph-analysis.json"' in run_analysis

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -23,6 +24,29 @@ from harness.squad_state import SquadStateStore
 
 DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
 EXT_YML = EXT_ROOT / "extension/extension.yml"
+
+
+def _ensure_git_repo(project_root: Path) -> None:
+    if (project_root / ".git").exists():
+        return
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "config", "user.name", "Echelon Tests"], cwd=project_root, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "echelon@example.test"],
+        cwd=project_root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "base"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+    )
 
 
 def _mock_provider(verdict: str = "DONE") -> MagicMock:
@@ -62,6 +86,7 @@ def _controller(
     provider: MagicMock | None = None,
     squad_dir: Path | None = None,
 ) -> tuple[SquadController, SquadStateStore]:
+    _ensure_git_repo(tmp_path)
     if squad_dir is None:
         squad_dir = tmp_path / "runs" / "run-test"
     squad_dir.mkdir(parents=True, exist_ok=True)
@@ -246,6 +271,7 @@ def test_assemble_prompt_ignores_retired_golddigger_cache_state(tmp_path: Path) 
 def test_run_context_refreshes_after_phase_updates_run_local_spec_artifacts(
     tmp_path: Path,
 ) -> None:
+    _ensure_git_repo(tmp_path)
     definition = tmp_path / "definition.yaml"
     extension_yml = tmp_path / "extension.yml"
     definition.write_text(

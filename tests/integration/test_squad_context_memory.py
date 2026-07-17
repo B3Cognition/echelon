@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import subprocess
 from unittest.mock import MagicMock, patch
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -19,6 +20,29 @@ DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
 EXT_YML = EXT_ROOT / "extension/extension.yml"
 
 
+def _ensure_git_repo(project_root: Path) -> None:
+    if (project_root / ".git").exists():
+        return
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "config", "user.name", "Echelon Tests"], cwd=project_root, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "echelon@example.test"],
+        cwd=project_root,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "base"],
+        cwd=project_root,
+        check=True,
+        capture_output=True,
+    )
+
+
 def _mock_provider() -> MagicMock:
     provider = MagicMock()
     provider.exec_agent.return_value = SquadAgentResult(
@@ -32,6 +56,7 @@ def _mock_provider() -> MagicMock:
 
 
 def _controller(tmp_path: Path, provider: MagicMock | None = None) -> tuple[SquadController, SquadStateStore]:
+    _ensure_git_repo(tmp_path)
     squad_dir = tmp_path / "runs" / "run-test"
     squad_dir.mkdir(parents=True, exist_ok=True)
     (squad_dir / "staging").mkdir(exist_ok=True)

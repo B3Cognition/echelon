@@ -49,9 +49,10 @@ def prepare_rewind(
     spec: str,
     target: str,
     confirm: bool,
+    spec_dir: Path | None = None,
 ) -> RewindResult:
-    spec_dir = _find_spec_dir(project_root, spec)
-    ledger = load_checkpoint_ledger(spec_dir)
+    resolved_spec_dir = spec_dir or _find_spec_dir(project_root, spec)
+    ledger = load_checkpoint_ledger(resolved_spec_dir)
     try:
         checkpoint = resolve_checkpoint(ledger, target)
     except KeyError as exc:

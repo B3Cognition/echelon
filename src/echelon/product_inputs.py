@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from harness.secret_scan import scan_text
+from kernel.task_contract import parse_task_rows
 
 
 _ROLES = frozenset({"requirement", "reference"})
@@ -25,6 +26,14 @@ _SECRET_SUFFIXES = frozenset({".pem", ".key", ".p12", ".pfx"})
 
 class ProductInputError(ValueError):
     """Raised when declared product input is unsafe or cannot be consumed."""
+
+
+@dataclass(frozen=True)
+class ProductInputTraceabilityRepair:
+    """A deterministic, conservative repair plan for contextual task references."""
+
+    removed: tuple[tuple[str, str], ...]
+    blockers: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -239,7 +248,17 @@ def validate_product_input_traceability(spec_dir: Path, declared_targets: Sequen
         ledger = json.loads(traceability_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return [f"product input traceability.json is invalid: {exc}"]
-    tasks = _task_metadata(spec_dir / "tasks.md")
+    return _traceability_blockers(ledger, _task_metadata(spec_dir / "tasks.md"), declared_targets)
+
+
+def _traceability_blockers(
+    ledger: object,
+    tasks: dict[str, dict[str, set[str]]],
+    declared_targets: Sequence[str],
+) -> list[str]:
+    """Validate a traceability ledger against canonical task metadata."""
+    if not isinstance(ledger, dict):
+        return ["product input traceability.json is invalid"]
     blockers: list[str] = []
     declared = set(declared_targets)
     for entry in ledger.get("requirements", []):
@@ -269,13 +288,93 @@ def validate_product_input_traceability(spec_dir: Path, declared_targets: Sequen
     return blockers
 
 
-def apply_product_input_updates(traceability_path: Path, updates: Sequence[object]) -> None:
+def repair_product_input_traceability(
+    traceability_path: Path,
+    tasks_path: Path,
+    declared_targets: Sequence[str],
+    *,
+    apply: bool,
+) -> ProductInputTraceabilityRepair:
+    """Prune only contextual task references when direct evidence remains.
+
+    A product-input unit may cite only tasks whose ``req=`` values intersect its
+    ``spec_ids``.  Agents sometimes append context tasks (for example a decision
+    spike with ``req=INFRA``) as evidence.  That is invalid, but it is safe to
+    remove when the same unit still has one or more direct task mappings.  Any
+    other traceability defect remains a blocker for a deliberate PLAN repair.
+    """
+    try:
+        ledger = json.loads(traceability_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return ProductInputTraceabilityRepair((), (f"product input traceability.json is invalid: {exc}",))
+    requirements = ledger.get("requirements")
+    if not isinstance(requirements, list):
+        return ProductInputTraceabilityRepair((), ("product input traceability has no requirements list",))
+
+    tasks = _task_metadata(tasks_path)
+    declared = set(declared_targets)
+    removed: list[tuple[str, str]] = []
+    blockers: list[str] = []
+    for entry in requirements:
+        if not isinstance(entry, dict) or str(entry.get("disposition") or "") != "included":
+            continue
+        unit_id = str(entry.get("input_unit_id") or "(unknown input unit)")
+        spec_ids = {str(value) for value in entry.get("spec_ids", []) if str(value)}
+        task_ids = [str(value) for value in entry.get("task_ids", []) if str(value)]
+        if not spec_ids or not task_ids:
+            blockers.append(f"{unit_id}: included requirement lacks direct traceability metadata")
+            continue
+
+        direct: list[str] = []
+        contextual: list[str] = []
+        unsafe: list[str] = []
+        for task_id in task_ids:
+            task = tasks.get(task_id)
+            if task is None:
+                unsafe.append(task_id)
+            elif not (task["targets"] & declared):
+                unsafe.append(task_id)
+            elif spec_ids & task["requirements"]:
+                direct.append(task_id)
+            else:
+                contextual.append(task_id)
+        if unsafe:
+            blockers.append(
+                f"{unit_id}: cannot safely repair task reference(s) {', '.join(unsafe)}"
+            )
+            continue
+        if contextual and not direct:
+            blockers.append(
+                f"{unit_id}: cannot remove contextual task reference(s) without losing all direct evidence"
+            )
+            continue
+        if contextual:
+            entry["task_ids"] = direct
+            removed.extend((unit_id, task_id) for task_id in contextual)
+
+    result = ProductInputTraceabilityRepair(tuple(removed), tuple(blockers))
+    if apply and result.removed and not result.blockers:
+        _write_json(traceability_path, ledger)
+        _write_traceability_markdown(traceability_path.with_suffix(".md"), ledger)
+    return result
+
+
+def apply_product_input_updates(
+    traceability_path: Path,
+    updates: Sequence[object],
+    *,
+    tasks_path: Path | None = None,
+    declared_targets: Sequence[str] | None = None,
+) -> None:
     """Apply validated agent mappings while keeping the controller as ledger writer."""
     try:
         ledger = json.loads(traceability_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ProductInputError(f"cannot update product input traceability: {exc}") from exc
-    requirements = ledger.get("requirements")
+    # Work on a copy: PLAN mapping errors must never leave a partial or invalid
+    # controller-owned ledger behind for a later finalization gate to discover.
+    candidate = json.loads(json.dumps(ledger))
+    requirements = candidate.get("requirements")
     if not isinstance(requirements, list):
         raise ProductInputError("product input traceability has no requirements list")
     by_id = {
@@ -303,8 +402,16 @@ def apply_product_input_updates(traceability_path: Path, updates: Sequence[objec
             "task_ids": _string_list(update.get("task_ids")),
             "targets": _string_list(update.get("targets")),
         })
-    _write_json(traceability_path, ledger)
-    _write_traceability_markdown(traceability_path.with_suffix(".md"), ledger)
+    if tasks_path is not None:
+        blockers = _traceability_blockers(
+            candidate,
+            _task_metadata(tasks_path),
+            declared_targets or (),
+        )
+        if blockers:
+            raise ProductInputError("; ".join(blockers))
+    _write_json(traceability_path, candidate)
+    _write_traceability_markdown(traceability_path.with_suffix(".md"), candidate)
 
 
 def _normalize_declaration(declaration: ProductInputDeclaration) -> ProductInputDeclaration:
@@ -439,12 +546,31 @@ def _write_traceability_markdown(path: Path, ledger: dict[str, object]) -> None:
 def _task_metadata(tasks_path: Path) -> dict[str, dict[str, set[str]]]:
     if not tasks_path.exists():
         return {}
+    markdown = tasks_path.read_text(encoding="utf-8")
+    canonical_tasks = parse_task_rows(markdown)
+    if canonical_tasks:
+        return {
+            task.task_id: {
+                "requirements": set(task.requirements),
+                "targets": {task.target} if task.target else set(),
+            }
+            for task in canonical_tasks
+        }
+
+    # Compatibility for pre-canonical task ledgers. Canonical tasks must use
+    # the shared parser above so fenced examples and later prose cannot
+    # overwrite their metadata.
     tasks: dict[str, dict[str, set[str]]] = {}
-    for line in tasks_path.read_text(encoding="utf-8").splitlines():
+    for line in markdown.splitlines():
         task_match = re.search(r"\b(T-\d+)\b", line)
         if task_match is None:
             continue
-        requirements = set(re.findall(r"req=([^\]\s]+)", line))
+        requirements = {
+            requirement
+            for value in re.findall(r"req=([^\]\s]+)", line)
+            for requirement in value.split(",")
+            if requirement
+        }
         targets = set(re.findall(r"target=([^\]\s]+)", line))
         tasks[task_match.group(1)] = {"requirements": requirements, "targets": targets}
     return tasks

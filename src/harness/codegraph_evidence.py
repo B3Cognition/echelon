@@ -8,11 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-
-FIXED_BRIDGE_RELATIVE = Path(
-    ".specify/extensions/echelon/scripts/node/codegraph/codegraph-bridge.js"
-)
-
+from .node_runtime import NodeRuntimeResolutionError, resolve_codegraph_bridge
 
 @dataclass(frozen=True)
 class CodeGraphEvidenceResult:
@@ -38,7 +34,6 @@ def write_codegraph_evidence(
     analysis_path = verify_run_dir / "codegraph-analysis.json"
     summary_path = verify_run_dir / "codegraph-summary.json"
     error_path = verify_run_dir / "codegraph-error.txt"
-    bridge_path = project_root / FIXED_BRIDGE_RELATIVE
     codegraph_dir = project_root / ".codegraph"
     codegraph_preexisted = codegraph_dir.exists()
     verify_run_dir.mkdir(parents=True, exist_ok=True)
@@ -56,11 +51,10 @@ def write_codegraph_evidence(
             )
             raise CodeGraphEvidenceError(str(error_path))
 
-        if not bridge_path.is_file():
-            message = (
-                "CodeGraph bridge missing at fixed installed extension path:\n"
-                f"{bridge_path}\n"
-            )
+        try:
+            bridge_path = resolve_codegraph_bridge(project_root)
+        except NodeRuntimeResolutionError as exc:
+            message = f"{exc}\n"
             _write_error(error_path, message)
             _write_degraded_summary(
                 summary_path=summary_path,

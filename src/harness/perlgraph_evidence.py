@@ -7,11 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-
-FIXED_CLI_RELATIVE = Path(
-    ".specify/extensions/echelon/scripts/node/perlgraph/dist/cli/perlgraph.js"
-)
-
+from .node_runtime import NodeRuntimeResolutionError, resolve_perlgraph_cli
 
 @dataclass(frozen=True)
 class PerlGraphEvidenceResult:
@@ -37,7 +33,6 @@ def write_perlgraph_evidence(
     analysis_path = verify_run_dir / "perlgraph-analysis.json"
     summary_path = verify_run_dir / "perlgraph-summary.json"
     error_path = verify_run_dir / "perlgraph-error.txt"
-    cli_path = project_root / FIXED_CLI_RELATIVE
     verify_run_dir.mkdir(parents=True, exist_ok=True)
 
     node = shutil.which("node")
@@ -52,11 +47,10 @@ def write_perlgraph_evidence(
         )
         raise PerlGraphEvidenceError(str(error_path))
 
-    if not cli_path.is_file():
-        message = (
-            "PerlGraph CLI missing at fixed installed extension path:\n"
-            f"{cli_path}\n"
-        )
+    try:
+        cli_path = resolve_perlgraph_cli(project_root)
+    except NodeRuntimeResolutionError as exc:
+        message = f"{exc}\n"
         _write_error(error_path, message)
         _write_degraded_summary(
             summary_path=summary_path,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from echelon.cli import _cmd_status, _find_converged_harness_build, _print_next_steps
@@ -32,6 +33,31 @@ def _write_build_state(
         json.dumps(payload),
         encoding="utf-8",
     )
+
+
+def _write_switchable_spec_run(
+    project: Path,
+    run_name: str,
+    *,
+    spec_id: str,
+    feature_branch: str | None = None,
+) -> Path:
+    run_dir = project / "runs" / run_name
+    spec_dir = run_dir / "specs" / spec_id
+    spec_dir.mkdir(parents=True)
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": f"runtime-{run_name}",
+                "spec_id": spec_id,
+                "feature_branch": feature_branch or spec_id,
+                "spec_dir": spec_dir.relative_to(project).as_posix(),
+                "published_spec_dir": f"specs/{spec_id}",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return run_dir
 
 
 def test_newer_blocked_harness_build_masks_older_converged_build(
@@ -280,6 +306,42 @@ def test_status_prints_authoritative_spec_dir_for_active_squad_run(
     assert "RUN STATE" in captured.out
     assert "Spec" in captured.out
     assert "specs/071-rule-studio-narrative" in captured.out
+
+
+def test_status_lists_active_spec_checkpoint_stash_and_other_runs(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    active = _write_switchable_spec_run(
+        tmp_path,
+        "run-a",
+        spec_id="001-spec-a",
+        feature_branch="feature/001-spec-a",
+    )
+    _write_switchable_spec_run(tmp_path, "run-b", spec_id="002-spec-b")
+    (tmp_path / "runs" / ".current").write_text("run-a", encoding="utf-8")
+    state_path = active / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["phase_a_stash"] = {"commit": "stash-commit"}
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    with patch(
+        "echelon.spec_switch.validate_spec_checkpoint",
+        return_value=SimpleNamespace(
+            checkpoint_id="cp-a",
+            phase="plan",
+            commit="abc123",
+        ),
+    ):
+        _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "ACTIVE SPEC" in output
+    assert "001-spec-a" in output
+    assert "feature/001-spec-a" in output
+    assert "cp-a (plan)" in output
+    assert "stash-commit" in output
+    assert "002-spec-b" in output
 
 
 def test_status_warns_when_installed_extension_differs_from_source(

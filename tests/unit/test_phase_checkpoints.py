@@ -2,9 +2,13 @@ from pathlib import Path
 import json
 import subprocess
 
+import pytest
+
 from harness.phase_checkpoints import (
     CheckpointLedger,
+    PhaseCheckpointError,
     PhaseCheckpoint,
+    commit_manual_checkpoint,
     create_phase_checkpoint,
     load_checkpoint_ledger,
     record_phase_checkpoint,
@@ -83,17 +87,28 @@ def _git(repo: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def test_create_phase_checkpoint_commits_artifacts_and_records_sha(tmp_path: Path) -> None:
+def _checkpoint_repo(tmp_path: Path) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-b", "main")
     _git(repo, "config", "user.email", "test@example.com")
     _git(repo, "config", "user.name", "Test User")
-    spec_dir = repo / "specs" / "001-demo"
+    (repo / "runs").mkdir()
+    (repo / "runs" / ".gitignore").write_text(
+        "**/.echelon/checkpoints.json\n*/state.json\n.current*\n",
+        encoding="utf-8",
+    )
+    spec_dir = repo / "runs" / "spec-run" / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+    (repo / "README.md").write_text("# Repository\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "base")
+    return repo, spec_dir
+
+
+def test_create_phase_checkpoint_commits_artifacts_and_records_sha(tmp_path: Path) -> None:
+    repo, spec_dir = _checkpoint_repo(tmp_path)
 
     (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
     checkpoint = create_phase_checkpoint(
@@ -109,3 +124,187 @@ def test_create_phase_checkpoint_commits_artifacts_and_records_sha(tmp_path: Pat
     assert checkpoint.commit == _git(repo, "rev-parse", "HEAD")
     assert "Co-authored-by: Echelon" in _git(repo, "log", "-1", "--format=%B")
     assert load_checkpoint_ledger(spec_dir).checkpoints[-1].commit == checkpoint.commit
+
+
+def test_create_phase_checkpoint_commits_only_active_spec_path(tmp_path: Path) -> None:
+    repo, spec_dir = _checkpoint_repo(tmp_path)
+    (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    (repo / "src").mkdir()
+    (repo / "src" / "staged.txt").write_text("staged\n", encoding="utf-8")
+    _git(repo, "add", "src/staged.txt")
+    (repo / "README.md").write_text("changed\n", encoding="utf-8")
+    (repo / "scratch.txt").write_text("scratch\n", encoding="utf-8")
+
+    checkpoint = create_phase_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        phase="phase3-plan",
+        next_phase="phase3-consensus",
+        run_id="spec-run",
+    )
+
+    assert _git(repo, "show", "--format=", "--name-only", "HEAD").splitlines() == [
+        "runs/spec-run/specs/001-demo/tasks.md"
+    ]
+    assert _git(repo, "diff", "--cached", "--name-only") == "src/staged.txt"
+    status = _git(repo, "status", "--short")
+    assert "README.md" in status
+    assert "scratch.txt" in status
+    assert checkpoint.commit == _git(repo, "rev-parse", "HEAD")
+
+
+def test_create_phase_checkpoint_commits_active_and_published_spec_only(
+    tmp_path: Path,
+) -> None:
+    repo, active = _checkpoint_repo(tmp_path)
+    published = repo / "specs" / "001-demo"
+    published.mkdir(parents=True)
+    (active / "tasks.md").write_text("# Run-local tasks\n", encoding="utf-8")
+    (published / "ARTIFACTS.md").write_text("# Artifacts\n", encoding="utf-8")
+    (repo / "README.md").write_text("unrelated\n", encoding="utf-8")
+
+    checkpoint = create_phase_checkpoint(
+        project_root=repo,
+        spec_dir=active,
+        phase="phase4-document",
+        next_phase="done",
+        run_id="spec-run",
+        additional_spec_dirs=(published,),
+    )
+
+    assert _git(repo, "show", "--format=", "--name-only", checkpoint.commit).splitlines() == [
+        "runs/spec-run/specs/001-demo/tasks.md",
+        "specs/001-demo/ARTIFACTS.md",
+    ]
+    assert "README.md" in _git(repo, "status", "--short")
+
+
+def test_create_phase_checkpoint_commits_declared_kb_path_only(tmp_path: Path) -> None:
+    repo, active = _checkpoint_repo(tmp_path)
+    published = repo / "specs" / "001-demo"
+    published.mkdir(parents=True)
+    kb_target = repo / "knowledge-base" / "sage-decisions.yaml"
+    kb_target.parent.mkdir(parents=True)
+    kb_target.write_text("entries: []\n", encoding="utf-8")
+    unrelated_kb_file = repo / "knowledge-base" / "patterns.yaml"
+    unrelated_kb_file.write_text("entries: []\n", encoding="utf-8")
+    (active / "tasks.md").write_text("# Run-local tasks\n", encoding="utf-8")
+    (published / "ARTIFACTS.md").write_text("# Artifacts\n", encoding="utf-8")
+    (repo / "README.md").write_text("unrelated\n", encoding="utf-8")
+
+    checkpoint = create_phase_checkpoint(
+        project_root=repo,
+        spec_dir=active,
+        phase="phase4-document",
+        next_phase="done",
+        run_id="spec-run",
+        additional_spec_dirs=(published,),
+        additional_owned_paths=(kb_target,),
+    )
+
+    assert _git(repo, "show", "--format=", "--name-only", checkpoint.commit).splitlines() == [
+        "knowledge-base/sage-decisions.yaml",
+        "runs/spec-run/specs/001-demo/tasks.md",
+        "specs/001-demo/ARTIFACTS.md",
+    ]
+    status = _git(repo, "status", "--short")
+    assert "README.md" in status
+    assert "knowledge-base/patterns.yaml" in status
+
+
+def test_create_phase_checkpoint_records_clean_head_without_new_commit(tmp_path: Path) -> None:
+    repo, spec_dir = _checkpoint_repo(tmp_path)
+    head_before = _git(repo, "rev-parse", "HEAD")
+    count_before = _git(repo, "rev-list", "--count", "HEAD")
+
+    checkpoint = create_phase_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        phase="phase2-decide",
+        next_phase="phase3-how",
+        run_id="spec-run",
+    )
+
+    assert checkpoint.commit == head_before
+    assert _git(repo, "rev-list", "--count", "HEAD") == count_before
+    assert load_checkpoint_ledger(spec_dir).checkpoints[-1] == checkpoint
+
+
+def test_create_phase_checkpoint_commits_owned_spec_when_runs_are_ignored(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "ignored-runs-repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+    (repo / ".gitignore").write_text("/runs/\n", encoding="utf-8")
+    (repo / "README.md").write_text("# Repository\n", encoding="utf-8")
+    _git(repo, "add", ".gitignore", "README.md")
+    _git(repo, "commit", "-m", "base")
+    spec_dir = repo / "runs" / "spec-run" / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Ignored but owned\n", encoding="utf-8")
+
+    checkpoint = create_phase_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        phase="phase1-what",
+        next_phase="phase1-why2",
+        run_id="spec-run",
+    )
+
+    assert _git(repo, "show", "--format=", "--name-only", "HEAD").splitlines() == [
+        "runs/spec-run/specs/001-demo/spec.md"
+    ]
+    assert checkpoint.commit == _git(repo, "rev-parse", "HEAD")
+
+
+def test_create_phase_checkpoint_rejects_spec_dir_outside_project(tmp_path: Path) -> None:
+    repo, _spec_dir = _checkpoint_repo(tmp_path)
+    outside = tmp_path / "outside" / "001-demo"
+    outside.mkdir(parents=True)
+    (outside / "spec.md").write_text("# Outside\n", encoding="utf-8")
+    position_before = (
+        _git(repo, "branch", "--show-current"),
+        _git(repo, "rev-parse", "HEAD"),
+        _git(repo, "diff", "--cached", "--name-only"),
+    )
+
+    with pytest.raises(PhaseCheckpointError, match="inside the project root"):
+        create_phase_checkpoint(
+            project_root=repo,
+            spec_dir=outside,
+            phase="phase1-what",
+            next_phase="phase1-why2",
+            run_id="spec-run",
+            spec_id="001-demo",
+        )
+
+    assert (
+        _git(repo, "branch", "--show-current"),
+        _git(repo, "rev-parse", "HEAD"),
+        _git(repo, "diff", "--cached", "--name-only"),
+    ) == position_before
+    assert not (outside / ".echelon" / "checkpoints.json").exists()
+
+
+def test_commit_manual_checkpoint_commits_only_active_spec_path(tmp_path: Path) -> None:
+    repo, spec_dir = _checkpoint_repo(tmp_path)
+    (spec_dir / "tasks.md").write_text("# Manual tasks\n", encoding="utf-8")
+    (repo / "unrelated.txt").write_text("unrelated staged\n", encoding="utf-8")
+    _git(repo, "add", "unrelated.txt")
+
+    checkpoint = commit_manual_checkpoint(
+        project_root=repo,
+        spec_dir=spec_dir,
+        phase="phase3-plan",
+        run_id="spec-run",
+        message="docs: manual spec checkpoint",
+    )
+
+    assert _git(repo, "show", "--format=", "--name-only", "HEAD").splitlines() == [
+        "runs/spec-run/specs/001-demo/tasks.md"
+    ]
+    assert _git(repo, "diff", "--cached", "--name-only") == "unrelated.txt"
+    assert checkpoint.commit == _git(repo, "rev-parse", "HEAD")

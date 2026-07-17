@@ -129,8 +129,16 @@ class TestPhaseOutputPaths:
     def test_phase4_document_generates_artifact_index_deterministically(self) -> None:
         text = PHASE4_DOCUMENT.read_text(encoding="utf-8")
 
-        assert "echelon spec artifacts" in text
+        assert "writes\n`ARTIFACTS.md`" in text
         assert "NEVER hand-author `ARTIFACTS.md`" in text
+
+    def test_phase4_finalization_keeps_git_under_python_ownership(self) -> None:
+        text = PHASE4_DOCUMENT.read_text(encoding="utf-8")
+
+        assert "Python-owned finalization" in text
+        assert "finalize-run.sh" not in text
+        assert "git checkout" not in text
+        assert "sibling branch from the configured default branch" in text
 
     def test_build_finalize_generates_artifact_index_deterministically(self) -> None:
         text = (

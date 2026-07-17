@@ -12,6 +12,7 @@ import yaml
 import echelon.kb_proposals as kb_proposals
 from echelon.kb_proposals import (
     _project_fingerprint,
+    accepted_kb_target_paths,
     apply_proposals,
     load_proposals,
     publish_kb_reports,
@@ -95,6 +96,48 @@ def test_publish_kb_reports_returns_none_without_source_reports(tmp_path: Path) 
 
     assert published is None
     assert not (spec_dir / "kb").exists()
+
+
+def test_accepted_kb_target_paths_returns_only_accepted_known_files(tmp_path: Path) -> None:
+    target = tmp_path / "knowledge-base" / "sage-decisions.yaml"
+    target.parent.mkdir(parents=True)
+    target.write_text("entries: []\n", encoding="utf-8")
+    report = tmp_path / "runs" / "squad-001" / "kb-apply-report.yaml"
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "run_id": "squad-001",
+                "outcomes": [
+                    {"outcome": "accepted", "targets": ["knowledge-base/sage-decisions.yaml"]},
+                    {"outcome": "rejected", "targets": ["knowledge-base/patterns.yaml"]},
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert accepted_kb_target_paths(tmp_path, "squad-001") == (target,)
+
+
+def test_accepted_kb_target_paths_rejects_unknown_accepted_file(tmp_path: Path) -> None:
+    report = tmp_path / "runs" / "squad-001" / "kb-apply-report.yaml"
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        yaml.safe_dump(
+            {
+                "run_id": "squad-001",
+                "outcomes": [{"outcome": "accepted", "targets": ["README.md"]}],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unknown target"):
+        accepted_kb_target_paths(tmp_path, "squad-001")
 
 
 def test_publish_kb_reports_failure_is_non_blocking(tmp_path: Path, monkeypatch) -> None:
