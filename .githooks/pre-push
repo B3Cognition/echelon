@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Block pushes to origin unless the full local test runner is green.
+set -euo pipefail
+
+remote="${1:-}"
+url="${2:-}"
+
+if [[ "$remote" != "origin" ]]; then
+  printf 'Echelon pre-push: skipping test gate for remote "%s".\n' "${remote:-<unknown>}"
+  exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+runner="$repo_root/tests/run-all.sh"
+
+if [[ ! -f "$runner" ]]; then
+  printf 'Echelon pre-push: missing test runner: %s\n' "$runner" >&2
+  exit 1
+fi
+
+printf 'Echelon pre-push: running full test suite before push to %s (%s).\n' "$remote" "$url"
+printf 'Command: bash tests/run-all.sh\n\n'
+
+cd "$repo_root"
+bash "$runner"

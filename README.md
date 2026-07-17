@@ -37,6 +37,17 @@ specify extension add --dev ~/echelon/extension
 
 See [INSTALLATION.md](INSTALLATION.md) for prerequisites, upgrade, and uninstall instructions.
 
+### Local Git hooks
+
+Enable the tracked hooks in each checkout:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+The pre-push hook runs `bash tests/run-all.sh` before pushes to `origin` and
+blocks the push when any suite is red.
+
 The installer also prepares pinned Context7, CodeGraph, and PerlGraph runtimes
 under `${ECHELON_HOME:-$HOME/.echelon}/node`. Project commands use stable
 wrappers or harness subcommands: they prefer a complete deployed runtime and
