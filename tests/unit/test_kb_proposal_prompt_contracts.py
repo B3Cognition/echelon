@@ -113,6 +113,18 @@ def test_auditor_and_scorekeeper_have_no_direct_canonical_kb_mutations() -> None
     assert "Award +5 bonus points to the agent's lifetime score" not in scorekeeper
 
 
+def test_auditor_recommends_pattern_feedback_validation() -> None:
+    text = _read("extension/agents/learning/auditor.md")
+    feedback_validation = text.split("#### Step 4: Validate Knowledge Base", 1)[1].split(
+        "### Mode 3:", 1
+    )[0]
+
+    assert "pattern-validation recommendation" in feedback_validation
+    assert "set `validated_by_feedback: true`" not in feedback_validation
+    assert "increase confidence" not in feedback_validation
+    assert "decrease confidence" not in feedback_validation
+
+
 def test_workflow_allows_kb_status_state_updates() -> None:
     text = _read("extension/workflow/definition.yaml")
     for key in [

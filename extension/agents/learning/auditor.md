@@ -163,8 +163,11 @@ Recalculate all domain accuracy scores with the new data point and record the tr
 
 Cross-reference feedback outcomes with entries in `patterns.yaml`:
 
-- Pattern used and outcome was good → set `validated_by_feedback: true`, increase confidence
-- Pattern used and outcome was bad → decrease confidence, flag for review
+- Pattern used and outcome was good → emit a pattern-validation recommendation in `{spec_dir}/pattern-validation-review.md` that proposes feedback validation and records the supporting confidence evidence
+- Pattern used and outcome was bad → emit a pattern-validation recommendation in `{spec_dir}/pattern-validation-review.md` that recommends review and records the contradictory evidence
+
+Do not edit canonical pattern fields directly. The deterministic KB application or a
+human reviewer decides whether to apply the recommendation.
 
 ### Mode 3: Evolution Loop (during FINALIZE, after Mode 1)
 
