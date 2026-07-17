@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from echelon.kb_proposals import load_proposals, validate_proposal_document
 
 
@@ -90,3 +92,49 @@ def test_load_proposals_reports_yaml_parse_failure(tmp_path: Path) -> None:
     assert len(loaded) == 1
     assert loaded[0].validation.ok is False
     assert loaded[0].data is None
+
+
+@pytest.mark.parametrize("proposal_type", [["pattern"], {"type": "pattern"}])
+def test_rejects_unhashable_proposal_type_without_raising(proposal_type) -> None:
+    result = validate_proposal_document(
+        "bad.yaml",
+        _base_proposal(proposal_type=proposal_type),
+    )
+
+    assert result.ok is False
+    assert any(issue.path == "proposal_type" for issue in result.issues)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [["knowledge-base/patterns.yaml"], {"target": "knowledge-base/patterns.yaml"}],
+)
+def test_rejects_unhashable_target_without_raising(target) -> None:
+    result = validate_proposal_document(
+        "bad.yaml",
+        _base_proposal(targets=[target]),
+    )
+
+    assert result.ok is False
+    assert any(issue.path == "targets[0]" for issue in result.issues)
+
+
+@pytest.mark.parametrize("created_at", ["not-a-timestamp", "2026-99-99T99:99:99Z"])
+def test_rejects_invalid_created_at(created_at: str) -> None:
+    result = validate_proposal_document(
+        "bad.yaml",
+        _base_proposal(created_at=created_at),
+    )
+
+    assert result.ok is False
+    assert any(issue.path == "created_at" for issue in result.issues)
+
+
+def test_rejects_boolean_confidence() -> None:
+    result = validate_proposal_document(
+        "bad.yaml",
+        _base_proposal(confidence=True),
+    )
+
+    assert result.ok is False
+    assert any(issue.path == "confidence" for issue in result.issues)

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 
-_ISO_DATETIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+_ISO_DATETIME_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
+)
 
 PROPOSAL_TARGETS: dict[str, set[str]] = {
     "sage_decision": {"knowledge-base/sage-decisions.yaml"},
@@ -87,17 +90,23 @@ def validate_proposal_document(
     )
 
     proposal_type = data.get("proposal_type")
-    allowed_targets = PROPOSAL_TARGETS.get(proposal_type)
+    allowed_targets = (
+        PROPOSAL_TARGETS.get(proposal_type)
+        if isinstance(proposal_type, str)
+        else None
+    )
     if not isinstance(proposal_type, str) or allowed_targets is None:
         issues.append(_issue("proposal_type", "unsupported proposal type"))
 
     created_at = data.get("created_at")
-    if not isinstance(created_at, str) or not _ISO_DATETIME_RE.match(created_at):
+    if not _valid_iso_datetime(created_at):
         issues.append(_issue("created_at", "expected ISO-8601 date-time"))
 
     confidence = data.get("confidence")
     if confidence is not None and (
-        not isinstance(confidence, (int, float)) or not 0 <= float(confidence) <= 1
+        isinstance(confidence, bool)
+        or not isinstance(confidence, (int, float))
+        or not 0 <= float(confidence) <= 1
     ):
         issues.append(_issue("confidence", "expected number between 0 and 1"))
 
@@ -106,7 +115,7 @@ def validate_proposal_document(
         issues.append(_issue("targets", "expected non-empty list"))
     elif allowed_targets is not None:
         for index, target in enumerate(targets):
-            if target not in allowed_targets:
+            if not isinstance(target, str) or target not in allowed_targets:
                 issues.append(_issue(f"targets[{index}]", "target incompatible with proposal_type"))
 
     for key in ("source_artifacts", "evidence_refs"):
@@ -181,9 +190,24 @@ def _validate_payload(data: dict[str, Any], issues: list[ProposalValidationIssue
         "calibration_observation": ("domain", "observation_kind"),
         "internalization_observation": ("subject_agent", "agent_tier", "metrics", "gate_verdict", "computation_health"),
     }
-    for key in required_by_type.get(proposal_type, ()):
+    required_fields = (
+        required_by_type.get(proposal_type, ())
+        if isinstance(proposal_type, str)
+        else ()
+    )
+    for key in required_fields:
         if key not in payload:
             issues.append(_issue(f"payload.{key}", "required"))
+
+
+def _valid_iso_datetime(value: Any) -> bool:
+    if not isinstance(value, str) or not _ISO_DATETIME_RE.match(value):
+        return False
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
 
 
 def _require(data: dict[str, Any], key: str, issues: list[ProposalValidationIssue]) -> None:
