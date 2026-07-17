@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 import os
@@ -34,7 +34,12 @@ from echelon.speckit_git import (
     SpecKitGitOwnershipError,
     require_speckit_git_disabled,
 )
-from harness.phase_checkpoints import load_checkpoint_ledger
+from harness.phase_checkpoints import (
+    CheckpointLedger,
+    PhaseCheckpoint,
+    load_checkpoint_ledger,
+    write_checkpoint_ledger,
+)
 
 
 class SpecSwitchError(RuntimeError):
@@ -87,6 +92,102 @@ def _local_branch_exists(project_root: Path, branch: str) -> bool:
     return result.returncode == 0
 
 
+def _checkpoint_commit_identity(
+    project_root: Path,
+    commit: str,
+) -> tuple[str, str, str, str] | None:
+    """Return the Echelon checkpoint identity carried by ``commit``.
+
+    Rebase preserves a commit's message and trailers while necessarily changing
+    its SHA.  The full identity below is the evidence that lets us distinguish
+    that normal rewrite from an arbitrary commit that happens to share a title.
+    """
+
+    message = run_git(project_root, "show", "-s", "--format=%B", commit).stdout
+    lines = message.splitlines()
+    if not lines:
+        return None
+
+    trailers: dict[str, str] = {}
+    for line in lines[1:]:
+        key, separator, value = line.partition(":")
+        if separator and key.startswith("Echelon-"):
+            trailers[key] = value.strip()
+
+    spec_id = trailers.get("Echelon-Spec", "")
+    run_id = trailers.get("Echelon-Run", "")
+    phase = trailers.get("Echelon-Phase", "")
+    checkpoint_id = trailers.get("Echelon-Checkpoint", "")
+    if (
+        trailers.get("Echelon-Origin") != "phase-a"
+        or trailers.get("Echelon-Action") != "checkpoint"
+        or not all((spec_id, run_id, phase, checkpoint_id))
+        or lines[0].strip() != f"echelon-checkpoint: {spec_id} {phase}"
+    ):
+        return None
+    return spec_id, run_id, phase, checkpoint_id
+
+
+def _checkpoint_identity(checkpoint: PhaseCheckpoint) -> tuple[str, str, str, str]:
+    return (
+        checkpoint.spec_id,
+        checkpoint.run_id,
+        checkpoint.phase,
+        checkpoint.id,
+    )
+
+
+def _reconcile_rebased_checkpoint_ledger(
+    project_root: Path,
+    run: SpecRun,
+    ledger: CheckpointLedger,
+) -> CheckpointLedger:
+    """Replace stale checkpoint SHAs with unambiguous rebased equivalents.
+
+    The checkpoint ledger is run-local operational metadata.  Only commits
+    reachable from the run's own branch and carrying every Echelon identity
+    trailer are eligible.  Ambiguous or absent replacements are deliberately
+    left untouched, preserving the normal safety failure.
+    """
+
+    commits = run_git(
+        project_root,
+        "log",
+        "--format=%H",
+        run.feature_branch,
+    ).stdout.splitlines()
+    candidates: dict[tuple[str, str, str, str], list[str]] = {}
+    for commit in commits:
+        identity = _checkpoint_commit_identity(project_root, commit)
+        if identity is not None:
+            candidates.setdefault(identity, []).append(commit)
+
+    replacements: dict[int, str] = {}
+    for index, checkpoint in enumerate(ledger.checkpoints):
+        if checkpoint.run_id != run.run_id or checkpoint.spec_id != run.spec_id:
+            continue
+        if ref_contains_commit(project_root, run.feature_branch, checkpoint.commit):
+            continue
+        matches = candidates.get(_checkpoint_identity(checkpoint), [])
+        if len(matches) == 1:
+            replacements[index] = matches[0]
+
+    if not replacements:
+        return ledger
+
+    reconciled = CheckpointLedger(
+        spec_id=ledger.spec_id,
+        checkpoints=[
+            replace(checkpoint, commit=replacements[index])
+            if index in replacements
+            else checkpoint
+            for index, checkpoint in enumerate(ledger.checkpoints)
+        ],
+    )
+    write_checkpoint_ledger(run.spec_dir, reconciled)
+    return reconciled
+
+
 def validate_spec_checkpoint(
     project_root: Path,
     run: SpecRun,
@@ -113,14 +214,24 @@ def validate_spec_checkpoint(
             f"no checkpoint for run {run.run_dir_name!r} "
             f"({run.run_id}, {run.spec_id})"
         )
+    if not _local_branch_exists(project_root, run.feature_branch):
+        raise SpecSwitchError(
+            f"feature branch {run.feature_branch!r} does not exist locally"
+        )
+    if not ref_contains_commit(project_root, run.feature_branch, checkpoint.commit):
+        ledger = _reconcile_rebased_checkpoint_ledger(project_root, run, ledger)
+        checkpoint = next(
+            (
+                item
+                for item in reversed(ledger.checkpoints)
+                if item.run_id == run.run_id and item.spec_id == run.spec_id
+            ),
+            checkpoint,
+        )
     if not commit_exists(project_root, checkpoint.commit):
         raise SpecSwitchError(
             f"checkpoint commit {checkpoint.commit!r} does not exist for "
             f"run {run.run_dir_name!r}"
-        )
-    if not _local_branch_exists(project_root, run.feature_branch):
-        raise SpecSwitchError(
-            f"feature branch {run.feature_branch!r} does not exist locally"
         )
     if not ref_contains_commit(project_root, run.feature_branch, checkpoint.commit):
         raise SpecSwitchError(

@@ -20,6 +20,7 @@ from echelon.spec_switch import (
     switch_spec,
     validate_spec_checkpoint,
 )
+from harness.phase_checkpoints import load_checkpoint_ledger
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -256,6 +257,56 @@ def test_validate_spec_checkpoint_rejects_commit_outside_feature_branch(
 
     with pytest.raises(SpecSwitchError, match="does not contain"):
         validate_spec_checkpoint(repo, resolve_spec_run(repo, "run-a"))
+
+
+def test_validate_spec_checkpoint_reconciles_rebased_echelon_checkpoint(
+    switch_repo: dict[str, object],
+) -> None:
+    """A completed run remains switchable after Git rewrites its checkpoints."""
+    repo = switch_repo["repo"]
+    spec_a = switch_repo["spec_a"]
+    assert isinstance(repo, Path)
+    assert isinstance(spec_a, Path)
+
+    message = """echelon-checkpoint: 001-spec-a phase-a
+
+Echelon-Origin: phase-a
+Echelon-Action: checkpoint
+Echelon-Spec: 001-spec-a
+Echelon-Run: runtime-a
+Echelon-Phase: phase-a
+Echelon-Checkpoint: phase-a
+"""
+    message_path = repo / "checkpoint-message.txt"
+    message_path.write_text(message, encoding="utf-8")
+    _git(repo, "commit", "--amend", "-F", str(message_path))
+    original = _git(repo, "rev-parse", "HEAD^{commit}").stdout.strip()
+    _write_ledger(
+        spec_a,
+        spec_id="001-spec-a",
+        checkpoints=[
+            _checkpoint(
+                checkpoint_id="phase-a",
+                spec_id="001-spec-a",
+                run_id="runtime-a",
+                commit=original,
+            )
+        ],
+    )
+
+    _git(repo, "switch", "main")
+    (repo / "shared.txt").write_text("new base\n", encoding="utf-8")
+    _git(repo, "add", "shared.txt")
+    _git(repo, "commit", "-m", "new base")
+    _git(repo, "switch", "001-spec-a")
+    _git(repo, "rebase", "main")
+    rebased = _git(repo, "rev-parse", "HEAD^{commit}").stdout.strip()
+    assert rebased != original
+
+    validated = validate_spec_checkpoint(repo, resolve_spec_run(repo, "run-a"))
+
+    assert validated.commit == rebased
+    assert load_checkpoint_ledger(spec_a).checkpoints[-1].commit == rebased
 
 
 def test_clean_switch_changes_branch_then_active_pointer(
