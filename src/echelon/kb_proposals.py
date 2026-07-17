@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -136,7 +137,17 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
                 )
             )
             continue
-        outcome = _apply_list_proposal(project_root, data, loaded.validation.operation_id)
+        try:
+            outcome = _apply_list_proposal(project_root, data, loaded.validation.operation_id)
+        except Exception as exc:
+            outcome = ProposalApplyOutcome(
+                proposal_id=proposal_id,
+                operation_id=loaded.validation.operation_id,
+                proposal_type=proposal_type,
+                outcome="rejected",
+                targets=target_names,
+                reason=f"apply failed: {exc}",
+            )
         outcomes.append(outcome)
 
     status = "applied" if any(item.outcome == "accepted" for item in outcomes) else "degraded"
@@ -174,23 +185,65 @@ def _apply_list_proposal(
     if not isinstance(document, dict):
         return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "rejected", targets, "target document must be a mapping")
 
+    from codegen.memory.kb_schema_validator import validate_kb_document
+
     entries_key = LIST_TARGET_ENTRY_KEYS[target]
+    baseline_validation = validate_kb_document(target_path.name, document)
+    if not baseline_validation.ok:
+        reason = "; ".join(
+            f"{issue.path}: {issue.message}" for issue in baseline_validation.issues
+        )
+        return ProposalApplyOutcome(
+            proposal_id,
+            operation_id,
+            proposal_type,
+            "rejected",
+            targets,
+            f"existing target schema debt: {reason}",
+        )
     entries = document.setdefault(entries_key, [])
     if not isinstance(entries, list):
         return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "rejected", targets, "target entries must be a list")
     if any(isinstance(entry, dict) and entry.get("operation_id") == operation_id for entry in entries):
         return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "skipped_duplicate", targets)
 
-    entry = _canonical_entry(data, operation_id)
+    entry = _canonical_entry(data, operation_id, project_root)
     entries.append(entry)
-    target_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    result_validation = validate_kb_document(target_path.name, document)
+    if not result_validation.ok:
+        reason = "; ".join(
+            f"{issue.path}: {issue.message}" for issue in result_validation.issues
+        )
+        return ProposalApplyOutcome(
+            proposal_id,
+            operation_id,
+            proposal_type,
+            "rejected",
+            targets,
+            f"resulting target schema invalid: {reason}",
+        )
+    try:
+        target_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    except Exception as exc:
+        return ProposalApplyOutcome(
+            proposal_id,
+            operation_id,
+            proposal_type,
+            "rejected",
+            targets,
+            f"target write failed: {exc}",
+        )
     return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "accepted", targets)
 
 
-def _canonical_entry(data: dict[str, Any], operation_id: str | None) -> dict[str, Any]:
+def _canonical_entry(
+    data: dict[str, Any],
+    operation_id: str | None,
+    project_root: Path,
+) -> dict[str, Any]:
     payload = dict(data["payload"])
     if payload.get("project_fingerprint") == "auto":
-        payload["project_fingerprint"] = _project_fingerprint()
+        payload["project_fingerprint"] = _project_fingerprint(project_root)
     entry: dict[str, Any] = {
         "operation_id": operation_id,
         "run_id": data["run_id"],
@@ -203,8 +256,22 @@ def _canonical_entry(data: dict[str, Any], operation_id: str | None) -> dict[str
     return entry
 
 
-def _project_fingerprint() -> str:
-    raw = str(Path.cwd()).encode("utf-8")
+def _project_fingerprint(project_root: Path) -> str:
+    identity = ""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(project_root), "remote", "get-url", "origin"],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        if result.returncode == 0:
+            identity = result.stdout.strip()
+    except Exception:
+        pass
+    if not identity:
+        identity = str(project_root.resolve())
+    raw = identity.encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:12]
 
 

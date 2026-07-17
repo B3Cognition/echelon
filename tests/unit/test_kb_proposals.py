@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 import yaml
 
-from echelon.kb_proposals import apply_proposals, load_proposals, validate_proposal_document
+from echelon.kb_proposals import (
+    _project_fingerprint,
+    apply_proposals,
+    load_proposals,
+    validate_proposal_document,
+)
 
 
 def _base_proposal(**overrides):
@@ -145,7 +150,9 @@ def test_apply_valid_pattern_writes_canonical_entry(tmp_path: Path) -> None:
     project = tmp_path
     kb = project / "knowledge-base"
     kb.mkdir()
-    (kb / "patterns.yaml").write_text("schema_version: 1\nentries: []\n", encoding="utf-8")
+    (kb / "patterns.yaml").write_text(
+        "schema_version: 1\nappend_only: true\nentries: []\n", encoding="utf-8"
+    )
     run = project / "runs" / "squad-001" / "kb-proposals"
     run.mkdir(parents=True)
     proposal = _base_proposal()
@@ -165,7 +172,9 @@ def test_apply_invalid_and_valid_mixed_run_continues(tmp_path: Path) -> None:
     project = tmp_path
     kb = project / "knowledge-base"
     kb.mkdir()
-    (kb / "patterns.yaml").write_text("schema_version: 1\nentries: []\n", encoding="utf-8")
+    (kb / "patterns.yaml").write_text(
+        "schema_version: 1\nappend_only: true\nentries: []\n", encoding="utf-8"
+    )
     proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
     proposal_dir.mkdir(parents=True)
     (proposal_dir / "bad.yaml").write_text("schema_version: [", encoding="utf-8")
@@ -183,11 +192,11 @@ def test_apply_duplicate_operation_is_skipped(tmp_path: Path) -> None:
     kb = project / "knowledge-base"
     kb.mkdir()
     (kb / "patterns.yaml").write_text(
-        "schema_version: 1\nentries:\n"
+        "schema_version: 1\nappend_only: true\nentries:\n"
         "  - operation_id: squad-001/kb-prop-0001\n"
         "    run_id: squad-001\n"
         "    source: speckit-echelon-mirror\n"
-        "    created_at: 2026-07-17T12:00:00Z\n"
+        "    created_at: '2026-07-17T12:00:00Z'\n"
         "    confidence: 0.8\n"
         "    project_fingerprint: a1b2c3d4e5f6\n"
         "    scope: local_only\n",
@@ -201,3 +210,117 @@ def test_apply_duplicate_operation_is_skipped(tmp_path: Path) -> None:
 
     assert report.accepted_count == 0
     assert report.skipped_duplicate_count == 1
+
+
+def test_apply_rejects_invalid_result_without_writing(tmp_path: Path) -> None:
+    project = tmp_path
+    kb = project / "knowledge-base"
+    kb.mkdir()
+    target = kb / "patterns.yaml"
+    original = "schema_version: 1\nappend_only: true\nentries: []\n"
+    target.write_text(original, encoding="utf-8")
+    proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+    proposal = _base_proposal()
+    proposal["payload"]["scope"] = "invalid"
+    (proposal_dir / "bad-result.yaml").write_text(yaml.safe_dump(proposal), encoding="utf-8")
+
+    report = apply_proposals(project, "squad-001")
+
+    assert report.rejected_count == 1
+    assert "resulting target schema invalid" in (report.outcomes[0].reason or "")
+    assert target.read_text(encoding="utf-8") == original
+
+
+def test_apply_rejects_preexisting_target_schema_debt_without_writing(tmp_path: Path) -> None:
+    project = tmp_path
+    kb = project / "knowledge-base"
+    kb.mkdir()
+    target = kb / "patterns.yaml"
+    original = "schema_version: 1\nentries:\n  - legacy: true\n"
+    target.write_text(original, encoding="utf-8")
+    proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+    (proposal_dir / "legacy.yaml").write_text(yaml.safe_dump(_base_proposal()), encoding="utf-8")
+
+    report = apply_proposals(project, "squad-001")
+
+    assert report.rejected_count == 1
+    assert "existing target schema debt" in (report.outcomes[0].reason or "")
+    assert target.read_text(encoding="utf-8") == original
+
+
+def test_project_fingerprint_is_stable_independent_of_cwd(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    other_cwd = tmp_path / "other"
+    other_cwd.mkdir()
+
+    monkeypatch.chdir(project)
+    first = _project_fingerprint(project)
+    monkeypatch.chdir(other_cwd)
+    second = _project_fingerprint(project)
+
+    assert first == second
+    assert len(first) == 12
+    assert first == first.lower()
+
+
+def test_apply_malformed_target_continues_to_valid_proposal(tmp_path: Path) -> None:
+    project = tmp_path
+    kb = project / "knowledge-base"
+    kb.mkdir()
+    (kb / "patterns.yaml").write_text("schema_version: [", encoding="utf-8")
+    proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+    (proposal_dir / "bad-target.yaml").write_text(yaml.safe_dump(_base_proposal()), encoding="utf-8")
+    valid_kb = project / "knowledge-base" / "pitfalls.yaml"
+    valid_kb.write_text("schema_version: 1\nappend_only: true\nentries: []\n", encoding="utf-8")
+    valid = _base_proposal(
+        proposal_id="kb-prop-0002",
+        proposal_type="pitfall",
+        targets=["knowledge-base/pitfalls.yaml"],
+        payload={
+            "name": "Avoid unclear constraints",
+            "domain": "planning",
+            "trigger": "constraint omitted",
+            "impact": "rework",
+            "avoidance": "state constraints first",
+            "tags": ["planning"],
+            "status": "active",
+            "project_fingerprint": "auto",
+            "scope": "local_only",
+        },
+    )
+    (proposal_dir / "good-target.yaml").write_text(yaml.safe_dump(valid), encoding="utf-8")
+
+    report = apply_proposals(project, "squad-001")
+
+    assert report.rejected_count == 1
+    assert report.accepted_count == 1
+    assert (valid_kb.exists())
+
+
+def test_apply_target_write_failure_is_reported_and_report_is_written(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path
+    kb = project / "knowledge-base"
+    kb.mkdir()
+    target = kb / "patterns.yaml"
+    target.write_text("schema_version: 1\nappend_only: true\nentries: []\n", encoding="utf-8")
+    proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+    (proposal_dir / "write-failure.yaml").write_text(yaml.safe_dump(_base_proposal()), encoding="utf-8")
+    original_write_text = Path.write_text
+
+    def fail_target_write(path: Path, *args, **kwargs):
+        if path == target:
+            raise OSError("target is read-only")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_target_write)
+
+    report = apply_proposals(project, "squad-001")
+
+    assert report.rejected_count == 1
+    assert "target is read-only" in (report.outcomes[0].reason or "")
+    assert (project / "runs" / "squad-001" / "kb-apply-report.yaml").exists()
