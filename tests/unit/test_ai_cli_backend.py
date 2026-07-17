@@ -195,6 +195,71 @@ def test_openai_compatible_backend_reads_api_key_file(tmp_path, monkeypatch) -> 
     assert captured["headers"]["Authorization"] == "Bearer file-token"
 
 
+def test_openai_compatible_backend_rejects_missing_api_key_file(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    config = _openai_config(features={"streaming": False})
+    config.llm.api_key_env = None
+    config.llm.api_key_file = str(tmp_path / "missing-token")
+
+    def fail_urlopen(request, timeout):
+        raise AssertionError("request should be blocked before HTTP")
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fail_urlopen,
+    )
+
+    result = OpenAICompatibleBackend(config).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 1
+    assert "API key file" in result.stderr
+    assert "missing-token" in result.stderr
+    assert result.metadata["provider_error_code"] == "api_key_file_error"
+
+
+def test_openai_compatible_backend_rejects_empty_api_key_file(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    token_file = tmp_path / ".omlx_token"
+    token_file.write_text("\n", encoding="utf-8")
+    config = _openai_config(features={"streaming": False})
+    config.llm.api_key_env = None
+    config.llm.api_key_file = str(token_file)
+
+    def fail_urlopen(request, timeout):
+        raise AssertionError("request should be blocked before HTTP")
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fail_urlopen,
+    )
+
+    result = OpenAICompatibleBackend(config).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 1
+    assert "API key file is empty" in result.stderr
+    assert result.metadata["provider_error_code"] == "api_key_file_error"
+
+
 def test_openai_compatible_backend_streams_sse_and_excludes_reasoning(
     tmp_path, monkeypatch
 ) -> None:
