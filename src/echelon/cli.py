@@ -5873,6 +5873,61 @@ def _print_roadmap(state: dict, workflow_path: Path | None = None) -> None:
     _banner("ROADMAP", fields, subtitle=f"{done_n}/{len(roadmap_phases)} phases complete ({pct}%)")
 
 
+def _print_active_spec_status(project_root: Path) -> None:
+    """Render the deterministic Phase A authoring selection, when one exists."""
+    from echelon.spec_lifecycle import (
+        SpecLifecycleError,
+        SpecRunNotFound,
+        discover_spec_runs,
+        resolve_active_spec_run,
+    )
+    from echelon.spec_switch import validate_spec_checkpoint
+
+    try:
+        active = resolve_active_spec_run(project_root)
+    except SpecRunNotFound:
+        return
+
+    fields: list[tuple[str, str]] = [
+        ("Run", active.run_dir_name),
+        ("Spec", active.spec_id),
+        ("Branch", active.feature_branch),
+    ]
+    try:
+        checkpoint = validate_spec_checkpoint(project_root, active)
+        fields.append(("Checkpoint", f"{checkpoint.checkpoint_id} ({checkpoint.phase})"))
+    except Exception as exc:
+        # Status is diagnostic: invalid Git/checkpoint state must not suppress
+        # the rest of the operator's orientation report.
+        fields.append(("Checkpoint", f"unavailable: {exc}"))
+
+    try:
+        state = json.loads((active.run_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        state = {}
+    managed_stash = state.get("phase_a_stash") if isinstance(state, dict) else None
+    if isinstance(managed_stash, dict):
+        stash_commit = managed_stash.get("commit")
+        if isinstance(stash_commit, str) and stash_commit.strip():
+            fields.append(("Managed stash", stash_commit.strip()))
+        else:
+            fields.append(("Managed stash", "recorded but malformed"))
+
+    try:
+        others = [
+            f"{run.spec_id} ({run.run_dir_name})"
+            for run in discover_spec_runs(project_root)
+            if run.run_dir != active.run_dir
+        ]
+    except SpecLifecycleError as exc:
+        fields.append(("Switchable", f"unavailable: {exc}"))
+    else:
+        if others:
+            fields.append(("Switchable", ", ".join(others)))
+
+    _banner("ACTIVE SPEC", fields)
+
+
 def _cmd_status(project_root: Path) -> None:
     """Print a concise orientation summary for the current project state.
 
@@ -5890,6 +5945,7 @@ def _cmd_status(project_root: Path) -> None:
         project_root / ".specify" / "extensions" / "echelon",
     )
     _print_project_config_compatibility_warning(project_root)
+    _print_active_spec_status(project_root)
 
     # ── Run state ───────────────────────────────────────────────────────────
     run_dir = _find_current_run_dir(project_root)
