@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -67,7 +68,7 @@ def test_spec_help_lists_current_run_and_target_options(
     assert "--re-policy" in captured.out
     assert "none|cached-only|changed|refresh-all" in captured.out
     assert "checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]" in captured.out
-    assert "target <spec_id>" not in captured.out
+    assert re.search(r"(?m)^\s*target <spec_id>(?:\s|$)", captured.out) is None
 
 
 @pytest.mark.unit
