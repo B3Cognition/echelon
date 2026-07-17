@@ -678,7 +678,7 @@ class SquadController:
             if blocked_result:
                 self._block_after_executor_failure(phase, blocked_result, result)
                 return SquadResult.from_state(self._state_store.load())
-            product_input_error = self._apply_product_input_updates(result)
+            product_input_error = self._apply_product_input_updates(result, phase)
             if product_input_error:
                 self._block_after_executor_failure(phase, product_input_error, result)
                 return SquadResult.from_state(self._state_store.load())
@@ -856,7 +856,7 @@ class SquadController:
         if blocked_result:
             self._block_after_executor_failure(phase, blocked_result, result)
             return SquadResult.from_state(self._state_store.load())
-        product_input_error = self._apply_product_input_updates(result)
+        product_input_error = self._apply_product_input_updates(result, phase)
         if product_input_error:
             self._block_after_executor_failure(phase, product_input_error, result)
             return SquadResult.from_state(self._state_store.load())
@@ -1322,25 +1322,49 @@ class SquadController:
         except (OSError, ValueError) as exc:
             logger.warning("Could not materialize implementation targets: %s", exc)
 
-    def _apply_product_input_updates(self, result: SquadAgentResult) -> str | None:
+    def _apply_product_input_updates(self, result: SquadAgentResult, phase: str) -> str | None:
         """Validate and persist agent proposals through the controller-owned ledger."""
         payload = result.echelon_result or {}
         updates = payload.get("product_input_updates")
-        if not updates:
-            return None
         state = self._state_store.load()
         metadata = state.get("product_inputs")
-        if not isinstance(metadata, dict):
-            return "product_input_updates received without declared product inputs"
+        if not isinstance(metadata, dict) or not metadata:
+            return "product_input_updates received without declared product inputs" if updates else None
+        if not updates and not (
+            phase in {"phase3-plan", "phase3-consensus"}
+        ):
+            return None
         traceability_ref = str(metadata.get("traceability") or "").strip()
         if not traceability_ref:
             return "product input traceability path is missing from run state"
         traceability_path = Path(traceability_ref)
         if not traceability_path.is_absolute():
             traceability_path = self._project_root / traceability_path
+        active_spec_dir = self._active_phase_a_spec_dir(state)
+        enforce_direct_task_mappings = phase in {"phase3-plan", "phase3-consensus"}
+        tasks_path = active_spec_dir / "tasks.md" if enforce_direct_task_mappings and active_spec_dir else None
+        targets = [
+            str(value).strip()
+            for value in state.get("implementation_targets", [])
+            if str(value).strip()
+        ]
         try:
-            from echelon.product_inputs import ProductInputError, apply_product_input_updates
-            apply_product_input_updates(traceability_path, updates)
+            from echelon.product_inputs import (
+                ProductInputError,
+                apply_product_input_updates,
+                validate_product_input_traceability,
+            )
+            if updates:
+                apply_product_input_updates(
+                    traceability_path,
+                    updates,
+                    tasks_path=tasks_path,
+                    declared_targets=targets,
+                )
+            elif tasks_path is not None:
+                blockers = validate_product_input_traceability(active_spec_dir, targets)
+                if blockers:
+                    return "invalid product input task mappings: " + "; ".join(blockers)
         except (OSError, ProductInputError) as exc:
             return f"invalid product input updates: {exc}"
         return None

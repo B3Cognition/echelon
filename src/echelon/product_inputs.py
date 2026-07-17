@@ -248,7 +248,17 @@ def validate_product_input_traceability(spec_dir: Path, declared_targets: Sequen
         ledger = json.loads(traceability_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return [f"product input traceability.json is invalid: {exc}"]
-    tasks = _task_metadata(spec_dir / "tasks.md")
+    return _traceability_blockers(ledger, _task_metadata(spec_dir / "tasks.md"), declared_targets)
+
+
+def _traceability_blockers(
+    ledger: object,
+    tasks: dict[str, dict[str, set[str]]],
+    declared_targets: Sequence[str],
+) -> list[str]:
+    """Validate a traceability ledger against canonical task metadata."""
+    if not isinstance(ledger, dict):
+        return ["product input traceability.json is invalid"]
     blockers: list[str] = []
     declared = set(declared_targets)
     for entry in ledger.get("requirements", []):
@@ -349,13 +359,22 @@ def repair_product_input_traceability(
     return result
 
 
-def apply_product_input_updates(traceability_path: Path, updates: Sequence[object]) -> None:
+def apply_product_input_updates(
+    traceability_path: Path,
+    updates: Sequence[object],
+    *,
+    tasks_path: Path | None = None,
+    declared_targets: Sequence[str] | None = None,
+) -> None:
     """Apply validated agent mappings while keeping the controller as ledger writer."""
     try:
         ledger = json.loads(traceability_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ProductInputError(f"cannot update product input traceability: {exc}") from exc
-    requirements = ledger.get("requirements")
+    # Work on a copy: PLAN mapping errors must never leave a partial or invalid
+    # controller-owned ledger behind for a later finalization gate to discover.
+    candidate = json.loads(json.dumps(ledger))
+    requirements = candidate.get("requirements")
     if not isinstance(requirements, list):
         raise ProductInputError("product input traceability has no requirements list")
     by_id = {
@@ -383,8 +402,16 @@ def apply_product_input_updates(traceability_path: Path, updates: Sequence[objec
             "task_ids": _string_list(update.get("task_ids")),
             "targets": _string_list(update.get("targets")),
         })
-    _write_json(traceability_path, ledger)
-    _write_traceability_markdown(traceability_path.with_suffix(".md"), ledger)
+    if tasks_path is not None:
+        blockers = _traceability_blockers(
+            candidate,
+            _task_metadata(tasks_path),
+            declared_targets or (),
+        )
+        if blockers:
+            raise ProductInputError("; ".join(blockers))
+    _write_json(traceability_path, candidate)
+    _write_traceability_markdown(traceability_path.with_suffix(".md"), candidate)
 
 
 def _normalize_declaration(declaration: ProductInputDeclaration) -> ProductInputDeclaration:
