@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -28,6 +29,12 @@ PROPOSAL_TARGETS: dict[str, set[str]] = {
     },
 }
 
+LIST_TARGET_ENTRY_KEYS = {
+    "knowledge-base/sage-decisions.yaml": "entries",
+    "knowledge-base/patterns.yaml": "entries",
+    "knowledge-base/pitfalls.yaml": "entries",
+}
+
 
 @dataclass(frozen=True)
 class ProposalValidationIssue:
@@ -47,6 +54,158 @@ class LoadedProposal:
     path: Path
     data: dict[str, Any] | None
     validation: ProposalValidationResult
+
+
+@dataclass(frozen=True)
+class ProposalApplyOutcome:
+    proposal_id: str
+    operation_id: str | None
+    proposal_type: str | None
+    outcome: str
+    targets: list[str]
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class KBApplyReport:
+    run_id: str
+    status: str
+    outcomes: list[ProposalApplyOutcome]
+    report_path: Path
+
+    @property
+    def accepted_count(self) -> int:
+        return sum(1 for item in self.outcomes if item.outcome == "accepted")
+
+    @property
+    def rejected_count(self) -> int:
+        return sum(1 for item in self.outcomes if item.outcome == "rejected")
+
+    @property
+    def skipped_duplicate_count(self) -> int:
+        return sum(1 for item in self.outcomes if item.outcome == "skipped_duplicate")
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "run_id": self.run_id,
+            "status": self.status,
+            "proposal_count": len(self.outcomes),
+            "accepted_count": self.accepted_count,
+            "rejected_count": self.rejected_count,
+            "skipped_duplicate_count": self.skipped_duplicate_count,
+            "outcomes": [item.__dict__ for item in self.outcomes],
+        }
+
+
+def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
+    import yaml
+
+    proposal_dir = project_root / "runs" / run_id / "kb-proposals"
+    report_path = project_root / "runs" / run_id / "kb-apply-report.yaml"
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    outcomes: list[ProposalApplyOutcome] = []
+
+    for loaded in load_proposals(proposal_dir, expected_run_id=run_id):
+        data = loaded.data or {}
+        proposal_id = str(data.get("proposal_id") or loaded.path.name)
+        proposal_type = data.get("proposal_type") if isinstance(data.get("proposal_type"), str) else None
+        targets = data.get("targets") if isinstance(data.get("targets"), list) else []
+        target_names = [str(target) for target in targets]
+        if not loaded.validation.ok:
+            outcomes.append(
+                ProposalApplyOutcome(
+                    proposal_id=proposal_id,
+                    operation_id=loaded.validation.operation_id,
+                    proposal_type=proposal_type,
+                    outcome="rejected",
+                    targets=target_names,
+                    reason="; ".join(f"{i.path}: {i.message}" for i in loaded.validation.issues),
+                )
+            )
+            continue
+        if proposal_type in {"calibration_observation", "internalization_observation"}:
+            outcomes.append(
+                ProposalApplyOutcome(
+                    proposal_id=proposal_id,
+                    operation_id=loaded.validation.operation_id,
+                    proposal_type=proposal_type,
+                    outcome="needs_review",
+                    targets=target_names,
+                    reason="aggregate target applier not implemented in first slice",
+                )
+            )
+            continue
+        outcome = _apply_list_proposal(project_root, data, loaded.validation.operation_id)
+        outcomes.append(outcome)
+
+    status = "applied" if any(item.outcome == "accepted" for item in outcomes) else "degraded"
+    report = KBApplyReport(run_id=run_id, status=status, outcomes=outcomes, report_path=report_path)
+    report_path.write_text(yaml.safe_dump(report.to_dict(), sort_keys=False), encoding="utf-8")
+    return report
+
+
+def _apply_list_proposal(
+    project_root: Path,
+    data: dict[str, Any],
+    operation_id: str | None,
+) -> ProposalApplyOutcome:
+    import yaml
+
+    targets = [str(target) for target in data.get("targets", [])]
+    target = targets[0]
+    target_path = project_root / target
+    proposal_id = str(data["proposal_id"])
+    proposal_type = str(data["proposal_type"])
+    if not target_path.exists():
+        return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "rejected", targets, "target file missing")
+
+    try:
+        document = yaml.safe_load(target_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        return ProposalApplyOutcome(
+            proposal_id,
+            operation_id,
+            proposal_type,
+            "rejected",
+            targets,
+            f"cannot parse target YAML: {exc}",
+        )
+    if not isinstance(document, dict):
+        return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "rejected", targets, "target document must be a mapping")
+
+    entries_key = LIST_TARGET_ENTRY_KEYS[target]
+    entries = document.setdefault(entries_key, [])
+    if not isinstance(entries, list):
+        return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "rejected", targets, "target entries must be a list")
+    if any(isinstance(entry, dict) and entry.get("operation_id") == operation_id for entry in entries):
+        return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "skipped_duplicate", targets)
+
+    entry = _canonical_entry(data, operation_id)
+    entries.append(entry)
+    target_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "accepted", targets)
+
+
+def _canonical_entry(data: dict[str, Any], operation_id: str | None) -> dict[str, Any]:
+    payload = dict(data["payload"])
+    if payload.get("project_fingerprint") == "auto":
+        payload["project_fingerprint"] = _project_fingerprint()
+    entry: dict[str, Any] = {
+        "operation_id": operation_id,
+        "run_id": data["run_id"],
+        "source": data["agent"],
+        "created_at": data["created_at"],
+    }
+    if "confidence" in data:
+        entry["confidence"] = data["confidence"]
+    entry.update(payload)
+    return entry
+
+
+def _project_fingerprint() -> str:
+    raw = str(Path.cwd()).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:12]
 
 
 def validate_proposal_document(
