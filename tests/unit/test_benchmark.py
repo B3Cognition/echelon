@@ -70,6 +70,17 @@ def test_plans_baseline_without_cleanse_phases() -> None:
     )
 
 
+def test_plans_artifact_only_baseline_without_delivery() -> None:
+    plan = plan_variant_commands("tiny-notes", "baseline", artifact_only=True)
+
+    assert plan.fixture_id == "tiny-notes"
+    assert plan.variant_id == "baseline"
+    assert plan.phase_ids == ()
+    assert len(plan.commands) == 1
+    assert plan.commands[0][:3] == ("echelon", "spec", "run")
+    assert not any(command[:3] == ("echelon", "delivery", "run") for command in plan.commands)
+
+
 def test_plans_constitution_tasks_adrs_with_ordered_phases() -> None:
     plan = plan_variant_commands("tiny-notes", "constitution-tasks-adrs")
 
@@ -284,6 +295,27 @@ def test_benchmark_dry_run_prints_commands(tmp_path: Path, capsys) -> None:
     assert "echelon delivery run RESOLVE_SPEC_ID_FROM_CURRENT_RUN mode=banzai" in out
 
 
+def test_benchmark_artifact_only_dry_run_skips_delivery(tmp_path: Path, capsys) -> None:
+    _cmd_benchmark(
+        [
+            "run",
+            "tiny-notes",
+            "--variant",
+            "baseline",
+            "--baseline-ref",
+            "baseline-artifacts",
+            "--artifact-only",
+            "--dry-run",
+        ],
+        project_root=tmp_path,
+    )
+
+    out = capsys.readouterr().out
+    assert "git reset --hard baseline-artifacts" in out
+    assert "echelon spec run --mode banzai" in out
+    assert "echelon delivery run" not in out
+
+
 def test_benchmark_dry_run_without_baseline_ref_prints_snapshot_wrapper(tmp_path: Path, capsys) -> None:
     _cmd_benchmark(
         [
@@ -351,6 +383,7 @@ def test_benchmark_run_allows_missing_baseline_ref(monkeypatch: pytest.MonkeyPat
         variant_id: str,
         *,
         baseline_ref: str | None = None,
+        artifact_only: bool = False,
     ) -> Path:
         calls.append(
             {
@@ -358,6 +391,7 @@ def test_benchmark_run_allows_missing_baseline_ref(monkeypatch: pytest.MonkeyPat
                 "fixture_id": fixture_id,
                 "variant_id": variant_id,
                 "baseline_ref": baseline_ref,
+                "artifact_only": artifact_only,
             }
         )
         output_dir = tmp_path / "runs" / "benchmarks" / "fake" / variant_id
@@ -374,6 +408,7 @@ def test_benchmark_run_allows_missing_baseline_ref(monkeypatch: pytest.MonkeyPat
             "fixture_id": "tiny-notes",
             "variant_id": "baseline",
             "baseline_ref": None,
+            "artifact_only": False,
         }
     ]
 
@@ -436,6 +471,44 @@ def test_run_benchmark_variant_writes_summary_with_injected_runner(tmp_path: Pat
     assert summary["variants"]["constitution"]["spec_id"] == "001"
     assert summary["variants"]["constitution"]["delivery_run_id"] == "build-1"
     assert (output_dir / "summary.md").exists()
+
+
+def test_run_benchmark_variant_artifact_only_skips_delivery(tmp_path: Path) -> None:
+    commands: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...]) -> int:
+        commands.append(command)
+        if command[:3] == ("echelon", "spec", "run"):
+            squad_dir = tmp_path / "runs" / "spec-20260704-120000-000001"
+            squad_dir.mkdir(parents=True)
+            (tmp_path / "runs" / ".current").write_text(f"{squad_dir.name}\n", encoding="utf-8")
+            (squad_dir / "state.json").write_text(
+                json.dumps({"run_id": "squad-1", "status": "done", "spec_id": "001"}),
+                encoding="utf-8",
+            )
+        return 0
+
+    output_dir = run_benchmark_variant(
+        tmp_path,
+        "tiny-notes",
+        "baseline",
+        baseline_ref="baseline-artifacts",
+        runner=runner,
+        timestamp="20260701-120000",
+        artifact_only=True,
+    )
+
+    assert not any(command[:3] == ("echelon", "delivery", "run") for command in commands)
+    assert commands[-2:] == [
+        ("git", "reset", "--hard", "baseline-artifacts"),
+        ("git", "clean", "-fd", "-e", "runs/benchmarks/"),
+    ]
+    summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+    baseline = summary["variants"]["baseline"]
+    assert baseline["status"] == "complete"
+    assert baseline["spec_id"] == "001"
+    assert baseline["delivery_run_id"] == ""
+    assert baseline["build_dispatches"] == 0
 
 
 def test_run_benchmark_variant_snapshots_workspace_when_baseline_ref_missing(tmp_path: Path) -> None:

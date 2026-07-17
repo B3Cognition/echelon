@@ -13,10 +13,29 @@ def test_workspace_init_accepts_openai_compatible_llm(
 ) -> None:
     from echelon.cli import _cmd_workspace
 
-    calls: list[tuple[Path, bool, str | None]] = []
+    calls: list[dict[str, object]] = []
 
-    def fake_init(project_root, *, allow_unsafe_host_execution=False, llm_cli=None):
-        calls.append((project_root, allow_unsafe_host_execution, llm_cli))
+    def fake_init(
+        project_root,
+        *,
+        allow_unsafe_host_execution=False,
+        llm_cli=None,
+        openai_base_url=None,
+        openai_model=None,
+        openai_api_key_file=None,
+        openai_api_key_env=None,
+    ):
+        calls.append(
+            {
+                "project_root": project_root,
+                "allow_unsafe_host_execution": allow_unsafe_host_execution,
+                "llm_cli": llm_cli,
+                "openai_base_url": openai_base_url,
+                "openai_model": openai_model,
+                "openai_api_key_file": openai_api_key_file,
+                "openai_api_key_env": openai_api_key_env,
+            }
+        )
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("echelon.cli._cmd_init", fake_init)
@@ -24,7 +43,81 @@ def test_workspace_init_accepts_openai_compatible_llm(
 
     _cmd_workspace(["init", "--llm", "openai-compatible", "--no-unsafe-host-execution"])
 
-    assert calls == [(tmp_path, False, "openai-compatible")]
+    assert calls == [
+        {
+            "project_root": tmp_path,
+            "allow_unsafe_host_execution": False,
+            "llm_cli": "openai-compatible",
+            "openai_base_url": None,
+            "openai_model": None,
+            "openai_api_key_file": None,
+            "openai_api_key_env": None,
+        }
+    ]
+
+
+def test_workspace_init_accepts_openai_compatible_endpoint_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_workspace
+
+    calls: list[dict[str, object]] = []
+
+    def fake_init(
+        project_root,
+        *,
+        allow_unsafe_host_execution=False,
+        llm_cli=None,
+        openai_base_url=None,
+        openai_model=None,
+        openai_api_key_file=None,
+        openai_api_key_env=None,
+    ):
+        calls.append(
+            {
+                "project_root": project_root,
+                "allow_unsafe_host_execution": allow_unsafe_host_execution,
+                "llm_cli": llm_cli,
+                "openai_base_url": openai_base_url,
+                "openai_model": openai_model,
+                "openai_api_key_file": openai_api_key_file,
+                "openai_api_key_env": openai_api_key_env,
+            }
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("echelon.cli._cmd_init", fake_init)
+    monkeypatch.setattr("echelon.cli._wants_unsafe_host_execution_interactively", lambda: False)
+
+    _cmd_workspace(
+        [
+            "init",
+            "--llm",
+            "openai-compatible",
+            "--openai-base-url",
+            "http://127.0.0.1:8000/v1",
+            "--openai-model",
+            "ThinkingCap-Qwen3.6-27B-OptiQ-4bit",
+            "--openai-api-key-file",
+            "~/.omlx_token",
+            "--openai-api-key-env",
+            "OMLX_API_KEY",
+            "--no-unsafe-host-execution",
+        ]
+    )
+
+    assert calls == [
+        {
+            "project_root": tmp_path,
+            "allow_unsafe_host_execution": False,
+            "llm_cli": "openai-compatible",
+            "openai_base_url": "http://127.0.0.1:8000/v1",
+            "openai_model": "ThinkingCap-Qwen3.6-27B-OptiQ-4bit",
+            "openai_api_key_file": "~/.omlx_token",
+            "openai_api_key_env": "OMLX_API_KEY",
+        }
+    ]
 
 
 def test_workspace_doctor_exits_clean_for_valid_workspace(

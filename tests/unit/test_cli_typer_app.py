@@ -512,6 +512,10 @@ def test_workspace_init_help_declares_workspace_options():
     assert result.exit_code == 0
     assert "--llm" in result.output
     assert "--llm-cli" in result.output
+    assert "--openai-base-url" in result.output
+    assert "--openai-model" in result.output
+    assert "--openai-api-key-file" in result.output
+    assert "--openai-api-key-env" in result.output
     command = get_command(app)
     workspace_command = command.commands["workspace"]
     init_command = workspace_command.commands["init"]
@@ -539,6 +543,49 @@ def test_workspace_init_typed_options_route_to_legacy_workspace(monkeypatch):
     ])
 
     assert calls == [["init", "--llm", "codex", "--allow-unsafe-host-execution"]]
+
+
+@pytest.mark.unit
+def test_workspace_init_typed_openai_options_route_to_legacy_workspace(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_workspace", lambda args: calls.append(args))
+
+    run(
+        [
+            "workspace",
+            "init",
+            "--llm",
+            "openai-compatible",
+            "--openai-base-url",
+            "http://127.0.0.1:8000/v1",
+            "--openai-model",
+            "ThinkingCap-Qwen3.6-27B-OptiQ-4bit",
+            "--openai-api-key-file",
+            "~/.omlx_token",
+            "--openai-api-key-env",
+            "OMLX_API_KEY",
+            "--no-unsafe-host-execution",
+        ]
+    )
+
+    assert calls == [
+        [
+            "init",
+            "--llm",
+            "openai-compatible",
+            "--openai-base-url",
+            "http://127.0.0.1:8000/v1",
+            "--openai-model",
+            "ThinkingCap-Qwen3.6-27B-OptiQ-4bit",
+            "--openai-api-key-file",
+            "~/.omlx_token",
+            "--openai-api-key-env",
+            "OMLX_API_KEY",
+            "--no-unsafe-host-execution",
+        ]
+    ]
 
 
 @pytest.mark.unit
@@ -585,6 +632,7 @@ def test_benchmark_help_declares_run_and_show_contracts():
     assert "FIXTURE_ID" in run_help.output
     assert "--variant" in run_help.output
     assert "--baseline-ref" in run_help.output
+    assert "--artifact-only" in run_help.output
     assert "--dry-run" in run_help.output
     assert show_help.exit_code == 0
     assert "TARGET" in show_help.output

@@ -644,6 +644,26 @@ def workspace_init(
         "--llm-cli",
         help="Persist the workspace AI CLI provider.",
     ),
+    openai_base_url: Optional[str] = typer.Option(
+        None,
+        "--openai-base-url",
+        help="Persist OpenAI-compatible API base URL.",
+    ),
+    openai_model: Optional[str] = typer.Option(
+        None,
+        "--openai-model",
+        help="Persist OpenAI-compatible model name.",
+    ),
+    openai_api_key_file: Optional[str] = typer.Option(
+        None,
+        "--openai-api-key-file",
+        help="Persist file path containing the OpenAI-compatible API key.",
+    ),
+    openai_api_key_env: Optional[str] = typer.Option(
+        None,
+        "--openai-api-key-env",
+        help="Persist environment variable containing the OpenAI-compatible API key.",
+    ),
     allow_unsafe_host_execution: Optional[bool] = typer.Option(
         None,
         "--allow-unsafe-host-execution/--no-unsafe-host-execution",
@@ -655,6 +675,10 @@ def workspace_init(
 
     args = ["init"]
     _extend_option(args, "--llm", llm)
+    _extend_option(args, "--openai-base-url", openai_base_url)
+    _extend_option(args, "--openai-model", openai_model)
+    _extend_option(args, "--openai-api-key-file", openai_api_key_file)
+    _extend_option(args, "--openai-api-key-env", openai_api_key_env)
     if allow_unsafe_host_execution is True:
         args.append("--allow-unsafe-host-execution")
     elif allow_unsafe_host_execution is False:
@@ -768,6 +792,11 @@ def benchmark_run(
         "--baseline-ref",
         help="Git ref to use as the baseline snapshot.",
     ),
+    artifact_only: bool = typer.Option(
+        False,
+        "--artifact-only",
+        help="Run only spec/Phase A artifact generation and skip delivery/build.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print planned commands without running them."),
 ) -> None:
     """Run or print an artifact-quality benchmark variant."""
@@ -776,6 +805,8 @@ def benchmark_run(
     args = ["run", fixture_id]
     _extend_option(args, "--variant", variant)
     _extend_option(args, "--baseline-ref", baseline_ref)
+    if artifact_only:
+        args.append("--artifact-only")
     if dry_run:
         args.append("--dry-run")
     args.extend(_ctx_args(ctx))

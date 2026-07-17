@@ -69,7 +69,8 @@ echelon {CLI_VERSION}
 Usage: echelon <command> [args...]
 
 Commands:
-  workspace init [--llm <provider>]
+  workspace init [--llm <provider>] [--openai-base-url <url>] [--openai-model <model>]
+                    [--openai-api-key-file <path>|--openai-api-key-env <env>]
                     [--allow-unsafe-host-execution|--no-unsafe-host-execution]
                                             One-time project setup (no LLM)
   workspace doctor                          Check workspace/source/runtime contract
@@ -114,7 +115,7 @@ Commands:
   benchmark list                            List experimental benchmark fixtures and variants.
   benchmark show [latest|<summary-path-or-run-dir>]
                                             Print saved benchmark scores.
-  benchmark run <fixture> --variant <id> [--baseline-ref <ref>] [--dry-run]
+  benchmark run <fixture> --variant <id> [--baseline-ref <ref>] [--artifact-only] [--dry-run]
                                             Run or print an artifact-quality benchmark variant.
 
   stack list [--json]                       List available Echelon stacks.
@@ -517,7 +518,15 @@ def _write_unsafe_host_execution_local_override(project_dir: Path, yaml_module) 
     return local_cfg
 
 
-def _apply_workspace_llm_selection(config: dict, llm_cli: str | None = None) -> str:
+def _apply_workspace_llm_selection(
+    config: dict,
+    llm_cli: str | None = None,
+    *,
+    openai_base_url: str | None = None,
+    openai_model: str | None = None,
+    openai_api_key_file: str | None = None,
+    openai_api_key_env: str | None = None,
+) -> str:
     from harness.config import VALID_LLM_CLIS
     from harness.init import _detect_llm_cli
 
@@ -529,6 +538,13 @@ def _apply_workspace_llm_selection(config: dict, llm_cli: str | None = None) -> 
         raise ValueError("config harness.llm section must be a mapping")
 
     existing = llm.get("cli")
+    openai_options = {
+        "base_url": openai_base_url,
+        "model": openai_model,
+        "api_key_file": openai_api_key_file,
+        "api_key_env": openai_api_key_env,
+    }
+
     if llm_cli:
         if llm_cli not in VALID_LLM_CLIS:
             raise ValueError(
@@ -536,12 +552,21 @@ def _apply_workspace_llm_selection(config: dict, llm_cli: str | None = None) -> 
                 f"{', '.join(sorted(VALID_LLM_CLIS))}"
             )
         llm["cli"] = llm_cli
+        for key, value in openai_options.items():
+            if value:
+                llm[key] = value
         return llm_cli
 
     selected = _detect_llm_cli()
     if os.environ.get("ECHELON_LLM", "").strip() or not existing:
         llm["cli"] = selected
+        for key, value in openai_options.items():
+            if value:
+                llm[key] = value
         return selected
+    for key, value in openai_options.items():
+        if value:
+            llm[key] = value
     return str(existing)
 
 
@@ -550,6 +575,10 @@ def _cmd_init(
     *,
     allow_unsafe_host_execution: bool = False,
     llm_cli: str | None = None,
+    openai_base_url: str | None = None,
+    openai_model: str | None = None,
+    openai_api_key_file: str | None = None,
+    openai_api_key_env: str | None = None,
 ) -> None:
     ext_dir = project_dir / ".specify" / "extensions" / "echelon"
     legacy_cfg = ext_dir / "echelon-config.yml"
@@ -611,7 +640,14 @@ def _cmd_init(
         print("✓ deploy.enabled=false written to .echelon/config.yml")
 
     try:
-        selected_llm_cli = _apply_workspace_llm_selection(config, llm_cli=llm_cli)
+        selected_llm_cli = _apply_workspace_llm_selection(
+            config,
+            llm_cli=llm_cli,
+            openai_base_url=openai_base_url,
+            openai_model=openai_model,
+            openai_api_key_file=openai_api_key_file,
+            openai_api_key_env=openai_api_key_env,
+        )
     except Exception as e:
         print(f"✗ Cannot write workspace LLM provider: {e}", file=sys.stderr)
         sys.exit(1)
@@ -6343,7 +6379,7 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         "  echelon benchmark list\n"
         "  echelon benchmark show [latest|<summary-path-or-run-dir>]\n"
         "  echelon benchmark run <fixture-id> --variant <variant-id> "
-        "[--baseline-ref <ref>] [--dry-run]\n"
+        "[--baseline-ref <ref>] [--artifact-only] [--dry-run]\n"
         "\n"
         "Example:\n"
         "  echelon benchmark run tiny-notes --variant baseline\n"
@@ -6449,6 +6485,7 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
 
     variant_id = "baseline"
     baseline_ref = ""
+    artifact_only = False
     dry_run = False
     i = 2
     while i < len(args):
@@ -6458,6 +6495,9 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         elif args[i] == "--baseline-ref" and i + 1 < len(args):
             baseline_ref = args[i + 1]
             i += 2
+        elif args[i] == "--artifact-only":
+            artifact_only = True
+            i += 1
         elif args[i] == "--dry-run":
             dry_run = True
             i += 1
@@ -6466,7 +6506,7 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
             sys.exit(1)
 
     try:
-        plan = plan_variant_commands(fixture_id, variant_id)
+        plan = plan_variant_commands(fixture_id, variant_id, artifact_only=artifact_only)
     except ValueError as exc:
         if variant_id in fixture_ids and variant_id not in variant_ids:
             print(
@@ -6495,17 +6535,32 @@ def _cmd_benchmark(args: list[str], project_root: Path) -> None:
         )
         _banner(
             "BENCHMARK DRY RUN",
-            [("fixture", plan.fixture_id), ("variant", plan.variant_id)],
+            [
+                ("fixture", plan.fixture_id),
+                ("variant", plan.variant_id),
+                ("mode", "artifact-only" if artifact_only else "full"),
+            ],
             subtitle="Commands that would run",
         )
         for command in commands:
             print(" ".join(command))
         return
 
-    output_dir = run_benchmark_variant(project_root, fixture_id, variant_id, baseline_ref=baseline_ref or None)
+    output_dir = run_benchmark_variant(
+        project_root,
+        fixture_id,
+        variant_id,
+        baseline_ref=baseline_ref or None,
+        artifact_only=artifact_only,
+    )
     _banner(
         "BENCHMARK COMPLETE",
-        [("fixture", fixture_id), ("variant", variant_id), ("output", str(output_dir))],
+        [
+            ("fixture", fixture_id),
+            ("variant", variant_id),
+            ("mode", "artifact-only" if artifact_only else "full"),
+            ("output", str(output_dir)),
+        ],
     )
 
 
@@ -7904,7 +7959,8 @@ def _cmd_workspace(args: list[str]) -> None:
     if not args or args[0] in ("-h", "--help"):
         print(
             "Usage: echelon workspace <subcommand> [args...]\n\n"
-            "  init [--llm <provider>]\n"
+            "  init [--llm <provider>] [--openai-base-url <url>] [--openai-model <model>]\n"
+            "       [--openai-api-key-file <path>|--openai-api-key-env <env>]\n"
             "       [--allow-unsafe-host-execution|--no-unsafe-host-execution]\n"
             "                            One-time project setup (no LLM)\n"
             "                            Prompts on an interactive TTY; use the flag to opt in non-interactively\n"
@@ -7924,8 +7980,14 @@ def _cmd_workspace(args: list[str]) -> None:
             print(
                 "Usage: echelon workspace init "
                 "[--llm <provider>] "
+                "[--openai-base-url <url>] [--openai-model <model>] "
+                "[--openai-api-key-file <path>|--openai-api-key-env <env>] "
                 "[--allow-unsafe-host-execution|--no-unsafe-host-execution]\n\n"
                 "  --llm <provider>              Persist the workspace AI CLI provider\n"
+                "  --openai-base-url <url>       Persist OpenAI-compatible API base URL\n"
+                "  --openai-model <model>        Persist OpenAI-compatible model name\n"
+                "  --openai-api-key-file <path>  Persist file path containing API key\n"
+                "  --openai-api-key-env <env>    Persist API key environment variable name\n"
                 "  --allow-unsafe-host-execution  Write local approval for AI CLI "
                 "permission-bypass flags\n"
                 "  --no-unsafe-host-execution     Do not prompt or write local approval",
@@ -7934,6 +7996,10 @@ def _cmd_workspace(args: list[str]) -> None:
             sys.exit(0)
         parsed_init_args: list[str] = []
         llm_cli: str | None = None
+        openai_base_url: str | None = None
+        openai_model: str | None = None
+        openai_api_key_file: str | None = None
+        openai_api_key_env: str | None = None
         from harness.config import VALID_LLM_CLIS
 
         valid_llm_clis = VALID_LLM_CLIS
@@ -7952,6 +8018,42 @@ def _cmd_workspace(args: list[str]) -> None:
             elif arg.startswith("--llm-cli="):
                 llm_cli = arg.split("=", 1)[1]
                 i += 1
+            elif arg == "--openai-base-url":
+                if i + 1 >= len(init_args):
+                    print(f"echelon workspace init: {arg} requires a URL", file=sys.stderr)
+                    sys.exit(1)
+                openai_base_url = init_args[i + 1]
+                i += 2
+            elif arg.startswith("--openai-base-url="):
+                openai_base_url = arg.split("=", 1)[1]
+                i += 1
+            elif arg == "--openai-model":
+                if i + 1 >= len(init_args):
+                    print(f"echelon workspace init: {arg} requires a model", file=sys.stderr)
+                    sys.exit(1)
+                openai_model = init_args[i + 1]
+                i += 2
+            elif arg.startswith("--openai-model="):
+                openai_model = arg.split("=", 1)[1]
+                i += 1
+            elif arg == "--openai-api-key-file":
+                if i + 1 >= len(init_args):
+                    print(f"echelon workspace init: {arg} requires a path", file=sys.stderr)
+                    sys.exit(1)
+                openai_api_key_file = init_args[i + 1]
+                i += 2
+            elif arg.startswith("--openai-api-key-file="):
+                openai_api_key_file = arg.split("=", 1)[1]
+                i += 1
+            elif arg == "--openai-api-key-env":
+                if i + 1 >= len(init_args):
+                    print(f"echelon workspace init: {arg} requires an environment variable", file=sys.stderr)
+                    sys.exit(1)
+                openai_api_key_env = init_args[i + 1]
+                i += 2
+            elif arg.startswith("--openai-api-key-env="):
+                openai_api_key_env = arg.split("=", 1)[1]
+                i += 1
             elif arg in {"--allow-unsafe-host-execution", "--no-unsafe-host-execution"}:
                 parsed_init_args.append(arg)
                 i += 1
@@ -7960,6 +8062,8 @@ def _cmd_workspace(args: list[str]) -> None:
                 print(
                     "Usage: echelon workspace init "
                     "[--llm <provider>] "
+                    "[--openai-base-url <url>] [--openai-model <model>] "
+                    "[--openai-api-key-file <path>|--openai-api-key-env <env>] "
                     "[--allow-unsafe-host-execution|--no-unsafe-host-execution]",
                     file=sys.stderr,
                 )
@@ -7985,7 +8089,15 @@ def _cmd_workspace(args: list[str]) -> None:
         if "--no-unsafe-host-execution" not in parsed_init_args and not allow_unsafe:
             allow_unsafe = _wants_unsafe_host_execution_interactively()
         project_root = Path.cwd()
-        _cmd_init(project_root, allow_unsafe_host_execution=allow_unsafe, llm_cli=llm_cli)
+        _cmd_init(
+            project_root,
+            allow_unsafe_host_execution=allow_unsafe,
+            llm_cli=llm_cli,
+            openai_base_url=openai_base_url,
+            openai_model=openai_model,
+            openai_api_key_file=openai_api_key_file,
+            openai_api_key_env=openai_api_key_env,
+        )
         _maybe_bootstrap_workspace_git(project_root)
         return
 

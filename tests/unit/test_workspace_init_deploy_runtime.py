@@ -152,6 +152,52 @@ def test_workspace_init_llm_option_overrides_template_default(tmp_path, monkeypa
     assert not (tmp_path / ".echelon" / "local.yml").exists()
 
 
+def test_workspace_init_persists_openai_compatible_endpoint_config(tmp_path, monkeypatch, capsys) -> None:
+    config = tmp_path / ".echelon" / "config.yml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        "deploy:\n"
+        "  enabled: false\n"
+        "  type: http\n"
+        "  blue_port: 18080\n"
+        "  green_port: 18081\n"
+        "harness:\n"
+        "  llm:\n"
+        "    cli: claude\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_provision_wing", lambda _project_dir, _config: "test-wing")
+
+    cli._cmd_workspace(
+        [
+            "init",
+            "--llm",
+            "openai-compatible",
+            "--openai-base-url",
+            "http://127.0.0.1:8000/v1",
+            "--openai-model",
+            "ThinkingCap-Qwen3.6-27B-OptiQ-4bit",
+            "--openai-api-key-file",
+            "~/.omlx_token",
+            "--openai-api-key-env",
+            "OMLX_API_KEY",
+            "--no-unsafe-host-execution",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert "LLM provider configured: openai-compatible" in captured.out
+    loaded = yaml.safe_load(config.read_text(encoding="utf-8"))
+    assert loaded["harness"]["llm"] == {
+        "cli": "openai-compatible",
+        "base_url": "http://127.0.0.1:8000/v1",
+        "model": "ThinkingCap-Qwen3.6-27B-OptiQ-4bit",
+        "api_key_file": "~/.omlx_token",
+        "api_key_env": "OMLX_API_KEY",
+    }
+
+
 def test_workspace_init_initializes_git_for_specify_workspace(
     tmp_path,
     monkeypatch,

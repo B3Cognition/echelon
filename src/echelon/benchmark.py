@@ -32,6 +32,7 @@ class BenchmarkCommandPlan:
     variant_id: str
     phase_ids: tuple[str, ...]
     commands: tuple[tuple[str, ...], ...]
+    artifact_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -123,7 +124,12 @@ def _variant(variant_id: str) -> BenchmarkVariant:
     raise ValueError(f"Unknown benchmark variant: {variant_id}")
 
 
-def plan_variant_commands(fixture_id: str, variant_id: str) -> BenchmarkCommandPlan:
+def plan_variant_commands(
+    fixture_id: str,
+    variant_id: str,
+    *,
+    artifact_only: bool = False,
+) -> BenchmarkCommandPlan:
     fixture = _fixture(fixture_id)
     variant = _variant(variant_id)
     commands: list[tuple[str, ...]] = [
@@ -142,20 +148,22 @@ def plan_variant_commands(fixture_id: str, variant_id: str) -> BenchmarkCommandP
         )
         for phase_id in variant.phases
     )
-    commands.append(
-        (
-            "echelon",
-            "delivery",
-            "run",
-            "RESOLVE_SPEC_ID_FROM_CURRENT_RUN",
-            "mode=banzai",
+    if not artifact_only:
+        commands.append(
+            (
+                "echelon",
+                "delivery",
+                "run",
+                "RESOLVE_SPEC_ID_FROM_CURRENT_RUN",
+                "mode=banzai",
+            )
         )
-    )
     return BenchmarkCommandPlan(
         fixture_id=fixture.id,
         variant_id=variant.id,
         phase_ids=variant.phases,
         commands=tuple(commands),
+        artifact_only=artifact_only,
     )
 
 
@@ -513,8 +521,9 @@ def run_benchmark_variant(
     baseline_ref: str | None = None,
     runner: CommandRunner | None = None,
     timestamp: str | None = None,
+    artifact_only: bool = False,
 ) -> Path:
-    plan = plan_variant_commands(fixture_id, variant_id)
+    plan = plan_variant_commands(fixture_id, variant_id, artifact_only=artifact_only)
     run = runner or _default_runner
     resolved_baseline_ref = baseline_ref or snapshot_benchmark_baseline(project_root)
 
@@ -554,12 +563,13 @@ def run_benchmark_variant(
         failure_kind = "spec_id_missing"
 
     if status == "complete":
-        for phase_command in plan.commands[1:-1]:
+        phase_commands = plan.commands[1:] if artifact_only else plan.commands[1:-1]
+        for phase_command in phase_commands:
             command = tuple(spec_id if part == "RESOLVE_SPEC_ID_FROM_CURRENT_RUN" else part for part in phase_command)
             if not run_one(command, "cleanse_phase"):
                 break
 
-    if status == "complete":
+    if status == "complete" and not artifact_only:
         delivery_command = tuple(
             spec_id if part == "RESOLVE_SPEC_ID_FROM_CURRENT_RUN" else part for part in plan.commands[-1]
         )
