@@ -283,7 +283,7 @@ Record proposal-read or usage failures as `kb_usage_status: degraded`, and prese
 any deterministic contract findings in `kb_contract_violations` and `kb_apply_report`.
 A KB failure does not stop finalization, agent dispatch, phase transitions, or publication.
 
-`finalize-run.sh` publishes KB provenance reports best-effort under
+The Python controller publishes KB provenance reports best-effort under
 `{spec_dir}/kb/` using deterministic `publish_kb_reports`, including
 `kb-apply-report.yaml` and `kb-usage-summary.yaml` when available. COMMANDER
 does not publish these reports manually.
@@ -436,45 +436,24 @@ echo "Run directory preserved → ${SQUAD_DIR}"
 - `feedback/` — post-implementation outcome data
 - `agent-scores.yaml` — agent performance history
 
-### 12.10b Commit Spec Artifacts and Return to Default Branch — MANDATORY
+### 12.10 Python-owned finalization — mandatory boundary
 
-**Always execute this step as a Bash tool call. Do NOT implement git operations inline or in prose.**
+After COMMANDER returns the Phase 4 result, the Python squad controller copies
+the run-local artifacts into the published spec, publishes the constitution and
+KB provenance, validates the complete build-ready artifact set, writes
+`ARTIFACTS.md`, and creates the terminal checkpoint commit containing the
+active and published spec trees.
 
-This is the harness handoff: spec artifacts (including `constitution.md` copied from `.specify/memory/`) are committed to the feature branch, and the working directory is switched back to the default branch. If this step is skipped, the harness will stash uncommitted artifacts and worktrees will be missing files.
+ALWAYS report the Phase 4 result and allow the controller to complete this
+boundary. NEVER call Git, `echelon spec artifacts`, or an external finalizer
+from this phase. In particular, do not stage files, create commits, push, stash,
+reset, or change branches.
+NEVER hand-author `ARTIFACTS.md`; it is Python-owned and overwritten during
+controller finalization.
 
-Read `RUN_ID` from state.json (squad runs are stored under `runs/`), then call `finalize-run.sh`:
+### 12.11 Next spec
 
-```bash
-# State is at runs/<run-id>/state.json — find the current run via .current pointer
-CURRENT_RUN=$(cat "${PROJECT_ROOT}/runs/.current" 2>/dev/null || echo "")
-if [ -n "${CURRENT_RUN}" ] && [ -f "${PROJECT_ROOT}/runs/${CURRENT_RUN}/state.json" ]; then
-  RUN_ID=$(python3 -c "import json; print(json.load(open('${PROJECT_ROOT}/runs/${CURRENT_RUN}/state.json')).get('run_id','unknown'))" 2>/dev/null || echo "unknown")
-else
-  RUN_ID="unknown"
-fi
-ECHELON_EXT="${PROJECT_ROOT}/.specify/extensions/echelon"
-bash "${ECHELON_EXT}/scripts/bash/finalize-run.sh" \
-  "${PROJECT_ROOT}" "${SPEC_ID}" "${FEATURE_NAME}" "${RUN_ID}"
-```
-
-If exit code is non-zero, always report the error and stop. Do not proceed to §12.11.
-
-The script handles: copying constitution.md, staging the published spec and knowledge-base changes in Git, conditional commit (skipped if nothing changed), and `git checkout <default-branch>`.
-
-After `finalize-run.sh` succeeds, refresh the human artifact map deterministically:
-
-```bash
-echelon spec artifacts "${SPEC_ID}"
-```
-
-ALWAYS use `echelon spec artifacts` to generate `{spec_dir}/ARTIFACTS.md` after finalization. NEVER hand-author `ARTIFACTS.md`; it is Python-owned and overwritten on regeneration.
-
-### 12.11 Branch Stacking (Next Spec)
-
-When the user starts a new squad run while implementation of the current spec is in progress:
-
-1. The new spec will be created on a new branch via `speckit.specify`
-2. Spec-kit handles branch stacking (new branch based on current feature branch)
-3. This allows parallel specification work while implementation continues
+Start another specification only through `echelon spec run`. After the active
+run passes checkpoint and cleanliness validation, Echelon creates its sibling branch from the configured default branch. The new spec is not stacked on the current feature branch.
 
 **DONE.** The squad run is complete. The feature branch `{NNN}-{feature}` is ready for `speckit.echelon.build`.

@@ -229,8 +229,15 @@ foundations:
   and directs the operator to checkpoint/clean then `echelon spec switch` to the
   requested spec. The guard is covered by a temporary real-Git test that proves
   the authoring branch and pointer remain unchanged.
+- Terminal Phase A finalization is now Python-owned. The controller publishes
+  the constitution, KB provenance, finalization reports, and `ARTIFACTS.md`,
+  validates readiness, then includes both the run-local and published spec
+  trees in the terminal checkpoint commit. Phase 4 no longer authorizes an
+  agent to call the branch-changing finalizer, stage files, commit, push, or
+  check out a branch; the next spec is a checkpoint-gated sibling through
+  `echelon spec run`.
 
-EGR-151 remains `in-progress`. Complete Phase A finalization artifact boundaries,
+EGR-151 remains `in-progress`. Add the full no-LLM real-Git lifecycle flow,
 consider replacing the landing guard with a dedicated landing worktree, add the
 changelog entry, and close final full-suite evidence. The full-suite run recorded
 3,878 passing tests and seven failures; a focused rerun cleared all three

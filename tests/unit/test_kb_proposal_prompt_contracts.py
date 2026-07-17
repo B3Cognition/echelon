@@ -84,7 +84,7 @@ def test_finalize_delegates_kb_report_publication_to_deterministic_helper() -> N
     text = _read("extension/workflow/phases/phase4-document.md")
     normalized = " ".join(text.split())
 
-    assert "`finalize-run.sh` publishes KB provenance reports best-effort" in normalized
+    assert "The Python controller publishes KB provenance reports best-effort" in normalized
     assert "under `{spec_dir}/kb/` using deterministic `publish_kb_reports`" in normalized
     assert "kb-apply-report.yaml" in normalized
     assert "kb-usage-summary.yaml" in normalized
