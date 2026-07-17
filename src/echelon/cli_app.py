@@ -181,8 +181,13 @@ def kb_validate(
     """Validate Phase A KB proposal artifacts without mutating canonical KB."""
     from echelon.kb_proposals import load_proposals
 
-    proposal_dir = Path.cwd() / "runs" / run_id / "kb-proposals"
-    loaded = load_proposals(proposal_dir, expected_run_id=run_id)
+    project_root = Path.cwd()
+    proposal_dir = project_root / "runs" / run_id / "kb-proposals"
+    loaded = load_proposals(
+        proposal_dir,
+        expected_run_id=run_id,
+        project_root=project_root,
+    )
     invalid = [item for item in loaded if not item.validation.ok]
     status = "valid" if loaded and not invalid else "degraded"
     typer.echo(f"kb_validation_status: {status}")

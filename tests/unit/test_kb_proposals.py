@@ -151,6 +151,28 @@ def test_validate_with_project_root_accepts_traceable_source_artifact(tmp_path: 
     assert result.ok is True
 
 
+def test_validate_with_project_root_rejects_missing_evidence_locator(tmp_path: Path) -> None:
+    _write_traceable_artifact(tmp_path)
+    proposal = _base_proposal(
+        evidence_refs=[
+            {
+                "artifact": "runs/squad-001/reasoning-journal.jsonl",
+                "locator": "RJ-999",
+                "claim": "Not present in artifact.",
+            }
+        ]
+    )
+
+    result = validate_proposal_document(
+        "kb-prop-0001.yaml",
+        proposal,
+        project_root=tmp_path,
+    )
+
+    assert result.ok is False
+    assert any(issue.path == "evidence_refs[0].locator" for issue in result.issues)
+
+
 def test_rejects_fictitious_speckit_agent_identity() -> None:
     proposal = _base_proposal(agent="speckit-echelon-invented")
 
@@ -480,6 +502,12 @@ def test_apply_duplicate_operation_is_skipped(tmp_path: Path) -> None:
         "    source: speckit-echelon-mirror\n"
         "    created_at: '2026-07-17T12:00:00Z'\n"
         "    confidence: 0.8\n"
+        "    id: pat-existing001\n"
+        "    name: Existing constraint pattern\n"
+        "    domain: planning\n"
+        "    description: Existing entry used to test duplicate operation skipping.\n"
+        "    tags: [planning]\n"
+        "    status: active\n"
         "    project_fingerprint: a1b2c3d4e5f6\n"
         "    scope: local_only\n",
         encoding="utf-8",
@@ -515,7 +543,7 @@ def test_apply_rejects_invalid_result_without_writing(tmp_path: Path) -> None:
     assert target.read_text(encoding="utf-8") == original
 
 
-def test_apply_preserves_preexisting_target_schema_debt_and_appends(tmp_path: Path) -> None:
+def test_apply_rejects_preexisting_target_schema_debt_without_mutating(tmp_path: Path) -> None:
     project = tmp_path
     _write_traceable_artifact(project)
     kb = project / "knowledge-base"
@@ -529,11 +557,10 @@ def test_apply_preserves_preexisting_target_schema_debt_and_appends(tmp_path: Pa
 
     report = apply_proposals(project, "squad-001")
 
-    assert report.accepted_count == 1
+    assert report.status == "degraded"
+    assert report.rejected_count == 1
     assert "existing target schema debt" in (report.outcomes[0].reason or "")
-    updated = yaml.safe_load(target.read_text(encoding="utf-8"))
-    assert len(updated["entries"]) == 2
-    assert updated["entries"][1]["operation_id"] == "squad-001/kb-prop-0001"
+    assert target.read_text(encoding="utf-8") == original
 
 
 def test_project_fingerprint_is_stable_independent_of_cwd(tmp_path: Path, monkeypatch) -> None:
@@ -614,6 +641,36 @@ def test_apply_atomic_target_write_failure_preserves_original(tmp_path: Path, mo
     assert "target is read-only" in (report.outcomes[0].reason or "")
     assert target.read_text(encoding="utf-8") == original
     assert (project / "runs" / "squad-001" / "kb-apply-report.yaml").exists()
+
+
+def test_apply_writes_durable_mutation_journal_before_canonical_write(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path
+    _write_traceable_artifact(project)
+    kb = project / "knowledge-base"
+    kb.mkdir()
+    target = kb / "patterns.yaml"
+    target.write_text("schema_version: 1\nappend_only: true\nentries: []\n", encoding="utf-8")
+    proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+    (proposal_dir / "accepted.yaml").write_text(yaml.safe_dump(_base_proposal()), encoding="utf-8")
+    original_replace = kb_proposals.os.replace
+    observed = {"journal_exists_before_target_write": False}
+
+    def observe_target_replace(source: Path, destination: Path):
+        if destination == target:
+            observed["journal_exists_before_target_write"] = (
+                project / "runs" / "squad-001" / "kb-mutation-journal.jsonl"
+            ).exists()
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(kb_proposals.os, "replace", observe_target_replace)
+
+    report = apply_proposals(project, "squad-001")
+
+    assert report.accepted_count == 1
+    assert observed["journal_exists_before_target_write"] is True
+    journal = project / "runs" / "squad-001" / "kb-mutation-journal.jsonl"
+    assert "squad-001/kb-prop-0001" in journal.read_text(encoding="utf-8")
 
 
 def test_apply_lock_contention_rejects_without_mutating_target(tmp_path: Path) -> None:

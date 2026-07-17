@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -16,6 +17,7 @@ from typing import Any
 _ISO_DATETIME_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$"
 )
+_LINE_LOCATOR_RE = re.compile(r"^(?:line|L)(?::|-)?(\d+)$", re.IGNORECASE)
 
 PROPOSAL_TARGETS: dict[str, set[str]] = {
     "sage_decision": {"knowledge-base/sage-decisions.yaml"},
@@ -271,6 +273,7 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
         try:
             outcome = _apply_list_proposal(
                 project_root,
+                report_path.parent / "kb-mutation-journal.jsonl",
                 data,
                 loaded.validation.operation_id,
                 mutation_snapshots,
@@ -407,6 +410,7 @@ def _combine_report_errors(existing: str | None, new: str) -> str:
 
 def _apply_list_proposal(
     project_root: Path,
+    mutation_journal_path: Path,
     data: dict[str, Any],
     operation_id: str | None,
     mutation_snapshots: dict[Path, str],
@@ -439,6 +443,7 @@ def _apply_list_proposal(
             operation_id,
             yaml,
             mutation_snapshots,
+            mutation_journal_path,
         )
     finally:
         _release_target_lock(lock_path)
@@ -452,6 +457,7 @@ def _apply_locked_list_proposal(
     operation_id: str | None,
     yaml_module: Any,
     mutation_snapshots: dict[Path, str],
+    mutation_journal_path: Path,
 ) -> ProposalApplyOutcome:
     proposal_id = str(data["proposal_id"])
     proposal_type = str(data["proposal_type"])
@@ -477,10 +483,17 @@ def _apply_locked_list_proposal(
 
     entries_key = LIST_TARGET_ENTRY_KEYS[targets[0]]
     baseline_validation = validate_kb_document(target_path.name, document)
-    legacy_reason = None
     if not baseline_validation.ok:
-        legacy_reason = "; ".join(
+        reason = "; ".join(
             f"{issue.path}: {issue.message}" for issue in baseline_validation.issues
+        )
+        return ProposalApplyOutcome(
+            proposal_id,
+            operation_id,
+            proposal_type,
+            "rejected",
+            targets,
+            f"existing target schema debt: {reason}",
         )
     entries = document.get(entries_key)
     if not isinstance(entries, list):
@@ -490,9 +503,7 @@ def _apply_locked_list_proposal(
 
     entry = _canonical_entry(data, operation_id, project_root)
     entries.append(entry)
-    candidate_document = dict(LIST_TARGET_SCHEMA_FIELDS[targets[0]])
-    candidate_document[entries_key] = [entry]
-    result_validation = validate_kb_document(target_path.name, candidate_document)
+    result_validation = validate_kb_document(target_path.name, document)
     if not result_validation.ok:
         reason = "; ".join(
             f"{issue.path}: {issue.message}" for issue in result_validation.issues
@@ -507,6 +518,16 @@ def _apply_locked_list_proposal(
         )
     try:
         mutation_snapshots.setdefault(target_path, original_text)
+        _append_mutation_journal(
+            mutation_journal_path,
+            {
+                "operation_id": operation_id,
+                "proposal_id": proposal_id,
+                "proposal_type": proposal_type,
+                "target": targets[0],
+                "outcome": "intent_to_write",
+            },
+        )
         _atomic_replace_text(target_path, yaml_module.safe_dump(document, sort_keys=False))
     except Exception as exc:
         return ProposalApplyOutcome(
@@ -517,8 +538,16 @@ def _apply_locked_list_proposal(
             targets,
             f"target write failed: {exc}",
         )
-    reason = f"existing target schema debt: {legacy_reason}" if legacy_reason else None
-    return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "accepted", targets, reason)
+    return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "accepted", targets)
+
+
+def _append_mutation_journal(journal_path: Path, entry: dict[str, Any]) -> None:
+    journal_path.parent.mkdir(parents=True, exist_ok=True)
+    with journal_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(entry, sort_keys=True))
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def _canonical_entry(
@@ -580,6 +609,19 @@ def _artifact_exists(project_root: Path, artifact: str) -> bool:
     except (OSError, ValueError):
         return False
     return candidate.exists() and candidate.is_file()
+
+
+def _evidence_locator_exists(project_root: Path, artifact: str, locator: str) -> bool:
+    artifact_path = (project_root / Path(artifact)).resolve()
+    try:
+        text = artifact_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return False
+    match = _LINE_LOCATOR_RE.match(locator.strip())
+    if match:
+        line_number = int(match.group(1))
+        return 1 <= line_number <= len(text.splitlines())
+    return locator.strip() in text
 
 
 def validate_proposal_document(
@@ -684,6 +726,17 @@ def validate_proposal_document(
             artifact = evidence.get("artifact")
             if isinstance(artifact, str) and artifact.strip() and artifact not in source_artifact_set:
                 issues.append(_issue(f"{base}.artifact", "expected artifact declared in source_artifacts"))
+            locator = evidence.get("locator")
+            if (
+                project_root is not None
+                and isinstance(artifact, str)
+                and artifact.strip()
+                and isinstance(locator, str)
+                and locator.strip()
+                and _artifact_exists(project_root, artifact)
+                and not _evidence_locator_exists(project_root, artifact, locator)
+            ):
+                issues.append(_issue(f"{base}.locator", "locator must resolve inside artifact"))
 
     payload = data.get("payload")
     if not isinstance(payload, dict):
