@@ -26,6 +26,17 @@ preserving unrelated user changes.
 - Pass those verified paths only for a successful Phase 4 terminal checkpoint.
 - Cover accepted, malformed, and unrelated-change cases with no-LLM Git tests.
 
+## 3. Expose switching through the active CLI front door
+
+**Files:** `src/echelon/cli_app.py`, `tests/unit/test_cli_typer_app.py`
+
+- Register `echelon spec switch` on the Typer application used by the installed
+  executable.
+- Preserve the deterministic switch parser's stash, discard, confirmation, and
+  managed-stash restoration flags.
+- Regress the actual CLI command/help surface rather than only the legacy
+  dispatcher.
+
 ## Verification
 
 - Run focused Phase A checkpoint, KB proposal, and squad checkpoint tests.

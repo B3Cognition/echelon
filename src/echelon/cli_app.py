@@ -1121,6 +1121,35 @@ def spec_repair_traceability(
     )
 
 
+@spec_app.command("switch")
+def spec_switch(
+    spec_or_run_id: str = typer.Argument(..., help="Checkpointed spec id or Phase A run id."),
+    stash: bool = typer.Option(False, "--stash", help="Stash dirty outgoing spec changes."),
+    discard: bool = typer.Option(False, "--discard", help="Discard dirty changes to the checkpoint."),
+    confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
+    restore_stash: bool = typer.Option(
+        False,
+        "--restore-stash",
+        help="Restore this spec's managed stash after switching.",
+    ),
+) -> None:
+    """Select a checkpointed Phase A spec run."""
+    from echelon.spec_switch_cli import run_spec_switch_command
+
+    args = [spec_or_run_id]
+    if stash:
+        args.append("--stash")
+    if discard:
+        args.append("--discard")
+    if confirm:
+        args.append("--confirm")
+    if restore_stash:
+        args.append("--restore-stash")
+    exit_code = run_spec_switch_command(args, project_root=Path.cwd())
+    if exit_code:
+        raise typer.Exit(exit_code)
+
+
 @spec_app.command("drop-target")
 def spec_drop_target(
     spec_id: str = typer.Argument(..., help="Active unfinished spec id."),
