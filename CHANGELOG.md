@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **EGR-151 / #164 exclusive Phase A GitOps** — Echelon now owns Phase A
+  branch lifecycle end-to-end: workspace initialization disables competing
+  spec-kit Git hooks, fresh specs start as checkpoint-gated sibling branches
+  from the recorded default commit, and `echelon spec switch` safely selects
+  unfinished runs with clean, managed-stash, or confirmed-discard handling.
+  Delivery resolves its requested spec without changing the active authoring
+  checkout, landing refuses to disturb a different active spec, and terminal
+  Phase A finalization commits the validated run-local and published artifact
+  trees through Python-owned checkpoints.
+
 - **First-class reverse-engineering lifecycle** — `echelon re run`, `echelon re
   continue`, and `echelon re resume` now own RE planning, bounded repair, and
   structured recovery under an independent `runs/.current-re` marker. Complete
