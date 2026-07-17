@@ -35,6 +35,11 @@ LIST_TARGET_ENTRY_KEYS = {
     "knowledge-base/patterns.yaml": "entries",
     "knowledge-base/pitfalls.yaml": "entries",
 }
+LIST_TARGET_SCHEMA_FIELDS = {
+    "knowledge-base/sage-decisions.yaml": {"schema_version": 2, "append_only": True},
+    "knowledge-base/patterns.yaml": {"schema_version": 1},
+    "knowledge-base/pitfalls.yaml": {"schema_version": 1},
+}
 
 
 @dataclass(frozen=True)
@@ -214,19 +219,12 @@ def _apply_list_proposal(
 
     entries_key = LIST_TARGET_ENTRY_KEYS[target]
     baseline_validation = validate_kb_document(target_path.name, document)
+    legacy_reason = None
     if not baseline_validation.ok:
-        reason = "; ".join(
+        legacy_reason = "; ".join(
             f"{issue.path}: {issue.message}" for issue in baseline_validation.issues
         )
-        return ProposalApplyOutcome(
-            proposal_id,
-            operation_id,
-            proposal_type,
-            "rejected",
-            targets,
-            f"existing target schema debt: {reason}",
-        )
-    entries = document.setdefault(entries_key, [])
+    entries = document.get(entries_key)
     if not isinstance(entries, list):
         return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "rejected", targets, "target entries must be a list")
     if any(isinstance(entry, dict) and entry.get("operation_id") == operation_id for entry in entries):
@@ -234,7 +232,9 @@ def _apply_list_proposal(
 
     entry = _canonical_entry(data, operation_id, project_root)
     entries.append(entry)
-    result_validation = validate_kb_document(target_path.name, document)
+    candidate_document = dict(LIST_TARGET_SCHEMA_FIELDS[target])
+    candidate_document[entries_key] = [entry]
+    result_validation = validate_kb_document(target_path.name, candidate_document)
     if not result_validation.ok:
         reason = "; ".join(
             f"{issue.path}: {issue.message}" for issue in result_validation.issues
@@ -258,7 +258,8 @@ def _apply_list_proposal(
             targets,
             f"target write failed: {exc}",
         )
-    return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "accepted", targets)
+    reason = f"existing target schema debt: {legacy_reason}" if legacy_reason else None
+    return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "accepted", targets, reason)
 
 
 def _canonical_entry(

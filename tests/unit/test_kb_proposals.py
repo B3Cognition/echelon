@@ -234,7 +234,7 @@ def test_apply_rejects_invalid_result_without_writing(tmp_path: Path) -> None:
     assert target.read_text(encoding="utf-8") == original
 
 
-def test_apply_rejects_preexisting_target_schema_debt_without_writing(tmp_path: Path) -> None:
+def test_apply_preserves_preexisting_target_schema_debt_and_appends(tmp_path: Path) -> None:
     project = tmp_path
     kb = project / "knowledge-base"
     kb.mkdir()
@@ -247,9 +247,11 @@ def test_apply_rejects_preexisting_target_schema_debt_without_writing(tmp_path: 
 
     report = apply_proposals(project, "squad-001")
 
-    assert report.rejected_count == 1
+    assert report.accepted_count == 1
     assert "existing target schema debt" in (report.outcomes[0].reason or "")
-    assert target.read_text(encoding="utf-8") == original
+    updated = yaml.safe_load(target.read_text(encoding="utf-8"))
+    assert len(updated["entries"]) == 2
+    assert updated["entries"][1]["operation_id"] == "squad-001/kb-prop-0001"
 
 
 def test_project_fingerprint_is_stable_independent_of_cwd(tmp_path: Path, monkeypatch) -> None:
