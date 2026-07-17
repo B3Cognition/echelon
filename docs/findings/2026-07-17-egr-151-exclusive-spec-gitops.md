@@ -236,10 +236,14 @@ foundations:
   agent to call the branch-changing finalizer, stage files, commit, push, or
   check out a branch; the next spec is a checkpoint-gated sibling through
   `echelon spec run`.
+- A composed no-LLM lifecycle regression now starts checkpointed, non-final
+  spec A, starts spec B as a sibling from the recorded `main` commit, delivers
+  ready A while dirty B remains the active authoring branch, and rejects
+  unready B before delivery dispatch. It uses temporary local Git plus mocked
+  delivery-runtime boundaries only; the lifecycle/delivery matrix passed 51
+  tests on 2026-07-17.
 
-EGR-151 remains `in-progress`. Add the full no-LLM real-Git lifecycle flow,
-consider replacing the landing guard with a dedicated landing worktree, add the
-changelog entry, and close final full-suite evidence. The full-suite run recorded
-3,878 passing tests and seven failures; a focused rerun cleared all three
-Git-fixture failures affected by the cutover. Four unrelated existing assertions
-remain in CLI help/template contracts outside EGR-151.
+EGR-151 remains `in-progress`. Add the changelog entry and close final full-suite
+evidence; a dedicated landing worktree remains a later refinement beyond the
+active guard. The latest full-suite run retained 20 broader failures, including
+target-preflight and CLI/template contract assertions outside this EGR slice.
