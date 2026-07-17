@@ -2,7 +2,8 @@
 
 ## Prerequisites
 
-**uv** is required. Install it if you don't have it:
+**uv** is required. **Node.js with npm** is required for Context7, CodeGraph,
+and PerlGraph. Install uv if you don't have it:
 
 ```bash
 brew install uv          # macOS
@@ -20,13 +21,20 @@ git clone https://github.com/B3Cognition/echelon.git ~/echelon
 bash ~/echelon/scripts/install.sh
 ```
 
-The installer does five things automatically:
+The installer does six things automatically:
 
 1. Downloads `SoarSuite_9.6.4-Multiplatform.zip` from GitHub and extracts the SOAR binary for your platform into `~/.echelon/soar/bin/`
 2. Adds `~/.echelon/soar/bin` to your PATH
 3. Creates a venv at `~/.echelon/venv/` and installs all four CLIs (`echelon`, `harness`, `codegen`, `understanding`) into it
-4. Adds `~/.echelon/venv/bin` to your PATH
-5. Creates `~/.echelon/memory/` and caches the AI embedding model (~80MB, one time)
+4. Installs the pinned Context7, CodeGraph, and PerlGraph runtimes under `~/.echelon/node/`
+5. Adds `~/.echelon/venv/bin` to your PATH
+6. Creates `~/.echelon/memory/` and caches the AI embedding model (~80MB, one time)
+
+Set `ECHELON_HOME` before installation to relocate the shared Node runtimes. A
+complete project-deployed runtime takes precedence when present; otherwise
+Echelon's wrappers and harness commands use `${ECHELON_HOME:-$HOME/.echelon}/node`.
+Agents call those stable wrappers and commands and do not invoke runtime files
+directly.
 
 ---
 
@@ -175,6 +183,12 @@ export PATH="$HOME/.echelon/soar/bin:$PATH"
 
 The warmup step requires internet access. If it fails silently, the model downloads on first use instead. No action needed.
 
+### Context7, CodeGraph, or PerlGraph runtime unavailable
+
+Install Node.js and npm, then rerun `bash ~/echelon/scripts/install.sh`. Do not
+run `npm ci` inside a project's deployed extension; the installer owns the
+shared runtimes and refreshes them from the pinned lockfiles.
+
 ### Re-run the installer
 
 The installer is safe to re-run. SOAR is skipped if already present; the venv is rebuilt; `memory-config.yml` is left untouched if it exists.
@@ -184,6 +198,7 @@ The installer is safe to re-run. SOAR is skipped if already present; the venv is
 ## System Requirements
 
 - **Python**: 3.11 or higher
+- **Node.js with npm**: required for Context7, CodeGraph, and PerlGraph
 - **OS**: macOS (ARM64, x86-64), Linux (x86-64)
 - **Disk**: ~500MB for SOAR + ~80MB for embedding model + ~2GB for understanding (torch + spaCy + transformers)
 - **spec-kit**: >= 0.4.2

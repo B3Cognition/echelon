@@ -45,6 +45,14 @@ def test_install_script_supports_optional_codegraph_cli_without_mcp_install():
     assert 'command -v codegraph' in install_script
 
 
+def test_uninstall_script_removes_shared_node_runtimes() -> None:
+    uninstall_script = (EXT_ROOT / "scripts" / "uninstall.sh").read_text()
+
+    assert 'ECHELON_HOME="${ECHELON_HOME:-$HOME/.echelon}"' in uninstall_script
+    assert 'NODE_RUNTIME_DIR="$ECHELON_HOME/node"' in uninstall_script
+    assert 'rm -rf "$NODE_RUNTIME_DIR"' in uninstall_script
+
+
 def test_codegraph_runtime_is_pinned_to_current_supported_release():
     package = json.loads((CODEGRAPH_RUNTIME_DIR / "package.json").read_text())
     lock = json.loads((CODEGRAPH_RUNTIME_DIR / "package-lock.json").read_text())
@@ -154,6 +162,10 @@ def test_re_analyzer_uses_state_output_dir_instead_of_hardcoded_re_path():
     assert "workspace-manifest.json" in analyzer
     assert "RE_OUTPUT_DIR" in analyzer
     assert '"$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" \\' in analyzer
+    assert "ALWAYS invoke `run-analysis.sh`" in analyzer
+    assert "NEVER derive or invoke CodeGraph or PerlGraph runtime paths" in analyzer
+    assert "scripts/node/codegraph/codegraph-bridge.js" not in analyzer
+    assert "dist/cli/perlgraph.js" not in analyzer
     assert '--output "$RE_OUTPUT_DIR"' in analyzer
     assert '--manifest "$RE_ANALYSIS_MANIFEST"' in analyzer
     assert '--source-output-root "$RE_OUTPUT_DIR/sources"' in analyzer

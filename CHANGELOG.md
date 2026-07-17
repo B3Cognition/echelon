@@ -46,11 +46,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
-- **Context7 deployed-runtime discovery** — the installer now places the pinned
-  `ctx7` runtime under `~/.echelon/node/context7`, and deployed extension
-  wrappers fall back to that shared installation. Project-local extension copies
-  no longer fail merely because `specify extension add/update` excludes
-  `node_modules`.
+- **Shared Node runtime discovery** — the installer now refreshes the pinned
+  Context7, CodeGraph, and PerlGraph runtimes under
+  `${ECHELON_HOME:-$HOME/.echelon}/node`. Primary-workspace wrappers and harness
+  evidence commands prefer a complete deployed runtime, then fall back to that
+  shared installation, while delivery remains strict worktree-local. Agent
+  contracts invoke stable wrappers instead of physical runtime paths, and
+  uninstall removes the shared runtime tree.
 
 - **EGR-147 / #162 authoritative implementation targets** — repeatable
   `echelon spec run --target` values are now resolved and persisted before

@@ -87,6 +87,9 @@ def test_verify_spec_codegraph_forbids_prompt_side_discovery() -> None:
 
     assert "NEVER locate, inspect, or infer CodeGraph bridge invocation" in text
     assert "do not attempt fallback discovery" in text
+    assert "owns deterministic runtime resolution" in text
+    assert ".specify/extensions/echelon/scripts/node/codegraph" not in text
+    assert ".specify/extensions/echelon/scripts/node/perlgraph" not in text
 
 
 def test_verify_spec_progress_integrity_does_not_override_fulfillment_status() -> None:

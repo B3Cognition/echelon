@@ -109,9 +109,14 @@ Aggregate:
   - $RE_OUTPUT_DIR/cross-repo.json     (only when multiple sources were analyzed)
 ```
 
-### Step 6: CodeGraph (Optional)
+### Step 6: Structural Code Intelligence (Optional)
 
-`run-analysis.sh` automatically runs the CodeGraph bridge when Node.js and `scripts/node/codegraph/codegraph-bridge.js` are available.
+ALWAYS invoke `run-analysis.sh` and let the wrapper resolve its managed CodeGraph and PerlGraph runtimes.
+NEVER derive or invoke CodeGraph or PerlGraph runtime paths from this agent.
+
+`run-analysis.sh` automatically uses each complete deployed runtime when present,
+then the installer-managed shared runtime. Missing Node.js or an incomplete
+runtime degrades that tool without blocking file-level analysis.
 
 **If `$RE_OUTPUT_DIR/codegraph-analysis.json` was produced**, include in the summary:
 - Total symbols: `.index_stats.total_symbols`
@@ -119,7 +124,12 @@ Aggregate:
 - Index state: `.index_stats.index_state` (`"ready"` or `"degraded"`)
 - Compact summary: `$RE_OUTPUT_DIR/codegraph-summary.json`
 
-**If not produced** (Node.js unavailable, bridge missing, or extraction failed): note this — downstream agents fall back to file-level analysis automatically.
+**If `$RE_OUTPUT_DIR/perlgraph-analysis.json` was produced**, include its compact
+summary at `$RE_OUTPUT_DIR/perlgraph-summary.json` and note any dynamic-risk or
+unsupported-pattern findings.
+
+**If either tool's artifacts were not produced**: note which structural evidence
+is unavailable. Downstream agents fall back to file-level analysis automatically.
 
 ## Output Block
 
@@ -138,11 +148,15 @@ echelon_result:
       cross_repo: null
       codegraph_analysis: "{RE_OUTPUT_DIR}/codegraph-analysis.json" | null
       codegraph_summary: "{RE_OUTPUT_DIR}/codegraph-summary.json" | null
+      perlgraph_analysis: "{RE_OUTPUT_DIR}/perlgraph-analysis.json" | null
+      perlgraph_summary: "{RE_OUTPUT_DIR}/perlgraph-summary.json" | null
   output_files:
     - "{RE_OUTPUT_DIR}/analysis.json"
     # Include only when produced:
     - "{RE_OUTPUT_DIR}/codegraph-analysis.json"
     - "{RE_OUTPUT_DIR}/codegraph-summary.json"
+    - "{RE_OUTPUT_DIR}/perlgraph-analysis.json"
+    - "{RE_OUTPUT_DIR}/perlgraph-summary.json"
   journal_entries:
     - type: phase_complete
       phase: re-extract-1-analyze

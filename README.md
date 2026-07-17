@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 3.4.0** — 55 registered agent roles across the Echelon architecture, with 45 active-routed manifest roles in the executable workflow, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Copilot, Opencode)
+**Version 3.4.1** — 55 registered agent roles across the Echelon architecture, with 45 active-routed manifest roles in the executable workflow, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -36,6 +36,11 @@ specify extension add --dev ~/echelon/extension
 | `understanding` | Requirements quality metrics |
 
 See [INSTALLATION.md](INSTALLATION.md) for prerequisites, upgrade, and uninstall instructions.
+
+The installer also prepares pinned Context7, CodeGraph, and PerlGraph runtimes
+under `${ECHELON_HOME:-$HOME/.echelon}/node`. Project commands use stable
+wrappers or harness subcommands: they prefer a complete deployed runtime and
+fall back to that shared installation. Agents never need a physical Node entrypoint.
 
 ### Update to latest version
 
@@ -1136,6 +1141,7 @@ See [INSTALLATION.md](INSTALLATION.md) for full prerequisites, upgrade, and unin
 - **Claude CLI** (`claude`) — required for `echelon spec run`, `echelon spec bugfix`, and other LLM commands
 - **uv** (required — install via `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - **Docker** (required for `echelon delivery run` — sandbox verification runs in Docker)
+- **Node.js with npm** (required for Context7 documentation lookup and CodeGraph/PerlGraph structural evidence)
 - **SOAR** >= 9.6.4 (bundled — downloaded by `scripts/install.sh` to `~/.echelon/soar/`)
 - **understanding** >= 3.7.0 (bundled — installed by `scripts/install.sh`)
 - **codegen** >= 0.9.1 (bundled — installed by `scripts/install.sh`)
@@ -1202,8 +1208,8 @@ network/
 ├── generate-squid-conf.sh   # Generate Squid proxy config for sandbox network policy
 └── squid.conf.template      # Squid config template with egress allowlist
 scripts/
-├── install.sh               # Downloads SOAR, creates ~/.echelon/venv/, installs all CLIs
-├── uninstall.sh             # Removes venv, SOAR, memory, PATH entries
+├── install.sh               # Downloads SOAR; installs CLIs and shared Node runtimes
+├── uninstall.sh             # Removes venv, SOAR, shared Node runtimes, memory, PATH entries
 ├── docker-gc.sh             # Garbage-collect stale sandbox containers and worktrees
 ├── docker-network.sh        # Create/teardown the Docker bridge network + Squid proxy
 ├── docker-sandbox.sh        # Lifecycle helpers for the Docker sandbox container
