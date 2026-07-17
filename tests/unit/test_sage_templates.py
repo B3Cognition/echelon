@@ -67,7 +67,8 @@ class TestSageTemplates:
         assert "agents/exploration/templates/sage-assumption-review-template.md" in text
         assert "agents/exploration/templates/sage-quality-gates-template.md" in text
         assert "agents/exploration/templates/sage-issues-template.md" in text
-        assert "agents/exploration/templates/sage-decision-entry-template.yaml" in text
+        assert "extension/templates/kb-proposals/sage-decision-proposal-template.yaml" in text
+        assert "agents/exploration/templates/sage-decision-entry-template.yaml" not in text
         assert ".specify/..." not in text
         assert "${STAGING_DIR}/assumption-review.md" in text
         assert "${STAGING_DIR}/issues.md" in text

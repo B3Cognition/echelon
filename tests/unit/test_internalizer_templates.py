@@ -16,8 +16,8 @@ class TestInternalizerTemplates:
             (
                 "internalizer-output-formats.md",
                 [
-                    "## Agent Scores Storage Format",
-                    "## Internalization Log Entry Fields",
+                    "## Agent Scores Proposal Payload Format",
+                    "## Internalization Log Proposal Fields",
                     "## Agent Internalization Health Dashboard Section",
                     "## Cross-Validation Flags Summary",
                 ],
@@ -54,6 +54,9 @@ class TestInternalizerTemplates:
         assert "knowledge-base/internalization-log.yaml" in text
         assert "knowledge-base/agent-scores.yaml" in text
         assert "knowledge-base/evolution-signals.yaml" in text
+        assert "internalization-observation-proposal-template.yaml" in text
+        assert "${SQUAD_DIR}/kb-proposals/" in text
+        assert "kb-write.sh" not in text
         assert "agent: speckit-echelon-internalizer (INTERNALIZER)" in text
         assert "agent: INTERNALIZE_METRICS" not in text
         assert "downstream_agent: SPEC_GUARD" not in text

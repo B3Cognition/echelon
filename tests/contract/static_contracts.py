@@ -655,7 +655,8 @@ def validate_auditor_internalization_contract(root: Path) -> list[str]:
             PatternCheck("history block", appendix, r"history:", flags),
             PatternCheck("null vs zero rule", target, r"null.*not.*0\.0|null.*not 0", flags),
             PatternCheck("history cap", target, r"capped at 20|oldest removed", flags),
-            PatternCheck("KB write protocol", target, r"kb-write\.sh", flags),
+            PatternCheck("KB proposal protocol", target, r"internalization-observation-proposal-template\.yaml", flags),
+            PatternCheck("KB proposal directory", target, r"\$\{SQUAD_DIR\}/kb-proposals/", flags),
         ]
     )
 
