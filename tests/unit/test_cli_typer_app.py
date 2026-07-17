@@ -440,13 +440,14 @@ def test_spec_run_help_declares_phase_a_options():
 
 
 @pytest.mark.unit
-def test_spec_help_does_not_offer_post_hoc_target_mutation():
+def test_spec_help_offers_only_guarded_unused_target_removal():
     result = invoke_help("spec")
     normalized = " ".join(result.output.split())
 
     assert result.exit_code == 0
-    assert "target <spec_id>" not in normalized
+    assert "target Set implementation targets" not in normalized
     assert "targets <spec_id>" in normalized
+    assert "drop-target <spec_id> <target> --confirm" in normalized
 
 
 @pytest.mark.unit

@@ -86,6 +86,8 @@ Commands:
   spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
   spec resume "<answers>"                   Answer escalation questions from a blocked run.
   spec rewind <phase-id>                    Rewind the active squad run to a safe checkpoint.
+  spec drop-target <spec_id> <target> --confirm
+                                            Remove an unused target from an unfinished run.
   spec checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]
                                             Manage Phase A/spec checkpoints.
   spec targets <spec_id>                    Display every task grouped by delivery target.
@@ -6165,6 +6167,140 @@ def _cmd_rewind(
     _banner("REWIND PREPARED", details)
 
 
+def _cmd_drop_target(args: list[str], project_root: Path) -> None:
+    """Remove one unreferenced delivery target from the active unfinished run.
+
+    This deliberately supports only a declared target with no task ownership.
+    Adding or replacing targets requires re-authoring because it changes the
+    architecture decision space; an unused target can safely return to PLAN.
+    """
+    confirm = "--confirm" in args
+    positional = [arg for arg in args if arg != "--confirm"]
+    if len(positional) != 2:
+        print(
+            "Usage: echelon spec drop-target <spec_id> <target> --confirm\n"
+            "  Removes one unused declared target and re-dispatches phase3-plan.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    spec_id, target = (value.strip().rstrip("/") for value in positional)
+    if not spec_id or not target:
+        print("✗ spec id and target must not be empty", file=sys.stderr)
+        sys.exit(1)
+
+    squad_dir = _find_current_run_dir(project_root)
+    if squad_dir is None or not (squad_dir / "state.json").is_file():
+        print("✗ No active squad run found.", file=sys.stderr)
+        sys.exit(1)
+
+    from harness.spec_frontmatter import write_targets
+    from harness.squad_state import SquadStateStore
+    from harness.task_targets import analyze_task_targets
+
+    store = SquadStateStore(squad_dir)
+    state = store.load()
+    active_spec_id = str(state.get("spec_id") or "").strip()
+    if active_spec_id != spec_id:
+        print(
+            f"✗ Active run owns spec {active_spec_id or '(unknown)'!r}, not {spec_id!r}.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if str(state.get("status") or "") == "done":
+        print(
+            "✗ Cannot drop a target from a completed spec. Start a new spec run instead.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    declared = [
+        str(value).strip().rstrip("/")
+        for value in state.get("implementation_targets") or []
+        if str(value).strip()
+    ]
+    if target not in declared:
+        print(f"✗ Target {target!r} is not declared by the active run.", file=sys.stderr)
+        sys.exit(1)
+    replacement_targets = [value for value in declared if value != target]
+    if not replacement_targets:
+        print("✗ A spec must retain at least one implementation target.", file=sys.stderr)
+        sys.exit(1)
+
+    spec_dir, spec_dir_ref = _normalize_rewind_spec_dir(project_root, state)
+    if spec_dir is None or spec_dir_ref is None:
+        print("✗ Could not resolve the active spec directory from state.json.", file=sys.stderr)
+        sys.exit(1)
+
+    tasks_file = spec_dir / "tasks.md"
+    if tasks_file.is_file():
+        analysis = analyze_task_targets(tasks_file.read_text(encoding="utf-8"))
+        owned_tasks = analysis.target_tasks.get(target, ())
+        if owned_tasks:
+            print(
+                f"✗ Cannot drop {target!r}: it owns task(s) {', '.join(owned_tasks)}.\n"
+                "  Re-author the target decision before changing delivery scope.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    planning_outputs = _REWIND_CLEANUP_OUTPUTS["phase3-plan"]
+    if not confirm:
+        _banner(
+            "DROP TARGET PREVIEW",
+            [
+                ("spec", spec_id),
+                ("remove", target),
+                ("remain", ", ".join(replacement_targets)),
+                ("invalidate", ", ".join(planning_outputs)),
+                ("next", f"echelon spec drop-target {spec_id} {target} --confirm"),
+            ],
+            subtitle="No files or run state changed.",
+        )
+        return
+
+    spec_dirs = [spec_dir]
+    published_ref = str(state.get("published_spec_dir") or "").strip()
+    if published_ref:
+        published_dir = Path(published_ref)
+        if not published_dir.is_absolute():
+            published_dir = project_root / published_dir
+        if published_dir.is_dir() and published_dir not in spec_dirs:
+            spec_dirs.append(published_dir)
+
+    removed: list[str] = []
+    for directory in spec_dirs:
+        write_targets(directory, replacement_targets)
+        for name in planning_outputs:
+            output = directory / name
+            if output.exists():
+                output.unlink()
+                if name not in removed:
+                    removed.append(name)
+
+    updated = _reset_rewind_state(state, "phase3-plan", spec_dir_ref)
+    updated["implementation_targets"] = replacement_targets
+    updated["tasks_lexicon_pass"] = None
+    updated["target_change"] = {
+        "action": "drop-unused-target",
+        "removed": target,
+        "remaining": replacement_targets,
+        "invalidated_outputs": removed,
+    }
+    store.save(updated)
+
+    _banner(
+        "TARGET REMOVED",
+        [
+            ("spec", spec_id),
+            ("removed", target),
+            ("targets", ", ".join(replacement_targets)),
+            ("invalidated", ", ".join(removed) if removed else "(none)"),
+            ("next", "echelon spec continue"),
+        ],
+        subtitle="Task planning will be regenerated for the remaining targets.",
+    )
+
+
 def _cmd_benchmark(args: list[str], project_root: Path) -> None:
     from echelon.benchmark import (
         baseline_snapshot_commands,
@@ -7331,6 +7467,8 @@ def _cmd_spec(args: list[str]) -> None:
             "                                      Run the next no-input Phase A recovery action\n"
             "  resume <answers>                    Answer escalation questions from a blocked run\n"
             "  rewind <phase-id>                   Rewind the active squad run to a checkpoint\n"
+            "  drop-target <spec_id> <target> --confirm\n"
+            "                                      Remove an unused target and re-plan tasks\n"
             "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
             "                                      Manage Phase A/spec checkpoints\n"
             "  artifacts <spec_id>                 Generate specs/<id>/ARTIFACTS.md\n"
@@ -7354,6 +7492,8 @@ def _cmd_spec(args: list[str]) -> None:
         _cmd_spec_resume(args[1:])
     elif subcmd == "rewind":
         _cmd_rewind(args[1:], project_root=Path.cwd())
+    elif subcmd == "drop-target":
+        _cmd_drop_target(args[1:], project_root=Path.cwd())
     elif subcmd == "checkpoint":
         from echelon.checkpoint_cli import run_checkpoint_command
 

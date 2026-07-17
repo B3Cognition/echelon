@@ -75,6 +75,8 @@ spec_app = typer.Typer(
         "                    [--re-max-inner <n>]\n"
         "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
         "  targets <spec_id>  Display every task grouped by delivery target.\n"
+        "  drop-target <spec_id> <target> --confirm\n"
+        "                    Remove an unused target from an unfinished run.\n"
         "  Example: targets <spec_id>"
     ),
     rich_markup_mode=None,
@@ -1047,6 +1049,21 @@ def spec_rewind(
     if confirm:
         args.append("--confirm")
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())
+
+
+@spec_app.command("drop-target")
+def spec_drop_target(
+    spec_id: str = typer.Argument(..., help="Active unfinished spec id."),
+    target: str = typer.Argument(..., help="Declared target to remove when it owns no tasks."),
+    confirm: bool = typer.Option(False, "--confirm", help="Apply the target removal."),
+) -> None:
+    """Remove an unused target and re-run task planning for the remaining targets."""
+    from echelon import cli as legacy_cli
+
+    args = [spec_id, target]
+    if confirm:
+        args.append("--confirm")
+    legacy_cli._cmd_drop_target(args, project_root=Path.cwd())
 
 
 @spec_checkpoint_app.command(
