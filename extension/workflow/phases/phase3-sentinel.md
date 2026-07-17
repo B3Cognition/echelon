@@ -30,7 +30,7 @@ Use the Agent tool to dispatch a subagent with:
   </context>
 
   <instructions>
-  You are SENTINEL. Read agents/solution/sentinel.md for your complete protocol. When Product Input Contract paths are present, confirm each included `IN-REQ-*` unit reaches at least one mapped acceptance criterion and target-owned task; return corrective `product_input_updates` using the exact canonical fields `input_unit_id`, `disposition`, `rationale`, `spec_ids`, `task_ids`, and `targets`, rather than editing the ledger.
+  You are SENTINEL. Read agents/solution/sentinel.md for your complete protocol. When Product Input Contract paths are present, confirm each included `IN-REQ-*` unit reaches at least one mapped acceptance criterion; return corrective `product_input_updates` using the exact canonical fields `input_unit_id`, `disposition`, `rationale`, `spec_ids`, `task_ids`, and `targets`, rather than editing the ledger. PLAN has not run yet, so always return `task_ids: []`; ORCHESTRATOR adds task ownership in the next phase.
   Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to speckit-echelon-cartographer (CARTOGRAPHER). Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
@@ -42,13 +42,10 @@ Use the Agent tool to dispatch a subagent with:
 `plan.md` is the canonical input to speckit-echelon-sentinel (SENTINEL). It is produced by speckit-echelon-architect (ARCHITECT) in phase3-how.
 
 - **If `plan.md` exists** → proceed normally with the full context pack.
-- **If `plan.md` is absent** (consequence of speckit-echelon-architect (ARCHITECT) omitting it — see Medium issue #33 in [docs/echelon-run-analysis-05-08.md](../../../../docs/echelon-run-analysis-05-08.md)) → read `architecture.md` as a proxy and append a `degraded_input` journal entry:
-
-  ```json
-  {"type": "degraded_input", "agent": "speckit-echelon-sentinel (SENTINEL)", "missing_artifact": "plan.md", "fallback": "architecture.md", "phase": "phase3-sentinel"}
-  ```
-
-  Always proceed with reduced confidence. Do not block. A future hardening will route back to phase3-how when this happens; for now speckit-echelon-sentinel (SENTINEL) falls back gracefully.
+- **If `plan.md` is absent** → this is a phase failure in phase3-how. Return a
+  `BLOCKED` verdict naming the missing artifact so COMMANDER/harness can repair or
+  replay phase3-how. Never substitute `architecture.md`: doing so would create a
+  test strategy against an incomplete implementation contract.
 
 ### Expected Outputs — ALL THREE REQUIRED
 

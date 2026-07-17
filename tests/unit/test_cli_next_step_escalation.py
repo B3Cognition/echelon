@@ -5,7 +5,80 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from echelon.cli import _next_continue_phase, _print_next_steps
+from echelon.cli import (
+    _next_continue_phase,
+    _print_next_steps,
+    _print_open_issues,
+    _print_staging_artifacts,
+)
+
+
+def _issues_doc(title: str) -> str:
+    return "\n".join(
+        [
+            "# Issues",
+            "",
+            "**CRITICAL:** 1",
+            "**HIGH:** 0",
+            "**MEDIUM:** 0",
+            "**LOW:** 0",
+            "",
+            f"### ISS-001: {title}",
+            "**Severity:** CRITICAL",
+            "**Responsible agent:** CARTOGRAPHER",
+        ]
+    )
+
+
+def test_prior_artifact_manifest_prefers_active_spec_dir_over_staging(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260717-100000-000001"
+    staging_dir = run_dir / "staging"
+    spec_dir = run_dir / "specs" / "001-demo"
+    staging_dir.mkdir(parents=True)
+    spec_dir.mkdir(parents=True)
+    (staging_dir / "stale-map.md").write_text("stale", encoding="utf-8")
+    (spec_dir / "domain-map.md").write_text("active", encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps({"spec_dir": str(spec_dir.relative_to(tmp_path))}),
+        encoding="utf-8",
+    )
+
+    _print_staging_artifacts(tmp_path)
+
+    captured = capsys.readouterr()
+    assert "domain-map" in captured.out
+    assert "stale-map" not in captured.out
+
+
+def test_open_issues_prefers_active_spec_dir_over_staging(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260717-100000-000001"
+    staging_dir = run_dir / "staging"
+    spec_dir = run_dir / "specs" / "001-demo"
+    staging_dir.mkdir(parents=True)
+    spec_dir.mkdir(parents=True)
+    (staging_dir / "issues.md").write_text(
+        _issues_doc("STALE staging issue"), encoding="utf-8"
+    )
+    (spec_dir / "issues.md").write_text(
+        _issues_doc("ACTIVE spec issue"), encoding="utf-8"
+    )
+    (run_dir / "state.json").write_text(
+        json.dumps({"spec_dir": str(spec_dir.relative_to(tmp_path))}),
+        encoding="utf-8",
+    )
+
+    _print_open_issues(tmp_path)
+
+    captured = capsys.readouterr()
+    assert "ACTIVE spec issue" in captured.out
+    assert "STALE staging issue" not in captured.out
+    assert str(spec_dir / "issues.md") in captured.out
 
 
 def test_blocked_squad_escalation_prioritizes_resume(
@@ -72,7 +145,10 @@ def test_ready_next_step_has_clear_subtitle_and_next_command(
         "# Quality Gates\n\n## Verdict: PASS\n",
         encoding="utf-8",
     )
-    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in (
+        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "test-strategy.md", "test-architecture.md", "coverage-map.md",
+    ):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReady.\n",
@@ -176,7 +252,10 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
 
     spec_dir = tmp_path / "specs" / "006-element-creator"
     spec_dir.mkdir(parents=True)
-    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in (
+        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "test-strategy.md", "test-architecture.md", "coverage-map.md",
+    ):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReady.\n",
@@ -351,7 +430,10 @@ def test_done_run_uses_published_artifacts_instead_of_stale_staging_why2(
 
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
-    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in (
+        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "test-strategy.md", "test-architecture.md", "coverage-map.md",
+    ):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReady.\n",
@@ -415,7 +497,10 @@ def test_continue_phase_treats_done_published_artifacts_as_build_ready(
 
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
-    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in (
+        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "test-strategy.md", "test-architecture.md", "coverage-map.md",
+    ):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReady.\n",

@@ -279,7 +279,11 @@ This is your most important job. Look for what is NOT written:
 - **Missing non-functional requirements:** If the spec mentions "users" but has no NFR for concurrent users, flag it. If it mentions "data" but has no NFR for backup/recovery, flag it.
 - **Implicit requirements:** Requirements that domain experts would consider obvious but are not written down.
 
-#### 4b. Flakiness Management Validation
+#### 4b. Flakiness Management Validation (WHY3 only)
+
+This check applies only to WHY3, after SENTINEL has produced the test-design
+artifacts. WHY2 must not require `test-strategy.md` or `coverage-map.md`; their
+absence during WHY2 is correct workflow ordering, not a quality finding.
 
 If `test-strategy.md` includes e2e or integration tests, a **Flakiness Management** section MUST exist with all 5 subsections:
 1. Detection Protocol

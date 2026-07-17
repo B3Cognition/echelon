@@ -49,7 +49,7 @@ console = Console()
 # These are CLI-standalone defaults. When run under an echelon project,
 # echelon-config.yml quality_gates section overrides these values — it is
 # the single source of truth. Keep these in sync with extension/echelon-config.yml.
-QUALITY_GATES = {
+DEFAULT_QUALITY_GATES = {
     "overall": 0.75,        # Minimum acceptable quality (ISO 29148:2018)
     "structure": 0.75,      # ISO 29148 §5.2.5 - Atomicity & Completeness
     "testability": 0.75,    # ISO 29148 - Verifiability (mandatory)
@@ -59,6 +59,43 @@ QUALITY_GATES = {
     "depth": 0.40,          # B3 Benchmark v0.1 - Cross-reference density (Understanding v3.6+)
     "behavioral": 0.55,     # Harel 2003/2005 - Observable outcomes
 }
+QUALITY_GATES = dict(DEFAULT_QUALITY_GATES)
+
+
+def _quality_gate_project_root(spec_path: Path) -> Path | None:
+    """Find the nearest Echelon project owning a specification path."""
+    from harness.config import (
+        CANONICAL_CONFIG_PATH,
+        CANONICAL_LOCAL_CONFIG_PATH,
+        LEGACY_CONFIG_PATH,
+        LEGACY_LOCAL_CONFIG_PATH,
+    )
+
+    start = spec_path.resolve()
+    if start.is_file() or start.suffix:
+        start = start.parent
+    markers = (
+        CANONICAL_CONFIG_PATH,
+        CANONICAL_LOCAL_CONFIG_PATH,
+        LEGACY_CONFIG_PATH,
+        LEGACY_LOCAL_CONFIG_PATH,
+    )
+    for candidate in (start, *start.parents):
+        if any((candidate / marker).exists() for marker in markers):
+            return candidate
+    return None
+
+
+def _configure_quality_gates_for_spec(spec_path: Path) -> None:
+    """Apply project-resolved gates for the current Understanding invocation."""
+    from harness.quality_scores import resolve_quality_gate_thresholds
+
+    resolved = resolve_quality_gate_thresholds(
+        _quality_gate_project_root(spec_path),
+        defaults=DEFAULT_QUALITY_GATES,
+    )
+    QUALITY_GATES.clear()
+    QUALITY_GATES.update(resolved)
 
 
 @app.command(hidden=True)
@@ -201,6 +238,8 @@ def scan(
                 raise typer.Exit(1)
         else:
             spec_files = [spec]
+
+        _configure_quality_gates_for_spec(spec_files[0])
 
         results = []
         for spec_file in spec_files:

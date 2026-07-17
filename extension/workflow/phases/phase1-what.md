@@ -15,6 +15,7 @@ Read and include in the subagent prompt:
 - `${STAGING_DIR}/glossary.md` + `${STAGING_DIR}/mental-model.md` + `${STAGING_DIR}/boundaries.md`
 - `${STAGING_DIR}/assumptions.md` + `${STAGING_DIR}/unknowns.md`
 - `${STAGING_DIR}/reference-architectures.md` (if greenfield)
+- `${STAGING_DIR}/user-clarifications.md` (if present; fresh control-plane input on every WHAT pass)
 - `reasoning-journal.jsonl` (filtered to DISCOVER + WHY1 entries)
 - User input (original request)
 - `agents/exploration/templates/cartographer-spec-template.md`
@@ -37,7 +38,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
-  If this is a first WHAT pass with no existing spec_dir, call `speckit.specify` to create the feature branch and spec directory, then move staging artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights.
+  If this is a first WHAT pass with no existing spec_dir, call `speckit.specify` to create the feature branch and spec directory, then move discovery artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights.
   If this is a resumed/amendment pass and an existing spec_dir is present in state or prompt context, skip `speckit.specify` and enhance that existing spec in place. Always keep the existing branch and spec directory; do not create or switch to a new numbered branch.
   Treat `.specify/memory/constitution.md` as read-only governance context. Apply its principles while authoring `spec.md`; do not edit, patch, append to, or regenerate the constitution from this phase.
   When the Product Input Contract is present, read its requirement snapshot and cite every adopted or challenged `IN-REQ-*` unit. Return one `echelon_result.product_input_updates` entry per normative unit. This is a strict API contract: copy the catalog ID into `input_unit_id`; use exactly one of `included`, `excluded`, `duplicate`, `open_question`, or `conflict` for `disposition`; give an evidence-backed `rationale`; place mapped FR/AC IDs in `spec_ids`; and set `task_ids: []` and `targets: []` in this phase. Never use aliases such as `unit`, `adopted`, or `mapped`. Do not write the ledger file directly; COMMANDER validates and persists the structured updates. Example:
@@ -61,7 +62,7 @@ Use the Agent tool to dispatch a subagent with:
   Always complete ALL of the following before returning. Do NOT return until they are true:
   1. `{spec_dir}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.
   2. `{spec_dir}/00-overview.md` exists (your 1-2 page human-readable summary).
-  3. All staging artifacts have been moved from `${STAGING_DIR}/` to `{spec_dir}/`.
+  3. All discovery artifacts have been moved from `${STAGING_DIR}/` to `{spec_dir}/`; run-control files (`user-clarifications.md`, `governance-trail.json`, `escalation-request.md`) remain in staging.
   Calling `speckit.specify` alone is NOT sufficient — Step 2 (spec enhancement) is mandatory before returning.
   </instructions>
   ```

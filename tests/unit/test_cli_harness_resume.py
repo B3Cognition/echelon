@@ -74,6 +74,8 @@ def _make_phase_a_spec(base: Path, spec_dir_name: str = "001-demo", *, canonical
     for name in ("spec.md", "plan.md", "research.md", "data-model.md"):
         content = "---\ntargets:\n  - .\n---\n# Spec\n" if name == "spec.md" else f"# {name}\n"
         (spec_dir / name).write_text(content, encoding="utf-8")
+    for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
+        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
     tasks = (
         "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n"
         if canonical_tasks

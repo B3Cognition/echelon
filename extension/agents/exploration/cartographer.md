@@ -350,13 +350,19 @@ another branch number and forks the same spec across multiple branches.
    Spec-kit creates the directory: `specs/{NNN}-{feature-name}/`
    Spec-kit generates initial `spec.md` from its versioned template
 
-4. **Move ALL staging artifacts to the new spec directory — MANDATORY:**
+4. **Move discovery artifacts to the new spec directory — MANDATORY:**
 
    ```bash
-   mv ${STAGING_DIR}/* specs/{NNN}-{feature-name}/
+   for artifact in "${STAGING_DIR}"/*; do
+     [ -e "$artifact" ] || continue
+     case "$(basename "$artifact")" in
+       user-clarifications.md|governance-trail.json|escalation-request.md) continue ;;
+     esac
+     mv -- "$artifact" specs/{NNN}-{feature-name}/
+   done
    ```
 
-   **Always move staging artifacts into the new spec directory. NEVER skip this move.** Downstream agents (speckit-echelon-architect (ARCHITECT), speckit-echelon-gatekeeper (GATEKEEPER), speckit-echelon-sentinel (SENTINEL)) look for glossary.md, mental-model.md, boundaries.md, assumptions.md in `specs/{NNN}-{feature-name}/`. If they remain in staging those reads fail silently.
+   **Always move discovery artifacts into the new spec directory. NEVER move run-control files out of staging.** Downstream agents (speckit-echelon-architect (ARCHITECT), speckit-echelon-gatekeeper (GATEKEEPER), speckit-echelon-sentinel (SENTINEL)) look for glossary.md, mental-model.md, boundaries.md, assumptions.md in `specs/{NNN}-{feature-name}/`. `user-clarifications.md`, `governance-trail.json`, and `escalation-request.md` remain in the run-local staging inbox so resumed phases receive fresh operator input.
 
 5. **Always emit BLOCKED when the spec directory is missing after executing the loaded skill instructions. NEVER re-invoke `speckit.specify`.** A missing spec dir after executing the skill instructions means the post-skill bash step failed (not the Skill). Re-invoking duplicates the branch attempt and produces a second spec skeleton. Instead, emit this parseable block and let speckit-echelon-commander (COMMANDER) handle recovery per `phase1-what.md §4.2 Fallback`.
 

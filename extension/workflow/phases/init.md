@@ -53,29 +53,19 @@ Override rules:
 
 ### 1.2 Create Staging Area
 
-The UNDERSTAND phase (DISCOVER → WHY1) runs BEFORE we know what to build. Outputs go to a staging area.
-
-**Archive prior run before wiping.** If staging contains artifacts from a completed prior run, archive them so project knowledge persists:
+The UNDERSTAND phase (DISCOVER → WHY1) runs BEFORE we know what to build. Its
+discovery outputs go to the current run's staging area. `${SQUAD_DIR}` is already
+a unique `runs/<run-id>/` directory created by the harness, so it is also the
+durable archive for this run. Never copy it into a nested archive and never wipe
+staging during initialization or resume.
 
 ```bash
-# Archive prior staging artifacts if they exist
-if [ -d "${STAGING_DIR}" ] && [ "$(ls ${STAGING_DIR}/ 2>/dev/null)" ]; then
-  # Read prior run_id from state.json (if available)
-  PRIOR_RUN_ID=$(python3 -c "import json; print(json.load(open('${SQUAD_DIR}/state.json')).get('run_id','unknown'))" 2>/dev/null || echo "unknown")
-  ARCHIVE_DIR="${SQUAD_DIR}/archive/${PRIOR_RUN_ID}"
-  mkdir -p "$ARCHIVE_DIR"
-  cp -r ${STAGING_DIR}/* "$ARCHIVE_DIR/" 2>/dev/null || true
-  # Also archive state.json snapshot
-  cp ${SQUAD_DIR}/state.json "$ARCHIVE_DIR/state.json" 2>/dev/null || true
-  echo "Archived prior run ${PRIOR_RUN_ID} → ${ARCHIVE_DIR}/"
-fi
-
-# Now safe to wipe staging
-rm -rf "${STAGING_DIR}"
 mkdir -p "${STAGING_DIR}"
 ```
 
-**Archive structure:** `${SQUAD_DIR}/archive/{run_id}/` preserves all analysis artifacts (spec.md, issues.md, tasks.md, reasoning-journal.jsonl, etc.) from each completed run. This is the project's institutional memory — it survives across runs and enables EVOLVE to diff artifacts between runs.
+Before WHAT, staging owns discovery artifacts. After WHAT, `{spec_dir}` owns
+canonical product artifacts while staging remains a control-plane inbox for
+files such as `user-clarifications.md` and `governance-trail.json`.
 
 **Important:** Always let the WHAT phase create `specs/{NNN}-{feature}/` via `speckit.specify`. Do NOT create it yet.
 
@@ -133,7 +123,8 @@ Create `${SQUAD_DIR}/reasoning-journal.jsonl`:
 }
 ```
 
-This will be moved to the spec directory after `speckit.specify` creates it.
+This remains at the run root for the lifetime of the run. Agents receive it via
+the harness context pack; it is not moved into the spec directory.
 
 ### 1.5 Load Prior Run Data (if re-run)
 
@@ -146,30 +137,11 @@ If user specifies a prior spec (e.g., "continue with 012-feature"):
 - Set `spec_id` and `spec_dir` in state.json
 - Note: EVOLVE will diff against prior artifacts during FINALIZE
 
-**Load from archive (automatic):** If no explicit prior spec is given but `${SQUAD_DIR}/archive/` contains prior runs:
-
-```bash
-# Find the most recent archived run
-LATEST_ARCHIVE=$(ls -td ${SQUAD_DIR}/archive/squad-* 2>/dev/null | head -1)
-if [ -n "$LATEST_ARCHIVE" ]; then
-  echo "Prior run found: ${LATEST_ARCHIVE}"
-  # Read prior reasoning journal for continuity
-  if [ -f "${LATEST_ARCHIVE}/reasoning-journal.jsonl" ]; then
-    # Include prior journal entries as context for all agents
-    PRIOR_JOURNAL="${LATEST_ARCHIVE}/reasoning-journal.jsonl"
-  fi
-  # Read prior issues for regression tracking
-  if [ -f "${LATEST_ARCHIVE}/issues.md" ]; then
-    PRIOR_ISSUES="${LATEST_ARCHIVE}/issues.md"
-  fi
-  # Read prior quality scores for convergence comparison
-  if [ -f "${LATEST_ARCHIVE}/state.json" ]; then
-    PRIOR_QUALITY=$(python3 -c "import json; s=json.load(open('${LATEST_ARCHIVE}/state.json')); print(json.dumps(s.get('quality_scores',[])))" 2>/dev/null)
-  fi
-fi
-```
-
-Prior run data is included in agent context packs so the squad can track improvement, detect regressions, and avoid re-discovering the same issues.
+**Load from prior runs (automatic):** If no explicit prior spec is given, use the
+harness-provided prior/current feature context assembled from sibling
+`runs/<prior-run-id>/` directories. Each prior run keeps its own `state.json`,
+`reasoning-journal.jsonl`, staging control inputs, and run-local spec tree.
+Never search for or create a nested archive beneath the active run.
 
 ### 1.6 Load Configuration — MANDATORY
 
@@ -192,7 +164,7 @@ This merges manifest defaults → `echelon-config.yml` (project overrides) → `
 - `ECHELON_CFG_CONVERGENCE_DELTA`: 0.02
 - `ECHELON_CFG_MAX_ACTIVE_SPECIALISTS`: 3
 - `ECHELON_CFG_BUDGET_TOKEN_BUDGET_K`: 1000
-- Quality gates: overall >= 0.70, structure >= 0.70, testability >= 0.70, semantic >= 0.60, cognitive >= 0.60, readability >= 0.50
+- Quality gates: use the Resolved Quality Gates injected from the project configuration; workflow files never restate numeric thresholds.
 
 > **Authoritative values:** `echelon-config.yml` (project overrides) / manifest `config.defaults` (fallback) is the single source of truth for all tunable thresholds (`convergence:`, `budget:`, `quality_gates:`). `workflow/definition.yaml` is the authority for the phase graph and routing structure only.
 

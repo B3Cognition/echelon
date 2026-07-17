@@ -10,7 +10,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from harness.quality_scores import normalize_why_quality_scores
+from harness.quality_scores import (
+    normalize_why_quality_scores,
+    render_quality_gate_context,
+    resolve_quality_gate_thresholds,
+)
 
 if TYPE_CHECKING:
     from harness.phase_graph import PhaseGraph, PhaseNode
@@ -421,14 +425,10 @@ class PhaseExecutor(ABC):
         return self._ext_dir / "echelon-config.yml"
 
     def _quality_gate_thresholds(self) -> dict:
-        try:
-            import yaml
-
-            data = yaml.safe_load(self._project_config_path().read_text()) or {}
-            gates = data.get("quality_gates")
-            return gates if isinstance(gates, dict) else {}
-        except Exception:
-            return {}
+        return resolve_quality_gate_thresholds(
+            self._project_root,
+            fallback_config_path=self._ext_dir / "echelon-config.yml",
+        )
 
     def _normalize_why_result_quality_scores(
         self,
@@ -593,10 +593,9 @@ class PhaseExecutor(ABC):
             if not file_ref or file_ref.startswith("#"):
                 continue
             resolved = _translate_squad_path(
-                file_ref.replace("{spec_dir}", spec_dir_ref).replace(
-                    "{context_dir}",
-                    context_dir_str,
-                )
+                file_ref.replace("{spec_dir}", spec_dir_ref)
+                .replace("{context_dir}", context_dir_str)
+                .replace("{staging_dir}", staging_dir_str)
             )
             if resolved.startswith("/"):
                 candidates = [Path(resolved)]
@@ -623,6 +622,7 @@ class PhaseExecutor(ABC):
             f"{_render_product_input_context(state)}"
             f"{_render_published_re_context(state)}"
             f"{self._extension_path_context()}"
+            f"{render_quality_gate_context(self._quality_gate_thresholds())}"
         )
         if spec_dir_ref:
             spec_dir_path = Path(spec_dir_ref)
@@ -661,6 +661,7 @@ class PhaseExecutor(ABC):
         prompt = "\n\n".join(static_parts + [context_preamble] + dynamic_parts)
         prompt = prompt.replace("{spec_dir}", spec_dir_ref)
         prompt = prompt.replace("{context_dir}", context_dir_str)
+        prompt = prompt.replace("{staging_dir}", staging_dir_str)
 
         # Translate legacy .specify/squad paths in agent + spec file text
         prompt = prompt.replace(".specify/squad/staging/", f"{staging_dir_str}/")
@@ -960,9 +961,10 @@ class StagedParallelExecutor(PhaseExecutor):
             file_ref = item.split(" ")[0].split("(")[0].rstrip()
             if not file_ref or file_ref.startswith("#"):
                 continue
-            resolved_ref = file_ref.replace("{spec_dir}", spec_dir_ref).replace(
-                "{context_dir}",
-                context_dir_str,
+            resolved_ref = (
+                file_ref.replace("{spec_dir}", spec_dir_ref)
+                .replace("{context_dir}", context_dir_str)
+                .replace("{staging_dir}", staging_dir_str)
             )
             if resolved_ref.startswith("/"):
                 candidates = [Path(resolved_ref)]
@@ -989,11 +991,13 @@ class StagedParallelExecutor(PhaseExecutor):
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_product_input_context(state)}"
+            f"{render_quality_gate_context(self._quality_gate_thresholds())}"
             f"Operate in **{mode_label}** mode.\n\n"
         )
 
         prompt = "\n\n".join(static_parts + [preamble] + dynamic_parts)
         prompt = prompt.replace("{context_dir}", context_dir_str)
+        prompt = prompt.replace("{staging_dir}", staging_dir_str)
         return (
             _shared_agent_contract()
             + prompt

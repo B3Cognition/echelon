@@ -125,7 +125,7 @@ evidence_hierarchy:
   - rank: 2
     type: understanding_metrics
     description: "Deterministic, reproducible quality scores"
-    example: "Testability score: 0.42 (below 0.70 gate)"
+    example: "Testability score: 0.42 (below the resolved project gate)"
   - rank: 3
     type: investigator_research
     description: "speckit-echelon-investigator (INVESTIGATOR) graded sources (A through E)"
@@ -432,6 +432,7 @@ phases:
       - assumptions.md
       - unknowns.md
       - reference-architectures.md    # greenfield only, if exists
+      - "{staging_dir}/user-clarifications.md" # control-plane input, if present
       - "{context_dir}/prior-spec-context.md"
       - "{context_dir}/current-feature-context.md"
       - "{context_dir}/stale-memory-report.md"
@@ -777,10 +778,14 @@ phases:
     tier: solution
     context_pack:
       - spec.md
+      - plan.md
       - architecture.md
+      - data-model.md
+      - contracts/
       - adr/ADR-*.md
       - security-findings.md    # if exists
       - research.md             # if exists
+      - quality-gates.md
       - calibration_map entry for speckit-echelon-sentinel (SENTINEL)
     outputs:
       - test-strategy.md

@@ -282,7 +282,10 @@ class TestAgentResultIntegrity:
         _mark_constitution_complete(tmp_path, store)
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
-        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+        for name in (
+            "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+            "test-strategy.md", "test-architecture.md", "coverage-map.md",
+        ):
             (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
         state = store.load()
         state["spec_id"] = "001-demo"
@@ -317,7 +320,10 @@ class TestAgentResultIntegrity:
 
         active_spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001"
         active_spec_dir.mkdir(parents=True)
-        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+        for name in (
+            "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+            "test-strategy.md", "test-architecture.md", "coverage-map.md",
+        ):
             (active_spec_dir / name).write_text(f"# active {name}\n", encoding="utf-8")
         (active_spec_dir / "contracts").mkdir()
         (active_spec_dir / "contracts" / "api.md").write_text("# Contract\n", encoding="utf-8")
@@ -360,7 +366,10 @@ class TestAgentResultIntegrity:
 
         active_spec_dir = tmp_path / "squad" / "run-test" / "specs" / "001-demo"
         active_spec_dir.mkdir(parents=True)
-        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+        for name in (
+            "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+            "test-strategy.md", "test-architecture.md", "coverage-map.md",
+        ):
             (active_spec_dir / name).write_text(f"# active {name}\n", encoding="utf-8")
         (active_spec_dir / "user-intent.md").write_text(
             "# User Intent\n\nfresh run-local artifact\n",
@@ -403,7 +412,10 @@ class TestAgentResultIntegrity:
 
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
-        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+        for name in (
+            "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+            "test-strategy.md", "test-architecture.md", "coverage-map.md",
+        ):
             (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
         state = store.load()
         state["spec_id"] = "001-demo"
@@ -707,7 +719,10 @@ class TestSquadControllerBasics:
         _mark_constitution_complete(tmp_path, store)
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
-        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+        for name in (
+            "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+            "test-strategy.md", "test-architecture.md", "coverage-map.md",
+        ):
             (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
         state = store.load()
         state["spec_id"] = "001-demo"
@@ -825,6 +840,37 @@ class TestSquadControllerBasics:
         state = store.load()
         assert state.get("escalation_question") is not None
         assert "consecutive" in state.get("escalation_question", "").lower()
+
+    def test_consecutive_why2_fail_with_active_spec_progress_routes_to_repair(self, tmp_path):
+        """Fresh WHY2 artifacts in state.spec_dir count as progress."""
+        provider = _mock_provider()
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {"quality_scores": [{"pass": False}]},
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        store.increment_why_fail_count()
+
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "issues.md").write_text("# Fresh WHY2 findings\n", encoding="utf-8")
+        state = store.load()
+        state["spec_dir"] = "runs/run-test/specs/001-demo"
+        state["last_dispatch"] = {"completed_at": "2020-01-01T00:00:00Z"}
+        store.save(state)
+
+        node = ctrl._graph.get("phase1-why2")
+        next_phase = ctrl._evaluate_transitions(node, result)
+
+        assert next_phase == "phase1-what"
+        assert store.load().get("escalation_question") is None
 
     def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path, monkeypatch):
         """Banzai: WHY1 returns escalation_question in state_updates → inline COMMANDER, not routing judge."""
@@ -1237,7 +1283,10 @@ class TestConsensusAcceptWithRiskRouting:
         _mark_constitution_complete(tmp_path, store)
         spec_dir = tmp_path / "specs" / "071-rule-studio"
         spec_dir.mkdir(parents=True)
-        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+        for name in (
+            "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+            "test-strategy.md", "test-architecture.md", "coverage-map.md",
+        ):
             (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
         with patch.object(store, "advance", wraps=store.advance) as spy:
@@ -1831,6 +1880,39 @@ class TestCommanderJudgmentStateUpdates:
         assert "blocked_reason" not in state
         assert state["escalation_resolved"] is True
         assert state["escalation_resolver"] == "COMMANDER-banzai"
+
+    def test_banzai_consecutive_fail_recovery_resets_counter_controller_side(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "escalation_question": None,
+                    "escalation_resolved": True,
+                    "escalation_resolver": "COMMANDER-banzai",
+                    "blocked_reason": None,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-why2", max_iterations=5)
+        state = store.load()
+        state["status"] = "blocked"
+        state["why_fail_count"] = 2
+        state["escalation_question"] = "Two consecutive WHY2 failures"
+        state["blocked_reason"] = "consecutive_why_fails"
+        store.save(state)
+
+        ctrl._judgment_dispatch_escalation(
+            "Two consecutive WHY2 failures",
+            "phase1-why2",
+        )
+
+        assert store.load()["why_fail_count"] == 0
 
     def test_banzai_escalation_invalid_cleanup_key_blocks(self, tmp_path):
         provider = _mock_provider()

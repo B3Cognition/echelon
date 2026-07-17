@@ -58,7 +58,10 @@ def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "quality-gates.md").write_text("# Quality Gates\n\n## Verdict: PASS\n")
-    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in (
+        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "test-strategy.md", "test-architecture.md", "coverage-map.md",
+    ):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReal project rules.\n",
@@ -95,7 +98,10 @@ def test_continue_ignores_stale_ready_files_when_solution_phases_were_skipped(
     spec_dir.mkdir(parents=True)
     (spec_dir / "quality-gates.md").write_text("# Quality Gates\n\n## Verdict: PASS\n")
     (spec_dir / "constitution.md").write_text("# Constitution\n\nReal project rules.\n")
-    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in (
+        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "test-strategy.md", "test-architecture.md", "coverage-map.md",
+    ):
         (spec_dir / name).write_text(f"# stale {name}\n", encoding="utf-8")
 
     assert _next_continue_phase(tmp_path) == "phase3-specialists"
@@ -124,7 +130,10 @@ def test_continue_resumes_next_missing_solution_phase_even_with_ready_files(
     spec_dir.mkdir(parents=True)
     (spec_dir / "quality-gates.md").write_text("# Quality Gates\n\n## Verdict: PASS\n")
     (spec_dir / "constitution.md").write_text("# Constitution\n\nReal project rules.\n")
-    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in (
+        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "test-strategy.md", "test-architecture.md", "coverage-map.md",
+    ):
         (spec_dir / name).write_text(f"# stale {name}\n", encoding="utf-8")
 
     assert _next_continue_phase(tmp_path) == "phase3-how"
@@ -146,7 +155,10 @@ def test_continue_reopens_done_run_to_publish_complete_run_local_artifacts(
     )
     active_spec_dir = run_dir / "specs" / "001"
     active_spec_dir.mkdir(parents=True)
-    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in (
+        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "test-strategy.md", "test-architecture.md", "coverage-map.md",
+    ):
         (active_spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
     published_spec_dir = tmp_path / "specs" / "001-themed-ascii-animation"
@@ -309,11 +321,17 @@ def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
         "| Structure | 0.677 | 0.75 | FAIL | not borderline |\n",
         encoding="utf-8",
     )
-    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in (
+        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "test-strategy.md", "test-architecture.md", "coverage-map.md",
+    ):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
     published_spec_dir = tmp_path / "specs" / "071-rule-studio-narrative"
     published_spec_dir.mkdir(parents=True)
-    for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+    for name in (
+        "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "test-strategy.md", "test-architecture.md", "coverage-map.md",
+    ):
         (published_spec_dir / name).write_text(f"# published {name}\n", encoding="utf-8")
     (published_spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReal project rules.\n",

@@ -13,6 +13,9 @@ REQUIRED_PHASE_A_BUILD_INPUTS = (
     "data-model.md",
     "tasks.md",
     "constitution.md",
+    "test-strategy.md",
+    "test-architecture.md",
+    "coverage-map.md",
 )
 
 CONSTITUTION_TEMPLATE_MARKERS = (

@@ -22,14 +22,9 @@ Validate the current feature's spec.md against quality gates based on ISO 29148:
 
 ## Quality Gates
 
-| Gate | Threshold | Standard |
-|------|-----------|----------|
-| Overall | >= 0.70 | ISO 29148:2018 |
-| Structure | >= 0.70 | ISO 29148 S5.2.5 |
-| Testability | >= 0.70 | ISO 29148 (mandatory) |
-| Semantic | >= 0.60 | Lucassen 2017 |
-| Cognitive | >= 0.60 | Sweller 1988 |
-| Readability | >= 0.50 | Flesch 1948 |
+Thresholds are loaded from the resolved project configuration at runtime. The
+Understanding output displays the effective values. Treat those values as
+authoritative and never use a numeric threshold copied into this document.
 
 ## Execution Steps
 

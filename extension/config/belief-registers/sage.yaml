@@ -1,12 +1,12 @@
 agent: SAGE
-last_updated: "2026-03-28"
+last_updated: "2026-07-17"
 beliefs:
   - id: SAG-001
-    claim: "Quality gate thresholds (Overall/Structure/Testability >= 0.70, Semantic/Cognitive >= 0.60, Readability >= 0.50, Depth >= 0.30) are correctly calibrated for production-quality specs"
-    verified: "2026-03-28"
+    claim: "Quality gate thresholds are resolved from echelon-config.yml and its supported project/local override cascade; SAGE must not cache numeric copies"
+    verified: "2026-07-17"
     expires: "2026-09-28"
-    anchor: "ISO 29148:2018; IEEE 830; Lucassen 2017; Sweller 1988"
-    confidence: 0.80
+    anchor: "echelon-config.yml quality_gates; harness.config.get_full_resolved_config"
+    confidence: 0.95
     severity: critical
 
   - id: SAG-002

@@ -44,6 +44,29 @@ def test_ready_state_passes_when_core_build_inputs_exist(tmp_path: Path) -> None
     assert result.ready_spec_dir == spec_dir
 
 
+def test_ready_state_requires_all_mandatory_sentinel_outputs(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "runs" / "run-1" / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    for name in (
+        "spec.md",
+        "plan.md",
+        "research.md",
+        "data-model.md",
+        "tasks.md",
+        "constitution.md",
+    ):
+        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+
+    result = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+
+    assert not result.ready
+    assert set(result.missing) == {
+        "test-strategy.md",
+        "test-architecture.md",
+        "coverage-map.md",
+    }
+
+
 def test_ready_state_rejects_placeholder_constitution(tmp_path: Path) -> None:
     spec_dir = tmp_path / "runs" / "run-1" / "specs" / "001-demo"
     _write_required(spec_dir)

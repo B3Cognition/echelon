@@ -27,7 +27,10 @@ from harness.phase_a_readiness import (
     validate_phase_a_readiness,
 )
 from harness.phase_checkpoints import create_phase_checkpoint
-from harness.quality_scores import normalize_why_quality_scores
+from harness.quality_scores import (
+    normalize_why_quality_scores,
+    resolve_quality_gate_thresholds,
+)
 from harness.published_re_context import attach_published_re_context
 from harness.run_history import append_phase_a_run
 from harness.spec_frontmatter import find_spec_dir, write_targets
@@ -242,6 +245,7 @@ class SquadController:
             "human_gate": HumanGateExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
         }
         self._cancelled = False
+        self._phase_a_published_this_run = False
         signal.signal(signal.SIGINT, self._handle_sigint)
 
     def _project_config_path(self) -> Path:
@@ -251,14 +255,10 @@ class SquadController:
         return self._ext_dir / "echelon-config.yml"
 
     def _quality_gate_thresholds(self) -> dict:
-        try:
-            import yaml
-
-            data = yaml.safe_load(self._project_config_path().read_text()) or {}
-            gates = data.get("quality_gates")
-            return gates if isinstance(gates, dict) else {}
-        except Exception:
-            return {}
+        return resolve_quality_gate_thresholds(
+            self._project_root,
+            fallback_config_path=self._ext_dir / "echelon-config.yml",
+        )
 
     def _normalize_why_result_quality_scores(
         self,
@@ -938,6 +938,13 @@ class SquadController:
         active_spec_dir = self._active_phase_a_spec_dir(state)
         if active_spec_dir is None or not active_spec_dir.exists():
             return None
+        if self._phase_a_published_this_run:
+            published_ref = str(state.get("published_spec_dir") or "").strip()
+            if published_ref:
+                published_spec_dir = Path(published_ref)
+                if not published_spec_dir.is_absolute():
+                    published_spec_dir = self._project_root / published_spec_dir
+                return validate_phase_a_readiness(state, [published_spec_dir])
         return self._publish_phase_a_artifacts_for_build()
 
     def _phase_a_readiness_candidate_dirs(self) -> list[Path]:
@@ -1012,6 +1019,7 @@ class SquadController:
         updated = self._state_store.load()
         updated["published_spec_dir"] = self._repo_relative_or_absolute(published_spec_dir)
         self._state_store.save(updated)
+        self._phase_a_published_this_run = True
         return validate_phase_a_readiness(updated, [published_spec_dir])
 
     def _publish_product_input_evidence(self, published_spec_dir: Path, state: dict) -> list[str]:
@@ -1722,16 +1730,16 @@ class SquadController:
                 fail_count = self._state_store.increment_why_fail_count()
                 if fail_count >= 2 and not state.get("escalation_question"):
                     last_ts = (state.get("last_dispatch") or {}).get("completed_at")
-                    if not self._staging_changed_since(last_ts):
+                    if not self._phase_artifacts_changed_since(last_ts):
                         print(
                             f"[squad] ✗ consecutive-fail guard: {fail_count} {node.id} FAILs "
-                            f"with no staging progress — forcing escalation",
+                            f"with no artifact progress — forcing escalation",
                             flush=True,
                         )
                         s = self._state_store.load()
                         s["escalation_question"] = (
                             f"Auto-detected: {fail_count} consecutive {node.id} FAILs "
-                            f"with no staging progress. User input or banzai COMMANDER "
+                            f"with no artifact progress. User input or banzai COMMANDER "
                             f"judgment required before continuing."
                         )
                         s["blocked_reason"] = "consecutive_why_fails"
@@ -1842,6 +1850,7 @@ class SquadController:
         """
         commander_path = self._ext_dir / "agents/control/commander.md"
         state = self._state_store.load()
+        reset_why_fail_count = state.get("blocked_reason") == "consecutive_why_fails"
 
         staging_dir = Path(state.get("staging_dir", str(self._squad_dir / "staging")))
         staging_context = ""
@@ -1866,6 +1875,8 @@ class SquadController:
             f"   escalation_resolved: true\n"
             f"   escalation_resolver: COMMANDER-banzai\n"
             f"   blocked_reason: null\n\n"
+            f"Do NOT return `why_fail_count`; it is controller-owned and the "
+            f"harness resets it after a valid consecutive-fail recovery.\n\n"
             f"**Staging context:**\n{staging_context}"
         )
         if commander_path.exists():
@@ -1884,6 +1895,8 @@ class SquadController:
             delete_null=True,
         ):
             return result
+        if reset_why_fail_count:
+            self._state_store.reset_why_fail_count()
         self._write_journal_entries(result, blocked_phase)
 
         return result
@@ -1919,11 +1932,12 @@ class SquadController:
             for entry in prepared_entries:
                 fh.write(_json.dumps(entry) + "\n")
 
-    def _staging_changed_since(self, iso_timestamp: Optional[str]) -> bool:
-        """Return True if any staging .md file is newer than iso_timestamp.
+    def _phase_artifacts_changed_since(self, iso_timestamp: Optional[str]) -> bool:
+        """Return True if a canonical phase artifact is newer than the cutoff.
 
-        Returns True (progress detected) when timestamp is None or when
-        any .md in staging_dir has mtime newer than the given UTC timestamp.
+        Before WHAT creates ``state.spec_dir``, discovery/WHY1 artifacts live in
+        the run-local staging directory. After that boundary, ``spec_dir`` is the
+        authoritative artifact root and staging is only a control-message inbox.
         """
         if iso_timestamp is None:
             return True
@@ -1931,8 +1945,16 @@ class SquadController:
             from datetime import datetime, timezone
             cutoff = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
             state = self._state_store.load()
-            staging_dir = Path(state.get("staging_dir", str(self._squad_dir / "staging")))
-            for f in staging_dir.glob("*.md"):
+            spec_dir_ref = str(state.get("spec_dir") or "").strip()
+            if spec_dir_ref:
+                artifact_root = Path(spec_dir_ref)
+                if not artifact_root.is_absolute():
+                    artifact_root = self._project_root / artifact_root
+            else:
+                artifact_root = Path(
+                    state.get("staging_dir", str(self._squad_dir / "staging"))
+                )
+            for f in artifact_root.rglob("*.md"):
                 mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc)
                 if mtime > cutoff:
                     return True

@@ -15,6 +15,7 @@ if str(EXT_ROOT) not in sys.path:
 from echelon.context_builder import build_run_context
 from echelon.context_metadata import artifact_hash
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
 from harness.squad import SquadController
 from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
@@ -286,6 +287,11 @@ phases:
                 "# Demo Spec\n\n- FR-123: Refreshed context.\n",
                 encoding="utf-8",
             )
+            for name in REQUIRED_PHASE_A_BUILD_INPUTS:
+                if name != "spec.md":
+                    (run_local_spec_dir / name).write_text(
+                        f"# {name}\n", encoding="utf-8"
+                    )
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={

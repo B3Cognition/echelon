@@ -547,6 +547,37 @@ def test_assemble_prompt_injects_squad_context(tmp_path):
     assert "STAGING_DIR" in prompt
 
 
+def test_assemble_prompt_injects_resolved_project_quality_gates(tmp_path):
+    """SAGE receives project-resolved gates instead of copied prompt literals."""
+    config = tmp_path / ".echelon" / "config.yml"
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "quality_gates:\n"
+        "  overall: 0.81\n"
+        "  structure: 0.82\n"
+        "  testability: 0.83\n"
+        "  semantic: 0.64\n",
+        encoding="utf-8",
+    )
+    squad_dir = tmp_path / "runs" / "run-test"
+    (squad_dir / "staging").mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-why2", type="agent"),
+        {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")},
+    )
+
+    assert "Resolved Quality Gates" in prompt
+    assert "overall: >= 0.81" in prompt
+    assert "structure: >= 0.82" in prompt
+    assert "testability: >= 0.83" in prompt
+    assert "semantic: >= 0.64" in prompt
+    assert "Never substitute thresholds copied from agent or phase files" in prompt
+
+
 def test_assemble_prompt_injects_extension_path_resolution(tmp_path):
     """Runtime agents get unambiguous installed-extension path mappings."""
     squad_dir = tmp_path / "squad" / "run-test"
@@ -1264,6 +1295,40 @@ def test_assemble_prompt_preserves_active_run_spec_dir(tmp_path):
     assert "REAL SPEC" not in prompt
     assert "ACTIVE_SPEC_DIR=" in prompt
     assert "PUBLISHED_SPEC_DIR=" in prompt
+
+
+def test_assemble_prompt_reads_fresh_clarifications_from_run_staging(tmp_path):
+    """Explicit staging refs must not resolve to a stale spec-dir copy."""
+    squad_dir = tmp_path / "runs" / "run-test"
+    staging_dir = squad_dir / "staging"
+    active_spec = squad_dir / "specs" / "006-element-creator"
+    staging_dir.mkdir(parents=True)
+    active_spec.mkdir(parents=True)
+    (staging_dir / "user-clarifications.md").write_text(
+        "FRESH RUN CLARIFICATION", encoding="utf-8"
+    )
+    (active_spec / "user-clarifications.md").write_text(
+        "STALE SPEC CLARIFICATION", encoding="utf-8"
+    )
+
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    node = PhaseNode(
+        id="phase1-what",
+        type="agent",
+        context_pack=["{staging_dir}/user-clarifications.md"],
+    )
+    state = {
+        "squad_dir": str(squad_dir),
+        "staging_dir": str(staging_dir),
+        "spec_dir": str(active_spec.relative_to(tmp_path)),
+    }
+
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "FRESH RUN CLARIFICATION" in prompt
+    assert "STALE SPEC CLARIFICATION" not in prompt
 
 
 def test_staged_prompt_preserves_active_run_spec_dir(tmp_path):

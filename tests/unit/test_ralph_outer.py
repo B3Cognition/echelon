@@ -223,6 +223,8 @@ class TestOuterLoopConvergence:
         source.mkdir(parents=True)
         for name in ("spec.md", "plan.md", "research.md", "data-model.md"):
             (source / name).write_text(f"# {name}\n", encoding="utf-8")
+        for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
+            (source / name).write_text(f"# {name}\n", encoding="utf-8")
         (source / "tasks.md").write_text(
             "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n",
             encoding="utf-8",
@@ -266,6 +268,8 @@ class TestOuterLoopConvergence:
         source = project / "specs" / "spec-001-demo"
         source.mkdir(parents=True)
         for name in ("spec.md", "plan.md", "research.md", "data-model.md"):
+            (source / name).write_text(f"# {name}\n", encoding="utf-8")
+        for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
             (source / name).write_text(f"# {name}\n", encoding="utf-8")
         (source / "tasks.md").write_text(
             "- [ ] T-001 complexity=standard phase=foundation req=INFRA depends=none\n"
@@ -316,7 +320,10 @@ class TestOuterLoopConvergence:
         gitops.base_dir = project
         source = project / "specs" / "spec-001-demo"
         source.mkdir(parents=True)
-        for name in ("spec.md", "plan.md", "research.md", "data-model.md", "tasks.md"):
+        for name in (
+            "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+            "test-strategy.md", "test-architecture.md", "coverage-map.md",
+        ):
             (source / name).write_text(f"# {name}\n", encoding="utf-8")
         (source / "constitution.md").write_text(
             "# [PROJECT_NAME] Constitution\n",

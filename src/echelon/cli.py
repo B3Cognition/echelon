@@ -4247,36 +4247,57 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
     _banner("NEXT STEP", fields, subtitle=subtitle)
 
 
+def _run_artifact_dir(project_root: Path, run_dir: Path) -> Path:
+    """Return the canonical artifact root for a run, with pre-WHAT fallback."""
+    state_path = run_dir / "state.json"
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            spec_ref = str(state.get("spec_dir") or "").strip()
+            if spec_ref:
+                spec_dir = Path(spec_ref)
+                if not spec_dir.is_absolute():
+                    spec_dir = project_root / spec_dir
+                if spec_dir.is_dir():
+                    return spec_dir
+        except (OSError, ValueError, TypeError):
+            pass
+    return run_dir / "staging"
+
+
 def _print_staging_artifacts(
     project_root: Path,
     exclude_dir: Optional[Path] = None,
     run_status: str = "",
 ) -> None:
-    """Print a compact manifest of staging artifacts from the most recent prior run.
+    """Print a compact manifest of artifacts from the most recent prior run.
 
     Skips squad-internal files (issues.md, assumption-review.md, *-endorsement.md)
     so the list reflects substantive domain artifacts the squad can build on.
-    Silent when no prior run has staging content, or when the run is done (the
+    Once WHAT establishes ``state.spec_dir``, that directory is authoritative;
+    staging is only the pre-WHAT fallback. Silent when no prior run has content, or when the run is done (the
     NEXT STEP section already surfaces readiness in that case).
     """
     if run_status == "done":
         return
 
     candidates = [
-        d for d in _iter_run_dirs(project_root)
-        if d != exclude_dir and (d / "staging").exists()
+        (d, _run_artifact_dir(project_root, d))
+        for d in _iter_run_dirs(project_root)
+        if d != exclude_dir
     ]
+    candidates = [(run_dir, artifact_dir) for run_dir, artifact_dir in candidates if artifact_dir.exists()]
     if not candidates:
         return
 
-    staging = candidates[0] / "staging"
+    run_dir, artifact_dir = candidates[0]
 
     _SKIP_NAMES = {"issues.md", "assumption-review.md", "escalation-request.md",
                    "user-clarifications.md"}
     _SKIP_SUFFIXES = ("-halt-endorsement.md", "-endorsement.md")
 
     names = sorted(
-        f.stem for f in staging.glob("*.md")
+        f.stem for f in artifact_dir.glob("*.md")
         if f.name not in _SKIP_NAMES
         and not any(f.name.endswith(s) for s in _SKIP_SUFFIXES)
     )
@@ -4288,9 +4309,9 @@ def _print_staging_artifacts(
     pairs = [names[i:i + 2] for i in range(0, len(names), 2)]
     files_list = "\n".join("  ".join(n.ljust(col_w) for n in pair).rstrip() for pair in pairs)
     _banner(
-        "STAGING ARTIFACTS",
+        "PRIOR RUN ARTIFACTS",
         [("artifacts", files_list)],
-        subtitle=f"{len(names)} files · {candidates[0].name}",
+        subtitle=f"{len(names)} files · {run_dir.name}",
     )
 
 
@@ -4424,21 +4445,25 @@ def _print_prior_knowledge(project_root: Path) -> None:
 def _print_open_issues(project_root: Path, exclude_dir: Optional[Path] = None) -> None:
     """Print a formatted summary of open issues from the most recent prior run.
 
-    Reads staging/issues.md from the latest run dir (excluding the current one).
+    Reads issues.md from the latest run's canonical artifact root (excluding the
+    current run). Before WHAT establishes ``state.spec_dir``, staging is used.
     Shows CRITICAL issue titles and user-gated HIGH issues. Silent when nothing
     to show — no output if no issues.md exists or all issues are LOW/MEDIUM.
     """
     import re as _re
 
-    # Find most recent run dir with a staging/issues.md, skipping the current run
+    # Find most recent run dir with issues.md, skipping the current run.
     candidates = [
-        d for d in _iter_run_dirs(project_root)
-        if d != exclude_dir and (d / "staging" / "issues.md").exists()
+        (d, _run_artifact_dir(project_root, d) / "issues.md")
+        for d in _iter_run_dirs(project_root)
+        if d != exclude_dir
     ]
+    candidates = [(run_dir, issues_path) for run_dir, issues_path in candidates if issues_path.exists()]
     if not candidates:
         return
 
-    issues_md = (candidates[0] / "staging" / "issues.md").read_text(errors="replace")
+    run_dir, issues_path = candidates[0]
+    issues_md = issues_path.read_text(errors="replace")
 
     # Extract severity counts from the Summary block
     counts: dict[str, int] = {}
@@ -4474,7 +4499,7 @@ def _print_open_issues(project_root: Path, exclude_dir: Optional[Path] = None) -
             user_gated.append(short)
 
     # Build banner fields
-    run_label = candidates[0].name
+    run_label = run_dir.name
     fields: list[tuple[str, str]] = []
 
     if criticals:
@@ -4495,7 +4520,7 @@ def _print_open_issues(project_root: Path, exclude_dir: Optional[Path] = None) -
     if other_high > 0:
         fields.append(("HIGH — squad-solvable", str(other_high)))
 
-    fields.append(("details", str(candidates[0] / "staging" / "issues.md")))
+    fields.append(("details", str(issues_path)))
     if user_gated:
         fields.append(("answer", "echelon spec resume \"<your answers>\""))
 

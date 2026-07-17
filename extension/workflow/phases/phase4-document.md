@@ -283,7 +283,7 @@ updated_at: "{ISO-8601}"
 
 ### 12.9 Print Final Summary — MANDATORY
 
-> **Always print this banner before returning `status: done` in `echelon_result.state_updates` or beginning staging cleanup (12.10). NEVER mark done or clean up first.** The banner is the human handoff. Skipping it leaves the user with no actionable output from the run.
+> **Always print this banner before returning `status: done` in `echelon_result.state_updates` or completing run preservation checks (12.10). NEVER mark done first.** The banner is the human handoff. Skipping it leaves the user with no actionable output from the run.
 >
 > The **HUMAN ACTIONS REQUIRED** section is unconditionally required — always print it. If there are no pending actions, print `None — squad resolved all items autonomously.` Never omit the section.
 
@@ -353,31 +353,28 @@ NOTE: No application source files were modified by this command.
 ============================================
 ```
 
-### 12.10 Archive and Cleanup Staging Area — MANDATORY
+### 12.10 Preserve Run Directory — MANDATORY
 
-**Precondition:** Only run after `run-history.json` is written (12.8) and the final `status: done` update has been prepared in `echelon_result.state_updates`. Always archive completed runs only; do not archive a partial run.
+**Precondition:** Only run after `run-history.json` is written (12.8) and the final `status: done` update has been prepared in `echelon_result.state_updates`.
 
-Archive the completed run artifacts, then clean staging:
+The active `${SQUAD_DIR}` is already the durable `runs/<run-id>/` record. Do not
+copy artifacts into a nested archive and do not clean staging: it contains the
+control-plane history needed to explain clarifications and governance decisions.
+Verify the run-local record instead:
 
 ```bash
-# Archive this run's artifacts
-RUN_ID=$(python3 -c "import json; print(json.load(open('${SQUAD_DIR}/state.json')).get('run_id','unknown'))" 2>/dev/null || echo "unknown")
-ARCHIVE_DIR="${SQUAD_DIR}/archive/${RUN_ID}"
-mkdir -p "$ARCHIVE_DIR"
-cp -r ${STAGING_DIR}/* "$ARCHIVE_DIR/" 2>/dev/null || true
-cp ${SQUAD_DIR}/state.json "$ARCHIVE_DIR/state.json" 2>/dev/null || true
-echo "Run archived → ${ARCHIVE_DIR}/"
-
-# Clean staging for next run
-rm -rf "${STAGING_DIR}"
+test -f "${SQUAD_DIR}/state.json"
+test -f "${SQUAD_DIR}/reasoning-journal.jsonl"
+test -d "${STAGING_DIR}"
+test -d "${spec_dir}"
+echo "Run directory preserved → ${SQUAD_DIR}"
 ```
 
-**What's preserved in the archive:**
-- `spec.md`, `tasks.md`, `plan.md` — the analysis products
-- `issues.md`, `quality-gates.md` — findings and quality scores
-- `reasoning-journal.jsonl` — full decision log
-- `state.json` — run state snapshot
-- All specialist outputs (threat-model.md, etc.)
+**Run-local ownership:**
+- `{spec_dir}/` — canonical analysis products, findings, quality gates, and specialist outputs
+- `${SQUAD_DIR}/reasoning-journal.jsonl` — full decision log
+- `${SQUAD_DIR}/state.json` — run state snapshot
+- `${STAGING_DIR}/` — discovery remnants and control-plane inputs
 
 **What lives in knowledge-base/ (already persistent):**
 - `calibration-profile.yaml` — per-domain accuracy corrections
@@ -409,7 +406,7 @@ bash "${ECHELON_EXT}/scripts/bash/finalize-run.sh" \
 
 If exit code is non-zero, always report the error and stop. Do not proceed to §12.11.
 
-The script handles: copying constitution.md, staging, conditional commit (skipped if nothing changed), and `git checkout <default-branch>`.
+The script handles: copying constitution.md, staging the published spec and knowledge-base changes in Git, conditional commit (skipped if nothing changed), and `git checkout <default-branch>`.
 
 After `finalize-run.sh` succeeds, refresh the human artifact map deterministically:
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 
@@ -27,6 +28,72 @@ PASS_VERDICTS = {
     "COMPLIANT",
     "ALIGNED",
 }
+
+
+def resolve_quality_gate_thresholds(
+    project_root: Path | None,
+    *,
+    defaults: dict[str, Any] | None = None,
+    fallback_config_path: Path | None = None,
+) -> dict[str, float]:
+    """Resolve numeric quality gates through the project config cascade."""
+    resolved: dict[str, float] = {
+        key: float(value)
+        for key, value in (defaults or {}).items()
+        if key in QUALITY_GATE_SCORE_KEYS and isinstance(value, (int, float))
+    }
+
+    if fallback_config_path is not None and fallback_config_path.exists():
+        try:
+            import yaml
+
+            payload = yaml.safe_load(fallback_config_path.read_text()) or {}
+            gates = payload.get("quality_gates")
+            if isinstance(gates, dict):
+                resolved.update(
+                    {
+                        key: float(value)
+                        for key, value in gates.items()
+                        if key in QUALITY_GATE_SCORE_KEYS
+                        and isinstance(value, (int, float))
+                    }
+                )
+        except Exception:
+            pass
+
+    if project_root is not None:
+        try:
+            from harness.config import get_full_resolved_config
+
+            payload = get_full_resolved_config(project_root)
+            gates = payload.get("quality_gates")
+            if isinstance(gates, dict):
+                resolved.update(
+                    {
+                        key: float(value)
+                        for key, value in gates.items()
+                        if key in QUALITY_GATE_SCORE_KEYS
+                        and isinstance(value, (int, float))
+                    }
+                )
+        except Exception:
+            pass
+
+    return resolved
+
+
+def render_quality_gate_context(gates: dict[str, Any]) -> str:
+    """Render the authoritative gate block injected into agent prompts."""
+    lines = [
+        "## Resolved Quality Gates",
+        "These values come from the resolved Echelon project configuration and are authoritative.",
+        "Never substitute thresholds copied from agent or phase files.",
+    ]
+    for key in QUALITY_GATE_SCORE_KEYS:
+        value = gates.get(key)
+        if isinstance(value, (int, float)):
+            lines.append(f"- {key}: >= {value:g}")
+    return "\n".join(lines) + "\n\n"
 
 
 def explicit_quality_pass(score: object) -> bool | None:

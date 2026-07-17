@@ -88,6 +88,36 @@ class TestPhaseGraph:
             "issues.md",
         }.issubset(plan2_pack)
 
+    def test_phase3_sentinel_receives_all_required_how_and_quality_inputs(self):
+        node = self.graph.get("phase3-sentinel")
+
+        assert {
+            "spec.md",
+            "plan.md",
+            "research.md",
+            "data-model.md",
+            "contracts/",
+            "quality-gates.md",
+        }.issubset(set(node.context_pack))
+
+    def test_why2_does_not_require_later_test_design_artifacts(self):
+        sage = (EXT_ROOT / "extension/agents/exploration/sage.md").read_text(
+            encoding="utf-8"
+        )
+
+        assert "Flakiness Management Validation (WHY3 only)" in sage
+        assert "WHY2 must not require `test-strategy.md` or `coverage-map.md`" in sage
+
+    def test_sentinel_does_not_require_plan_tasks_before_plan_phase(self):
+        sentinel_phase = (
+            EXT_ROOT / "extension/workflow/phases/phase3-sentinel.md"
+        ).read_text(encoding="utf-8")
+
+        assert "target-owned task" not in sentinel_phase
+        assert "`task_ids: []`" in sentinel_phase
+        assert "Always proceed with reduced confidence" not in sentinel_phase
+        assert "phase failure" in sentinel_phase
+
     def test_phase1_discover_has_pre_dispatch(self):
         node = self.graph.get("phase1-discover")
         assert len(node.pre_dispatch) > 0
@@ -96,6 +126,11 @@ class TestPhaseGraph:
         node = self.graph.get("phase1-discover")
         assert "glossary.md" in node.outputs
         assert "mental-model.md" in node.outputs
+
+    def test_phase1_what_reads_fresh_user_clarifications_from_run_staging(self):
+        node = self.graph.get("phase1-what")
+
+        assert "{staging_dir}/user-clarifications.md" in node.context_pack
 
     def test_phase1_modeler_loads_node_condition_and_greenfield_skip(self):
         node = self.graph.get("phase1-modeler")
