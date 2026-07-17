@@ -349,6 +349,7 @@ providers:
       - artifact
     features:
       streaming: true
+      stream_options: true
       json_mode: false
       structured_outputs: false
       tool_calls: false
@@ -420,6 +421,7 @@ separate from Echelon command capabilities:
 ```yaml
 features:
   streaming: true
+  stream_options: true
   json_mode: false
   structured_outputs: false
   tool_calls: false

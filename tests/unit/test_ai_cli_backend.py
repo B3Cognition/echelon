@@ -501,6 +501,50 @@ def test_openai_compatible_backend_can_omit_stream_options(
     assert "stream_options" not in captured["payload"]
 
 
+def test_openai_compatible_backend_reports_reasoning_content_policy(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    class FakeResponse:
+        headers = {"Content-Type": "text/event-stream"}
+
+        def __init__(self) -> None:
+            self._lines = iter([
+                b'data: {"choices":[{"delta":{"content":"echelon_result:\\n"},"finish_reason":"stop"}]}\n',
+                b"data: [DONE]\n",
+            ])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def readline(self):
+            return next(self._lines, b"")
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        lambda request, timeout: FakeResponse(),
+    )
+
+    result = OpenAICompatibleBackend(
+        _openai_config(features={"reasoning_content": "merged"})
+    ).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 0
+    assert result.metadata["reasoning_content_policy"] == "merged"
+    assert result.metadata["reasoning_content_observed"] is False
+
+
 def test_openai_compatible_backend_streams_content_blocks(
     tmp_path, monkeypatch
 ) -> None:
