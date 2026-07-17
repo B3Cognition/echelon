@@ -1107,6 +1107,20 @@ def spec_rewind(
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())
 
 
+@spec_app.command("repair-traceability")
+def spec_repair_traceability(
+    confirm: bool = typer.Option(False, "--confirm", help="Apply the safe traceability repair."),
+) -> None:
+    """Repair safely-prunable product-input task mappings and resume finalization."""
+    from pathlib import Path
+
+    from echelon import cli as legacy_cli
+
+    legacy_cli._cmd_repair_traceability(
+        ["--confirm"] if confirm else [], project_root=Path.cwd()
+    )
+
+
 @spec_app.command("drop-target")
 def spec_drop_target(
     spec_id: str = typer.Argument(..., help="Active unfinished spec id."),

@@ -208,6 +208,59 @@ T-057 is described above and must not be parsed as another task row.
     assert validate_product_input_traceability(spec, ["sources/web"]) == []
 
 
+def test_traceability_repair_prunes_contextual_task_ids_only_when_direct_mappings_remain(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import repair_product_input_traceability
+
+    spec = tmp_path / "specs" / "001-demo"
+    inputs = spec / "inputs"
+    inputs.mkdir(parents=True)
+    traceability_path = inputs / "traceability.json"
+    traceability_path.write_text(
+        json.dumps(
+            {
+                "requirements": [
+                    {
+                        "input_unit_id": "IN-REQ-1",
+                        "disposition": "included",
+                        "spec_ids": ["FR-1"],
+                        "task_ids": ["T-001", "T-S01"],
+                        "targets": ["sources/web"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    tasks_path = spec / "tasks.md"
+    tasks_path.write_text(
+        "- [ ] T-001 complexity=standard phase=foundation req=FR-1 depends=none target=sources/web\n"
+        "- [ ] T-S01 complexity=standard phase=foundation req=INFRA depends=none target=sources/web\n",
+        encoding="utf-8",
+    )
+
+    preview = repair_product_input_traceability(
+        traceability_path, tasks_path, ["sources/web"], apply=False
+    )
+
+    assert preview.removed == (("IN-REQ-1", "T-S01"),)
+    assert preview.blockers == ()
+    assert json.loads(traceability_path.read_text(encoding="utf-8"))["requirements"][0]["task_ids"] == [
+        "T-001",
+        "T-S01",
+    ]
+
+    applied = repair_product_input_traceability(
+        traceability_path, tasks_path, ["sources/web"], apply=True
+    )
+
+    assert applied.removed == (("IN-REQ-1", "T-S01"),)
+    assert json.loads(traceability_path.read_text(encoding="utf-8"))["requirements"][0]["task_ids"] == [
+        "T-001"
+    ]
+
+
 def test_controller_applies_structured_traceability_updates(tmp_path: Path) -> None:
     from echelon.product_inputs import (
         apply_product_input_updates,

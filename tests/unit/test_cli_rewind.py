@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from echelon.cli import _cmd_rewind
+from echelon.cli import _cmd_repair_traceability, _cmd_rewind
 from echelon.rewind import RewindResult
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
 
@@ -265,3 +265,45 @@ def test_checkpoint_rewind_uses_run_local_ledger_and_resets_run_state(
     assert "phase_a_readiness_blockers" not in state
     assert state["completed_phases"] == ["phase3-how"]
     assert "echelon spec continue" in capsys.readouterr().out
+
+
+def test_traceability_repair_resumes_finalization_without_replanning(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_a_readiness_failed",
+            "phase_a_readiness_blockers": ["IN-REQ-1: task T-S01 does not reference the mapped specification IDs"],
+            "spec_dir": "runs/spec-20260618-073106-635192/specs/006-element-creator",
+            "product_inputs": {"traceability": "runs/spec-20260618-073106-635192/inputs/traceability.json"},
+            "implementation_targets": ["sources/web"],
+            "completed_phases": ["phase3-plan", "phase3-consensus", "checkpoint-plan"],
+        },
+    )
+    spec_dir = run_dir / "specs" / "006-element-creator"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=foundation req=FR-1 depends=none target=sources/web\n"
+        "- [ ] T-S01 complexity=standard phase=foundation req=INFRA depends=none target=sources/web\n",
+        encoding="utf-8",
+    )
+    traceability = run_dir / "inputs" / "traceability.json"
+    traceability.parent.mkdir(parents=True)
+    traceability.write_text(
+        json.dumps({"requirements": [{"input_unit_id": "IN-REQ-1", "disposition": "included", "spec_ids": ["FR-1"], "task_ids": ["T-001", "T-S01"], "targets": ["sources/web"]}]}),
+        encoding="utf-8",
+    )
+
+    _cmd_repair_traceability(["--confirm"], project_root=tmp_path)
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    ledger = json.loads(traceability.read_text(encoding="utf-8"))
+    assert ledger["requirements"][0]["task_ids"] == ["T-001"]
+    assert state["status"] == "running"
+    assert state["phase"] == "phase4-document"
+    assert state["blocked_reason"] is None
+    assert "TRACEABILITY REPAIRED" in capsys.readouterr().out

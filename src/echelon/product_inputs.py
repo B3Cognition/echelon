@@ -29,6 +29,14 @@ class ProductInputError(ValueError):
 
 
 @dataclass(frozen=True)
+class ProductInputTraceabilityRepair:
+    """A deterministic, conservative repair plan for contextual task references."""
+
+    removed: tuple[tuple[str, str], ...]
+    blockers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ProductInputDeclaration:
     role: str
     location: str
@@ -268,6 +276,77 @@ def validate_product_input_traceability(spec_dir: Path, declared_targets: Sequen
             if not (task["targets"] & declared):
                 blockers.append(f"{unit_id}: task {task_id} is not target-owned by a declared implementation target")
     return blockers
+
+
+def repair_product_input_traceability(
+    traceability_path: Path,
+    tasks_path: Path,
+    declared_targets: Sequence[str],
+    *,
+    apply: bool,
+) -> ProductInputTraceabilityRepair:
+    """Prune only contextual task references when direct evidence remains.
+
+    A product-input unit may cite only tasks whose ``req=`` values intersect its
+    ``spec_ids``.  Agents sometimes append context tasks (for example a decision
+    spike with ``req=INFRA``) as evidence.  That is invalid, but it is safe to
+    remove when the same unit still has one or more direct task mappings.  Any
+    other traceability defect remains a blocker for a deliberate PLAN repair.
+    """
+    try:
+        ledger = json.loads(traceability_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return ProductInputTraceabilityRepair((), (f"product input traceability.json is invalid: {exc}",))
+    requirements = ledger.get("requirements")
+    if not isinstance(requirements, list):
+        return ProductInputTraceabilityRepair((), ("product input traceability has no requirements list",))
+
+    tasks = _task_metadata(tasks_path)
+    declared = set(declared_targets)
+    removed: list[tuple[str, str]] = []
+    blockers: list[str] = []
+    for entry in requirements:
+        if not isinstance(entry, dict) or str(entry.get("disposition") or "") != "included":
+            continue
+        unit_id = str(entry.get("input_unit_id") or "(unknown input unit)")
+        spec_ids = {str(value) for value in entry.get("spec_ids", []) if str(value)}
+        task_ids = [str(value) for value in entry.get("task_ids", []) if str(value)]
+        if not spec_ids or not task_ids:
+            blockers.append(f"{unit_id}: included requirement lacks direct traceability metadata")
+            continue
+
+        direct: list[str] = []
+        contextual: list[str] = []
+        unsafe: list[str] = []
+        for task_id in task_ids:
+            task = tasks.get(task_id)
+            if task is None:
+                unsafe.append(task_id)
+            elif not (task["targets"] & declared):
+                unsafe.append(task_id)
+            elif spec_ids & task["requirements"]:
+                direct.append(task_id)
+            else:
+                contextual.append(task_id)
+        if unsafe:
+            blockers.append(
+                f"{unit_id}: cannot safely repair task reference(s) {', '.join(unsafe)}"
+            )
+            continue
+        if contextual and not direct:
+            blockers.append(
+                f"{unit_id}: cannot remove contextual task reference(s) without losing all direct evidence"
+            )
+            continue
+        if contextual:
+            entry["task_ids"] = direct
+            removed.extend((unit_id, task_id) for task_id in contextual)
+
+    result = ProductInputTraceabilityRepair(tuple(removed), tuple(blockers))
+    if apply and result.removed and not result.blockers:
+        _write_json(traceability_path, ledger)
+        _write_traceability_markdown(traceability_path.with_suffix(".md"), ledger)
+    return result
 
 
 def apply_product_input_updates(traceability_path: Path, updates: Sequence[object]) -> None:

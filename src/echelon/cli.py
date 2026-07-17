@@ -3193,13 +3193,13 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
         traceability_blockers = _phase_a_readiness_traceability_blockers(run_state)
         if traceability_blockers:
             return _RunRecoveryAction(
-                "safe_rewind",
+                "manual_recovery",
                 reason=reason,
-                phase="phase3-plan",
-                command="echelon spec rewind phase3-plan",
+                command="echelon spec repair-traceability",
                 note=(
-                    "Repair the product-input requirement-to-task mappings in PLAN, then "
-                    "re-run consensus. "
+                    "Preview a deterministic repair that removes contextual task references "
+                    "while preserving direct requirement mappings; it resumes finalization without "
+                    "re-running PLAN when safe. "
                     f"{len(traceability_blockers)} traceability blocker(s) were recorded; "
                     "each listed task must have a req= value that intersects its mapped spec_ids."
                 ),
@@ -6348,6 +6348,61 @@ def _cmd_rewind(
     _banner("REWIND PREPARED", details)
 
 
+def _cmd_repair_traceability(args: list[str], project_root: Path) -> None:
+    """Safely remove contextual task references from active product-input evidence."""
+    confirm = "--confirm" in args
+    if any(arg != "--confirm" for arg in args):
+        print("Usage: echelon spec repair-traceability [--confirm]", file=sys.stderr)
+        raise SystemExit(1)
+
+    squad_dir = _find_current_run_dir(project_root)
+    if squad_dir is None or not (squad_dir / "state.json").is_file():
+        print("✗ No active squad run found.", file=sys.stderr)
+        raise SystemExit(1)
+
+    from harness.squad_state import SquadStateStore
+    from echelon.product_inputs import repair_product_input_traceability
+
+    store = SquadStateStore(squad_dir)
+    state = store.load()
+    if str(state.get("blocked_reason") or "") != "phase_a_readiness_failed":
+        print("✗ Traceability repair is available only for a Phase A readiness block.", file=sys.stderr)
+        raise SystemExit(1)
+    spec_dir, spec_dir_ref = _normalize_rewind_spec_dir(project_root, state)
+    inputs = state.get("product_inputs")
+    traceability_ref = str(inputs.get("traceability") or "").strip() if isinstance(inputs, dict) else ""
+    if spec_dir is None or spec_dir_ref is None or not traceability_ref:
+        print("✗ Active run lacks the spec or product-input evidence needed for repair.", file=sys.stderr)
+        raise SystemExit(1)
+    traceability_path = Path(traceability_ref)
+    if not traceability_path.is_absolute():
+        traceability_path = project_root / traceability_path
+    targets = [str(value).strip() for value in state.get("implementation_targets", []) if str(value).strip()]
+    repair = repair_product_input_traceability(
+        traceability_path, spec_dir / "tasks.md", targets, apply=confirm
+    )
+    if repair.blockers:
+        print("✗ Traceability cannot be repaired safely:", file=sys.stderr)
+        for blocker in repair.blockers:
+            print(f"  - {blocker}", file=sys.stderr)
+        print("  Re-plan with: echelon spec rewind phase3-plan", file=sys.stderr)
+        raise SystemExit(1)
+    if not repair.removed:
+        print("✗ No contextual task references were available to repair.", file=sys.stderr)
+        raise SystemExit(1)
+
+    rows = [("remove", f"{unit_id} → {task_id}") for unit_id, task_id in repair.removed]
+    if not confirm:
+        rows.append(("next", "echelon spec repair-traceability --confirm"))
+        _banner("TRACEABILITY REPAIR PREVIEW", rows, subtitle="No evidence or run state changed.")
+        return
+
+    repaired = _reset_rewind_state(state, "phase4-document", spec_dir_ref)
+    store.save(repaired)
+    rows.append(("next", "echelon spec continue"))
+    _banner("TRACEABILITY REPAIRED", rows, subtitle="Direct mappings preserved; finalization can resume.")
+
+
 def _cmd_drop_target(args: list[str], project_root: Path) -> None:
     """Remove one unreferenced delivery target from the active unfinished run.
 
@@ -7656,6 +7711,7 @@ def _cmd_spec(args: list[str]) -> None:
             "                                      Run the next no-input Phase A recovery action\n"
             "  resume <answers>                    Answer escalation questions from a blocked run\n"
             "  rewind <phase-id>                   Rewind the active squad run to a checkpoint\n"
+            "  repair-traceability [--confirm]     Remove safely-prunable contextual task references\n"
             "  switch <spec-or-run-id> [--stash | --discard --confirm]\n"
             "                    [--restore-stash] Select a checkpointed Phase A spec run\n"
             "  drop-target <spec_id> <target> --confirm\n"
@@ -7684,6 +7740,8 @@ def _cmd_spec(args: list[str]) -> None:
     elif subcmd == "rewind":
         _require_phase_a_git_ownership(Path.cwd(), command_name="echelon spec rewind")
         _cmd_rewind(args[1:], project_root=Path.cwd())
+    elif subcmd == "repair-traceability":
+        _cmd_repair_traceability(args[1:], project_root=Path.cwd())
     elif subcmd == "switch":
         from echelon.spec_switch_cli import run_spec_switch_command
 

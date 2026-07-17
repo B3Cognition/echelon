@@ -947,7 +947,7 @@ def test_continue_manual_block_does_not_claim_human_resume(
     assert 'echelon spec resume "<your answer>"' not in captured.out
 
 
-def test_continue_traceability_readiness_failure_rewinds_planning(tmp_path: Path, capsys) -> None:
+def test_continue_traceability_readiness_failure_offers_traceability_repair(tmp_path: Path, capsys) -> None:
     _write_run_state(
         tmp_path,
         {
@@ -964,8 +964,8 @@ def test_continue_traceability_readiness_failure_rewinds_planning(tmp_path: Path
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
     captured = capsys.readouterr()
-    assert "echelon spec rewind phase3-plan" in captured.out
-    assert "Repair the product-input requirement-to-task mappings" in captured.out
+    assert "echelon spec repair-traceability" in captured.out
+    assert "removes contextual task references" in captured.out
 
 
 def test_continue_retries_external_blocker_phase_after_fix(
