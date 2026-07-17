@@ -50,6 +50,21 @@ def test_finalize_runs_kb_apply_non_blocking() -> None:
     assert "echelon kb apply --run-id \"${RUN_ID}\" || true" not in text
 
 
+def test_finalize_delegates_kb_report_publication_to_deterministic_helper() -> None:
+    text = _read("extension/workflow/phases/phase4-document.md")
+    normalized = " ".join(text.split())
+
+    assert "`finalize-run.sh` publishes KB provenance reports best-effort" in normalized
+    assert "under `{spec_dir}/kb/` using deterministic `publish_kb_reports`" in normalized
+    assert "kb-apply-report.yaml" in normalized
+    assert "kb-usage-summary.yaml" in normalized
+    manual_copy = re.compile(
+        r"\bcopy\s+it\s+to\s+`?\{spec_dir\}/kb/kb-apply-report\.yaml",
+        re.IGNORECASE,
+    )
+    assert not manual_copy.search(text)
+
+
 def test_finalize_has_no_direct_canonical_kb_writes() -> None:
     text = _read("extension/workflow/phases/phase4-document.md")
     direct_write = re.compile(

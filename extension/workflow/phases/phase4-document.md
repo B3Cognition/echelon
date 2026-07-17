@@ -275,8 +275,10 @@ Record proposal-read or usage failures as `kb_usage_status: degraded`, and prese
 any deterministic contract findings in `kb_contract_violations` and `kb_apply_report`.
 A KB failure does not stop finalization, agent dispatch, phase transitions, or publication.
 
-If `{spec_dir}` exists and `runs/${RUN_ID}/kb-apply-report.yaml` exists, copy it
-to `{spec_dir}/kb/kb-apply-report.yaml`, creating `{spec_dir}/kb/` if needed.
+`finalize-run.sh` publishes KB provenance reports best-effort under
+`{spec_dir}/kb/` using deterministic `publish_kb_reports`, including
+`kb-apply-report.yaml` and `kb-usage-summary.yaml` when available. COMMANDER
+does not publish these reports manually.
 
 ### 12.7b Collect Final Artifacts
 
