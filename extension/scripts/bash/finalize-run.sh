@@ -11,6 +11,33 @@ RUN_ID="${4:?RUN_ID required}"
 
 SPEC_DIR="${PROJECT_ROOT}/specs/${SPEC_ID}-${FEATURE_NAME}"
 
+if ! PYTHONPATH="${PROJECT_ROOT}/src:${PYTHONPATH:-}" python3 - "${PROJECT_ROOT}" "${RUN_ID}" "${SPEC_DIR}" <<'PY'
+from pathlib import Path
+import sys
+
+project_root = Path(sys.argv[1])
+run_id = sys.argv[2]
+spec_dir = Path(sys.argv[3])
+run_dir = project_root / "runs" / run_id
+has_reports = (run_dir / "kb-apply-report.yaml").exists() or (run_dir / "kb-usage.yaml").exists()
+
+try:
+    from echelon.kb_proposals import publish_kb_reports
+
+    published = publish_kb_reports(project_root, run_id, spec_dir)
+    if published is None and has_reports:
+        print("[FINALIZE] WARNING: KB provenance publication returned no output", file=sys.stderr)
+except Exception as exc:
+    print(f"[FINALIZE] WARNING: KB provenance publication failed: {exc}", file=sys.stderr)
+PY
+then
+  echo "[FINALIZE] WARNING: unable to run KB provenance publication; continuing"
+fi
+
+if [ -d "${SPEC_DIR}/kb" ]; then
+  echo "[FINALIZE] KB provenance reports detected under ${SPEC_DIR}/kb"
+fi
+
 echo "[FINALIZE] Committing spec artifacts for ${SPEC_ID}-${FEATURE_NAME}..."
 
 # ── 1. Copy constitution into spec dir ────────────────────────────────────────

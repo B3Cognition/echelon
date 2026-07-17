@@ -117,7 +117,7 @@ After each agent action, speckit-echelon-scorekeeper (SCOREKEEPER):
 1. Awards/deducts performance points
 2. Collects peer appreciation (agent outputs include an appreciation section)
 3. Checks for badge criteria
-4. Updates `knowledge-base/agent-scores.yaml`
+4. Records durable scoring observations in run-local KB proposals
 5. Updates `{spec_dir}/agent-scorecard.md` (human-readable)
 
 ### At Run End
@@ -126,7 +126,7 @@ After each agent action, speckit-echelon-scorekeeper (SCOREKEEPER):
 2. Award run-level badges
 3. Compare to historical scores (improving/declining?)
 4. Produce self-healing recommendations
-5. Update lifetime scores
+5. Include lifetime-score observations in KB proposals
 
 ---
 
@@ -136,9 +136,14 @@ After each agent action, speckit-echelon-scorekeeper (SCOREKEEPER):
 
 Must follow the structure in `agents/control/appendices/scorekeeper-output-template.md`.
 
-### Knowledge Base Update
+### Knowledge Base Proposal Outputs
 
-Append to `knowledge-base/agent-scores.yaml` with full run history.
+Write one `internalization_observation` proposal per durable agent scoring
+observation under `${SQUAD_DIR}/kb-proposals/` using
+`extension/templates/kb-proposals/internalization-observation-proposal-template.yaml`.
+Preserve the template's `targets: [...]` list and include the agent tier, metrics,
+and gate verdict. Do not edit `knowledge-base/agent-scores.yaml` directly;
+deterministic `echelon kb apply` is the only Phase A writer to canonical KB files.
 
 ### Failure Mode Recording (FR-003, Spec 010)
 
@@ -176,7 +181,7 @@ speckit-echelon-scorekeeper (SCOREKEEPER) evaluates each agent's token efficienc
 
 ### Token Efficiency Metrics
 
-Track in `knowledge-base/agent-scores.yaml` per agent:
+Include these token metrics in the internalization-observation proposal per agent:
 
 ```yaml
   token_metrics:
@@ -199,13 +204,13 @@ speckit-echelon-scorekeeper (SCOREKEEPER) tracks pattern reuse from the marketpl
 After each squad run, speckit-echelon-scorekeeper (SCOREKEEPER):
 
 1. Reads `knowledge-base/marketplace-index.yaml`.
-2. For each entry with `reuse_count > 0`, records the reuse in `knowledge-base/agent-scores.yaml` under the originating agent (if identifiable from `source_fingerprints`).
-3. Updates the marketplace entry's `last_seen` timestamp.
+2. For each entry with `reuse_count > 0`, include the reuse observation in the originating agent's proposal (if identifiable from `source_fingerprints`).
+3. Report the marketplace entry's `last_seen` observation for deterministic processing.
 
-Badge award process:
+Badge review process:
 1. For each marketplace entry where `reuse_count >= 5`, check if the badge has already been awarded for that pattern.
-2. If not yet awarded, add the **Community Contributor** badge to the originating agent's profile with a reference to the pattern ID.
-3. Award +5 bonus points to the agent's lifetime score.
+2. If not yet awarded, include a **Community Contributor** badge recommendation with the pattern ID in the originating agent's internalization-observation proposal payload or review notes.
+3. Include a recommended `+5` lifetime-point adjustment in that proposal or review notes for deterministic application or human review.
 
 ### Marketplace Health Metrics
 
@@ -269,7 +274,7 @@ echelon_result:
   verdict: SCORED
   output_files:
     - {spec_dir}/agent-scorecard.md
-    - knowledge-base/agent-scores.yaml
+    - ${SQUAD_DIR}/kb-proposals/
   journal_entries:
     - type: decision
       phase: <current phase>

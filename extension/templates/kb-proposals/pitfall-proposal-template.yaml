@@ -1,0 +1,27 @@
+schema_version: 1
+proposal_id: kb-prop-pitfall-template
+proposal_type: pitfall
+run_id: squad-template
+agent: speckit-echelon-mirror
+created_at: "2026-07-17T12:00:00Z"
+targets:
+  - knowledge-base/pitfalls.yaml
+confidence: 0.7
+source_artifacts:
+  - runs/squad-template/reasoning-journal.jsonl
+evidence_refs:
+  - artifact: runs/squad-template/reasoning-journal.jsonl
+    locator: RJ-template
+    claim: Pitfall was observed during Phase A review.
+payload:
+  name: Hidden dependency in acceptance criteria
+  domain: planning
+  evidence_grade: C
+  validated_by_feedback: false
+  trigger: Acceptance criteria refer to behavior outside the chosen target.
+  impact: Delivery may start with unresolved implementation ownership.
+  avoidance: Resolve target ownership before task generation.
+  tags: [planning, ownership]
+  status: active
+  project_fingerprint: auto
+  scope: local_only

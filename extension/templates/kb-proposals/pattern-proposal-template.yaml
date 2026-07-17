@@ -1,0 +1,25 @@
+schema_version: 1
+proposal_id: kb-prop-pattern-template
+proposal_type: pattern
+run_id: squad-template
+agent: speckit-echelon-mirror
+created_at: "2026-07-17T12:00:00Z"
+targets:
+  - knowledge-base/patterns.yaml
+confidence: 0.72
+source_artifacts:
+  - runs/squad-template/reasoning-journal.jsonl
+evidence_refs:
+  - artifact: runs/squad-template/reasoning-journal.jsonl
+    locator: RJ-template
+    claim: Pattern was supported by a completed Phase A review.
+payload:
+  name: Architecture constraint before estimates
+  domain: planning
+  evidence_grade: C
+  validated_by_feedback: false
+  description: Apply explicit architecture constraints before ASSESS estimates.
+  tags: [planning, calibration]
+  status: active
+  project_fingerprint: auto
+  scope: local_only

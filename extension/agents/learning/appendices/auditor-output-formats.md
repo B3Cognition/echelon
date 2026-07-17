@@ -1,5 +1,9 @@
 # Auditor Output Formats
 
+Do not edit canonical knowledge-base files directly. Treat the schemas below as
+run-local review artifacts or proposal payload examples for deterministic KB
+application.
+
 ## Calibration Profile Entry
 
 ```yaml
@@ -15,7 +19,8 @@ domains:
 
 ## Auto Feedback Schema
 
-Write to `knowledge-base/feedback/{spec-id}-{project-name}.yaml`:
+Use this shape for run-local feedback review artifacts and future feedback
+proposal payloads:
 
 ```yaml
 spec_id: "{spec-id}"

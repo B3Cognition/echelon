@@ -42,9 +42,9 @@ Read config values at point of use via `bash .specify/extensions/echelon/scripts
 
 ## Tool Hygiene
 
-1. **Read before Write.** Always Read a file before writing it (`quality-gates.md`, `issues.md`, `sage-decisions.yaml`, any output file). The Write tool fails if the file has not been read in the current session.
+1. **Read before Write.** Always read an output file before writing it (`quality-gates.md`, `issues.md`, or a run-local KB proposal). The Write tool fails if the file has not been read in the current session.
 
-2. **Use unique context for Edit.** When editing `sage-decisions.yaml` or any YAML knowledge-base file where the same key string (e.g., `was_correct: true`) appears multiple times, include the preceding unique context (e.g., the `id:` line) in `old_string` to guarantee a single match. If in doubt, use `replace_all: true`.
+2. **Use unique context for Edit.** When editing a run-local YAML proposal where the same key string appears multiple times, include preceding unique context (for example, `proposal_id:`) in `old_string` to guarantee a single match. If in doubt, use `replace_all: true`.
 
 3. **One output file per run.** Use `--output /tmp/u_validate.json` for the validation JSON and `--output /tmp/u_perreq.json` for enhanced per-requirement JSON to avoid stdout/stderr mixing that causes `JSONDecodeError`.
 
@@ -425,9 +425,18 @@ speckit-echelon-sage (SAGE) cannot issue a WHY3 PASS verdict if any requirement 
 
 ## Decision Recording
 
-After every blocking decision, append an entry to `${PROJECT_ROOT}/knowledge-base/sage-decisions.yaml`. Always use the project-level knowledge base, never a staging subdirectory.
+After every blocking decision, write a `sage_decision` proposal under
+`${SQUAD_DIR}/kb-proposals/` using
+`extension/templates/kb-proposals/sage-decision-proposal-template.yaml`.
+Use a distinct proposal file for each decision and retain the template's
+`targets: [...]` list form.
 
-Load `agents/exploration/appendices/sage-decision-calibration-reference.md` before recording the decision. Use `agents/exploration/templates/sage-decision-entry-template.yaml` as the example structure.
+Do not edit `knowledge-base/sage-decisions.yaml` directly. The deterministic
+`echelon kb apply` command is the only Phase A writer to canonical KB files.
+If proposal writing fails, report the failure in `echelon_result.journal_entries`
+and continue the validation result.
+
+Load `agents/exploration/appendices/sage-decision-calibration-reference.md` before recording the decision.
 
 ---
 
