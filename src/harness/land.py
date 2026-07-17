@@ -494,6 +494,63 @@ def _find_latest_harness_branch(spec_id: str, project_dir: Path) -> str | None:
     return latest[0]
 
 
+def _block_different_active_authoring_spec(
+    project_root: Path,
+    feature_branch: str,
+    spec_id: str,
+) -> bool:
+    """Refuse landing before it changes a checkout owned by another Phase A run."""
+    from echelon.spec_lifecycle import (
+        SpecLifecycleError,
+        SpecRunNotFound,
+        resolve_active_spec_run,
+    )
+
+    try:
+        active = resolve_active_spec_run(project_root)
+    except SpecRunNotFound as exc:
+        if not (project_root / "runs" / ".current").exists():
+            return False
+        _banner(
+            "LAND — ACTIVE AUTHORING STATE BLOCKED",
+            [
+                ("problem", str(exc)),
+                ("next step", "repair the active spec pointer before landing"),
+            ],
+            subtitle="Landing will not guess which Phase A checkout it may disturb.",
+        )
+        return True
+    except SpecLifecycleError as exc:
+        _banner(
+            "LAND — ACTIVE AUTHORING STATE BLOCKED",
+            [
+                ("problem", str(exc)),
+                ("next step", "repair the active spec state before landing"),
+            ],
+            subtitle="Landing will not guess which Phase A checkout it may disturb.",
+        )
+        return True
+
+    if active.feature_branch == feature_branch:
+        return False
+
+    _banner(
+        "LAND — ACTIVE AUTHORING SPEC",
+        [
+            ("active spec", active.spec_id),
+            ("active branch", active.feature_branch),
+            ("requested spec", spec_id),
+            ("requested branch", feature_branch),
+            (
+                "next step",
+                f"checkpoint/clean the active spec, then echelon spec switch {spec_id}",
+            ),
+        ],
+        subtitle="Landing is refusing to disturb a different active Phase A checkout.",
+    )
+    return True
+
+
 def land(
     spec_id: str,
     *,
@@ -535,6 +592,13 @@ def land(
         _cleanup_worktrees(spec_id, wrapper_project_dir, gitops)
         _delete_harness_branches(spec_id, project_dir)
         return True
+
+    if _block_different_active_authoring_spec(
+        wrapper_project_dir,
+        feature_branch,
+        spec_id,
+    ):
+        return False
 
     if state_dir is not None:
         pr_url = find_pr_url(spec_id, state_dir)
