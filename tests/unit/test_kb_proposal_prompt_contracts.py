@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -43,6 +44,20 @@ def test_finalize_runs_kb_apply_non_blocking() -> None:
     assert "kb_usage_status: degraded" in text
     assert "kb-apply-report.yaml" in text
     assert "Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`" not in text
+    assert "KB_VALIDATE_EXIT=$?" in text
+    assert "KB_APPLY_EXIT=$?" in text
+    assert "echelon kb validate --run-id \"${RUN_ID}\" || true" not in text
+    assert "echelon kb apply --run-id \"${RUN_ID}\" || true" not in text
+
+
+def test_finalize_has_no_direct_canonical_kb_writes() -> None:
+    text = _read("extension/workflow/phases/phase4-document.md")
+    direct_write = re.compile(
+        r"\b(?:update|append|write|modify)\s+(?:to\s+)?`?knowledge-base/",
+        re.IGNORECASE,
+    )
+
+    assert not direct_write.search(text)
 
 
 def test_workflow_allows_kb_status_state_updates() -> None:

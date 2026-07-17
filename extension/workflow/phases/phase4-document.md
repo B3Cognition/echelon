@@ -130,7 +130,7 @@ Use the Agent tool:
 
   <instructions>
   You are AUDITOR. Read agents/learning/auditor.md for your complete protocol.
-  Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` and `calibration-dashboard.md` in `{spec_dir}/` using the provided appendices. Return journal entries in `echelon_result.journal_entries`.
+  Track AI accuracy per domain. Build the confidence profile and adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Write any durable calibration observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `extension/templates/kb-proposals/calibration-observation-proposal-template.yaml`; do not edit canonical KB files directly. Produce `confidence-flags.md` and `calibration-dashboard.md` in `{spec_dir}/` using the provided appendices. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -148,13 +148,29 @@ After CALIBRATE completes, read `confidence-flags.md`:
 Read `RUN_ID` from `runs/.current`, then run:
 
 ```bash
-RUN_ID=$(cat "${PROJECT_ROOT}/runs/.current" 2>/dev/null || true)
-echelon kb validate --run-id "${RUN_ID}" || true
-echelon kb apply --run-id "${RUN_ID}" || true
+if [ -f "${PROJECT_ROOT}/runs/.current" ]; then
+  RUN_ID=$(cat "${PROJECT_ROOT}/runs/.current")
+else
+  RUN_ID=""
+fi
+
+if echelon kb validate --run-id "${RUN_ID}"; then
+  KB_VALIDATE_EXIT=0
+else
+  KB_VALIDATE_EXIT=$?
+fi
+
+if echelon kb apply --run-id "${RUN_ID}"; then
+  KB_APPLY_EXIT=0
+else
+  KB_APPLY_EXIT=$?
+fi
 ```
 
-If validation fails, record `kb_validation_status: degraded` in
-`echelon_result.state_updates`; if apply fails, record `kb_apply_status: degraded`.
+If `KB_VALIDATE_EXIT` is non-zero, record `kb_validation_status: degraded` in
+`echelon_result.state_updates`; otherwise record it as `validated`. If
+`KB_APPLY_EXIT` is non-zero, record `kb_apply_status: degraded`; otherwise record
+it as `applied`.
 Record proposal-read or usage failures as `kb_usage_status: degraded`, and preserve
 any deterministic contract findings in `kb_contract_violations` and `kb_apply_report`.
 A KB failure does not stop finalization, agent dispatch, phase transitions, or publication.
@@ -256,7 +272,7 @@ If speckit-echelon-consolidator (CONSOLIDATOR) is unavailable, record the skip i
 
 Dispatch speckit-echelon-scorekeeper (SCOREKEEPER) to produce the final scorecard (see Section 13 for full protocol). Pass the per-agent internalization composite scores from step 12.4 so SCOREKEEPER can incorporate the internalization trend into the scorecard.
 
-Include `agents/control/appendices/scorekeeper-output-template.md` and `agents/control/appendices/scorekeeper-scoring-reference.md` in the context pack. Produce `agent-scorecard.md` using the provided template and update `knowledge-base/agent-scores.yaml`.
+Include `agents/control/appendices/scorekeeper-output-template.md` and `agents/control/appendices/scorekeeper-scoring-reference.md` in the context pack. Produce `agent-scorecard.md` using the provided template. Write durable per-agent internalization observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `extension/templates/kb-proposals/internalization-observation-proposal-template.yaml`; do not edit canonical KB files directly.
 
 Read the scorecard output and apply any automatic self-healing actions.
 
