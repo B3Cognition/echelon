@@ -1,8 +1,11 @@
 # Internalizer Output Formats
 
-## Agent Scores Storage Format
+Do not edit canonical knowledge-base files directly. Treat the structures below
+as review/proposal payload examples for deterministic KB application.
 
-Write to `knowledge-base/agent-scores.yaml` under each agent's entry:
+## Agent Scores Proposal Payload Format
+
+Use this shape when proposing an agent-score refresh under each agent's entry:
 
 ```yaml
 agents:
@@ -43,9 +46,9 @@ agents:
           timestamp: "2026-03-21T10:00:00Z"
 ```
 
-## Internalization Log Entry Fields
+## Internalization Log Proposal Fields
 
-Each entry in `internalization-log.yaml` includes:
+Each proposed internalization observation includes:
 
 - `id`: next sequential `int-NNN`
 - `run_id`: current run ID

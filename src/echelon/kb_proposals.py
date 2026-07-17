@@ -42,6 +42,66 @@ LIST_TARGET_SCHEMA_FIELDS = {
     "knowledge-base/patterns.yaml": {"schema_version": 1},
     "knowledge-base/pitfalls.yaml": {"schema_version": 1},
 }
+KNOWN_PROPOSAL_AGENTS = {
+    "speckit-echelon-adaptive",
+    "speckit-echelon-advocate",
+    "speckit-echelon-architect",
+    "speckit-echelon-auditor",
+    "speckit-echelon-benchmark",
+    "speckit-echelon-cartographer",
+    "speckit-echelon-change-controller",
+    "speckit-echelon-checkpoint",
+    "speckit-echelon-chief",
+    "speckit-echelon-code-reviewer",
+    "speckit-echelon-commander",
+    "speckit-echelon-consolidator",
+    "speckit-echelon-debugger",
+    "speckit-echelon-docs-verifier",
+    "speckit-echelon-engineering-manager",
+    "speckit-echelon-gatekeeper",
+    "speckit-echelon-gatekeeper-assess",
+    "speckit-echelon-golddigger",
+    "speckit-echelon-guardian",
+    "speckit-echelon-implementation-mapper",
+    "speckit-echelon-implementer",
+    "speckit-echelon-integrator",
+    "speckit-echelon-internalizer",
+    "speckit-echelon-investigator",
+    "speckit-echelon-maverick",
+    "speckit-echelon-mirror",
+    "speckit-echelon-modeler",
+    "speckit-echelon-monitor",
+    "speckit-echelon-oracle",
+    "speckit-echelon-orchestrator",
+    "speckit-echelon-progress-tracker",
+    "speckit-echelon-re-analyzer",
+    "speckit-echelon-re-checklister",
+    "speckit-echelon-re-constituter",
+    "speckit-echelon-re-expander",
+    "speckit-echelon-re-planner",
+    "speckit-echelon-re-specifier",
+    "speckit-echelon-re-tasker",
+    "speckit-echelon-re-validator",
+    "speckit-echelon-re-verifier",
+    "speckit-echelon-realist",
+    "speckit-echelon-sage",
+    "speckit-echelon-scorekeeper",
+    "speckit-echelon-scout",
+    "speckit-echelon-sentinel",
+    "speckit-echelon-spec-fulfillment-auditor",
+    "speckit-echelon-spec-guard",
+    "speckit-echelon-strategist",
+    "speckit-echelon-synthesizer",
+    "speckit-echelon-tech-writer",
+    "speckit-echelon-test-guardian",
+    "speckit-echelon-tracker",
+    "speckit-echelon-understanding-validate",
+    "speckit-echelon-validator",
+    "speckit-echelon-verification",
+    "speckit-echelon-veteran",
+    "speckit-echelon-visual-validator",
+}
+RESERVED_PAYLOAD_FIELDS = {"operation_id", "run_id", "source", "created_at", "confidence"}
 
 
 @dataclass(frozen=True)
@@ -133,8 +193,30 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
             report_error,
         )
 
+    preflight_report = KBApplyReport(
+        run_id=run_id,
+        status="degraded",
+        outcomes=[],
+        report_path=report_path,
+    )
     try:
-        loaded_proposals = load_proposals(proposal_dir, expected_run_id=run_id)
+        _persist_apply_report(report_path, preflight_report, yaml)
+    except Exception as exc:
+        report_error = _combine_report_errors(report_error, f"report write failed: {exc}")
+        return KBApplyReport(
+            run_id=run_id,
+            status="degraded",
+            outcomes=[],
+            report_path=report_path,
+            report_error=report_error,
+        )
+
+    try:
+        loaded_proposals = load_proposals(
+            proposal_dir,
+            expected_run_id=run_id,
+            project_root=project_root,
+        )
     except Exception as exc:
         outcomes.append(
             ProposalApplyOutcome(
@@ -155,6 +237,7 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
             report_error,
         )
 
+    mutation_snapshots: dict[Path, str] = {}
     for loaded in loaded_proposals:
         data = loaded.data or {}
         proposal_id = str(data.get("proposal_id") or loaded.path.name)
@@ -186,7 +269,12 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
             )
             continue
         try:
-            outcome = _apply_list_proposal(project_root, data, loaded.validation.operation_id)
+            outcome = _apply_list_proposal(
+                project_root,
+                data,
+                loaded.validation.operation_id,
+                mutation_snapshots,
+            )
         except Exception as exc:
             outcome = ProposalApplyOutcome(
                 proposal_id=proposal_id,
@@ -212,6 +300,7 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
         status=status,
         yaml_module=yaml,
         report_error=report_error,
+        mutation_snapshots=mutation_snapshots,
     )
 
 
@@ -247,6 +336,7 @@ def _finalize_apply_report(
     status: str,
     yaml_module: Any | None,
     report_error: str | None,
+    mutation_snapshots: dict[Path, str] | None = None,
 ) -> KBApplyReport:
     report = KBApplyReport(
         run_id=run_id,
@@ -257,12 +347,10 @@ def _finalize_apply_report(
     )
     if report_error is None and yaml_module is not None:
         try:
-            report_path.write_text(
-                yaml_module.safe_dump(report.to_dict(), sort_keys=False),
-                encoding="utf-8",
-            )
+            _persist_apply_report(report_path, report, yaml_module)
         except Exception as exc:
             report_error = f"report write failed: {exc}"
+            outcomes = _rollback_accepted_outcomes(outcomes, mutation_snapshots or {}, report_error)
             report = KBApplyReport(
                 run_id=run_id,
                 status="degraded",
@@ -273,6 +361,46 @@ def _finalize_apply_report(
     return report
 
 
+def _persist_apply_report(report_path: Path, report: KBApplyReport, yaml_module: Any) -> None:
+    _atomic_replace_text(
+        report_path,
+        yaml_module.safe_dump(report.to_dict(), sort_keys=False),
+    )
+
+
+def _rollback_accepted_outcomes(
+    outcomes: list[ProposalApplyOutcome],
+    mutation_snapshots: dict[Path, str],
+    report_error: str,
+) -> list[ProposalApplyOutcome]:
+    rollback_errors: list[str] = []
+    for target_path, original_text in mutation_snapshots.items():
+        try:
+            _atomic_replace_text(target_path, original_text)
+        except Exception as exc:
+            rollback_errors.append(f"{target_path}: {exc}")
+    reason_suffix = report_error
+    if rollback_errors:
+        reason_suffix = f"{report_error}; rollback failed: {'; '.join(rollback_errors)}"
+
+    rolled_back: list[ProposalApplyOutcome] = []
+    for outcome in outcomes:
+        if outcome.outcome == "accepted":
+            rolled_back.append(
+                ProposalApplyOutcome(
+                    proposal_id=outcome.proposal_id,
+                    operation_id=outcome.operation_id,
+                    proposal_type=outcome.proposal_type,
+                    outcome="rejected",
+                    targets=outcome.targets,
+                    reason=f"canonical mutation rolled back because apply report could not be persisted: {reason_suffix}",
+                )
+            )
+        else:
+            rolled_back.append(outcome)
+    return rolled_back
+
+
 def _combine_report_errors(existing: str | None, new: str) -> str:
     return f"{existing}; {new}" if existing else new
 
@@ -281,6 +409,7 @@ def _apply_list_proposal(
     project_root: Path,
     data: dict[str, Any],
     operation_id: str | None,
+    mutation_snapshots: dict[Path, str],
 ) -> ProposalApplyOutcome:
     import yaml
 
@@ -309,6 +438,7 @@ def _apply_list_proposal(
             data,
             operation_id,
             yaml,
+            mutation_snapshots,
         )
     finally:
         _release_target_lock(lock_path)
@@ -321,6 +451,7 @@ def _apply_locked_list_proposal(
     data: dict[str, Any],
     operation_id: str | None,
     yaml_module: Any,
+    mutation_snapshots: dict[Path, str],
 ) -> ProposalApplyOutcome:
     proposal_id = str(data["proposal_id"])
     proposal_type = str(data["proposal_type"])
@@ -328,7 +459,8 @@ def _apply_locked_list_proposal(
         return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "rejected", targets, "target file missing")
 
     try:
-        document = yaml_module.safe_load(target_path.read_text(encoding="utf-8")) or {}
+        original_text = target_path.read_text(encoding="utf-8")
+        document = yaml_module.safe_load(original_text) or {}
     except Exception as exc:
         return ProposalApplyOutcome(
             proposal_id,
@@ -374,6 +506,7 @@ def _apply_locked_list_proposal(
             f"resulting target schema invalid: {reason}",
         )
     try:
+        mutation_snapshots.setdefault(target_path, original_text)
         _atomic_replace_text(target_path, yaml_module.safe_dump(document, sort_keys=False))
     except Exception as exc:
         return ProposalApplyOutcome(
@@ -403,15 +536,17 @@ def _canonical_entry(
         payload["id"] = f"{prefix}-{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:12]}"
     if proposal_type == "sage_decision":
         payload.setdefault("was_correct", True)
-    entry: dict[str, Any] = {
-        "operation_id": operation_id,
-        "run_id": data["run_id"],
-        "source": data["agent"],
-        "created_at": data["created_at"],
-    }
+    entry: dict[str, Any] = dict(payload)
+    entry.update(
+        {
+            "operation_id": operation_id,
+            "run_id": data["run_id"],
+            "source": data["agent"],
+            "created_at": data["created_at"],
+        }
+    )
     if "confidence" in data:
         entry["confidence"] = data["confidence"]
-    entry.update(payload)
     return entry
 
 
@@ -434,11 +569,25 @@ def _project_fingerprint(project_root: Path) -> str:
     return hashlib.sha256(raw).hexdigest()[:12]
 
 
+def _artifact_exists(project_root: Path, artifact: str) -> bool:
+    artifact_path = Path(artifact)
+    if artifact_path.is_absolute():
+        return False
+    try:
+        candidate = (project_root / artifact_path).resolve()
+        root = project_root.resolve()
+        candidate.relative_to(root)
+    except (OSError, ValueError):
+        return False
+    return candidate.exists() and candidate.is_file()
+
+
 def validate_proposal_document(
     filename: str,
     data: Any,
     *,
     expected_run_id: str | None = None,
+    project_root: Path | None = None,
 ) -> ProposalValidationResult:
     issues: list[ProposalValidationIssue] = []
     if not isinstance(data, dict):
@@ -475,13 +624,8 @@ def validate_proposal_document(
     )
 
     agent = data.get("agent")
-    agent_prefix = "speckit-echelon-"
-    if (
-        not isinstance(agent, str)
-        or not agent.startswith(agent_prefix)
-        or not agent[len(agent_prefix) :].strip()
-    ):
-        issues.append(_issue("agent", "expected non-empty speckit-echelon-* identity"))
+    if not isinstance(agent, str) or agent not in KNOWN_PROPOSAL_AGENTS:
+        issues.append(_issue("agent", "expected known speckit-echelon agent identity"))
 
     proposal_type = data.get("proposal_type")
     allowed_targets = (
@@ -513,12 +657,17 @@ def validate_proposal_document(
                 issues.append(_issue(f"targets[{index}]", "target incompatible with proposal_type"))
 
     source_artifacts = data.get("source_artifacts")
+    source_artifact_set: set[str] = set()
     if not isinstance(source_artifacts, list) or not source_artifacts:
         issues.append(_issue("source_artifacts", "expected non-empty list"))
     else:
         for index, artifact in enumerate(source_artifacts):
             if not isinstance(artifact, str) or not artifact.strip():
                 issues.append(_issue(f"source_artifacts[{index}]", "expected non-empty string"))
+                continue
+            source_artifact_set.add(artifact)
+            if project_root is not None and not _artifact_exists(project_root, artifact):
+                issues.append(_issue(f"source_artifacts[{index}]", "artifact must exist under project root"))
 
     evidence_refs = data.get("evidence_refs")
     if not isinstance(evidence_refs, list) or not evidence_refs:
@@ -532,9 +681,17 @@ def validate_proposal_document(
             for key in ("artifact", "locator", "claim"):
                 if not isinstance(evidence.get(key), str) or not evidence[key].strip():
                     issues.append(_issue(f"{base}.{key}", "expected non-empty string"))
+            artifact = evidence.get("artifact")
+            if isinstance(artifact, str) and artifact.strip() and artifact not in source_artifact_set:
+                issues.append(_issue(f"{base}.artifact", "expected artifact declared in source_artifacts"))
 
-    if not isinstance(data.get("payload"), dict):
+    payload = data.get("payload")
+    if not isinstance(payload, dict):
         issues.append(_issue("payload", "expected mapping"))
+    else:
+        for key in sorted(RESERVED_PAYLOAD_FIELDS):
+            if key in payload:
+                issues.append(_issue(f"payload.{key}", "reserved for deterministic KB applier"))
 
     _validate_payload(data, issues)
     return _result(issues, operation_id=operation_id)
@@ -544,6 +701,7 @@ def load_proposals(
     proposal_dir: Path,
     *,
     expected_run_id: str | None = None,
+    project_root: Path | None = None,
 ) -> list[LoadedProposal]:
     if not proposal_dir.exists():
         return []
@@ -579,6 +737,7 @@ def load_proposals(
             path.name,
             data,
             expected_run_id=expected_run_id,
+            project_root=project_root,
         )
         proposal_id = data.get("proposal_id") if isinstance(data, dict) else None
         if isinstance(proposal_id, str) and proposal_id.strip():

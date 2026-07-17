@@ -22,8 +22,8 @@ NEVER assume quality improved because more artifacts or explanations were produc
 ALWAYS report stagnation, regression, and confirmation-bias signals clearly when detected.
 NEVER suppress bad news to keep the run moving.
 
-### Rule 3 - Recoverable Knowledge Updates
-ALWAYS archive stale or low-confidence knowledge-base entries with an audit trail.
+### Rule 3 - Recoverable Knowledge Recommendations
+ALWAYS record stale or low-confidence knowledge-base entries as reviewable recommendations with an audit trail.
 NEVER delete learning history outright or fabricate comparisons on first runs.
 
 ## Inputs
@@ -118,13 +118,16 @@ If no recommendations pass the confidence gate, always omit the file; do not pro
 - **`bias-check.md`** — Only produced if bias detected. Lists stale patterns and confirmation bias indicators.
 - **`prompt-recommendations.md`** — Only produced if evidence-backed recommendations exist. Contains specific, actionable prompt change suggestions with evidence chain.
 
-### Knowledge Base Updates
+### Knowledge Base Recommendations
 
-Update entry statuses in `patterns.yaml` and `pitfalls.yaml`:
-- Set `status: stale` for entries older than 6 months with no matching feedback
-- Set `status: low_confidence` for entries with accuracy < 0.4
-- Move entries flagged `stale` AND `low_confidence` for 2 consecutive runs to `knowledge-base/archive/`
-- Respect maximum of 200 active entries per file — archive oldest when exceeded
+Do not edit canonical knowledge-base files directly. Canonical writes are owned by
+deterministic KB application and review after FINALIZE.
+
+Write stale-entry and low-confidence recommendations to run/spec review artifacts:
+- Recommend `status: stale` for entries older than 6 months with no matching feedback.
+- Recommend `status: low_confidence` for entries with accuracy < 0.4.
+- Recommend archival review for entries flagged `stale` AND `low_confidence` for 2 consecutive runs.
+- Recommend capacity review when an active file exceeds 200 entries.
 
 ### Stagnation Response
 
@@ -144,7 +147,7 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 ## Constraints
 
 - Always observe and report. Do NOT modify artifacts from other agents.
-- Always move knowledge base removals to archive with an audit trail. Do NOT delete entries outright.
+- Always recommend knowledge-base removals with an audit trail. Do NOT delete entries outright.
 - Always report quality decline clearly. Do NOT suppress bad news.
 - Keep evolution-report.md factual. Diffs, not opinions.
 - On first run, always produce only the baseline snapshot — do not fabricate comparisons.

@@ -180,3 +180,30 @@ def test_workflow_allows_kb_status_state_updates() -> None:
         "kb_apply_report",
     ]:
         assert key in text
+
+
+def test_adaptive_records_staleness_as_review_artifacts_not_canonical_mutations() -> None:
+    text = _read("extension/agents/learning/adaptive.md")
+
+    assert "Do not edit canonical knowledge-base files directly" in text
+    direct_write = re.compile(
+        r"\b(?:write|update|append|modify|move|archive|set)\b[^\n]{0,180}`?(?:knowledge-base/)?(?:patterns|pitfalls)\.yaml|knowledge-base/archive/",
+        re.IGNORECASE,
+    )
+
+    assert not direct_write.search(text)
+
+
+def test_learning_appendices_do_not_instruct_canonical_kb_writes() -> None:
+    for path in [
+        "extension/agents/learning/appendices/internalizer-output-formats.md",
+        "extension/agents/learning/appendices/auditor-output-formats.md",
+    ]:
+        text = _read(path)
+        direct_write = re.compile(
+            r"\b(?:write|update|append|modify|move|archive|set)\b[^\n]{0,180}`?knowledge-base/",
+            re.IGNORECASE,
+        )
+
+        assert "Do not edit canonical knowledge-base files directly" in text
+        assert not direct_write.search(text)

@@ -51,6 +51,12 @@ def _base_proposal(**overrides):
     return data
 
 
+def _write_traceable_artifact(project: Path, run_id: str = "squad-001") -> None:
+    artifact = project / "runs" / run_id / "reasoning-journal.jsonl"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text('{"id":"RJ-001","claim":"traceable"}\n', encoding="utf-8")
+
+
 def test_publish_kb_reports_copies_apply_report_to_spec_dir(tmp_path: Path) -> None:
     project = tmp_path
     run_dir = project / "runs" / "squad-001"
@@ -121,6 +127,39 @@ def test_valid_pattern_proposal_passes() -> None:
     assert result.issues == []
 
 
+def test_validate_with_project_root_rejects_missing_source_artifact(tmp_path: Path) -> None:
+    result = validate_proposal_document(
+        "kb-prop-0001.yaml",
+        _base_proposal(),
+        project_root=tmp_path,
+    )
+
+    assert result.ok is False
+    assert any(issue.path == "source_artifacts[0]" for issue in result.issues)
+
+
+def test_validate_with_project_root_accepts_traceable_source_artifact(tmp_path: Path) -> None:
+    _write_traceable_artifact(tmp_path)
+
+    result = validate_proposal_document(
+        "kb-prop-0001.yaml",
+        _base_proposal(),
+        expected_run_id="squad-001",
+        project_root=tmp_path,
+    )
+
+    assert result.ok is True
+
+
+def test_rejects_fictitious_speckit_agent_identity() -> None:
+    proposal = _base_proposal(agent="speckit-echelon-invented")
+
+    result = validate_proposal_document("bad-agent.yaml", proposal)
+
+    assert result.ok is False
+    assert any(issue.path == "agent" for issue in result.issues)
+
+
 @pytest.mark.parametrize("value", [[["journal.jsonl"]], [None], [1]])
 def test_rejects_non_string_source_artifacts(value) -> None:
     proposal = _base_proposal(source_artifacts=value)
@@ -146,6 +185,46 @@ def test_rejects_invalid_evidence_references(value) -> None:
 
     assert result.ok is False
     assert any(issue.path.startswith("evidence_refs[0]") for issue in result.issues)
+
+
+def test_rejects_evidence_reference_not_declared_as_source_artifact() -> None:
+    proposal = _base_proposal(
+        source_artifacts=["runs/squad-001/other.jsonl"],
+        evidence_refs=[
+            {
+                "artifact": "runs/squad-001/reasoning-journal.jsonl",
+                "locator": "RJ-001",
+                "claim": "WHY3 passed.",
+            }
+        ],
+    )
+
+    result = validate_proposal_document("bad-evidence.yaml", proposal)
+
+    assert result.ok is False
+    assert any(issue.path == "evidence_refs[0].artifact" for issue in result.issues)
+
+
+def test_rejects_reserved_payload_provenance_fields() -> None:
+    proposal = _base_proposal(
+        payload={
+            **_base_proposal()["payload"],
+            "operation_id": "forged/run",
+            "run_id": "forged-run",
+            "source": "speckit-echelon-invented",
+            "created_at": "1999-01-01T00:00:00Z",
+        }
+    )
+
+    result = validate_proposal_document("bad-payload.yaml", proposal)
+
+    assert result.ok is False
+    assert {issue.path for issue in result.issues} >= {
+        "payload.operation_id",
+        "payload.run_id",
+        "payload.source",
+        "payload.created_at",
+    }
 
 
 @pytest.mark.parametrize("agent", ["mirror", "speckit-echelon-"])
@@ -248,6 +327,7 @@ def test_rejects_boolean_confidence() -> None:
 
 def test_apply_valid_pattern_writes_canonical_entry(tmp_path: Path) -> None:
     project = tmp_path
+    _write_traceable_artifact(project)
     kb = project / "knowledge-base"
     kb.mkdir()
     (kb / "patterns.yaml").write_text(
@@ -273,6 +353,7 @@ def test_apply_valid_pattern_writes_canonical_entry(tmp_path: Path) -> None:
 
 def test_apply_sage_entry_defaults_correctness_and_passes_canonical_schema(tmp_path: Path) -> None:
     project = tmp_path
+    _write_traceable_artifact(project)
     kb = project / "knowledge-base"
     kb.mkdir()
     target = kb / "sage-decisions.yaml"
@@ -303,6 +384,7 @@ def test_apply_sage_entry_defaults_correctness_and_passes_canonical_schema(tmp_p
 
 def test_apply_rejects_new_sage_entry_that_fails_canonical_validation(tmp_path: Path) -> None:
     project = tmp_path
+    _write_traceable_artifact(project)
     kb = project / "knowledge-base"
     kb.mkdir()
     target = kb / "sage-decisions.yaml"
@@ -350,6 +432,7 @@ def test_load_proposals_rejects_later_duplicate_proposal_id(tmp_path: Path) -> N
 
 def test_apply_mixed_run_is_degraded_when_one_proposal_is_rejected(tmp_path: Path) -> None:
     project = tmp_path
+    _write_traceable_artifact(project)
     kb = project / "knowledge-base"
     kb.mkdir()
     (kb / "patterns.yaml").write_text("schema_version: 1\nentries: []\n", encoding="utf-8")
@@ -367,6 +450,7 @@ def test_apply_mixed_run_is_degraded_when_one_proposal_is_rejected(tmp_path: Pat
 
 def test_apply_invalid_and_valid_mixed_run_continues(tmp_path: Path) -> None:
     project = tmp_path
+    _write_traceable_artifact(project)
     kb = project / "knowledge-base"
     kb.mkdir()
     (kb / "patterns.yaml").write_text(
@@ -386,6 +470,7 @@ def test_apply_invalid_and_valid_mixed_run_continues(tmp_path: Path) -> None:
 
 def test_apply_duplicate_operation_is_skipped(tmp_path: Path) -> None:
     project = tmp_path
+    _write_traceable_artifact(project)
     kb = project / "knowledge-base"
     kb.mkdir()
     (kb / "patterns.yaml").write_text(
@@ -411,6 +496,7 @@ def test_apply_duplicate_operation_is_skipped(tmp_path: Path) -> None:
 
 def test_apply_rejects_invalid_result_without_writing(tmp_path: Path) -> None:
     project = tmp_path
+    _write_traceable_artifact(project)
     kb = project / "knowledge-base"
     kb.mkdir()
     target = kb / "patterns.yaml"
@@ -431,6 +517,7 @@ def test_apply_rejects_invalid_result_without_writing(tmp_path: Path) -> None:
 
 def test_apply_preserves_preexisting_target_schema_debt_and_appends(tmp_path: Path) -> None:
     project = tmp_path
+    _write_traceable_artifact(project)
     kb = project / "knowledge-base"
     kb.mkdir()
     target = kb / "patterns.yaml"
@@ -467,6 +554,7 @@ def test_project_fingerprint_is_stable_independent_of_cwd(tmp_path: Path, monkey
 
 def test_apply_malformed_target_continues_to_valid_proposal(tmp_path: Path) -> None:
     project = tmp_path
+    _write_traceable_artifact(project)
     kb = project / "knowledge-base"
     kb.mkdir()
     (kb / "patterns.yaml").write_text("schema_version: [", encoding="utf-8")
@@ -502,6 +590,7 @@ def test_apply_malformed_target_continues_to_valid_proposal(tmp_path: Path) -> N
 
 def test_apply_atomic_target_write_failure_preserves_original(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path
+    _write_traceable_artifact(project)
     kb = project / "knowledge-base"
     kb.mkdir()
     target = kb / "patterns.yaml"
@@ -529,6 +618,7 @@ def test_apply_atomic_target_write_failure_preserves_original(tmp_path: Path, mo
 
 def test_apply_lock_contention_rejects_without_mutating_target(tmp_path: Path) -> None:
     project = tmp_path
+    _write_traceable_artifact(project)
     kb = project / "knowledge-base"
     kb.mkdir()
     target = kb / "patterns.yaml"
@@ -547,8 +637,9 @@ def test_apply_lock_contention_rejects_without_mutating_target(tmp_path: Path) -
     assert target.read_text(encoding="utf-8") == original
 
 
-def test_report_write_failure_returns_degraded_report(tmp_path: Path, monkeypatch) -> None:
+def test_report_write_failure_rolls_back_canonical_mutation(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path
+    _write_traceable_artifact(project)
     kb = project / "knowledge-base"
     kb.mkdir()
     target = kb / "patterns.yaml"
@@ -556,21 +647,54 @@ def test_report_write_failure_returns_degraded_report(tmp_path: Path, monkeypatc
     proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
     proposal_dir.mkdir(parents=True)
     (proposal_dir / "report-failure.yaml").write_text(yaml.safe_dump(_base_proposal()), encoding="utf-8")
-    report_path = project / "runs" / "squad-001" / "kb-apply-report.yaml"
-    original_write_text = Path.write_text
+    original = target.read_text(encoding="utf-8")
+    original_replace = kb_proposals.os.replace
+    calls = {"report_writes": 0}
 
-    def fail_report_write(path: Path, *args, **kwargs):
-        if path == report_path:
-            raise OSError("report filesystem is unavailable")
-        return original_write_text(path, *args, **kwargs)
+    def fail_final_report_replace(source: Path, destination: Path):
+        if destination == project / "runs" / "squad-001" / "kb-apply-report.yaml":
+            calls["report_writes"] += 1
+            if calls["report_writes"] > 1:
+                raise OSError("report filesystem is unavailable")
+        return original_replace(source, destination)
 
-    monkeypatch.setattr(Path, "write_text", fail_report_write)
+    monkeypatch.setattr(kb_proposals.os, "replace", fail_final_report_replace)
 
     report = apply_proposals(project, "squad-001")
 
     assert report.status == "degraded"
-    assert report.accepted_count == 1
+    assert report.accepted_count == 0
+    assert report.rejected_count == 1
     assert "report filesystem is unavailable" in (report.report_error or "")
+    assert target.read_text(encoding="utf-8") == original
+
+
+def test_report_preflight_failure_skips_canonical_mutation(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path
+    _write_traceable_artifact(project)
+    kb = project / "knowledge-base"
+    kb.mkdir()
+    target = kb / "patterns.yaml"
+    original = "schema_version: 1\nappend_only: true\nentries: []\n"
+    target.write_text(original, encoding="utf-8")
+    proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+    (proposal_dir / "preflight-failure.yaml").write_text(yaml.safe_dump(_base_proposal()), encoding="utf-8")
+    original_replace = kb_proposals.os.replace
+
+    def fail_report_replace(source: Path, destination: Path):
+        if destination == project / "runs" / "squad-001" / "kb-apply-report.yaml":
+            raise OSError("report filesystem is unavailable")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(kb_proposals.os, "replace", fail_report_replace)
+
+    report = apply_proposals(project, "squad-001")
+
+    assert report.status == "degraded"
+    assert report.accepted_count == 0
+    assert "report filesystem is unavailable" in (report.report_error or "")
+    assert target.read_text(encoding="utf-8") == original
 
 
 def test_project_fingerprint_prefers_git_origin(tmp_path: Path) -> None:
