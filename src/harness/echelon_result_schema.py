@@ -64,6 +64,23 @@ RESERVED_STATE_UPDATE_KEYS = frozenset({
     "updated_at",
 })
 
+PRODUCT_INPUT_DISPOSITIONS = frozenset({
+    "included",
+    "excluded",
+    "duplicate",
+    "open_question",
+    "conflict",
+})
+
+PRODUCT_INPUT_UPDATE_FIELDS = frozenset({
+    "input_unit_id",
+    "disposition",
+    "rationale",
+    "spec_ids",
+    "task_ids",
+    "targets",
+})
+
 
 def validate_echelon_result(
     payload: Any,
@@ -155,11 +172,47 @@ def validate_echelon_result(
 
     product_input_updates = result.get("product_input_updates")
     if product_input_updates is not None:
-        if not isinstance(product_input_updates, list) or not all(
-            isinstance(item, dict) for item in product_input_updates
-        ):
+        if not isinstance(product_input_updates, list):
             raise EchelonResultValidationError(
                 "echelon_result.product_input_updates must be a list of objects"
             )
+        for index, update in enumerate(product_input_updates):
+            field_path = f"echelon_result.product_input_updates[{index}]"
+            if not isinstance(update, dict):
+                raise EchelonResultValidationError(
+                    "echelon_result.product_input_updates must be a list of objects"
+                )
+            missing_fields = PRODUCT_INPUT_UPDATE_FIELDS - update.keys()
+            if missing_fields:
+                raise EchelonResultValidationError(
+                    f"{field_path} is missing required field(s): "
+                    + ", ".join(sorted(missing_fields))
+                )
+            unexpected_fields = update.keys() - PRODUCT_INPUT_UPDATE_FIELDS
+            if unexpected_fields:
+                raise EchelonResultValidationError(
+                    f"{field_path} has unsupported field(s): "
+                    + ", ".join(sorted(unexpected_fields))
+                )
+            for field in ("input_unit_id", "rationale"):
+                value = update[field]
+                if not isinstance(value, str) or not value.strip():
+                    raise EchelonResultValidationError(
+                        f"{field_path}.{field} must be a non-empty string"
+                    )
+            disposition = update["disposition"]
+            if disposition not in PRODUCT_INPUT_DISPOSITIONS:
+                allowed = ", ".join(sorted(PRODUCT_INPUT_DISPOSITIONS))
+                raise EchelonResultValidationError(
+                    f"{field_path}.disposition must be one of: {allowed}"
+                )
+            for field in ("spec_ids", "task_ids", "targets"):
+                values = update[field]
+                if not isinstance(values, list) or not all(
+                    isinstance(value, str) and value.strip() for value in values
+                ):
+                    raise EchelonResultValidationError(
+                        f"{field_path}.{field} must be a list of non-empty strings"
+                    )
 
     return result

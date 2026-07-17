@@ -150,6 +150,37 @@ def test_bad_journal_entries_type_is_rejected():
         })
 
 
+def test_product_input_updates_require_the_canonical_traceability_fields():
+    with pytest.raises(EchelonResultValidationError, match="input_unit_id"):
+        validate_echelon_result({
+            "verdict": "DONE",
+            "state_updates": {},
+            "product_input_updates": [{
+                "unit": "IN-REQ-123",
+                "disposition": "adopted",
+                "mapped": ["FR-001"],
+                "rationale": "Natural-language aliases must not bypass the contract.",
+            }],
+        })
+
+
+def test_product_input_updates_accept_a_phase_one_mapping_without_tasks():
+    result = validate_echelon_result({
+        "verdict": "DONE",
+        "state_updates": {},
+        "product_input_updates": [{
+            "input_unit_id": "IN-REQ-123",
+            "disposition": "included",
+            "rationale": "Captured by the specification.",
+            "spec_ids": ["FR-001", "AC-001"],
+            "task_ids": [],
+            "targets": [],
+        }],
+    })
+
+    assert result["product_input_updates"][0]["input_unit_id"] == "IN-REQ-123"
+
+
 def test_reserved_harness_state_key_is_rejected():
     with pytest.raises(EchelonResultValidationError, match="last_dispatch"):
         validate_echelon_result({

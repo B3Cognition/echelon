@@ -222,6 +222,11 @@ def test_prompt_contract_uses_snapshot_paths_and_structured_updates() -> None:
     assert "Requirement inputs are normative" in prompt
     assert "immutable snapshot paths" in prompt
     assert "product_input_updates" in prompt
+    assert "input_unit_id: <IN-REQ-* ID from PRODUCT_INPUT_CATALOG>" in prompt
+    assert "disposition: <included|excluded|duplicate|open_question|conflict>" in prompt
+    assert "spec_ids: [FR-001, AC-001]" in prompt
+    assert "task_ids: []" in prompt
+    assert "targets: []" in prompt
 
 
 def test_phase_a_publication_copies_evidence_only_after_traceability_is_ready(tmp_path: Path) -> None:

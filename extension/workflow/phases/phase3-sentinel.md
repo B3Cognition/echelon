@@ -30,7 +30,7 @@ Use the Agent tool to dispatch a subagent with:
   </context>
 
   <instructions>
-  You are SENTINEL. Read agents/solution/sentinel.md for your complete protocol. When Product Input Contract paths are present, confirm each included `IN-REQ-*` unit reaches at least one mapped acceptance criterion and target-owned task; return corrective `product_input_updates` rather than editing the ledger.
+  You are SENTINEL. Read agents/solution/sentinel.md for your complete protocol. When Product Input Contract paths are present, confirm each included `IN-REQ-*` unit reaches at least one mapped acceptance criterion and target-owned task; return corrective `product_input_updates` using the exact canonical fields `input_unit_id`, `disposition`, `rationale`, `spec_ids`, `task_ids`, and `targets`, rather than editing the ledger.
   Produce a comprehensive test strategy from plan.md + data-model.md + spec.md acceptance criteria. Use the testability sub-metrics from quality-gates.md (hard_constraint_ratio, constraint_density, negative_space_coverage) to identify which testability dimension is weakest and prioritize test effort accordingly. Map every acceptance criterion to a test approach. Define the test pyramid. Identify boundary value cases. If acceptance criteria have no testable form, flag them for routing back to speckit-echelon-cartographer (CARTOGRAPHER). Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```

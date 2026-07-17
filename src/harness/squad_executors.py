@@ -69,12 +69,24 @@ _FALLBACK_ECHELON_RESULT_TEMPLATE = """# Echelon result contract template.
 # - NEVER wrap this block in markdown fences such as ```yaml or ```echelon_result.
 # - NEVER emit `<echelon_result>` XML, JSON, or prose-only summaries as the contract.
 # - NEVER put summaries, bullets, or sign-off text after the echelon_result block.
+# - Include product_input_updates only when the Product Input Contract is present
+#   and this agent proposes a ledger change. Its keys are a strict API contract:
+#   input_unit_id, disposition, rationale, spec_ids, task_ids, targets.
+# - NEVER use aliases such as unit, adopted, or mapped in product_input_updates.
 
 echelon_result:
   verdict: <DONE|COMPLETE|PASS|FAIL|BLOCKED|KILL|DEFER>
   output_files:
     - <path/to/artifact.md>
   state_updates: {}
+  # Omit this section when there is no Product Input Contract or no ledger change.
+  product_input_updates:
+    - input_unit_id: <IN-REQ-* ID from PRODUCT_INPUT_CATALOG>
+      disposition: <included|excluded|duplicate|open_question|conflict>
+      rationale: <evidence-backed reason for this disposition>
+      spec_ids: [FR-001, AC-001]
+      task_ids: []
+      targets: []
   journal_entries:
     - type: insight
       data:
@@ -218,6 +230,16 @@ def _render_product_input_context(state: dict) -> str:
         "- Read only immutable snapshot paths named by the manifest and catalog. Do not add undeclared inputs.",
         "- Cite stable input unit IDs when adopting or challenging product evidence.",
         "- Propose ledger changes only in echelon_result.product_input_updates; the controller validates and writes the canonical ledger.",
+        "- Each product_input_updates item must contain exactly: input_unit_id, disposition, rationale, spec_ids, task_ids, targets.",
+        "- disposition is exactly one of: included, excluded, duplicate, open_question, conflict. Never use aliases such as unit, adopted, or mapped.",
+        "- In Phase 1, use spec_ids for FR/AC mappings and return task_ids: [] and targets: []. Later planning phases fill task_ids and targets.",
+        "- Required item shape:",
+        "  input_unit_id: <IN-REQ-* ID from PRODUCT_INPUT_CATALOG>",
+        "  disposition: <included|excluded|duplicate|open_question|conflict>",
+        "  rationale: <evidence-backed reason for this disposition>",
+        "  spec_ids: [FR-001, AC-001]",
+        "  task_ids: []",
+        "  targets: []",
         "",
     ])
 

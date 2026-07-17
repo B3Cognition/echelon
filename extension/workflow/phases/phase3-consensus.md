@@ -105,7 +105,7 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
 
   <instructions>
   You are ORCHESTRATOR. Read agents/solution/orchestrator.md for your complete protocol. Operate as PLAN2 — consensus-phase plan revision.
-  When Product Input Contract paths are present, repair any requirement mapping that lacks a canonical target-owned task and return `product_input_updates`; do not edit the controller-owned ledger directly.
+  When Product Input Contract paths are present, repair any requirement mapping that lacks a canonical target-owned task and return `product_input_updates` using the exact canonical fields `input_unit_id`, `disposition`, `rationale`, `spec_ids`, `task_ids`, and `targets`; do not edit the controller-owned ledger directly.
   Treat `constitution.md` as read-only governance context. Do not edit, rewrite, append to, or output `constitution.md`.
   Re-evaluate task dependencies and task-to-spec coverage against spec.md, plan.md, contracts/, coverage-map.md, WHY3 issues, and ASSESS2 implementability feedback. Update critical path if sequencing changed. Validate all specialist and test-strategy outputs have corresponding tasks. Incorporate implementability feedback — split unclear tasks, add missing context, and add missing requirement/test tasks. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
