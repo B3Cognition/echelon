@@ -32,8 +32,20 @@ printf -- "---\ntargets:\n  - repo-a\n  - repo-b\n---\n# spec\n" \
 for artifact in plan.md research.md data-model.md; do
   printf '# %s\n' "$artifact" > "$tmpdir/specs/024-test/$artifact"
 done
-printf -- '- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none\n' \
-  > "$tmpdir/specs/024-test/tasks.md"
+for artifact in test-strategy.md test-architecture.md coverage-map.md; do
+  printf '# %s\n' "$artifact" > "$tmpdir/specs/024-test/$artifact"
+done
+cat > "$tmpdir/specs/024-test/tasks.md" <<'TASKS'
+- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none target=repo-a
+
+  **Files:**
+  - `repo-a/src/main.py` - repo-a implementation
+
+- [ ] T-002 complexity=standard phase=build req=FR-002 depends=none target=repo-b
+
+  **Files:**
+  - `repo-b/src/main.py` - repo-b implementation
+TASKS
 printf '# Constitution\n\nPrinciples are defined for this project.\n' \
   > "$tmpdir/specs/024-test/constitution.md"
 

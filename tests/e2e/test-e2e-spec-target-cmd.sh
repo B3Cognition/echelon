@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E2E: echelon spec target command — writes/replaces targets: frontmatter
+# E2E: echelon spec target command — refuses post-hoc target mutation.
 # Runs in isolated tmpdir; uses Python module directly (no installed binary needed).
 set -uo pipefail
 . "$(cd "$(dirname -- "$0")/.." && pwd)/utils/python-detect.sh"
@@ -40,59 +40,36 @@ trap 'rm -rf "$tmpdir"' EXIT
 mkdir -p "$tmpdir/specs/024-psd-import"
 printf '# PSD Import Spec\n' > "$tmpdir/specs/024-psd-import/spec.md"
 
-# ── Test 1: write single target ───────────────────────────────────────────────
-PYTHONPATH="$PYTHONPATH" $PYTHON -c "
+# ── Test 1: target mutation is rejected and writes no metadata ────────────────
+set +e
+target_output="$(PYTHONPATH="$PYTHONPATH" $PYTHON -c "
 import os, sys
 os.chdir('$tmpdir')
 from echelon.cli import _cmd_spec_target
 _cmd_spec_target(['024', 'og-platform'])
-" > /dev/null 2>&1
+" 2>&1)"
+target_rc=$?
+set -e
 
-result="$(PYTHONPATH="$PYTHONPATH" $PYTHON -c "
-import re, sys
-sys.path.insert(0, '$REPO_ROOT/src')
-from harness.spec_frontmatter import read_frontmatter
-from pathlib import Path
-data = read_frontmatter(Path('$tmpdir/specs/024-psd-import'))
-print(data.get('targets', []))
-")"
-if [[ "$result" == "['og-platform']" ]]; then
-  assert "single target written" "$(ok_result)"
+if [[ "$target_rc" -eq 2 ]]; then
+  assert "post-hoc target mutation exits 2" "$(ok_result)"
 else
-  assert "single target written" "$(fail_result " got: $result")"
+  assert "post-hoc target mutation exits 2" "$(fail_result " rc=$target_rc output=$target_output")"
 fi
 
-# ── Test 2: replace with multiple targets ─────────────────────────────────────
-PYTHONPATH="$PYTHONPATH" $PYTHON -c "
-import os, sys
-os.chdir('$tmpdir')
-from echelon.cli import _cmd_spec_target
-_cmd_spec_target(['024', 'og-platform', 'fet-frontend-libs'])
-" > /dev/null 2>&1
-
-result="$(PYTHONPATH="$PYTHONPATH" $PYTHON -c "
-import sys
-sys.path.insert(0, '$REPO_ROOT/src')
-from harness.spec_frontmatter import read_frontmatter
-from pathlib import Path
-data = read_frontmatter(Path('$tmpdir/specs/024-psd-import'))
-print(data.get('targets', []))
-")"
-if [[ "$result" == "['og-platform', 'fet-frontend-libs']" ]]; then
-  assert "multiple targets written" "$(ok_result)"
+if [[ "$target_output" == *"no longer mutates generated specifications"* ]]; then
+  assert "post-hoc target mutation explains replacement workflow" "$(ok_result)"
 else
-  assert "multiple targets written" "$(fail_result " got: $result")"
+  assert "post-hoc target mutation explains replacement workflow" "$(fail_result " output=$target_output")"
 fi
 
-# ── Test 3: no duplication on rewrite ─────────────────────────────────────────
-targets_count="$(grep -c '^targets:' "$tmpdir/specs/024-psd-import/targets.yml" || true)"
-if [[ "$targets_count" == "1" ]]; then
-  assert "no duplication on rewrite" "$(ok_result)"
+if [[ ! -e "$tmpdir/specs/024-psd-import/targets.yml" ]]; then
+  assert "post-hoc target mutation writes no targets.yml" "$(ok_result)"
 else
-  assert "no duplication on rewrite" "$(fail_result " targets: appears $targets_count times")"
+  assert "post-hoc target mutation writes no targets.yml" "$(fail_result " targets.yml exists")"
 fi
 
-# ── Test 4: ambiguous spec id exits non-zero, writes nothing ──────────────────
+# ── Test 2: ambiguous spec id still writes nothing ────────────────────────────
 mkdir -p "$tmpdir/specs/024-alpha"
 printf '# alpha\n' > "$tmpdir/specs/024-alpha/spec.md"
 

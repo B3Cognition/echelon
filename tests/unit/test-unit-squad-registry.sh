@@ -2,6 +2,7 @@
 # test-unit-squad-registry.sh — structural validation for squad harness
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+. "$ROOT/tests/utils/python-detect.sh"
 PASS=0; FAIL=0
 
 assert_eq() {
@@ -34,7 +35,7 @@ CMD_LINES=$(wc -l < "$ROOT/extension/agents/control/commander.md")
 assert_le "$CMD_LINES" 350 "commander.md ≤ 350 lines"
 
 # 3. All phase types in definition.yaml have a registered executor
-TYPES=$(python3 -c "
+TYPES=$("$PYTHON" -c "
 import yaml, sys
 sys.path.insert(0, '$ROOT/src')
 d = yaml.safe_load(open('$ROOT/extension/workflow/definition.yaml'))
@@ -61,7 +62,7 @@ fi
 # 4. All new harness modules importable
 # Use python3 on PATH (not ~/.echelon/venv, which does not exist in CI) — the
 # block inserts $ROOT/src on sys.path, so it imports from the source tree.
-python3 -c "
+"$PYTHON" -c "
 import sys
 sys.path.insert(0, '$ROOT/src')
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
