@@ -30,9 +30,13 @@ def test_context7_cli_runtime_is_pinned_and_extension_local() -> None:
 def test_install_script_installs_context7_with_npm_ci() -> None:
     install_script = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
 
+    assert 'NODE_RUNTIME_ROOT="${ECHELON_HOME:-$HOME/.echelon}/node"' in install_script
     assert 'CTX7_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/context7"' in install_script
-    assert 'CTX7_NODE_DIR="$HOME/.echelon/node/context7"' in install_script
-    assert 'cp "$CTX7_SOURCE_DIR/package.json" "$CTX7_SOURCE_DIR/package-lock.json" "$CTX7_NODE_DIR/"' in install_script
+    assert 'CTX7_NODE_DIR="$NODE_RUNTIME_ROOT/context7"' in install_script
+    assert (
+        '_refresh_node_runtime "$CTX7_SOURCE_DIR" "$CTX7_NODE_DIR" dist'
+        in install_script
+    )
     assert 'npm ci --prefix "$CTX7_NODE_DIR"' in install_script
     assert "Context7 CLI dependencies installed" in install_script
     assert "context7-mcp" not in install_script

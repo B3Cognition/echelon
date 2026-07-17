@@ -17,12 +17,22 @@ CODEGRAPH_PACKAGE = "@colbymchenry/codegraph"
 CODEGRAPH_VERSION = "1.4.1"
 
 
-def test_install_script_installs_re_node_dependencies_with_npm_ci():
+def test_install_script_installs_codegraph_in_shared_runtime_with_npm_ci():
     install_script = (EXT_ROOT / "scripts" / "install.sh").read_text()
 
-    assert "CODEGRAPH_NODE_DIR=" in install_script
+    assert 'NODE_RUNTIME_ROOT="${ECHELON_HOME:-$HOME/.echelon}/node"' in install_script
+    assert (
+        'CODEGRAPH_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/codegraph"'
+        in install_script
+    )
+    assert 'CODEGRAPH_NODE_DIR="$NODE_RUNTIME_ROOT/codegraph"' in install_script
+    assert (
+        '_refresh_node_runtime "$CODEGRAPH_SOURCE_DIR" "$CODEGRAPH_NODE_DIR" vendor dist'
+        in install_script
+    )
     assert 'npm ci --prefix "$CODEGRAPH_NODE_DIR"' in install_script
     assert "CodeGraph bridge" in install_script
+    assert 'npm ci --prefix "$CODEGRAPH_SOURCE_DIR"' not in install_script
 
 
 def test_install_script_supports_optional_codegraph_cli_without_mcp_install():
