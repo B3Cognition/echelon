@@ -101,6 +101,8 @@ def test_openai_compatible_backend_posts_chat_completion(tmp_path, monkeypatch) 
     monkeypatch.setenv("LOCAL_LLM_API_KEY", "secret-token")
 
     class FakeResponse:
+        status = 200
+
         def __enter__(self):
             return self
 
@@ -139,6 +141,7 @@ def test_openai_compatible_backend_posts_chat_completion(tmp_path, monkeypatch) 
     assert result.exit_code == 0
     assert result.stdout == "echelon_result:\n  verdict: DONE\n"
     assert result.token_usage == 12
+    assert result.metadata["http_status"] == 200
     assert captured["url"] == "http://127.0.0.1:8000/v1/chat/completions"
     assert captured["timeout"] == 12.5
     assert captured["headers"]["Authorization"] == "Bearer secret-token"
@@ -533,6 +536,7 @@ def test_openai_compatible_backend_streams_sse_and_excludes_reasoning(
     captured = {}
 
     class FakeResponse:
+        status = 200
         headers = {"Content-Type": "text/event-stream"}
 
         def __init__(self) -> None:
@@ -578,6 +582,7 @@ def test_openai_compatible_backend_streams_sse_and_excludes_reasoning(
     assert captured["payload"]["stream"] is True
     assert captured["payload"]["stream_options"] == {"include_usage": True}
     assert captured["timeout"] == 12.5
+    assert result.metadata["http_status"] == 200
     assert result.metadata["streamed"] is True
     assert result.metadata["finish_reason"] == "stop"
     assert result.metadata["reasoning_content_observed"] is True
