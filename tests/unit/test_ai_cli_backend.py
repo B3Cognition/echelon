@@ -102,6 +102,11 @@ def test_openai_compatible_backend_posts_chat_completion(tmp_path, monkeypatch) 
 
     class FakeResponse:
         status = 200
+        headers = {
+            "Content-Type": "application/json",
+            "X-Request-ID": "req_123",
+            "Set-Cookie": "session=secret",
+        }
 
         def __enter__(self):
             return self
@@ -142,6 +147,10 @@ def test_openai_compatible_backend_posts_chat_completion(tmp_path, monkeypatch) 
     assert result.stdout == "echelon_result:\n  verdict: DONE\n"
     assert result.token_usage == 12
     assert result.metadata["http_status"] == 200
+    assert result.metadata["raw_response_headers"] == {
+        "content-type": "application/json",
+        "x-request-id": "req_123",
+    }
     assert captured["url"] == "http://127.0.0.1:8000/v1/chat/completions"
     assert captured["timeout"] == 12.5
     assert captured["headers"]["Authorization"] == "Bearer secret-token"
@@ -537,7 +546,10 @@ def test_openai_compatible_backend_streams_sse_and_excludes_reasoning(
 
     class FakeResponse:
         status = 200
-        headers = {"Content-Type": "text/event-stream"}
+        headers = {
+            "Content-Type": "text/event-stream",
+            "X-Request-ID": "req_stream",
+        }
 
         def __init__(self) -> None:
             self._lines = iter([
@@ -583,6 +595,10 @@ def test_openai_compatible_backend_streams_sse_and_excludes_reasoning(
     assert captured["payload"]["stream_options"] == {"include_usage": True}
     assert captured["timeout"] == 12.5
     assert result.metadata["http_status"] == 200
+    assert result.metadata["raw_response_headers"] == {
+        "content-type": "text/event-stream",
+        "x-request-id": "req_stream",
+    }
     assert result.metadata["streamed"] is True
     assert result.metadata["finish_reason"] == "stop"
     assert result.metadata["reasoning_content_observed"] is True

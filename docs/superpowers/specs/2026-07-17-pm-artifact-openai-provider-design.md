@@ -387,8 +387,9 @@ small OpenAI-chat protocol adapter:
 - Treat `choices[].delta.content` as artifact text.
 - Treat `choices[].delta.reasoning_content` as provider reasoning metadata,
   never as artifact text and never as the parsed `echelon_result`.
-- Track `finish_reason`, usage, HTTP status, provider headers when useful, and
-  whether the response was streamed or non-streamed.
+- Track `finish_reason`, usage, HTTP status, whitelisted provider headers
+  (`content-type`, request-id variants), and whether the response was streamed
+  or non-streamed.
 - Retain stable OpenAI response identity metadata (`id`, `object`, `created`,
   `model`, `system_fingerprint`) for audit logs and evidence ledgers when the
   endpoint provides it.
