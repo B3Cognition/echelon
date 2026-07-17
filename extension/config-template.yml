@@ -1226,6 +1226,7 @@ harness:
   #   # max_tokens: 8192
   #   # features:
   #   #   streaming: true
+  #   #   stream_options: true
   #   #   json_mode: false
   #   #   structured_outputs: false
   #   #   tool_calls: false
