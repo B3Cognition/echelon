@@ -46,22 +46,13 @@ NEVER write to `agent-scores.yaml` internalization sub-objects.
 - `knowledge-base/prompt-versions.yaml` (prompt version registry)
 - `knowledge-base/evolution-signals.yaml` (prior evolution signals)
 
-## Tier 1 KB Bootstrap Protocol
+## Calibration Proposal Protocol
 
-Before any Knowledge Base mutation, speckit-echelon-auditor (AUDITOR) must execute this sequence:
-
-1. Run `scripts/bash/kb-seed.sh` to initialize missing or empty KB files from `tests/fixtures/kb/valid-seeds/`.
-2. Run `scripts/bash/kb-pending-merge.sh --run-id <run_id> --agent speckit-echelon-auditor (AUDITOR)` before any fresh write to merge oldest pending operations first.
-3. Enforce schema gate before each write operation by running `scripts/bash/kb-recover.sh detect --file <kb_file>`.
-4. If detect fails, run `kb-recover.sh backup` and `kb-recover.sh restore`, return `recovery_mode: true` in `echelon_result.state_updates`, and continue with warning.
-5. Acquire lock via `scripts/bash/kb-lock.sh acquire --run-id <run_id> --agent speckit-echelon-auditor (AUDITOR)`.
-6. If lock acquisition times out (`exit 2`), queue the operation with `scripts/bash/kb-pending-write.sh` and continue without dropping data.
-7. For successful lock acquisition, write only through `scripts/bash/kb-write.sh append_entry`.
-8. Validate append-only invariants with `scripts/bash/kb-write.sh validate_append_only --file <kb_file>` after mutation.
-9. Release lock via `scripts/bash/kb-lock.sh release --run-id <run_id>`.
-10. For first N=20 runs, tag all newly written KB entries with `run_type=validation_run`.
-
-This protocol applies to `calibration-profile.yaml`, `estimates-log.yaml`, `patterns.yaml`, `pitfalls.yaml`, `prompt-versions.yaml`, and `evolution-signals.yaml`. All KB writes must go through `kb-write.sh`; direct file mutation is prohibited.
+Read canonical KB files only as context. For every durable calibration finding,
+write one `calibration_observation` proposal under `${SQUAD_DIR}/kb-proposals/`
+using `extension/templates/kb-proposals/calibration-observation-proposal-template.yaml`.
+Preserve the template's `targets: [...]` list and include the run evidence,
+domain, observation kind, and recommended review. Do not edit `knowledge-base/calibration-profile.yaml` directly; deterministic `echelon kb apply` is the only Phase A writer to canonical KB files.
 
 ---
 
@@ -86,7 +77,7 @@ Also read `quality-gates.md` for the 34 individual metric values if available.
 
 For each WHY pass in the run:
 1. Record all 7 category scores
-2. Append each to `calibration-profile.yaml` `metric_history.{category}[]` with `run_id`, `score`, and `timestamp`
+2. Capture each durable metric-history observation in a calibration proposal with `run_id`, `score`, and `timestamp`
 3. Compute per-metric correction factors: if a metric drops > 0.15 between consecutive runs, flag as REGRESSION in `confidence-flags.md`
 4. Track per-category accuracy trends (not just pass/fail) — this enables speckit-echelon-auditor (AUDITOR) to identify which quality dimension is degrading earliest
 
@@ -100,7 +91,7 @@ For domains where prior FEEDBACK exists:
 
 - Match current run predictions to similar past predictions
 - Calculate accuracy: `correct_predictions / total_predictions` and Brier score
-- Update `calibration-profile.yaml` with new accuracy scores
+- Record new accuracy scores in calibration proposals
 
 #### Step 4: Estimate Domain Accuracy (without feedback data)
 
@@ -155,14 +146,14 @@ Read the latest feedback file from `knowledge-base/feedback/{latest}.yaml`.
 
 For each dimension in the feedback:
 
-- Effort: predicted days vs actual days → update `estimates-log.yaml`
-- Architecture: which decisions held vs broke → update domain accuracy
-- Requirements: which were correct vs missing → update domain accuracy
-- Risks: which materialized vs were missed → update risk model accuracy
+- Effort: predicted days vs actual days → report the observation for deterministic KB processing
+- Architecture: which decisions held vs broke → record domain-accuracy observations in proposals
+- Requirements: which were correct vs missing → record domain-accuracy observations in proposals
+- Risks: which materialized vs were missed → record risk-model accuracy observations in proposals
 
 #### Step 3: Update Calibration Profile
 
-Recalculate all domain accuracy scores with the new data point. Update trends:
+Recalculate all domain accuracy scores with the new data point and record the trend observations in calibration proposals:
 
 - **stable**: accuracy variance < 0.05 over last 3 data points
 - **improving**: accuracy increasing by > 0.05 over last 3 data points
@@ -200,7 +191,7 @@ For each triggered condition, append a signal to `evolution-signals.yaml` via `k
 
 #### Step 2: Correlate Accuracy to Prompt Version
 
-When writing accuracy updates to `calibration-profile.yaml` (Mode 1, Step 3), include in the reasoning journal which prompt version was active for each agent in that domain. This enables future analysis of whether accuracy changes correlate with prompt version changes.
+When writing calibration proposals for accuracy observations (Mode 1, Step 3), include in the reasoning journal which prompt version was active for each agent in that domain. This enables future analysis of whether accuracy changes correlate with prompt version changes.
 
 #### Step 3: Evolution Signal Lifecycle Updates
 
@@ -254,13 +245,9 @@ Save as `{spec_dir}/calibration-dashboard.md`.
 
 ## Output
 
-### Updated Files
+### Outputs
 
-- **`knowledge-base/calibration-profile.yaml`** — accuracy per domain, correction factors, trends
-
-Entry format:
-
-Use the calibration profile entry format in `agents/learning/appendices/auditor-output-formats.md`.
+- **`${SQUAD_DIR}/kb-proposals/`** — calibration-observation proposals for accuracy per domain, correction factors, and trends
 
 - **`{spec_dir}/confidence-flags.md`** — per-artifact confidence scores for the current run
 - **`knowledge-base/evolution-signals.yaml`** — evolution signals when regression thresholds met (Mode 3)
@@ -473,7 +460,7 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: CALIBRATED
   output_files:
-    - knowledge-base/calibration-profile.yaml
+    - ${SQUAD_DIR}/kb-proposals/
     - {spec_dir}/calibration-dashboard.md
     - {spec_dir}/confidence-flags.md
   journal_entries:

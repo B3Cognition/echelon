@@ -60,6 +60,43 @@ def test_finalize_has_no_direct_canonical_kb_writes() -> None:
     assert not direct_write.search(text)
 
 
+def test_auditor_records_calibration_as_kb_proposals() -> None:
+    text = _read("extension/agents/learning/auditor.md")
+    assert "calibration-observation-proposal-template.yaml" in text
+    assert "${SQUAD_DIR}/kb-proposals/" in text
+    assert "Do not edit `knowledge-base/calibration-profile.yaml` directly" in text
+    direct_write = re.compile(
+        r"\b(?:update|append|write|modify)\s+(?:to\s+)?`?knowledge-base/calibration-profile\.yaml",
+        re.IGNORECASE,
+    )
+
+    assert not direct_write.search(text)
+
+
+def test_scorekeeper_records_internalization_as_kb_proposals() -> None:
+    text = _read("extension/agents/control/scorekeeper.md")
+    assert "internalization-observation-proposal-template.yaml" in text
+    assert "${SQUAD_DIR}/kb-proposals/" in text
+    assert "Do not edit `knowledge-base/agent-scores.yaml` directly" in text
+    direct_write = re.compile(
+        r"\b(?:update|append|write|modify)\s+(?:to\s+)?`?knowledge-base/agent-scores\.yaml",
+        re.IGNORECASE,
+    )
+
+    assert not direct_write.search(text)
+
+
+def test_finalize_applies_kb_proposals_after_scorekeeper() -> None:
+    text = _read("extension/workflow/phases/phase4-document.md")
+
+    assert text.index("echelon kb apply --run-id") > text.index(
+        "Run speckit-echelon-scorekeeper"
+    )
+    assert text.index("echelon kb apply --run-id") < text.index(
+        "12.7b Collect Final Artifacts"
+    )
+
+
 def test_workflow_allows_kb_status_state_updates() -> None:
     text = _read("extension/workflow/definition.yaml")
     for key in [

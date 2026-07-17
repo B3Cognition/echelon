@@ -143,44 +143,10 @@ After CALIBRATE completes, read `confidence-flags.md`:
 - If any domain has **confidence < 0.5** → summon speckit-echelon-investigator (INVESTIGATOR) for that domain (if not already investigated). This is a late-stage safety net.
 - If speckit-echelon-investigator (INVESTIGATOR) was already summoned and confidence is still < 0.5 → always flag for human in the final report (do not block delivery).
 
-### 12.KB Apply KB Proposals - NON-BLOCKING
+### 12.6 Prepare Artifact Manifest
 
-Read `RUN_ID` from `runs/.current`, then run:
-
-```bash
-if [ -f "${PROJECT_ROOT}/runs/.current" ]; then
-  RUN_ID=$(cat "${PROJECT_ROOT}/runs/.current")
-else
-  RUN_ID=""
-fi
-
-if echelon kb validate --run-id "${RUN_ID}"; then
-  KB_VALIDATE_EXIT=0
-else
-  KB_VALIDATE_EXIT=$?
-fi
-
-if echelon kb apply --run-id "${RUN_ID}"; then
-  KB_APPLY_EXIT=0
-else
-  KB_APPLY_EXIT=$?
-fi
-```
-
-If `KB_VALIDATE_EXIT` is non-zero, record `kb_validation_status: degraded` in
-`echelon_result.state_updates`; otherwise record it as `validated`. If
-`KB_APPLY_EXIT` is non-zero, record `kb_apply_status: degraded`; otherwise record
-it as `applied`.
-Record proposal-read or usage failures as `kb_usage_status: degraded`, and preserve
-any deterministic contract findings in `kb_contract_violations` and `kb_apply_report`.
-A KB failure does not stop finalization, agent dispatch, phase transitions, or publication.
-
-If `{spec_dir}` exists and `runs/${RUN_ID}/kb-apply-report.yaml` exists, copy it
-to `{spec_dir}/kb/kb-apply-report.yaml`, creating `{spec_dir}/kb/` if needed.
-
-### 12.6 Collect Final Artifacts
-
-Verify all expected artifacts exist in `{spec_dir}/`. Create a manifest:
+Prepare a manifest of expected artifacts in `{spec_dir}/`; refresh its statuses
+after KB proposal processing in 12.7b:
 
 ```
 Artifact                          | Producer        | Status
@@ -275,6 +241,48 @@ Dispatch speckit-echelon-scorekeeper (SCOREKEEPER) to produce the final scorecar
 Include `agents/control/appendices/scorekeeper-output-template.md` and `agents/control/appendices/scorekeeper-scoring-reference.md` in the context pack. Produce `agent-scorecard.md` using the provided template. Write durable per-agent internalization observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `extension/templates/kb-proposals/internalization-observation-proposal-template.yaml`; do not edit canonical KB files directly.
 
 Read the scorecard output and apply any automatic self-healing actions.
+
+### 12.KB Apply KB Proposals - NON-BLOCKING
+
+After MIRROR, AUDITOR, and SCOREKEEPER have written their run-local proposals,
+read `RUN_ID` from `runs/.current`, then run:
+
+```bash
+if [ -f "${PROJECT_ROOT}/runs/.current" ]; then
+  RUN_ID=$(cat "${PROJECT_ROOT}/runs/.current")
+else
+  RUN_ID=""
+fi
+
+if echelon kb validate --run-id "${RUN_ID}"; then
+  KB_VALIDATE_EXIT=0
+else
+  KB_VALIDATE_EXIT=$?
+fi
+
+if echelon kb apply --run-id "${RUN_ID}"; then
+  KB_APPLY_EXIT=0
+else
+  KB_APPLY_EXIT=$?
+fi
+```
+
+If `KB_VALIDATE_EXIT` is non-zero, record `kb_validation_status: degraded` in
+`echelon_result.state_updates`; otherwise record it as `validated`. If
+`KB_APPLY_EXIT` is non-zero, record `kb_apply_status: degraded`; otherwise record
+it as `applied`.
+Record proposal-read or usage failures as `kb_usage_status: degraded`, and preserve
+any deterministic contract findings in `kb_contract_violations` and `kb_apply_report`.
+A KB failure does not stop finalization, agent dispatch, phase transitions, or publication.
+
+If `{spec_dir}` exists and `runs/${RUN_ID}/kb-apply-report.yaml` exists, copy it
+to `{spec_dir}/kb/kb-apply-report.yaml`, creating `{spec_dir}/kb/` if needed.
+
+### 12.7b Collect Final Artifacts
+
+Refresh the artifact manifest prepared in 12.6 after KB proposal processing. Verify
+all expected artifacts exist in `{spec_dir}/`, including
+`kb/kb-apply-report.yaml` when the deterministic apply command produced it.
 
 ### 12.8 Prepare Final State
 
