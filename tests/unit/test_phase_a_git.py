@@ -87,6 +87,17 @@ def test_resolve_default_branch_falls_back_to_master(tmp_path: Path) -> None:
     assert commit == _git(repo, "rev-parse", "refs/heads/master^{commit}")
 
 
+def test_resolve_default_branch_falls_back_to_master_when_default_main_is_missing(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path, initial_branch="master")
+
+    branch, commit = resolve_phase_a_default_branch(repo, "main")
+
+    assert branch == "master"
+    assert commit == _git(repo, "rev-parse", "refs/heads/master^{commit}")
+
+
 def test_resolve_default_branch_falls_back_to_origin_head(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path, initial_branch="trunk")
     _git(repo, "update-ref", "refs/remotes/origin/trunk", "HEAD")

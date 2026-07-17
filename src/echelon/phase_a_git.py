@@ -80,6 +80,27 @@ def _local_branch_exists(project_root: Path, branch: str) -> bool:
     return result.returncode == 0
 
 
+def _auto_detect_phase_a_default_branch(project_root: Path) -> str:
+    if _local_branch_exists(project_root, "main"):
+        return "main"
+    if _local_branch_exists(project_root, "master"):
+        return "master"
+    origin_head = run_git(
+        project_root,
+        "symbolic-ref",
+        "--quiet",
+        "--short",
+        "refs/remotes/origin/HEAD",
+        check=False,
+    )
+    branch = origin_head.stdout.strip().removeprefix("origin/")
+    if origin_head.returncode != 0 or not branch or not _local_branch_exists(project_root, branch):
+        raise PhaseAGitError(
+            "cannot resolve a local Phase A default branch; configure one explicitly"
+        )
+    return branch
+
+
 def resolve_phase_a_default_branch(
     project_root: Path,
     configured: str = "",
@@ -91,28 +112,19 @@ def resolve_phase_a_default_branch(
     try:
         if requested:
             if not _local_branch_exists(root, requested):
-                raise PhaseAGitError(
-                    f"configured default branch {requested!r} is missing locally"
-                )
-            branch = requested
-        elif _local_branch_exists(root, "main"):
-            branch = "main"
-        elif _local_branch_exists(root, "master"):
-            branch = "master"
+                # HarnessConfig historically supplies "main" when a project
+                # has no explicit branch setting. Treat that compatibility
+                # default as unconfigured so established master/trunk repos
+                # still use the normal local-resolution order.
+                if requested == "main":
+                    requested = ""
+                else:
+                    raise PhaseAGitError(
+                        f"configured default branch {requested!r} is missing locally"
+                    )
+            branch = requested or _auto_detect_phase_a_default_branch(root)
         else:
-            origin_head = run_git(
-                root,
-                "symbolic-ref",
-                "--quiet",
-                "--short",
-                "refs/remotes/origin/HEAD",
-                check=False,
-            )
-            branch = origin_head.stdout.strip().removeprefix("origin/")
-            if origin_head.returncode != 0 or not branch or not _local_branch_exists(root, branch):
-                raise PhaseAGitError(
-                    "cannot resolve a local Phase A default branch; configure one explicitly"
-                )
+            branch = _auto_detect_phase_a_default_branch(root)
 
         commit = run_git(root, "rev-parse", f"refs/heads/{branch}^{{commit}}").stdout.strip()
     except GitHelperError as exc:
