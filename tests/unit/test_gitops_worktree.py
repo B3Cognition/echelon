@@ -107,13 +107,12 @@ def test_prepare_codegraph_runtime_runs_locked_npm_ci(tmp_path, monkeypatch):
     assert run.call_args.args[0] == [
         "/usr/bin/npm",
         "ci",
-        "--prefix",
-        str(runtime),
         "--ignore-scripts",
         "--no-audit",
         "--no-fund",
         "--prefer-offline",
     ]
+    assert run.call_args.kwargs["cwd"] == str(runtime)
 
 
 def test_prepare_perlgraph_runtime_runs_locked_npm_ci_and_build(tmp_path, monkeypatch):
@@ -132,8 +131,6 @@ def test_prepare_perlgraph_runtime_runs_locked_npm_ci_and_build(tmp_path, monkey
     assert run.call_args_list[0].args[0] == [
         "/usr/bin/npm",
         "ci",
-        "--prefix",
-        str(runtime),
         "--include=dev",
         "--no-audit",
         "--no-fund",
@@ -144,9 +141,9 @@ def test_prepare_perlgraph_runtime_runs_locked_npm_ci_and_build(tmp_path, monkey
         "/usr/bin/npm",
         "run",
         "build",
-        "--prefix",
-        str(runtime),
     ]
+    assert run.call_args_list[0].kwargs["cwd"] == str(runtime)
+    assert run.call_args_list[1].kwargs["cwd"] == str(runtime)
 
 
 def test_sync_runtime_extension_copies_codegraph_source_without_node_modules(tmp_path):

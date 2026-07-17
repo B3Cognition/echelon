@@ -40,7 +40,8 @@ def test_install_script_installs_context7_with_npm_ci() -> None:
         '_refresh_node_runtime "$CTX7_SOURCE_DIR" "$CTX7_NODE_DIR" dist'
         in install_script
     )
-    assert 'npm ci --prefix "$CTX7_NODE_DIR"' in install_script
+    assert '_npm_ci_in_runtime "$CTX7_NODE_DIR"' in install_script
+    assert 'npm ci --prefix "$CTX7_NODE_DIR"' not in install_script
     assert "Context7 CLI dependencies installed" in install_script
     assert "context7-mcp" not in install_script
 

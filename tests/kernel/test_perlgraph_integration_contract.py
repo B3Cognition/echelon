@@ -29,12 +29,13 @@ def test_install_script_prepares_perlgraph_in_shared_runtime() -> None:
         '_refresh_node_runtime "$PERLGRAPH_SOURCE_DIR" "$PERLGRAPH_NODE_DIR" dist'
         in install_script
     )
-    assert 'npm ci --prefix "$PERLGRAPH_NODE_DIR"' in install_script
+    assert '_npm_ci_in_runtime "$PERLGRAPH_NODE_DIR"' in install_script
     assert '--include=dev' in _perlgraph_install_section(install_script)
-    assert 'npm run build --prefix "$PERLGRAPH_NODE_DIR"' in install_script
+    assert '_npm_run_in_runtime "$PERLGRAPH_NODE_DIR" build' in install_script
     assert 'CXXFLAGS="${CXXFLAGS:--std=c++20}"' in install_script
     assert "PerlGraph" in install_script
     assert "--ignore-scripts" not in _perlgraph_install_section(install_script)
+    assert 'npm ci --prefix "$PERLGRAPH_NODE_DIR"' not in install_script
     assert 'npm ci --prefix "$PERLGRAPH_SOURCE_DIR"' not in install_script
 
 

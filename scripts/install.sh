@@ -43,6 +43,24 @@ _refresh_node_runtime() {
   done
 }
 
+_npm_ci_in_runtime() {
+  local runtime_dir="$1"
+  shift
+  (
+    cd "$runtime_dir"
+    npm ci "$@"
+  )
+}
+
+_npm_run_in_runtime() {
+  local runtime_dir="$1"
+  shift
+  (
+    cd "$runtime_dir"
+    npm run "$@"
+  )
+}
+
 # ── Shell RC detection ───────────────────────────────────────────────────────
 _detect_shell_rc() {
   case "${SHELL##*/}" in
@@ -168,7 +186,7 @@ elif [ ! -f "$CODEGRAPH_SOURCE_DIR/package-lock.json" ]; then
   echo "  ⚠ package-lock.json not found at $CODEGRAPH_SOURCE_DIR; skipping CodeGraph bridge deps."
 else
   _refresh_node_runtime "$CODEGRAPH_SOURCE_DIR" "$CODEGRAPH_NODE_DIR" vendor dist
-  npm ci --prefix "$CODEGRAPH_NODE_DIR" --ignore-scripts --no-audit --no-fund --prefer-offline --silent
+  _npm_ci_in_runtime "$CODEGRAPH_NODE_DIR" --ignore-scripts --no-audit --no-fund --prefer-offline --silent
   echo "  ✓ CodeGraph bridge dependencies installed → $CODEGRAPH_NODE_DIR/node_modules"
 fi
 
@@ -214,8 +232,8 @@ elif [ ! -f "$PERLGRAPH_SOURCE_DIR/package-lock.json" ]; then
   echo "  ⚠ package-lock.json not found at $PERLGRAPH_SOURCE_DIR; skipping PerlGraph runtime deps."
 else
   _refresh_node_runtime "$PERLGRAPH_SOURCE_DIR" "$PERLGRAPH_NODE_DIR" dist
-  CXXFLAGS="${CXXFLAGS:--std=c++20}" npm ci --prefix "$PERLGRAPH_NODE_DIR" --include=dev --no-audit --no-fund --prefer-offline --silent
-  npm run build --prefix "$PERLGRAPH_NODE_DIR" --silent
+  CXXFLAGS="${CXXFLAGS:--std=c++20}" _npm_ci_in_runtime "$PERLGRAPH_NODE_DIR" --include=dev --no-audit --no-fund --prefer-offline --silent
+  _npm_run_in_runtime "$PERLGRAPH_NODE_DIR" build --silent
   echo "  ✓ PerlGraph runtime dependencies installed → $PERLGRAPH_NODE_DIR/node_modules"
   echo "  ✓ PerlGraph CLI built → $PERLGRAPH_NODE_DIR/dist/cli/perlgraph.js"
 fi
@@ -232,7 +250,7 @@ elif [ ! -f "$CTX7_SOURCE_DIR/package-lock.json" ]; then
   echo "  ⚠ package-lock.json not found at $CTX7_SOURCE_DIR; skipping Context7 deps."
 else
   _refresh_node_runtime "$CTX7_SOURCE_DIR" "$CTX7_NODE_DIR" dist
-  npm ci --prefix "$CTX7_NODE_DIR" --silent
+  _npm_ci_in_runtime "$CTX7_NODE_DIR" --silent
   echo "  ✓ Context7 CLI dependencies installed → $CTX7_NODE_DIR/node_modules"
 fi
 
