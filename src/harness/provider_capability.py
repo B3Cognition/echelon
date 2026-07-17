@@ -12,3 +12,4 @@ CLI_PROVIDER_CAPABILITIES = frozenset(
     {ProviderCapability.ARTIFACT, ProviderCapability.BUILD}
 )
 ARTIFACT_PROVIDER_CAPABILITIES = frozenset({ProviderCapability.ARTIFACT})
+BUILD_PROVIDER_CAPABILITIES = frozenset({ProviderCapability.BUILD})

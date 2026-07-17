@@ -69,7 +69,7 @@ echelon {CLI_VERSION}
 Usage: echelon <command> [args...]
 
 Commands:
-  workspace init [--llm <claude|codex|opencode|copilot>]
+  workspace init [--llm <provider>]
                     [--allow-unsafe-host-execution|--no-unsafe-host-execution]
                                             One-time project setup (no LLM)
   workspace doctor                          Check workspace/source/runtime contract
@@ -1750,6 +1750,7 @@ def _cmd_harness_run(
         sys.exit(1)
 
     rerun_command = _command_display(command_prefix, display_args or args)
+    _require_provider_capability(command_prefix, ProviderCapability.BUILD)
     _workspace_git_preflight(Path.cwd(), command_name=rerun_command)
 
     spec_id = args[0]
@@ -2335,6 +2336,7 @@ def _cmd_harness_resume(
         return
 
     rerun_command = _command_display(command_prefix, display_args or args)
+    _require_provider_capability(command_prefix, ProviderCapability.BUILD)
     spec_id, kv, resume_answer = _parse_harness_resume_args(args)
     strategy = kv.get("strategy", "default")
     mode = kv.get("mode", "semi")
@@ -6956,6 +6958,7 @@ from harness.llm_tool_policy import (
     build_llm_cli_command,
     build_opencode_skill_command,
 )
+from harness.provider_capability import ProviderCapability
 
 
 def _find_skill(skill_base: str, project_dir: Path, cli: str) -> Path | None:
@@ -6972,6 +6975,66 @@ def _load_cli_config(project_dir: Path):
 
 def _load_cli_tool_policy(project_dir: Path) -> LlmToolPolicy:
     return _load_cli_config(project_dir).llm.tool_policy
+
+
+def _capability_label(capability: ProviderCapability) -> str:
+    if capability == ProviderCapability.ARTIFACT:
+        return "artifact"
+    if capability == ProviderCapability.BUILD:
+        return "build"
+    return str(capability)
+
+
+def _capability_article(capability: ProviderCapability) -> str:
+    return "an" if capability == ProviderCapability.ARTIFACT else "a"
+
+
+def _supported_capability_label(capabilities: frozenset[ProviderCapability]) -> str:
+    if capabilities == frozenset({ProviderCapability.ARTIFACT}):
+        return "artifact work only"
+    if capabilities == frozenset({ProviderCapability.BUILD}):
+        return "build work only"
+    if capabilities == frozenset({ProviderCapability.ARTIFACT, ProviderCapability.BUILD}):
+        return "artifact and build work"
+    if not capabilities:
+        return "no Echelon work"
+    values = ", ".join(sorted(_capability_label(item) for item in capabilities))
+    return f"{values} work"
+
+
+def _require_provider_capability(
+    command_name: str,
+    required: ProviderCapability,
+    *,
+    project_dir: Path | None = None,
+) -> None:
+    root = project_dir or Path.cwd()
+    try:
+        config = _load_cli_config(root)
+    except Exception:
+        # Capability gates must not mask existing config/preflight diagnostics.
+        # If config cannot load, let the command's normal validation report it.
+        return
+    provider = AICodingCliProvider(config)
+    if required in provider.capabilities:
+        return
+    provider_name = config.llm.cli
+    supported = _supported_capability_label(provider.capabilities)
+    required_label = _capability_label(required)
+    article = _capability_article(required)
+    print(
+        f'Provider "{provider_name}" supports {supported}.\n'
+        f'Command "{command_name}" requires {required_label} capability.\n'
+        f"Choose {article} {required_label}-capable provider.",
+        file=sys.stderr,
+    )
+    sys.exit(2)
+
+
+def _skill_required_capability(command: str) -> ProviderCapability:
+    if command in {"build", "review", "codegen"}:
+        return ProviderCapability.BUILD
+    return ProviderCapability.ARTIFACT
 
 
 def _print_event(event: dict, _printer: list = []) -> None:
@@ -7059,13 +7122,18 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
         sys.exit(1)
 
     project_dir = Path.cwd()
-    cli = os.environ.get("ECHELON_LLM", "claude")
+    _require_provider_capability(
+        f"echelon {command}",
+        _skill_required_capability(command),
+        project_dir=project_dir,
+    )
     try:
         config = _load_cli_config(project_dir)
         tool_policy = config.llm.tool_policy
     except Exception as exc:
         print(f"echelon {command}: invalid LLM tool policy: {exc}", file=sys.stderr)
         sys.exit(1)
+    cli = config.llm.cli
 
     skill_path = _find_skill(skill_base, project_dir, cli)
     if skill_path is None:
@@ -7076,7 +7144,7 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
     if cli == "opencode":
         cmd = build_opencode_skill_command(bin_, skill_base, arguments, tool_policy)
         result = subprocess.run(cmd, cwd=str(project_dir))
-    elif cli in {"copilot", "codex"}:
+    elif cli in {"copilot", "codex", "openai-compatible"}:
         prompt = _build_prompt(skill_path, arguments)
         result_code = AICodingCliProvider(config).exec_prompt(str(project_dir), prompt)
         sys.exit(result_code)
@@ -7541,12 +7609,14 @@ def _cmd_spec_run(args: list[str]) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+    _require_provider_capability("echelon spec run", ProviderCapability.ARTIFACT, project_dir=project_root)
     _cmd_run(args, project_root=project_root, ext_dir=ext_dir)
 
 
 def _cmd_spec_continue(args: list[str]) -> None:
     project_root = Path.cwd()
     ext_dir = _installed_extension_or_exit(project_root)
+    _require_provider_capability("echelon spec continue", ProviderCapability.ARTIFACT, project_dir=project_root)
     _cmd_continue(args, project_root=project_root, ext_dir=ext_dir)
 
 
@@ -7559,6 +7629,7 @@ def _cmd_spec_resume(args: list[str]) -> None:
         sys.exit(1)
     project_root = Path.cwd()
     ext_dir = _installed_extension_or_exit(project_root)
+    _require_provider_capability("echelon spec resume", ProviderCapability.ARTIFACT, project_dir=project_root)
     _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
 
 
@@ -7834,7 +7905,7 @@ def _cmd_workspace(args: list[str]) -> None:
         if any(arg in {"-h", "--help"} for arg in init_args):
             print(
                 "Usage: echelon workspace init "
-                "[--llm <claude|codex|opencode|copilot>] "
+                "[--llm <provider>] "
                 "[--allow-unsafe-host-execution|--no-unsafe-host-execution]\n\n"
                 "  --llm <provider>              Persist the workspace AI CLI provider\n"
                 "  --allow-unsafe-host-execution  Write local approval for AI CLI "
@@ -7845,7 +7916,9 @@ def _cmd_workspace(args: list[str]) -> None:
             sys.exit(0)
         parsed_init_args: list[str] = []
         llm_cli: str | None = None
-        valid_llm_clis = {"claude", "codex", "opencode", "copilot"}
+        from harness.config import VALID_LLM_CLIS
+
+        valid_llm_clis = VALID_LLM_CLIS
         i = 0
         while i < len(init_args):
             arg = init_args[i]
@@ -7868,7 +7941,7 @@ def _cmd_workspace(args: list[str]) -> None:
                 print(f"echelon workspace init: unknown option '{arg}'\n", file=sys.stderr)
                 print(
                     "Usage: echelon workspace init "
-                    "[--llm <claude|codex|opencode|copilot>] "
+                    "[--llm <provider>] "
                     "[--allow-unsafe-host-execution|--no-unsafe-host-execution]",
                     file=sys.stderr,
                 )

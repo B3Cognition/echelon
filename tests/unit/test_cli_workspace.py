@@ -7,6 +7,26 @@ import pytest
 import yaml
 
 
+def test_workspace_init_accepts_openai_compatible_llm(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_workspace
+
+    calls: list[tuple[Path, bool, str | None]] = []
+
+    def fake_init(project_root, *, allow_unsafe_host_execution=False, llm_cli=None):
+        calls.append((project_root, allow_unsafe_host_execution, llm_cli))
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("echelon.cli._cmd_init", fake_init)
+    monkeypatch.setattr("echelon.cli._wants_unsafe_host_execution_interactively", lambda: False)
+
+    _cmd_workspace(["init", "--llm", "openai-compatible", "--no-unsafe-host-execution"])
+
+    assert calls == [(tmp_path, False, "openai-compatible")]
+
+
 def test_workspace_doctor_exits_clean_for_valid_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+from harness.config import HarnessConfig, LlmConfig
+
 
 @pytest.mark.unit
 def test_help_command_prints_usage_without_unknown_command(
@@ -86,6 +88,38 @@ def test_top_level_checkpoint_is_not_a_compatibility_alias(
     captured = capsys.readouterr()
     assert "No such command 'checkpoint'" in captured.err
     assert "echelon spec checkpoint list" not in captured.out
+
+
+@pytest.mark.unit
+def test_delivery_run_rejects_artifact_only_provider(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from echelon import cli
+
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(
+            cli="openai-compatible",
+            base_url="http://127.0.0.1:8000/v1",
+            model="local-model",
+        ),
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
+
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_harness_run(["001-demo"])
+
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert 'Provider "openai-compatible" supports artifact work only.' in captured.err
+    assert 'Command "echelon delivery run" requires build capability.' in captured.err
+    assert "Choose a build-capable provider." in captured.err
 
 
 @pytest.mark.unit
