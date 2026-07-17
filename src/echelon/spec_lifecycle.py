@@ -430,6 +430,30 @@ def _replace_active_run_pointer(project_root: Path, target: SpecRun) -> None:
     _write_text_atomic(pointer, f"{target.run_dir_name}\n")
 
 
+def activate_initial_spec_run(
+    project_root: Path,
+    target: SpecRun,
+    *,
+    observed_branch: str,
+) -> SpecRun:
+    """Select the first discoverable run after its target branch is checked out."""
+
+    root = Path(project_root).resolve()
+    pointer = root / "runs" / ".current"
+    if pointer.exists():
+        raise SpecLifecycleError(
+            "cannot activate an initial spec run while runs/.current already exists"
+        )
+    canonical = _resolve_run_dir_name(root, target.run_dir_name)
+    if observed_branch != canonical.feature_branch:
+        raise SpecLifecycleError(
+            f"observed branch {observed_branch!r} does not match target branch "
+            f"{canonical.feature_branch!r}"
+        )
+    _replace_active_run_pointer(root, canonical)
+    return canonical
+
+
 def begin_spec_switch(
     project_root: Path,
     source: SpecRun,

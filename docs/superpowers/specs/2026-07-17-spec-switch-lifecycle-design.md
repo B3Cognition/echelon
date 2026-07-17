@@ -157,14 +157,16 @@ is an idempotent success after validating that the pointer and branch agree.
 
 Starting a brand-new spec is the only target-side exception because the new run
 has no branch or checkpoint yet. The outgoing run still must pass all switch
-safety checks before Echelon checks out the default branch and allocates the new
-run.
+safety checks before Echelon allocates a new branch ref at the recorded default
+commit. Echelon then checks out that target branch directly; it does not need an
+observable intermediate checkout of the default branch.
 
 ### Clean Switch
 
 For a clean worktree:
 
-1. checkout the target feature branch, or the default branch for a new spec;
+1. checkout the target feature branch; for a new spec, create that branch ref at
+   the recorded default commit first;
 2. verify the resulting branch name;
 3. atomically replace `runs/.current` for an existing target, or create the new
    run and then write its pointer; and

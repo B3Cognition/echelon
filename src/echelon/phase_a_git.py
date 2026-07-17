@@ -261,3 +261,57 @@ def create_phase_a_spec_branch(
         raise PhaseAGitError(str(exc)) from exc
 
     return bootstrap
+
+
+def create_phase_a_spec_branch_ref(
+    project_root: Path,
+    bootstrap: PhaseASpecBootstrap,
+    *,
+    clean_verified: bool = False,
+) -> PhaseASpecBootstrap:
+    """Create a sibling branch ref without changing the checked-out branch.
+
+    ``clean_verified`` is reserved for a lifecycle-lock holder that has already
+    inspected the worktree while its own untracked lock metadata exists.
+    """
+
+    root = Path(project_root).resolve()
+    try:
+        if not clean_verified and is_worktree_dirty(root, include_untracked=True):
+            raise PhaseAGitError("Phase A branch creation requires a clean worktree")
+        if not commit_exists(root, bootstrap.default_commit):
+            raise PhaseAGitError(
+                f"planned default commit {bootstrap.default_commit!r} no longer exists"
+            )
+        default_commit = run_git(
+            root,
+            "rev-parse",
+            f"refs/heads/{bootstrap.default_branch}^{{commit}}",
+        ).stdout.strip()
+        if default_commit != bootstrap.default_commit:
+            raise PhaseAGitError(
+                f"default branch {bootstrap.default_branch!r} moved after planning"
+            )
+        if _local_branch_exists(root, bootstrap.feature_branch):
+            raise PhaseAGitError(
+                f"target branch {bootstrap.feature_branch!r} already exists"
+            )
+        run_git(root, "branch", bootstrap.feature_branch, bootstrap.default_commit)
+        created_commit = run_git(
+            root,
+            "rev-parse",
+            f"refs/heads/{bootstrap.feature_branch}^{{commit}}",
+        ).stdout.strip()
+        if created_commit != bootstrap.default_commit:
+            raise PhaseAGitError(
+                f"created branch has unexpected commit {created_commit!r}"
+            )
+        if not ref_contains_commit(
+            root,
+            bootstrap.feature_branch,
+            bootstrap.default_commit,
+        ):
+            raise PhaseAGitError("created branch does not contain its planned default commit")
+    except GitHelperError as exc:
+        raise PhaseAGitError(str(exc)) from exc
+    return bootstrap

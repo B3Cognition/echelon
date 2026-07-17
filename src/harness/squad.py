@@ -538,7 +538,22 @@ class SquadController:
         # Fresh start if no state or not resumable
         # The correct squad dir was already selected by _cmd_run before creating this controller.
         if not existing or existing_status not in ("running", "in_progress"):
-            run_id = f"squad-{int(time.time())}"
+            prepared_identity = {
+                key: existing[key]
+                for key in (
+                    "run_id",
+                    "spec_id",
+                    "spec_number",
+                    "spec_dir",
+                    "published_spec_dir",
+                    "feature_branch",
+                    "phase_a_default_branch",
+                    "phase_a_base_commit",
+                    "specify_feature_directory",
+                )
+                if key in existing
+            }
+            run_id = str(prepared_identity.get("run_id") or f"squad-{int(time.time())}")
             entry_phase = next_phase_override or self._graph.entry_phase()
             project_mode = self._detect_project_mode(mode)
             self._state_store.initialize(
@@ -556,6 +571,10 @@ class SquadController:
                     else None
                 ),
             )
+            if prepared_identity:
+                initialized = self._state_store.load()
+                initialized.update(prepared_identity)
+                self._state_store.save(initialized)
             self._attach_published_re_context()
             if self._state_store.load().get("status") == "blocked":
                 return SquadResult.from_state(self._state_store.load())

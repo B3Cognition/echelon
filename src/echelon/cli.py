@@ -311,6 +311,16 @@ def _workspace_git_preflight_for_squad_run(
     _workspace_git_preflight(project_root, command_name=command_name)
 
 
+def _require_phase_a_git_ownership(project_root: Path, *, command_name: str) -> None:
+    try:
+        from echelon.speckit_git import require_speckit_git_disabled
+
+        require_speckit_git_disabled(project_root)
+    except Exception as exc:
+        print(f"✗ {command_name}: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
 def _derive_wing_suggestion(project_dir: Path) -> str:
     """Suggest a wing name: git remote slug if available, else dirname-hash6."""
     try:
@@ -4584,6 +4594,10 @@ def _select_squad_dir(
     project_root: Path,
     user_message: str,
     reset: bool = False,
+    *,
+    configured_default_branch: str = "",
+    dirty_action: str = "refuse",
+    confirm_discard: bool = False,
 ) -> tuple[Path, bool]:
     """Return (squad_dir, is_fresh_start).
 
@@ -4593,25 +4607,49 @@ def _select_squad_dir(
     import json as _json
     from harness.paths import make_spec_run_id
 
+    def start_fresh() -> tuple[Path, bool]:
+        from echelon.phase_a_start import PhaseAStartError, start_phase_a_spec
+
+        run_id = make_spec_run_id()
+        runs_gitignore = project_root / "runs" / ".gitignore"
+        runs_gitignore.parent.mkdir(exist_ok=True)
+        _ensure_runs_gitignore(runs_gitignore)
+        try:
+            outcome = start_phase_a_spec(
+                project_root,
+                run_id,
+                user_message,
+                configured_default_branch=configured_default_branch,
+                dirty_action=dirty_action,
+                confirm_discard=confirm_discard,
+            )
+        except PhaseAStartError as exc:
+            print(f"✗ echelon spec run: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        return outcome.run_dir, True
+
     if reset:
-        return _setup_run_dir(project_root, make_spec_run_id()), True
+        return start_fresh()
 
     existing_dir = _find_current_run_dir(project_root)
     if not existing_dir:
-        return _setup_run_dir(project_root, make_spec_run_id()), True
+        return start_fresh()
 
     try:
         state = _json.loads((existing_dir / "state.json").read_text())
     except Exception:
-        return _setup_run_dir(project_root, make_spec_run_id()), True
+        return start_fresh()
+
+    if state.get("status") == "preparing" and user_message == state.get("user_message"):
+        return existing_dir, True
 
     status = state.get("status")
     if status not in ("running", "in_progress"):
-        return _setup_run_dir(project_root, make_spec_run_id()), True
+        return start_fresh()
 
     # Different task → new run dir (preserves old one, doesn't overwrite)
     if user_message and user_message != state.get("user_message", ""):
-        return _setup_run_dir(project_root, make_spec_run_id()), True
+        return start_fresh()
 
     # Same task, resumable status → resume in existing dir
     return existing_dir, False
@@ -4896,6 +4934,7 @@ def _cmd_run(
     _print_extension_drift_warning(project_root, ext_dir)
     _enforce_project_config_compatibility(project_root)
     _workspace_git_preflight(project_root, command_name="echelon spec run")
+    _require_phase_a_git_ownership(project_root, command_name="echelon spec run")
 
     # Parse optional flags
     mode = "semi"
@@ -4909,6 +4948,8 @@ def _cmd_run(
     product_input_values: list[str] = []
     init_target = False
     ignore_re = False
+    dirty_action = "refuse"
+    confirm_discard = False
     message_parts: list[str] = []
     i = 0
     while i < len(args):
@@ -4952,6 +4993,21 @@ def _cmd_run(
         elif args[i] == "--ignore-re":
             ignore_re = True
             i += 1
+        elif args[i] == "--stash":
+            if dirty_action != "refuse":
+                print("✗ echelon spec run: choose only --stash or --discard", file=sys.stderr)
+                raise SystemExit(2)
+            dirty_action = "stash"
+            i += 1
+        elif args[i] == "--discard":
+            if dirty_action != "refuse":
+                print("✗ echelon spec run: choose only --stash or --discard", file=sys.stderr)
+                raise SystemExit(2)
+            dirty_action = "discard"
+            i += 1
+        elif args[i] == "--confirm":
+            confirm_discard = True
+            i += 1
         elif args[i] in {"--re-policy", "--re-max-inner"}:
             moved = args[i]
             print(
@@ -4990,8 +5046,16 @@ def _cmd_run(
         reset=reset,
     )
 
+    config = load_config(project_root, squad_only=True)
     prev_dir = _find_current_run_dir(project_root)
-    squad_dir, is_fresh = _select_squad_dir(project_root, message, reset=reset)
+    squad_dir, is_fresh = _select_squad_dir(
+        project_root,
+        message,
+        reset=reset,
+        configured_default_branch=str(getattr(config, "target_default_branch", "") or ""),
+        dirty_action=dirty_action,
+        confirm_discard=confirm_discard,
+    )
     if reset:
         print("[squad] state reset — starting fresh", flush=True)
     elif is_fresh and prev_dir is not None and prev_dir != squad_dir:
@@ -5051,7 +5115,6 @@ def _cmd_run(
             print(f"✗ echelon spec run: {exc}", file=sys.stderr)
             raise SystemExit(1) from exc
 
-    config = load_config(project_root, squad_only=True)
     provider = SquadCliProvider(config)
     graph = PhaseGraph(
         ext_dir / "workflow/definition.yaml",
@@ -6567,6 +6630,9 @@ def _cmd_phase(
     if _phase_run_requires_task_lexicon_config(phase_id):
         _enforce_project_config_compatibility(project_root)
 
+    _workspace_git_preflight(project_root, command_name="echelon phase run")
+    _require_phase_a_git_ownership(project_root, command_name="echelon phase run")
+
     mode = "semi"
     spec_arg = ""
     message_parts: list[str] = []
@@ -6592,7 +6658,12 @@ def _cmd_phase(
             sys.exit(1)
     run_dir = _find_current_run_dir(project_root)
     if run_dir is None:
-        run_dir = _setup_run_dir(project_root, make_spec_run_id())
+        print(
+            "✗ echelon phase run requires an active spec run. "
+            "Start one with: echelon spec run <description>",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
     state_store = SquadStateStore(run_dir)
     current_state = state_store.load()
@@ -7476,7 +7547,7 @@ def _cmd_spec(args: list[str]) -> None:
             "  run <description> [--mode semi|banzai|guided] [--reset]\n"
             "                    [--message <text>] [--next-phase <id>]\n"
             "                    [--target <source-id-or-path>]... [--init]\n"
-            "                    [--ignore-re]\n"
+            "                    [--ignore-re] [--stash | --discard --confirm]\n"
             "                                      Run Phase A squad spec authoring\n"
             "  status                              Show current run state and next action\n"
             "  continue [--mode semi|banzai|guided]\n"
@@ -7509,6 +7580,7 @@ def _cmd_spec(args: list[str]) -> None:
     elif subcmd == "resume":
         _cmd_spec_resume(args[1:])
     elif subcmd == "rewind":
+        _require_phase_a_git_ownership(Path.cwd(), command_name="echelon spec rewind")
         _cmd_rewind(args[1:], project_root=Path.cwd())
     elif subcmd == "switch":
         from echelon.spec_switch_cli import run_spec_switch_command
@@ -7519,6 +7591,7 @@ def _cmd_spec(args: list[str]) -> None:
     elif subcmd == "drop-target":
         _cmd_drop_target(args[1:], project_root=Path.cwd())
     elif subcmd == "checkpoint":
+        _require_phase_a_git_ownership(Path.cwd(), command_name="echelon spec checkpoint")
         from echelon.checkpoint_cli import run_checkpoint_command
 
         run_checkpoint_command(args[1:], project_root=Path.cwd())
@@ -7527,6 +7600,10 @@ def _cmd_spec(args: list[str]) -> None:
     elif subcmd == "verify":
         _dispatch_skill_command("verify-spec", args[1:])
     elif subcmd in {"bugfix", "change", "reopen"}:
+        _require_phase_a_git_ownership(
+            Path.cwd(),
+            command_name=f"echelon spec {subcmd}",
+        )
         _dispatch_skill_command(subcmd, args[1:])
     else:
         print(f"echelon spec: unknown subcommand '{subcmd}'\n", file=sys.stderr)
@@ -7571,6 +7648,7 @@ def _cmd_spec_run(args: list[str]) -> None:
 def _cmd_spec_continue(args: list[str]) -> None:
     project_root = Path.cwd()
     ext_dir = _installed_extension_or_exit(project_root)
+    _require_phase_a_git_ownership(project_root, command_name="echelon spec continue")
     _cmd_continue(args, project_root=project_root, ext_dir=ext_dir)
 
 
@@ -7583,6 +7661,7 @@ def _cmd_spec_resume(args: list[str]) -> None:
         sys.exit(1)
     project_root = Path.cwd()
     ext_dir = _installed_extension_or_exit(project_root)
+    _require_phase_a_git_ownership(project_root, command_name="echelon spec resume")
     _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
 
 
@@ -7920,6 +7999,14 @@ def _cmd_workspace(args: list[str]) -> None:
         project_root = Path.cwd()
         _cmd_init(project_root, allow_unsafe_host_execution=allow_unsafe, llm_cli=llm_cli)
         _maybe_bootstrap_workspace_git(project_root)
+        try:
+            from echelon.speckit_git import disable_speckit_git
+
+            state = disable_speckit_git(project_root)
+        except Exception as exc:
+            print(f"✗ Could not establish exclusive Echelon Git ownership: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"✓ exclusive Git ownership established ({state.reason})")
         return
 
     if subcmd == "doctor":

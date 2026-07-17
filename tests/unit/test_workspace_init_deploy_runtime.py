@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -207,6 +208,47 @@ def test_workspace_init_initializes_git_for_specify_workspace(
         text=True,
     ).stdout.splitlines()
     assert staged == []
+
+
+def test_workspace_init_bootstraps_git_before_disabling_speckit_git(
+    tmp_path, monkeypatch
+) -> None:
+    calls: list[str] = []
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_cmd_init", lambda *_args, **_kwargs: calls.append("config"))
+    monkeypatch.setattr(
+        cli, "_maybe_bootstrap_workspace_git", lambda _root: calls.append("git")
+    )
+
+    def disable(_root):
+        calls.append("disable")
+        assert calls == ["config", "git", "disable"]
+        return SimpleNamespace(reason="disabled for test")
+
+    monkeypatch.setattr("echelon.speckit_git.disable_speckit_git", disable)
+
+    cli._cmd_workspace(["init", "--no-unsafe-host-execution"])
+
+    assert calls == ["config", "git", "disable"]
+
+
+def test_workspace_init_fails_closed_when_speckit_git_cannot_be_disabled(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_cmd_init", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "_maybe_bootstrap_workspace_git", lambda _root: None)
+
+    def fail(_root):
+        raise RuntimeError("enabled Git hook remains configured")
+
+    monkeypatch.setattr("echelon.speckit_git.disable_speckit_git", fail)
+
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_workspace(["init", "--no-unsafe-host-execution"])
+
+    assert exc.value.code == 1
+    assert "exclusive Echelon Git ownership" in capsys.readouterr().err
 
 
 def test_workspace_init_rerun_repairs_missing_sources_scaffold(

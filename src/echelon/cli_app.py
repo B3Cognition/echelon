@@ -487,6 +487,9 @@ def root_run(
         "--ignore-re",
         help="Do not attach the latest published RE context.",
     ),
+    stash: bool = typer.Option(False, "--stash", help="Stash dirty outgoing spec changes."),
+    discard: bool = typer.Option(False, "--discard", help="Discard dirty changes to checkpoint."),
+    confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
 ) -> None:
     """Compatibility alias for spec run."""
     spec_run(
@@ -500,6 +503,9 @@ def root_run(
         target=target,
         input_values=None,
         ignore_re=ignore_re,
+        stash=stash,
+        discard=discard,
+        confirm=confirm,
     )
 
 
@@ -1006,6 +1012,9 @@ def spec_run(
         "--ignore-re",
         help="Do not attach the latest published RE context.",
     ),
+    stash: bool = typer.Option(False, "--stash", help="Stash dirty outgoing spec changes."),
+    discard: bool = typer.Option(False, "--discard", help="Discard dirty changes to checkpoint."),
+    confirm: bool = typer.Option(False, "--confirm", help="Confirm destructive discard."),
 ) -> None:
     """Run Phase A squad spec authoring."""
     from echelon import cli as legacy_cli
@@ -1025,6 +1034,12 @@ def spec_run(
     _extend_repeated_option(args, "--input", input_values)
     if ignore_re:
         args.append("--ignore-re")
+    if stash:
+        args.append("--stash")
+    if discard:
+        args.append("--discard")
+    if confirm:
+        args.append("--confirm")
     legacy_cli._cmd_spec_run(args)
 
 

@@ -118,8 +118,10 @@ accepted spec-switch lifecycle.
 
 ## Implementation Progress
 
-The first five ownership foundations are implemented on
-`codex/egr-151-spec-lifecycle-gitops` without activating the runtime cutover:
+The first six ownership foundations are implemented on
+`codex/egr-151-spec-lifecycle-gitops`. The sixth slice activates the runtime
+cutover after the preceding branch, checkpoint, transaction, and switch
+foundations:
 
 - `src/echelon/speckit_git.py` deterministically inspects and verifies
   disablement of spec-kit's project-local Git extension and hooks.
@@ -188,8 +190,33 @@ The first five ownership foundations are implemented on
   and conflict retention, confirmed discard, Git inspection failure, option
   parsing, interactive choices, and CLI dispatch without LLM, Docker, or network
   access.
+- `echelon workspace init` now bootstraps workspace Git before idempotently
+  disabling and verifying spec-kit Git. A failed or malformed disablement
+  blocks initialization, while managed spec run/continue/resume/rewind,
+  checkpoint, manual-phase, bugfix, change, and reopen entrypoints fail closed
+  if competing spec-kit Git behavior remains.
+- `src/echelon/phase_a_start.py` now starts a fresh run under the lifecycle lock.
+  It ignores the outgoing workflow status, requires the outgoing run's exact
+  checkpoint, applies the same dirty refusal/managed-stash/confirmed-discard
+  protocol as switching, creates a sibling branch ref at the recorded default
+  commit, writes discoverable prepared run state, checks out the target, and
+  updates `runs/.current` only after Git succeeds.
+- The squad controller preserves the prepared run/spec/branch/base identity
+  when initializing normal workflow state. `SquadCliProvider` snapshots branch
+  and HEAD around both primary and control-payload repair invocations and raises
+  a lifecycle ownership error if an external agent mutates either.
+- New no-LLM real-Git tests cover first and subsequent spec starts, a non-final
+  outgoing run, missing checkpoints, sibling ancestry, dirty refusal, managed
+  stash, confirmed discard, prepared-state controller handoff, first-run CLI
+  directory creation, workspace disablement order/failure, and provider branch
+  or commit mutation. The cutover/adjacent matrix passed 221 tests; the three
+  full-suite integration fixtures affected by authoritative Git checkpoints
+  were migrated to temporary real Git repositories and their focused rerun
+  passed 14 tests.
 
-EGR-151 remains `in-progress`. Automatic spec-kit disablement, fail-closed
-global Phase A ownership preflight, Echelon-owned `spec run` sibling-branch
-bootstrap, new-spec outgoing safety, status integration, delivery isolation,
-finalization, changelog entry, and full-suite verification remain outstanding.
+EGR-151 remains `in-progress`. Status integration, delivery isolation,
+finalization/landing isolation, changelog entry, and final full-suite closure
+remain outstanding. The full-suite run recorded 3,878 passing tests and seven
+failures; a focused rerun cleared all three Git-fixture failures affected by the
+cutover. Four unrelated existing assertions remain in CLI help/template
+contracts outside EGR-151.

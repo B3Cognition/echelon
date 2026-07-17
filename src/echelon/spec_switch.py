@@ -163,7 +163,13 @@ def _worktree_paths(project_root: Path) -> tuple[str, ...]:
                 raise SpecSwitchError("cannot parse renamed Git status path")
             paths.add(records[index])
             index += 1
-    return tuple(sorted(paths))
+    return tuple(
+        sorted(
+            path
+            for path in paths
+            if not path.startswith(".echelon/runtime/")
+        )
+    )
 
 
 def _load_run_state(run: SpecRun) -> dict[str, object]:
@@ -343,6 +349,31 @@ def _discard_to_checkpoint(
     run_git(project_root, "clean", "-fd")
     if dirty := _worktree_paths(project_root):
         raise DirtySpecWorktreeError(dirty)
+
+
+def spec_worktree_paths(project_root: Path) -> tuple[str, ...]:
+    """Return Git-visible dirty paths using the spec-switch parser."""
+
+    return _worktree_paths(Path(project_root).resolve())
+
+
+def stash_spec_worktree(
+    project_root: Path,
+    run: SpecRun,
+    checkpoint: ValidatedSpecCheckpoint,
+) -> str:
+    """Stash dirty state under the source run's managed stash record."""
+
+    return _create_managed_stash(Path(project_root).resolve(), run, checkpoint)
+
+
+def discard_spec_worktree(
+    project_root: Path,
+    checkpoint: ValidatedSpecCheckpoint,
+) -> None:
+    """Discard dirty state back to the exact validated checkpoint."""
+
+    _discard_to_checkpoint(Path(project_root).resolve(), checkpoint)
 
 
 def _switch_spec_locked(

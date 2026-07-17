@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -57,6 +59,17 @@ def test_ready_spec_can_be_preserved_while_a_different_spec_run_starts(
 
     monkeypatch.setattr("harness.paths.make_spec_run_id", lambda: "spec-new")
 
+    def fake_start(_root, run_id, description, **_kwargs):
+        assert run_id == "spec-new"
+        assert description == "build the second feature"
+        new_run = tmp_path / "runs" / run_id
+        new_run.mkdir()
+        (new_run / "staging").mkdir()
+        (tmp_path / "runs" / ".current").write_text(f"{run_id}\n", encoding="utf-8")
+        return SimpleNamespace(run_dir=new_run)
+
+    monkeypatch.setattr("echelon.phase_a_start.start_phase_a_spec", fake_start)
+
     new_run, is_fresh = _select_squad_dir(tmp_path, "build the second feature")
 
     assert is_fresh is True
@@ -97,3 +110,35 @@ def test_spec_switch_dispatches_to_deterministic_presenter(
     _cmd_spec(["switch", "run-b", "--stash"])
 
     assert calls == [(["run-b", "--stash"], tmp_path)]
+
+
+def test_first_cli_selector_creates_runs_directory_and_echelon_branch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "Echelon Tests"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "echelon@example.test"], cwd=tmp_path, check=True
+    )
+    (tmp_path / ".gitignore").write_text("/runs/\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".gitignore"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "base"], cwd=tmp_path, check=True, capture_output=True
+    )
+    monkeypatch.setattr("harness.paths.make_spec_run_id", lambda: "run-first")
+
+    run_dir, is_fresh = _select_squad_dir(tmp_path, "Build audit logging")
+
+    assert is_fresh is True
+    assert run_dir == tmp_path / "runs" / "run-first"
+    assert (tmp_path / "runs" / ".gitignore").exists()
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert branch == "001-build-audit-logging"
+    assert (tmp_path / "runs" / ".current").read_text().strip() == "run-first"

@@ -435,6 +435,9 @@ def test_spec_run_help_declares_phase_a_options():
     assert "--target" in result.output
     assert "--input" in result.output
     assert "--ignore-re" in result.output
+    assert "--stash" in result.output
+    assert "--discard" in result.output
+    assert "--confirm" in result.output
     assert "--re-policy" not in result.output
     assert "--re-max-inner" not in result.output
 
@@ -478,6 +481,7 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "--input",
         "reference:sources/provision",
         "--ignore-re",
+        "--stash",
     ])
 
     assert calls == [[
@@ -499,6 +503,7 @@ def test_spec_run_typed_options_route_to_legacy_spec_run(monkeypatch):
         "--input",
         "reference:sources/provision",
         "--ignore-re",
+        "--stash",
     ]]
 
 
