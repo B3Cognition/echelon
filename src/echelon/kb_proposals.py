@@ -207,6 +207,31 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
     )
 
 
+def publish_kb_reports(project_root: Path, run_id: str, spec_dir: Path) -> Path | None:
+    run_dir = project_root / "runs" / run_id
+    apply_report = run_dir / "kb-apply-report.yaml"
+    usage = run_dir / "kb-usage.yaml"
+    if not apply_report.exists() and not usage.exists():
+        return None
+
+    out_dir = spec_dir / "kb"
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        if apply_report.exists():
+            (out_dir / "kb-apply-report.yaml").write_text(
+                apply_report.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+        if usage.exists():
+            (out_dir / "kb-usage-summary.yaml").write_text(
+                usage.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+    except OSError:
+        return None
+    return out_dir
+
+
 def _finalize_apply_report(
     run_id: str,
     report_path: Path,

@@ -11,6 +11,10 @@ RUN_ID="${4:?RUN_ID required}"
 
 SPEC_DIR="${PROJECT_ROOT}/specs/${SPEC_ID}-${FEATURE_NAME}"
 
+if [ -d "${SPEC_DIR}/kb" ]; then
+  echo "[FINALIZE] KB provenance reports detected under ${SPEC_DIR}/kb"
+fi
+
 echo "[FINALIZE] Committing spec artifacts for ${SPEC_ID}-${FEATURE_NAME}..."
 
 # ── 1. Copy constitution into spec dir ────────────────────────────────────────

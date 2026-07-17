@@ -14,6 +14,7 @@ from echelon.kb_proposals import (
     _project_fingerprint,
     apply_proposals,
     load_proposals,
+    publish_kb_reports,
     validate_proposal_document,
 )
 
@@ -48,6 +49,23 @@ def _base_proposal(**overrides):
     }
     data.update(overrides)
     return data
+
+
+def test_publish_kb_reports_copies_apply_report_to_spec_dir(tmp_path: Path) -> None:
+    project = tmp_path
+    run_dir = project / "runs" / "squad-001"
+    run_dir.mkdir(parents=True)
+    (run_dir / "kb-apply-report.yaml").write_text(
+        "schema_version: 1\nrun_id: squad-001\nstatus: degraded\n",
+        encoding="utf-8",
+    )
+    spec_dir = project / "specs" / "001-feature"
+    spec_dir.mkdir(parents=True)
+
+    published = publish_kb_reports(project, "squad-001", spec_dir)
+
+    assert published == spec_dir / "kb"
+    assert (spec_dir / "kb" / "kb-apply-report.yaml").exists()
 
 
 def test_valid_pattern_proposal_passes() -> None:
