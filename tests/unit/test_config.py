@@ -512,6 +512,61 @@ def test_llm_timeout_ms_set():
     assert config.llm.timeout_ms == 600_000
 
 
+def test_llm_openai_compatible_config_parsed() -> None:
+    config = _parse_config({
+        "provider": "docker",
+        "llm": {
+            "cli": "openai-compatible",
+            "base_url": "http://127.0.0.1:8000/v1",
+            "model": "local-model",
+            "api_key_env": "LOCAL_LLM_API_KEY",
+            "temperature": 0.2,
+            "max_tokens": 8192,
+            "features": {
+                "streaming": False,
+                "json_mode": True,
+                "structured_outputs": False,
+                "tool_calls": False,
+            },
+        },
+    })
+
+    assert config.llm.cli == "openai-compatible"
+    assert config.llm.base_url == "http://127.0.0.1:8000/v1"
+    assert config.llm.model == "local-model"
+    assert config.llm.api_key_env == "LOCAL_LLM_API_KEY"
+    assert config.llm.temperature == 0.2
+    assert config.llm.max_tokens == 8192
+    assert config.llm.features == {
+        "streaming": False,
+        "json_mode": True,
+        "structured_outputs": False,
+        "tool_calls": False,
+    }
+
+
+def test_llm_openai_compatible_requires_base_url() -> None:
+    with pytest.raises(ValidationError, match="base_url"):
+        _parse_config({
+            "provider": "docker",
+            "llm": {
+                "cli": "openai-compatible",
+                "model": "local-model",
+            },
+        })
+
+
+def test_llm_openai_compatible_requires_model() -> None:
+    with pytest.raises(ValidationError, match="model"):
+        _parse_config({
+            "provider": "docker",
+            "llm": {
+                "cli": "openai-compatible",
+                "base_url": "http://127.0.0.1:8000/v1",
+            },
+        })
+
+
 def test_llm_tool_policy_defaults_deny_unsafe_host_execution() -> None:
     config = _parse_config(MINIMAL)
 

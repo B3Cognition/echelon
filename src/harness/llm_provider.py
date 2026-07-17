@@ -12,6 +12,11 @@ from typing import Mapping
 from harness.ai_cli_backend import CliRunRequest, CliRunResult, create_ai_cli_backend
 from harness.config import HarnessConfig
 from harness.llm_tool_policy import build_llm_cli_command
+from harness.provider_capability import (
+    ARTIFACT_PROVIDER_CAPABILITIES,
+    CLI_PROVIDER_CAPABILITIES,
+    ProviderCapability,
+)
 
 
 class AICodingCliProvider:
@@ -52,6 +57,12 @@ class AICodingCliProvider:
     @property
     def cli(self) -> str:
         return self._cli
+
+    @property
+    def capabilities(self) -> frozenset[ProviderCapability]:
+        if self._cli == "openai-compatible":
+            return ARTIFACT_PROVIDER_CAPABILITIES
+        return CLI_PROVIDER_CAPABILITIES
 
     def _build_cmd(self, prompt: str) -> list[str]:
         """Compatibility helper for tests and call sites that inspect command shape."""

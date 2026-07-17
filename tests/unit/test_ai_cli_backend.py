@@ -28,6 +28,22 @@ def _config(cli: str) -> HarnessConfig:
     )
 
 
+def _openai_config() -> HarnessConfig:
+    return HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(
+            cli="openai-compatible",
+            base_url="http://127.0.0.1:8000/v1",
+            model="local-model",
+            api_key_env="LOCAL_LLM_API_KEY",
+            temperature=0.2,
+            max_tokens=256,
+        ),
+    )
+
+
 def test_cli_run_result_defaults() -> None:
     result = CliRunResult(exit_code=0, stdout="ok", stderr="")
 
@@ -67,6 +83,69 @@ def test_backend_factory_returns_concrete_backend(cli: str, class_name: str) -> 
 
     assert backend.__class__.__name__ == class_name
     assert backend.name == cli
+
+
+def test_backend_factory_returns_openai_compatible_backend() -> None:
+    backend = create_ai_cli_backend(_openai_config())
+
+    assert backend.__class__.__name__ == "OpenAICompatibleBackend"
+    assert backend.name == "openai-compatible"
+
+
+def test_openai_compatible_backend_posts_chat_completion(tmp_path, monkeypatch) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    captured = {}
+    monkeypatch.setenv("LOCAL_LLM_API_KEY", "secret-token")
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "choices": [
+                    {"message": {"content": "echelon_result:\n  verdict: DONE\n"}}
+                ],
+                "usage": {"prompt_tokens": 7, "completion_tokens": 5},
+            }).encode()
+
+    def fake_urlopen(request, timeout):
+        captured["url"] = request.full_url
+        captured["timeout"] = timeout
+        captured["headers"] = dict(request.header_items())
+        captured["payload"] = json.loads(request.data.decode())
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fake_urlopen,
+    )
+    backend = OpenAICompatibleBackend(_openai_config())
+    result = backend.run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "echelon_result:\n  verdict: DONE\n"
+    assert result.token_usage == 12
+    assert captured["url"] == "http://127.0.0.1:8000/v1/chat/completions"
+    assert captured["timeout"] == 12.5
+    assert captured["headers"]["Authorization"] == "Bearer secret-token"
+    assert captured["payload"]["model"] == "local-model"
+    assert captured["payload"]["messages"] == [
+        {"role": "user", "content": "Return a result."}
+    ]
+    assert captured["payload"]["temperature"] == 0.2
+    assert captured["payload"]["max_tokens"] == 256
 
 
 def test_claude_backend_streams_json_and_captures_result_error(tmp_path) -> None:

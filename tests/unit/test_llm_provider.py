@@ -14,6 +14,12 @@ from harness.llm_tool_policy import LlmToolPolicy
 
 
 def _config(config_dir=None, timeout_ms=1_200_000, cli="claude", tool_policy=None):
+    llm_kwargs = {}
+    if cli == "openai-compatible":
+        llm_kwargs.update(
+            base_url="http://127.0.0.1:8000/v1",
+            model="local-model",
+        )
     return HarnessConfig(
         target_repo=".",
         target_default_branch="main",
@@ -23,6 +29,7 @@ def _config(config_dir=None, timeout_ms=1_200_000, cli="claude", tool_policy=Non
             timeout_ms=timeout_ms,
             cli=cli,
             tool_policy=tool_policy or LlmToolPolicy(),
+            **llm_kwargs,
         ),
     )
 
@@ -59,6 +66,27 @@ class TestAICodingCliProvider:
     def test_provider_has_no_build_or_feedback_orchestration_methods(self):
         assert not hasattr(AICodingCliProvider, "exec_build")
         assert not hasattr(AICodingCliProvider, "exec_feedback")
+
+    def test_provider_exposes_default_cli_build_and_artifact_capabilities(self):
+        from harness.provider_capability import ProviderCapability
+
+        provider = AICodingCliProvider(_config(cli="claude"))
+
+        assert provider.capabilities == frozenset(
+            {ProviderCapability.ARTIFACT, ProviderCapability.BUILD}
+        )
+
+    def test_openai_compatible_provider_is_artifact_only(self):
+        from harness.provider_capability import ProviderCapability
+
+        provider = AICodingCliProvider(
+            _config(
+                cli="openai-compatible",
+                timeout_ms=600_000,
+            )
+        )
+
+        assert provider.capabilities == frozenset({ProviderCapability.ARTIFACT})
 
     def test_exec_prompt_runs_generic_prompt_without_build_status_file(self, tmp_path):
         with _patch_claude_popen() as popen:

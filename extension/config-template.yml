@@ -1207,13 +1207,27 @@ harness:
 
   # --- LLM Provider ---
 
-  # LLM CLI used by `echelon delivery run` for build and review steps.
+  # LLM provider used by Echelon commands.
   # Overrides ECHELON_LLM env var when set.
-  # Options: claude (default) | copilot | opencode | codex
+  # Build-capable CLIs: claude (default) | copilot | opencode | codex
+  # Artifact-only API provider: openai-compatible
   # llm:
   #   cli: claude
   #   config_dir: ~/.claude-personal   # sets CLAUDE_CONFIG_DIR (claude only)
   #   timeout_ms: 1200000              # 20 minutes
+  #
+  #   # OpenAI-compatible artifact-only provider example:
+  #   # cli: openai-compatible
+  #   # base_url: http://127.0.0.1:8000/v1
+  #   # model: local-model
+  #   # api_key_env: LOCAL_LLM_API_KEY
+  #   # temperature: 0.2
+  #   # max_tokens: 8192
+  #   # features:
+  #   #   streaming: false
+  #   #   json_mode: false
+  #   #   structured_outputs: false
+  #   #   tool_calls: false
   #   tool_policy:
   #     file_boundary: workspace
   #     network_boundary: harness_allowlist

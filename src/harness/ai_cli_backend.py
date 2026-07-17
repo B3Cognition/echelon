@@ -42,10 +42,13 @@ def create_ai_cli_backend(config: HarnessConfig) -> AICodingCliBackend:
     from harness.ai_cli_backends.claude import ClaudeCliBackend
     from harness.ai_cli_backends.codex import CodexCliBackend
     from harness.ai_cli_backends.copilot import CopilotCliBackend
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
     from harness.ai_cli_backends.opencode import OpenCodeCliBackend
     from harness.ai_cli_backends.plain import PlainCliBackend
 
     cli = config.llm.cli
+    if cli == "openai-compatible":
+        return OpenAICompatibleBackend(config)
     if cli == "claude":
         return ClaudeCliBackend(config)
     if cli == "codex":

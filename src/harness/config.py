@@ -78,7 +78,7 @@ DEFAULT_NETWORK_ALLOWLIST = [
 
 VALID_PROVIDERS = {"docker", "e2b", "modal", "daytona"}
 VALID_CONTAINER_CLIS = {"docker", "podman"}
-VALID_LLM_CLIS = {"claude", "copilot", "opencode", "codex"}
+VALID_LLM_CLIS = {"claude", "copilot", "opencode", "codex", "openai-compatible"}
 VALID_PR_HOSTS = {"github", "gitlab", "none"}
 VALID_FULFILLMENT_REFRESH_POLICIES = {
     "every_slice",
@@ -160,10 +160,16 @@ class AppRuntimeConfig:
 class LlmConfig:
     """Configuration for host-side LLM CLI subprocesses."""
     enabled: bool = False              # true when llm section is present in config
-    cli: str = "claude"               # "claude", "copilot", "opencode", or "codex"
+    cli: str = "claude"               # "claude", "copilot", "opencode", "codex", or "openai-compatible"
     config_dir: Optional[str] = None   # passed as CLAUDE_CONFIG_DIR env var (claude only)
     timeout_ms: int = 10_800_000       # 3 hours per autonomous build invocation
     tool_policy: LlmToolPolicy = field(default_factory=LlmToolPolicy)
+    base_url: Optional[str] = None     # OpenAI-compatible endpoint base URL
+    model: Optional[str] = None        # OpenAI-compatible model name
+    api_key_env: Optional[str] = None  # env var containing API key for API providers
+    temperature: float = 0.2
+    max_tokens: Optional[int] = None
+    features: Dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass
@@ -519,13 +525,40 @@ def _parse_llm(data: Dict[str, Any]) -> LlmConfig:
     if not isinstance(raw, dict):
         raw = {}
     tool_policy = _parse_llm_tool_policy(raw)
+    cli = _validate_llm_cli(str(raw.get("cli", "claude")))
+    base_url = str(raw["base_url"]).rstrip("/") if raw.get("base_url") else None
+    model = str(raw["model"]) if raw.get("model") else None
+    if cli == "openai-compatible":
+        if not base_url:
+            raise ValidationError(
+                "llm.base_url is required for openai-compatible provider",
+                field_path="llm.base_url",
+            )
+        if not model:
+            raise ValidationError(
+                "llm.model is required for openai-compatible provider",
+                field_path="llm.model",
+            )
     return LlmConfig(
         enabled="llm" in data,
-        cli=_validate_llm_cli(str(raw.get("cli", "claude"))),
+        cli=cli,
         config_dir=str(raw["config_dir"]) if raw.get("config_dir") else None,
         timeout_ms=int(raw.get("timeout_ms", 10_800_000)),
         tool_policy=tool_policy,
+        base_url=base_url,
+        model=model,
+        api_key_env=str(raw["api_key_env"]) if raw.get("api_key_env") else None,
+        temperature=float(raw.get("temperature", 0.2)),
+        max_tokens=int(raw["max_tokens"]) if raw.get("max_tokens") is not None else None,
+        features=_parse_llm_features(raw),
     )
+
+
+def _parse_llm_features(raw: Dict[str, Any]) -> Dict[str, bool]:
+    features = raw.get("features", {})
+    if not isinstance(features, dict):
+        return {}
+    return {str(key): bool(value) for key, value in features.items()}
 
 
 def _parse_llm_tool_policy(raw_llm: Dict[str, Any]) -> LlmToolPolicy:
