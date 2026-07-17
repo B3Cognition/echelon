@@ -91,6 +91,20 @@ JUDGMENT_STATE_UPDATE_KEYS = frozenset(
 logger = logging.getLogger(__name__)
 
 
+def _phase_dispatch_limit_phase(state: dict, fallback: str = "") -> str:
+    """Identify the phase to retry after a human-authorized dispatch-cap recovery."""
+    phase = str(state.get("phase_dispatch_limit_phase") or "").strip()
+    if phase:
+        return phase
+
+    question = str(state.get("escalation_question") or "")
+    match = re.search(r"Phase ['\"]([^'\"]+)['\"] has been dispatched", question)
+    if match:
+        return match.group(1)
+
+    return fallback if fallback not in TERMINAL_PHASES else ""
+
+
 def _spec_id_from_phase_a_dir(spec_dir: Path) -> str:
     if spec_dir.name.startswith("spec-"):
         return spec_dir.name.removeprefix("spec-")
@@ -449,6 +463,7 @@ class SquadController:
         elif existing_status == "blocked" and existing.get("escalation_question"):
             q = existing.get("escalation_question", "")
             mode_at_block = _state_autonomy_mode(existing, mode)
+            recovery_reason = str(existing.get("blocked_reason") or "")
 
             if mode_at_block == "banzai":
                 print(
@@ -466,6 +481,7 @@ class SquadController:
                 self._judgment_dispatch_escalation(
                     escalation_question=q,
                     blocked_phase=existing.get("phase", "unknown"),
+                    recovery_reason=recovery_reason,
                 )
                 force_resume = True
             else:
@@ -614,6 +630,8 @@ class SquadController:
                 s = self._state_store.load()
                 s["escalation_question"] = escalation_q
                 s["blocked_reason"] = "phase_dispatch_limit"
+                s["phase_dispatch_limit_phase"] = phase
+                s["phase_dispatch_limit"] = phase_limit
                 s["status"] = "blocked"
                 self._state_store.save(s)
                 print(
@@ -682,6 +700,7 @@ class SquadController:
             if state_now.get("status") == "blocked" and state_now.get("escalation_question") and not state_now.get("escalation_resolved"):
                 q = state_now["escalation_question"]
                 run_mode = _state_autonomy_mode(state_now, mode)
+                recovery_reason = str(state_now.get("blocked_reason") or "")
                 if run_mode == "banzai":
                     print(
                         f"[squad] ~ {node.id}  escalation — banzai COMMANDER judgment",
@@ -692,7 +711,11 @@ class SquadController:
                     s["status"] = "running"
                     s["blocked_reason"] = None
                     self._state_store.save(s)
-                    self._judgment_dispatch_escalation(q, phase)
+                    self._judgment_dispatch_escalation(
+                        q,
+                        phase,
+                        recovery_reason=recovery_reason,
+                    )
                     if self._state_store.load().get("status") == "blocked":
                         return SquadResult.from_state(self._state_store.load())
                     # Unconditionally mark escalation resolved — do not rely on COMMANDER
@@ -1842,6 +1865,7 @@ class SquadController:
         self,
         escalation_question: str,
         blocked_phase: str,
+        recovery_reason: str = "",
     ) -> SquadAgentResult:
         """Dispatch COMMANDER to resolve a user-gated escalation in banzai mode.
 
@@ -1850,7 +1874,13 @@ class SquadController:
         """
         commander_path = self._ext_dir / "agents/control/commander.md"
         state = self._state_store.load()
-        reset_why_fail_count = state.get("blocked_reason") == "consecutive_why_fails"
+        blocked_reason = recovery_reason or str(state.get("blocked_reason") or "")
+        reset_why_fail_count = blocked_reason == "consecutive_why_fails"
+        capped_phase = (
+            _phase_dispatch_limit_phase(state, blocked_phase)
+            if blocked_reason == "phase_dispatch_limit"
+            else ""
+        )
 
         staging_dir = Path(state.get("staging_dir", str(self._squad_dir / "staging")))
         staging_context = ""
@@ -1897,6 +1927,14 @@ class SquadController:
             return result
         if reset_why_fail_count:
             self._state_store.reset_why_fail_count()
+        if capped_phase:
+            self._state_store.reset_phase_dispatch_count(capped_phase)
+            recovered = self._state_store.load()
+            recovered["phase_dispatch_limit_recovery"] = {
+                "phase": capped_phase,
+                "resolver": "COMMANDER-banzai",
+            }
+            self._state_store.save(recovered)
         self._write_journal_entries(result, blocked_phase)
 
         return result

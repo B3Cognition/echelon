@@ -34,6 +34,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Context7 deployed-runtime discovery** — the installer now places the pinned
+  `ctx7` runtime under `~/.echelon/node/context7`, and deployed extension
+  wrappers fall back to that shared installation. Project-local extension copies
+  no longer fail merely because `specify extension add/update` excludes
+  `node_modules`.
+
 - **EGR-147 / #162 authoritative implementation targets** — repeatable
   `echelon spec run --target` values are now resolved and persisted before
   Phase A dispatch, written to `targets.yml`, injected into architecture/task

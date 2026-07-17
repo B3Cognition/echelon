@@ -786,6 +786,42 @@ def test_continue_ignores_legacy_nested_re_state_during_outer_escalation(
     assert calls == []
 
 
+def test_continue_explains_how_to_recover_from_phase_dispatch_limit(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_dispatch_limit",
+            "escalation_question": (
+                "Phase 'phase1-what' has been dispatched 6 times (limit 5) "
+                "without converging or advancing. Possible routing loop. "
+                "How should I proceed?"
+            ),
+            "phase_dispatch_limit_phase": "phase1-what",
+            "phase_dispatch_limit": 5,
+            "phase_dispatch_counts": {"phase1-what": 6},
+            "last_dispatch": {"phase_id": "phase1-why2"},
+            "completed_phases": ["init"],
+            "user_message": "reverse engineer the workspace",
+            "autonomy_mode": "semi",
+        },
+    )
+
+    monkeypatch.setattr("echelon.cli._cmd_run", lambda *args, **kwargs: None)
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    output = capsys.readouterr().out
+    assert "authorize one targeted retry of phase1-what" in output.lower()
+    assert "latest issues.md findings" in output
+    assert 'echelon spec resume "Authorize one targeted retry of phase1-what' in output
+
+
 def test_continue_ignores_legacy_nested_re_state_for_active_spec_run(
     tmp_path: Path,
     monkeypatch,

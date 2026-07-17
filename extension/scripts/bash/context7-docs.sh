@@ -10,11 +10,20 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CTX7_NODE_DIR="$(dirname "$SCRIPT_DIR")/node/context7"
-CTX7_BIN="${ECHELON_CONTEXT7_BIN:-$CTX7_NODE_DIR/node_modules/.bin/ctx7}"
+LOCAL_CTX7_BIN="$CTX7_NODE_DIR/node_modules/.bin/ctx7"
+SHARED_CTX7_BIN="${ECHELON_HOME:-$HOME/.echelon}/node/context7/node_modules/.bin/ctx7"
+
+if [[ -n "${ECHELON_CONTEXT7_BIN:-}" ]]; then
+  CTX7_BIN="$ECHELON_CONTEXT7_BIN"
+elif [[ -x "$LOCAL_CTX7_BIN" ]]; then
+  CTX7_BIN="$LOCAL_CTX7_BIN"
+else
+  CTX7_BIN="$SHARED_CTX7_BIN"
+fi
 
 if [[ ! -x "$CTX7_BIN" ]]; then
   echo "Context7 CLI is not installed at $CTX7_BIN" >&2
-  echo "Run: npm ci --prefix \"$CTX7_NODE_DIR\"" >&2
+  echo "Run Echelon's installer: bash <echelon-checkout>/scripts/install.sh" >&2
   exit 127
 fi
 

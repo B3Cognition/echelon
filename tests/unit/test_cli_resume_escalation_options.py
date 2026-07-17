@@ -299,3 +299,45 @@ def test_resume_terminal_block_delegates_to_continue(
     assert resumed["blocked_reason"] is None
     assert resumed["blocked_decision"]["status"] == "resolved"
     assert calls == [([], tmp_path, Path.cwd() / "extension")]
+
+
+def test_resume_phase_dispatch_limit_resets_the_capped_phase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_resume
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_dispatch_limit",
+            "escalation_question": (
+                "Phase 'phase1-what' has been dispatched 6 times (limit 5) "
+                "without converging or advancing. Possible routing loop. "
+                "How should I proceed?"
+            ),
+            "phase_dispatch_limit_phase": "phase1-what",
+            "phase_dispatch_limit": 5,
+            "phase_dispatch_counts": {
+                "phase1-what": 6,
+                "phase1-why2": 3,
+            },
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    _patch_resume_dependencies(monkeypatch)
+    monkeypatch.setattr("echelon.cli._cmd_continue", lambda *args, **kwargs: None)
+
+    _cmd_resume(
+        ["Authorize one targeted retry of phase1-what using the latest issues.md findings."],
+        project_root=tmp_path,
+        ext_dir=Path.cwd() / "extension",
+    )
+
+    resumed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert "phase1-what" not in resumed["phase_dispatch_counts"]
+    assert resumed["phase_dispatch_counts"] == {"phase1-why2": 3}
+    assert resumed["phase_dispatch_limit_recovery"]["phase"] == "phase1-what"

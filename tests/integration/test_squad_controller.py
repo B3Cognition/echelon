@@ -1914,6 +1914,51 @@ class TestCommanderJudgmentStateUpdates:
 
         assert store.load()["why_fail_count"] == 0
 
+    def test_banzai_phase_dispatch_limit_recovery_resets_capped_phase(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "escalation_question": None,
+                    "escalation_resolved": True,
+                    "escalation_resolver": "COMMANDER-banzai",
+                    "blocked_reason": None,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "status": "running",
+                "phase": "terminal-blocked",
+                "blocked_reason": None,
+                "escalation_question": (
+                    "Phase 'phase1-what' has been dispatched 6 times (limit 5) "
+                    "without converging or advancing."
+                ),
+                "phase_dispatch_limit_phase": "phase1-what",
+                "phase_dispatch_counts": {"phase1-what": 6},
+            }
+        )
+        store.save(state)
+
+        ctrl._judgment_dispatch_escalation(
+            state["escalation_question"],
+            "terminal-blocked",
+            recovery_reason="phase_dispatch_limit",
+        )
+
+        resumed = store.load()
+        assert "phase1-what" not in resumed["phase_dispatch_counts"]
+        assert resumed["phase_dispatch_limit_recovery"]["phase"] == "phase1-what"
+
     def test_banzai_escalation_invalid_cleanup_key_blocks(self, tmp_path):
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(

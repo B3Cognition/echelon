@@ -11,7 +11,8 @@ VENV_DIR="$HOME/.echelon/venv"
 MEMORY_DIR="$HOME/.echelon/memory"
 CODEGRAPH_NODE_DIR="$ECHELON_DIR/extension/scripts/node/codegraph"
 PERLGRAPH_NODE_DIR="$ECHELON_DIR/extension/scripts/node/perlgraph"
-CTX7_NODE_DIR="$ECHELON_DIR/extension/scripts/node/context7"
+CTX7_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/context7"
+CTX7_NODE_DIR="$HOME/.echelon/node/context7"
 
 echo ""
 echo "╔══════════════════════════════════════════╗"
@@ -198,13 +199,15 @@ fi
 echo "▶ Installing Context7 documentation tool dependencies..."
 if ! command -v node &>/dev/null; then
   echo "  ⚠ Node.js not found; Context7 documentation lookups will be unavailable."
-  echo "    Install Node.js, then run: npm ci --prefix \"$CTX7_NODE_DIR\""
+  echo "    Install Node.js, then rerun this installer."
 elif ! command -v npm &>/dev/null; then
   echo "  ⚠ npm not found; Context7 documentation lookups will be unavailable."
-  echo "    Install npm, then run: npm ci --prefix \"$CTX7_NODE_DIR\""
-elif [ ! -f "$CTX7_NODE_DIR/package-lock.json" ]; then
-  echo "  ⚠ package-lock.json not found at $CTX7_NODE_DIR; skipping Context7 deps."
+  echo "    Install npm, then rerun this installer."
+elif [ ! -f "$CTX7_SOURCE_DIR/package-lock.json" ]; then
+  echo "  ⚠ package-lock.json not found at $CTX7_SOURCE_DIR; skipping Context7 deps."
 else
+  mkdir -p "$CTX7_NODE_DIR"
+  cp "$CTX7_SOURCE_DIR/package.json" "$CTX7_SOURCE_DIR/package-lock.json" "$CTX7_NODE_DIR/"
   npm ci --prefix "$CTX7_NODE_DIR" --silent
   echo "  ✓ Context7 CLI dependencies installed → $CTX7_NODE_DIR/node_modules"
 fi
@@ -260,7 +263,7 @@ fi
 if [ -x "$CTX7_NODE_DIR/node_modules/.bin/ctx7" ]; then
   echo "  Context7 CLI  → $CTX7_NODE_DIR/node_modules/.bin/ctx7"
 else
-  echo "  Context7 CLI  → not ready (run: npm ci --prefix \"$CTX7_NODE_DIR\")"
+  echo "  Context7 CLI  → not ready (rerun this installer after installing Node.js/npm)"
 fi
 echo "  Memory        → $MEMORY_DIR"
 echo ""

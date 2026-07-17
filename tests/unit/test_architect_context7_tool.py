@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -29,7 +30,9 @@ def test_context7_cli_runtime_is_pinned_and_extension_local() -> None:
 def test_install_script_installs_context7_with_npm_ci() -> None:
     install_script = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
 
-    assert "CTX7_NODE_DIR=" in install_script
+    assert 'CTX7_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/context7"' in install_script
+    assert 'CTX7_NODE_DIR="$HOME/.echelon/node/context7"' in install_script
+    assert 'cp "$CTX7_SOURCE_DIR/package.json" "$CTX7_SOURCE_DIR/package-lock.json" "$CTX7_NODE_DIR/"' in install_script
     assert 'npm ci --prefix "$CTX7_NODE_DIR"' in install_script
     assert "Context7 CLI dependencies installed" in install_script
     assert "context7-mcp" not in install_script
@@ -41,7 +44,8 @@ def test_context7_wrapper_execs_extension_local_ctx7() -> None:
 
     assert mode & stat.S_IXUSR
     assert 'CTX7_NODE_DIR="$(dirname "$SCRIPT_DIR")/node/context7"' in text
-    assert 'CTX7_BIN="${ECHELON_CONTEXT7_BIN:-$CTX7_NODE_DIR/node_modules/.bin/ctx7}"' in text
+    assert 'LOCAL_CTX7_BIN="$CTX7_NODE_DIR/node_modules/.bin/ctx7"' in text
+    assert 'SHARED_CTX7_BIN="${ECHELON_HOME:-$HOME/.echelon}/node/context7/node_modules/.bin/ctx7"' in text
     assert "echelon.context7.v1" in text
     assert '"result": result' in text
     assert 'exec "$CTX7_BIN" "$@"' in text
@@ -117,6 +121,50 @@ esac
             "infoSnippets": [{"text": "current docs"}],
         },
     }
+
+
+def test_deployed_context7_wrapper_uses_shared_installed_runtime(tmp_path: Path) -> None:
+    deployed_wrapper = (
+        tmp_path
+        / "project"
+        / ".specify"
+        / "extensions"
+        / "echelon"
+        / "scripts"
+        / "bash"
+        / "context7-docs.sh"
+    )
+    deployed_wrapper.parent.mkdir(parents=True)
+    shutil.copy2(CTX7_WRAPPER, deployed_wrapper)
+
+    shared_ctx7 = (
+        tmp_path
+        / "home"
+        / ".echelon"
+        / "node"
+        / "context7"
+        / "node_modules"
+        / ".bin"
+        / "ctx7"
+    )
+    shared_ctx7.parent.mkdir(parents=True)
+    shared_ctx7.write_text(
+        "#!/usr/bin/env bash\nprintf '[{\"id\":\"/fake/shared\",\"title\":\"Shared runtime\"}]\\n'\n",
+        encoding="utf-8",
+    )
+    shared_ctx7.chmod(0o755)
+
+    proc = subprocess.run(
+        [str(deployed_wrapper), "library", "shared runtime", "--json"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "HOME": str(tmp_path / "home")},
+    )
+
+    payload = json.loads(proc.stdout)
+    assert payload["ok"] is True
+    assert payload["result"] == [{"id": "/fake/shared", "title": "Shared runtime"}]
 
 
 def test_architect_uses_context7_cli_wrapper_not_mcp_names() -> None:

@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -55,7 +56,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.3.8"
+CLI_VERSION = "3.4.0"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -2994,6 +2995,21 @@ class _RunRecoveryAction:
     note: str = ""
 
 
+def _phase_dispatch_limit_phase(run_state: dict) -> str | None:
+    """Find the phase whose retry window was exhausted.
+
+    New runs persist the phase explicitly.  The question fallback keeps runs
+    created by older Echelon versions recoverable without state-file surgery.
+    """
+    phase = str(run_state.get("phase_dispatch_limit_phase") or "").strip()
+    if phase:
+        return phase
+
+    question = str(run_state.get("escalation_question") or "")
+    match = re.search(r"Phase ['\"]([^'\"]+)['\"] has been dispatched", question)
+    return match.group(1) if match else None
+
+
 def _is_retryable_dispatch_block_reason(reason: str) -> bool:
     reason = reason.strip()
     return (
@@ -3079,6 +3095,25 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
         return _RunRecoveryAction("advance")
 
     if run_state.get("escalation_question"):
+        if reason == "phase_dispatch_limit":
+            phase = _phase_dispatch_limit_phase(run_state)
+            if phase:
+                answer = (
+                    f"Authorize one targeted retry of {phase} using the latest "
+                    "issues.md findings."
+                )
+                return _RunRecoveryAction(
+                    "human_resume",
+                    reason=reason,
+                    phase=phase,
+                    command=f'echelon spec resume "{answer}"',
+                    note=(
+                        f"{run_state.get('escalation_question', '').strip()}\n\n"
+                        f"Unblock: review the latest issues.md findings, then authorize "
+                        f"one targeted retry of {phase}. Echelon will reset that phase's "
+                        "dispatch counter before retrying it."
+                    ),
+                )
         return _RunRecoveryAction(
             "human_resume",
             reason=reason or "human answer required",
@@ -6552,8 +6587,11 @@ def _cmd_resume(
 
     _preserve_active_spec_context(project_root, state)
 
-    # Capture blocked phase before clearing — needed to decide resume path.
+    # Capture blocked state before clearing — needed to decide resume path and
+    # to reopen the retry window after an explicitly authorized cap recovery.
     blocked_phase = state.get("phase", "")
+    blocked_reason = str(state.get("blocked_reason") or "").strip()
+    capped_phase = _phase_dispatch_limit_phase(state)
 
     # Write user's answer to staging so the re-dispatched phase can read it.
     staging_dir = Path(state.get("staging_dir", str(squad_dir / "staging")))
@@ -6606,6 +6644,17 @@ def _cmd_resume(
         selected_option=selected_option,
         resumed_phase=resumed_phase,
     )
+
+    if blocked_reason == "phase_dispatch_limit" and capped_phase:
+        counts = state.get("phase_dispatch_counts") or {}
+        if isinstance(counts, dict):
+            previous_count = counts.pop(capped_phase, None)
+            state["phase_dispatch_counts"] = counts
+            state["phase_dispatch_limit_recovery"] = {
+                "phase": capped_phase,
+                "previous_dispatch_count": previous_count,
+                "answer": answer,
+            }
 
     # Clear the blocked state.
     state["escalation_question"] = None
