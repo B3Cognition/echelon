@@ -348,10 +348,12 @@ providers:
     capabilities:
       - artifact
     features:
-      streaming: false
+      streaming: true
       json_mode: false
       structured_outputs: false
       tool_calls: false
+      reasoning_content: auto
+      reasoning_effort: false
 ```
 
 The provider should expose feature flags rather than assuming all compatible
@@ -361,6 +363,82 @@ and do not imply global pipeline features.
 The v1 artifact pipeline can operate with plain text output plus strict result
 block validation. JSON mode or structured outputs may be enabled when the local
 server supports them, but they are optimizations rather than required behavior.
+
+### OpenCode-Informed Protocol Borrowing
+
+OpenCode is useful prior art, but this design should borrow protocol patterns
+rather than embed OpenCode as a dependency. The relevant lesson is that an
+OpenAI-compatible endpoint may expose a simple URL while still needing a real
+protocol adapter.
+
+The provider should therefore evolve from a bare request/response helper into a
+small OpenAI-chat protocol adapter:
+
+- Send `POST <base_url>/chat/completions`.
+- Prefer `stream: true` with Server-Sent Events framing when the endpoint
+  supports it.
+- Request usage metadata when supported, for example
+  `stream_options.include_usage`.
+- Treat `choices[].delta.content` as artifact text.
+- Treat `choices[].delta.reasoning_content` as provider reasoning metadata,
+  never as artifact text and never as the parsed `echelon_result`.
+- Track `finish_reason`, usage, HTTP status, provider headers when useful, and
+  whether the response was streamed or non-streamed.
+- Reject streamed tool-call deltas for the artifact provider unless a later
+  design explicitly adds tool support. Artifact providers do not gain build/tool
+  capability because an endpoint can emit tool-call syntax.
+- Keep a non-streaming fallback only for endpoints that cannot stream, and mark
+  it as lower confidence for reasoning models because reasoning may be merged
+  into final content by the server.
+
+This keeps the local provider compact while addressing the two issues found in
+testing: long responses can hang if the client waits for the whole body, and
+reasoning models may pollute strict YAML/result parsing when reasoning is merged
+with visible answer text.
+
+### Provider Timing Model
+
+The provider must enforce timeouts at three levels:
+
+- Header timeout: the endpoint must begin responding within a short configured
+  window.
+- Stream/read timeout: each read must produce data or fail within a configured
+  window.
+- Overall deadline: the full provider call must stop at the Echelon timeout and
+  return a timed-out provider result.
+
+A socket timeout alone is not enough because chunked responses can keep the
+connection open while the caller blocks waiting for the complete body. Streaming
+plus deadline-aware reads gives the controller a reliable timeout signal and
+allows future progress reporting if needed.
+
+### Model Capability Profile
+
+The OpenAI-compatible provider should carry model-level capability metadata,
+separate from Echelon command capabilities:
+
+```yaml
+features:
+  streaming: true
+  json_mode: false
+  structured_outputs: false
+  tool_calls: false
+  reasoning_content: auto     # auto | field | merged | none
+  reasoning_effort: false
+```
+
+`capabilities.artifact` answers whether Echelon may use the provider for PM/spec
+work. `features.reasoning_content` answers how the protocol adapter should treat
+reasoning output for a selected model. These are intentionally separate so a
+reasoning-capable model does not imply build capability or tool execution.
+
+When `reasoning_content: field`, the adapter expects reasoning in
+`reasoning_content` fields and excludes it from artifact text. When
+`reasoning_content: merged`, the adapter assumes the server may mix reasoning
+into normal content and the controller should prefer stricter prompts, shorter
+repair loops, or a different model for structured artifact phases. When
+`reasoning_content: auto`, the adapter detects fields when present and records
+what it observed in metadata.
 
 The provider returns a normalized run result:
 
@@ -372,6 +450,7 @@ timed_out
 token_usage
 provider_error_code
 raw_response_metadata
+reasoning_metadata
 ```
 
 Timeouts, HTTP errors, malformed API responses, and invalid model output are
@@ -524,6 +603,12 @@ Unit tests should cover:
 - Provider capability parsing and command gating.
 - OpenAI-compatible request construction, timeout handling, HTTP error handling,
   token usage extraction, and malformed response handling.
+- Streaming SSE parsing, including `[DONE]` termination, partial line handling,
+  usage events, `finish_reason`, and cancellation on read timeout.
+- Reasoning separation: `reasoning_content` is captured as provider metadata and
+  excluded from artifact text and structured result parsing.
+- Non-streaming fallback behavior for endpoints that do not support SSE.
+- Tool-call rejection for artifact-only providers.
 - Structured result extraction and validation from provider output.
 - Aha normalized schema validation using fixture snapshots.
 - Evidence reference generation and citation validation.
@@ -534,8 +619,11 @@ Unit tests should cover:
   PM relationship corrections.
 
 Contract tests should use a local stub OpenAI-compatible server that implements
-`/v1/chat/completions` and returns deterministic model messages. Aha ingestion
-tests should use recorded fixtures, not live Aha calls.
+`/v1/chat/completions` and returns deterministic streamed and non-streamed model
+messages. The stub should include fixtures for plain content, separate
+`reasoning_content`, merged reasoning prose, delayed stream chunks, HTTP errors,
+and malformed SSE frames. Aha ingestion tests should use recorded fixtures, not
+live Aha calls.
 
 End-to-end tests should run a tiny artifact pipeline from fixture Aha snapshots
 through final artifact publication and assert that all final product claims trace
