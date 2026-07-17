@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -324,3 +326,45 @@ def test_apply_target_write_failure_is_reported_and_report_is_written(tmp_path: 
     assert report.rejected_count == 1
     assert "target is read-only" in (report.outcomes[0].reason or "")
     assert (project / "runs" / "squad-001" / "kb-apply-report.yaml").exists()
+
+
+def test_report_write_failure_returns_degraded_report(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path
+    kb = project / "knowledge-base"
+    kb.mkdir()
+    target = kb / "patterns.yaml"
+    target.write_text("schema_version: 1\nappend_only: true\nentries: []\n", encoding="utf-8")
+    proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+    (proposal_dir / "report-failure.yaml").write_text(yaml.safe_dump(_base_proposal()), encoding="utf-8")
+    report_path = project / "runs" / "squad-001" / "kb-apply-report.yaml"
+    original_write_text = Path.write_text
+
+    def fail_report_write(path: Path, *args, **kwargs):
+        if path == report_path:
+            raise OSError("report filesystem is unavailable")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_report_write)
+
+    report = apply_proposals(project, "squad-001")
+
+    assert report.status == "degraded"
+    assert report.accepted_count == 1
+    assert "report filesystem is unavailable" in (report.report_error or "")
+
+
+def test_project_fingerprint_prefers_git_origin(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    origin = "https://example.test/echelon/project.git"
+    subprocess.run(["git", "-C", str(project), "init"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(project), "remote", "add", "origin", origin],
+        check=True,
+        capture_output=True,
+    )
+
+    expected = hashlib.sha256(origin.encode("utf-8")).hexdigest()[:12]
+
+    assert _project_fingerprint(project) == expected

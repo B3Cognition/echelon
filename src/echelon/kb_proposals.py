@@ -73,6 +73,7 @@ class KBApplyReport:
     status: str
     outcomes: list[ProposalApplyOutcome]
     report_path: Path
+    report_error: str | None = None
 
     @property
     def accepted_count(self) -> int:
@@ -87,7 +88,7 @@ class KBApplyReport:
         return sum(1 for item in self.outcomes if item.outcome == "skipped_duplicate")
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        result: dict[str, object] = {
             "schema_version": 1,
             "run_id": self.run_id,
             "status": self.status,
@@ -97,6 +98,9 @@ class KBApplyReport:
             "skipped_duplicate_count": self.skipped_duplicate_count,
             "outcomes": [item.__dict__ for item in self.outcomes],
         }
+        if self.report_error is not None:
+            result["report_error"] = self.report_error
+        return result
 
 
 def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
@@ -104,7 +108,11 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
 
     proposal_dir = project_root / "runs" / run_id / "kb-proposals"
     report_path = project_root / "runs" / run_id / "kb-apply-report.yaml"
-    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_error: str | None = None
+    try:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        report_error = f"report directory creation failed: {exc}"
     outcomes: list[ProposalApplyOutcome] = []
 
     for loaded in load_proposals(proposal_dir, expected_run_id=run_id):
@@ -151,8 +159,25 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
         outcomes.append(outcome)
 
     status = "applied" if any(item.outcome == "accepted" for item in outcomes) else "degraded"
-    report = KBApplyReport(run_id=run_id, status=status, outcomes=outcomes, report_path=report_path)
-    report_path.write_text(yaml.safe_dump(report.to_dict(), sort_keys=False), encoding="utf-8")
+    report = KBApplyReport(
+        run_id=run_id,
+        status="degraded" if report_error else status,
+        outcomes=outcomes,
+        report_path=report_path,
+        report_error=report_error,
+    )
+    if report_error is None:
+        try:
+            report_path.write_text(yaml.safe_dump(report.to_dict(), sort_keys=False), encoding="utf-8")
+        except Exception as exc:
+            report_error = f"report write failed: {exc}"
+            report = KBApplyReport(
+                run_id=run_id,
+                status="degraded",
+                outcomes=outcomes,
+                report_path=report_path,
+                report_error=report_error,
+            )
     return report
 
 
