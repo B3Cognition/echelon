@@ -3479,6 +3479,7 @@ def _reset_rewind_state(state: dict, phase: str, spec_dir_ref: str) -> dict:
     rewound["escalation_question"] = None
     rewound["escalation_resolved"] = False
     rewound["escalation_resolver"] = None
+    rewound.pop("phase_a_readiness_blockers", None)
     if phase in _REWIND_PHASE_ORDER:
         cutoff = _REWIND_PHASE_ORDER.index(phase)
         downstream = set(_REWIND_PHASE_ORDER[cutoff:])
@@ -6280,6 +6281,7 @@ def _cmd_rewind(
             result = prepare_rewind(
                 project_root=project_root,
                 spec=spec_dir.name,
+                spec_dir=spec_dir,
                 target=target,
                 confirm=confirm,
             )
@@ -6291,6 +6293,10 @@ def _cmd_rewind(
             print(result.message)
             return
 
+        removed = _cleanup_rewind_outputs(spec_dir, target, squad_dir)
+        rewound = _reset_rewind_state(state, target, spec_dir_ref)
+        store.save(rewound)
+
         _banner(
             "REWIND COMPLETE",
             [
@@ -6299,6 +6305,8 @@ def _cmd_rewind(
                 ("from", result.from_commit[:7]),
                 ("to", result.to_commit[:7]),
                 ("backup", result.backup_ref or "(none)"),
+                ("cleaned", ", ".join(removed) if removed else "(none)"),
+                ("next", "echelon spec continue"),
             ],
         )
         return

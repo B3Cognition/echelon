@@ -88,3 +88,30 @@ def test_rewind_missing_checkpoint_reports_available_targets(tmp_path: Path) -> 
     message = str(exc.value)
     assert "checkpoint not found for spec 001-demo: phase2-decide" in message
     assert "Available checkpoints: phase3-plan" in message
+
+
+def test_rewind_uses_explicit_run_local_spec_directory(tmp_path: Path) -> None:
+    repo, root_spec_dir, checkpoint, later = _repo_with_checkpoint(tmp_path)
+    ledger = root_spec_dir / ".echelon" / "checkpoints.json"
+    run_spec_dir = repo / "runs" / "spec-1" / "specs" / root_spec_dir.name
+    run_spec_dir.mkdir(parents=True)
+    (run_spec_dir / ".echelon").mkdir()
+    (run_spec_dir / ".echelon" / "checkpoints.json").write_text(
+        ledger.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    ledger.unlink()
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "move ledger to run context")
+    later = _git(repo, "rev-parse", "HEAD")
+
+    result = prepare_rewind(
+        project_root=repo,
+        spec="001",
+        spec_dir=run_spec_dir,
+        target="phase3-plan",
+        confirm=False,
+    )
+
+    assert not result.applied
+    assert result.from_commit == later
+    assert result.to_commit == checkpoint

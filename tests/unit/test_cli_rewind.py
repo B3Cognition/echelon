@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from echelon.cli import _cmd_rewind
+from echelon.rewind import RewindResult
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
 
 
@@ -216,3 +217,51 @@ def test_rewind_missing_checkpoint_exits_without_traceback(
     assert "checkpoint not found for spec 013-vod-cms-modernization: phase3-plan" in captured.err
     assert "Available checkpoints: phase2-decide" in captured.err
     assert "Traceback" not in captured.err
+
+
+def test_checkpoint_rewind_uses_run_local_ledger_and_resets_run_state(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_a_readiness_failed",
+            "phase_a_readiness_blockers": ["broken mapping"],
+            "spec_dir": "runs/spec-20260618-073106-635192/specs/006-element-creator",
+            "completed_phases": ["phase3-how", "phase3-plan", "phase3-consensus"],
+        },
+    )
+    run_spec_dir = run_dir / "specs" / "006-element-creator"
+    (run_spec_dir / ".echelon").mkdir(parents=True)
+    (run_spec_dir / ".echelon" / "checkpoints.json").write_text("{}\n", encoding="utf-8")
+
+    received: dict[str, object] = {}
+
+    def fake_prepare_rewind(**kwargs):
+        received.update(kwargs)
+        return RewindResult(
+            applied=True,
+            spec_id="006-element-creator",
+            checkpoint_id="phase3-plan",
+            from_commit="abcdef0",
+            to_commit="1234567",
+            backup_ref="echelon/backup/test",
+            message="Rewind complete.",
+        )
+
+    monkeypatch.setattr("echelon.rewind.prepare_rewind", fake_prepare_rewind)
+
+    _cmd_rewind(["phase3-plan", "--confirm"], project_root=tmp_path)
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert received["spec_dir"] == run_spec_dir
+    assert state["status"] == "running"
+    assert state["phase"] == "phase3-plan"
+    assert state["blocked_reason"] is None
+    assert "phase_a_readiness_blockers" not in state
+    assert state["completed_phases"] == ["phase3-how"]
+    assert "echelon spec continue" in capsys.readouterr().out
