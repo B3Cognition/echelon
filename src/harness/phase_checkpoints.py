@@ -123,44 +123,57 @@ def _has_staged_or_unstaged_changes(project_root: Path) -> bool:
     return bool(run_git(project_root, "status", "--porcelain", check=False).stdout.strip())
 
 
-def _spec_pathspecs(project_root: Path, spec_dir: Path) -> tuple[str, str]:
+def _spec_pathspecs(project_root: Path, spec_dirs: tuple[Path, ...]) -> tuple[str, ...]:
     root = Path(project_root).resolve()
-    resolved_spec_dir = Path(spec_dir).resolve()
-    try:
-        relative = resolved_spec_dir.relative_to(root)
-    except ValueError as exc:
-        raise PhaseCheckpointError("active spec directory must be inside the project root") from exc
-    if relative == Path("."):
-        raise PhaseCheckpointError("active spec directory cannot be the project root")
-    include = relative.as_posix()
-    ledger = (relative / CHECKPOINT_LEDGER_REL).as_posix()
-    return include, f":(exclude){ledger}"
+    pathspecs: list[str] = []
+    seen: set[Path] = set()
+    for spec_dir in spec_dirs:
+        resolved_spec_dir = Path(spec_dir).resolve()
+        if resolved_spec_dir in seen:
+            continue
+        try:
+            relative = resolved_spec_dir.relative_to(root)
+        except ValueError as exc:
+            raise PhaseCheckpointError(
+                "owned spec directory must be inside the project root"
+            ) from exc
+        if relative == Path("."):
+            raise PhaseCheckpointError("owned spec directory cannot be the project root")
+        seen.add(resolved_spec_dir)
+        pathspecs.extend(
+            [
+                relative.as_posix(),
+                f":(exclude){(relative / CHECKPOINT_LEDGER_REL).as_posix()}",
+            ]
+        )
+    if not pathspecs:
+        raise PhaseCheckpointError("at least one owned spec directory is required")
+    return tuple(pathspecs)
 
 
 def _commit_spec_changes(
     project_root: Path,
-    spec_dir: Path,
+    spec_dirs: tuple[Path, ...],
     message: str,
 ) -> str | None:
-    """Commit only Git-visible changes owned by the active spec directory."""
+    """Commit only Git-visible changes owned by the supplied spec directories."""
 
     root = Path(project_root).resolve()
-    include, exclude = _spec_pathspecs(root, spec_dir)
+    pathspecs = _spec_pathspecs(root, spec_dirs)
     try:
-        run_git(root, "add", "-f", "-A", "--", include, exclude)
+        run_git(root, "add", "-f", "-A", "--", *pathspecs)
         staged = run_git(
             root,
             "diff",
             "--cached",
             "--quiet",
             "--",
-            include,
-            exclude,
+            *pathspecs,
             check=False,
         )
         if staged.returncode == 0:
             return None
-        run_git(root, "commit", "--only", "-m", message, "--", include, exclude)
+        run_git(root, "commit", "--only", "-m", message, "--", *pathspecs)
         return run_git(root, "rev-parse", "HEAD^{commit}").stdout.strip()
     except GitHelperError as exc:
         raise PhaseCheckpointError(str(exc)) from exc
@@ -174,6 +187,7 @@ def create_phase_checkpoint(
     next_phase: str,
     run_id: str,
     spec_id: str = "",
+    additional_spec_dirs: tuple[Path, ...] = (),
 ) -> PhaseCheckpoint:
     spec_id = spec_id or _spec_id_from_dir(spec_dir)
     subject = f"echelon-checkpoint: {spec_id} {phase}"
@@ -188,7 +202,11 @@ def create_phase_checkpoint(
             checkpoint_id=phase,
         ),
     )
-    commit = _commit_spec_changes(project_root, spec_dir, message)
+    commit = _commit_spec_changes(
+        project_root,
+        (spec_dir, *additional_spec_dirs),
+        message,
+    )
     if commit is None:
         try:
             commit = run_git(project_root, "rev-parse", "HEAD^{commit}").stdout.strip()
@@ -257,7 +275,7 @@ def commit_manual_checkpoint(
             checkpoint_id=checkpoint_id,
         ),
     )
-    commit = _commit_spec_changes(project_root, spec_dir, commit_message)
+    commit = _commit_spec_changes(project_root, (spec_dir,), commit_message)
     if commit is None:
         raise RuntimeError("no changes in the active spec directory to commit")
     checkpoint = PhaseCheckpoint(

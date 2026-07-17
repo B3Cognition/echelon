@@ -98,3 +98,35 @@ def test_squad_checkpoints_published_spec_with_full_directory_id(
 
     assert calls[0]["spec_dir"] == spec_dir
     assert calls[0]["spec_id"] == "001-prose-distribution-engine"
+
+
+def test_squad_terminal_phase4_checkpoint_includes_published_spec(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls = []
+
+    def fake_checkpoint(**kwargs):
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr("harness.squad.create_phase_checkpoint", fake_checkpoint)
+
+    controller = object.__new__(SquadController)
+    controller._project_root = tmp_path
+    controller._squad_dir = tmp_path / "runs" / "spec-run"
+    controller._state_store = MagicMock()
+    controller._state_store.load.return_value = {
+        "run_id": "squad-1",
+        "spec_id": "001-demo",
+        "spec_dir": "runs/spec-run/specs/001-demo",
+        "published_spec_dir": "specs/001-demo",
+    }
+    active = tmp_path / "runs" / "spec-run" / "specs" / "001-demo"
+    published = tmp_path / "specs" / "001-demo"
+    active.mkdir(parents=True)
+    published.mkdir(parents=True)
+
+    controller._checkpoint_successful_phase("phase4-document", "done")
+
+    assert calls[0]["additional_spec_dirs"] == (published,)

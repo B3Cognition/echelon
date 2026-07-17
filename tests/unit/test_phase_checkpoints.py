@@ -153,6 +153,32 @@ def test_create_phase_checkpoint_commits_only_active_spec_path(tmp_path: Path) -
     assert checkpoint.commit == _git(repo, "rev-parse", "HEAD")
 
 
+def test_create_phase_checkpoint_commits_active_and_published_spec_only(
+    tmp_path: Path,
+) -> None:
+    repo, active = _checkpoint_repo(tmp_path)
+    published = repo / "specs" / "001-demo"
+    published.mkdir(parents=True)
+    (active / "tasks.md").write_text("# Run-local tasks\n", encoding="utf-8")
+    (published / "ARTIFACTS.md").write_text("# Artifacts\n", encoding="utf-8")
+    (repo / "README.md").write_text("unrelated\n", encoding="utf-8")
+
+    checkpoint = create_phase_checkpoint(
+        project_root=repo,
+        spec_dir=active,
+        phase="phase4-document",
+        next_phase="done",
+        run_id="spec-run",
+        additional_spec_dirs=(published,),
+    )
+
+    assert _git(repo, "show", "--format=", "--name-only", checkpoint.commit).splitlines() == [
+        "runs/spec-run/specs/001-demo/tasks.md",
+        "specs/001-demo/ARTIFACTS.md",
+    ]
+    assert "README.md" in _git(repo, "status", "--short")
+
+
 def test_create_phase_checkpoint_records_clean_head_without_new_commit(tmp_path: Path) -> None:
     repo, spec_dir = _checkpoint_repo(tmp_path)
     head_before = _git(repo, "rev-parse", "HEAD")

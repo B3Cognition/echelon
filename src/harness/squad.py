@@ -1099,6 +1099,12 @@ class SquadController:
         state: dict,
     ) -> None:
         run_id = str(state.get("run_id") or "unknown")
+        try:
+            from echelon.kb_proposals import publish_kb_reports
+
+            publish_kb_reports(self._project_root, run_id, published_spec_dir)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not publish KB provenance reports: %s", exc)
         spec_status = str(state.get("spec_status") or "planned")
         constitution_hash = self._constitution_hash(published_spec_dir / "constitution.md")
         append_phase_a_run(
@@ -1263,6 +1269,14 @@ class SquadController:
         spec_dir = self._active_phase_a_spec_dir(state)
         if spec_dir is None or not spec_dir.exists():
             return True
+        additional_spec_dirs: tuple[Path, ...] = ()
+        if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
+            published_spec_dir = self._published_phase_a_spec_dir(state, spec_dir)
+            if (
+                published_spec_dir.exists()
+                and published_spec_dir.resolve() != spec_dir.resolve()
+            ):
+                additional_spec_dirs = (published_spec_dir,)
         try:
             create_phase_checkpoint(
                 project_root=self._project_root,
@@ -1271,6 +1285,7 @@ class SquadController:
                 next_phase=next_phase,
                 run_id=str(state.get("run_id") or ""),
                 spec_id=_checkpoint_spec_id_from_state(state, spec_dir),
+                additional_spec_dirs=additional_spec_dirs,
             )
         except Exception as exc:
             logger.error("Could not create required phase checkpoint for %s: %s", phase, exc)

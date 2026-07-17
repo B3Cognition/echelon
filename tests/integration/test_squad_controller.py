@@ -373,6 +373,9 @@ class TestAgentResultIntegrity:
         state["spec_id"] = "001-demo"
         state["spec_dir"] = "runs/run-test/specs/001-demo"
         store.save(state)
+        kb_report = tmp_path / "runs" / "r" / "kb-apply-report.yaml"
+        kb_report.parent.mkdir(parents=True)
+        kb_report.write_text("status: degraded\n", encoding="utf-8")
 
         result = ctrl.run("msg", "banzai")
 
@@ -386,6 +389,9 @@ class TestAgentResultIntegrity:
         ).read_text(encoding="utf-8") == "# Constitution\n\nReal project rules.\n"
         assert (published_dir / "ARTIFACTS.md").exists()
         assert (published_dir / "squad-report.md").exists()
+        assert (published_dir / "kb" / "kb-apply-report.yaml").read_text(
+            encoding="utf-8"
+        ) == "status: degraded\n"
         history = json.loads((published_dir / "run-history.json").read_text(encoding="utf-8"))
         assert history["runs"][-1]["run_id"] == "r"
         assert history["runs"][-1]["phase"] == "A"
