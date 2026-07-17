@@ -583,6 +583,10 @@ def test_continue_retries_incomplete_phase_before_constitution(
             "completed_phases": ["init"],
             "user_message": "make terminal ascii art",
             "autonomy_mode": "semi",
+            "implementation_targets": [
+                "sources/pressbox-search",
+                "sources/pressbox-search-api",
+            ],
         },
     )
 
@@ -602,7 +606,15 @@ def test_continue_retries_incomplete_phase_before_constitution(
     assert state["status"] == "running"
     assert state["blocked_reason"] is None
     assert state["escalation_question"] is None
-    assert calls == [["make terminal ascii art", "--mode", "semi"]]
+    assert calls == [[
+        "make terminal ascii art",
+        "--mode",
+        "semi",
+        "--target",
+        "sources/pressbox-search",
+        "--target",
+        "sources/pressbox-search-api",
+    ]]
 
 
 def test_continue_provider_session_limit_retries_incomplete_phase(

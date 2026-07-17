@@ -5907,6 +5907,19 @@ def _cmd_continue(
         "phase3-consensus":    "Consensus gate (WHY3 + ASSESS2 + PLAN2)",
     }
 
+    def resume_run_args() -> list[str]:
+        """Reconstruct the original execution scope from controller-owned state."""
+        targets = state.get("implementation_targets")
+        stored_targets = (
+            [str(value).strip() for value in targets if str(value).strip()]
+            if isinstance(targets, list)
+            else []
+        )
+        run_args = [user_message, "--mode", mode]
+        for target in stored_targets:
+            run_args.extend(["--target", target])
+        return run_args
+
     def start_phase(next_phase: str, *, verb: str, clear_recovery: bool = False) -> None:
         nonlocal state
         state, _ = _ensure_active_continue_spec_context(
@@ -5929,8 +5942,7 @@ def _cmd_continue(
             f"[squad] Mode:  {mode}",
             flush=True,
         )
-        run_args = [user_message, "--mode", mode]
-        _cmd_run(run_args, project_root=project_root, ext_dir=ext_dir)
+        _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
 
     action = _classify_run_recovery(state)
     if action.kind == "safe_rewind":
@@ -5988,7 +6000,7 @@ def _cmd_continue(
     if status in ("running", "in_progress"):
         # Live run — let echelon spec run pick it up (same message → same dir → resume)
         print(f"[squad] Resuming active run in {squad_dir.name}…", flush=True)
-        _cmd_run([user_message, "--mode", mode], project_root=project_root, ext_dir=ext_dir)
+        _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
         return
 
     # Determine the next phase automatically

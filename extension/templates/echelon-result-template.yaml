@@ -14,6 +14,8 @@
 #   and this agent proposes a ledger change. Its keys are a strict API contract:
 #   input_unit_id, disposition, rationale, spec_ids, task_ids, targets.
 # - NEVER use aliases such as unit, adopted, or mapped in product_input_updates.
+# - YAML safety: double-quote every free-text scalar (for example rationale,
+#   reasoning, and section), especially when it contains `:`, `#`, or quotes.
 
 echelon_result:
   verdict: <DONE|COMPLETE|PASS|FAIL|BLOCKED|KILL|DEFER>
@@ -24,7 +26,7 @@ echelon_result:
   product_input_updates:
     - input_unit_id: <IN-REQ-* ID from PRODUCT_INPUT_CATALOG>
       disposition: <included|excluded|duplicate|open_question|conflict>
-      rationale: <evidence-backed reason for this disposition>
+      rationale: "<evidence-backed reason for this disposition>"
       spec_ids: [FR-001, AC-001]
       task_ids: []
       targets: []

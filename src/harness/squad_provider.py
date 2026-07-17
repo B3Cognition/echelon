@@ -1,6 +1,7 @@
 """SquadAgentResult + SquadCliProvider for pre-code squad phase dispatch."""
 from __future__ import annotations
 
+import json
 import os
 import time
 from dataclasses import dataclass
@@ -56,6 +57,43 @@ def _provider_session_limit_message(*transcripts: str) -> str:
     return ""
 
 
+def _quote_unquoted_yaml_scalar_colons(text: str) -> str:
+    """Recover free-text YAML scalars that contain an unquoted ``: `` delimiter.
+
+    Agent output is required to be valid YAML. This narrow recovery supports a
+    common LLM mistake in prose fields such as ``rationale`` while leaving
+    structured values and correctly quoted scalars untouched. Schema validation
+    remains mandatory after parsing.
+    """
+    recovered: list[str] = []
+    for line in text.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        newline = line[len(content):]
+        if ": " not in content:
+            recovered.append(line)
+            continue
+        prefix, value = content.split(": ", 1)
+        stripped_value = value.lstrip()
+        if (
+            ": " not in value
+            or not prefix.lstrip().startswith(("rationale", "reasoning", "section", "artifact"))
+            or stripped_value.startswith(("'", '"', "[", "{", "|", ">"))
+        ):
+            recovered.append(line)
+            continue
+        recovered.append(f"{prefix}: {json.dumps(value, ensure_ascii=False)}{newline}")
+    return "".join(recovered)
+
+
+def _trim_trailing_renderer_output(text: str) -> str:
+    """Keep the indented YAML payload and discard provider status rendering."""
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines[1:], start=1):
+        if line.strip() and not line[0].isspace():
+            return "".join(lines[:index])
+    return text
+
+
 def _extract_echelon_result(raw: str) -> Optional[dict]:
     """Find the last echelon_result block in raw output and parse it.
 
@@ -107,6 +145,8 @@ def _extract_echelon_result(raw: str) -> Optional[dict]:
         if fence_end != -1:
             snippet = snippet[:fence_end]
 
+    snippet = _trim_trailing_renderer_output(snippet)
+
     def _parse(text: str) -> Optional[dict]:
         try:
             parsed = yaml.safe_load(text)
@@ -121,13 +161,19 @@ def _extract_echelon_result(raw: str) -> Optional[dict]:
     if result is not None:
         return result
 
+    recovered_snippet = _quote_unquoted_yaml_scalar_colons(snippet)
+    if recovered_snippet != snippet:
+        result = _parse(recovered_snippet)
+        if result is not None:
+            return result
+
     # Retry without journal_entries — routing fields (verdict, state_updates)
     # appear before journal_entries in the block, so stripping journal_entries
     # lets the rest parse correctly even when entries have YAML formatting errors.
     for journal_key in ("  journal_entries:", "journal_entries:"):
-        je_idx = snippet.find(f"\n{journal_key}")
+        je_idx = recovered_snippet.find(f"\n{journal_key}")
         if je_idx != -1:
-            result = _parse(snippet[:je_idx])
+            result = _parse(recovered_snippet[:je_idx])
             if result is not None:
                 return result
 
@@ -208,7 +254,9 @@ def _build_echelon_result_repair_prompt(
         "prompt and raw output below.\n\n"
         f"Validation problem: {reason}\n\n"
         "Return exactly one valid YAML block starting with `echelon_result:`. "
-        "Do not wrap it in Markdown fences and do not add prose before or after it.\n\n"
+        "Do not wrap it in Markdown fences and do not add prose before or after it. "
+        "Double-quote every free-text scalar (including rationale and reasoning), "
+        "escaping embedded quotes; unquoted text containing `: ` is invalid YAML.\n\n"
         "## Original Prompt\n"
         f"{original_prompt}\n\n"
         "## Raw Output From Clean Invocation\n"

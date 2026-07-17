@@ -96,6 +96,35 @@ echelon_result:
         result = _extract_echelon_result(raw)
         assert result["verdict"] == "DONE"
 
+    def test_recovers_unquoted_colon_in_product_input_rationale(self):
+        raw = """echelon_result:
+  verdict: COMPLETE
+  state_updates:
+    lexicon_pass: true
+  product_input_updates:
+    - input_unit_id: IN-REQ-A1CDF9D624B1
+      disposition: included
+      rationale: The factual premise is challenged: no entity-tagging model exists.
+      spec_ids: [FR-100]
+      task_ids: []
+      targets: []
+  journal_entries: []
+── done  1 turns · 42s · $2.3042 ──
+"""
+
+        result = _extract_echelon_result(raw)
+
+        assert result is not None
+        assert result["state_updates"]["lexicon_pass"] is True
+        assert result["product_input_updates"] == [{
+            "input_unit_id": "IN-REQ-A1CDF9D624B1",
+            "disposition": "included",
+            "rationale": "The factual premise is challenged: no entity-tagging model exists.",
+            "spec_ids": ["FR-100"],
+            "task_ids": [],
+            "targets": [],
+        }]
+
     # ── Legacy fenced block format (```echelon_result) ─────────────────────
     # Kept as a compatibility parser for older run logs and provider drift.
     # Current prompts require an unfenced YAML root block as the final output.

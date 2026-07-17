@@ -77,6 +77,8 @@ _FALLBACK_ECHELON_RESULT_TEMPLATE = """# Echelon result contract template.
 #   and this agent proposes a ledger change. Its keys are a strict API contract:
 #   input_unit_id, disposition, rationale, spec_ids, task_ids, targets.
 # - NEVER use aliases such as unit, adopted, or mapped in product_input_updates.
+# - YAML safety: double-quote every free-text scalar (for example rationale,
+#   reasoning, and section), especially when it contains `:`, `#`, or quotes.
 
 echelon_result:
   verdict: <DONE|COMPLETE|PASS|FAIL|BLOCKED|KILL|DEFER>
@@ -87,7 +89,7 @@ echelon_result:
   product_input_updates:
     - input_unit_id: <IN-REQ-* ID from PRODUCT_INPUT_CATALOG>
       disposition: <included|excluded|duplicate|open_question|conflict>
-      rationale: <evidence-backed reason for this disposition>
+      rationale: "<evidence-backed reason for this disposition>"
       spec_ids: [FR-001, AC-001]
       task_ids: []
       targets: []
@@ -236,11 +238,12 @@ def _render_product_input_context(state: dict) -> str:
         "- Propose ledger changes only in echelon_result.product_input_updates; the controller validates and writes the canonical ledger.",
         "- Each product_input_updates item must contain exactly: input_unit_id, disposition, rationale, spec_ids, task_ids, targets.",
         "- disposition is exactly one of: included, excluded, duplicate, open_question, conflict. Never use aliases such as unit, adopted, or mapped.",
+        "- YAML safety: double-quote every free-text scalar, especially rationale values containing ':', '#', or quotes.",
         "- In Phase 1, use spec_ids for FR/AC mappings and return task_ids: [] and targets: []. Later planning phases fill task_ids and targets.",
         "- Required item shape:",
         "  input_unit_id: <IN-REQ-* ID from PRODUCT_INPUT_CATALOG>",
         "  disposition: <included|excluded|duplicate|open_question|conflict>",
-        "  rationale: <evidence-backed reason for this disposition>",
+        '  rationale: "<evidence-backed reason for this disposition>"',
         "  spec_ids: [FR-001, AC-001]",
         "  task_ids: []",
         "  targets: []",

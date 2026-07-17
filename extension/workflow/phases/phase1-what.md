@@ -46,7 +46,7 @@ Use the Agent tool to dispatch a subagent with:
   product_input_updates:
     - input_unit_id: IN-REQ-EXAMPLE
       disposition: included
-      rationale: Captured by the cited functional requirements and acceptance criteria.
+      rationale: "Captured by the cited functional requirements and acceptance criteria."
       spec_ids: [FR-001, AC-001]
       task_ids: []
       targets: []
