@@ -167,6 +167,7 @@ class LlmConfig:
     base_url: Optional[str] = None     # OpenAI-compatible endpoint base URL
     model: Optional[str] = None        # OpenAI-compatible model name
     api_key_env: Optional[str] = None  # env var containing API key for API providers
+    api_key_file: Optional[str] = None  # file containing API key for API providers
     temperature: float = 0.2
     max_tokens: Optional[int] = None
     features: Dict[str, object] = field(default_factory=dict)
@@ -548,6 +549,7 @@ def _parse_llm(data: Dict[str, Any]) -> LlmConfig:
         base_url=base_url,
         model=model,
         api_key_env=str(raw["api_key_env"]) if raw.get("api_key_env") else None,
+        api_key_file=str(raw["api_key_file"]) if raw.get("api_key_file") else None,
         temperature=float(raw.get("temperature", 0.2)),
         max_tokens=int(raw["max_tokens"]) if raw.get("max_tokens") is not None else None,
         features=_parse_llm_features(raw),

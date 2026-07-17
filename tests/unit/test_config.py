@@ -520,6 +520,7 @@ def test_llm_openai_compatible_config_parsed() -> None:
             "base_url": "http://127.0.0.1:8000/v1",
             "model": "local-model",
             "api_key_env": "LOCAL_LLM_API_KEY",
+            "api_key_file": "~/.omlx_token",
             "temperature": 0.2,
             "max_tokens": 8192,
             "features": {
@@ -537,6 +538,7 @@ def test_llm_openai_compatible_config_parsed() -> None:
     assert config.llm.base_url == "http://127.0.0.1:8000/v1"
     assert config.llm.model == "local-model"
     assert config.llm.api_key_env == "LOCAL_LLM_API_KEY"
+    assert config.llm.api_key_file == "~/.omlx_token"
     assert config.llm.temperature == 0.2
     assert config.llm.max_tokens == 8192
     assert config.llm.features == {

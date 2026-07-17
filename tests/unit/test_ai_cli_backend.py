@@ -151,6 +151,50 @@ def test_openai_compatible_backend_posts_chat_completion(tmp_path, monkeypatch) 
     assert "stream" not in captured["payload"]
 
 
+def test_openai_compatible_backend_reads_api_key_file(tmp_path, monkeypatch) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    captured = {}
+    token_file = tmp_path / ".omlx_token"
+    token_file.write_text("file-token\n", encoding="utf-8")
+    config = _openai_config(features={"streaming": False})
+    config.llm.api_key_env = None
+    config.llm.api_key_file = str(token_file)
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "choices": [{"message": {"content": "ok"}}],
+            }).encode()
+
+    def fake_urlopen(request, timeout):
+        captured["headers"] = dict(request.header_items())
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    result = OpenAICompatibleBackend(config).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 0
+    assert captured["headers"]["Authorization"] == "Bearer file-token"
+
+
 def test_openai_compatible_backend_streams_sse_and_excludes_reasoning(
     tmp_path, monkeypatch
 ) -> None:
