@@ -16,6 +16,7 @@ Tier 2 files (schema version 2):
 
 6. `internalization-log.yaml`
 7. `evolution-signals.yaml`
+8. `sage-decisions.yaml`
 
 ## Global Rules
 
@@ -211,6 +212,28 @@ agents:
     score: 0.8
     created_at: 2026-03-19T00:00:00Z
 ```
+
+## sage-decisions.yaml
+
+Required top-level keys:
+
+1. `schema_version` (integer, required - must be `2`)
+2. `append_only` (boolean, required - must be `true`)
+3. `entries` (array, required)
+
+`entries[]` required keys:
+
+1. `run_id` (string)
+2. `artifact` (string)
+3. `challenge_type` (enum: `logical_inconsistency` | `missing_evidence` | `assumption_violation` | `quality_threshold` | `specification_gap`)
+4. `challenge_summary` (string)
+5. `outcome` (enum: `blocked` | `passed_with_warnings` | `passed`)
+6. `resolution` (string)
+7. `was_correct` (boolean; initially `true` unless later evidence overturns the decision)
+
+Canonical writes may include provenance fields such as `operation_id`, `source`, and
+`created_at`. SAGE records decisions through run-local proposal files; the
+deterministic KB applier validates this schema before updating the canonical log.
 
 ## internalization-log.yaml
 

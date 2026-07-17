@@ -4,11 +4,13 @@ Load this appendix before SAGE records a blocking decision, applies internalizat
 
 ## Decision Recording
 
-After every blocking decision (PASS or FAIL verdict), append an entry to `knowledge-base/sage-decisions.yaml`. This is mandatory; no decision may go unrecorded.
+After every blocking decision (PASS or FAIL verdict), write a decision proposal under
+`${SQUAD_DIR}/kb-proposals/` using
+`extension/templates/kb-proposals/sage-decision-proposal-template.yaml`. This is
+mandatory; no decision may go unrecorded.
 
-Always write decisions to `${PROJECT_ROOT}/knowledge-base/sage-decisions.yaml`. Never write to `${STAGING_DIR}/knowledge-base/sage-decisions.yaml` or any staging subdirectory.
-
-This path is the same regardless of WHY mode. All SAGE modes write to the same file.
+Do not edit `knowledge-base/sage-decisions.yaml` directly. The deterministic KB
+applier owns canonical writes after FINALIZE validation.
 
 Required fields:
 
@@ -24,13 +26,12 @@ Required fields:
 
 Recording process:
 
-1. Before writing the completion signal, construct the decision entry from the verdict and findings.
-2. Append the entry to the `entries` array in `knowledge-base/sage-decisions.yaml`.
-3. If the file has reached `max_entries` (100), remove the oldest entry before appending.
-4. Always preserve existing entries except to backfill `was_correct`; never modify them otherwise.
-5. Write `challenge_summary` and `resolution` using YAML block scalar style (`|`).
-
-Use `agents/exploration/templates/sage-decision-entry-template.yaml` as the example structure.
+1. Before the completion signal, construct a proposal with the verdict and findings.
+2. Set `proposal_type: sage_decision`, target `knowledge-base/sage-decisions.yaml`,
+   and use a unique run-local `proposal_id`.
+3. Set `was_correct: true` unless later evidence explicitly overturns the decision.
+4. Write `challenge_summary` and `resolution` using YAML block scalar style (`|`).
+5. Preserve canonical history: read it for calibration only and never modify it.
 
 ## Internalization-Weighted Scrutiny
 

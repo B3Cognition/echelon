@@ -31,13 +31,16 @@ Always perform constitution NEVER-rule check + all ADR compliance checks only. D
 When judging verify-spec fulfillment reports, preserve the implementation map's
 evidence semantics:
 
-- `source_capability`: source exists, but behavior may not be executable.
-- `unit_test` / `source_and_test`: executable test evidence exists.
-- `integration_test`: system/CI path evidence exists.
+- Verified Implementation Evidence and Verified Test Evidence are the source of
+  fulfillment truth. CodeGraph Candidates are structural leads and audit
+  context only; they do not prove fulfillment unless direct inspection also
+  produced verified source/test citations.
+- `source_only`: source exists, but behavior may not be executable.
+- `test_only` / `source_and_test`: executable test evidence exists.
 - `measured_runtime`: CI artifact or runtime metric output proves a threshold.
 - `assertion_only`: code or tests assert a threshold against synthetic fixtures,
   but no measured artifact proves the production/runtime threshold.
-- `none`: no evidence found.
+- `missing`: no evidence found.
 
 Runtime thresholds (`NFR-*`, `SC-*`, latency, frame-rate, crash-free rate,
 retention, cloud cost, privacy telemetry, deterministic replay across targets)

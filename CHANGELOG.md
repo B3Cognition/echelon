@@ -55,6 +55,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   visible in explicit groups, declared-target mismatches are reported, and an
   invalid map exits nonzero only after the complete read-only report is shown.
 
+- **EGR-141 CodeGraph candidate evidence split** — verify-spec CodeGraph
+  evidence maps now emit schema v2 candidate leads instead of fields named as
+  verified implementation/test evidence. The implementation-map contract now
+  separates verified source/test citations from CodeGraph candidates with an
+  explicit candidate disposition, the judgment prepass rejects legacy v1 maps,
+  and the verified-ledger version was bumped to avoid reusing rows from the old
+  evidence semantics.
+
 - **EGR-115 / #140 fulfillment refresh ownership** — scoped fulfillment refresh
   fallback now preserves the authoritative resolved `spec_dir` when it must
   rerun full verification, avoiding a return to spec discovery in workspace

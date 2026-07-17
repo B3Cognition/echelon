@@ -57,7 +57,7 @@ Use the Agent tool:
 
   <instructions>
   You are MIRROR. Read agents/learning/mirror.md for your complete protocol.
-  Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, what the squad should do differently. Log reusable patterns and pitfalls to the knowledge base. Produce `knowledge-transfer-assessment.md` using the provided template. Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`. Return journal entries in `echelon_result.journal_entries`.
+  Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, and what the squad should do differently. Write reusable pattern and pitfall proposal files under `${SQUAD_DIR}/kb-proposals/` using the KB proposal templates. Do not edit canonical knowledge-base files directly. Produce `knowledge-transfer-assessment.md` using the provided template. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -130,7 +130,7 @@ Use the Agent tool:
 
   <instructions>
   You are AUDITOR. Read agents/learning/auditor.md for your complete protocol.
-  Track AI accuracy per domain. Build/update the confidence profile. Adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Update `knowledge-base/calibration-profile.yaml`. Produce `confidence-flags.md` and `calibration-dashboard.md` in `{spec_dir}/` using the provided appendices. Return journal entries in `echelon_result.journal_entries`.
+  Track AI accuracy per domain. Build the confidence profile and adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Write any durable calibration observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `extension/templates/kb-proposals/calibration-observation-proposal-template.yaml`; do not edit canonical KB files directly. Produce `confidence-flags.md` and `calibration-dashboard.md` in `{spec_dir}/` using the provided appendices. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -143,9 +143,10 @@ After CALIBRATE completes, read `confidence-flags.md`:
 - If any domain has **confidence < 0.5** → summon speckit-echelon-investigator (INVESTIGATOR) for that domain (if not already investigated). This is a late-stage safety net.
 - If speckit-echelon-investigator (INVESTIGATOR) was already summoned and confidence is still < 0.5 → always flag for human in the final report (do not block delivery).
 
-### 12.6 Collect Final Artifacts
+### 12.6 Prepare Artifact Manifest
 
-Verify all expected artifacts exist in `{spec_dir}/`. Create a manifest:
+Prepare a manifest of expected artifacts in `{spec_dir}/`; refresh its statuses
+after KB proposal processing in 12.7b:
 
 ```
 Artifact                          | Producer        | Status
@@ -237,9 +238,61 @@ If speckit-echelon-consolidator (CONSOLIDATOR) is unavailable, record the skip i
 
 Dispatch speckit-echelon-scorekeeper (SCOREKEEPER) to produce the final scorecard (see Section 13 for full protocol). Pass the per-agent internalization composite scores from step 12.4 so SCOREKEEPER can incorporate the internalization trend into the scorecard.
 
-Include `agents/control/appendices/scorekeeper-output-template.md` and `agents/control/appendices/scorekeeper-scoring-reference.md` in the context pack. Produce `agent-scorecard.md` using the provided template and update `knowledge-base/agent-scores.yaml`.
+Include `agents/control/appendices/scorekeeper-output-template.md` and `agents/control/appendices/scorekeeper-scoring-reference.md` in the context pack. Produce `agent-scorecard.md` using the provided template. Write durable per-agent internalization observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `extension/templates/kb-proposals/internalization-observation-proposal-template.yaml`; do not edit canonical KB files directly.
 
 Read the scorecard output and apply any automatic self-healing actions.
+
+### 12.KB Apply KB Proposals - NON-BLOCKING
+
+After MIRROR, AUDITOR, and SCOREKEEPER have written their run-local proposals,
+read `RUN_ID` from `runs/.current`, then run:
+
+```bash
+if [ -f "${PROJECT_ROOT}/runs/.current" ]; then
+  RUN_ID=$(cat "${PROJECT_ROOT}/runs/.current")
+else
+  RUN_ID=""
+fi
+
+if KB_VALIDATE_OUTPUT="$(echelon kb validate --run-id "${RUN_ID}" 2>&1)"; then
+  :
+fi
+printf '%s\n' "${KB_VALIDATE_OUTPUT}"
+if printf '%s\n' "${KB_VALIDATE_OUTPUT}" | grep -Fxq "kb_validation_status: valid"; then
+  KB_VALIDATION_STATUS=validated
+else
+  KB_VALIDATION_STATUS=degraded
+fi
+
+if KB_APPLY_OUTPUT="$(echelon kb apply --run-id "${RUN_ID}" 2>&1)"; then
+  :
+fi
+printf '%s\n' "${KB_APPLY_OUTPUT}"
+if printf '%s\n' "${KB_APPLY_OUTPUT}" | grep -Fxq "kb_apply_status: applied"; then
+  KB_APPLY_STATUS=applied
+else
+  KB_APPLY_STATUS=degraded
+fi
+```
+
+Record `kb_validation_status` from `KB_VALIDATION_STATUS` and `kb_apply_status`
+from `KB_APPLY_STATUS` in `echelon_result.state_updates`. The commands remain
+non-blocking, but their printed status values are authoritative because they may
+exit zero while reporting a degraded result.
+Record proposal-read or usage failures as `kb_usage_status: degraded`, and preserve
+any deterministic contract findings in `kb_contract_violations` and `kb_apply_report`.
+A KB failure does not stop finalization, agent dispatch, phase transitions, or publication.
+
+`finalize-run.sh` publishes KB provenance reports best-effort under
+`{spec_dir}/kb/` using deterministic `publish_kb_reports`, including
+`kb-apply-report.yaml` and `kb-usage-summary.yaml` when available. COMMANDER
+does not publish these reports manually.
+
+### 12.7b Collect Final Artifacts
+
+Refresh the artifact manifest prepared in 12.6 after KB proposal processing. Verify
+all expected artifacts exist in `{spec_dir}/`, including
+`kb/kb-apply-report.yaml` when the deterministic apply command produced it.
 
 ### 12.8 Prepare Final State
 

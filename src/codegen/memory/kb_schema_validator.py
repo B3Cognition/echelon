@@ -171,11 +171,51 @@ def _validate_entry(
         _validate_iso_datetime(entry.get("created_at"), f"{base}.created_at", issues)
 
     if filename in {"patterns.yaml", "pitfalls.yaml"}:
+        _validate_required_strings(base, entry, ("id",), issues)
         _validate_learning_scope(base, entry, issues)
         _validate_confidence(entry.get("confidence"), f"{base}.confidence", issues)
 
     if filename == "internalization-log.yaml":
         _validate_internalization_entry(base, entry, issues)
+
+    if filename == "sage-decisions.yaml":
+        _validate_sage_decision_entry(base, entry, issues)
+
+
+def _validate_required_strings(
+    base: str,
+    entry: dict[str, Any],
+    keys: tuple[str, ...],
+    issues: list[KnowledgeBaseValidationIssue],
+) -> None:
+    for key in keys:
+        if not isinstance(entry.get(key), str) or not entry[key].strip():
+            issues.append(_issue(f"{base}.{key}", "required non-empty string"))
+
+
+def _validate_sage_decision_entry(
+    base: str,
+    entry: dict[str, Any],
+    issues: list[KnowledgeBaseValidationIssue],
+) -> None:
+    _validate_required_strings(
+        base,
+        entry,
+        ("run_id", "artifact", "challenge_type", "challenge_summary", "outcome", "resolution"),
+        issues,
+    )
+    if entry.get("challenge_type") not in {
+        "logical_inconsistency",
+        "missing_evidence",
+        "assumption_violation",
+        "quality_threshold",
+        "specification_gap",
+    }:
+        issues.append(_issue(f"{base}.challenge_type", "invalid challenge type"))
+    if entry.get("outcome") not in {"blocked", "passed_with_warnings", "passed"}:
+        issues.append(_issue(f"{base}.outcome", "invalid outcome"))
+    if not isinstance(entry.get("was_correct"), bool):
+        issues.append(_issue(f"{base}.was_correct", "expected boolean"))
 
 
 def _validate_learning_scope(

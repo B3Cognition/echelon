@@ -1150,7 +1150,7 @@ def _write_skipped_codegraph_evidence_map(
     import json
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "skipped_degraded_codegraph",
         "reason": "CodeGraph evidence was degraded and codegraph-analysis.json is absent.",
         "source_files": {
@@ -1158,6 +1158,13 @@ def _write_skipped_codegraph_evidence_map(
         },
         "summary": {
             "total_requirements": 0,
+            "counts": {
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+                "none": 0,
+                "ambiguous": 0,
+            },
             "fallback_requirement_ids": [],
         },
         "requirements": [],

@@ -97,6 +97,11 @@ re_app = typer.Typer(
     help="Publish and inspect workspace reverse engineering.",
     no_args_is_help=True,
 )
+kb_app = typer.Typer(
+    add_completion=False,
+    help="Validate and apply Phase A knowledge-base proposals.",
+    no_args_is_help=True,
+)
 
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(spec_app, name="spec")
@@ -106,6 +111,7 @@ app.add_typer(stack_app, name="stack")
 app.add_typer(delivery_app, name="delivery")
 app.add_typer(harness_app, name="harness", hidden=True)
 app.add_typer(re_app, name="re")
+app.add_typer(kb_app, name="kb")
 workspace_app.add_typer(workspace_sources_app, name="sources")
 spec_app.add_typer(spec_checkpoint_app, name="checkpoint")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
@@ -166,6 +172,41 @@ def root(
         legacy_cli = _legacy_cli()
         typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
         raise typer.Exit()
+
+
+@kb_app.command("validate")
+def kb_validate(
+    run_id: str = typer.Option(..., "--run-id", help="Phase A run id below runs/."),
+) -> None:
+    """Validate Phase A KB proposal artifacts without mutating canonical KB."""
+    from echelon.kb_proposals import load_proposals
+
+    project_root = Path.cwd()
+    proposal_dir = project_root / "runs" / run_id / "kb-proposals"
+    loaded = load_proposals(
+        proposal_dir,
+        expected_run_id=run_id,
+        project_root=project_root,
+    )
+    invalid = [item for item in loaded if not item.validation.ok]
+    status = "valid" if loaded and not invalid else "degraded"
+    typer.echo(f"kb_validation_status: {status}")
+    typer.echo(f"proposals: {len(loaded)}")
+    typer.echo(f"invalid: {len(invalid)}")
+
+
+@kb_app.command("apply")
+def kb_apply(
+    run_id: str = typer.Option(..., "--run-id", help="Phase A run id below runs/."),
+) -> None:
+    """Apply valid Phase A KB proposal artifacts without blocking the run."""
+    from echelon.kb_proposals import apply_proposals
+
+    report = apply_proposals(Path.cwd(), run_id)
+    typer.echo(f"kb_apply_status: {report.status}")
+    typer.echo(f"report: {report.report_path}")
+    typer.echo(f"accepted: {report.accepted_count}")
+    typer.echo(f"rejected: {report.rejected_count}")
 
 
 @app.command("version")
