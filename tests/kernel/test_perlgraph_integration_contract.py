@@ -96,7 +96,10 @@ def test_run_analysis_writes_perlgraph_artifacts() -> None:
         EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"
     ).read_text()
 
-    assert 'PERLGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/perlgraph"' in run_analysis
+    assert "node-runtime-resolver.sh" in run_analysis
+    assert "echelon_resolve_perlgraph_runtime" in run_analysis
+    assert 'PERLGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/perlgraph"' not in run_analysis
+    assert 'npm ci --prefix \\"$PERLGRAPH_NODE_DIR\\"' not in run_analysis
     assert '"$REPO_OUTPUT/perlgraph-analysis.json"' in run_analysis
     assert '"$REPO_OUTPUT/perlgraph-summary.json"' in run_analysis
     assert '"$OUTPUT_DIR/perlgraph-analysis.json"' in run_analysis

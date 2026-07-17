@@ -66,13 +66,15 @@ def test_shell_ci_uses_a_node_runtime_supported_by_codegraph_sdk():
     assert 'node-version: "24"' in workflow
 
 
-def test_run_analysis_points_to_extension_node_install_path():
+def test_run_analysis_uses_shared_runtime_resolver_without_local_npm_repair():
     run_analysis = (
         EXT_ROOT / "extension" / "scripts" / "bash" / "re" / "run-analysis.sh"
     ).read_text()
 
-    assert 'CODEGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/codegraph"' in run_analysis
-    assert 'npm ci --prefix \\"$CODEGRAPH_NODE_DIR\\"' in run_analysis
+    assert "node-runtime-resolver.sh" in run_analysis
+    assert "echelon_resolve_codegraph_runtime" in run_analysis
+    assert 'CODEGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/codegraph"' not in run_analysis
+    assert 'npm ci --prefix \\"$CODEGRAPH_NODE_DIR\\"' not in run_analysis
     assert "npm install --prefix scripts/node/codegraph" not in run_analysis
 
 

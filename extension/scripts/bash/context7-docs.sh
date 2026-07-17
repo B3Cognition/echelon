@@ -10,15 +10,22 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CTX7_NODE_DIR="$(dirname "$SCRIPT_DIR")/node/context7"
-LOCAL_CTX7_BIN="$CTX7_NODE_DIR/node_modules/.bin/ctx7"
-SHARED_CTX7_BIN="${ECHELON_HOME:-$HOME/.echelon}/node/context7/node_modules/.bin/ctx7"
+NODE_RUNTIME_RESOLVER="$SCRIPT_DIR/node-runtime-resolver.sh"
+
+if [[ ! -f "$NODE_RUNTIME_RESOLVER" ]]; then
+  echo "Context7 runtime resolver is missing at $NODE_RUNTIME_RESOLVER" >&2
+  exit 127
+fi
+# shellcheck source=node-runtime-resolver.sh
+source "$NODE_RUNTIME_RESOLVER"
 
 if [[ -n "${ECHELON_CONTEXT7_BIN:-}" ]]; then
   CTX7_BIN="$ECHELON_CONTEXT7_BIN"
-elif [[ -x "$LOCAL_CTX7_BIN" ]]; then
-  CTX7_BIN="$LOCAL_CTX7_BIN"
 else
-  CTX7_BIN="$SHARED_CTX7_BIN"
+  if ! CTX7_RUNTIME_DIR="$(echelon_resolve_context7_runtime "$(dirname "$CTX7_NODE_DIR")")"; then
+    exit 127
+  fi
+  CTX7_BIN="$CTX7_RUNTIME_DIR/node_modules/.bin/ctx7"
 fi
 
 if [[ ! -x "$CTX7_BIN" ]]; then

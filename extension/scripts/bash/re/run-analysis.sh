@@ -19,6 +19,13 @@ if ! command -v jq &> /dev/null; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NODE_RUNTIME_RESOLVER="$SCRIPT_DIR/../node-runtime-resolver.sh"
+if [[ ! -f "$NODE_RUNTIME_RESOLVER" ]]; then
+    echo "Error: Node runtime resolver not found at $NODE_RUNTIME_RESOLVER" >&2
+    exit 1
+fi
+# shellcheck source=../node-runtime-resolver.sh
+source "$NODE_RUNTIME_RESOLVER"
 OUTPUT_DIR=""
 SOURCE_OUTPUT_ROOT=""
 MANIFEST_PATH=""
@@ -555,6 +562,36 @@ write_polyrepo_perlgraph_summary() {
         }' > "$summary_path"
 }
 
+resolve_structural_runtimes() {
+    local local_node_root
+    local_node_root="$(dirname "$(dirname "$SCRIPT_DIR")")/node"
+    CODEGRAPH_AVAILABLE=false
+    PERLGRAPH_AVAILABLE=false
+    BRIDGE_SCRIPT=""
+    PERLGRAPH_CLI=""
+
+    if ! command -v node >/dev/null 2>&1; then
+        echo "⚠️  CodeGraph and PerlGraph structural analysis skipped: Node.js not found." >&2
+        return 0
+    fi
+
+    if CODEGRAPH_RUNTIME_DIR="$(echelon_resolve_codegraph_runtime "$local_node_root")"; then
+        BRIDGE_SCRIPT="$CODEGRAPH_RUNTIME_DIR/codegraph-bridge.js"
+        CODEGRAPH_AVAILABLE=true
+    else
+        echo "⚠️  CodeGraph structural analysis skipped: runtime unavailable." >&2
+    fi
+
+    if PERLGRAPH_RUNTIME_DIR="$(echelon_resolve_perlgraph_runtime "$local_node_root")"; then
+        PERLGRAPH_CLI="$PERLGRAPH_RUNTIME_DIR/dist/cli/perlgraph.js"
+        PERLGRAPH_AVAILABLE=true
+    else
+        echo "⚠️  PerlGraph structural analysis skipped: runtime unavailable." >&2
+    fi
+}
+
+resolve_structural_runtimes
+
 # ---------- Manifest-driven mode (1 or more repos in subdirectories) ----------
 
 if [[ "$USE_MANIFEST" == "true" ]]; then
@@ -573,31 +610,6 @@ if [[ "$USE_MANIFEST" == "true" ]]; then
         echo "Manifest: repos-manifest.json (compatibility fallback)" >&2
     fi
     echo "" >&2
-
-    CODEGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/codegraph"
-    BRIDGE_SCRIPT="$CODEGRAPH_NODE_DIR/codegraph-bridge.js"
-    NODE_MODULES_DIR="$CODEGRAPH_NODE_DIR/node_modules"
-    PERLGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/perlgraph"
-    PERLGRAPH_CLI="$PERLGRAPH_NODE_DIR/dist/cli/perlgraph.js"
-    PERLGRAPH_NODE_MODULES_DIR="$PERLGRAPH_NODE_DIR/node_modules"
-    CODEGRAPH_AVAILABLE=false
-    if command -v node >/dev/null 2>&1 && [[ -f "$BRIDGE_SCRIPT" ]]; then
-        if [[ ! -d "$NODE_MODULES_DIR" ]]; then
-            echo "⚠️  CodeGraph structural analysis skipped: node_modules not found." >&2
-            echo "   Run: npm ci --prefix \"$CODEGRAPH_NODE_DIR\"" >&2
-        else
-            CODEGRAPH_AVAILABLE=true
-        fi
-    fi
-    PERLGRAPH_AVAILABLE=false
-    if command -v node >/dev/null 2>&1 && [[ -f "$PERLGRAPH_CLI" ]]; then
-        if [[ ! -d "$PERLGRAPH_NODE_MODULES_DIR" ]]; then
-            echo "⚠️  PerlGraph structural analysis skipped: node_modules not found." >&2
-            echo "   Run: npm ci --prefix \"$PERLGRAPH_NODE_DIR\" && npm run build --prefix \"$PERLGRAPH_NODE_DIR\"" >&2
-        else
-            PERLGRAPH_AVAILABLE=true
-        fi
-    fi
 
     for (( i=0; i<REPO_COUNT; i++ )); do
         REPO_NAME=$(manifest_source_name "$MANIFEST_PATH" "$WORKSPACE_MANIFEST" "$i")
@@ -867,32 +879,16 @@ jq -n \
     }' > "$OUTPUT_DIR/analysis.json"
 
 # Structural Code Intelligence (conditional — fail-open, non-blocking)
-CODEGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/codegraph"
-BRIDGE_SCRIPT="$CODEGRAPH_NODE_DIR/codegraph-bridge.js"
-NODE_MODULES_DIR="$CODEGRAPH_NODE_DIR/node_modules"
-if command -v node >/dev/null 2>&1 && [[ -f "$BRIDGE_SCRIPT" ]]; then
-    if [[ ! -d "$NODE_MODULES_DIR" ]]; then
-        echo "⚠️  CodeGraph structural analysis skipped: node_modules not found." >&2
-        echo "   Run: npm ci --prefix \"$CODEGRAPH_NODE_DIR\"" >&2
-    else
-        echo "Running structural analysis (CodeGraph)..." >&2
-        run_codegraph_bridge "$BRIDGE_SCRIPT" "$OUTPUT_DIR/codegraph-analysis.json"
-        write_codegraph_summary "$OUTPUT_DIR/codegraph-analysis.json" "$OUTPUT_DIR/codegraph-summary.json"
-    fi
+if [[ "$CODEGRAPH_AVAILABLE" == "true" ]]; then
+    echo "Running structural analysis (CodeGraph)..." >&2
+    run_codegraph_bridge "$BRIDGE_SCRIPT" "$OUTPUT_DIR/codegraph-analysis.json"
+    write_codegraph_summary "$OUTPUT_DIR/codegraph-analysis.json" "$OUTPUT_DIR/codegraph-summary.json"
 fi
 
 # Perl Structural Code Intelligence (conditional — fail-open, non-blocking)
-PERLGRAPH_NODE_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")/node/perlgraph"
-PERLGRAPH_CLI="$PERLGRAPH_NODE_DIR/dist/cli/perlgraph.js"
-PERLGRAPH_NODE_MODULES_DIR="$PERLGRAPH_NODE_DIR/node_modules"
-if command -v node >/dev/null 2>&1 && [[ -f "$PERLGRAPH_CLI" ]]; then
-    if [[ ! -d "$PERLGRAPH_NODE_MODULES_DIR" ]]; then
-        echo "⚠️  PerlGraph structural analysis skipped: node_modules not found." >&2
-        echo "   Run: npm ci --prefix \"$PERLGRAPH_NODE_DIR\" && npm run build --prefix \"$PERLGRAPH_NODE_DIR\"" >&2
-    else
-        echo "Running Perl structural analysis (PerlGraph)..." >&2
-        run_perlgraph "$PERLGRAPH_CLI" "$OUTPUT_DIR/perlgraph-analysis.json" "$OUTPUT_DIR/perlgraph-summary.json"
-    fi
+if [[ "$PERLGRAPH_AVAILABLE" == "true" ]]; then
+    echo "Running Perl structural analysis (PerlGraph)..." >&2
+    run_perlgraph "$PERLGRAPH_CLI" "$OUTPUT_DIR/perlgraph-analysis.json" "$OUTPUT_DIR/perlgraph-summary.json"
 fi
 
 echo "" >&2

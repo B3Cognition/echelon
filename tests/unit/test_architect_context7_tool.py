@@ -14,6 +14,9 @@ ARCHITECT = ROOT / "extension" / "agents" / "solution" / "architect.md"
 PHASE = ROOT / "extension" / "workflow" / "phases" / "phase3-how.md"
 CTX7_NODE_DIR = ROOT / "extension" / "scripts" / "node" / "context7"
 CTX7_WRAPPER = ROOT / "extension" / "scripts" / "bash" / "context7-docs.sh"
+NODE_RUNTIME_RESOLVER = (
+    ROOT / "extension" / "scripts" / "bash" / "node-runtime-resolver.sh"
+)
 
 
 def test_context7_cli_runtime_is_pinned_and_extension_local() -> None:
@@ -47,9 +50,10 @@ def test_context7_wrapper_execs_extension_local_ctx7() -> None:
     mode = CTX7_WRAPPER.stat().st_mode
 
     assert mode & stat.S_IXUSR
+    assert "node-runtime-resolver.sh" in text
+    assert "echelon_resolve_context7_runtime" in text
     assert 'CTX7_NODE_DIR="$(dirname "$SCRIPT_DIR")/node/context7"' in text
-    assert 'LOCAL_CTX7_BIN="$CTX7_NODE_DIR/node_modules/.bin/ctx7"' in text
-    assert 'SHARED_CTX7_BIN="${ECHELON_HOME:-$HOME/.echelon}/node/context7/node_modules/.bin/ctx7"' in text
+    assert "SHARED_CTX7_BIN=" not in text
     assert "echelon.context7.v1" in text
     assert '"result": result' in text
     assert 'exec "$CTX7_BIN" "$@"' in text
@@ -140,6 +144,7 @@ def test_deployed_context7_wrapper_uses_shared_installed_runtime(tmp_path: Path)
     )
     deployed_wrapper.parent.mkdir(parents=True)
     shutil.copy2(CTX7_WRAPPER, deployed_wrapper)
+    shutil.copy2(NODE_RUNTIME_RESOLVER, deployed_wrapper.parent)
 
     shared_ctx7 = (
         tmp_path
