@@ -118,7 +118,7 @@ accepted spec-switch lifecycle.
 
 ## Implementation Progress
 
-The first three ownership foundations are implemented on
+The first four ownership foundations are implemented on
 `codex/egr-151-spec-lifecycle-gitops` without activating the runtime cutover:
 
 - `src/echelon/speckit_git.py` deterministically inspects and verifies
@@ -143,6 +143,17 @@ The first three ownership foundations are implemented on
   site instead of logging a warning and continuing.
 - `src/echelon/cli.py` idempotently maintains the run-local ledger ignore rule
   without overwriting existing `runs/.gitignore` content.
+- `src/echelon/spec_lifecycle.py` discovers current and legacy spec runs without
+  mtime inference, resolves exact identities before unique numeric prefixes,
+  requires `runs/.current` to name an exact run directory, and rejects run or
+  artifact paths that escape the project root.
+- The same lifecycle module serializes mutations with an owned atomic directory
+  lock and journals switch intent before pointer changes. Atomic pointer
+  replacement plus explicit recovery handles known pre-checkout, post-checkout,
+  and post-pointer crash windows while inconsistent state fails closed.
+- `tests/unit/test_spec_lifecycle.py` exercises all lifecycle state transitions
+  in temporary filesystems with caller-supplied branch observations. It performs
+  no Git checkout, LLM invocation, Docker operation, or network request.
 - Focused adjacent verification passed 33 tests on 2026-07-17:
   `test_phase_a_git`, `test_speckit_git`, existing spec switch/resume tests, and
   the RE Git-flow integration test; `git diff --check` also passed.
@@ -154,8 +165,11 @@ The first three ownership foundations are implemented on
   `target <spec_id>` as a substring of the already-landed
   `drop-target <spec_id>` command, so the matrix selected its checkpoint-routing
   test explicitly.
+- The lifecycle-transaction and adjacent GitOps matrix passed 73 tests on
+  2026-07-17 across spec lifecycle state, Phase A Git, authoritative
+  checkpoints, existing switch/resume routing, and spec-kit Git inspection.
 
-EGR-151 remains `in-progress`. Lifecycle resolution/locking, transactional
-`echelon spec switch`, stash/discard recovery, CLI activation, delivery
-isolation, finalization, the atomic spec-kit Git cutover, changelog entry, and
-full-suite verification remain outstanding.
+EGR-151 remains `in-progress`. Validated checkpoint lookup, actual Git checkout,
+managed stash/confirmed discard recovery, `echelon spec switch` CLI wiring,
+delivery isolation, finalization, the atomic spec-kit Git cutover, changelog
+entry, and full-suite verification remain outstanding.
