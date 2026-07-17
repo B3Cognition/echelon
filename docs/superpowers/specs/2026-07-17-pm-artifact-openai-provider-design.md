@@ -364,6 +364,8 @@ and do not imply global pipeline features.
 The v1 artifact pipeline can operate with plain text output plus strict result
 block validation. JSON mode or structured outputs may be enabled when the local
 server supports them, but they are optimizations rather than required behavior.
+When `features.json_mode` is true, the OpenAI-compatible adapter sends
+`response_format: {"type": "json_object"}` on the chat completion request.
 
 ### OpenCode-Informed Protocol Borrowing
 
