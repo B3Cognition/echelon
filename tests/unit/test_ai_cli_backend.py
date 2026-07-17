@@ -194,6 +194,49 @@ def test_openai_compatible_backend_can_request_json_mode(
     assert captured["payload"]["response_format"] == {"type": "json_object"}
 
 
+def test_openai_compatible_backend_can_request_reasoning_effort(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "choices": [{"message": {"content": "ok"}}],
+            }).encode()
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode())
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    result = OpenAICompatibleBackend(
+        _openai_config(features={"streaming": False, "reasoning_effort": "high"})
+    ).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 0
+    assert captured["payload"]["reasoning_effort"] == "high"
+
+
 def test_openai_compatible_backend_reads_nonstreaming_content_blocks(
     tmp_path, monkeypatch
 ) -> None:

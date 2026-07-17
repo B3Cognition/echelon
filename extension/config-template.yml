@@ -1231,7 +1231,7 @@ harness:
   #   #   structured_outputs: false
   #   #   tool_calls: false
   #   #   reasoning_content: auto
-  #   #   reasoning_effort: false
+  #   #   reasoning_effort: false  # false | low | medium | high
   #   tool_policy:
   #     file_boundary: workspace
   #     network_boundary: harness_allowlist

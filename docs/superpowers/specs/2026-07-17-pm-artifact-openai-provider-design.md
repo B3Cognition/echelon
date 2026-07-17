@@ -354,7 +354,7 @@ providers:
       structured_outputs: false
       tool_calls: false
       reasoning_content: auto
-      reasoning_effort: false
+      reasoning_effort: false  # false | low | medium | high
 ```
 
 The provider should expose feature flags rather than assuming all compatible
@@ -366,6 +366,8 @@ block validation. JSON mode or structured outputs may be enabled when the local
 server supports them, but they are optimizations rather than required behavior.
 When `features.json_mode` is true, the OpenAI-compatible adapter sends
 `response_format: {"type": "json_object"}` on the chat completion request.
+When `features.reasoning_effort` is `low`, `medium`, or `high`, the adapter
+sends that value as the chat completion `reasoning_effort` field.
 
 ### OpenCode-Informed Protocol Borrowing
 
@@ -428,7 +430,7 @@ features:
   structured_outputs: false
   tool_calls: false
   reasoning_content: auto     # auto | field | merged | none
-  reasoning_effort: false
+  reasoning_effort: false     # false | low | medium | high
 ```
 
 `capabilities.artifact` answers whether Echelon may use the provider for PM/spec
