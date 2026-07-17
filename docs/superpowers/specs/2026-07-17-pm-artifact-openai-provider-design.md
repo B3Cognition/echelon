@@ -458,10 +458,15 @@ stdout
 stderr
 timed_out
 token_usage
+token_usage_details
 provider_error_code
 raw_response_metadata
 reasoning_metadata
 ```
+
+`token_usage` is the numeric total used by existing harness accounting.
+`token_usage_details` records normalized provider usage fields when present:
+`prompt_tokens`, `completion_tokens`, and `total_tokens`.
 
 Timeouts, HTTP errors, malformed API responses, and invalid model output are
 reported as provider results. The controller decides whether to retry, repair,
