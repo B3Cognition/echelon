@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from harness.secret_scan import scan_text
+from kernel.task_contract import parse_task_rows
 
 
 _ROLES = frozenset({"requirement", "reference"})
@@ -439,12 +440,31 @@ def _write_traceability_markdown(path: Path, ledger: dict[str, object]) -> None:
 def _task_metadata(tasks_path: Path) -> dict[str, dict[str, set[str]]]:
     if not tasks_path.exists():
         return {}
+    markdown = tasks_path.read_text(encoding="utf-8")
+    canonical_tasks = parse_task_rows(markdown)
+    if canonical_tasks:
+        return {
+            task.task_id: {
+                "requirements": set(task.requirements),
+                "targets": {task.target} if task.target else set(),
+            }
+            for task in canonical_tasks
+        }
+
+    # Compatibility for pre-canonical task ledgers. Canonical tasks must use
+    # the shared parser above so fenced examples and later prose cannot
+    # overwrite their metadata.
     tasks: dict[str, dict[str, set[str]]] = {}
-    for line in tasks_path.read_text(encoding="utf-8").splitlines():
+    for line in markdown.splitlines():
         task_match = re.search(r"\b(T-\d+)\b", line)
         if task_match is None:
             continue
-        requirements = set(re.findall(r"req=([^\]\s]+)", line))
+        requirements = {
+            requirement
+            for value in re.findall(r"req=([^\]\s]+)", line)
+            for requirement in value.split(",")
+            if requirement
+        }
         targets = set(re.findall(r"target=([^\]\s]+)", line))
         tasks[task_match.group(1)] = {"requirements": requirements, "targets": targets}
     return tasks

@@ -170,6 +170,44 @@ def test_traceability_requires_target_owned_tasks(tmp_path: Path) -> None:
     ]
 
 
+def test_traceability_uses_canonical_task_rows_for_csv_requirements(tmp_path: Path) -> None:
+    """Examples and later prose must not overwrite a canonical task's metadata."""
+    from echelon.product_inputs import validate_product_input_traceability
+
+    spec = tmp_path / "specs" / "001-demo"
+    inputs = spec / "inputs"
+    inputs.mkdir(parents=True)
+    (inputs / "traceability.json").write_text(
+        json.dumps(
+            {
+                "requirements": [
+                    {
+                        "input_unit_id": "IN-REQ-1",
+                        "disposition": "included",
+                        "spec_ids": ["FR-140", "FR-141"],
+                        "task_ids": ["T-057"],
+                        "targets": ["sources/web"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (spec / "tasks.md").write_text(
+        """```markdown
+- [ ] T-057 complexity=standard phase=download req=FR-140,FR-141 depends=none target=sources/web
+```
+
+- [ ] T-057 complexity=standard phase=download req=FR-140,FR-141 depends=none target=sources/web
+
+T-057 is described above and must not be parsed as another task row.
+""",
+        encoding="utf-8",
+    )
+
+    assert validate_product_input_traceability(spec, ["sources/web"]) == []
+
+
 def test_controller_applies_structured_traceability_updates(tmp_path: Path) -> None:
     from echelon.product_inputs import (
         apply_product_input_updates,
@@ -227,6 +265,16 @@ def test_prompt_contract_uses_snapshot_paths_and_structured_updates() -> None:
     assert "spec_ids: [FR-001, AC-001]" in prompt
     assert "task_ids: []" in prompt
     assert "targets: []" in prompt
+
+
+def test_plan_phase_requires_direct_product_input_task_mappings() -> None:
+    phase = (
+        Path(__file__).parents[2]
+        / "extension/workflow/phases/phase3-plan.md"
+    ).read_text(encoding="utf-8")
+
+    assert "directly intersect that unit's `spec_ids`" in phase
+    assert "Do not mark a contextual or illustrative unit `included` with empty" in phase
 
 
 def test_phase_a_publication_copies_evidence_only_after_traceability_is_ready(tmp_path: Path) -> None:

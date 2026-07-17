@@ -3088,6 +3088,25 @@ def _blocked_failed_dispatch_phase(run_state: dict) -> str | None:
     return phase_id
 
 
+def _phase_a_readiness_traceability_blockers(run_state: dict) -> list[str]:
+    """Return product-input mapping blockers preserved by Phase A finalization."""
+    blockers = run_state.get("phase_a_readiness_blockers")
+    if not isinstance(blockers, list):
+        return []
+    markers = (
+        "product input traceability",
+        "included requirement has no specification IDs",
+        "included requirement has no task IDs",
+        "does not reference the mapped specification IDs",
+        "is not target-owned by a declared implementation target",
+    )
+    return [
+        str(blocker)
+        for blocker in blockers
+        if isinstance(blocker, str) and any(marker in blocker for marker in markers)
+    ]
+
+
 def _interrupted_retry_phase(run_state: dict) -> str | None:
     phase_id = str(run_state.get("interrupted_phase") or run_state.get("phase") or "").strip()
     if phase_id and phase_id not in {"DONE", "terminal-blocked"}:
@@ -3169,6 +3188,22 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
             command="echelon spec continue",
             note=note,
         )
+
+    if reason == "phase_a_readiness_failed":
+        traceability_blockers = _phase_a_readiness_traceability_blockers(run_state)
+        if traceability_blockers:
+            return _RunRecoveryAction(
+                "safe_rewind",
+                reason=reason,
+                phase="phase3-plan",
+                command="echelon spec rewind phase3-plan",
+                note=(
+                    "Repair the product-input requirement-to-task mappings in PLAN, then "
+                    "re-run consensus. "
+                    f"{len(traceability_blockers)} traceability blocker(s) were recorded; "
+                    "each listed task must have a req= value that intersects its mapped spec_ids."
+                ),
+            )
 
     if "invalid next_phase" in reason:
         return _RunRecoveryAction(
@@ -6062,13 +6097,16 @@ def _cmd_continue(
 
     action = _classify_run_recovery(state)
     if action.kind == "safe_rewind":
+        fields = [("blocked by", action.reason)]
+        if action.note:
+            fields.append(("why", action.note))
+        fields.extend([
+            ("recover with", action.command),
+            ("then", "echelon spec continue"),
+        ])
         _banner(
             "CHECKPOINT",
-            [
-                ("blocked by", action.reason),
-                ("recover with", action.command),
-                ("then", "echelon spec continue"),
-            ],
+            fields,
             subtitle="Run paused. Deterministic recovery required.",
         )
         return
