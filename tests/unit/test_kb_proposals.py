@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import echelon.kb_proposals as kb_proposals
 from echelon.kb_proposals import (
     _project_fingerprint,
     apply_proposals,
@@ -370,3 +371,40 @@ def test_project_fingerprint_prefers_git_origin(tmp_path: Path) -> None:
     expected = hashlib.sha256(origin.encode("utf-8")).hexdigest()[:12]
 
     assert _project_fingerprint(project) == expected
+
+
+def test_apply_missing_yaml_returns_degraded_report(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path
+    proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+    real_import = __import__
+
+    def fail_yaml_import(name, *args, **kwargs):
+        if name == "yaml":
+            raise ImportError("PyYAML unavailable")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", fail_yaml_import)
+
+    report = apply_proposals(project, "squad-001")
+
+    assert report.status == "degraded"
+    assert "PyYAML unavailable" in (report.report_error or "")
+
+
+def test_apply_loader_failure_returns_degraded_report(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path
+    proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+
+    def fail_loader(*args, **kwargs):
+        raise OSError("proposal directory cannot be enumerated")
+
+    monkeypatch.setattr(kb_proposals, "load_proposals", fail_loader)
+
+    report = apply_proposals(project, "squad-001")
+
+    assert report.status == "degraded"
+    assert report.rejected_count == 1
+    assert "proposal directory cannot be enumerated" in (report.outcomes[0].reason or "")
+    assert (project / "runs" / "squad-001" / "kb-apply-report.yaml").exists()

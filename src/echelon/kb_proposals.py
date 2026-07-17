@@ -109,8 +109,6 @@ class KBApplyReport:
 
 
 def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
-    import yaml
-
     proposal_dir = project_root / "runs" / run_id / "kb-proposals"
     report_path = project_root / "runs" / run_id / "kb-apply-report.yaml"
     report_error: str | None = None
@@ -120,7 +118,42 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
         report_error = f"report directory creation failed: {exc}"
     outcomes: list[ProposalApplyOutcome] = []
 
-    for loaded in load_proposals(proposal_dir, expected_run_id=run_id):
+    try:
+        import yaml
+    except Exception as exc:
+        report_error = _combine_report_errors(report_error, f"PyYAML unavailable: {exc}")
+        return _finalize_apply_report(
+            run_id,
+            report_path,
+            outcomes,
+            "degraded",
+            None,
+            report_error,
+        )
+
+    try:
+        loaded_proposals = load_proposals(proposal_dir, expected_run_id=run_id)
+    except Exception as exc:
+        outcomes.append(
+            ProposalApplyOutcome(
+                proposal_id="__system__",
+                operation_id=None,
+                proposal_type=None,
+                outcome="rejected",
+                targets=[],
+                reason=f"proposal loading failed: {exc}",
+            )
+        )
+        return _finalize_apply_report(
+            run_id,
+            report_path,
+            outcomes,
+            "degraded",
+            yaml,
+            report_error,
+        )
+
+    for loaded in loaded_proposals:
         data = loaded.data or {}
         proposal_id = str(data.get("proposal_id") or loaded.path.name)
         proposal_type = data.get("proposal_type") if isinstance(data.get("proposal_type"), str) else None
@@ -164,6 +197,24 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
         outcomes.append(outcome)
 
     status = "applied" if any(item.outcome == "accepted" for item in outcomes) else "degraded"
+    return _finalize_apply_report(
+        run_id=run_id,
+        report_path=report_path,
+        outcomes=outcomes,
+        status=status,
+        yaml_module=yaml,
+        report_error=report_error,
+    )
+
+
+def _finalize_apply_report(
+    run_id: str,
+    report_path: Path,
+    outcomes: list[ProposalApplyOutcome],
+    status: str,
+    yaml_module: Any | None,
+    report_error: str | None,
+) -> KBApplyReport:
     report = KBApplyReport(
         run_id=run_id,
         status="degraded" if report_error else status,
@@ -171,9 +222,12 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
         report_path=report_path,
         report_error=report_error,
     )
-    if report_error is None:
+    if report_error is None and yaml_module is not None:
         try:
-            report_path.write_text(yaml.safe_dump(report.to_dict(), sort_keys=False), encoding="utf-8")
+            report_path.write_text(
+                yaml_module.safe_dump(report.to_dict(), sort_keys=False),
+                encoding="utf-8",
+            )
         except Exception as exc:
             report_error = f"report write failed: {exc}"
             report = KBApplyReport(
@@ -184,6 +238,10 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
                 report_error=report_error,
             )
     return report
+
+
+def _combine_report_errors(existing: str | None, new: str) -> str:
+    return f"{existing}; {new}" if existing else new
 
 
 def _apply_list_proposal(
