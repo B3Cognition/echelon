@@ -68,6 +68,48 @@ def test_publish_kb_reports_copies_apply_report_to_spec_dir(tmp_path: Path) -> N
     assert (spec_dir / "kb" / "kb-apply-report.yaml").exists()
 
 
+def test_publish_kb_reports_copies_usage_summary(tmp_path: Path) -> None:
+    project = tmp_path
+    run_dir = project / "runs" / "squad-001"
+    run_dir.mkdir(parents=True)
+    usage_text = "schema_version: 1\nrun_id: squad-001\n"
+    (run_dir / "kb-usage.yaml").write_text(usage_text, encoding="utf-8")
+    spec_dir = project / "specs" / "001-feature"
+
+    published = publish_kb_reports(project, "squad-001", spec_dir)
+
+    assert published == spec_dir / "kb"
+    assert (spec_dir / "kb" / "kb-usage-summary.yaml").read_text(encoding="utf-8") == usage_text
+
+
+def test_publish_kb_reports_returns_none_without_source_reports(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs" / "001-feature"
+
+    published = publish_kb_reports(tmp_path, "squad-001", spec_dir)
+
+    assert published is None
+    assert not (spec_dir / "kb").exists()
+
+
+def test_publish_kb_reports_failure_is_non_blocking(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path
+    run_dir = project / "runs" / "squad-001"
+    run_dir.mkdir(parents=True)
+    (run_dir / "kb-apply-report.yaml").write_text("status: degraded\n", encoding="utf-8")
+    spec_dir = project / "specs" / "001-feature"
+    destination = spec_dir / "kb" / "kb-apply-report.yaml"
+    original_write_text = Path.write_text
+
+    def fail_publication(path: Path, *args, **kwargs):
+        if path == destination:
+            raise RuntimeError("publication failed unexpectedly")
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_publication)
+
+    assert publish_kb_reports(project, "squad-001", spec_dir) is None
+
+
 def test_valid_pattern_proposal_passes() -> None:
     result = validate_proposal_document(
         "kb-prop-0001.yaml",

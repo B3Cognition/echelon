@@ -227,7 +227,7 @@ def publish_kb_reports(project_root: Path, run_id: str, spec_dir: Path) -> Path 
                 usage.read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
-    except OSError:
+    except Exception:
         return None
     return out_dir
 
