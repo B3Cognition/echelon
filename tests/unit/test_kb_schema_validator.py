@@ -98,6 +98,51 @@ def test_global_learning_entry_allows_missing_project_fingerprint() -> None:
     assert result.ok is True
 
 
+def test_learning_entry_requires_documented_id() -> None:
+    result = validate_kb_document(
+        "patterns.yaml",
+        {
+            "schema_version": 1,
+            "entries": [
+                {
+                    "source": "AUDITOR",
+                    "created_at": "2026-06-23T10:00:00Z",
+                    "confidence": 0.8,
+                    "run_id": "squad-001",
+                    "scope": "global",
+                }
+            ],
+        },
+    )
+
+    assert result.ok is False
+    assert any(issue.path == "entries[0].id" for issue in result.issues)
+
+
+def test_sage_decision_requires_documented_fields_and_boolean_correctness() -> None:
+    result = validate_kb_document(
+        "sage-decisions.yaml",
+        {
+            "schema_version": 2,
+            "append_only": True,
+            "entries": [
+                {
+                    "run_id": "squad-001",
+                    "artifact": "spec.md",
+                    "challenge_type": "missing_evidence",
+                    "challenge_summary": "Evidence is incomplete.",
+                    "outcome": "blocked",
+                    "resolution": "Obtain evidence.",
+                    "was_correct": "true",
+                }
+            ],
+        },
+    )
+
+    assert result.ok is False
+    assert any(issue.path == "entries[0].was_correct" for issue in result.issues)
+
+
 def test_pending_operation_requires_checksum_and_provenance() -> None:
     result = validate_pending_operation(
         {

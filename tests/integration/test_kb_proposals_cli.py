@@ -28,3 +28,44 @@ def test_kb_apply_writes_report_for_empty_run(tmp_path, monkeypatch) -> None:
     assert result.exit_code == 0
     assert (tmp_path / "runs" / "squad-001" / "kb-apply-report.yaml").exists()
     assert "kb_apply_status: degraded" in result.stdout
+
+
+def test_kb_apply_reports_degraded_for_mixed_apply_outcomes(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    proposal_dir = tmp_path / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+    (tmp_path / "knowledge-base").mkdir()
+    (tmp_path / "knowledge-base" / "patterns.yaml").write_text(
+        "schema_version: 1\nentries: []\n", encoding="utf-8"
+    )
+    (proposal_dir / "accepted.yaml").write_text(
+        """schema_version: 1
+proposal_id: kb-prop-0001
+proposal_type: pattern
+run_id: squad-001
+agent: speckit-echelon-mirror
+created_at: \"2026-07-17T12:00:00Z\"
+targets: [knowledge-base/patterns.yaml]
+confidence: 0.72
+source_artifacts: [runs/squad-001/reasoning-journal.jsonl]
+evidence_refs:
+  - artifact: runs/squad-001/reasoning-journal.jsonl
+    locator: RJ-001
+    claim: Supported by review.
+payload:
+  name: Constraint first
+  domain: planning
+  description: Use constraints before estimates.
+  tags: [planning]
+  status: active
+  project_fingerprint: auto
+  scope: local_only
+""",
+        encoding="utf-8",
+    )
+    (proposal_dir / "rejected.yaml").write_text("schema_version: [", encoding="utf-8")
+
+    result = runner.invoke(app, ["kb", "apply", "--run-id", "squad-001"])
+
+    assert result.exit_code == 0
+    assert "kb_apply_status: degraded" in result.stdout

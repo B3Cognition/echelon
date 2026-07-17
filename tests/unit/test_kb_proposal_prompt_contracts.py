@@ -21,6 +21,30 @@ def test_sage_records_decisions_as_kb_proposals() -> None:
     assert "append an entry to `${PROJECT_ROOT}/knowledge-base/sage-decisions.yaml`" not in text
 
 
+def test_sage_calibration_reference_uses_proposals_and_keeps_canonical_reads() -> None:
+    text = _read("extension/agents/exploration/appendices/sage-decision-calibration-reference.md")
+
+    assert "sage-decision-proposal-template.yaml" in text
+    assert "${SQUAD_DIR}/kb-proposals/" in text
+    assert "Do not edit `knowledge-base/sage-decisions.yaml` directly" in text
+    assert "Read the last 10 entries from `knowledge-base/sage-decisions.yaml`" in text
+    assert "append an entry to `knowledge-base/sage-decisions.yaml`" not in text
+
+
+def test_internalizer_writes_review_artifacts_instead_of_canonical_kb() -> None:
+    text = _read("extension/agents/learning/internalizer.md")
+
+    assert "internalization-observation-proposal-template.yaml" in text
+    assert "${SQUAD_DIR}/kb-proposals/" in text
+    assert "Do not edit canonical knowledge-base files directly" in text
+    assert "kb-write.sh" not in text
+    direct_write = re.compile(
+        r"\b(?:write|update|append|modify)\b[^\n]{0,160}`?knowledge-base/(?:internalization-log|agent-scores|evolution-signals)\.yaml",
+        re.IGNORECASE,
+    )
+    assert not direct_write.search(text)
+
+
 def test_mirror_records_patterns_and_pitfalls_as_kb_proposals() -> None:
     text = _read("extension/agents/learning/mirror.md")
     assert "pattern-proposal-template.yaml" in text
@@ -39,13 +63,19 @@ def test_finalize_runs_kb_apply_non_blocking() -> None:
     assert "echelon kb validate --run-id" in text
     assert "echelon kb apply --run-id" in text
     assert "does not stop finalization" in text
-    assert "kb_validation_status: degraded" in text
-    assert "kb_apply_status: degraded" in text
+    assert "KB_VALIDATION_STATUS=degraded" in text
+    assert "KB_APPLY_STATUS=degraded" in text
     assert "kb_usage_status: degraded" in text
     assert "kb-apply-report.yaml" in text
     assert "Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`" not in text
-    assert "KB_VALIDATE_EXIT=$?" in text
-    assert "KB_APPLY_EXIT=$?" in text
+    assert "KB_VALIDATE_OUTPUT=" in text
+    assert "KB_APPLY_OUTPUT=" in text
+    assert "if KB_VALIDATE_OUTPUT=" in text
+    assert "if KB_APPLY_OUTPUT=" in text
+    assert "kb_validation_status: valid" in text
+    assert "kb_apply_status: applied" in text
+    assert "KB_VALIDATE_EXIT" not in text
+    assert "KB_APPLY_EXIT" not in text
     assert "echelon kb validate --run-id \"${RUN_ID}\" || true" not in text
     assert "echelon kb apply --run-id \"${RUN_ID}\" || true" not in text
 

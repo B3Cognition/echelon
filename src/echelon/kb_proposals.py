@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -196,7 +198,13 @@ def apply_proposals(project_root: Path, run_id: str) -> KBApplyReport:
             )
         outcomes.append(outcome)
 
-    status = "applied" if any(item.outcome == "accepted" for item in outcomes) else "degraded"
+    unresolved_outcomes = {"rejected", "needs_review"}
+    status = (
+        "applied"
+        if any(item.outcome == "accepted" for item in outcomes)
+        and not any(item.outcome in unresolved_outcomes for item in outcomes)
+        else "degraded"
+    )
     return _finalize_apply_report(
         run_id=run_id,
         report_path=report_path,
@@ -281,11 +289,46 @@ def _apply_list_proposal(
     target_path = project_root / target
     proposal_id = str(data["proposal_id"])
     proposal_type = str(data["proposal_type"])
+    try:
+        lock_path = _acquire_target_lock(target_path)
+    except OSError as exc:
+        return ProposalApplyOutcome(
+            proposal_id,
+            operation_id,
+            proposal_type,
+            "rejected",
+            targets,
+            f"target lock unavailable: {exc}",
+        )
+
+    try:
+        return _apply_locked_list_proposal(
+            project_root,
+            target_path,
+            targets,
+            data,
+            operation_id,
+            yaml,
+        )
+    finally:
+        _release_target_lock(lock_path)
+
+
+def _apply_locked_list_proposal(
+    project_root: Path,
+    target_path: Path,
+    targets: list[str],
+    data: dict[str, Any],
+    operation_id: str | None,
+    yaml_module: Any,
+) -> ProposalApplyOutcome:
+    proposal_id = str(data["proposal_id"])
+    proposal_type = str(data["proposal_type"])
     if not target_path.exists():
         return ProposalApplyOutcome(proposal_id, operation_id, proposal_type, "rejected", targets, "target file missing")
 
     try:
-        document = yaml.safe_load(target_path.read_text(encoding="utf-8")) or {}
+        document = yaml_module.safe_load(target_path.read_text(encoding="utf-8")) or {}
     except Exception as exc:
         return ProposalApplyOutcome(
             proposal_id,
@@ -300,7 +343,7 @@ def _apply_list_proposal(
 
     from codegen.memory.kb_schema_validator import validate_kb_document
 
-    entries_key = LIST_TARGET_ENTRY_KEYS[target]
+    entries_key = LIST_TARGET_ENTRY_KEYS[targets[0]]
     baseline_validation = validate_kb_document(target_path.name, document)
     legacy_reason = None
     if not baseline_validation.ok:
@@ -315,7 +358,7 @@ def _apply_list_proposal(
 
     entry = _canonical_entry(data, operation_id, project_root)
     entries.append(entry)
-    candidate_document = dict(LIST_TARGET_SCHEMA_FIELDS[target])
+    candidate_document = dict(LIST_TARGET_SCHEMA_FIELDS[targets[0]])
     candidate_document[entries_key] = [entry]
     result_validation = validate_kb_document(target_path.name, candidate_document)
     if not result_validation.ok:
@@ -331,7 +374,7 @@ def _apply_list_proposal(
             f"resulting target schema invalid: {reason}",
         )
     try:
-        target_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+        _atomic_replace_text(target_path, yaml_module.safe_dump(document, sort_keys=False))
     except Exception as exc:
         return ProposalApplyOutcome(
             proposal_id,
@@ -353,6 +396,13 @@ def _canonical_entry(
     payload = dict(data["payload"])
     if payload.get("project_fingerprint") == "auto":
         payload["project_fingerprint"] = _project_fingerprint(project_root)
+    proposal_type = data["proposal_type"]
+    if proposal_type in {"pattern", "pitfall"} and not payload.get("id"):
+        prefix = "pat" if proposal_type == "pattern" else "pit"
+        identity = operation_id or f"{data['run_id']}/{data['proposal_id']}"
+        payload["id"] = f"{prefix}-{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:12]}"
+    if proposal_type == "sage_decision":
+        payload.setdefault("was_correct", True)
     entry: dict[str, Any] = {
         "operation_id": operation_id,
         "run_id": data["run_id"],
@@ -424,6 +474,15 @@ def validate_proposal_document(
         else None
     )
 
+    agent = data.get("agent")
+    agent_prefix = "speckit-echelon-"
+    if (
+        not isinstance(agent, str)
+        or not agent.startswith(agent_prefix)
+        or not agent[len(agent_prefix) :].strip()
+    ):
+        issues.append(_issue("agent", "expected non-empty speckit-echelon-* identity"))
+
     proposal_type = data.get("proposal_type")
     allowed_targets = (
         PROPOSAL_TARGETS.get(proposal_type)
@@ -453,10 +512,26 @@ def validate_proposal_document(
             if not isinstance(target, str) or target not in allowed_targets:
                 issues.append(_issue(f"targets[{index}]", "target incompatible with proposal_type"))
 
-    for key in ("source_artifacts", "evidence_refs"):
-        value = data.get(key)
-        if not isinstance(value, list) or not value:
-            issues.append(_issue(key, "expected non-empty list"))
+    source_artifacts = data.get("source_artifacts")
+    if not isinstance(source_artifacts, list) or not source_artifacts:
+        issues.append(_issue("source_artifacts", "expected non-empty list"))
+    else:
+        for index, artifact in enumerate(source_artifacts):
+            if not isinstance(artifact, str) or not artifact.strip():
+                issues.append(_issue(f"source_artifacts[{index}]", "expected non-empty string"))
+
+    evidence_refs = data.get("evidence_refs")
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        issues.append(_issue("evidence_refs", "expected non-empty list"))
+    else:
+        for index, evidence in enumerate(evidence_refs):
+            base = f"evidence_refs[{index}]"
+            if not isinstance(evidence, dict):
+                issues.append(_issue(base, "expected mapping"))
+                continue
+            for key in ("artifact", "locator", "claim"):
+                if not isinstance(evidence.get(key), str) or not evidence[key].strip():
+                    issues.append(_issue(f"{base}.{key}", "expected non-empty string"))
 
     if not isinstance(data.get("payload"), dict):
         issues.append(_issue("payload", "expected mapping"))
@@ -487,6 +562,7 @@ def load_proposals(
             )
         return loaded
 
+    seen_proposal_ids: set[str] = set()
     for path in sorted(proposal_dir.glob("*.yaml")):
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -499,15 +575,28 @@ def load_proposals(
                 )
             )
             continue
+        validation = validate_proposal_document(
+            path.name,
+            data,
+            expected_run_id=expected_run_id,
+        )
+        proposal_id = data.get("proposal_id") if isinstance(data, dict) else None
+        if isinstance(proposal_id, str) and proposal_id.strip():
+            if proposal_id in seen_proposal_ids:
+                validation = _result(
+                    [
+                        *validation.issues,
+                        _issue("proposal_id", f"duplicate proposal_id in run: {proposal_id}"),
+                    ],
+                    operation_id=validation.operation_id,
+                )
+            else:
+                seen_proposal_ids.add(proposal_id)
         loaded.append(
             LoadedProposal(
                 path=path,
                 data=data if isinstance(data, dict) else None,
-                validation=validate_proposal_document(
-                    path.name,
-                    data,
-                    expected_run_id=expected_run_id,
-                ),
+                validation=validation,
             )
         )
     return loaded
@@ -533,6 +622,41 @@ def _validate_payload(data: dict[str, Any], issues: list[ProposalValidationIssue
     for key in required_fields:
         if key not in payload:
             issues.append(_issue(f"payload.{key}", "required"))
+
+
+def _acquire_target_lock(target_path: Path) -> Path:
+    lock_path = target_path.with_name(f"{target_path.name}.lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    os.close(fd)
+    return lock_path
+
+
+def _release_target_lock(lock_path: Path) -> None:
+    try:
+        lock_path.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def _atomic_replace_text(target_path: Path, content: str) -> None:
+    fd, temp_name = tempfile.mkstemp(
+        dir=target_path.parent,
+        prefix=f".{target_path.name}.",
+        suffix=".tmp",
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp_path, target_path)
+    except Exception:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
 
 
 def _valid_iso_datetime(value: Any) -> bool:

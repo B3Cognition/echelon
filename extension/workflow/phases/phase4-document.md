@@ -254,23 +254,31 @@ else
   RUN_ID=""
 fi
 
-if echelon kb validate --run-id "${RUN_ID}"; then
-  KB_VALIDATE_EXIT=0
+if KB_VALIDATE_OUTPUT="$(echelon kb validate --run-id "${RUN_ID}" 2>&1)"; then
+  :
+fi
+printf '%s\n' "${KB_VALIDATE_OUTPUT}"
+if printf '%s\n' "${KB_VALIDATE_OUTPUT}" | grep -Fxq "kb_validation_status: valid"; then
+  KB_VALIDATION_STATUS=validated
 else
-  KB_VALIDATE_EXIT=$?
+  KB_VALIDATION_STATUS=degraded
 fi
 
-if echelon kb apply --run-id "${RUN_ID}"; then
-  KB_APPLY_EXIT=0
+if KB_APPLY_OUTPUT="$(echelon kb apply --run-id "${RUN_ID}" 2>&1)"; then
+  :
+fi
+printf '%s\n' "${KB_APPLY_OUTPUT}"
+if printf '%s\n' "${KB_APPLY_OUTPUT}" | grep -Fxq "kb_apply_status: applied"; then
+  KB_APPLY_STATUS=applied
 else
-  KB_APPLY_EXIT=$?
+  KB_APPLY_STATUS=degraded
 fi
 ```
 
-If `KB_VALIDATE_EXIT` is non-zero, record `kb_validation_status: degraded` in
-`echelon_result.state_updates`; otherwise record it as `validated`. If
-`KB_APPLY_EXIT` is non-zero, record `kb_apply_status: degraded`; otherwise record
-it as `applied`.
+Record `kb_validation_status` from `KB_VALIDATION_STATUS` and `kb_apply_status`
+from `KB_APPLY_STATUS` in `echelon_result.state_updates`. The commands remain
+non-blocking, but their printed status values are authoritative because they may
+exit zero while reporting a degraded result.
 Record proposal-read or usage failures as `kb_usage_status: degraded`, and preserve
 any deterministic contract findings in `kb_contract_violations` and `kb_apply_report`.
 A KB failure does not stop finalization, agent dispatch, phase transitions, or publication.

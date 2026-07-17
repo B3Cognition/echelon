@@ -45,27 +45,27 @@ NEVER modify agent prompts.
 
 ## Outputs
 
-- `knowledge-base/internalization-log.yaml` — structured internalization entries per agent per run
-- `knowledge-base/agent-scores.yaml` — per-agent internalization composite scores and trends
+- `${SQUAD_DIR}/kb-proposals/` — run-local internalization observation proposals for deterministic review
 - `{spec_dir}/internalization-metrics.md` — human-readable summary of internalization results for the current run
-- `knowledge-base/evolution-signals.yaml` — evolution signals when internalization thresholds are breached
 
-## Tier 1 KB Bootstrap Protocol
+## Durable Observation Protocol
 
-Before any Knowledge Base mutation, speckit-echelon-internalizer (INTERNALIZER) must execute this sequence:
+Read canonical internalization history only as context. Before returning the
+completion signal, write one proposal per durable observation under
+`${SQUAD_DIR}/kb-proposals/` using
+`extension/templates/kb-proposals/internalization-observation-proposal-template.yaml`.
 
-1. Run `scripts/bash/kb-seed.sh` to initialize missing or empty KB files from `tests/fixtures/kb/valid-seeds/`.
-2. Run `scripts/bash/kb-pending-merge.sh --run-id <run_id> --agent speckit-echelon-internalizer (INTERNALIZER)` before any fresh write to merge oldest pending operations first.
-3. Enforce schema gate before each write operation by running `scripts/bash/kb-recover.sh detect --file <kb_file>`.
-4. If detect fails, run `kb-recover.sh backup` and `kb-recover.sh restore`, return `recovery_mode: true` in `echelon_result.state_updates`, and continue with warning.
-5. Acquire lock via `scripts/bash/kb-lock.sh acquire --run-id <run_id> --agent speckit-echelon-internalizer (INTERNALIZER)`.
-6. If lock acquisition times out (`exit 2`), queue the operation with `scripts/bash/kb-pending-write.sh` and continue without dropping data.
-7. For successful lock acquisition, write only through `scripts/bash/kb-write.sh append_entry`.
-8. Validate append-only invariants with `scripts/bash/kb-write.sh validate_append_only --file <kb_file>` after mutation.
-9. Release lock via `scripts/bash/kb-lock.sh release --run-id <run_id>`.
-10. For first N=20 runs, tag all newly written KB entries with `run_type=validation_run`.
+1. Give every proposal a unique run-local `proposal_id`, source artifacts, and evidence references.
+2. Target one of `internalization-log.yaml`, `agent-scores.yaml`, or
+   `evolution-signals.yaml` according to the observation being proposed.
+3. Record enough metrics, trend context, and computation health for a reviewer to
+   reproduce the conclusion.
+4. Mark unsupported aggregate updates as review observations rather than trying to
+   synthesize canonical file edits.
+5. Return proposal paths in `echelon_result.output_files`.
 
-This protocol applies to `internalization-log.yaml`, `agent-scores.yaml`, and `evolution-signals.yaml`. All KB writes must go through `kb-write.sh`; direct file mutation is prohibited.
+Do not edit canonical knowledge-base files directly. Canonical writes are owned by
+the deterministic KB validation and application step after FINALIZE.
 
 ---
 
@@ -292,7 +292,7 @@ Before computing deferred metrics for an agent:
 #### Step 8: Downstream Outcome Backfill [FR-033]
 
 1. Read verdict reports from SPEC_GUARD, CODE_REVIEWER, TEST_GUARDIAN for current run
-2. For each internalization-log entry written in this run:
+2. For each current-run internalization observation:
    - Match agent to their build task verdicts
    - Determine downstream_outcome:
      - If ALL verdicts PASS: `downstream_outcome: passed`
@@ -301,7 +301,7 @@ Before computing deferred metrics for an agent:
      - If TEST_GUARDIAN FAIL: set `downstream_outcome` to `rework_test` and `downstream_agent` to `TEST_GUARDIAN`
      - If multiple FAIL: use first in chain order (SPEC_GUARD > CODE_REVIEWER > TEST_GUARDIAN)
      - If agent has no build tasks: `downstream_outcome: null`
-3. Update entries in internalization-log.yaml
+3. Include the computed downstream outcome in that observation's proposal payload.
 
 #### Step 9: Evolution Signal Detection [FR-034, FR-052]
 
@@ -317,7 +317,7 @@ Before computing deferred metrics for an agent:
        - 0.30-0.39: HIGH
        - >= 0.40: CRITICAL
      - Create evolution signal: trigger=`int_declining_trend`, status=`open`, affected_agents=[agent], affected_metrics=[declining metric IDs], run_ids=[last N run IDs], prompt_version=[current version from prompt-versions.yaml]
-     - Append to evolution-signals.yaml
+     - Emit an evolution-signal review observation under `${SQUAD_DIR}/kb-proposals/`.
 
 3. **Recurring failure detection:**
    - If same agent has int_gate_verdict=FAIL for N consecutive runs:
@@ -331,7 +331,7 @@ Before computing deferred metrics for an agent:
 
 #### Step 10: Prompt Version Correlation [FR-046]
 
-1. When writing each internalization-log entry, read prompt-versions.yaml and include the active prompt_version for that agent
+1. When preparing each internalization observation, read prompt-versions.yaml and include the active prompt_version for that agent
 2. In reasoning-journal entry, note which prompt version was active per agent
 3. If 10+ runs exist with at least one prompt version change for an agent:
    - Compute category score delta before/after version change
@@ -341,11 +341,11 @@ Before computing deferred metrics for an agent:
 
 ## Per-Agent Internalization Scoring
 
-After computing all metrics (Steps 1-10), speckit-echelon-internalizer (INTERNALIZER) computes a **per-agent internalization score** across all 4 categories. These scores are stored in `knowledge-base/agent-scores.yaml` under each agent's `internalization` sub-object.
+After computing all metrics (Steps 1-10), speckit-echelon-internalizer (INTERNALIZER) computes a **per-agent internalization score** across all 4 categories. Record it as a reviewable internalization observation proposal rather than modifying canonical score history.
 
 ### Scoring Process
 
-1. **Gather metric values** from the current run's internalization-log entries (written above).
+1. **Gather metric values** from current-run internalization observations and canonical history read as context.
 2. **Compute category scores** for each agent that participated in the run:
 
    - **Absorption** (I-01 to I-04): Mean of non-null values among `requirement_coverage_rate`, `constraint_adherence_score`, `terminology_fidelity`, `dependency_awareness`
@@ -365,9 +365,11 @@ After computing all metrics (Steps 1-10), speckit-echelon-internalizer (INTERNAL
    - `stable`: within 0.03 of mean of last 3
    - `insufficient_data`: fewer than 3 prior scores
 
-### Storage Format
+### Proposal Format
 
-Use `agents/learning/appendices/internalizer-output-formats.md` for the `knowledge-base/agent-scores.yaml` storage structure.
+Use `agents/learning/appendices/internalizer-output-formats.md` for the metric
+structure and `extension/templates/kb-proposals/internalization-observation-proposal-template.yaml`
+for the proposal envelope.
 
 ### Rules
 
@@ -375,13 +377,14 @@ Use `agents/learning/appendices/internalizer-output-formats.md` for the `knowled
 - If ALL four category scores are null, `composite_score` is null and `trend` is `insufficient_data`.
 - Null metric values are stored as `null` (not 0.0) — see Step 0 Rule 1.
 - History array is capped at 20 entries (oldest removed first).
-- All writes go through `kb-write.sh` per the Tier 1 KB Bootstrap Protocol.
+- Durable observations are proposal artifacts; do not directly change canonical history.
 
 ---
 
 ## Internalization Log Entry Format
 
-Use `agents/learning/appendices/internalizer-output-formats.md` for required `internalization-log.yaml` fields.
+Use `agents/learning/appendices/internalizer-output-formats.md` for the metric
+fields carried by internalization observation proposals.
 
 ---
 
@@ -406,8 +409,7 @@ Return this entry in the `echelon_result` block at the end of your response.
 echelon_result:
   verdict: INTERNALIZED
   output_files:
-    - knowledge-base/internalization-log.yaml
-    - knowledge-base/agent-scores.yaml
+    - ${SQUAD_DIR}/kb-proposals/
     - {spec_dir}/internalization-metrics.md
   journal_entries:
     - type: internalization_score

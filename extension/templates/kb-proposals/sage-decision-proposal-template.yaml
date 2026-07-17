@@ -15,7 +15,8 @@ evidence_refs:
     claim: Decision resolved a Phase A challenge.
 payload:
   artifact: spec.md
-  challenge_type: ambiguity
+  challenge_type: missing_evidence
   challenge_summary: Scope boundary required an explicit decision.
-  outcome: Chose the narrower scope supported by current evidence.
+  outcome: blocked
   resolution: Record assumptions and defer expansion to change control.
+  was_correct: true

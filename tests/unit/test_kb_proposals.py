@@ -121,6 +121,43 @@ def test_valid_pattern_proposal_passes() -> None:
     assert result.issues == []
 
 
+@pytest.mark.parametrize("value", [[["journal.jsonl"]], [None], [1]])
+def test_rejects_non_string_source_artifacts(value) -> None:
+    proposal = _base_proposal(source_artifacts=value)
+
+    result = validate_proposal_document("bad-provenance.yaml", proposal)
+
+    assert result.ok is False
+    assert any(issue.path == "source_artifacts[0]" for issue in result.issues)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        ["not-a-mapping"],
+        [{"artifact": "journal.jsonl", "locator": "RJ-001"}],
+        [{"artifact": "journal.jsonl", "locator": 1, "claim": "supported"}],
+    ],
+)
+def test_rejects_invalid_evidence_references(value) -> None:
+    proposal = _base_proposal(evidence_refs=value)
+
+    result = validate_proposal_document("bad-evidence.yaml", proposal)
+
+    assert result.ok is False
+    assert any(issue.path.startswith("evidence_refs[0]") for issue in result.issues)
+
+
+@pytest.mark.parametrize("agent", ["mirror", "speckit-echelon-"])
+def test_rejects_unknown_agent_identity(agent: str) -> None:
+    proposal = _base_proposal(agent=agent)
+
+    result = validate_proposal_document("bad-agent.yaml", proposal)
+
+    assert result.ok is False
+    assert any(issue.path == "agent" for issue in result.issues)
+
+
 def test_rejects_scalar_target_contract() -> None:
     data = _base_proposal(target="knowledge-base/patterns.yaml")
     data.pop("targets")
@@ -227,8 +264,105 @@ def test_apply_valid_pattern_writes_canonical_entry(tmp_path: Path) -> None:
     assert report.accepted_count == 1
     data = yaml.safe_load((kb / "patterns.yaml").read_text(encoding="utf-8"))
     assert data["entries"][0]["operation_id"] == "squad-001/kb-prop-0001"
+    assert data["entries"][0]["id"] == "pat-" + hashlib.sha256(
+        b"squad-001/kb-prop-0001"
+    ).hexdigest()[:12]
     assert data["entries"][0]["run_id"] == "squad-001"
     assert data["entries"][0]["project_fingerprint"] != "auto"
+
+
+def test_apply_sage_entry_defaults_correctness_and_passes_canonical_schema(tmp_path: Path) -> None:
+    project = tmp_path
+    kb = project / "knowledge-base"
+    kb.mkdir()
+    target = kb / "sage-decisions.yaml"
+    target.write_text("schema_version: 2\nappend_only: true\nentries: []\n", encoding="utf-8")
+    proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+    proposal = _base_proposal(
+        proposal_id="kb-prop-sage-0001",
+        proposal_type="sage_decision",
+        agent="speckit-echelon-sage",
+        targets=["knowledge-base/sage-decisions.yaml"],
+        payload={
+            "artifact": "spec.md",
+            "challenge_type": "missing_evidence",
+            "challenge_summary": "Evidence is incomplete.",
+            "outcome": "blocked",
+            "resolution": "Obtain evidence.",
+        },
+    )
+    (proposal_dir / "sage.yaml").write_text(yaml.safe_dump(proposal), encoding="utf-8")
+
+    report = apply_proposals(project, "squad-001")
+
+    assert report.status == "applied"
+    entry = yaml.safe_load(target.read_text(encoding="utf-8"))["entries"][0]
+    assert entry["was_correct"] is True
+
+
+def test_apply_rejects_new_sage_entry_that_fails_canonical_validation(tmp_path: Path) -> None:
+    project = tmp_path
+    kb = project / "knowledge-base"
+    kb.mkdir()
+    target = kb / "sage-decisions.yaml"
+    original = "schema_version: 2\nappend_only: true\nentries: []\n"
+    target.write_text(original, encoding="utf-8")
+    proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+    proposal = _base_proposal(
+        proposal_type="sage_decision",
+        agent="speckit-echelon-sage",
+        targets=["knowledge-base/sage-decisions.yaml"],
+        payload={
+            "artifact": "spec.md",
+            "challenge_type": "invalid",
+            "challenge_summary": "Evidence is incomplete.",
+            "outcome": "blocked",
+            "resolution": "Obtain evidence.",
+            "was_correct": True,
+        },
+    )
+    (proposal_dir / "invalid-sage.yaml").write_text(yaml.safe_dump(proposal), encoding="utf-8")
+
+    report = apply_proposals(project, "squad-001")
+
+    assert report.status == "degraded"
+    assert report.rejected_count == 1
+    assert target.read_text(encoding="utf-8") == original
+
+
+def test_load_proposals_rejects_later_duplicate_proposal_id(tmp_path: Path) -> None:
+    proposal_dir = tmp_path / "kb-proposals"
+    proposal_dir.mkdir()
+    (proposal_dir / "first.yaml").write_text(yaml.safe_dump(_base_proposal()), encoding="utf-8")
+    (proposal_dir / "second.yaml").write_text(yaml.safe_dump(_base_proposal()), encoding="utf-8")
+
+    loaded = load_proposals(proposal_dir, expected_run_id="squad-001")
+
+    assert loaded[0].validation.ok is True
+    assert loaded[1].validation.ok is False
+    assert any(
+        issue.path == "proposal_id" and "duplicate" in issue.message
+        for issue in loaded[1].validation.issues
+    )
+
+
+def test_apply_mixed_run_is_degraded_when_one_proposal_is_rejected(tmp_path: Path) -> None:
+    project = tmp_path
+    kb = project / "knowledge-base"
+    kb.mkdir()
+    (kb / "patterns.yaml").write_text("schema_version: 1\nentries: []\n", encoding="utf-8")
+    proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+    (proposal_dir / "accepted.yaml").write_text(yaml.safe_dump(_base_proposal()), encoding="utf-8")
+    (proposal_dir / "rejected.yaml").write_text("schema_version: [", encoding="utf-8")
+
+    report = apply_proposals(project, "squad-001")
+
+    assert report.accepted_count == 1
+    assert report.rejected_count == 1
+    assert report.status == "degraded"
 
 
 def test_apply_invalid_and_valid_mixed_run_continues(tmp_path: Path) -> None:
@@ -366,7 +500,7 @@ def test_apply_malformed_target_continues_to_valid_proposal(tmp_path: Path) -> N
     assert (valid_kb.exists())
 
 
-def test_apply_target_write_failure_is_reported_and_report_is_written(tmp_path: Path, monkeypatch) -> None:
+def test_apply_atomic_target_write_failure_preserves_original(tmp_path: Path, monkeypatch) -> None:
     project = tmp_path
     kb = project / "knowledge-base"
     kb.mkdir()
@@ -375,20 +509,42 @@ def test_apply_target_write_failure_is_reported_and_report_is_written(tmp_path: 
     proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
     proposal_dir.mkdir(parents=True)
     (proposal_dir / "write-failure.yaml").write_text(yaml.safe_dump(_base_proposal()), encoding="utf-8")
-    original_write_text = Path.write_text
+    original = target.read_text(encoding="utf-8")
+    original_replace = kb_proposals.os.replace
 
-    def fail_target_write(path: Path, *args, **kwargs):
-        if path == target:
+    def fail_replace(source: Path, destination: Path):
+        if destination == target:
             raise OSError("target is read-only")
-        return original_write_text(path, *args, **kwargs)
+        return original_replace(source, destination)
 
-    monkeypatch.setattr(Path, "write_text", fail_target_write)
+    monkeypatch.setattr(kb_proposals.os, "replace", fail_replace)
 
     report = apply_proposals(project, "squad-001")
 
     assert report.rejected_count == 1
     assert "target is read-only" in (report.outcomes[0].reason or "")
+    assert target.read_text(encoding="utf-8") == original
     assert (project / "runs" / "squad-001" / "kb-apply-report.yaml").exists()
+
+
+def test_apply_lock_contention_rejects_without_mutating_target(tmp_path: Path) -> None:
+    project = tmp_path
+    kb = project / "knowledge-base"
+    kb.mkdir()
+    target = kb / "patterns.yaml"
+    original = "schema_version: 1\nentries: []\n"
+    target.write_text(original, encoding="utf-8")
+    target.with_name(f"{target.name}.lock").write_text("another writer", encoding="utf-8")
+    proposal_dir = project / "runs" / "squad-001" / "kb-proposals"
+    proposal_dir.mkdir(parents=True)
+    (proposal_dir / "contended.yaml").write_text(yaml.safe_dump(_base_proposal()), encoding="utf-8")
+
+    report = apply_proposals(project, "squad-001")
+
+    assert report.status == "degraded"
+    assert report.rejected_count == 1
+    assert "target lock unavailable" in (report.outcomes[0].reason or "")
+    assert target.read_text(encoding="utf-8") == original
 
 
 def test_report_write_failure_returns_degraded_report(tmp_path: Path, monkeypatch) -> None:
