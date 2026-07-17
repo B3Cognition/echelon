@@ -238,15 +238,16 @@ class TestRunSkillAutoLand:
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.run_gc")
     @patch("harness.skills.run_skill.StrategyCoordinator")
-    def test_branch_recovery_uses_local_target_repo_path(
+    def test_delivery_run_does_not_prepare_or_switch_target_checkout(
         self,
         mock_coordinator_cls: MagicMock,
         mock_gc: MagicMock,
         mock_parse: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """Polyrepo runtime dirs are not git checkouts; recover target checkout."""
+        """Delivery uses the mirror/worktree boundary, not the authoring checkout."""
         from harness.config import HarnessConfig
+        from harness.paths import current_build_marker
         from harness.run_intent import RunIntent
         from harness.skills.run_skill import run
 
@@ -281,7 +282,8 @@ class TestRunSkillAutoLand:
             config=config,
         )
 
-        gitops.ensure_on_default_branch.assert_called_once_with(str(target.resolve()))
+        gitops.ensure_on_default_branch.assert_not_called()
+        assert current_build_marker(runtime, "012").exists()
 
     @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
