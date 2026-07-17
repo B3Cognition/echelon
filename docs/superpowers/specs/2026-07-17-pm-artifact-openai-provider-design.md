@@ -40,6 +40,11 @@ cannot be accidentally used for specification or product artifact commands.
   assumptions, and downstream product artifacts.
 - Require providers to declare artifact and build capabilities, and gate Echelon
   commands against those capabilities before execution.
+- Be honest that input preparation is the hard adoption problem: the first
+  version needs PM-curated Aha IDs and consistent Aha hygiene more than it needs
+  more connectors.
+- Define PM review gates, pilot success metrics, and future expansion boundaries
+  so the MVP can earn trust before broadening scope.
 
 ## Non-Goals
 
@@ -53,6 +58,8 @@ cannot be accidentally used for specification or product artifact commands.
 - Do not pretend an OpenAI-compatible chat-completions endpoint is an AI coding
   CLI with file tools.
 - Do not merge the PM artifact pipeline into the current build harness as-is.
+- Do not make Pendo, Dovetail, Salesforce, Jira, Cerbero, GTM generation, or
+  delivery handoff part of the MVP. They remain future expansion candidates.
 
 ## Core Architecture
 
@@ -77,6 +84,26 @@ invalid output, or blocks with a typed reason.
 
 The model is a replaceable text worker. It does not own filesystem mutation,
 source-of-record mutation, state transitions, or command execution.
+
+## Adoption Model
+
+The original broader pipeline design correctly identified the input problem as
+the biggest practical risk. This design keeps that lesson and narrows the first
+version accordingly.
+
+The v1 pipeline can run only after a PM or product operator selects a small set
+of related Aha idea and feature IDs. The system should not pretend that it can
+infer the right scope from an entire roadmap. Early success depends on:
+
+- Aha records containing enough context to cite.
+- PMs selecting records that plausibly belong together.
+- The pipeline surfacing missing context as open questions instead of filling
+  gaps with unsupported prose.
+- Review gates that make PM judgment explicit and lightweight.
+
+This means the first run may still feel manual. That is acceptable. The system
+is removing reconstruction work after the input set is chosen; it is not removing
+the PM's responsibility to frame the work.
 
 ## Aha Ingestion CLI
 
@@ -161,6 +188,25 @@ The relationship map becomes explicit evidence for later artifacts. It is not
 hidden chain-of-thought and is not treated as source truth; it is a pipeline
 artifact that downstream phases may cite or challenge.
 
+## PM Review Gates
+
+Human gates are intentional. The pipeline should not be marketed or implemented
+as fully autonomous product decision-making.
+
+The v1 flow has two required PM review gates:
+
+1. **Relationship gate:** after `input-relationship-map.md`, the PM confirms
+   whether the selected Aha records belong together, marks records as core,
+   duplicate, adjacent/follow-on, or out of scope, and answers any blocking
+   relationship questions.
+2. **Artifact package gate:** after the consistency and traceability review, the
+   PM approves, edits, or rejects the product package before it is shared outside
+   the pilot workflow.
+
+The controller represents unresolved gates as typed blocked states, not as model
+failures. A run can resume after the PM response is recorded. PM responses become
+first-class evidence references for downstream artifact changes.
+
 ## Normalized Product Input Contract
 
 The normalized input model preserves source identity aggressively:
@@ -232,21 +278,51 @@ The initial PM pipeline should remain small and auditable:
    source inputs.
 2. Input relationship mapping: interpret how the selected IDs relate and surface
    conflicts, duplicates, adjacent scope, and missing context.
-3. Problem framing: produce problem statement, personas/users, jobs, pains,
+3. PM relationship gate: record PM approval, corrections, or blocking questions
+   for the relationship map.
+4. Problem framing: produce problem statement, personas/users, jobs, pains,
    desired outcomes, and success criteria.
-4. Opportunity and product brief: synthesize a concise product direction and
+5. Opportunity and product brief: synthesize a concise product direction and
    scope boundary.
-5. Requirements and acceptance criteria: derive FR/NFR-style requirements,
+6. Requirements and acceptance criteria: derive FR/NFR-style requirements,
    acceptance criteria, and non-goals.
-6. Risk, assumption, and question pass: populate assumptions, risks, decisions,
+7. Risk, assumption, and question pass: populate assumptions, risks, decisions,
    unresolved questions, and needed stakeholder follow-ups.
-7. Consistency and traceability review: check contradictions, orphan
+8. Consistency and traceability review: check contradictions, orphan
    requirements, weak evidence, unsupported claims, and unresolved blockers.
-8. Final package: publish the artifact bundle and traceability matrix.
+9. PM artifact package gate: record approval, edits, rejected claims, and
+   required follow-ups.
+10. Final package: publish the artifact bundle and traceability matrix.
 
 Each phase receives bounded context: normalized input, prior artifacts, active
 ledgers, and the current phase contract. Each phase returns a structured result
 block. The controller decides whether the result advances the run.
+
+## MVP Pilot
+
+The MVP should prove that the artifact workflow is useful before expanding into
+more source systems or downstream automation.
+
+Pilot scope:
+
+- One product area.
+- One to three PMs who already maintain useful Aha records.
+- Aha as the only source system.
+- Three to ten related idea/feature IDs per run.
+- Local or same-DC OpenAI-compatible provider as the default model path.
+- No Aha mutation, Jira sync, GTM generation, or delivery handoff.
+
+Success metrics:
+
+- Time from selected Aha IDs to first reviewable product package.
+- PM rating of usefulness compared with writing the package from scratch.
+- Number of unsupported claims caught by traceability validation.
+- Number of open questions surfaced before stakeholder review.
+- Number of relationship corrections made at the first PM gate.
+- Rework reduced before sharing with engineering, design, or leadership.
+
+The MVP should be judged on whether it creates a trusted reviewable package, not
+on whether it automates the entire product lifecycle.
 
 ## OpenAI-Compatible Artifact Provider
 
@@ -301,6 +377,11 @@ raw_response_metadata
 Timeouts, HTTP errors, malformed API responses, and invalid model output are
 reported as provider results. The controller decides whether to retry, repair,
 or block.
+
+The internal/local endpoint is the preferred default for v1 because the PM
+artifact pipeline handles product context that should stay inside the data
+center. External model routing can be added later behind the same
+OpenAI-compatible provider contract, but v1 should not require it.
 
 ## Provider Capability Gate
 
@@ -378,9 +459,27 @@ The pipeline distinguishes deterministic preflight errors from model errors:
   route to repair or block depending on severity.
 - Open questions and conflicts are allowed as artifacts, but publication requires
   they be explicitly listed and not silently converted into requirements.
+- PM review gates block progress until answered, but they are expected workflow
+  states, not errors.
 
 No phase should silently degrade traceability. Degraded evidence is allowed only
 when represented in the evidence ledger and final traceability matrix.
+
+## Risk Register
+
+The broader Claude architecture's strongest non-technical contribution was its
+honest risk framing. The v1 PM artifact pipeline carries that forward:
+
+| Risk | Severity | Mitigation |
+|---|---|---|
+| Aha records are incomplete or stale | High | Preserve assumptions and open questions instead of inventing missing context. |
+| Selected IDs are not actually related | High | Make the relationship map the first semantic artifact and require PM confirmation. |
+| Model output is polished but unsupported | High | Enforce evidence refs, traceability review, and unsupported-claim findings. |
+| PMs expect automatic product decisions | Medium | Keep relationship and artifact package gates mandatory. |
+| Scope expands into connector work too early | Medium | Treat non-Aha systems as deferred expansion until MVP trust is proven. |
+| Local model output is invalid or shallow | Medium | Use strict result contracts, retry/repair, bounded prompts, and provider fallback policy. |
+| Aha API/auth failures block runs | Medium | Validate ingestion before agent dispatch and make snapshot replay possible. |
+| Artifact package is too large to review | Medium | Keep separate brief, requirements, ledgers, and traceability views instead of one giant PRD. |
 
 ## Security and Operations
 
@@ -396,6 +495,28 @@ controlled preflight step.
 Run artifacts should be immutable after publication. Re-running the pipeline with
 the same Aha snapshot should be possible without calling Aha again.
 
+## Future Expansion
+
+The original architecture included useful later-stage ideas: Cerbero product
+catalog context, usage signals, customer research, commercial signals, delivery
+health, GTM assets, delivery handoff, and feedback loops. They should remain
+explicitly staged after the Aha artifact MVP.
+
+Recommended expansion path:
+
+1. **Cerbero context:** add product ownership, team, dependency, and repo context
+   as read-only background evidence, without turning the pipeline into a build
+   system.
+2. **Selected source signals:** add curated Pendo, Dovetail, Salesforce, or Jira
+   snapshots only after the Aha path proves reliable.
+3. **Downstream packages:** produce GTM or engineering handoff packages from an
+   approved artifact bundle, still without build execution.
+4. **Learning loop:** compare PM corrections, resolved assumptions, and final
+   package changes against future runs to improve prompts and validation.
+
+Each expansion should preserve the same rule: source systems are snapshotted and
+normalized before agent reasoning; agents do not browse live systems directly.
+
 ## Testing Strategy
 
 Unit tests should cover:
@@ -408,6 +529,9 @@ Unit tests should cover:
 - Evidence reference generation and citation validation.
 - Related input set handling, including linked ideas, feature requirements,
   adjacent scope, duplicates, and conflicts.
+- PM gate state transitions, resume behavior, and gate response provenance.
+- MVP metric emission for run duration, unsupported claims, open questions, and
+  PM relationship corrections.
 
 Contract tests should use a local stub OpenAI-compatible server that implements
 `/v1/chat/completions` and returns deterministic model messages. Aha ingestion
@@ -426,6 +550,9 @@ to Aha evidence, prior artifacts, explicit assumptions, or open questions.
 - The first write-back path to Aha is intentionally deferred. A later design can
   add a separate controlled publisher if product managers need generated
   artifacts returned to Aha.
+- External model routing and hybrid provider routing are deferred. The v1 design
+  uses the OpenAI-compatible provider contract and assumes the local/internal
+  endpoint is the default.
 - The exact normalized schema can evolve during implementation, but it must
   preserve source IDs, source URLs, source fields, timestamps, hashes, and stable
   evidence references from the first version.
