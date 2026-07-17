@@ -490,6 +490,52 @@ def test_openai_compatible_backend_parses_unlabeled_sse_body(
     assert result.metadata["streamed"] is True
 
 
+def test_openai_compatible_backend_streams_multiline_sse_events(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    class FakeResponse:
+        headers = {"Content-Type": "text/event-stream"}
+
+        def __init__(self) -> None:
+            self._lines = iter([
+                b'data: {"choices":[\n',
+                b'data: {"delta":{"content":"echelon_result:\\n"}}\n',
+                b"data: ]}\n",
+                b"\n",
+                b'data: {"choices":[{"delta":{"content":"  verdict: PASS\\n"},"finish_reason":"stop"}],"usage":{"total_tokens":19}}\n',
+                b"data: [DONE]\n",
+            ])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def readline(self):
+            return next(self._lines, b"")
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        lambda request, timeout: FakeResponse(),
+    )
+
+    result = OpenAICompatibleBackend(_openai_config()).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "echelon_result:\n  verdict: PASS\n"
+    assert result.token_usage == 19
+
+
 def test_openai_compatible_backend_rejects_streamed_tool_calls(
     tmp_path, monkeypatch
 ) -> None:
