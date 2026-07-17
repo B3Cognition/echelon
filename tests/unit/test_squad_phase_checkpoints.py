@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import yaml
+
 from harness.squad import SquadController
 
 
@@ -130,3 +132,57 @@ def test_squad_terminal_phase4_checkpoint_includes_published_spec(
     controller._checkpoint_successful_phase("phase4-document", "done")
 
     assert calls[0]["additional_spec_dirs"] == (published,)
+
+
+def test_squad_terminal_phase4_checkpoint_includes_accepted_kb_targets(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    calls = []
+
+    def fake_checkpoint(**kwargs):
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr("harness.squad.create_phase_checkpoint", fake_checkpoint)
+
+    controller = object.__new__(SquadController)
+    controller._project_root = tmp_path
+    controller._squad_dir = tmp_path / "runs" / "spec-run"
+    controller._state_store = MagicMock()
+    controller._state_store.load.return_value = {
+        "run_id": "spec-run",
+        "spec_id": "001-demo",
+        "spec_dir": "runs/spec-run/specs/001-demo",
+        "published_spec_dir": "specs/001-demo",
+    }
+    active = tmp_path / "runs" / "spec-run" / "specs" / "001-demo"
+    published = tmp_path / "specs" / "001-demo"
+    accepted_target = tmp_path / "knowledge-base" / "sage-decisions.yaml"
+    active.mkdir(parents=True)
+    published.mkdir(parents=True)
+    accepted_target.parent.mkdir(parents=True)
+    accepted_target.write_text("entries: []\n", encoding="utf-8")
+    report = tmp_path / "runs" / "spec-run" / "kb-apply-report.yaml"
+    report.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "run_id": "spec-run",
+                "status": "applied",
+                "outcomes": [
+                    {
+                        "proposal_id": "sage-1",
+                        "outcome": "accepted",
+                        "targets": ["knowledge-base/sage-decisions.yaml"],
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    controller._checkpoint_successful_phase("phase4-document", "done")
+
+    assert calls[0]["additional_owned_paths"] == (accepted_target,)

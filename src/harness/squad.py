@@ -15,6 +15,7 @@ from typing import Optional
 
 from echelon.artifact_index import write_artifact_index
 from echelon.context_builder import build_run_context
+from echelon.kb_proposals import accepted_kb_target_paths
 from harness.condition_evaluator import ConditionEvaluator
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
@@ -1270,6 +1271,7 @@ class SquadController:
         if spec_dir is None or not spec_dir.exists():
             return True
         additional_spec_dirs: tuple[Path, ...] = ()
+        additional_owned_paths: tuple[Path, ...] = ()
         if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
             published_spec_dir = self._published_phase_a_spec_dir(state, spec_dir)
             if (
@@ -1277,6 +1279,10 @@ class SquadController:
                 and published_spec_dir.resolve() != spec_dir.resolve()
             ):
                 additional_spec_dirs = (published_spec_dir,)
+            additional_owned_paths = accepted_kb_target_paths(
+                self._project_root,
+                str(state.get("run_id") or ""),
+            )
         try:
             create_phase_checkpoint(
                 project_root=self._project_root,
@@ -1286,6 +1292,7 @@ class SquadController:
                 run_id=str(state.get("run_id") or ""),
                 spec_id=_checkpoint_spec_id_from_state(state, spec_dir),
                 additional_spec_dirs=additional_spec_dirs,
+                additional_owned_paths=additional_owned_paths,
             )
         except Exception as exc:
             logger.error("Could not create required phase checkpoint for %s: %s", phase, exc)
@@ -1407,7 +1414,14 @@ class SquadController:
 
     def _copy_spec_tree(self, source: Path, destination: Path) -> None:
         destination.mkdir(parents=True, exist_ok=True)
+        runtime_metadata = destination / ".echelon"
+        if runtime_metadata.is_dir():
+            shutil.rmtree(runtime_metadata)
+        elif runtime_metadata.exists():
+            runtime_metadata.unlink()
         for child in source.iterdir():
+            if child.name == ".echelon":
+                continue
             target = destination / child.name
             if child.is_dir():
                 if target.exists() and not target.is_dir():

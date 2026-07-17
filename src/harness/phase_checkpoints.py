@@ -123,13 +123,17 @@ def _has_staged_or_unstaged_changes(project_root: Path) -> bool:
     return bool(run_git(project_root, "status", "--porcelain", check=False).stdout.strip())
 
 
-def _spec_pathspecs(project_root: Path, spec_dirs: tuple[Path, ...]) -> tuple[str, ...]:
+def _owned_pathspecs(
+    project_root: Path,
+    spec_dirs: tuple[Path, ...],
+    additional_owned_paths: tuple[Path, ...] = (),
+) -> tuple[str, ...]:
     root = Path(project_root).resolve()
     pathspecs: list[str] = []
-    seen: set[Path] = set()
+    seen_dirs: set[Path] = set()
     for spec_dir in spec_dirs:
         resolved_spec_dir = Path(spec_dir).resolve()
-        if resolved_spec_dir in seen:
+        if resolved_spec_dir in seen_dirs:
             continue
         try:
             relative = resolved_spec_dir.relative_to(root)
@@ -139,15 +143,30 @@ def _spec_pathspecs(project_root: Path, spec_dirs: tuple[Path, ...]) -> tuple[st
             ) from exc
         if relative == Path("."):
             raise PhaseCheckpointError("owned spec directory cannot be the project root")
-        seen.add(resolved_spec_dir)
+        seen_dirs.add(resolved_spec_dir)
         pathspecs.extend(
             [
                 relative.as_posix(),
                 f":(exclude){(relative / CHECKPOINT_LEDGER_REL).as_posix()}",
             ]
         )
+    seen_paths: set[Path] = set()
+    for owned_path in additional_owned_paths:
+        resolved_path = Path(owned_path).resolve()
+        if resolved_path in seen_paths:
+            continue
+        try:
+            relative = resolved_path.relative_to(root)
+        except ValueError as exc:
+            raise PhaseCheckpointError(
+                "additional owned path must be inside the project root"
+            ) from exc
+        if relative == Path(".") or not resolved_path.is_file():
+            raise PhaseCheckpointError("additional owned path must be an existing file")
+        seen_paths.add(resolved_path)
+        pathspecs.append(relative.as_posix())
     if not pathspecs:
-        raise PhaseCheckpointError("at least one owned spec directory is required")
+        raise PhaseCheckpointError("at least one owned path is required")
     return tuple(pathspecs)
 
 
@@ -155,11 +174,12 @@ def _commit_spec_changes(
     project_root: Path,
     spec_dirs: tuple[Path, ...],
     message: str,
+    additional_owned_paths: tuple[Path, ...] = (),
 ) -> str | None:
-    """Commit only Git-visible changes owned by the supplied spec directories."""
+    """Commit only Git-visible changes owned by supplied Echelon paths."""
 
     root = Path(project_root).resolve()
-    pathspecs = _spec_pathspecs(root, spec_dirs)
+    pathspecs = _owned_pathspecs(root, spec_dirs, additional_owned_paths)
     try:
         run_git(root, "add", "-f", "-A", "--", *pathspecs)
         staged = run_git(
@@ -188,6 +208,7 @@ def create_phase_checkpoint(
     run_id: str,
     spec_id: str = "",
     additional_spec_dirs: tuple[Path, ...] = (),
+    additional_owned_paths: tuple[Path, ...] = (),
 ) -> PhaseCheckpoint:
     spec_id = spec_id or _spec_id_from_dir(spec_dir)
     subject = f"echelon-checkpoint: {spec_id} {phase}"
@@ -206,6 +227,7 @@ def create_phase_checkpoint(
         project_root,
         (spec_dir, *additional_spec_dirs),
         message,
+        additional_owned_paths,
     )
     if commit is None:
         try:

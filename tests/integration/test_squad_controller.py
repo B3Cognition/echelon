@@ -369,6 +369,9 @@ class TestAgentResultIntegrity:
             "test-strategy.md", "test-architecture.md", "coverage-map.md",
         ):
             (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        checkpoint_ledger = spec_dir / ".echelon" / "checkpoints.json"
+        checkpoint_ledger.parent.mkdir()
+        checkpoint_ledger.write_text("{\"checkpoints\": []}\n", encoding="utf-8")
         state = store.load()
         state["spec_id"] = "001-demo"
         state["spec_dir"] = "runs/run-test/specs/001-demo"
@@ -389,6 +392,7 @@ class TestAgentResultIntegrity:
         ).read_text(encoding="utf-8") == "# Constitution\n\nReal project rules.\n"
         assert (published_dir / "ARTIFACTS.md").exists()
         assert (published_dir / "squad-report.md").exists()
+        assert not (published_dir / ".echelon").exists()
         assert (published_dir / "kb" / "kb-apply-report.yaml").read_text(
             encoding="utf-8"
         ) == "status: degraded\n"

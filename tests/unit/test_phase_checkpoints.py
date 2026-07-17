@@ -179,6 +179,39 @@ def test_create_phase_checkpoint_commits_active_and_published_spec_only(
     assert "README.md" in _git(repo, "status", "--short")
 
 
+def test_create_phase_checkpoint_commits_declared_kb_path_only(tmp_path: Path) -> None:
+    repo, active = _checkpoint_repo(tmp_path)
+    published = repo / "specs" / "001-demo"
+    published.mkdir(parents=True)
+    kb_target = repo / "knowledge-base" / "sage-decisions.yaml"
+    kb_target.parent.mkdir(parents=True)
+    kb_target.write_text("entries: []\n", encoding="utf-8")
+    unrelated_kb_file = repo / "knowledge-base" / "patterns.yaml"
+    unrelated_kb_file.write_text("entries: []\n", encoding="utf-8")
+    (active / "tasks.md").write_text("# Run-local tasks\n", encoding="utf-8")
+    (published / "ARTIFACTS.md").write_text("# Artifacts\n", encoding="utf-8")
+    (repo / "README.md").write_text("unrelated\n", encoding="utf-8")
+
+    checkpoint = create_phase_checkpoint(
+        project_root=repo,
+        spec_dir=active,
+        phase="phase4-document",
+        next_phase="done",
+        run_id="spec-run",
+        additional_spec_dirs=(published,),
+        additional_owned_paths=(kb_target,),
+    )
+
+    assert _git(repo, "show", "--format=", "--name-only", checkpoint.commit).splitlines() == [
+        "knowledge-base/sage-decisions.yaml",
+        "runs/spec-run/specs/001-demo/tasks.md",
+        "specs/001-demo/ARTIFACTS.md",
+    ]
+    status = _git(repo, "status", "--short")
+    assert "README.md" in status
+    assert "knowledge-base/patterns.yaml" in status
+
+
 def test_create_phase_checkpoint_records_clean_head_without_new_commit(tmp_path: Path) -> None:
     repo, spec_dir = _checkpoint_repo(tmp_path)
     head_before = _git(repo, "rev-parse", "HEAD")
