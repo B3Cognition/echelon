@@ -223,9 +223,16 @@ foundations:
   mirror and ephemeral worktrees. No-LLM tests prove delivery of spec A preserves
   active spec B's branch, dirty authoring file, and `runs/.current` pointer; a
   separate requested-spec regression proves a ready A cannot authorize unready B.
+- `echelon delivery land <spec>` now resolves `runs/.current` before any
+  readiness check, branch preparation, merge, cleanup, or status mutation. It
+  refuses when another feature branch is active, names both specs and branches,
+  and directs the operator to checkpoint/clean then `echelon spec switch` to the
+  requested spec. The guard is covered by a temporary real-Git test that proves
+  the authoring branch and pointer remain unchanged.
 
-EGR-151 remains `in-progress`. Finalization/landing worktree isolation,
-changelog entry, and final full-suite closure remain outstanding. The full-suite
-run recorded 3,878 passing tests and seven failures; a focused rerun cleared all
-three Git-fixture failures affected by the cutover. Four unrelated existing
-assertions remain in CLI help/template contracts outside EGR-151.
+EGR-151 remains `in-progress`. Complete Phase A finalization artifact boundaries,
+consider replacing the landing guard with a dedicated landing worktree, add the
+changelog entry, and close final full-suite evidence. The full-suite run recorded
+3,878 passing tests and seven failures; a focused rerun cleared all three
+Git-fixture failures affected by the cutover. Four unrelated existing assertions
+remain in CLI help/template contracts outside EGR-151.
