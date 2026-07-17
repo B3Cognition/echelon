@@ -241,14 +241,26 @@ def resolve_product_inputs(
 
 def validate_product_input_traceability(spec_dir: Path, declared_targets: Sequence[str]) -> list[str]:
     """Return publication blockers for requirement input traceability."""
-    traceability_path = spec_dir / "inputs" / "traceability.json"
+    return validate_product_input_traceability_paths(
+        spec_dir / "inputs" / "traceability.json",
+        spec_dir / "tasks.md",
+        declared_targets,
+    )
+
+
+def validate_product_input_traceability_paths(
+    traceability_path: Path,
+    tasks_path: Path,
+    declared_targets: Sequence[str],
+) -> list[str]:
+    """Validate one ledger against one task artifact before publication."""
     if not traceability_path.exists():
         return ["product input traceability.json is missing"]
     try:
         ledger = json.loads(traceability_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return [f"product input traceability.json is invalid: {exc}"]
-    return _traceability_blockers(ledger, _task_metadata(spec_dir / "tasks.md"), declared_targets)
+    return _traceability_blockers(ledger, _task_metadata(tasks_path), declared_targets)
 
 
 def _traceability_blockers(

@@ -1413,7 +1413,7 @@ class SquadController:
             from echelon.product_inputs import (
                 ProductInputError,
                 apply_product_input_updates,
-                validate_product_input_traceability,
+                validate_product_input_traceability_paths,
             )
             if updates:
                 apply_product_input_updates(
@@ -1423,7 +1423,11 @@ class SquadController:
                     declared_targets=targets,
                 )
             elif tasks_path is not None:
-                blockers = validate_product_input_traceability(active_spec_dir, targets)
+                blockers = validate_product_input_traceability_paths(
+                    traceability_path,
+                    tasks_path,
+                    targets,
+                )
                 if blockers:
                     return "invalid product input task mappings: " + "; ".join(blockers)
         except (OSError, ProductInputError) as exc:

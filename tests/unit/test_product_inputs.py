@@ -398,6 +398,65 @@ def test_phase_plan_controller_rejects_bad_traceability_before_consensus(tmp_pat
     assert ledger["requirements"][0]["disposition"] == "open_question"
 
 
+def test_consensus_controller_validates_run_local_traceability_without_requiring_publication(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import (
+        apply_product_input_updates,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+    from harness.squad import SquadController
+    from harness.squad_provider import SquadAgentResult
+    from harness.squad_state import SquadStateStore
+
+    project = tmp_path / "workspace"
+    source = project / "requirements.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("A normative requirement.\n", encoding="utf-8")
+    run_dir = project / "runs" / "run-1"
+    resolution = resolve_product_inputs(
+        project, run_dir, [parse_input_declaration("requirement:requirements.md")]
+    )
+    unit_id = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))["units"][0]["id"]
+    spec = run_dir / "specs" / "001-demo"
+    spec.mkdir(parents=True)
+    tasks_path = spec / "tasks.md"
+    tasks_path.write_text(
+        "- [ ] T-001 complexity=standard phase=foundation req=FR-1 depends=none target=sources/web\n",
+        encoding="utf-8",
+    )
+    apply_product_input_updates(
+        resolution.traceability_path,
+        [{
+            "input_unit_id": unit_id,
+            "disposition": "included",
+            "rationale": "Mapped during planning.",
+            "spec_ids": ["FR-1"],
+            "task_ids": ["T-001"],
+            "targets": ["sources/web"],
+        }],
+        tasks_path=tasks_path,
+        declared_targets=["sources/web"],
+    )
+    store = SquadStateStore(run_dir)
+    store.initialize(
+        "run-1", "greenfield", "demo", 0, "phase3-consensus",
+        implementation_targets=["sources/web"],
+        product_inputs=resolution.state_payload(project),
+    )
+    state = store.load()
+    state["spec_dir"] = str(spec.relative_to(project))
+    store.save(state)
+    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    result = SquadAgentResult(
+        exit_code=0, raw_output="", duration_ms=0, timed_out=False,
+        echelon_result={"verdict": "PASS"},
+    )
+
+    assert controller._apply_product_input_updates(result, "phase3-consensus") is None
+
+
 def test_prompt_contract_uses_snapshot_paths_and_structured_updates() -> None:
     from harness.squad_executors import _render_product_input_context
 
