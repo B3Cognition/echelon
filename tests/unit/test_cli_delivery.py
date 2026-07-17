@@ -12,6 +12,35 @@ import pytest
 from harness.config import HarnessConfig, LlmConfig
 
 
+def _artifact_only_provider_config() -> HarnessConfig:
+    return HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(
+            cli="openai-compatible",
+            base_url="http://127.0.0.1:8000/v1",
+            model="local-model",
+        ),
+    )
+
+
+def _use_artifact_only_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config = _artifact_only_provider_config()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
+
+
+def _assert_build_capability_rejection(
+    captured: pytest.CaptureFixture[str],
+    command_name: str,
+) -> None:
+    err = captured.readouterr().err
+    assert 'Provider "openai-compatible" supports artifact work only.' in err
+    assert f'Command "{command_name}" requires build capability.' in err
+    assert "Choose a build-capable provider." in err
+
+
 @pytest.mark.unit
 def test_help_command_prints_usage_without_unknown_command(
     capsys: pytest.CaptureFixture[str],
@@ -98,28 +127,103 @@ def test_delivery_run_rejects_artifact_only_provider(
 ) -> None:
     from echelon import cli
 
-    config = HarnessConfig(
-        target_repo=".",
-        target_default_branch="main",
-        provider="docker",
-        llm=LlmConfig(
-            cli="openai-compatible",
-            base_url="http://127.0.0.1:8000/v1",
-            model="local-model",
-        ),
-    )
-
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
+    _use_artifact_only_provider(monkeypatch, tmp_path)
 
     with pytest.raises(SystemExit) as exc:
         cli._cmd_harness_run(["001-demo"])
 
     assert exc.value.code == 2
-    captured = capsys.readouterr()
-    assert 'Provider "openai-compatible" supports artifact work only.' in captured.err
-    assert 'Command "echelon delivery run" requires build capability.' in captured.err
-    assert "Choose a build-capable provider." in captured.err
+    _assert_build_capability_rejection(capsys, "echelon delivery run")
+
+
+@pytest.mark.unit
+def test_delivery_init_rejects_artifact_only_provider(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from echelon import cli
+
+    _use_artifact_only_provider(monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_harness_init([], command_prefix="echelon delivery init")
+
+    assert exc.value.code == 2
+    _assert_build_capability_rejection(capsys, "echelon delivery init")
+
+
+@pytest.mark.unit
+def test_delivery_target_rejects_artifact_only_provider(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from echelon import cli
+
+    _use_artifact_only_provider(monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_delivery_target(["001-demo"])
+
+    assert exc.value.code == 2
+    _assert_build_capability_rejection(capsys, "echelon delivery target")
+
+
+@pytest.mark.unit
+def test_delivery_status_rejects_artifact_only_provider(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from echelon import cli
+
+    _use_artifact_only_provider(monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_delivery_status(["001-demo"], project_root=tmp_path)
+
+    assert exc.value.code == 2
+    _assert_build_capability_rejection(capsys, "echelon delivery status")
+
+
+@pytest.mark.unit
+def test_delivery_checkpoint_rejects_artifact_only_provider(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from echelon import cli
+
+    _use_artifact_only_provider(monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_delivery_checkpoint(["list", "001-demo"], project_root=tmp_path)
+
+    assert exc.value.code == 2
+    _assert_build_capability_rejection(capsys, "echelon delivery checkpoint")
+
+
+@pytest.mark.unit
+def test_delivery_land_rejects_artifact_only_provider(
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from echelon import cli
+
+    _use_artifact_only_provider(monkeypatch, tmp_path)
+    monkeypatch.setattr("echelon.cli._dispatch_land_to_spec_targets", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        "harness.config.load_config",
+        lambda *_args, **_kwargs: pytest.fail("land should be blocked before loading build config"),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli._cmd_land(["001-demo"])
+
+    assert exc.value.code == 2
+    _assert_build_capability_rejection(capsys, "echelon delivery land")
 
 
 @pytest.mark.unit

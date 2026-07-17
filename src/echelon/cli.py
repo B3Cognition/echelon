@@ -783,6 +783,11 @@ def _cmd_land(args: list[str]) -> None:
     polyrepo_env = os.environ.get("ECHELON_POLYREPO_ROOT")
     target_name_env = os.environ.get("ECHELON_TARGET_REPO_NAME")
     config_root = Path(polyrepo_env).resolve() if target_env and polyrepo_env else project_dir
+    _require_provider_capability(
+        "echelon delivery land",
+        ProviderCapability.BUILD,
+        project_dir=config_root,
+    )
     harness_base_dir = project_dir
     if target_env and polyrepo_env:
         harness_base_dir = (
@@ -1123,6 +1128,8 @@ def _cmd_harness_init(
         )
         sys.exit(1)
 
+    _require_provider_capability(command_prefix, ProviderCapability.BUILD)
+
     target_repo = "."
     base_dir = str(Path.cwd())
     _workspace_git_preflight(
@@ -1188,6 +1195,7 @@ def _cmd_delivery_target(args: list[str]) -> None:
         return
 
     spec_id = args[0]
+    _require_provider_capability("echelon delivery target", ProviderCapability.BUILD)
     from harness.spec_frontmatter import (
         find_spec_dir,
         read_target_entries,
@@ -3693,6 +3701,11 @@ def _cmd_delivery_status(args: list[str], *, project_root: Path | None = None) -
 
     root = project_root or Path.cwd()
     spec_id, strategy, json_output = _parse_delivery_status_args(args)
+    _require_provider_capability(
+        "echelon delivery status",
+        ProviderCapability.BUILD,
+        project_dir=root,
+    )
     states = _iter_harness_build_states(root)
     if spec_id:
         states = [state for state in states if str(state.get("spec_id") or "") == spec_id]
@@ -3773,6 +3786,11 @@ def _cmd_delivery_checkpoint(args: list[str], *, project_root: Path | None = Non
             strategy = raw.split("=", 1)[1]
 
     root = project_root or Path.cwd()
+    _require_provider_capability(
+        "echelon delivery checkpoint",
+        ProviderCapability.BUILD,
+        project_dir=root,
+    )
     state = _find_harness_checkpoint_state(root, spec_id, strategy)
     if state is None:
         strategy_suffix = f" strategy {strategy!r}" if strategy else ""
