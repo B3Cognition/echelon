@@ -118,7 +118,7 @@ accepted spec-switch lifecycle.
 
 ## Implementation Progress
 
-The first two ownership foundations are implemented on
+The first three ownership foundations are implemented on
 `codex/egr-151-spec-lifecycle-gitops` without activating the runtime cutover:
 
 - `src/echelon/speckit_git.py` deterministically inspects and verifies
@@ -133,11 +133,29 @@ The first two ownership foundations are implemented on
   branches, all identity sources, read-only planning, sibling creation, and
   refusal without HEAD movement for staged/tracked/untracked dirt, a non-default
   checkout, a moved default ref, and an existing target branch.
+- `src/harness/phase_checkpoints.py` now force-stages only the active spec path,
+  excludes runtime checkpoint metadata, preserves unrelated staged, tracked,
+  and untracked work, and records the current commit even when the owned path
+  has no changes. This remains branch-durable when a workspace broadly ignores
+  `/runs/`.
+- `src/harness/squad.py` now converts required checkpoint errors into durable
+  `phase_checkpoint_failed` terminal blocks at every automatic checkpoint call
+  site instead of logging a warning and continuing.
+- `src/echelon/cli.py` idempotently maintains the run-local ledger ignore rule
+  without overwriting existing `runs/.gitignore` content.
 - Focused adjacent verification passed 33 tests on 2026-07-17:
   `test_phase_a_git`, `test_speckit_git`, existing spec switch/resume tests, and
   the RE Git-flow integration test; `git diff --check` also passed.
+- The authoritative-checkpoint matrix passed 142 tests on 2026-07-17 across
+  checkpoint creation, run metadata, checkpoint CLI routing, rewind, the full
+  squad controller integration suite, Phase A Git bootstrap, and spec-kit Git
+  ownership; `git diff --check` passed. The broader `test_cli_delivery.py` file
+  retains one unrelated pre-existing help assertion that rejects
+  `target <spec_id>` as a substring of the already-landed
+  `drop-target <spec_id>` command, so the matrix selected its checkpoint-routing
+  test explicitly.
 
-EGR-151 remains `in-progress`. CLI activation, path-scoped authoritative
-checkpoints, transactional `echelon spec switch`, delivery isolation,
-finalization, the atomic spec-kit Git cutover, changelog entry, and full-suite
-verification remain outstanding.
+EGR-151 remains `in-progress`. Lifecycle resolution/locking, transactional
+`echelon spec switch`, stash/discard recovery, CLI activation, delivery
+isolation, finalization, the atomic spec-kit Git cutover, changelog entry, and
+full-suite verification remain outstanding.

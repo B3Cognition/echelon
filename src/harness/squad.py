@@ -677,7 +677,8 @@ class SquadController:
                 result,
                 allowed_state_update_keys=node.allowed_state_updates,
             )
-            self._checkpoint_successful_phase(phase, next_phase)
+            if not self._checkpoint_successful_phase(phase, next_phase):
+                return SquadResult.from_state(self._state_store.load())
             self._refresh_run_context(f"phase advance {phase} -> {next_phase}")
 
             # Enforce iteration increment for transitions that declare action: increment_iteration.
@@ -724,7 +725,8 @@ class SquadController:
                     s = self._state_store.load()
                     s["escalation_resolved"] = True
                     self._state_store.save(s)
-                    self._checkpoint_successful_phase(phase, phase)
+                    if not self._checkpoint_successful_phase(phase, phase):
+                        return SquadResult.from_state(self._state_store.load())
                     continue  # re-dispatch the same phase (e.g. phase1-why1) next iteration
                 else:
                     _blocked_banner(
@@ -856,7 +858,8 @@ class SquadController:
             allowed_state_update_keys=node.allowed_state_updates,
             manual_phase_run=True,
         )
-        self._checkpoint_successful_phase(phase, next_phase)
+        if not self._checkpoint_successful_phase(phase, next_phase):
+            return SquadResult.from_state(self._state_store.load())
         self._refresh_run_context(f"manual phase advance {phase} -> {next_phase}")
         print(f"[squad] ✓ {node.id}  → {next_phase}  (stopped)", flush=True)
         return SquadResult.from_state(self._state_store.load())
@@ -912,7 +915,8 @@ class SquadController:
                 allowed_state_update_keys=node.allowed_state_updates,
                 manual_phase_run=manual_phase_run,
             )
-            self._checkpoint_successful_phase(node.id, next_phase)
+            if not self._checkpoint_successful_phase(node.id, next_phase):
+                return True
             self._refresh_run_context(f"phase skip {node.id} -> {next_phase}")
             suffix = "  (stopped)" if manual_phase_run else ""
             print(
@@ -1234,12 +1238,12 @@ class SquadController:
                 return run_local
         return None
 
-    def _checkpoint_successful_phase(self, phase: str, next_phase: str) -> None:
+    def _checkpoint_successful_phase(self, phase: str, next_phase: str) -> bool:
         self._materialize_implementation_targets()
         state = self._state_store.load()
         spec_dir = self._active_phase_a_spec_dir(state)
         if spec_dir is None or not spec_dir.exists():
-            return
+            return True
         try:
             create_phase_checkpoint(
                 project_root=self._project_root,
@@ -1250,7 +1254,14 @@ class SquadController:
                 spec_id=_checkpoint_spec_id_from_state(state, spec_dir),
             )
         except Exception as exc:
-            logger.warning("Could not create phase checkpoint for %s: %s", phase, exc)
+            logger.error("Could not create required phase checkpoint for %s: %s", phase, exc)
+            blocked = self._state_store.load()
+            blocked["status"] = "blocked"
+            blocked["phase"] = PHASE_TERMINAL_BLOCKED
+            blocked["blocked_reason"] = f"phase_checkpoint_failed: {phase}: {exc}"
+            self._state_store.save(blocked)
+            return False
+        return True
 
     def _materialize_implementation_targets(self) -> None:
         """Write authoritative run targets once an active spec exists."""

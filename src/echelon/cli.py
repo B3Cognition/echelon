@@ -2904,15 +2904,29 @@ def _exit_if_provider_session_limited(state_store: object) -> None:
         raise SystemExit(2)
 
 
+_RUNS_GITIGNORE_PATTERNS = (
+    "**/.echelon/checkpoints.json",
+    "*/state.json",
+    "*/*.tmp",
+    ".current*",
+)
+
+
+def _ensure_runs_gitignore(gitignore: Path) -> None:
+    lines = gitignore.read_text(encoding="utf-8").splitlines() if gitignore.exists() else []
+    missing = [pattern for pattern in _RUNS_GITIGNORE_PATTERNS if pattern not in lines]
+    if not missing:
+        return
+    gitignore.write_text("\n".join([*lines, *missing]) + "\n", encoding="utf-8")
+
+
 def _setup_run_dir(project_root: Path, run_id: str) -> Path:
     """Create runs/<run_id>/ + staging/, write runs/.gitignore, update runs/.current."""
     from harness.paths import runs_dir
     runs_root = runs_dir(project_root)
     runs_root.mkdir(exist_ok=True)
 
-    gitignore = runs_root / ".gitignore"
-    if not gitignore.exists():
-        gitignore.write_text("*/state.json\n*/*.tmp\n.current*\n")
+    _ensure_runs_gitignore(runs_root / ".gitignore")
 
     run_dir = runs_root / run_id
     run_dir.mkdir(exist_ok=True)

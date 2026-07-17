@@ -8,10 +8,14 @@ import json
 from pathlib import Path
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
-from echelon.git_helpers import run_git
+from echelon.git_helpers import GitHelperError, run_git
 
 
 CHECKPOINT_LEDGER_REL = Path(".echelon") / "checkpoints.json"
+
+
+class PhaseCheckpointError(RuntimeError):
+    """Raised when a Phase A checkpoint cannot be created safely."""
 
 
 @dataclass(frozen=True)
@@ -119,6 +123,49 @@ def _has_staged_or_unstaged_changes(project_root: Path) -> bool:
     return bool(run_git(project_root, "status", "--porcelain", check=False).stdout.strip())
 
 
+def _spec_pathspecs(project_root: Path, spec_dir: Path) -> tuple[str, str]:
+    root = Path(project_root).resolve()
+    resolved_spec_dir = Path(spec_dir).resolve()
+    try:
+        relative = resolved_spec_dir.relative_to(root)
+    except ValueError as exc:
+        raise PhaseCheckpointError("active spec directory must be inside the project root") from exc
+    if relative == Path("."):
+        raise PhaseCheckpointError("active spec directory cannot be the project root")
+    include = relative.as_posix()
+    ledger = (relative / CHECKPOINT_LEDGER_REL).as_posix()
+    return include, f":(exclude){ledger}"
+
+
+def _commit_spec_changes(
+    project_root: Path,
+    spec_dir: Path,
+    message: str,
+) -> str | None:
+    """Commit only Git-visible changes owned by the active spec directory."""
+
+    root = Path(project_root).resolve()
+    include, exclude = _spec_pathspecs(root, spec_dir)
+    try:
+        run_git(root, "add", "-f", "-A", "--", include, exclude)
+        staged = run_git(
+            root,
+            "diff",
+            "--cached",
+            "--quiet",
+            "--",
+            include,
+            exclude,
+            check=False,
+        )
+        if staged.returncode == 0:
+            return None
+        run_git(root, "commit", "--only", "-m", message, "--", include, exclude)
+        return run_git(root, "rev-parse", "HEAD^{commit}").stdout.strip()
+    except GitHelperError as exc:
+        raise PhaseCheckpointError(str(exc)) from exc
+
+
 def create_phase_checkpoint(
     *,
     project_root: Path,
@@ -127,28 +174,26 @@ def create_phase_checkpoint(
     next_phase: str,
     run_id: str,
     spec_id: str = "",
-) -> PhaseCheckpoint | None:
-    if not _has_staged_or_unstaged_changes(project_root):
-        return None
-
+) -> PhaseCheckpoint:
     spec_id = spec_id or _spec_id_from_dir(spec_dir)
-    run_git(project_root, "add", "-A")
-    if run_git(project_root, "diff", "--cached", "--quiet", check=False).returncode != 0:
-        subject = f"echelon-checkpoint: {spec_id} {phase}"
-        message = build_echelon_commit_message(
-            subject,
-            EchelonCommitMetadata(
-                origin="phase-a",
-                action="checkpoint",
-                spec_id=spec_id,
-                run_id=run_id,
-                phase=phase,
-                checkpoint_id=phase,
-            ),
-        )
-        run_git(project_root, "commit", "-m", message)
-
-    commit = run_git(project_root, "rev-parse", "HEAD").stdout.strip()
+    subject = f"echelon-checkpoint: {spec_id} {phase}"
+    message = build_echelon_commit_message(
+        subject,
+        EchelonCommitMetadata(
+            origin="phase-a",
+            action="checkpoint",
+            spec_id=spec_id,
+            run_id=run_id,
+            phase=phase,
+            checkpoint_id=phase,
+        ),
+    )
+    commit = _commit_spec_changes(project_root, spec_dir, message)
+    if commit is None:
+        try:
+            commit = run_git(project_root, "rev-parse", "HEAD^{commit}").stdout.strip()
+        except GitHelperError as exc:
+            raise PhaseCheckpointError(str(exc)) from exc
     checkpoint = PhaseCheckpoint(
         id=phase,
         spec_id=spec_id,
@@ -199,9 +244,6 @@ def commit_manual_checkpoint(
     run_id: str,
     message: str,
 ) -> PhaseCheckpoint:
-    if not _has_staged_or_unstaged_changes(project_root):
-        raise RuntimeError("no changes to commit")
-
     spec_id = _spec_id_from_dir(spec_dir)
     checkpoint_id = new_checkpoint_id(phase, "user-committed")
     commit_message = build_echelon_commit_message(
@@ -215,9 +257,9 @@ def commit_manual_checkpoint(
             checkpoint_id=checkpoint_id,
         ),
     )
-    run_git(project_root, "add", "-A")
-    run_git(project_root, "commit", "-m", commit_message)
-    commit = run_git(project_root, "rev-parse", "HEAD").stdout.strip()
+    commit = _commit_spec_changes(project_root, spec_dir, commit_message)
+    if commit is None:
+        raise RuntimeError("no changes in the active spec directory to commit")
     checkpoint = PhaseCheckpoint(
         id=checkpoint_id,
         spec_id=spec_id,
