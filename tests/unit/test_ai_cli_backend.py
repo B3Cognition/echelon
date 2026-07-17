@@ -151,6 +151,48 @@ def test_openai_compatible_backend_posts_chat_completion(tmp_path, monkeypatch) 
     assert "stream" not in captured["payload"]
 
 
+def test_openai_compatible_backend_prefers_request_env_api_key(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    captured = {}
+    monkeypatch.setenv("LOCAL_LLM_API_KEY", "process-token")
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "choices": [{"message": {"content": "ok"}}],
+            }).encode()
+
+    def fake_urlopen(request, timeout):
+        captured["headers"] = dict(request.header_items())
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    result = OpenAICompatibleBackend(_openai_config(features={"streaming": False})).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={"LOCAL_LLM_API_KEY": "request-token"},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 0
+    assert captured["headers"]["Authorization"] == "Bearer request-token"
+
+
 def test_openai_compatible_backend_reads_api_key_file(tmp_path, monkeypatch) -> None:
     from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
 
