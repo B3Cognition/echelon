@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from echelon.cli import _next_continue_phase, _select_squad_dir
+import pytest
+
+from echelon.cli import USAGE, _cmd_spec, _next_continue_phase, _select_squad_dir
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
 
 
@@ -62,3 +64,36 @@ def test_ready_spec_can_be_preserved_while_a_different_spec_run_starts(
     assert (tmp_path / "runs" / ".current").read_text(encoding="utf-8").strip() == "spec-new"
     assert (new_run / "staging").is_dir()
     assert json.loads((old_run / "state.json").read_text(encoding="utf-8")) == old_state
+
+
+def test_spec_help_documents_checkpoint_gated_switch_flags(capsys) -> None:
+    with pytest.raises(SystemExit) as exit_info:
+        _cmd_spec(["--help"])
+
+    output = capsys.readouterr().out
+    assert exit_info.value.code == 0
+    assert "switch <spec-or-run-id>" in output
+    assert "--stash | --discard --confirm" in output
+    assert "--restore-stash" in output
+    assert "spec switch <spec-or-run-id>" in USAGE
+
+
+def test_spec_switch_dispatches_to_deterministic_presenter(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    calls: list[tuple[list[str], Path]] = []
+
+    def fake_command(args, *, project_root, **_kwargs):
+        calls.append((args, project_root))
+        return 0
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.spec_switch_cli.run_spec_switch_command",
+        fake_command,
+    )
+
+    _cmd_spec(["switch", "run-b", "--stash"])
+
+    assert calls == [(["run-b", "--stash"], tmp_path)]

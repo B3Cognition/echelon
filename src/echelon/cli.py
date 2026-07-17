@@ -86,6 +86,8 @@ Commands:
   spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
   spec resume "<answers>"                   Answer escalation questions from a blocked run.
   spec rewind <phase-id>                    Rewind the active squad run to a safe checkpoint.
+  spec switch <spec-or-run-id> [--stash | --discard --confirm] [--restore-stash]
+                                            Select a checkpointed Phase A spec run.
   spec drop-target <spec_id> <target> --confirm
                                             Remove an unused target from an unfinished run.
   spec checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]
@@ -7481,6 +7483,8 @@ def _cmd_spec(args: list[str]) -> None:
             "                                      Run the next no-input Phase A recovery action\n"
             "  resume <answers>                    Answer escalation questions from a blocked run\n"
             "  rewind <phase-id>                   Rewind the active squad run to a checkpoint\n"
+            "  switch <spec-or-run-id> [--stash | --discard --confirm]\n"
+            "                    [--restore-stash] Select a checkpointed Phase A spec run\n"
             "  drop-target <spec_id> <target> --confirm\n"
             "                                      Remove an unused target and re-plan tasks\n"
             "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
@@ -7506,6 +7510,12 @@ def _cmd_spec(args: list[str]) -> None:
         _cmd_spec_resume(args[1:])
     elif subcmd == "rewind":
         _cmd_rewind(args[1:], project_root=Path.cwd())
+    elif subcmd == "switch":
+        from echelon.spec_switch_cli import run_spec_switch_command
+
+        exit_code = run_spec_switch_command(args[1:], project_root=Path.cwd())
+        if exit_code:
+            sys.exit(exit_code)
     elif subcmd == "drop-target":
         _cmd_drop_target(args[1:], project_root=Path.cwd())
     elif subcmd == "checkpoint":

@@ -118,7 +118,7 @@ accepted spec-switch lifecycle.
 
 ## Implementation Progress
 
-The first four ownership foundations are implemented on
+The first five ownership foundations are implemented on
 `codex/egr-151-spec-lifecycle-gitops` without activating the runtime cutover:
 
 - `src/echelon/speckit_git.py` deterministically inspects and verifies
@@ -154,6 +154,20 @@ The first four ownership foundations are implemented on
 - `tests/unit/test_spec_lifecycle.py` exercises all lifecycle state transitions
   in temporary filesystems with caller-supplied branch observations. It performs
   no Git checkout, LLM invocation, Docker operation, or network request.
+- `src/echelon/spec_switch.py` validates the latest checkpoint owned by each
+  exact run, proves commit existence and feature-branch containment, and runs
+  existing-run switches under the lifecycle lock. Git checkout precedes the
+  active pointer, and an interrupted intent is reconciled before new work.
+- Dirty switches now fail with Git-reported paths unless the caller selects a
+  managed `--stash` or confirmed `--discard`. Managed stashes persist immutable
+  commit SHAs in run state, restore by SHA, drop only after conflict-free apply,
+  and remain recorded after conflicts. Discard resets to the validated outgoing
+  checkpoint and removes only non-ignored untracked paths.
+- `src/echelon/spec_switch_cli.py` and the thin `echelon spec switch
+  <spec-or-run-id>` dispatch provide deterministic non-interactive flags and an
+  interactive stash/discard/cancel choice. The engine refuses to run unless
+  spec-kit Git is already disabled, so this command does not weaken the hard
+  ownership dependency while automatic migration remains inactive.
 - Focused adjacent verification passed 33 tests on 2026-07-17:
   `test_phase_a_git`, `test_speckit_git`, existing spec switch/resume tests, and
   the RE Git-flow integration test; `git diff --check` also passed.
@@ -168,8 +182,14 @@ The first four ownership foundations are implemented on
 - The lifecycle-transaction and adjacent GitOps matrix passed 73 tests on
   2026-07-17 across spec lifecycle state, Phase A Git, authoritative
   checkpoints, existing switch/resume routing, and spec-kit Git inspection.
+- The checkpoint-gated switch and adjacent GitOps matrix passed 112 tests on
+  2026-07-17. Its temporary real repositories cover clean/idempotent switching,
+  checkpoint/branch rejection, checkout recovery, dirty refusal, stash/restore
+  and conflict retention, confirmed discard, Git inspection failure, option
+  parsing, interactive choices, and CLI dispatch without LLM, Docker, or network
+  access.
 
-EGR-151 remains `in-progress`. Validated checkpoint lookup, actual Git checkout,
-managed stash/confirmed discard recovery, `echelon spec switch` CLI wiring,
-delivery isolation, finalization, the atomic spec-kit Git cutover, changelog
-entry, and full-suite verification remain outstanding.
+EGR-151 remains `in-progress`. Automatic spec-kit disablement, fail-closed
+global Phase A ownership preflight, Echelon-owned `spec run` sibling-branch
+bootstrap, new-spec outgoing safety, status integration, delivery isolation,
+finalization, changelog entry, and full-suite verification remain outstanding.
