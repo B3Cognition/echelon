@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import socket
 import subprocess
 import sys
 import time
@@ -28,7 +29,7 @@ def _config(cli: str) -> HarnessConfig:
     )
 
 
-def _openai_config() -> HarnessConfig:
+def _openai_config(features: dict[str, object] | None = None) -> HarnessConfig:
     return HarnessConfig(
         target_repo=".",
         target_default_branch="main",
@@ -40,6 +41,7 @@ def _openai_config() -> HarnessConfig:
             api_key_env="LOCAL_LLM_API_KEY",
             temperature=0.2,
             max_tokens=256,
+            features=features or {},
         ),
     )
 
@@ -124,7 +126,7 @@ def test_openai_compatible_backend_posts_chat_completion(tmp_path, monkeypatch) 
         "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
         fake_urlopen,
     )
-    backend = OpenAICompatibleBackend(_openai_config())
+    backend = OpenAICompatibleBackend(_openai_config(features={"streaming": False}))
     result = backend.run_prompt(
         CliRunRequest(
             cwd=str(tmp_path),
@@ -146,6 +148,143 @@ def test_openai_compatible_backend_posts_chat_completion(tmp_path, monkeypatch) 
     ]
     assert captured["payload"]["temperature"] == 0.2
     assert captured["payload"]["max_tokens"] == 256
+    assert "stream" not in captured["payload"]
+
+
+def test_openai_compatible_backend_streams_sse_and_excludes_reasoning(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    captured = {}
+
+    class FakeResponse:
+        headers = {"Content-Type": "text/event-stream"}
+
+        def __init__(self) -> None:
+            self._lines = iter([
+                b'data: {"choices":[{"delta":{"reasoning_content":"private notes"}}]}\n',
+                b'data: {"choices":[{"delta":{"content":"echelon_result:\\n"}}]}\n',
+                b'data: {"choices":[{"delta":{"content":"  verdict: PASS\\n"},"finish_reason":"stop"}],"usage":{"total_tokens":42}}\n',
+                b"data: [DONE]\n",
+            ])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def readline(self):
+            return next(self._lines, b"")
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode())
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fake_urlopen,
+    )
+    backend = OpenAICompatibleBackend(_openai_config())
+    result = backend.run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "echelon_result:\n  verdict: PASS\n"
+    assert "private notes" not in result.stdout
+    assert result.token_usage == 42
+    assert captured["payload"]["stream"] is True
+    assert captured["payload"]["stream_options"] == {"include_usage": True}
+    assert captured["timeout"] == 12.5
+    assert result.metadata["streamed"] is True
+    assert result.metadata["finish_reason"] == "stop"
+    assert result.metadata["reasoning_content_observed"] is True
+
+
+def test_openai_compatible_backend_rejects_streamed_tool_calls(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    class FakeResponse:
+        headers = {"Content-Type": "text/event-stream"}
+
+        def __init__(self) -> None:
+            self._lines = iter([
+                b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"write_file","arguments":"{}"}}]}}]}\n',
+            ])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def readline(self):
+            return next(self._lines, b"")
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        lambda request, timeout: FakeResponse(),
+    )
+    backend = OpenAICompatibleBackend(_openai_config())
+    result = backend.run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 1
+    assert "tool_calls are not supported" in result.stderr
+    assert result.metadata["provider_error_code"] == "unsupported_tool_calls"
+
+
+def test_openai_compatible_backend_stream_read_timeout_returns_timed_out(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    class FakeResponse:
+        headers = {"Content-Type": "text/event-stream"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def readline(self):
+            raise socket.timeout("stream stalled")
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        lambda request, timeout: FakeResponse(),
+    )
+    backend = OpenAICompatibleBackend(_openai_config())
+    result = backend.run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == -1
+    assert result.timed_out is True
+    assert "stream stalled" in result.stderr
+    assert result.metadata["provider_error_code"] == "timeout"
 
 
 def test_claude_backend_streams_json_and_captures_result_error(tmp_path) -> None:

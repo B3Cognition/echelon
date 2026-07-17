@@ -169,7 +169,7 @@ class LlmConfig:
     api_key_env: Optional[str] = None  # env var containing API key for API providers
     temperature: float = 0.2
     max_tokens: Optional[int] = None
-    features: Dict[str, bool] = field(default_factory=dict)
+    features: Dict[str, object] = field(default_factory=dict)
 
 
 @dataclass
@@ -554,11 +554,17 @@ def _parse_llm(data: Dict[str, Any]) -> LlmConfig:
     )
 
 
-def _parse_llm_features(raw: Dict[str, Any]) -> Dict[str, bool]:
+def _parse_llm_features(raw: Dict[str, Any]) -> Dict[str, object]:
     features = raw.get("features", {})
     if not isinstance(features, dict):
         return {}
-    return {str(key): bool(value) for key, value in features.items()}
+    parsed: Dict[str, object] = {}
+    for key, value in features.items():
+        if isinstance(value, (bool, int, float, str)) or value is None:
+            parsed[str(key)] = value
+        else:
+            parsed[str(key)] = bool(value)
+    return parsed
 
 
 def _parse_llm_tool_policy(raw_llm: Dict[str, Any]) -> LlmToolPolicy:

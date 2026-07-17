@@ -527,6 +527,8 @@ def test_llm_openai_compatible_config_parsed() -> None:
                 "json_mode": True,
                 "structured_outputs": False,
                 "tool_calls": False,
+                "reasoning_content": "auto",
+                "reasoning_effort": False,
             },
         },
     })
@@ -542,6 +544,8 @@ def test_llm_openai_compatible_config_parsed() -> None:
         "json_mode": True,
         "structured_outputs": False,
         "tool_calls": False,
+        "reasoning_content": "auto",
+        "reasoning_effort": False,
     }
 
 
