@@ -3,6 +3,7 @@
 **Status:** Approved
 **Date:** 2026-07-17
 **Deciders:** Echelon maintainers
+**Tracking:** EGR-151
 
 ## Purpose
 
@@ -13,6 +14,47 @@ named spec must remain independent of the active authoring run.
 
 This lifecycle must be testable with temporary Git repositories and scripted
 providers. No LLM invocation is required.
+
+## Hard Dependency: Echelon Owns GitOps
+
+This design depends on a single Git authority. The spec-kit Git extension must
+be disabled before Echelon activates the new spec-switching lifecycle:
+
+```bash
+specify extension disable git
+```
+
+Spec-kit remains responsible for specification workflows and artifact
+generation. Echelon is exclusively responsible for repository state and branch
+topology, including:
+
+- default-branch resolution;
+- spec numbering, branch naming, creation, and checkout;
+- Phase A checkpoints and commits;
+- switching, managed stashes, destructive checkpoint recovery, and restoration;
+- Phase A finalization and delivery handoff;
+- delivery mirrors and worktrees; and
+- landing and merging.
+
+No spec-kit hook may create or switch a branch, create a commit, stash changes,
+reset the worktree, or merge branches. Direct `speckit.specify` invocation may
+generate artifacts in the current checkout, but users must enter the managed
+lifecycle through `echelon spec run`.
+
+Exclusive Git ownership is the first implementation workstream and a blocking
+release prerequisite for every switching behavior in this design. The cutover
+must not create a branchless interval: Echelon first builds and verifies its own
+default-branch resolution, spec identity allocation, sibling-branch creation,
+and prepared-spec-directory contract behind deterministic Python boundaries.
+Only when those replacements and checkpoint-gated switching are ready does
+workspace migration disable the spec-kit Git extension and activate the
+fail-closed runtime preflight.
+
+Existing projects require an idempotent migration/preflight check. After the
+cutover, Echelon refuses managed Phase A Git operations if competing spec-kit
+Git hooks remain enabled. Before the cutover, the new ownership inspector may be
+shipped and tested but must not disable the existing hook ahead of its Echelon
+replacement.
 
 ## Invariants
 
@@ -29,6 +71,8 @@ providers. No LLM invocation is required.
    Phase A workspace.
 8. Phase A readiness does not merge a feature branch into the default branch.
    Merge remains a delivery/landing operation.
+9. Echelon is the sole Git authority. Spec-kit produces artifacts in the branch
+   Echelon prepared and must not mutate Git state.
 
 ## Options Considered
 
@@ -179,12 +223,18 @@ when another Phase A run is active:
 
 1. require a valid outgoing checkpoint;
 2. resolve dirty work through stash, discard, or cancel;
-3. checkout and verify the configured default branch;
-4. allocate a new run directory and make it active; and
-5. let the normal WHAT/spec-kit flow create a new sibling feature branch.
+3. resolve and record the configured default-branch commit;
+4. allocate the spec ID, branch name, and new run directory;
+5. create and checkout the new sibling feature branch from that exact commit;
+6. atomically make the new run active; and
+7. invoke the normal WHAT/spec-kit artifact flow with spec-kit Git integration
+   disabled.
 
-The new branch must be based on the verified default-branch commit. A branch
-created from the outgoing feature branch is a lifecycle error and blocks the run.
+After every spec-kit boundary, Echelon verifies that the current branch and HEAD
+still match the lifecycle state it supplied. An unexpected branch change or
+spec-kit-created commit is a lifecycle error and blocks the run. The new branch
+must be based on the recorded default-branch commit; a branch created from the
+outgoing feature branch is invalid.
 
 ## Delivery Isolation
 
@@ -223,6 +273,9 @@ branch and provide explicit switch/cleanup guidance.
   switch without changing Git or `runs/.current`.
 - Missing target branches block without changing the active run.
 - Detached HEAD blocks switching.
+- Enabled spec-kit Git hooks block managed Phase A Git operations.
+- A branch or commit mutation across a spec-kit artifact-generation boundary
+  blocks the run and reports the expected and observed Git state.
 - Unrelated dirty source changes are treated exactly like other dirty changes;
   Echelon never silently commits them.
 - Stash, reset, cleanup, checkout, and pointer-write errors are reported with
@@ -247,25 +300,29 @@ failures assert that no provider is invoked.
 - dirty-worktree action parsing and non-interactive refusal;
 - stash commit recording, conflict retention, and successful restoration;
 - discard confirmation and checkpoint reset;
-- delivery resolution independent of `runs/.current`; and
-- requested-spec readiness validation.
+- delivery resolution independent of `runs/.current`;
+- requested-spec readiness validation;
+- spec-kit Git extension detection and idempotent disablement; and
+- rejection when a spec-kit boundary changes the Echelon-owned branch or HEAD.
 
 ### Real-Git Integration Flow
 
-1. Create `main` and spec A's run and feature branch.
-2. Advance spec A to a real Phase A checkpoint but leave it non-terminal.
-3. Verify that starting spec B is allowed only through the checkpoint/cleanliness
+1. Initialize the workspace, disable spec-kit Git integration, and verify that
+   the preflight rejects a simulated competing Git hook.
+2. Create `main` and spec A's run and feature branch through Echelon GitOps.
+3. Advance spec A to a real Phase A checkpoint but leave it non-terminal.
+4. Verify that starting spec B is allowed only through the checkpoint/cleanliness
    protocol and that B branches from `main`, not A.
-4. Verify branches A and B both exist and have independent ancestry.
-5. Switch A -> B -> A by spec ID and run ID, checking the branch and
+5. Verify branches A and B both exist and have independent ancestry.
+6. Switch A -> B -> A by spec ID and run ID, checking the branch and
    `runs/.current` after every operation.
-6. Repeat with dirty A using stash, stash restoration, discard, and cancel.
-7. Attempt delivery for incomplete A and B; assert failure before provider
+7. Repeat with dirty A using stash, stash restoration, discard, and cancel.
+8. Attempt delivery for incomplete A and B; assert failure before provider
    dispatch.
-8. Mark A ready, keep B active and incomplete, and start delivery A.
-9. Assert the shared checkout remains on B, `runs/.current` still names B,
+9. Mark A ready, keep B active and incomplete, and start delivery A.
+10. Assert the shared checkout remains on B, `runs/.current` still names B,
    delivery uses an A worktree, and only A's build marker changes.
-10. Mark B ready and repeat delivery isolation in the opposite direction.
+11. Mark B ready and repeat delivery isolation in the opposite direction.
 
 The integration test asserts repository state rather than mocked Git calls. It
 therefore covers the complete lifecycle contract while remaining deterministic
@@ -276,4 +333,34 @@ and independent of an LLM, Docker, or network access.
 Workflow documentation that describes new specs as branch-stacked must be
 updated. The supported model is sibling feature branches from the configured
 default branch. Command help and README examples must distinguish the active
-Phase A spec from explicitly addressed delivery state.
+Phase A spec from explicitly addressed delivery state. Installation and upgrade
+documentation must also state that Echelon disables the spec-kit Git extension
+and is the sole supported Git lifecycle authority.
+
+## Implementation Order
+
+1. **Build the exclusive-ownership foundation.** Add deterministic inspection
+   and disablement verification, then implement Echelon-owned default-branch
+   resolution, spec identity allocation, sibling-branch creation, and the
+   prepared-spec-directory contract. Keep the disablement cutover inactive until
+   the replacement path and switch safety are ready.
+2. **Make Phase A checkpoints safe and authoritative.** Scope checkpoint commits
+   to Echelon-owned paths, persist a checkpoint even when no files changed, and
+   treat required checkpoint failures as blocking.
+3. **Add lifecycle resolution and transactions.** Implement exact run resolution,
+   a workspace lifecycle lock, crash-recoverable switch intent, and atomic active
+   pointer updates.
+4. **Implement switching and perform the ownership cutover.** Add clean
+   switching, managed stash/restore, confirmed discard-to-checkpoint, and
+   status/recovery output. Then make workspace migration disable spec-kit Git,
+   activate the fail-closed preflight, and remove all spec-kit branch/commit
+   assumptions in one tested cutover.
+5. **Isolate and pin delivery.** Resolve the requested run to a validated ready
+   commit, create delivery worktrees without mutating the authoring checkout, and
+   remove `ensure_on_default_branch()` from delivery startup.
+6. **Correct finalization and landing boundaries.** Generate and validate the
+   complete artifact set before the final Phase A commit and isolate or explicitly
+   guard landing operations.
+7. **Complete real-Git, no-LLM lifecycle coverage.** Exercise switching, recovery,
+   ancestry, readiness, and delivery isolation using temporary repositories and
+   scripted providers.
