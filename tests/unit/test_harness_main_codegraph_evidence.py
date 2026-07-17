@@ -26,7 +26,7 @@ def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def _write_fake_bridge(project_root: Path) -> Path:
-    bridge_path = (
+    runtime_dir = (
         project_root
         / ".specify"
         / "extensions"
@@ -34,8 +34,12 @@ def _write_fake_bridge(project_root: Path) -> Path:
         / "scripts"
         / "node"
         / "codegraph"
-        / "codegraph-bridge.js"
     )
+    return _write_fake_bridge_at_runtime(runtime_dir)
+
+
+def _write_fake_bridge_at_runtime(runtime_dir: Path) -> Path:
+    bridge_path = runtime_dir / "codegraph-bridge.js"
     bridge_path.parent.mkdir(parents=True)
     bridge_path.write_text(
         """
@@ -66,6 +70,10 @@ fs.writeFileSync(outputPath, JSON.stringify({
 """.lstrip(),
         encoding="utf-8",
     )
+    (runtime_dir / "codegraph-adapter.js").write_text("adapter\n", encoding="utf-8")
+    package = runtime_dir / "node_modules/@colbymchenry/codegraph/package.json"
+    package.parent.mkdir(parents=True)
+    package.write_text("{}\n", encoding="utf-8")
     return bridge_path
 
 
@@ -210,6 +218,33 @@ def test_write_codegraph_evidence_uses_installed_bridge_when_global_cli_exists(
     assert not error_path.exists()
 
 
+def test_write_codegraph_evidence_uses_shared_runtime(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    echelon_home = tmp_path / "echelon-home"
+    _write_fake_bridge_at_runtime(echelon_home / "node/codegraph")
+    monkeypatch.setenv("ECHELON_HOME", str(echelon_home))
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001"
+    _write_verify_state(verify_run_dir)
+    spec_dir = project_root / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    result = _run(
+        [
+            "write-codegraph-evidence",
+            str(project_root),
+            str(verify_run_dir),
+            str(spec_dir),
+        ]
+    )
+
+    assert result.returncode == 0, result.stderr
+    summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())
+    assert summary["index_state"] == "ready"
+
+
 def test_write_codegraph_evidence_rejects_stale_cli_repo_path_and_regenerates(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -301,11 +336,12 @@ def test_write_codegraph_evidence_cli_preserves_existing_codegraph_dir(
     assert marker.read_text(encoding="utf-8") == "existing"
 
 
-def test_write_codegraph_evidence_reports_missing_fixed_installed_bridge_path(
+def test_write_codegraph_evidence_reports_missing_resolved_runtime(
     tmp_path: Path, monkeypatch
 ) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
+    monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "empty-echelon-home"))
     _write_fake_codegraph_cli(tmp_path / "bin", success=False)
     _prepend_path(monkeypatch, tmp_path / "bin")
     verify_run_dir = tmp_path / "runs" / "verify-spec-001"
@@ -324,8 +360,9 @@ def test_write_codegraph_evidence_reports_missing_fixed_installed_bridge_path(
 
     assert result.returncode != 0
     error = (verify_run_dir / "codegraph-error.txt").read_text(encoding="utf-8")
-    assert ".specify/extensions/echelon/scripts/node/codegraph/codegraph-bridge.js" in error
-    assert "fixed installed extension path" in error
+    assert ".specify/extensions/echelon/scripts/node/codegraph" in error
+    assert "empty-echelon-home/node/codegraph" in error
+    assert "CodeGraph runtime is unavailable" in error
     summary = json.loads((verify_run_dir / "codegraph-summary.json").read_text())
     assert summary["structural_evidence"] == "degraded"
     assert summary["evidence_quality"] == "manual_fallback_required"

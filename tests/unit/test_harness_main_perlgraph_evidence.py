@@ -34,7 +34,7 @@ def _write_verify_state(verify_run_dir: Path) -> None:
 
 
 def _write_fake_perlgraph_cli(project_root: Path, *, stale_repo: Path | None = None) -> Path:
-    cli_path = (
+    runtime_dir = (
         project_root
         / ".specify"
         / "extensions"
@@ -42,10 +42,14 @@ def _write_fake_perlgraph_cli(project_root: Path, *, stale_repo: Path | None = N
         / "scripts"
         / "node"
         / "perlgraph"
-        / "dist"
-        / "cli"
-        / "perlgraph.js"
     )
+    return _write_fake_perlgraph_cli_at_runtime(runtime_dir, stale_repo=stale_repo)
+
+
+def _write_fake_perlgraph_cli_at_runtime(
+    runtime_dir: Path, *, stale_repo: Path | None = None
+) -> Path:
+    cli_path = runtime_dir / "dist" / "cli" / "perlgraph.js"
     cli_path.parent.mkdir(parents=True)
     repo_literal = "repoPath" if stale_repo is None else json.dumps(str(stale_repo))
     cli_path.write_text(
@@ -92,6 +96,8 @@ fs.writeFileSync(summaryPath, JSON.stringify(summary));
 """.lstrip(),
         encoding="utf-8",
     )
+    cli_path.chmod(0o755)
+    (runtime_dir / "node_modules").mkdir()
     return cli_path
 
 
@@ -123,6 +129,33 @@ def test_write_perlgraph_evidence_cli_writes_analysis_and_summary(tmp_path: Path
     assert state["perlgraph_summary_path"] == str(verify_run_dir / "perlgraph-summary.json")
 
 
+def test_write_perlgraph_evidence_uses_shared_runtime(
+    tmp_path: Path, monkeypatch
+) -> None:
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    echelon_home = tmp_path / "echelon-home"
+    _write_fake_perlgraph_cli_at_runtime(echelon_home / "node/perlgraph")
+    monkeypatch.setenv("ECHELON_HOME", str(echelon_home))
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001"
+    _write_verify_state(verify_run_dir)
+    spec_dir = project_root / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+
+    result = _run(
+        [
+            "write-perlgraph-evidence",
+            str(project_root),
+            str(verify_run_dir),
+            str(spec_dir),
+        ]
+    )
+
+    assert result.returncode == 0, result.stderr
+    summary = json.loads((verify_run_dir / "perlgraph-summary.json").read_text())
+    assert summary["index_state"] == "ready"
+
+
 def test_write_perlgraph_evidence_rejects_stale_repo_path(tmp_path: Path) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
@@ -152,9 +185,12 @@ def test_write_perlgraph_evidence_rejects_stale_repo_path(tmp_path: Path) -> Non
     assert state["perlgraph_evidence"] == "degraded"
 
 
-def test_write_perlgraph_evidence_degrades_when_runtime_missing(tmp_path: Path) -> None:
+def test_write_perlgraph_evidence_degrades_when_runtime_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
     project_root = tmp_path / "project"
     project_root.mkdir()
+    monkeypatch.setenv("ECHELON_HOME", str(tmp_path / "empty-echelon-home"))
     verify_run_dir = tmp_path / "runs" / "verify-spec-001"
     _write_verify_state(verify_run_dir)
     spec_dir = project_root / "specs" / "001-demo"
