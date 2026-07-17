@@ -985,6 +985,12 @@ phases:
       - update_state_done
     outputs:
       - squad-report.md
+    allowed_state_updates:
+      - kb_usage_status
+      - kb_validation_status
+      - kb_apply_status
+      - kb_contract_violations
+      - kb_apply_report
     transitions:
       - to: done
         condition: always

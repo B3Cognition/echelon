@@ -57,7 +57,7 @@ Use the Agent tool:
 
   <instructions>
   You are MIRROR. Read agents/learning/mirror.md for your complete protocol.
-  Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, what the squad should do differently. Log reusable patterns and pitfalls to the knowledge base. Produce `knowledge-transfer-assessment.md` using the provided template. Update `knowledge-base/patterns.yaml` and `knowledge-base/pitfalls.yaml`. Return journal entries in `echelon_result.journal_entries`.
+  Perform post-run analysis. Extract what assumptions were wrong, which patterns worked, and what the squad should do differently. Write reusable pattern and pitfall proposal files under `${SQUAD_DIR}/kb-proposals/` using the KB proposal templates. Do not edit canonical knowledge-base files directly. Produce `knowledge-transfer-assessment.md` using the provided template. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -142,6 +142,25 @@ After CALIBRATE completes, read `confidence-flags.md`:
 
 - If any domain has **confidence < 0.5** → summon speckit-echelon-investigator (INVESTIGATOR) for that domain (if not already investigated). This is a late-stage safety net.
 - If speckit-echelon-investigator (INVESTIGATOR) was already summoned and confidence is still < 0.5 → always flag for human in the final report (do not block delivery).
+
+### 12.KB Apply KB Proposals - NON-BLOCKING
+
+Read `RUN_ID` from `runs/.current`, then run:
+
+```bash
+RUN_ID=$(cat "${PROJECT_ROOT}/runs/.current" 2>/dev/null || true)
+echelon kb validate --run-id "${RUN_ID}" || true
+echelon kb apply --run-id "${RUN_ID}" || true
+```
+
+If validation fails, record `kb_validation_status: degraded` in
+`echelon_result.state_updates`; if apply fails, record `kb_apply_status: degraded`.
+Record proposal-read or usage failures as `kb_usage_status: degraded`, and preserve
+any deterministic contract findings in `kb_contract_violations` and `kb_apply_report`.
+A KB failure does not stop finalization, agent dispatch, phase transitions, or publication.
+
+If `{spec_dir}` exists and `runs/${RUN_ID}/kb-apply-report.yaml` exists, copy it
+to `{spec_dir}/kb/kb-apply-report.yaml`, creating `{spec_dir}/kb/` if needed.
 
 ### 12.6 Collect Final Artifacts
 
