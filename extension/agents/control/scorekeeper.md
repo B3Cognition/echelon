@@ -207,10 +207,10 @@ After each squad run, speckit-echelon-scorekeeper (SCOREKEEPER):
 2. For each entry with `reuse_count > 0`, include the reuse observation in the originating agent's proposal (if identifiable from `source_fingerprints`).
 3. Report the marketplace entry's `last_seen` observation for deterministic processing.
 
-Badge award process:
+Badge review process:
 1. For each marketplace entry where `reuse_count >= 5`, check if the badge has already been awarded for that pattern.
-2. If not yet awarded, add the **Community Contributor** badge to the originating agent's profile with a reference to the pattern ID.
-3. Award +5 bonus points to the agent's lifetime score.
+2. If not yet awarded, include a **Community Contributor** badge recommendation with the pattern ID in the originating agent's internalization-observation proposal payload or review notes.
+3. Include a recommended `+5` lifetime-point adjustment in that proposal or review notes for deterministic application or human review.
 
 ### Marketplace Health Metrics
 

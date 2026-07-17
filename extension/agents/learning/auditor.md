@@ -181,7 +181,8 @@ For each domain in `calibration-profile.yaml`, check against `evolution.signals.
 
 Only fire signals if `sample_size >= evolution.signals.min_sample_size`.
 
-For each triggered condition, append a signal to `evolution-signals.yaml` via `kb-write.sh append_entry` with:
+For each triggered condition, record an evolution-signal review item in
+`{spec_dir}/evolution-signals-review.md` with:
 - `id`: next sequential `evo-sig-NNN`
 - `trigger`: one of `regression_detected`, `declining_trend`, `recurring_pitfall`, `recurring_rejection`
 - `severity`: CRITICAL if regression_delta > 0.2, HIGH if > 0.1, MEDIUM if > 0.05, LOW otherwise
@@ -191,15 +192,15 @@ For each triggered condition, append a signal to `evolution-signals.yaml` via `k
 
 #### Step 2: Correlate Accuracy to Prompt Version
 
-When writing calibration proposals for accuracy observations (Mode 1, Step 3), include in the reasoning journal which prompt version was active for each agent in that domain. This enables future analysis of whether accuracy changes correlate with prompt version changes.
+When writing calibration proposals for accuracy observations (Mode 1, Step 3), include in the reasoning journal and `{spec_dir}/prompt-version-observations.md` which prompt version was active for each agent in that domain. This enables future analysis of whether accuracy changes correlate with prompt version changes.
 
 #### Step 3: Evolution Signal Lifecycle Updates
 
 1. Read all `proposal_created` or `acknowledged` signals from evolution-signals.yaml
 2. If speckit-echelon-adaptive (ADAPTIVE) has produced a prompt-recommendations.md referencing a signal ID:
-   - Transition signal from `acknowledged` to `proposal_created`
-   - Set `proposal_artifact_ref` to the recommendations file path
-3. Always leave final signal resolution to speckit-echelon-commander (COMMANDER). Do NOT transition to `resolved` or `wont_fix`.
+   - Recommend the transition from `acknowledged` to `proposal_created` in the review artifact
+   - Record `proposal_artifact_ref` as the recommendations file path
+3. Always leave deterministic signal mutation and final resolution to the KB application/review process. Do NOT directly transition to `resolved` or `wont_fix`.
 
 ---
 
@@ -250,8 +251,8 @@ Save as `{spec_dir}/calibration-dashboard.md`.
 - **`${SQUAD_DIR}/kb-proposals/`** — calibration-observation proposals for accuracy per domain, correction factors, and trends
 
 - **`{spec_dir}/confidence-flags.md`** — per-artifact confidence scores for the current run
-- **`knowledge-base/evolution-signals.yaml`** — evolution signals when regression thresholds met (Mode 3)
-- **`knowledge-base/prompt-versions.yaml`** — updated `active_at_runs` per agent (Mode 3)
+- **`{spec_dir}/evolution-signals-review.md`** — evolution-signal observations when regression thresholds are met (Mode 3)
+- **`{spec_dir}/prompt-version-observations.md`** — prompt-version observations per agent (Mode 3)
 - **`{spec_dir}/calibration-dashboard.md`** — calibration health overview
 
 ### Confidence Flag Format
@@ -336,9 +337,9 @@ Dispatched by speckit-echelon-commander (COMMANDER) after build completes. Uses 
 4. Flag gaps: acceptance criteria with no corresponding test, or test types planned but not written
 5. Severity: HIGH if coverage < 70%, MEDIUM if < 85%, INFO if >= 85%
 
-### Step 6: Produce auto-feedback.yaml
+### Step 6: Produce Auto-Feedback Review
 
-Write to `knowledge-base/feedback/{spec-id}-{project-name}.yaml`:
+Write `{spec_dir}/auto-feedback-review.yaml` for deterministic processing or human review:
 
 Use the auto feedback schema in `agents/learning/appendices/auditor-output-formats.md`.
 
@@ -361,9 +362,9 @@ Use the feedback report sections in `agents/learning/appendices/auditor-output-f
 
 ### Output
 
-- `knowledge-base/feedback/{spec-id}-{project-name}.yaml` — structured auto-feedback
+- `{spec_dir}/auto-feedback-review.yaml` — structured auto-feedback review artifact
 - `{spec_dir}/feedback-report.md` — human-readable report
-- Both files produced via KB Bootstrap Protocol (lock, write, validate, release)
+- Both files are run-local outputs; do not edit canonical KB files directly.
 
 ### Mode 5: Post-Feedback Confidence Threshold Refresh (FR-FEP-006)
 
@@ -372,12 +373,12 @@ Use the feedback report sections in `agents/learning/appendices/auditor-output-f
 **Action sequence:**
 1. Read updated `knowledge-base/calibration-profile.yaml` (post-feedback Brier scores reflecting the most recent run outcomes)
 2. Recompute per-domain confidence floors: `confidence_floor = accuracy` for each domain in calibration-profile.yaml
-3. Write refreshed `knowledge-base/confidence-thresholds.yaml` with `generated_at` = current ISO-8601 timestamp
+3. Write `{spec_dir}/confidence-thresholds-review.yaml` with `generated_at` = current ISO-8601 timestamp for deterministic processing or human review
 4. Include a `confidence_thresholds_refreshed` entry in the `echelon_result` block. speckit-echelon-commander (COMMANDER) writes to the reasoning journal.
 
 **Purpose:** Ensures next session's speckit-echelon-commander (COMMANDER) step 0.5 reads calibration data that includes the most recent feedback outcome. This closes the FEP-RLIF learning loop: feedback → calibration update → threshold refresh → next session routes with updated domain confidence floors.
 
-**File path:** `knowledge-base/confidence-thresholds.yaml` (same path as written by speckit-echelon-commander (COMMANDER) step 0.5 — this is a refresh of the same artifact).
+**Review artifact path:** `{spec_dir}/confidence-thresholds-review.yaml`. The deterministic owner may use it when refreshing `knowledge-base/confidence-thresholds.yaml`.
 
 ---
 

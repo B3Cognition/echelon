@@ -97,6 +97,22 @@ def test_finalize_applies_kb_proposals_after_scorekeeper() -> None:
     )
 
 
+def test_auditor_and_scorekeeper_have_no_direct_canonical_kb_mutations() -> None:
+    auditor = _read("extension/agents/learning/auditor.md")
+    scorekeeper = _read("extension/agents/control/scorekeeper.md")
+    direct_write = re.compile(
+        r"\b(?:write|update|append|modify|add)\b[^\n]{0,160}`?knowledge-base/",
+        re.IGNORECASE,
+    )
+
+    assert not direct_write.search(auditor)
+    assert not direct_write.search(scorekeeper)
+    assert "- **`knowledge-base/evolution-signals.yaml`" not in auditor
+    assert "- **`knowledge-base/prompt-versions.yaml`" not in auditor
+    assert "add the **Community Contributor** badge" not in scorekeeper
+    assert "Award +5 bonus points to the agent's lifetime score" not in scorekeeper
+
+
 def test_workflow_allows_kb_status_state_updates() -> None:
     text = _read("extension/workflow/definition.yaml")
     for key in [
