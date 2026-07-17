@@ -9,6 +9,7 @@ import subprocess
 import pytest
 
 from echelon.phase_a_start import PhaseAStartError, start_phase_a_spec
+from echelon.spec_lifecycle import PhaseAExecutionLock
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -135,6 +136,21 @@ def test_next_spec_refuses_dirty_outgoing_run_by_default(tmp_path: Path) -> None
 
     with pytest.raises(PhaseAStartError, match="dirty worktree"):
         start_phase_a_spec(repo, "run-b", "Build search dashboard")
+
+    assert _git(repo, "branch", "--show-current") == "001-spec-a"
+    assert (repo / "runs" / ".current").read_text().strip() == "run-a"
+    assert not (repo / "runs" / "run-b").exists()
+
+
+def test_next_spec_refuses_to_switch_checkout_while_phase_a_is_executing(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    _checkpoint_active_run(repo)
+
+    with PhaseAExecutionLock.acquire(repo, "active-controller"):
+        with pytest.raises(PhaseAStartError, match="active-controller"):
+            start_phase_a_spec(repo, "run-b", "Build search dashboard")
 
     assert _git(repo, "branch", "--show-current") == "001-spec-a"
     assert (repo / "runs" / ".current").read_text().strip() == "run-a"

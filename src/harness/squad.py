@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import signal
 import shutil
@@ -11,11 +12,16 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from echelon.artifact_index import write_artifact_index
 from echelon.context_builder import build_run_context
 from echelon.kb_proposals import accepted_kb_target_paths
+from echelon.spec_lifecycle import (
+    PhaseAExecutionLock,
+    SpecLifecycleLocked,
+    SpecRunExecutionLock,
+)
 from harness.condition_evaluator import ConditionEvaluator
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
@@ -361,7 +367,39 @@ class SquadController:
         except (Exception, SystemExit):
             return []
 
+    def _run_with_execution_lease(
+        self,
+        execute: Callable[[], SquadResult],
+    ) -> SquadResult:
+        """Serialize controller execution for this run before touching state."""
+
+        operation_id = f"squad-exec-{os.getpid()}"
+        try:
+            with PhaseAExecutionLock.acquire(self._project_root, operation_id):
+                with SpecRunExecutionLock.acquire(self._squad_dir, operation_id):
+                    return execute()
+        except SpecLifecycleLocked as exc:
+            state = self._state_store.load()
+            phase = str(state.get("phase") or "unknown")
+            run_id = str(state.get("run_id") or self._squad_dir.name)
+            logger.warning("Phase A run %s is already executing: %s", run_id, exc)
+            print(
+                f"[squad] run already active — refusing concurrent execution ({exc})",
+                flush=True,
+            )
+            return SquadResult(status="busy", phase=phase, run_id=run_id)
+
     def run(
+        self,
+        user_message: str = "",
+        mode: str = "semi",
+        next_phase_override: str = "",
+    ) -> SquadResult:
+        return self._run_with_execution_lease(
+            lambda: self._run_locked(user_message, mode, next_phase_override)
+        )
+
+    def _run_locked(
         self,
         user_message: str = "",
         mode: str = "semi",
@@ -781,6 +819,22 @@ class SquadController:
         self._state_store.save(state)
 
     def run_single_phase(
+        self,
+        phase_id: str,
+        user_message: str = "",
+        mode: str = "semi",
+        initial_state_updates: dict | None = None,
+    ) -> SquadResult:
+        return self._run_with_execution_lease(
+            lambda: self._run_single_phase_locked(
+                phase_id,
+                user_message,
+                mode,
+                initial_state_updates,
+            )
+        )
+
+    def _run_single_phase_locked(
         self,
         phase_id: str,
         user_message: str = "",

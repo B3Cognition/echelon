@@ -153,31 +153,36 @@ class SpecLifecycleLock:
     operation_id: str
 
     @classmethod
-    def acquire(cls, project_root: Path, operation_id: str) -> "SpecLifecycleLock":
+    def _acquire_path(
+        cls,
+        lock_path: Path,
+        operation_id: str,
+        *,
+        owner_label: str,
+    ) -> "SpecLifecycleLock":
         if not _SAFE_OPERATION_ID.fullmatch(operation_id):
             raise ValueError(f"unsafe lifecycle operation ID: {operation_id!r}")
-        lock_path = _runtime_dir(project_root) / "spec-lifecycle.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         while True:
             try:
                 lock_path.mkdir()
                 break
             except FileExistsError as exc:
-                owner = _read_json_object(lock_path / "owner.json", label="lifecycle lock owner")
+                owner = _read_json_object(lock_path / "owner.json", label=owner_label)
                 owner_id = str(owner.get("operation_id") or "")
                 pid = owner.get("pid")
                 hostname = owner.get("hostname")
                 if not _SAFE_OPERATION_ID.fullmatch(owner_id):
                     raise SpecLifecycleRecoveryRequired(
-                        f"lifecycle lock owner operation ID is malformed: {owner_id!r}"
+                        f"{owner_label} operation ID is malformed: {owner_id!r}"
                     ) from exc
                 if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
                     raise SpecLifecycleRecoveryRequired(
-                        "lifecycle lock owner PID is malformed"
+                        f"{owner_label} PID is malformed"
                     ) from exc
                 if hostname != socket.gethostname():
                     raise SpecLifecycleRecoveryRequired(
-                        f"cannot prove remote lifecycle lock owner {owner_id!r} is stale"
+                        f"cannot prove remote {owner_label} {owner_id!r} is stale"
                     ) from exc
                 if _pid_alive(pid):
                     raise SpecLifecycleLocked(owner_id) from exc
@@ -196,6 +201,14 @@ class SpecLifecycleLock:
             raise
         return cls(path=lock_path, operation_id=operation_id)
 
+    @classmethod
+    def acquire(cls, project_root: Path, operation_id: str) -> "SpecLifecycleLock":
+        return cls._acquire_path(
+            _runtime_dir(project_root) / "spec-lifecycle.lock",
+            operation_id,
+            owner_label="lifecycle lock owner",
+        )
+
     def release(self) -> None:
         if not self.path.exists():
             return
@@ -210,6 +223,30 @@ class SpecLifecycleLock:
 
     def __exit__(self, *_exc: object) -> None:
         self.release()
+
+
+class SpecRunExecutionLock(SpecLifecycleLock):
+    """Atomic single-writer lease for one Phase A squad run."""
+
+    @classmethod
+    def acquire(cls, run_dir: Path, operation_id: str) -> "SpecRunExecutionLock":
+        return cls._acquire_path(
+            Path(run_dir).resolve() / ".echelon" / "runtime" / "execution.lock",
+            operation_id,
+            owner_label="run execution lock owner",
+        )
+
+
+class PhaseAExecutionLock(SpecLifecycleLock):
+    """Atomic lease preventing a live controller from losing its checkout."""
+
+    @classmethod
+    def acquire(cls, project_root: Path, operation_id: str) -> "PhaseAExecutionLock":
+        return cls._acquire_path(
+            _runtime_dir(project_root) / "phase-a-execution.lock",
+            operation_id,
+            owner_label="Phase A execution lock owner",
+        )
 
 
 def _project_path(project_root: Path, value: str) -> Path:

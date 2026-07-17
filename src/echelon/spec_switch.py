@@ -18,6 +18,7 @@ from echelon.git_helpers import (
     run_git,
 )
 from echelon.spec_lifecycle import (
+    PhaseAExecutionLock,
     SpecLifecycleError,
     SpecLifecycleLock,
     SpecRun,
@@ -513,15 +514,16 @@ def switch_spec(
     operation_id = f"switch-{uuid4().hex}"
     try:
         with SpecLifecycleLock.acquire(root, operation_id):
-            require_speckit_git_disabled(root)
-            return _switch_spec_locked(
-                root,
-                identity,
-                operation_id=operation_id,
-                dirty_action=dirty_action,
-                confirm_discard=confirm_discard,
-                restore_stash=restore_stash,
-            )
+            with PhaseAExecutionLock.acquire(root, operation_id):
+                require_speckit_git_disabled(root)
+                return _switch_spec_locked(
+                    root,
+                    identity,
+                    operation_id=operation_id,
+                    dirty_action=dirty_action,
+                    confirm_discard=confirm_discard,
+                    restore_stash=restore_stash,
+                )
     except SpecSwitchError:
         raise
     except (GitHelperError, SpecKitGitOwnershipError, SpecLifecycleError) as exc:

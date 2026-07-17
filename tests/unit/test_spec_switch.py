@@ -9,7 +9,11 @@ import subprocess
 import pytest
 
 from echelon.git_helpers import GitHelperError
-from echelon.spec_lifecycle import load_spec_switch_intent, resolve_spec_run
+from echelon.spec_lifecycle import (
+    PhaseAExecutionLock,
+    load_spec_switch_intent,
+    resolve_spec_run,
+)
 from echelon.spec_switch import (
     DirtySpecWorktreeError,
     SpecSwitchError,
@@ -272,6 +276,20 @@ def test_clean_switch_changes_branch_then_active_pointer(
     assert _git(repo, "branch", "--show-current").stdout.strip() == "002-spec-b"
     assert (repo / "runs" / ".current").read_text(encoding="utf-8") == "run-b\n"
     assert load_spec_switch_intent(repo) is None
+
+
+def test_switch_refuses_to_change_checkout_while_phase_a_is_executing(
+    switch_repo: dict[str, object],
+) -> None:
+    repo = switch_repo["repo"]
+    assert isinstance(repo, Path)
+
+    with PhaseAExecutionLock.acquire(repo, "active-controller"):
+        with pytest.raises(SpecSwitchError, match="active-controller"):
+            switch_spec(repo, "run-b")
+
+    assert _git(repo, "branch", "--show-current").stdout.strip() == "001-spec-a"
+    assert (repo / "runs" / ".current").read_text(encoding="utf-8") == "run-a\n"
 
 
 def test_switch_to_already_active_run_is_idempotent_even_when_dirty(

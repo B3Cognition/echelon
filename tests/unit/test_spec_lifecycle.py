@@ -12,6 +12,7 @@ from echelon.spec_lifecycle import (
     SpecLifecycleLock,
     SpecLifecycleLocked,
     SpecLifecycleRecoveryRequired,
+    SpecRunExecutionLock,
     SpecRunAmbiguous,
     SpecRunNotFound,
     begin_spec_switch,
@@ -219,6 +220,20 @@ def test_lifecycle_lock_rejects_second_live_owner(tmp_path: Path) -> None:
     with SpecLifecycleLock.acquire(tmp_path, "switch-001"):
         with pytest.raises(SpecLifecycleLocked, match="switch-001"):
             SpecLifecycleLock.acquire(tmp_path, "switch-002")
+
+
+def test_run_execution_lock_refuses_a_second_owner_without_blocking_sibling_run(
+    tmp_path: Path,
+) -> None:
+    run_a = tmp_path / "runs" / "run-a"
+    run_b = tmp_path / "runs" / "run-b"
+
+    with SpecRunExecutionLock.acquire(run_a, "run-a-owner") as first:
+        assert first.path == run_a / ".echelon" / "runtime" / "execution.lock"
+        with pytest.raises(SpecLifecycleLocked, match="run-a-owner"):
+            SpecRunExecutionLock.acquire(run_a, "run-a-second")
+        with SpecRunExecutionLock.acquire(run_b, "run-b-owner") as sibling:
+            assert sibling.path == run_b / ".echelon" / "runtime" / "execution.lock"
 
 
 def test_lifecycle_lock_release_does_not_remove_different_owner(tmp_path: Path) -> None:

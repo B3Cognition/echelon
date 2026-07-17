@@ -16,6 +16,7 @@ from echelon.phase_a_git import (
     plan_phase_a_spec,
 )
 from echelon.spec_lifecycle import (
+    PhaseAExecutionLock,
     SpecLifecycleError,
     SpecLifecycleLock,
     SpecRun,
@@ -104,87 +105,88 @@ def start_phase_a_spec(
     created_branch = ""
     try:
         with SpecLifecycleLock.acquire(root, operation_id):
-            require_speckit_git_disabled(root)
-            observed = current_branch(root)
-            if not observed:
-                raise PhaseAStartError("detached HEAD blocks a fresh spec start")
-            if load_spec_switch_intent(root) is not None:
-                recover_spec_switch(root, observed_branch=observed)
+            with PhaseAExecutionLock.acquire(root, operation_id):
+                require_speckit_git_disabled(root)
                 observed = current_branch(root)
+                if not observed:
+                    raise PhaseAStartError("detached HEAD blocks a fresh spec start")
+                if load_spec_switch_intent(root) is not None:
+                    recover_spec_switch(root, observed_branch=observed)
+                    observed = current_branch(root)
 
-            source = _resolve_source(root)
-            source_checkpoint = None
-            stash_commit = ""
-            if source is not None:
-                if observed != source.feature_branch:
+                source = _resolve_source(root)
+                source_checkpoint = None
+                stash_commit = ""
+                if source is not None:
+                    if observed != source.feature_branch:
+                        raise PhaseAStartError(
+                            f"active run branch is {source.feature_branch!r}, but Git is on {observed!r}"
+                        )
+                    source_checkpoint = validate_spec_checkpoint(root, source)
+
+                dirty_paths = spec_worktree_paths(root)
+                if dirty_paths:
+                    if source is None:
+                        raise DirtySpecWorktreeError(dirty_paths)
+                    if dirty_action == "refuse":
+                        raise DirtySpecWorktreeError(dirty_paths)
+                    if dirty_action == "stash":
+                        stash_commit = stash_spec_worktree(root, source, source_checkpoint)
+                    else:
+                        discard_spec_worktree(root, source_checkpoint)
+
+                if target_dir.exists():
+                    raise PhaseAStartError(f"target run directory already exists: {target_dir}")
+                bootstrap = plan_phase_a_spec(
+                    root,
+                    target_dir,
+                    description,
+                    configured_default_branch,
+                )
+                if source is None and observed != bootstrap.default_branch:
                     raise PhaseAStartError(
-                        f"active run branch is {source.feature_branch!r}, but Git is on {observed!r}"
+                        "first spec start requires the configured default branch "
+                        f"{bootstrap.default_branch!r}; found {observed!r}"
                     )
-                source_checkpoint = validate_spec_checkpoint(root, source)
+                create_phase_a_spec_branch_ref(root, bootstrap, clean_verified=True)
+                created_branch = bootstrap.feature_branch
+                _write_prepared_state(target_dir, run_id, description, bootstrap)
+                target = resolve_spec_run(root, run_id)
 
-            dirty_paths = spec_worktree_paths(root)
-            if dirty_paths:
+                if source is not None:
+                    begin_spec_switch(
+                        root,
+                        source,
+                        target,
+                        observed_branch=observed,
+                        operation_id=operation_id,
+                    )
+                run_git(root, "switch", bootstrap.feature_branch)
+                selected_branch = current_branch(root)
                 if source is None:
-                    raise DirtySpecWorktreeError(dirty_paths)
-                if dirty_action == "refuse":
-                    raise DirtySpecWorktreeError(dirty_paths)
-                if dirty_action == "stash":
-                    stash_commit = stash_spec_worktree(root, source, source_checkpoint)
+                    activate_initial_spec_run(
+                        root,
+                        target,
+                        observed_branch=selected_branch,
+                    )
                 else:
-                    discard_spec_worktree(root, source_checkpoint)
-
-            if target_dir.exists():
-                raise PhaseAStartError(f"target run directory already exists: {target_dir}")
-            bootstrap = plan_phase_a_spec(
-                root,
-                target_dir,
-                description,
-                configured_default_branch,
-            )
-            if source is None and observed != bootstrap.default_branch:
-                raise PhaseAStartError(
-                    "first spec start requires the configured default branch "
-                    f"{bootstrap.default_branch!r}; found {observed!r}"
+                    mark_spec_switch_checked_out(
+                        root,
+                        operation_id,
+                        observed_branch=selected_branch,
+                    )
+                    commit_spec_switch_pointer(
+                        root,
+                        operation_id,
+                        observed_branch=selected_branch,
+                    )
+                return PhaseAStartOutcome(
+                    run_dir=target_dir,
+                    bootstrap=bootstrap,
+                    source=source,
+                    source_checkpoint=source_checkpoint,
+                    stash_commit=stash_commit,
                 )
-            create_phase_a_spec_branch_ref(root, bootstrap, clean_verified=True)
-            created_branch = bootstrap.feature_branch
-            _write_prepared_state(target_dir, run_id, description, bootstrap)
-            target = resolve_spec_run(root, run_id)
-
-            if source is not None:
-                begin_spec_switch(
-                    root,
-                    source,
-                    target,
-                    observed_branch=observed,
-                    operation_id=operation_id,
-                )
-            run_git(root, "switch", bootstrap.feature_branch)
-            selected_branch = current_branch(root)
-            if source is None:
-                activate_initial_spec_run(
-                    root,
-                    target,
-                    observed_branch=selected_branch,
-                )
-            else:
-                mark_spec_switch_checked_out(
-                    root,
-                    operation_id,
-                    observed_branch=selected_branch,
-                )
-                commit_spec_switch_pointer(
-                    root,
-                    operation_id,
-                    observed_branch=selected_branch,
-                )
-            return PhaseAStartOutcome(
-                run_dir=target_dir,
-                bootstrap=bootstrap,
-                source=source,
-                source_checkpoint=source_checkpoint,
-                stash_commit=stash_commit,
-            )
     except PhaseAStartError:
         raise
     except DirtySpecWorktreeError as exc:

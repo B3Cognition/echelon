@@ -14,7 +14,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Delivery resolves its requested spec without changing the active authoring
   checkout, landing refuses to disturb a different active spec, and terminal
   Phase A finalization commits the validated run-local and published artifact
-  trees through Python-owned checkpoints.
+  trees through Python-owned checkpoints. A live Phase A controller now owns a
+  deterministic execution lease, so duplicate resumes fail safely and a new
+  spec or switch cannot move the shared checkout underneath it.
 
 - **First-class reverse-engineering lifecycle** — `echelon re run`, `echelon re
   continue`, and `echelon re resume` now own RE planning, bounded repair, and

@@ -2,7 +2,7 @@
 
 **Review date:** 2026-07-17
 **Priority:** P1
-**Status:** in-progress
+**Status:** fixed
 **GitHub:** #164
 **Design:** `docs/superpowers/specs/2026-07-17-spec-switch-lifecycle-design.md`
 
@@ -242,8 +242,21 @@ foundations:
   unready B before delivery dispatch. It uses temporary local Git plus mocked
   delivery-runtime boundaries only; the lifecycle/delivery matrix passed 51
   tests on 2026-07-17.
+- `PhaseAExecutionLock` and `SpecRunExecutionLock` now protect the active
+  controller before it reads or mutates state. The first lease owns the shared
+  checkout; the second identifies the exact run. A duplicate normal resume or
+  manual phase replay returns `busy` before provider dispatch or state mutation.
+  Fresh-spec creation and existing-spec switching take the workspace execution
+  lease while holding their lifecycle mutation lock, so they fail closed instead
+  of changing branches under a live controller. Temporary real-Git tests cover
+  both start and switch refusal, and no-LLM controller tests cover normal and
+  manual duplicate execution.
 
-EGR-151 remains `in-progress`. Add the changelog entry and close final full-suite
-evidence; a dedicated landing worktree remains a later refinement beyond the
-active guard. The latest full-suite run retained 20 broader failures, including
-target-preflight and CLI/template contract assertions outside this EGR slice.
+EGR-151 is `fixed`. The `[Unreleased]` changelog entry records the ownership
+cutover and execution-lease guarantee. The final focused no-LLM EGR matrix
+passed **222 tests** on 2026-07-17; it covers lifecycle, Git, checkpoint,
+switch, delivery-isolation, CLI, KB-proposal, and controller paths. Historical
+full-suite evidence remains explicit rather than being overstated: the latest
+broad run retained 20 failures in target-preflight and CLI/template-contract
+areas outside this EGR slice. A dedicated landing worktree remains a future
+refinement beyond the active landing guard.
