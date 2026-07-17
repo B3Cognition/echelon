@@ -213,10 +213,19 @@ foundations:
   full-suite integration fixtures affected by authoritative Git checkpoints
   were migrated to temporary real Git repositories and their focused rerun
   passed 14 tests.
+- `echelon spec status` now renders the exact `runs/.current` authoring run,
+  declared feature branch, latest validated checkpoint, recorded managed stash,
+  and other switchable runs. Invalid checkpoint state remains visible as a
+  diagnostic instead of hiding the rest of the orientation report.
+- Explicit delivery no longer calls `ensure_on_default_branch()` on the shared
+  Phase A checkout. It continues to use the requested spec's readiness gate and
+  `.current-build-<spec>` marker, while Git mutations remain within the harness
+  mirror and ephemeral worktrees. No-LLM tests prove delivery of spec A preserves
+  active spec B's branch, dirty authoring file, and `runs/.current` pointer; a
+  separate requested-spec regression proves a ready A cannot authorize unready B.
 
-EGR-151 remains `in-progress`. Status integration, delivery isolation,
-finalization/landing isolation, changelog entry, and final full-suite closure
-remain outstanding. The full-suite run recorded 3,878 passing tests and seven
-failures; a focused rerun cleared all three Git-fixture failures affected by the
-cutover. Four unrelated existing assertions remain in CLI help/template
-contracts outside EGR-151.
+EGR-151 remains `in-progress`. Finalization/landing worktree isolation,
+changelog entry, and final full-suite closure remain outstanding. The full-suite
+run recorded 3,878 passing tests and seven failures; a focused rerun cleared all
+three Git-fixture failures affected by the cutover. Four unrelated existing
+assertions remain in CLI help/template contracts outside EGR-151.

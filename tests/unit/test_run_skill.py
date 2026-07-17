@@ -286,6 +286,75 @@ class TestRunSkillAutoLand:
         assert current_build_marker(runtime, "012").exists()
 
     @patch("harness.skills.run_skill.parse_intent")
+    @patch("harness.skills.run_skill.run_gc")
+    @patch("harness.skills.run_skill.StrategyCoordinator")
+    def test_delivery_preserves_active_authoring_branch_dirty_state_and_pointer(
+        self,
+        mock_coordinator_cls: MagicMock,
+        mock_gc: MagicMock,
+        mock_parse: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """A selected delivery run leaves another active Phase A run untouched."""
+        import subprocess
+
+        from harness.config import HarnessConfig
+        from harness.run_intent import RunIntent
+        from harness.skills.run_skill import run
+
+        def git(*args: str) -> str:
+            result = subprocess.run(
+                ["git", *args],
+                cwd=tmp_path,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return result.stdout.strip()
+
+        (tmp_path / ".gitignore").write_text("/runs/\n", encoding="utf-8")
+        (tmp_path / "authoring.txt").write_text("base\n", encoding="utf-8")
+        git("init", "-b", "main")
+        git("config", "user.email", "tests@example.com")
+        git("config", "user.name", "Echelon Tests")
+        git("add", ".gitignore", "authoring.txt")
+        git("commit", "-m", "base")
+        git("switch", "-c", "002-spec-b")
+        (tmp_path / "authoring.txt").write_text("unfinished B\n", encoding="utf-8")
+        current = tmp_path / "runs" / ".current"
+        current.parent.mkdir(parents=True)
+        current.write_text("run-b", encoding="utf-8")
+        before_status = git("status", "--porcelain")
+
+        config = HarnessConfig(
+            target_repo=str(tmp_path),
+            target_default_branch="main",
+            provider="docker",
+        )
+        mock_parse.return_value = RunIntent(spec_id="001-spec-a", mode="semi", auto_merge=False)
+        coordinator_instance = MagicMock()
+        coordinator_instance.start.return_value = [_make_converged_result()]
+        coordinator_instance.compare_results.return_value = {
+            "strategies": {},
+            "summary": {"converged": 1, "failed": 0, "total_tokens": 0},
+        }
+        mock_coordinator_cls.return_value = coordinator_instance
+        gitops = MagicMock()
+
+        run(
+            "spec 001-spec-a semi",
+            provider=MagicMock(),
+            gitops=gitops,
+            base_dir=str(tmp_path),
+            config=config,
+        )
+
+        assert git("branch", "--show-current") == "002-spec-b"
+        assert git("status", "--porcelain") == before_status
+        assert current.read_text(encoding="utf-8") == "run-b"
+        gitops.ensure_on_default_branch.assert_not_called()
+
+    @patch("harness.skills.run_skill.parse_intent")
     @patch("harness.skills.run_skill.load_config")
     @patch("harness.skills.run_skill.run_gc")
     @patch("harness.skills.run_skill.StrategyCoordinator")
