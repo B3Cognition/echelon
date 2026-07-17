@@ -41,7 +41,9 @@ The system should own contracts, mutation, recovery, deduplication, and metrics.
   deterministic apply.
 - Record KB usage and apply metrics so later runs can measure whether prior
   knowledge was actually beneficial.
-- Gate Phase A finalization on the deterministic KB apply step having run.
+- Keep KB read, proposal, validation, and apply failures non-blocking for the
+  user-requested Phase A run. KB failures must be recorded and degraded, not stop
+  agents or harness progress.
 
 ## Non-Goals
 
@@ -50,6 +52,8 @@ The system should own contracts, mutation, recovery, deduplication, and metrics.
   shape, provenance, safety, target compatibility, and deterministic consistency.
 - Do not build a global cross-project sync implementation in this pass.
 - Do not require every rejected proposal to block Phase A finalization.
+- Do not make KB unavailability, malformed proposals, failed usage recording, or
+  apply failures block agent dispatch, phase transitions, or finalization.
 - Do not delete or rewrite existing legacy KB entries as part of the first pass.
 - Do not remove `knowledge-base/` as the canonical durable store.
 
@@ -73,7 +77,13 @@ The rule is:
 ```text
 LLM can say what something means.
 SYSTEM decides whether it is valid memory and how it lands.
+KB failure records and degrades; it does not block the product run.
 ```
+
+Knowledge is an accelerator, not a prerequisite. If KB read, usage recording,
+proposal validation, or proposal apply fails, COMMANDER records the failure and
+continues with the best available context. Agents receive empty, stale, or
+read-only KB context rather than being stopped.
 
 ## Run-Local Layout
 
@@ -99,6 +109,10 @@ accepted, rejected, skipped, queued, or marked for review.
 `kb-usage.yaml` records which existing KB entries were loaded into Phase A
 context packs, which agents received them, and whether those entries were cited
 or acted on by later outputs.
+
+If usage recording fails, the harness records `kb_usage_status: degraded` in
+state and continues dispatch. Missing usage data lowers measurement confidence;
+it does not invalidate the run.
 
 ## Proposal Contract
 
@@ -336,9 +350,11 @@ Responsibilities:
 Exit behavior:
 
 - `0`: all proposals valid or only skippable duplicates.
-- `1`: proposal validation failures exist.
+- `1`: proposal validation failures exist. COMMANDER records the failures and
+  continues to Phase A finalization with KB apply skipped or partially applied.
 - `2`: system error, such as unreadable run directory or parser failure in the
-  validation engine.
+  validation engine. COMMANDER records `kb_validation_status: degraded` and
+  continues without treating KB as authoritative for this run.
 
 ### `echelon kb apply`
 
@@ -373,16 +389,21 @@ Each proposal receives exactly one outcome:
   promotion/demotion, or requires human policy.
 - `queued`: deterministic lock/contention prevented safe apply.
 
-Rejected proposals do not usually block Phase A finalization. They are visible in
-the apply report.
+Rejected proposals do not block Phase A finalization. They are visible in the
+apply report.
 
-Blocking apply failures are reserved for systemic issues:
+Systemic apply failures still do not block the user-requested run. They disable
+KB mutation for the run, mark the KB step degraded, and require a report entry:
 
 - proposal directory cannot be read
 - unsupported apply-engine schema version
 - canonical KB is unparseable and recovery fails
 - canonical KB post-apply validation fails
 - direct canonical KB mutation is detected outside `echelon kb apply`
+
+In all of these cases, Phase A continues. Canonical KB files are left unchanged
+or restored to the pre-apply snapshot, `kb-apply-report.yaml` records the failure
+when possible, and final output warns that durable learning was not applied.
 
 ## Deduplication and Normalization
 
@@ -422,7 +443,10 @@ knowledge-base/sage-decisions.yaml
 
 If a canonical KB file changes and no `echelon kb apply` report accounts for the
 change, finalize reports a contract violation. In the first migration stage this
-may be a warning. Once Phase A agents are converted, it becomes blocking.
+is a warning. Once Phase A agents are converted, it remains non-blocking for the
+product run but is upgraded to a high-severity KB contract violation in the final
+report and any maintainer-facing health report. The remedy is to fix the KB
+writer, not to stop the user's spec run.
 
 ## Phase A Workflow Integration
 
@@ -436,8 +460,10 @@ During FINALIZE:
 5. `finalize-run.sh` stages `knowledge-base/`, `runs/<run-id>/kb-apply-report.yaml`,
    and any published proposal/report artifacts selected for Phase A provenance.
 
-Phase A finalization requires the apply report to exist. The report may contain
-rejections.
+Phase A finalization attempts to include the apply report, but the absence or
+failure of the apply report does not stop finalization. COMMANDER records
+`kb_apply_status: missing`, `failed`, or `degraded` in state and in the final
+summary. The run continues with durable learning skipped for this iteration.
 
 ## Usage Measurement
 
@@ -502,7 +528,8 @@ from new proposal quality:
 3. Ensure newly applied proposal entries satisfy the current schema.
 4. Add targeted migration commands for legacy entries with missing timestamps,
    missing run IDs, or missing project fingerprints.
-5. After migration, make full canonical KB validation blocking for Phase A apply.
+5. After migration, make full canonical KB validation authoritative for deciding
+   whether KB mutation occurs, but still non-blocking for the Phase A run itself.
 
 This lets the proposal pipeline land without forcing an immediate rewrite of all
 historical memory.
@@ -520,7 +547,8 @@ The apply engine uses existing KB recovery concepts where possible:
 - write a report even when apply fails after partial validation
 
 If post-apply validation fails, the engine restores the pre-apply snapshot and
-marks the run report as failed.
+marks the run report as failed. The Phase A run then continues with KB mutation
+disabled for that run.
 
 ## Testing
 
@@ -539,15 +567,18 @@ Integration tests:
 - fake Phase A run with valid proposals applies to canonical KB
 - malformed SAGE proposal is rejected and `sage-decisions.yaml` remains parseable
 - duplicate pattern proposal is skipped
-- canonical KB parse failure blocks apply and writes a report
+- canonical KB parse failure skips apply, writes a degraded report, and the run
+  continues
 - lock timeout queues proposals without data loss
+- failed usage recording records degraded status and the run continues
 
 Contract tests:
 
 - Phase A learning agent prompts reference proposal templates
 - Phase A learning agent prompts do not instruct direct canonical KB writes
-- FINALIZE phase requires `echelon kb validate` and `echelon kb apply`
-- `finalize-run.sh` stages the KB apply report
+- FINALIZE phase attempts `echelon kb validate` and `echelon kb apply` but
+  continues on KB degradation
+- `finalize-run.sh` stages the KB apply report when present
 
 ## Rollout Plan
 
@@ -558,8 +589,10 @@ Contract tests:
    already visible in the startup banner fallback path.
 5. Convert MIRROR pattern/pitfall writes to proposals.
 6. Convert AUDITOR and INTERNALIZER observations to proposals.
-7. Require `kb-apply-report.yaml` in Phase A FINALIZE.
-8. Turn direct canonical KB mutation from warning into blocking for Phase A.
+7. Attempt `kb-apply-report.yaml` generation in Phase A FINALIZE and record
+   degraded status when absent.
+8. Turn direct canonical KB mutation from warning into high-severity KB contract
+   violation while keeping the product run non-blocking.
 
 ## Open Questions
 
