@@ -283,6 +283,52 @@ def test_openai_compatible_backend_reads_nonstreaming_content_blocks(
     assert result.token_usage == 11
 
 
+def test_openai_compatible_backend_records_nonstreaming_response_metadata(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "id": "chatcmpl-123",
+                "object": "chat.completion",
+                "created": 1_725_000_000,
+                "model": "local-model",
+                "system_fingerprint": "fp_local",
+                "choices": [{"message": {"content": "ok"}}],
+            }).encode()
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        lambda request, timeout: FakeResponse(),
+    )
+
+    result = OpenAICompatibleBackend(_openai_config(features={"streaming": False})).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 0
+    assert result.metadata["raw_response_metadata"] == {
+        "id": "chatcmpl-123",
+        "object": "chat.completion",
+        "created": 1_725_000_000,
+        "model": "local-model",
+        "system_fingerprint": "fp_local",
+    }
+
+
 def test_openai_compatible_backend_rejects_nonstreaming_truncation(
     tmp_path, monkeypatch
 ) -> None:
@@ -672,6 +718,53 @@ def test_openai_compatible_backend_streams_content_blocks(
     assert result.exit_code == 0
     assert result.stdout == "echelon_result:\n  verdict: PASS\n"
     assert result.token_usage == 13
+
+
+def test_openai_compatible_backend_records_streaming_response_metadata(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    class FakeResponse:
+        headers = {"Content-Type": "text/event-stream"}
+
+        def __init__(self) -> None:
+            self._lines = iter([
+                b'data: {"id":"chatcmpl-stream","object":"chat.completion.chunk","created":1725000001,"model":"local-model","system_fingerprint":"fp_stream","choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n',
+                b"data: [DONE]\n",
+            ])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def readline(self):
+            return next(self._lines, b"")
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        lambda request, timeout: FakeResponse(),
+    )
+
+    result = OpenAICompatibleBackend(_openai_config()).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 0
+    assert result.metadata["raw_response_metadata"] == {
+        "id": "chatcmpl-stream",
+        "object": "chat.completion.chunk",
+        "created": 1_725_000_001,
+        "model": "local-model",
+        "system_fingerprint": "fp_stream",
+    }
 
 
 def test_openai_compatible_backend_rejects_streaming_truncation(

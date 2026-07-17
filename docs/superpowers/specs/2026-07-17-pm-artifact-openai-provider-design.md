@@ -389,6 +389,9 @@ small OpenAI-chat protocol adapter:
   never as artifact text and never as the parsed `echelon_result`.
 - Track `finish_reason`, usage, HTTP status, provider headers when useful, and
   whether the response was streamed or non-streamed.
+- Retain stable OpenAI response identity metadata (`id`, `object`, `created`,
+  `model`, `system_fingerprint`) for audit logs and evidence ledgers when the
+  endpoint provides it.
 - Reject streamed tool-call deltas for the artifact provider unless a later
   design explicitly adds tool support. Artifact providers do not gain build/tool
   capability because an endpoint can emit tool-call syntax.
