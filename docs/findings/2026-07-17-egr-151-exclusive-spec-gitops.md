@@ -115,3 +115,29 @@ accepted spec-switch lifecycle.
   providers; it requires no LLM, Docker, or network access.
 - Completion includes an `[Unreleased]` changelog entry, a fixed EGR register
   row, and recorded focused/full verification evidence.
+
+## Implementation Progress
+
+The first two ownership foundations are implemented on
+`codex/egr-151-spec-lifecycle-gitops` without activating the runtime cutover:
+
+- `src/echelon/speckit_git.py` deterministically inspects and verifies
+  disablement of spec-kit's project-local Git extension and hooks.
+- `src/echelon/phase_a_git.py` derives bounded spec identities, allocates the
+  next number across published/run-local directories plus local/remote refs,
+  resolves and records the default-branch commit, prepares run-local artifact
+  context, and creates a verified sibling branch only from a clean default
+  checkout.
+- `tests/unit/test_phase_a_git.py` uses temporary real Git repositories and no
+  LLM, Docker, or network dependency. It covers explicit and fallback default
+  branches, all identity sources, read-only planning, sibling creation, and
+  refusal without HEAD movement for staged/tracked/untracked dirt, a non-default
+  checkout, a moved default ref, and an existing target branch.
+- Focused adjacent verification passed 33 tests on 2026-07-17:
+  `test_phase_a_git`, `test_speckit_git`, existing spec switch/resume tests, and
+  the RE Git-flow integration test; `git diff --check` also passed.
+
+EGR-151 remains `in-progress`. CLI activation, path-scoped authoritative
+checkpoints, transactional `echelon spec switch`, delivery isolation,
+finalization, the atomic spec-kit Git cutover, changelog entry, and full-suite
+verification remain outstanding.
