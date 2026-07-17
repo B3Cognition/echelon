@@ -37,8 +37,9 @@ The system should own contracts, mutation, recovery, deduplication, and metrics.
   proposal validation and canonical KB mutation.
 - Preserve an audit trail from canonical KB entry back to proposal, run, agent,
   source artifacts, and evidence references.
-- Keep canonical `knowledge-base/*.yaml` parseable and schema-valid after every
-  deterministic apply.
+- Keep every canonical `knowledge-base/*.yaml` file touched by deterministic
+  apply parseable and schema-valid after mutation, while reporting untouched
+  legacy debt separately.
 - Record KB usage and apply metrics so later runs can measure whether prior
   knowledge was actually beneficial.
 - Keep KB read, proposal, validation, and apply failures non-blocking for the
@@ -114,6 +115,26 @@ If usage recording fails, the harness records `kb_usage_status: degraded` in
 state and continues dispatch. Missing usage data lowers measurement confidence;
 it does not invalidate the run.
 
+## Published Layout
+
+Run-local proposal files are working artifacts. They may live under runtime-owned
+or ignored directories and are not the publication contract.
+
+At Phase A publication, COMMANDER copies the durable KB provenance summary into
+the spec directory when possible:
+
+```text
+specs/<id>-<feature>/kb/
+  kb-apply-report.yaml
+  kb-usage-summary.yaml
+```
+
+`kb-apply-report.yaml` contains proposal IDs, outcomes, target files, canonical
+entry IDs, and rejection/degradation reasons. Raw proposal files remain in the
+run directory unless a later policy explicitly publishes them. This keeps normal
+spec publication compact while preserving enough provenance to audit canonical KB
+changes.
+
 ## Proposal Contract
 
 Each proposal is one YAML document. The common envelope is:
@@ -125,7 +146,8 @@ proposal_type: pattern
 run_id: squad-1234567890
 agent: speckit-echelon-mirror
 created_at: 2026-07-17T12:00:00Z
-target: knowledge-base/patterns.yaml
+targets:
+  - knowledge-base/patterns.yaml
 confidence: 0.72
 source_artifacts:
   - runs/squad-1234567890/reasoning-journal.jsonl
@@ -146,14 +168,17 @@ Common validation rules:
 - `run_id` must match the active run.
 - `created_at` must be an ISO-8601 date-time.
 - `agent` must be a known Phase A agent or an explicitly allowed command.
-- `target` must be compatible with `proposal_type`.
+- `targets` must be a non-empty list of files compatible with `proposal_type`.
 - `confidence` must be between 0.0 and 1.0 when present.
 - `source_artifacts` must exist or be listed as archived run artifacts.
 - `evidence_refs` must be non-empty for durable learning proposals.
 - `payload` must validate against the type-specific schema.
 
+For idempotency, the deterministic operation identity is
+`<run_id>/<proposal_id>`. Proposal IDs may repeat across different runs.
+
 The harness does not judge whether a semantic claim is wise. It does reject
-claims that are unsupported, malformed, unsafe, incompatible with the target, or
+claims that are unsupported, malformed, unsafe, incompatible with the targets, or
 impossible to trace.
 
 ## Initial Proposal Types
@@ -321,7 +346,8 @@ extension/templates/kb-proposals/
 Phase A learning agents receive the relevant template in their context pack.
 Agent prompts must say:
 
-- write proposal artifacts under `runs/<run-id>/kb-proposals/`
+- write proposal artifacts under `${SQUAD_DIR}/kb-proposals/`; the canonical
+  resolved layout is `runs/<run-id>/kb-proposals/`
 - do not edit canonical `knowledge-base/*.yaml`
 - return proposal paths in `echelon_result.output_files`
 - use one proposal per semantic learning item
@@ -351,7 +377,8 @@ Exit behavior:
 
 - `0`: all proposals valid or only skippable duplicates.
 - `1`: proposal validation failures exist. COMMANDER records the failures and
-  continues to Phase A finalization with KB apply skipped or partially applied.
+  continues; `echelon kb apply` may still apply the valid subset and reject the
+  invalid proposals.
 - `2`: system error, such as unreadable run directory or parser failure in the
   validation engine. COMMANDER records `kb_validation_status: degraded` and
   continues without treating KB as authoritative for this run.
@@ -366,9 +393,9 @@ echelon kb apply --run-id <run-id>
 
 Responsibilities:
 
-1. Run validation first.
+1. Run validation first and classify each proposal independently.
 2. Snapshot canonical KB checksums before mutation.
-3. Apply accepted proposals through deterministic writers.
+3. Apply valid proposals through deterministic target appliers.
 4. Deduplicate against existing entries.
 5. Preserve append-only invariants.
 6. Validate canonical KB files after mutation.
@@ -376,6 +403,23 @@ Responsibilities:
 8. Update usage/application metrics.
 
 `apply` is the only Phase A writer to canonical KB files.
+
+Validation failures for one proposal do not prevent other valid proposals from
+being applied. The apply report records mixed outcomes in a single run.
+
+## Target Appliers
+
+Canonical KB files do not all have the same mutation shape. The apply engine owns
+one deterministic applier per target family:
+
+- append-only list appliers for `sage-decisions.yaml`, `estimates-log.yaml`,
+  `internalization-log.yaml`, and `evolution-signals.yaml`
+- list-entry appliers for `patterns.yaml` and `pitfalls.yaml`
+- aggregate/map appliers for `calibration-profile.yaml` and `agent-scores.yaml`
+
+The existing `kb-write.sh append_entry` behavior can be reused for append-only
+targets where it fits, but it is not the whole write model. Aggregate targets
+need structured read-normalize-write appliers with post-write validation.
 
 ## Apply Outcomes
 
@@ -411,15 +455,15 @@ The apply engine normalizes proposal payloads before comparison:
 
 - trim insignificant whitespace
 - normalize case for names and tags where appropriate
-- compute stable semantic fingerprints from type, normalized name, target, domain,
-  tags, and evidence refs
+- compute stable semantic fingerprints from type, normalized name, targets,
+  domain, tags, and evidence refs
 - compute project fingerprint deterministically from `git remote get-url origin`
   when `project_fingerprint: auto`
 - add provenance fields required by `knowledge-base/kb-schema.md`
 
 Duplicate detection is deterministic and conservative:
 
-- exact proposal ID already applied: `skipped_duplicate`
+- exact operation identity already applied: `skipped_duplicate`
 - exact semantic fingerprint already present: `skipped_duplicate`
 - near match with conflicting description or lower confidence: `needs_review`
 
@@ -450,20 +494,38 @@ writer, not to stop the user's spec run.
 
 ## Phase A Workflow Integration
 
-During FINALIZE:
+During Phase A:
 
-1. REALIST, MIRROR, ADAPTIVE, INTERNALIZER, AUDITOR, CONSOLIDATOR, SCOREKEEPER,
-   SAGE, and VETERAN produce proposal artifacts when they have durable learning.
-2. COMMANDER runs `echelon kb validate --run-id <run-id>`.
-3. COMMANDER runs `echelon kb apply --run-id <run-id>`.
-4. COMMANDER includes `kb-apply-report.yaml` in final artifacts.
-5. `finalize-run.sh` stages `knowledge-base/`, `runs/<run-id>/kb-apply-report.yaml`,
-   and any published proposal/report artifacts selected for Phase A provenance.
+1. Any Phase A agent with durable learning writes proposal artifacts when the
+   learning is observed. SAGE writes `sage_decision` proposals at decision time,
+   not only during FINALIZE.
+2. FINALIZE learning agents write their proposals during the FINALIZE sequence.
+3. COMMANDER runs `echelon kb validate --run-id <run-id>`.
+4. COMMANDER runs `echelon kb apply --run-id <run-id>`.
+5. COMMANDER copies `kb-apply-report.yaml` and a usage summary into
+   `{spec_dir}/kb/` when possible.
+6. `finalize-run.sh` stages `knowledge-base/` and `{spec_dir}/kb/` when present.
 
 Phase A finalization attempts to include the apply report, but the absence or
 failure of the apply report does not stop finalization. COMMANDER records
 `kb_apply_status: missing`, `failed`, or `degraded` in state and in the final
 summary. The run continues with durable learning skipped for this iteration.
+
+## State and Workflow Contract
+
+The workflow definition must allow KB status keys wherever COMMANDER records
+Phase A progress:
+
+- `kb_usage_status`
+- `kb_validation_status`
+- `kb_apply_status`
+- `kb_contract_violations`
+- `kb_apply_report`
+
+These keys are reporting and recovery signals only. They must not participate in
+phase-transition predicates that could stop the product run. If a phase-specific
+`allowed_state_updates` list would reject these keys, the workflow definition and
+state-update validator must be updated before agents start emitting them.
 
 ## Usage Measurement
 
@@ -578,7 +640,9 @@ Contract tests:
 - Phase A learning agent prompts do not instruct direct canonical KB writes
 - FINALIZE phase attempts `echelon kb validate` and `echelon kb apply` but
   continues on KB degradation
-- `finalize-run.sh` stages the KB apply report when present
+- workflow `allowed_state_updates` permits KB status keys without transition
+  blocking
+- `finalize-run.sh` stages the spec-owned KB report directory when present
 
 ## Rollout Plan
 
@@ -591,13 +655,12 @@ Contract tests:
 6. Convert AUDITOR and INTERNALIZER observations to proposals.
 7. Attempt `kb-apply-report.yaml` generation in Phase A FINALIZE and record
    degraded status when absent.
-8. Turn direct canonical KB mutation from warning into high-severity KB contract
+8. Publish `{spec_dir}/kb/` summaries when possible.
+9. Turn direct canonical KB mutation from warning into high-severity KB contract
    violation while keeping the product run non-blocking.
 
 ## Open Questions
 
-- Should proposal artifacts be published under `specs/<id>/kb-proposals/`, or is
-  `kb-apply-report.yaml` enough public provenance?
 - Should `echelon_result` include proposal summaries in addition to proposal file
   paths?
 - Which legacy KB violations should be auto-migrated, and which should remain
