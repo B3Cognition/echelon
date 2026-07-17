@@ -6,6 +6,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -247,6 +248,49 @@ def test_openai_compatible_backend_can_request_reasoning_effort(
 
     assert result.exit_code == 0
     assert captured["payload"]["reasoning_effort"] == "high"
+
+
+def test_openai_compatible_backend_records_http_error_response_headers(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    def fake_urlopen(request, timeout):
+        raise urllib.error.HTTPError(
+            request.full_url,
+            429,
+            "Too Many Requests",
+            {
+                "Content-Type": "application/json",
+                "OpenAI-Request-ID": "req_error",
+                "Set-Cookie": "session=secret",
+            },
+            io.BytesIO(b'{"error":"rate limit"}'),
+        )
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    result = OpenAICompatibleBackend(
+        _openai_config(features={"streaming": False})
+    ).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 429
+    assert result.metadata["provider_error_code"] == "http_error"
+    assert result.metadata["http_status"] == 429
+    assert result.metadata["raw_response_headers"] == {
+        "content-type": "application/json",
+        "openai-request-id": "req_error",
+    }
 
 
 def test_openai_compatible_backend_reads_nonstreaming_content_blocks(
