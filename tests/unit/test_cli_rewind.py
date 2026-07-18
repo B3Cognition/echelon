@@ -10,7 +10,13 @@ import pytest
 
 from echelon.cli import _cmd_repair_traceability, _cmd_rewind
 from echelon.rewind import RewindResult
-from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
+from echelon.spec_lifecycle import PhaseAExecutionLock
+from harness.phase_checkpoints import (
+    PhaseCheckpoint,
+    checkpoint_targets,
+    load_checkpoint_ledger,
+    record_checkpoint_metadata,
+)
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -350,6 +356,28 @@ def test_rewind_phase1_what_uses_the_active_ledger_for_preview_and_confirm(
     assert state["phase_dispatch_counts"] == {}
 
 
+def test_rewind_refuses_a_run_that_is_still_running(tmp_path: Path, capsys) -> None:
+    """A live controller must not be able to overwrite a completed rewind."""
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "running",
+            "phase": "phase2-decide",
+            "spec_dir": "specs/004-transform-selector",
+        },
+    )
+    spec_dir = tmp_path / "specs" / "004-transform-selector"
+    spec_dir.mkdir(parents=True)
+    _record_checkpoints(spec_dir, "phase1-what")
+    with PhaseAExecutionLock.acquire(tmp_path, "live-controller"):
+        with pytest.raises(SystemExit) as exc:
+            _cmd_rewind(["phase1-what", "--confirm"], project_root=tmp_path)
+
+    assert exc.value.code == 1
+    assert "still running" in capsys.readouterr().err
+    assert (run_dir / "state.json").exists()
+
+
 def test_rewind_missing_checkpoint_exits_without_traceback(
     tmp_path: Path,
     capsys,
@@ -408,7 +436,12 @@ def test_checkpoint_rewind_uses_run_local_ledger_and_resets_run_state(
     )
     run_spec_dir = run_dir / "specs" / "006-element-creator"
     run_spec_dir.mkdir(parents=True)
-    _record_checkpoints(run_spec_dir, "phase3-how", "phase3-plan")
+    _record_checkpoints(
+        run_spec_dir,
+        "phase3-how",
+        "phase3-plan",
+        "phase3-consensus",
+    )
 
     received: dict[str, object] = {}
 
@@ -435,6 +468,10 @@ def test_checkpoint_rewind_uses_run_local_ledger_and_resets_run_state(
     assert state["blocked_reason"] is None
     assert "phase_a_readiness_blockers" not in state
     assert state["completed_phases"] == ["phase3-how"]
+    assert checkpoint_targets(load_checkpoint_ledger(run_spec_dir)) == [
+        "phase3-how",
+        "phase3-plan",
+    ]
     assert "echelon spec continue" in capsys.readouterr().out
 
 

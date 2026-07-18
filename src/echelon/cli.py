@@ -5875,7 +5875,7 @@ def _print_roadmap(state: dict, workflow_path: Path | None = None) -> None:
     completed_set = {str(phase) for phase in completed}
     counts = state.get("phase_dispatch_counts")
     counts = counts if isinstance(counts, dict) else {}
-    current = state.get("current_phase")
+    current = state.get("current_phase") or state.get("phase")
     ld = state.get("last_dispatch")
     if not current and isinstance(ld, dict):
         current = ld.get("phase_id") or ld.get("phase")
@@ -6000,7 +6000,7 @@ def _cmd_status(project_root: Path) -> None:
         ])
     else:
         run_status = state.get("status", "unknown")
-        _ld = state.get("current_phase") or state.get("last_dispatch")
+        _ld = state.get("current_phase") or state.get("phase") or state.get("last_dispatch")
         if isinstance(_ld, dict):
             _ld = _ld.get("phase_id") or _ld.get("phase") or str(_ld)
         current_phase = _ld or "—"
@@ -6306,6 +6306,7 @@ def _cmd_rewind(
         checkpoint_targets,
         load_checkpoint_ledger,
         resolve_checkpoint,
+        write_checkpoint_ledger,
     )
 
     ledger = load_checkpoint_ledger(spec_dir)
@@ -6324,34 +6325,53 @@ def _cmd_rewind(
         print(f"✗ Cannot rewind to {target}.\n  {detail}", file=sys.stderr)
         sys.exit(1)
 
+    from echelon.spec_lifecycle import (
+        PhaseAExecutionLock,
+        SpecLifecycleLocked,
+        SpecRunExecutionLock,
+    )
+
     try:
-        result = prepare_rewind(
-            project_root=project_root,
-            spec=spec_dir.name,
-            spec_dir=spec_dir,
-            target=target,
-            confirm=confirm,
+        with PhaseAExecutionLock.acquire(project_root, f"rewind-{os.getpid()}"):
+            with SpecRunExecutionLock.acquire(squad_dir, f"rewind-{os.getpid()}"):
+                result = prepare_rewind(
+                    project_root=project_root,
+                    spec=spec_dir.name,
+                    spec_dir=spec_dir,
+                    target=target,
+                    confirm=confirm,
+                )
+                if not result.applied:
+                    print(result.message)
+                    return
+
+                target_index = ledger.checkpoints.index(checkpoint)
+                retained_ledger = type(ledger)(
+                    spec_id=ledger.spec_id,
+                    checkpoints=ledger.checkpoints[: target_index + 1],
+                )
+                write_checkpoint_ledger(spec_dir, retained_ledger)
+                checkpoint_phases_before_target = {
+                    item.phase for item in ledger.checkpoints[:target_index]
+                }
+                removed = _cleanup_rewind_outputs(spec_dir, checkpoint.phase, squad_dir)
+                rewound = _reset_rewind_state(
+                    state,
+                    checkpoint.phase,
+                    spec_dir_ref,
+                    checkpoint_phases_before_target=checkpoint_phases_before_target,
+                )
+                store.save(rewound)
+    except SpecLifecycleLocked:
+        print(
+            "✗ Cannot rewind while the active spec run is still running.\n"
+            "  Interrupt it and wait for `echelon spec status` to show INTERRUPTED, then retry.",
+            file=sys.stderr,
         )
+        sys.exit(1)
     except RewindError as exc:
         print(f"✗ Cannot rewind to {target}.\n  {exc}", file=sys.stderr)
         sys.exit(1)
-
-    if not result.applied:
-        print(result.message)
-        return
-
-    target_index = ledger.checkpoints.index(checkpoint)
-    checkpoint_phases_before_target = {
-        item.phase for item in ledger.checkpoints[:target_index]
-    }
-    removed = _cleanup_rewind_outputs(spec_dir, checkpoint.phase, squad_dir)
-    rewound = _reset_rewind_state(
-        state,
-        checkpoint.phase,
-        spec_dir_ref,
-        checkpoint_phases_before_target=checkpoint_phases_before_target,
-    )
-    store.save(rewound)
 
     _banner(
         "REWIND COMPLETE",

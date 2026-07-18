@@ -96,3 +96,17 @@ def test_current_phase_that_was_completed_still_counts_toward_progress(capsys):
     out = capsys.readouterr().out
     assert "[▶]" in out and "phase1-discover" in out
     assert "2/" in out
+
+
+@pytest.mark.unit
+def test_phase_field_wins_over_stale_last_dispatch(capsys):
+    """A rewind changes `phase`; last_dispatch only describes the prior attempt."""
+    _print_roadmap({
+        "status": "running",
+        "phase": "phase1-what",
+        "completed_phases": ["phase1-why1", "phase1-constitution"],
+        "last_dispatch": {"phase_id": "phase2-decide"},
+    })
+    out = capsys.readouterr().out
+    assert "[▶]  phase1-what" in out
+    assert "[▶]  phase2-decide" not in out

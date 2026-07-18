@@ -308,6 +308,30 @@ def test_status_prints_authoritative_spec_dir_for_active_squad_run(
     assert "specs/071-rule-studio-narrative" in captured.out
 
 
+def test_status_uses_phase_instead_of_stale_last_dispatch(tmp_path: Path, capsys) -> None:
+    run_id = "spec-20260718-000001"
+    run_dir = tmp_path / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_id, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_id,
+                "status": "running",
+                "phase": "phase1-what",
+                "last_dispatch": {"phase_id": "phase2-decide"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_status(tmp_path)
+
+    out = capsys.readouterr().out
+    assert "Phase   phase1-what" in out
+    assert "Phase   phase2-decide" not in out
+
+
 def test_status_lists_active_spec_checkpoint_stash_and_other_runs(
     tmp_path: Path,
     capsys,
