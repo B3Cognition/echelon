@@ -225,7 +225,7 @@ def _render_product_input_context(state: dict) -> str:
     required = ("manifest", "catalog", "traceability", "requirement_context", "reference_context")
     if not all(str(inputs.get(key) or "").strip() for key in required):
         return ""
-    return "\n".join([
+    lines = [
         "## Product Input Contract",
         f"PRODUCT_INPUT_MANIFEST={inputs['manifest']}",
         f"PRODUCT_INPUT_CATALOG={inputs['catalog']}",
@@ -247,8 +247,32 @@ def _render_product_input_context(state: dict) -> str:
         "  spec_ids: [FR-001, AC-001]",
         "  task_ids: []",
         "  targets: []",
-        "",
-    ])
+    ]
+    repair = state.get("product_input_mapping_repair")
+    if isinstance(repair, dict):
+        blockers = repair.get("blockers")
+        if isinstance(blockers, list) and blockers:
+            lines.extend([
+                "",
+                "## Product Input Mapping Repair (Controller-Enforced)",
+                "The prior planning result did not resolve these ledger entries:",
+                *[f"- {str(blocker)}" for blocker in blockers],
+                "Read PRODUCT_INPUT_TRACEABILITY before editing tasks.",
+                "Return one canonical product_input_updates entry for every unresolved unit, "
+                "with task_ids whose req= values intersect that unit's spec_ids.",
+                "Do not return COMPLETE while any listed unit remains open_question or conflict.",
+            ])
+    if state.get("tasks_lexicon_pass") is False:
+        lines.extend([
+            "",
+            "## Tasks Lexicon Repair (Controller-Enforced)",
+            "The previous PLAN result failed the tasks hard gate.",
+            "Run the authoritative tasks validator, repair every finding in tasks.md or glossary.md, "
+            "then rerun it. Do not treat parse_pass or a soft score as success: the result must return ok=true.",
+            "Do not return COMPLETE with tasks_lexicon_pass: false.",
+        ])
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _render_published_re_context(state: dict) -> str:

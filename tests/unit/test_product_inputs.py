@@ -481,6 +481,47 @@ def test_prompt_contract_uses_snapshot_paths_and_structured_updates() -> None:
     assert "targets: []" in prompt
 
 
+def test_product_input_context_includes_controller_mapping_repair() -> None:
+    from harness.squad_executors import _render_product_input_context
+
+    prompt = _render_product_input_context({
+        "product_inputs": {
+            "manifest": "runs/one/inputs/manifest.json",
+            "catalog": "runs/one/inputs/catalog.json",
+            "traceability": "runs/one/inputs/traceability.json",
+            "requirement_context": "runs/one/inputs/requirement-context.md",
+            "reference_context": "runs/one/inputs/reference-context.md",
+        },
+        "product_input_mapping_repair": {
+            "attempt": 1,
+            "blockers": ["IN-REQ-1: unresolved disposition open_question"],
+        },
+    })
+
+    assert "Product Input Mapping Repair" in prompt
+    assert "IN-REQ-1: unresolved disposition open_question" in prompt
+    assert "Do not return COMPLETE" in prompt
+
+
+def test_product_input_context_requires_tasks_lexicon_repair_before_completion() -> None:
+    from harness.squad_executors import _render_product_input_context
+
+    prompt = _render_product_input_context({
+        "product_inputs": {
+            "manifest": "runs/one/inputs/manifest.json",
+            "catalog": "runs/one/inputs/catalog.json",
+            "traceability": "runs/one/inputs/traceability.json",
+            "requirement_context": "runs/one/inputs/requirement-context.md",
+            "reference_context": "runs/one/inputs/reference-context.md",
+        },
+        "tasks_lexicon_pass": False,
+        "tasks_lexicon_attempts": 1,
+    })
+
+    assert "Tasks Lexicon Repair" in prompt
+    assert "must return ok=true" in prompt
+
+
 def test_plan_phase_requires_direct_product_input_task_mappings() -> None:
     phase = (
         Path(__file__).parents[2]

@@ -73,6 +73,10 @@ MAX_CONVERGENCE_GUARD_FIRES = 3
 # Max dispatches of any single phase per run before forcing escalation.
 # WHY phases are governed separately by why_fail_count; this cap applies to all others.
 MAX_PHASE_DISPATCHES = 5
+# A planning agent gets the original pass plus two controller-directed repairs
+# to resolve its own product-input mapping omissions.  This is intentionally
+# bounded: the controller may demand evidence, but must never invent mappings.
+MAX_PRODUCT_INPUT_MAPPING_REPAIRS = 2
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
 JUDGMENT_STATE_UPDATE_KEYS = frozenset(
     {
@@ -732,6 +736,8 @@ class SquadController:
                 return SquadResult.from_state(self._state_store.load())
             product_input_error = self._apply_product_input_updates(result, phase)
             if product_input_error:
+                if self._schedule_product_input_mapping_repair(phase, product_input_error):
+                    continue
                 self._block_after_executor_failure(phase, product_input_error, result)
                 return SquadResult.from_state(self._state_store.load())
 
@@ -1445,7 +1451,53 @@ class SquadController:
                     return "invalid product input task mappings: " + "; ".join(blockers)
         except (OSError, ProductInputError) as exc:
             return f"invalid product input updates: {exc}"
+        if phase in {"phase3-plan", "phase3-consensus"}:
+            repaired = self._state_store.load()
+            repaired.pop("product_input_mapping_repair", None)
+            repaired.pop("product_input_mapping_repair_attempts", None)
+            self._state_store.save(repaired)
         return None
+
+    def _schedule_product_input_mapping_repair(self, phase: str, error: str) -> bool:
+        """Re-dispatch PLAN with exact unresolved product-input evidence.
+
+        Product-input mappings are authored by ORCHESTRATOR, not inferred by the
+        controller.  A missing/invalid update therefore gets a bounded repair
+        pass with the ledger blockers injected into its prompt; only exhaustion
+        becomes a terminal block.
+        """
+        if phase not in {"phase3-plan", "phase3-consensus"}:
+            return False
+        prefixes = (
+            "invalid product input task mappings:",
+            "invalid product input updates:",
+        )
+        if not error.startswith(prefixes):
+            return False
+
+        state = self._state_store.load()
+        attempts = state.get("product_input_mapping_repair_attempts", 0)
+        attempts = attempts if isinstance(attempts, int) else 0
+        if attempts >= MAX_PRODUCT_INPUT_MAPPING_REPAIRS:
+            return False
+
+        detail = error.split(":", 1)[1].strip() if ":" in error else error
+        blockers = [item.strip() for item in detail.split(";") if item.strip()]
+        state["product_input_mapping_repair_attempts"] = attempts + 1
+        state["product_input_mapping_repair"] = {
+            "attempt": attempts + 1,
+            "blockers": blockers,
+        }
+        state["phase"] = phase
+        state["status"] = "running"
+        state["blocked_reason"] = None
+        self._state_store.save(state)
+        print(
+            f"[squad] ~ {phase} product-input mapping repair "
+            f"({attempts + 1}/{MAX_PRODUCT_INPUT_MAPPING_REPAIRS})",
+            flush=True,
+        )
+        return True
 
     def _published_phase_a_spec_dir(self, state: dict, active_spec_dir: Path) -> Path:
         published_ref = str(state.get("published_spec_dir") or "").strip()

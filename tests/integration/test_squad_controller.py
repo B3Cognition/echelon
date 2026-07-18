@@ -2217,6 +2217,42 @@ class TestStructuralGuardDeterminism:
         assert nxt == "phase2-decide"
 
 
+class TestProductInputMappingRepair:
+    def test_plan_mapping_failure_is_requeued_with_controller_context(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+
+        repaired = ctrl._schedule_product_input_mapping_repair(
+            "phase3-plan",
+            "invalid product input task mappings: "
+            "IN-REQ-1: unresolved disposition open_question",
+        )
+
+        state = store.load()
+        assert repaired is True
+        assert state["phase"] == "phase3-plan"
+        assert state["status"] == "running"
+        assert state["product_input_mapping_repair_attempts"] == 1
+        assert state["product_input_mapping_repair"]["blockers"] == [
+            "IN-REQ-1: unresolved disposition open_question"
+        ]
+
+    def test_plan_mapping_repair_stops_after_bounded_attempts(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+        state = store.load()
+        state["product_input_mapping_repair_attempts"] = 2
+        store.save(state)
+
+        repaired = ctrl._schedule_product_input_mapping_repair(
+            "phase3-plan",
+            "invalid product input task mappings: "
+            "IN-REQ-1: unresolved disposition open_question",
+        )
+
+        assert repaired is False
+
+
 class TestLexiconGateGuardDeterminism:
     """The lexicon-gate self-loop guards (phase3-plan tasks gate) must route
     deterministically via ConditionEvaluator — never punt to COMMANDER.
