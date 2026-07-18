@@ -382,6 +382,15 @@ def _routing_contract(node: "PhaseNode") -> str:
     if re.search(r"\balignment\s*=", condition_text):
         fields.append(("alignment", "ALIGNED | DRIFT | STOP_AND_ASK"))
 
+    if re.search(r"\blexicon_pass\b", condition_text):
+        fields.append(("lexicon_pass", "true | false  # required when the spec Lexicon gate is enabled"))
+        fields.append(("lexicon_attempts", "<integer>"))
+        fields.append(("lexicon_findings", "<integer>"))
+
+    if "tasks_lexicon_pass" in condition_text:
+        fields.append(("tasks_lexicon_pass", "true | false  # required when the tasks Lexicon gate is enabled"))
+        fields.append(("tasks_lexicon_attempts", "<integer>"))
+
     if not fields:
         return ""
 

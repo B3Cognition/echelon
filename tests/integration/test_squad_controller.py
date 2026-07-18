@@ -2141,7 +2141,11 @@ class TestStructuralGuardDeterminism:
         st = store.load()
         st["iteration"] = 0
         st["max_iterations"] = 3
+        st["spec_dir"] = "runs/run-test/specs/001-demo"
         store.save(st)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
         with patch.object(ctrl, "_judgment_dispatch",
                           side_effect=AssertionError("guard punted to COMMANDER")):
             nxt = ctrl._evaluate_transitions(
@@ -2191,3 +2195,80 @@ class TestLexiconGateGuardDeterminism:
                           side_effect=AssertionError("guard punted to COMMANDER — not deterministic")):
             nxt = ctrl._evaluate_transitions(node, self._result({"tasks_lexicon_pass": True}))
         assert nxt == "phase3-consensus"   # deterministic fall-through on gate pass
+
+    def test_spec_gate_missing_result_redispatches_without_commander(self, tmp_path):
+        """An omitted certificate cannot bypass an enabled spec Lexicon gate."""
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        st = store.load()
+        st["iteration"] = 0
+        st["max_iterations"] = 3
+        st["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(st)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+
+        with patch.object(
+            ctrl,
+            "_judgment_dispatch",
+            side_effect=AssertionError("missing Lexicon result punted to COMMANDER"),
+        ):
+            nxt = ctrl._evaluate_transitions(node, self._result({}))
+
+        assert nxt == "phase1-what"
+
+    def test_spec_gate_rejects_claimed_pass_without_derived_artifact(self, tmp_path):
+        """A declared pass is invalid until the derived requirements exist."""
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        st = store.load()
+        st["iteration"] = 0
+        st["max_iterations"] = 3
+        st["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(st)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+        result = self._result({"lexicon_pass": True})
+
+        with patch.object(
+            ctrl,
+            "_judgment_dispatch",
+            side_effect=AssertionError("missing artifact punted to COMMANDER"),
+        ):
+            nxt = ctrl._evaluate_transitions(node, result)
+
+        assert nxt == "phase1-what"
+        assert result.state_updates["lexicon_pass"] is False
+
+    def test_spec_gate_blocks_on_exhaustion_when_configured_hard(self, tmp_path):
+        """A hard Lexicon gate cannot fall through after its final repair pass."""
+        (tmp_path / ".echelon").mkdir()
+        (tmp_path / ".echelon" / "config.yml").write_text(
+            "lexicon_gate:\n"
+            "  enabled: true\n"
+            "  on_exhausted: block\n"
+            "  artifacts:\n"
+            "    spec:\n"
+            "      enabled: true\n"
+            "      path: requirements.lexicon.md\n",
+            encoding="utf-8",
+        )
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        st = store.load()
+        st["iteration"] = 3
+        st["max_iterations"] = 3
+        st["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(st)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+
+        nxt = ctrl._evaluate_transitions(node, self._result({}))
+
+        assert nxt == "terminal-blocked"
+        state = store.load()
+        assert state["status"] == "blocked"
+        assert state["blocked_reason"] == "lexicon_gate_exhausted"

@@ -13,3 +13,4 @@ def test_lexicon_gate_has_tasks_artifact():
     assert g["artifacts"]["spec"]["path"] == "requirements.lexicon.md"
     assert g["artifacts"]["spec"]["source_ref"] == "spec.md"
     assert g["artifacts"]["spec"]["mode"] == "derived"
+    assert g["on_exhausted"] == "block"

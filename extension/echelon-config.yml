@@ -160,7 +160,7 @@ lexicon_gate:
       spec_ref: requirements.lexicon.md
   glossary_file: glossary.md
   max_repair_attempts: 3
-  on_exhausted: warn
+  on_exhausted: block
 
 # =============================================================================
 # HEURISTICS

@@ -1797,6 +1797,82 @@ class SquadController:
         self._gate_config_cache = cfg
         return cfg
 
+    def _enforce_spec_lexicon_gate_result(
+        self,
+        node: PhaseNode,
+        state: dict,
+        result: SquadAgentResult,
+    ) -> None:
+        """Keep an enabled derived-spec gate from falling through on omission.
+
+        CARTOGRAPHER owns generation and repair, but its result is still a
+        controller contract.  A missing certificate or derived artifact is a
+        failed attempt, never an invitation for a judgment agent to bypass the
+        deterministic self-loop.
+        """
+
+        if node.id != "phase1-what":
+            return
+        gate = self._lexicon_gate_config().get("lexicon_gate", {})
+        if not isinstance(gate, dict) or not gate.get("enabled", False):
+            return
+        artifacts = gate.get("artifacts", {})
+        spec_gate = artifacts.get("spec", {}) if isinstance(artifacts, dict) else {}
+        if not isinstance(spec_gate, dict) or not spec_gate.get("enabled", False):
+            return
+
+        updates = result.state_updates
+        spec_dir_ref = str(updates.get("spec_dir") or state.get("spec_dir") or "").strip()
+        spec_dir = Path(spec_dir_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        if not (spec_dir / "spec.md").is_file():
+            return
+        derived_name = str(spec_gate.get("path") or "requirements.lexicon.md").strip()
+        certificate = updates.get("lexicon_pass")
+        if isinstance(certificate, bool) and certificate and (spec_dir / derived_name).is_file():
+            return
+
+        updates["lexicon_pass"] = False
+        attempts = updates.get("lexicon_attempts")
+        updates["lexicon_attempts"] = attempts if isinstance(attempts, int) else 0
+        findings = updates.get("lexicon_findings")
+        updates["lexicon_findings"] = findings if isinstance(findings, int) else 1
+
+    def _lexicon_gate_must_block_on_exhaustion(
+        self,
+        node: PhaseNode,
+        state: dict,
+        result: SquadAgentResult,
+    ) -> bool:
+        """Block an enabled hard Lexicon gate instead of falling through.
+
+        A `warn` policy deliberately permits downstream review with a recorded
+        warning.  A `block` policy is a hard delivery contract: after the final
+        repair attempt there is no valid transition to a later authoring phase.
+        """
+        if node.id != "phase1-what":
+            return False
+        gate = self._lexicon_gate_config().get("lexicon_gate", {})
+        if not isinstance(gate, dict) or str(gate.get("on_exhausted", "block")).lower() != "block":
+            return False
+        artifacts = gate.get("artifacts", {})
+        spec_gate = artifacts.get("spec", {}) if isinstance(artifacts, dict) else {}
+        if not isinstance(spec_gate, dict) or not spec_gate.get("enabled", False):
+            return False
+        if int(state.get("iteration") or 0) < int(state.get("max_iterations") or self._max_iterations):
+            return False
+        if result.state_updates.get("lexicon_pass") is True:
+            return False
+
+        exhausted = self._state_store.load()
+        exhausted["phase"] = PHASE_TERMINAL_BLOCKED
+        exhausted["status"] = "blocked"
+        exhausted["blocked_reason"] = "lexicon_gate_exhausted"
+        exhausted["lexicon_gate_exhausted"] = True
+        self._state_store.save(exhausted)
+        return True
+
     def _governance_config(self) -> dict:
         """Load the `governance` block so governance.* resolves in transition conditions.
 
@@ -1856,6 +1932,9 @@ class SquadController:
         state = self._state_store.load()
         if node.id in WHY_PHASES:
             self._normalize_why_result_quality_scores(result)
+        self._enforce_spec_lexicon_gate_result(node, state, result)
+        if self._lexicon_gate_must_block_on_exhaustion(node, state, result):
+            return PHASE_TERMINAL_BLOCKED
         # Merge order (lowest→highest precedence): lexicon_gate config, governance
         # config, then state, then result.state_updates — so freshly-written values
         # (quality_scores, tasks_lexicon_pass, etc.) win, while config-namespace

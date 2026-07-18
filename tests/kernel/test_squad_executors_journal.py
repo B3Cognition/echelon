@@ -505,6 +505,28 @@ def test_why2_routing_contract_uses_full_quality_score_shape():
     assert "overall:" in contract
 
 
+def test_spec_lexicon_routing_contract_requires_certificate_fields():
+    """WHAT agents must be told that Lexicon routing is a result contract."""
+    from harness.phase_graph import PhaseNode
+    from harness.squad_executors import _routing_contract
+
+    node = PhaseNode(
+        id="phase1-what",
+        type="agent",
+        transitions=[{
+            "condition": "lexicon_gate.enabled AND NOT lexicon_pass AND iteration < max_iterations",
+            "to": "phase1-what",
+        }],
+    )
+
+    contract = _routing_contract(node)
+
+    assert "lexicon_pass:" in contract
+    assert "lexicon_attempts:" in contract
+    assert "lexicon_findings:" in contract
+    assert "required when the spec Lexicon gate is enabled" in contract
+
+
 def test_allowed_state_updates_contract_renders_empty_allowlist():
     contract = _allowed_state_updates_contract([])
 
