@@ -1560,12 +1560,13 @@ class SquadController:
 
     def _preserve_cartographer_spec_context(self, state: dict) -> None:
         """Record an existing CARTOGRAPHER spec before blocking a failed dispatch."""
+        state.pop("cartographer_resume_existing_spec", None)
         spec_dir_ref = str(state.get("spec_dir") or "").strip()
         if spec_dir_ref:
             candidate = Path(spec_dir_ref)
             if not candidate.is_absolute():
                 candidate = self._project_root / candidate
-            if candidate.exists() and candidate.is_dir():
+            if (candidate / "spec.md").is_file():
                 spec_id = str(state.get("spec_id") or candidate.name).strip()
                 if spec_id:
                     state["spec_id"] = spec_id
@@ -1580,7 +1581,7 @@ class SquadController:
             return
 
         candidate = self._project_root / "specs" / branch
-        if not candidate.exists() or not candidate.is_dir():
+        if not (candidate / "spec.md").is_file():
             return
 
         state["spec_id"] = state.get("spec_id") or branch

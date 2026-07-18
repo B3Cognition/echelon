@@ -190,6 +190,23 @@ def test_checkpoint_successful_phase_returns_true_after_checkpoint(
     assert store.load()["status"] == "running"
 
 
+def test_cartographer_context_preservation_requires_spec_md(tmp_path: Path) -> None:
+    """A reserved run-local path must not suppress the initial WHAT pass."""
+    ctrl, store = _controller(tmp_path)
+    store.initialize("spec-run", "banzai", "msg", 0, "phase1-what")
+    planned = tmp_path / "runs" / "spec-run" / "specs" / "001-demo"
+    planned.mkdir(parents=True)
+    state = store.load()
+    state["spec_id"] = "001-demo"
+    state["spec_dir"] = str(planned.relative_to(tmp_path))
+    store.save(state)
+
+    state = store.load()
+    ctrl._preserve_cartographer_spec_context(state)
+
+    assert "cartographer_resume_existing_spec" not in state
+
+
 class TestConsensusCannotBeSkipped:
     """Regression: phase3-consensus was previously skipped via EVOI fabrication.
     With the harness, phase3-plan → phase3-consensus is condition: always.
@@ -526,6 +543,9 @@ class TestCartographerResumeGuard:
         squad_dir = tmp_path / "runs" / "spec-test"
         staging_dir = squad_dir / "staging"
         staging_dir.mkdir(parents=True)
+        existing_spec = tmp_path / "specs" / "072-pr-pipeline-fix"
+        existing_spec.mkdir(parents=True)
+        (existing_spec / "spec.md").write_text("# Existing spec\n", encoding="utf-8")
         executor = AgentExecutor(
             _mock_provider(),
             graph,

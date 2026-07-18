@@ -290,9 +290,11 @@ You OWN the spec creation workflow. Always call `speckit.specify` yourself — d
 ### Resume / Amendment Guard — Existing Spec Directory
 
 Before Step 1, inspect the current prompt and state for an existing `spec_dir`,
-`feature_branch`, or `cartographer_resume_existing_spec: true`.
+`feature_branch`, or `cartographer_resume_existing_spec: true`. These are only
+candidate locations: the sole proof of a resumable spec is an existing
+`${spec_dir}/spec.md`.
 
-If an existing `spec_dir` is provided and exists on disk:
+If an existing `spec_dir` is provided and `${spec_dir}/spec.md` exists on disk:
 
 1. Treat this dispatch as an enhancement/amendment pass.
 2. **Always keep the existing spec directory; do NOT call `speckit.specify`.**
@@ -306,6 +308,11 @@ This guard exists because `echelon spec resume` re-dispatches the blocked phase 
 human input. If the original CARTOGRAPHER pass already created branch
 `NNN-feature` and `specs/NNN-feature/`, a second `speckit.specify` call allocates
 another branch number and forks the same spec across multiple branches.
+
+A reserved run-local directory without `spec.md` is a Phase A bootstrap target,
+not an existing spec. Treat it as a first WHAT pass: invoke `speckit.specify`.
+Never let the existence of `.echelon/`, `targets.yml`, or other control metadata
+in that directory suppress first-pass spec creation.
 
 ### Step 1: Create Spec via Spec-Kit
 

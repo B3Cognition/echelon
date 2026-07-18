@@ -25,7 +25,12 @@ Read and include in the subagent prompt:
 
 speckit-echelon-cartographer (CARTOGRAPHER) calls `speckit.specify` itself (via Skill tool) on the first WHAT pass, just as speckit-echelon-sage (SAGE) calls Understanding via Skill tool. speckit-echelon-commander (COMMANDER) does NOT call `speckit.specify`.
 
-On resumed/amendment passes, if `state.json.spec_dir` is set or the prompt includes `cartographer_resume_existing_spec: true`, speckit-echelon-cartographer (CARTOGRAPHER) MUST reuse that existing spec directory and MUST NOT call `speckit.specify`, `create-new-feature.sh`, `git checkout -b`, or any other branch-allocating command.
+On resumed/amendment passes, reuse the existing spec directory only when
+`{spec_dir}/spec.md` exists. `cartographer_resume_existing_spec: true` is
+advisory and never overrides this file check. A Phase A bootstrap may reserve a
+run-local `spec_dir` before WHAT, so a directory without `spec.md` is a **first
+WHAT pass**: CARTOGRAPHER MUST invoke `speckit.specify` rather than treating it
+as an amendment.
 
 Use the Agent tool to dispatch a subagent with:
 
@@ -38,8 +43,8 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
-  If this is a first WHAT pass with no existing spec_dir, call `speckit.specify` to create the feature branch and spec directory, then move discovery artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights.
-  If this is a resumed/amendment pass and an existing spec_dir is present in state or prompt context, skip `speckit.specify` and enhance that existing spec in place. Always keep the existing branch and spec directory; do not create or switch to a new numbered branch.
+  If this is a first WHAT pass with no existing `{spec_dir}/spec.md`, call `speckit.specify` to create the feature branch and spec directory, then move discovery artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights. A reserved directory by itself is not an existing spec.
+  If this is a resumed/amendment pass and `{spec_dir}/spec.md` exists, skip `speckit.specify` and enhance that existing spec in place. Always keep the existing branch and spec directory; do not create or switch to a new numbered branch.
   Treat `.specify/memory/constitution.md` as read-only governance context. Apply its principles while authoring `spec.md`; do not edit, patch, append to, or regenerate the constitution from this phase.
   When the Product Input Contract is present, read its requirement snapshot and cite every adopted or challenged `IN-REQ-*` unit. Return one `echelon_result.product_input_updates` entry per normative unit. This is a strict API contract: copy the catalog ID into `input_unit_id`; use exactly one of `included`, `excluded`, `duplicate`, `open_question`, or `conflict` for `disposition`; give an evidence-backed `rationale`; place mapped FR/AC IDs in `spec_ids`; and set `task_ids: []` and `targets: []` in this phase. Never use aliases such as `unit`, `adopted`, or `mapped`. Do not write the ledger file directly; COMMANDER validates and persists the structured updates. Example:
   ```yaml

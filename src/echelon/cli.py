@@ -7221,12 +7221,18 @@ def _preserve_active_spec_context(project_root: Path, state: dict) -> None:
     if state.get("phase") != "phase1-what":
         return
 
+    # Phase A bootstrap reserves a run-local target path before CARTOGRAPHER
+    # has called spec-kit.  A directory alone is therefore not evidence of an
+    # existing spec; carrying this flag into the first WHAT pass suppresses
+    # the required `speckit.specify` invocation.
+    state.pop("cartographer_resume_existing_spec", None)
+
     spec_dir = state.get("spec_dir")
     if spec_dir:
         candidate = Path(spec_dir)
         if not candidate.is_absolute():
             candidate = project_root / candidate
-        if candidate.exists():
+        if (candidate / "spec.md").is_file():
             state["cartographer_resume_existing_spec"] = True
             return
 
@@ -7247,7 +7253,7 @@ def _preserve_active_spec_context(project_root: Path, state: dict) -> None:
         return
 
     candidate = project_root / "specs" / branch
-    if not candidate.exists():
+    if not (candidate / "spec.md").is_file():
         return
 
     state["spec_id"] = state.get("spec_id") or branch

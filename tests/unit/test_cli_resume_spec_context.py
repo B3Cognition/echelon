@@ -44,3 +44,19 @@ def test_resume_does_not_mark_non_spec_branch(tmp_path):
     _preserve_active_spec_context(tmp_path, state)
 
     assert "cartographer_resume_existing_spec" not in state
+
+
+def test_resume_does_not_treat_planned_spec_dir_as_existing_spec(tmp_path):
+    """A Phase A bootstrap path is not resumable until it has spec.md."""
+    from echelon.cli import _preserve_active_spec_context
+
+    planned = tmp_path / "runs" / "run-004" / "specs" / "004-transform-selector"
+    planned.mkdir(parents=True)
+    state = {
+        "phase": "phase1-what",
+        "spec_dir": str(planned.relative_to(tmp_path)),
+    }
+
+    _preserve_active_spec_context(tmp_path, state)
+
+    assert "cartographer_resume_existing_spec" not in state

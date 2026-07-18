@@ -647,7 +647,13 @@ class PhaseExecutor(ABC):
                     "- NEVER switch to PUBLISHED_SPEC_DIR during squad phase execution unless a phase explicitly asks for publication.\n"
                     "- PUBLISHED_SPEC_DIR is the final project target used by build/harness after publication.\n\n"
                 )
+        resumable_spec = False
         if node.id == "phase1-what" and state.get("cartographer_resume_existing_spec"):
+            candidate = Path(str(state.get("spec_dir") or ""))
+            if not candidate.is_absolute():
+                candidate = self._project_root / candidate
+            resumable_spec = (candidate / "spec.md").is_file()
+        if resumable_spec:
             spec_dir = state.get("spec_dir", "")
             feature_branch = state.get("feature_branch", "")
             context_preamble += (
