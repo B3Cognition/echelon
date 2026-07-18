@@ -35,7 +35,8 @@ Every executable task starts with one top-level canonical row:
 
 ## Phase: Foundation
 
-- [ ] T-001 complexity=standard phase=foundation req=FR-015,FR-023 depends=none target=.
+- [x] T-001 complexity=standard phase=foundation req=FR-015,FR-023 depends=none target=.
+  **Status:** DONE
 
   **Title:** Module skeleton — shared constants and dataclasses
 
@@ -49,15 +50,16 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest unit tests load the module via importlib with zero side effects and assert the exact constant values and dataclass field sets against data-model.md.
 
   **Acceptance Criteria:**
-  - [ ] Module imports without executing any pipeline code (import-safe, ADR-008)
-  - [ ] `CATEGORIES` has exactly 5 tokens plus `VERDICTS` exactly 3, matching contracts/model-command-contract.md
-  - [ ] All 7 data-model.md runtime entities exist as dataclasses with the documented fields
+  - [x] Module imports without executing any pipeline code (import-safe, ADR-008)
+  - [x] `CATEGORIES` has exactly 5 tokens plus `VERDICTS` exactly 3, matching contracts/model-command-contract.md
+  - [x] All 7 data-model.md runtime entities exist as dataclasses with the documented fields
 
   **Test Tasks:**
-  - [ ] Constant-value assertions importing the module constants (contract-anchor tests)
-  - [ ] Dataclass instantiation tests for RunConfig, SocraticQuestion, Answer, CallOutcome, ParseFailure
+  - [x] Constant-value assertions importing the module constants (contract-anchor tests)
+  - [x] Dataclass instantiation tests for RunConfig, SocraticQuestion, Answer, CallOutcome, ParseFailure
 
-- [ ] T-002 complexity=standard phase=foundation req=FR-001,FR-002,FR-003,FR-004,FR-007,NFR-003 depends=T-001 target=.
+- [x] T-002 complexity=standard phase=foundation req=FR-001,FR-002,FR-003,FR-004,FR-007,NFR-003 depends=T-001 target=.
+  **Status:** DONE
 
   **Title:** Argument parsing and usage text with egress disclosure
 
@@ -71,17 +73,18 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest argv-vector tests assert defaults (15/`claude`/300), `shlex` splitting of quoted command lines, zero-word rejection, exactly 1 egress-disclosure occurrence in captured `--help` text, plus parametrized non-positive vectors (`--questions 0/-1`, `--timeout 0/-1` → exit-1 argument-error class, ISS-308) and a sub-second `--timeout 0.3` acceptance vector (ISS-305).
 
   **Acceptance Criteria:**
-  - [ ] Defaults are exactly 15, `claude`, 300 (FR-002/FR-003/FR-004)
-  - [ ] `--claude-cmd "claude --safe-mode"` splits to executable `claude` (FR-007)
-  - [ ] `--help` output contains exactly 1 egress disclosure (NFR-003)
-  - [ ] Argument errors never surface as exit code 2 (U-007 boundary)
-  - [ ] Non-positive `--questions`/`--timeout` values reject on the exit-1 path (ISS-308); sub-second positive `--timeout` values parse (ISS-305)
+  - [x] Defaults are exactly 15, `claude`, 300 (FR-002/FR-003/FR-004)
+  - [x] `--claude-cmd "claude --safe-mode"` splits to executable `claude` (FR-007)
+  - [x] `--help` output contains exactly 1 egress disclosure (NFR-003)
+  - [x] Argument errors never surface as exit code 2 (U-007 boundary)
+  - [x] Non-positive `--questions`/`--timeout` values reject on the exit-1 path (ISS-308); sub-second positive `--timeout` values parse (ISS-305)
 
   **Test Tasks:**
-  - [ ] Argument-handling group: defaults, overrides, quoting, zero-word value, help-text disclosure count
-  - [ ] Bounds vectors: non-positive `--questions`/`--timeout` rejection plus sub-second `--timeout` acceptance (ISS-308/ISS-305)
+  - [x] Argument-handling group: defaults, overrides, quoting, zero-word value, help-text disclosure count
+  - [x] Bounds vectors: non-positive `--questions`/`--timeout` rejection plus sub-second `--timeout` acceptance (ISS-308/ISS-305)
 
-- [ ] T-003 complexity=standard phase=foundation req=FR-005,FR-006,FR-012,FR-042,NFR-005 depends=T-002 target=.
+- [x] T-003 complexity=standard phase=foundation req=FR-005,FR-006,FR-012,FR-042,NFR-005 depends=T-002 target=.
+  **Status:** DONE
 
   **Title:** Pre-flight checks, spec loading, fail() choke point, main() exit-code spine
 
@@ -95,14 +98,14 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest tmp_path matrix proves exit 1 (missing/unreadable spec; read-only directory) and exit 2 (missing executable, message contains 1 installation pointer) each with exactly 0 model subprocess launches and exactly 1 stderr line.
 
   **Acceptance Criteria:**
-  - [ ] AC-013: missing/unreadable spec → exit 1, 0 model calls
-  - [ ] AC-019: read-only spec directory → exit 1, 0 model calls
-  - [ ] AC-014: executable not found → exit 2, exactly 1 installation pointer, 0 reports written
-  - [ ] Every non-zero exit emits exactly 1 stderr diagnostic line (NFR-005)
+  - [x] AC-013: missing/unreadable spec → exit 1, 0 model calls
+  - [x] AC-019: read-only spec directory → exit 1, 0 model calls
+  - [x] AC-014: executable not found → exit 2, exactly 1 installation pointer, 0 reports written
+  - [x] Every non-zero exit emits exactly 1 stderr diagnostic line (NFR-005)
 
   **Test Tasks:**
-  - [ ] Pre-flight ordering test (readable checked before writable before which)
-  - [ ] Exit-code subset of the SC-003 matrix for codes 1 plus 2
+  - [x] Pre-flight ordering test (readable checked before writable before which)
+  - [x] Exit-code subset of the SC-003 matrix for codes 1 plus 2
 
 ## Checkpoint: Foundation Complete
 
@@ -115,7 +118,8 @@ Every executable task starts with one top-level canonical row:
 
 ## Phase: Core
 
-- [ ] T-004 complexity=standard phase=core req=FR-014,FR-015,FR-018,FR-021,FR-022,FR-023 depends=T-003 target=.
+- [x] T-004 complexity=standard phase=core req=FR-014,FR-015,FR-018,FR-021,FR-022,FR-023 depends=T-003 target=.
+  **Status:** DONE
 
   **Title:** Line numbering and round-1/round-2 prompt builders (pure)
 
@@ -129,14 +133,15 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest string assertions on built prompts: 1-based `N: ` numbering, question cap N and all 5 category tokens in round 1, `{id, question}`-only payload and zero round-1 leakage tokens in round 2.
 
   **Acceptance Criteria:**
-  - [ ] `numbered_text` starts at 1 and covers every line (FR-018)
-  - [ ] Round-1 prompt carries the numbered spec plus the FR-015 instruction (FR-014)
-  - [ ] Round-2 prompt contains 0 round-1 categories, targets, line references, or reasoning (FR-022, AC-011 convention)
+  - [x] `numbered_text` starts at 1 and covers every line (FR-018)
+  - [x] Round-1 prompt carries the numbered spec plus the FR-015 instruction (FR-014)
+  - [x] Round-2 prompt contains 0 round-1 categories, targets, line references, or reasoning (FR-022, AC-011 convention)
 
   **Test Tasks:**
-  - [ ] Prompt-assembly group: numbering, round-1 content, round-2 leakage-absence matrix
+  - [x] Prompt-assembly group: numbering, round-1 content, round-2 leakage-absence matrix
 
-- [ ] T-005 complexity=complex phase=core req=FR-010,FR-011,FR-043 depends=T-004 target=.
+- [x] T-005 complexity=complex phase=core req=FR-010,FR-011,FR-043 depends=T-004 target=.
+  **Status:** DONE
 
   **Title:** Isolated subprocess runner with timeout and outcome classification
 
@@ -150,14 +155,14 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest with tmp_path-generated recording stubs proves: fresh `sue-challenge-*` cwd outside the repo per invocation (AC-012), argv tail `-p`, prompt arrived on stdin read to EOF; a sleeping stub with a sub-second `--timeout` yields kind `timeout` with partial output preserved.
 
   **Acceptance Criteria:**
-  - [ ] AC-012: recorded cwd is exactly 1 newly created temp directory outside the repository per call (FR-010)
-  - [ ] Temp cwd is removed after each call, success or failure
-  - [ ] Timeout kills the subprocess, preserving partial output (FR-011)
-  - [ ] Stub executable substitution works end-to-end through the real subprocess spawn (FR-043)
+  - [x] AC-012: recorded cwd is exactly 1 newly created temp directory outside the repository per call (FR-010)
+  - [x] Temp cwd is removed after each call, success or failure
+  - [x] Timeout kills the subprocess, preserving partial output (FR-011)
+  - [x] Stub executable substitution works end-to-end through the real subprocess spawn (FR-043)
 
   **Test Tasks:**
-  - [ ] cwd/argv/stdin-recording stub tests
-  - [ ] Sleeping-stub timeout test with sub-second budget (suite stays under the 30 s pre-commit target)
+  - [x] cwd/argv/stdin-recording stub tests
+  - [x] Sleeping-stub timeout test with sub-second budget (suite stays under the 30 s pre-commit target)
 
 - [ ] T-006 complexity=standard phase=core req=FR-026,FR-027 depends=T-005 target=.
 

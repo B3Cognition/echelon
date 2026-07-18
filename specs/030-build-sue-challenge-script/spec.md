@@ -1,8 +1,11 @@
+---
+status: In Progress
+---
 # Feature Specification: SUE Challenge Script
 
 **Feature Branch**: `030-build-sue-challenge-script`
 **Created**: 2026-07-18
-**Status**: Planned
+**Status**: In Progress
 **Input**: User description: "Build the SUE challenge script: a standalone Python script (scripts/sue_challenge.py) that challenges a specification via Socratic question-answer dialogue using two isolated claude -p calls, per the attached approved design document. Implement exactly the v1 scope: interface, JSON schemas, isolation contract, report format, error handling, and pytest unit tests as designed."
 
 > The SUE challenge script interrogates a markdown specification through a two-round Socratic dialogue. Round 1 asks a challenge model to generate probing questions about the specification. Round 2 asks a fresh, isolated reading of the same model to answer each question using only the specification text. Questions the text cannot answer become findings in a report written beside the challenged specification. The mechanism operationalizes the grounding rule: the engine asks, the text testifies, the human decides. This specification implements the approved v1 design exactly: the question-to-answer dialogue tier only.
