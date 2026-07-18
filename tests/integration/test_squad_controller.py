@@ -2027,6 +2027,68 @@ class TestCommanderJudgmentStateUpdates:
 
         assert store.load()["why_fail_count"] == 0
 
+    def test_banzai_escalation_applies_commander_next_phase(self, tmp_path):
+        """A banzai judgment route must replace terminal-blocked, not become metadata."""
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "next_phase": "checkpoint-assess",
+                    "escalation_question": None,
+                    "escalation_resolved": True,
+                    "escalation_resolver": "COMMANDER-banzai",
+                    "blocked_reason": None,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "terminal-blocked", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "status": "running",
+                "escalation_question": "Two consecutive WHY2 failures",
+                "blocked_reason": "consecutive_why_fails",
+            }
+        )
+        store.save(state)
+
+        ctrl._judgment_dispatch_escalation(
+            "Two consecutive WHY2 failures",
+            "phase1-why2",
+            recovery_reason="consecutive_why_fails",
+        )
+
+        resumed = store.load()
+        assert resumed["phase"] == "checkpoint-assess"
+        assert "next_phase" not in resumed
+
+    def test_terminal_blocked_never_runs_phase_a_finalization(self, tmp_path):
+        """A terminal block is a stop state, even if an earlier handler set running."""
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "terminal-blocked", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "status": "running",
+                "blocked_reason": "consecutive_why_fails",
+                "escalation_question": "Two consecutive WHY2 failures",
+            }
+        )
+        store.save(state)
+
+        with patch.object(ctrl, "_publish_terminal_phase_a_artifacts_if_available") as publish:
+            result = ctrl.run("msg", "banzai")
+
+        assert result.status == "blocked"
+        assert store.load()["blocked_reason"] == "consecutive_why_fails"
+        publish.assert_not_called()
+
     def test_banzai_phase_dispatch_limit_recovery_resets_capped_phase(self, tmp_path):
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(

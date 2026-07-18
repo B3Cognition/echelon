@@ -637,6 +637,18 @@ class SquadController:
 
             if phase in TERMINAL_PHASES:
                 state = self._state_store.load()
+                # ``terminal-blocked`` is not finalization.  It is a hard stop
+                # requested by a guard, and must never be converted into a
+                # readiness check or a successful completion merely because an
+                # earlier banzai handler temporarily set status=running.
+                if phase == PHASE_TERMINAL_BLOCKED:
+                    if state.get("status") != "blocked":
+                        state["status"] = "blocked"
+                        state["blocked_reason"] = (
+                            state.get("blocked_reason") or "terminal_blocked"
+                        )
+                        self._state_store.save(state)
+                    return SquadResult.from_state(self._state_store.load())
                 # Preserve "blocked" status set by guards (e.g. consecutive-fail).
                 # Only write "done" when not already in a terminal-blocked state.
                 if state.get("status") != "blocked":
@@ -2210,9 +2222,21 @@ class SquadController:
             )
 
         result = self._provider.exec_agent(str(self._project_root), context)
+        requested_phase = str(
+            result.state_updates.get("next_phase")
+            or result.state_updates.get("phase")
+            or ""
+        ).strip()
+        if requested_phase and requested_phase not in self._graph.all_phase_ids():
+            self._block_after_judgment_validation_failure(
+                blocked_phase,
+                f"judgment returned invalid next_phase {requested_phase!r}",
+            )
+            return result
         if not self._apply_judgment_state_updates(
             result,
             blocked_phase,
+            exclude_keys={"next_phase", "phase"},
             delete_null=True,
         ):
             return result
@@ -2225,6 +2249,17 @@ class SquadController:
                 "phase": capped_phase,
                 "resolver": "COMMANDER-banzai",
             }
+            self._state_store.save(recovered)
+        if requested_phase:
+            recovered = self._state_store.load()
+            recovered["phase"] = requested_phase
+            recovered.pop("next_phase", None)
+            self._state_store.save(recovered)
+        elif blocked_phase and blocked_phase != PHASE_TERMINAL_BLOCKED:
+            # A judgment that only answers the question resumes the phase that
+            # raised it; it must not leave the controller on terminal-blocked.
+            recovered = self._state_store.load()
+            recovered["phase"] = blocked_phase
             self._state_store.save(recovered)
         self._write_journal_entries(result, blocked_phase)
 

@@ -5660,7 +5660,17 @@ def _phase_a_readiness_candidate_dirs(
     add(active_spec_dir)
     add(published_spec_dir)
 
-    spec_id = str(current_state.get("spec_id") or "").strip()
+    # A complete spec-kit name is authoritative.  A legacy ``spec_id: 004``
+    # must not cause a second ``specs/004`` artifact tree to be inspected once
+    # state already identifies ``004-feature-name``.
+    canonical_spec_id = ""
+    for key in ("specify_feature_directory", "spec_dir", "published_spec_dir"):
+        candidate_id = _spec_id_from_ref(str(current_state.get(key) or ""))
+        if re.fullmatch(r"\d{3,4}-[A-Za-z0-9][A-Za-z0-9._-]*", candidate_id):
+            canonical_spec_id = candidate_id
+            break
+
+    spec_id = canonical_spec_id or str(current_state.get("spec_id") or "").strip()
     if spec_id:
         add(project_root / "specs" / spec_id)
         if run_dir is not None:
@@ -5671,6 +5681,10 @@ def _phase_a_readiness_candidate_dirs(
         if not ref:
             continue
         add(Path(ref))
+
+    specified_ref = str(current_state.get("specify_feature_directory") or "").strip()
+    if specified_ref:
+        add(Path(specified_ref))
 
     staging_ref = str(current_state.get("staging_dir") or "").strip()
     if staging_ref:
@@ -6338,6 +6352,31 @@ def _cmd_continue(
             flush=True,
         )
         start_phase(next_phase, verb="Continuing from verified Lexicon recovery")
+        return
+
+    # Echelon versions before the banzai-routing fix persisted a COMMANDER
+    # ``next_phase`` as inert metadata, then incorrectly entered Phase-A
+    # finalization from ``terminal-blocked``.  Recover that exact historic
+    # state without treating the readiness failure as a reason to rewind.
+    persisted_banzai_phase = str(state.get("next_phase") or "").strip()
+    if (
+        state.get("status") == "blocked"
+        and state.get("phase") == "terminal-blocked"
+        and state.get("blocked_reason") == "phase_a_readiness_failed"
+        and state.get("escalation_resolver") == "COMMANDER-banzai"
+        and state.get("escalation_resolved") is True
+        and persisted_banzai_phase in _ROADMAP_PHASES
+    ):
+        state.pop("next_phase", None)
+        print(
+            "[squad] Recovering the persisted banzai COMMANDER route before finalization.",
+            flush=True,
+        )
+        start_phase(
+            persisted_banzai_phase,
+            verb="Continuing from accepted banzai judgment",
+            clear_recovery=True,
+        )
         return
 
     action = _classify_run_recovery(state, project_root=project_root)

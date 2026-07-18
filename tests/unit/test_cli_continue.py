@@ -13,6 +13,7 @@ from echelon.cli import (
     _cmd_continue,
     _ensure_active_continue_spec_context,
     _next_continue_phase,
+    _phase_a_readiness_candidate_dirs,
 )
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
 
@@ -114,6 +115,35 @@ def test_continue_derives_published_slug_from_run_local_specify_directory(
     assert state["published_spec_dir"] == "specs/004-transform-selector-above-stat"
 
 
+def test_readiness_candidates_exclude_stale_short_spec_alias_when_slug_is_known(
+    tmp_path: Path,
+) -> None:
+    """A full spec-kit slug must prevent readiness from inspecting specs/<number>."""
+    run_dir = tmp_path / "runs" / "spec-test"
+    active = run_dir / "specs" / "004-transform-selector-above-stat"
+    published = tmp_path / "specs" / "004-transform-selector-above-stat"
+    active.mkdir(parents=True)
+    published.mkdir(parents=True)
+
+    candidates = _phase_a_readiness_candidate_dirs(
+        tmp_path,
+        {
+            "spec_id": "004",
+            "spec_dir": "runs/spec-test/specs/004-transform-selector-above-stat",
+            "published_spec_dir": "specs/004-transform-selector-above-stat",
+            "specify_feature_directory": "runs/spec-test/specs/004-transform-selector-above-stat",
+        },
+        run_dir,
+        active_spec_dir=active,
+        published_spec_dir=published,
+    )
+
+    assert active in candidates
+    assert published in candidates
+    assert run_dir / "specs" / "004" not in candidates
+    assert tmp_path / "specs" / "004" not in candidates
+
+
 def test_continue_recovers_terminal_lexicon_block_after_independent_validation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -172,6 +202,42 @@ THEN: The dashboard is visible
     assert state["lexicon_pass"] is True
     assert state["lexicon_findings"] == 0
     assert calls == [["build the dashboard", "--mode", "semi"]]
+
+
+def test_continue_honors_persisted_banzai_judgment_after_readiness_misroute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A historic terminal block must honor COMMANDER's saved executable route."""
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_a_readiness_failed",
+            "escalation_resolved": True,
+            "escalation_resolver": "COMMANDER-banzai",
+            "next_phase": "checkpoint-assess",
+            "spec_id": "004-transform-selector-above-stat",
+            "spec_dir": "runs/spec-test/specs/004-transform-selector-above-stat",
+            "user_message": "add transform selector",
+            "autonomy_mode": "banzai",
+        },
+    )
+    spec_dir = run_dir / "specs" / "004-transform-selector-above-stat"
+    spec_dir.mkdir(parents=True)
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_run", lambda args, **_kwargs: calls.append(args))
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "checkpoint-assess"
+    assert state["status"] == "running"
+    assert state["blocked_reason"] is None
+    assert "next_phase" not in state
+    assert calls == [["add transform selector", "--mode", "banzai"]]
 
 
 def test_continue_routes_to_constitution_without_phase_provenance(tmp_path: Path) -> None:
