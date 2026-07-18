@@ -4,23 +4,36 @@
 
 - Spec: 030-build-sue-challenge-script (runs/spec-20260718-104053-744160/specs/030-build-sue-challenge-script/spec.md)
 - Orchestrator: speckit-echelon-orchestrator (ORCHESTRATOR)
-- Mode: first-pass
+- Mode: consensus
 - Date: 2026-07-18
 
 ## Effort Basis (GATEKEEPER inputs — no new estimates)
 
 Per Rule 3, ORCHESTRATOR does not estimate effort. All per-task figures below are a
 proportional decomposition of GATEKEEPER's estimates.md totals: most-likely 10 h
-(0.25 person-weeks), interval 4–24 h (0.10–0.60 person-weeks, low confidence,
-uncalibrated domain). Per-task shares sum exactly to the 10 h most-likely figure; the
-manual acceptance gate (T-S01) sits in the acceptance-run overhead GATEKEEPER noted
-separately in prioritization.md and is operator-paced, not developer effort.
+(0.25 person-weeks). At consensus, GATEKEEPER's implementability-report.md tightened
+the interval to 4–18 h (0.10–0.45 person-weeks, confidence medium) — the first-pass
+worst case ("extraction contract needs redesign after the OQ-001 spike") is defused by
+the executed spike. Per-task shares are unchanged and sum exactly to the 10 h
+most-likely figure; the manual acceptance gate (T-S01) sits in the acceptance-run
+overhead GATEKEEPER noted separately in prioritization.md and is operator-paced, not
+developer effort.
+
+## Consensus Re-Evaluation (PLAN2)
+
+ASSESS2 scored all 15 tasks READY; zero tasks were added, split, or re-sequenced, and
+no specialist output required a new task (SENTINEL's test strategy is already embedded
+in the per-task Test contracts; no SECURITY/PERFORMANCE specialist artifacts exist for
+this run). The critical path is therefore **unchanged**: the same linear chain
+T-001→…→T-014→T-S01. The only task-content deltas (ISS-308 bounds vectors and the
+ISS-305 sub-second timeout clarification, both on T-002) add test vectors inside an
+existing 0.5 h share and do not move the path.
 
 ## Minimum Timeline
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| Critical path effort | 10 h most-likely (4–24 h interval) | = the entire build chain T-001→T-014; single-file deliverable serializes everything |
+| Critical path effort | 10 h most-likely (4–18 h consensus interval) | = the entire build chain T-001→T-014; single-file deliverable serializes everything |
 | Critical path task count | 14 build tasks (+ 1 manual gate T-S01) | every build task is on the critical path |
 | Parallelizable task count | 0 | all tasks mutate `scripts/sue_challenge.py` and/or `tests/unit/test_sue_challenge.py` — shared mutable state everywhere |
 

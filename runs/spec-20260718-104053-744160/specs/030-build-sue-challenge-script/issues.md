@@ -1,209 +1,173 @@
-# Issues — WHY2
+# Issues — WHY3
 
 ## Summary
-- **CRITICAL:** 0
-- **HIGH:** 0
-- **MEDIUM:** 4
-- **LOW:** 7
-- **Verdict:** PASS
+- **CRITICAL:** 1
+- **HIGH:** 3
+- **MEDIUM:** 1
+- **LOW:** 5
+- **Verdict:** FAIL
 
-All 8 Understanding quality gates pass (see quality-gates.md). No CRITICAL or HIGH issues found. All 11 issues below are advisory — none is a required amendment blocking the transition to ASSESS; MEDIUMs should be addressed when spec.md or the base artifacts are next touched, and unaddressed MEDIUMs escalate to HIGH at WHY3 per the iteration-awareness rule.
+All 8 Understanding document-level quality gates pass (see quality-gates.md); the FAIL is issue-driven. The CRITICAL is a WHY3 automation-coverage protocol violation (missing acceptance record in state.json — a cheap, deterministic fix owned by COMMANDER). The 3 HIGHs are the WHY2 MEDIUMs that WHY2 explicitly warned would escalate if unaddressed — spec.md and mental-model.md received zero amendments between WHY2 and WHY3, so the escalation rule fires. Every required fix is small (two one-line spec rewordings, one one-word mental-model deletion, one dataclass type change, one state record); a re-validation after they land should PASS cleanly.
 
-WHY1 follow-up: all 3 WHY1 HIGH issues were substantively addressed in the spec (ISS-001 → FR-010 + Limitations + OQ-002; ISS-002 → FR-026/FR-027 extraction contract + OQ-001; ISS-003 → AC-023/SC-001 explicit tolerance). WHY1 MEDIUMs ISS-004..ISS-007 are encoded as FR-007, FR-006/FR-019/FR-020/FR-041, FR-038/AC-008, FR-018 respectively. Residuals from WHY1 ISS-006/ISS-008/ISS-010 (base-artifact patches, spike scoping) are carried below as ISS-204, ISS-205, ISS-209.
+**WHY2 follow-up disposition (11 issues):** 6 substantively addressed at HOW — ISS-202 (out-of-range citations → ADR-007 `(not present in the specification)` render marker, contract-pinned and test-enumerated), ISS-206 (category enum tokens pinned as ADR-002 shared constants; FR-015 names declared display names), ISS-207 (timeout dump content assigned: partial output + `TIMEOUT after <T>s` line), ISS-208 (bounds assigned in data-model: `> 0` constraints — small test-enumeration residual carried as ISS-308), ISS-209 (A-005 size measurement encoded as T-S01 step 3), ISS-210 (decode disposition assigned: UTF-8 `errors="replace"`, run proceeds). 3 NOT addressed → escalated (ISS-302, ISS-303, ISS-304 below). 2 LOWs not addressed → carried at LOW (ISS-309, ISS-310).
 
 ## Issues
 
-### ISS-201: Element-counting semantics differ between the round-1 and round-2 prompt requirements
-- **Severity:** MEDIUM
-- **Type:** inconsistency
-- **Description:** FR-014 counts the round-1 instruction as one of its "exactly 2 elements" (spec text + generation instruction). FR-021 says the round-2 prompt holds "exactly 2 content blocks" (spec text + question ids/texts) — yet FR-023 mandates a round-2 answering instruction that must also be in that prompt. Under FR-014's counting convention the round-2 prompt contains 3 elements; under a literal reading of FR-021/AC-011, a prompt containing the FR-023 instruction fails the "exactly 2" check.
-- **Affected artifact:** spec.md
-- **Affected section:** FR-014, FR-021, FR-023, AC-011
-- **Evidence:** FR-014: "exactly 2 elements: the full line-numbered specification text (FR-018) plus the question-generation instruction of FR-015". FR-021: "exactly 2 content blocks: the line-numbered specification text (FR-018) plus the round-1 question identifiers with their question texts". FR-023: "The round-2 instruction MUST direct the model…" — an element FR-021 does not count.
-- **Recommendation:** Reword FR-021 to "exactly 3 elements: the line-numbered specification text, the round-1 question identifiers with their question texts, plus the answering instruction of FR-023", or add a glossary definition making "content block" exclude instructions — and align AC-011's stub assertion with whichever convention is chosen. Intent is recoverable from context (FR-022 + FR-023 make it obvious the instruction is present), so this is advisory, but a literal AC-011 test would currently be written against the wrong count.
-- **Responsible agent:** WHAT
-
-### ISS-202: No assigned behavior for out-of-range or non-positive line references at render time
-- **Severity:** MEDIUM
+### ISS-301: Escalated coverage rows SC-001/AC-023 have no user-acceptance record in state.json
+- **Severity:** CRITICAL
 - **Type:** incompleteness
-- **Description:** FR-016 and FR-024 validate line references only as "a list of integer line references". A reference of 0, a negative number, or a number beyond the specification's last line passes validation, but FR-039 then requires the report to "quote exactly 1 line of text from the specification file" for it — a line that does not exist. No requirement assigns behavior to this path (skip with a note, clamp, render as unverifiable, or classify as parse failure).
-- **Affected artifact:** spec.md
-- **Affected section:** FR-016, FR-024, FR-039, AC-009
-- **Evidence:** FR-024: "…plus a list of integer evidence line references"; FR-039: "For each cited evidence line number, the report MUST quote exactly 1 line of text from the specification file". Nothing constrains the integers to [1, line_count].
-- **Recommendation:** Assign one deterministic behavior. Recommended: render out-of-range citations as an explicit "line N not present in specification" marker rather than failing the run (a validation-failure classification would burn the single retry on a cosmetic model slip). SENTINEL needs this decision to enumerate the rendering unit tests.
-- **Responsible agent:** WHAT
+- **Description:** coverage-map.md classifies SC-001 and AC-023 (the manual live acceptance run) as coverage_type `escalate`. The WHY3 automation coverage check requires every escalated requirement to terminate in an explicit `deferred_risky_accepted` entry in state.json; state.json contains no such key (verified directly). SENTINEL's rationale — "user decision is recorded in the approved spec" — is an agent inferring acceptance, which is precisely what the recorded-acceptance rule exists to prevent. Requirement SC-001/AC-023 was escalated but no user acceptance is recorded in state.json.
+- **Affected artifact:** coverage-map.md, state.json
+- **Affected section:** coverage-map.md Escalations table; state.json (missing `deferred_risky_accepted`)
+- **Evidence:** `state.json` top-level keys enumerated 2026-07-18: `deferred_risky_accepted` absent. coverage-map.md Escalations: "resolved — user decision is recorded in the approved spec (SC-001, AC-023) … no new approval required".
+- **Recommendation:** COMMANDER records a `deferred_risky_accepted` entry for SC-001/AC-023 in state.json, citing the approved spec text (SC-001, AC-023, plan.md Final Phase) as the acceptance evidence — or surfaces the one-line confirmation to the user if autonomy mode requires it. This is a state-recording formality, not a re-decision: the substantive choice (single manual live gate with encoded tolerance) is genuinely spec-mandated. WHY3 cannot PASS until the record exists.
+- **Responsible agent:** HOW (COMMANDER — deterministic state write)
 
-### ISS-203: AC-002 "exactly 4 facts" conflicts with the truncation-note header on truncated runs
-- **Severity:** MEDIUM
+### ISS-302: FR-021/AC-011 "exactly 2 content blocks" still contradicts FR-023's mandated instruction — spec unamended since WHY2
+- **Severity:** HIGH — Previously raised in WHY2 as ISS-201 (MEDIUM), not addressed
 - **Type:** inconsistency
-- **Description:** AC-002's Given clause covers any "completed challenge run" and asserts the header "states exactly 4 facts". FR-036 and AC-020 require a 5th header element — the truncation note — whenever round 1 over-produced. For a completed run with truncation, AC-002 and AC-020 assert conflicting header contents (acceptance_criteria_conflict).
+- **Description:** FR-014 counts the round-1 instruction as one of its "exactly 2 elements"; FR-021/AC-011 count "exactly 2 content blocks" in the round-2 prompt while FR-023 mandates an answering instruction that FR-014's convention would count as a third element. WHY2 flagged this with the explicit warning that a literal AC-011 test would assert the wrong count. Since WHY2: the spec was NOT reworded; instead the counting convention ("a content block is a data payload; instructions are not content blocks") was pinned normatively in contracts/model-command-contract.md, and SENTINEL's tests adopt it. That mitigation is real — but plan.md (Risks row 3), test-strategy.md (Known Test-Enumeration Hazard), and coverage-map.md (Gap Analysis row 1) ALL still route the one-line rewording to CARTOGRAPHER, and plan.md's own precondition ("before phase3-sentinel") has already been missed. The authoritative artifact now contradicts the frozen build contract, and SPEC GUARD verifies code against spec.md, not contracts.
 - **Affected artifact:** spec.md
-- **Affected section:** AC-002, AC-020, FR-036
-- **Evidence:** AC-002: "the report header states exactly 4 facts…"; FR-036: "exactly 4 base facts — … — plus the FR-019 truncation note when truncation occurred".
-- **Recommendation:** Scope AC-002's Given clause to runs without truncation, or reword its Then clause to "states exactly 4 base facts" mirroring FR-036's wording.
-- **Responsible agent:** WHAT
+- **Affected section:** FR-021 (line 163), AC-011 (line 45), FR-023, FR-014
+- **Evidence:** spec.md line 163 verbatim on 2026-07-18: "exactly 2 content blocks: the line-numbered specification text (FR-018) plus the round-1 question identifiers with their question texts" — unchanged since WHY2. contracts/model-command-contract.md: "a **content block** is a data payload … Flagged for CARTOGRAPHER's FR-021/AC-011 wording alignment."
+- **Recommendation:** CARTOGRAPHER applies the one-line rewording before build: either reword FR-021/AC-011 to count 3 elements including the FR-023 instruction, or add the contract's content-block definition to spec.md's Glossary Additions so the spec itself carries the convention its ACs are tested under.
+- **Responsible agent:** WHAT (CARTOGRAPHER)
 
-### ISS-204: mental-model.md still asserts atomic report writes that spec U-010 explicitly declined
-- **Severity:** MEDIUM
+### ISS-303: AC-002 "exactly 4 facts" still conflicts with the truncation-note header — spec unamended since WHY2
+- **Severity:** HIGH — Previously raised in WHY2 as ISS-203 (MEDIUM), not addressed
 - **Type:** inconsistency
-- **Description:** The spec's Resolved-During-WHAT table (U-010) decides "plain overwrite of the report file; no atomicity or concurrency guarantee claimed in v1" (FR-034). mental-model.md's Challenge Report lifecycle still reads "written atomically at the end of a successful run" — the exact embellishment WHY1 ISS-008 flagged. The spec side was fixed (option 1 of the WHY1 recommendation); the model was not patched, and the two artifacts now directly contradict each other. Risk: SENTINEL derives an atomicity test from the mental model for behavior the spec deliberately does not guarantee.
+- **Description:** AC-002's Given clause covers any completed challenge run and asserts a header of "exactly 4 facts"; FR-036/AC-020 require a 5th header element (the truncation note) on truncated runs — an acceptance_criteria_conflict. Since WHY2 the spec was not touched; contracts/report-format.md pins "4 base facts; the truncation note is the only conditional addition", which resolves it for the renderer and tests, but the two ACs still assert conflicting header contents in the authoritative artifact.
+- **Affected artifact:** spec.md
+- **Affected section:** AC-002 (line 23), AC-020, FR-036
+- **Evidence:** spec.md line 23 verbatim on 2026-07-18: "the report header states exactly 4 facts" — unchanged since WHY2, versus FR-036 "exactly 4 base facts — … — plus the FR-019 truncation note when truncation occurred".
+- **Recommendation:** CARTOGRAPHER rewords AC-002's Then clause to "exactly 4 base facts" (mirroring FR-036) or scopes its Given clause to non-truncated runs. One line.
+- **Responsible agent:** WHAT (CARTOGRAPHER)
+
+### ISS-304: mental-model.md still asserts atomic report writes that spec U-010 explicitly declined
+- **Severity:** HIGH — Previously raised in WHY2 as ISS-204 (MEDIUM) and in WHY1 as ISS-008 (LOW); not addressed across two passes
+- **Type:** inconsistency
+- **Description:** Spec decision U-010 (encoded in FR-034) is "plain overwrite … no atomicity or concurrency guarantee claimed in v1". mental-model.md's Challenge Report lifecycle still reads "written atomically at the end of a successful run". data-model.md explicitly declares the mental-model claim "superseded" — proof the squad knows the two artifacts contradict — yet the one-word source patch was never applied. This has now survived two escalation warnings; the persistence itself is the finding: base-artifact drift is being tolerated rather than repaired, and any future consumer reading mental-model.md without data-model.md's caveat inherits a false guarantee (e.g. deriving an atomic-rename test ADR-007 explicitly rejected).
 - **Affected artifact:** mental-model.md
 - **Affected section:** Challenge Report — Lifecycle (line 39)
-- **Evidence:** mental-model.md: "written atomically at the end of a successful run"; spec.md U-010: "Plain overwrite of the report file; no atomicity or concurrency guarantee claimed in v1".
-- **Recommendation:** Delete the word "atomically" from mental-model.md's Challenge Report lifecycle (one-line patch). Previously raised in WHY1 as ISS-008 (LOW); escalated one step because the artifacts now actively contradict rather than merely embellish.
+- **Evidence:** mental-model.md line 39 verbatim on 2026-07-18: "written atomically at the end of a successful run; regenerable at will." spec.md U-010: "Plain overwrite of the report file; no atomicity or concurrency guarantee claimed in v1."
+- **Recommendation:** Delete the word "atomically" (replace with "written by plain overwrite"). One word. Batch the ISS-309 collapsed-rendering patch into the same touch.
 - **Responsible agent:** DISCOVER
 
-### ISS-205: Base-artifact report definitions still omit the collapsed audit rendering
+### ISS-305: RunConfig types timeout_seconds as int while the test strategy depends on sub-second timeout values
+- **Severity:** MEDIUM
+- **Type:** inconsistency
+- **Description:** data-model.md declares `timeout_seconds | int | default 300; > 0`. test-strategy.md's timeout-boundary row specifies "`--timeout` ≈ 0.2–0.5 s to keep suite fast", and tasks.md T-005/T-009/T-014 all rely on "sub-second `--timeout`" stubs (the < 30 s pre-commit target, SNT-008, depends on this). An integer-typed option cannot express 0.2–0.5: as written, either argparse rejects the test values or truncates them to 0 — which the `> 0` constraint then rejects. The two HOW artifacts are mutually unsatisfiable; this surfaces as immediate rework at T-005 (the highest-risk task in risk-matrix.md).
+- **Affected artifact:** data-model.md, contracts/cli-contract.md
+- **Affected section:** data-model.md Entity: RunConfig (`timeout_seconds` row); cli-contract.md `--timeout SECONDS` row; tasks.md T-005/T-009/T-014; test-strategy.md Boundary And Data Strategy (Timeout budget row)
+- **Evidence:** data-model.md: "`timeout_seconds` | int | yes | default 300; > 0"; test-strategy.md: "sleep-mode stub; `--timeout` ≈ 0.2–0.5 s to keep suite fast".
+- **Recommendation:** ARCHITECT changes the type to float (`argparse type=float`, constraint > 0, default 300.0) in data-model.md and cli-contract.md — one row each. Spec FR-004 ("defaulting to exactly 300 seconds") is unaffected. The alternative (integer seconds with ≥ 1 s test budgets) would violate the SNT-008 30-second suite target across the multi-case timeout matrix.
+- **Responsible agent:** HOW (ARCHITECT)
+
+### ISS-306: ADR-006 residual write-failure path exits 1, contradicting the cli-contract exit-1 guarantee
 - **Severity:** LOW
 - **Type:** inconsistency
-- **Description:** FR-038/AC-008 correctly restore the collapsed audit-appendix rendering in the spec (the WHY1 ISS-006 substance is resolved and spec.md is authoritative). The glossary.md "Challenge report" and mental-model.md "Challenge Report" definitions still describe the audit appendix without the collapsed property.
+- **Description:** contracts/cli-contract.md's exit table guarantees for code 1: "exactly 0 model calls launched". ADR-006's consequences note that a report-write failure occurring after the model calls (exotic ACL race bypassing the FR-006 pre-flight) "reports exit 1 with the diagnostic line" — an exit-1 outcome after 2 model calls, breaking the stated guarantee. coverage-map.md already documents the path as accepted and practically unreachable; the residual is the guarantee wording, not the behavior.
+- **Affected artifact:** contracts/cli-contract.md, research.md (ADR-006)
+- **Affected section:** cli-contract.md Exit codes table (code 1 Guarantees cell); ADR-006 Consequences
+- **Evidence:** cli-contract.md code-1 guarantee "exactly 0 model calls launched (ERR-001/ERR-002)" vs ADR-006: "failure after model calls reports exit 1 with the diagnostic line".
+- **Recommendation:** Scope the code-1 guarantee to pre-flight failures ("pre-flight failures exit 1 before any model call; the practically-unreachable post-flight write failure also maps to 1") — one cell edit whenever cli-contract.md is next touched. No test change needed.
+- **Responsible agent:** HOW (ARCHITECT)
+
+### ISS-307: spec.md assumption/open-question statuses are stale against the executed HOW spikes
+- **Severity:** LOW
+- **Type:** inconsistency
+- **Description:** research.md resolved OQ-001 and OQ-002 with Grade-A direct evidence (claude CLI 2.1.214 spike, 2026-07-18) — genuine resolutions with protocol, observations, and failure modes, not name-only (resolution-evidence check PASS). spec.md still lists both as open ("under investigation") and keeps A-001/A-002 at "unvalidated (… spike before HOW)". The evidence direction supports the spec's design, so nothing is wrong substantively — the statuses are simply stale.
+- **Affected artifact:** spec.md
+- **Affected section:** Open Questions table (OQ-001, OQ-002); Assumptions in Effect (A-001, A-002); Limitations (Residual context exposure)
+- **Evidence:** research.md "OQ-001 / OQ-002 Evidence (spike executed at HOW, 2026-07-18)" vs spec.md OQ table "should-resolve-before-HOW" rows still open.
+- **Recommendation:** When CARTOGRAPHER applies ISS-302/ISS-303, refresh the two OQ rows to "resolved at HOW — see research.md" and A-001/A-002 statuses to "validated at HOW (claude CLI 2.1.214)" / "confirmed residual, documented limitation". Batch — do not make this a separate touch.
+- **Responsible agent:** WHAT (CARTOGRAPHER, batched)
+
+### ISS-308: No enumerated tests for non-positive --questions/--timeout values despite the data-model bounds
+- **Severity:** LOW
+- **Type:** incompleteness (residual of WHY2 ISS-208, which is otherwise addressed)
+- **Description:** data-model.md assigns `> 0` constraints to `max_questions` and `timeout_seconds`, resolving WHY2 ISS-208's missing bounds. But tasks.md T-002's test list (defaults, overrides, quoting, zero-word value, disclosure count) and coverage-map.md's T-ARG rows enumerate no case for `--questions 0/-1` or `--timeout 0/-1`, so the new constraints have no named verification.
+- **Affected artifact:** tasks.md, coverage-map.md
+- **Affected section:** T-002 Test Tasks; coverage-map FR-002/FR-004 rows
+- **Evidence:** T-002 test enumeration contains no non-positive-value vectors; data-model.md RunConfig constrains both fields `> 0`.
+- **Recommendation:** IMPLEMENTER adds two parametrized argv vectors (non-positive N, non-positive timeout → exit-1 argument-error class) inside the existing T-002 argument-handling group; no new task needed.
+- **Responsible agent:** HOW (IMPLEMENTER at T-002)
+
+### ISS-309: Base-artifact report definitions still omit the collapsed audit rendering
+- **Severity:** LOW — Previously raised in WHY2 as ISS-205, not addressed
+- **Type:** inconsistency
+- **Description:** glossary.md and mental-model.md "Challenge report" definitions still describe the audit appendix without the collapsed property that FR-038/AC-008 (spec, authoritative) and ADR-007 (`<details>` block) mandate. Not escalated: the authoritative artifacts are correct and test-enumerated (T-RPT-07); this is base-artifact hygiene.
 - **Affected artifact:** glossary.md, mental-model.md
 - **Affected section:** Challenge report definitions
-- **Evidence:** glossary.md: "(3) audit appendix — answered-and-discarded questions with their answering lines" — no collapsed rendering; same in mental-model.md.
-- **Recommendation:** Patch both definitions when next touched. Residual of WHY1 ISS-006; not escalated because the authoritative artifact (spec.md) now carries the requirement.
+- **Evidence:** grep for "collapsed" in glossary.md/mental-model.md returns no hits; spec.md FR-038 and report-format.md both mandate it.
+- **Recommendation:** Batch into the ISS-304 DISCOVER patch.
 - **Responsible agent:** DISCOVER
 
-### ISS-206: Weakness-category enum tokens are unpinned across artifacts
-- **Severity:** LOW
-- **Type:** ambiguity
-- **Description:** FR-015 names the 5 categories in human-readable form ("hidden assumption", "undefined term", "missing boundary"); mental-model.md's Socratic Question schema uses tokens (`assumption`, `undefined-term`, `boundary`). FR-016 validates "exactly 1 category from FR-015" — if the round-1 prompt taxonomy and the validator enum drift apart (one using names, the other tokens), every run burns its retry on a category mismatch.
-- **Affected artifact:** spec.md, mental-model.md
-- **Affected section:** FR-015, FR-016; mental-model.md Socratic Question
-- **Evidence:** FR-015: "ambiguity, hidden assumption, contradiction, undefined term, missing boundary" vs mental-model.md: "`ambiguity` | `assumption` | `contradiction` | `undefined-term` | `boundary`".
-- **Recommendation:** Pin the exact JSON enum tokens at HOW (single shared constant per MODELER's contract map) and instruct the prompt with the same tokens; a one-line spec clarification that FR-015's names are display names for those tokens would close it fully.
-- **Responsible agent:** WHAT (clarification) / HOW (constant)
-
-### ISS-207: Debug-dump content unspecified when the failing call is a timeout
-- **Severity:** LOW
-- **Type:** incompleteness
-- **Description:** FR-030/ERR-004 require "saving the raw output of the failing calls" to `.sue-debug`. A timed-out call (FR-011) may have produced no output at all; what gets dumped for that call (empty file, partial output, a timeout marker) is unassigned.
-- **Affected artifact:** spec.md
-- **Affected section:** FR-030, ERR-004, AC-017
-- **Evidence:** FR-011 routes timeouts to the parse-failure path; FR-030 assumes raw output exists for every failing call.
-- **Recommendation:** One sentence at WHAT or a HOW decision: dump whatever partial output was captured plus a one-line timeout marker so the dump is never silently empty.
-- **Responsible agent:** WHAT
-
-### ISS-208: No bounds on the question-count and timeout option values
-- **Severity:** LOW
-- **Type:** incompleteness
-- **Description:** FR-002 and FR-004 assign defaults (15, 300) but no validity range. `--questions 0` arguably collapses to the FR-020 zero-question path via the prompt instruction, but negative N and timeout ≤ 0 have no assigned behavior.
-- **Affected artifact:** spec.md
-- **Affected section:** FR-002, FR-004
-- **Evidence:** Neither requirement constrains the accepted value range.
-- **Recommendation:** Treat non-positive values as invalid invocation input (argparse-level rejection) — a HOW-level decision; note it in the spec only if CARTOGRAPHER touches these FRs anyway.
-- **Responsible agent:** HOW
-
-### ISS-209: OQ-001 spike scope omits the A-005 size measurement WHY1 recommended
-- **Severity:** LOW
-- **Type:** incompleteness
-- **Description:** WHY1 ISS-010 recommended folding a size measurement (chars/tokens of spec 029 plus both prompt templates) into the U-001/OQ-001 spike. The spec's OQ-001 row covers prompt delivery and output flags only; A-005 remains "unvalidated; observed at acceptance".
-- **Affected artifact:** spec.md
-- **Affected section:** Open Questions (OQ-001), Assumptions in Effect (A-005)
-- **Evidence:** OQ-001 impact column: "FR-026, FR-028 implementation freeze; stub fixture design" — no size measurement.
-- **Recommendation:** Add the size measurement to the OQ-001 spike instructions when INVESTIGATOR is dispatched (near-zero cost); no spec text change strictly required. Previously raised in WHY1 as ISS-010, partially addressed (A-005 is now an explicit limitation).
-- **Responsible agent:** INVESTIGATOR (spike scoping)
-
-### ISS-210: "Unreadable" specification path does not explicitly cover decode failures
-- **Severity:** LOW
-- **Type:** ambiguity
-- **Description:** FR-005 exits 1 when the path is "missing or unreadable". A file that exists and is permission-readable but fails text decoding (non-UTF-8 bytes) is not clearly either. Line-numbered embedding (FR-018) and line quoting (FR-039) require successful decoding, so this input must land somewhere deterministic.
-- **Affected artifact:** spec.md
-- **Affected section:** FR-005, ERR-001
-- **Evidence:** "missing or unreadable" — readability is not defined to include decodability.
-- **Recommendation:** Define "unreadable" to include decode failure (exit 1, pre-flight) — one glossary-addition line.
-- **Responsible agent:** WHAT
-
-### ISS-211: AC-012 asserts a temp-directory location constraint absent from FR-010
-- **Severity:** LOW
+### ISS-310: FR-010 still lacks the outside-the-repository location constraint that AC-012 tests
+- **Severity:** LOW — Previously raised in WHY2 as ISS-211, not addressed
 - **Type:** inconsistency
-- **Description:** AC-012 requires the recorded working directory to be "outside the repository"; FR-010 requires only "1 newly created neutral temporary directory". If the operator's temp root lives inside the repository tree (e.g. TMPDIR override), FR-010 is satisfiable while AC-012 fails.
-- **Affected artifact:** spec.md
-- **Affected section:** FR-010, AC-012
-- **Evidence:** AC-012: "exactly 1 newly created temporary directory outside the repository"; FR-010 carries no location constraint.
-- **Recommendation:** Add "outside the challenged specification's repository tree" (or "outside any git working tree") to FR-010 so the FR carries the constraint its AC tests.
-- **Responsible agent:** WHAT
+- **Description:** AC-012 requires the recorded cwd to be "outside the repository"; FR-010 carries no location constraint. ADR-004 claims mkdtemp in the system temp location is "outside the repository by construction" — untrue under a TMPDIR override pointing into the repo tree. Mitigation is adequate (T-SEAM-04 controls the test environment and asserts the location), so this stays LOW, but the FR should carry the constraint its AC verifies.
+- **Affected artifact:** spec.md, research.md (ADR-004)
+- **Affected section:** FR-010, AC-012; ADR-004 Decision
+- **Evidence:** FR-010: "exactly 1 newly created neutral temporary directory" — no location clause; AC-012: "outside the repository".
+- **Recommendation:** Append "outside the challenged specification's repository tree" to FR-010 when CARTOGRAPHER applies ISS-302/ISS-303 (batch).
+- **Responsible agent:** WHAT (CARTOGRAPHER, batched)
 
 ## Per-Requirement Failures
 
-Document-level gates all pass; rows below are per-requirement dips below the resolved gates, for speckit-echelon-cartographer (CARTOGRAPHER) consumption. Constraint diagnostics for all testability-0.0 rows: `hard_constraints: null`, `soft_words: []`, diagnosis "no numeric thresholds" — a parser artifact for these rows (each does contain numeric constraints, e.g. "exit code 3", "first N"); treat as re-phrasing hints, not defects.
+Spec.md is unchanged since WHY2; the per-requirement profile is identical (re-verified from `/tmp/u_perreq.json`, 83 requirements). Document-level gates all pass. The actionable subset remains: 8 requirements at per-requirement testability 0.00 (AC-015, AC-020, FR-017, FR-019, FR-025, FR-033, FR-040, NFR-004 — parser artifacts; each contains numeric constraints), 6 readability rows below 0.55 (FR-044 0.31, FR-016 0.44, FR-015 0.49, FR-010 0.51, AC-011 0.53, AC-012 0.54), 4 cognitive rows below 0.65 (AC-017/AC-023 0.63, SC-001 0.64, FR-010 0.64), and the structure rows ≤ 0.35 (FR-016 0.15, AC-018 0.18, AC-011 0.23, SC-003 0.23, FR-022 0.25, ERR-001 0.33). Granularity note stands: per-requirement depth/structure are document-level metrics single bullets cannot satisfy; only the listed rows are worth touching, and all are advisory.
 
-| Requirement | Category | Score | Gate | Verdict |
-|------------|----------|-------|------|---------|
-| AC-015 | testability | 0.00 | 0.75 | FAIL |
-| AC-020 | testability | 0.00 | 0.75 | FAIL |
-| FR-017 | testability | 0.00 | 0.75 | FAIL |
-| FR-019 | testability | 0.00 | 0.75 | FAIL |
-| FR-025 | testability | 0.00 | 0.75 | FAIL |
-| FR-033 | testability | 0.00 | 0.75 | FAIL |
-| FR-040 | testability | 0.00 | 0.75 | FAIL |
-| NFR-004 | testability | 0.00 | 0.75 | FAIL |
-| FR-015 | behavioral | 0.00 | 0.55 | FAIL |
-| FR-022 | behavioral | 0.00 | 0.55 | FAIL |
-| FR-035 | behavioral | 0.00 | 0.55 | FAIL |
-| FR-039 | behavioral | 0.00 | 0.55 | FAIL |
-| NFR-003 | behavioral | 0.00 | 0.55 | FAIL |
-| FR-044 | readability | 0.31 | 0.55 | FAIL |
-| FR-016 | readability | 0.44 | 0.55 | FAIL |
-| FR-015 | readability | 0.49 | 0.55 | FAIL |
-| FR-010 | readability | 0.51 | 0.55 | FAIL |
-| AC-011 | readability | 0.53 | 0.55 | FAIL |
-| AC-012 | readability | 0.54 | 0.55 | FAIL |
-| AC-023 | cognitive | 0.63 | 0.65 | FAIL |
-| AC-017 | cognitive | 0.63 | 0.65 | FAIL |
-| SC-001 | cognitive | 0.64 | 0.65 | FAIL |
-| FR-010 | cognitive | 0.64 | 0.65 | FAIL |
-| FR-016 | structure | 0.15 | 0.75 | FAIL |
-| AC-018 | structure | 0.18 | 0.75 | FAIL |
-| AC-011 | structure | 0.23 | 0.75 | FAIL |
-| SC-003 | structure | 0.23 | 0.75 | FAIL |
-| FR-022 | structure | 0.25 | 0.75 | FAIL |
-| ERR-001 | structure | 0.33 | 0.75 | FAIL |
+## EARS Pattern Gaps
 
-Granularity note (do not iterate on these): per-requirement depth is below 0.4 for 83/83 requirements and per-requirement structure below 0.75 for 73/83 — depth and structure are document-level metrics that single bullets cannot individually satisfy; the document-level scores (0.872, 0.8342) both PASS. Only the structure rows ≤ 0.35 above are worth touching. Semantic: 0/83 failures.
+None — 0 of 83 requirements unclassified (event_driven 71, ubiquitous 8, unwanted 3, optional 1).
 
 ## Contradiction Detection (Step 8 — systematic sweep)
 
-Artifacts scanned: 6 (spec.md, glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md) plus reasoning-journal.jsonl. Contradiction types checked: requirement_conflict, assumption_requirement_misalignment, boundary_violation, priority_inversion, acceptance_criteria_conflict. **Contradictions found: 2 (both WARNING, neither BLOCKING).**
+Artifacts scanned: 19 (spec.md, glossary.md, mental-model.md, mental-model-code.md, boundaries.md, assumptions.md, unknowns.md, plan.md, research.md, data-model.md, contracts/cli-contract.md, contracts/internal-interfaces.md, contracts/model-command-contract.md, contracts/report-format.md, tasks.md, test-strategy.md, coverage-map.md, critical-path.md, risk-matrix.md) plus reasoning-journal.jsonl and state.json. Contradiction types checked: requirement_conflict, assumption_requirement_misalignment, boundary_violation, priority_inversion, acceptance_criteria_conflict. **Contradictions found: 5 (3 BLOCKING via WHY3 escalation, 2 WARNING).**
 
-| Field | Contradiction 1 | Contradiction 2 |
-|-------|-----------------|-----------------|
-| contradiction_type | acceptance_criteria_conflict | acceptance_criteria_conflict |
-| artifact_a | spec.md AC-002 | spec.md AC-011 / FR-021 |
-| artifact_b | spec.md AC-020 / FR-036 | spec.md FR-023 / FR-014 |
-| description | For a completed run with round-1 truncation, AC-002 asserts a 4-fact header while AC-020/FR-036 require a 5th element (truncation note) | AC-011/FR-021 count "exactly 2 content blocks" in the round-2 prompt while FR-023 mandates an answering instruction that FR-014's convention would count as a third element |
-| severity | WARNING | WARNING |
-| suggested_resolution | Scope AC-002 to non-truncated runs or reword to "4 base facts" (ISS-203) | Reword FR-021 to count 3 elements or define "content block" to exclude instructions; align AC-011 (ISS-201) |
+| # | contradiction_type | artifact_a | artifact_b | description | severity | suggested_resolution |
+|---|--------------------|------------|------------|-------------|----------|----------------------|
+| 1 | acceptance_criteria_conflict | spec.md AC-011 / FR-021 | spec.md FR-023 / FR-014; contracts/model-command-contract.md counting convention | "Exactly 2 content blocks" vs the mandated answering instruction; spec contradicts its own convention and the frozen contract | BLOCKING (ISS-302) | One-line FR-021/AC-011 reword or glossary definition of "content block" |
+| 2 | acceptance_criteria_conflict | spec.md AC-002 | spec.md AC-020 / FR-036 | 4-fact header vs 5th truncation-note element on truncated runs | BLOCKING (ISS-303) | Reword AC-002 to "4 base facts" or scope to non-truncated runs |
+| 3 | requirement_conflict (artifact-level) | mental-model.md Challenge Report lifecycle | spec.md U-010 / FR-034; data-model.md | "Written atomically" vs the recorded plain-overwrite decision | BLOCKING (ISS-304) | Delete "atomically" from mental-model.md |
+| 4 | requirement_conflict (artifact-level) | data-model.md RunConfig `timeout_seconds: int` | test-strategy.md / tasks.md sub-second `--timeout` (0.2–0.5 s) | Integer type cannot express the sub-second budgets the timeout tests require | WARNING (ISS-305, MEDIUM) | Type the option float in data-model.md + cli-contract.md |
+| 5 | requirement_conflict (artifact-level) | contracts/cli-contract.md exit-1 guarantee "0 model calls" | research.md ADR-006 post-flight write-failure → exit 1 | Practically-unreachable residual path breaks the stated exit-1 invariant | WARNING (ISS-306, LOW) | Scope the guarantee wording to pre-flight failures |
 
-Checks that found nothing: requirement_conflict — none (the FR-008/FR-028 call-count arithmetic is consistent: 2 logical calls, ≤ 4 subprocess invocations, matching NFR-001's 4-timeout bound); assumption_requirement_misalignment — none (A-001/A-002 unvalidated statuses are honestly mirrored by OQ-001/OQ-002 and the Limitations section; FR-010 claims only what temp-cwd guarantees); boundary_violation — none (Out of Scope mirrors boundaries.md's explicit harness NON-boundary; concurrency non-goal now stated); priority_inversion — none (all FRs are MVP; no cross-priority dependencies exist).
+Checks that found nothing: assumption_requirement_misalignment — none blocking (A-001/A-002 statuses are stale rather than misaligned, ISS-307; the evidence direction supports the requirements); boundary_violation — none (plan/contracts honour the harness NON-boundary; FR-045 gate + import-scan test hold the line); priority_inversion — none (all FRs MVP; task chain is linear with in-degree ≤ 1, verified in dependencies.md); requirement_conflict within spec.md proper — none beyond rows 1–2 (call-count arithmetic FR-008/FR-028/NFR-001 consistent: 2 logical calls, ≤ 4 invocations, 4-timeout bound).
 
 ## Pre-Mortem Findings
 
 | Risk | Likelihood | Impact | Affected Requirements |
 |------|-----------|--------|----------------------|
-| Prompt builder or AC-011 stub test written against the literal "2 content blocks" count, omitting or miscounting the round-2 answering instruction | MEDIUM | Round-2 output unusable on every run (exit-3 loop) or a false-passing isolation test | FR-021, FR-022, FR-023, AC-011 (ISS-201) |
-| Model cites an out-of-range evidence line; renderer crashes or quotes the wrong line with no assigned behavior to test against | MEDIUM | Rework at build; report evidence silently wrong — the grounding rule's weakest joint | FR-024, FR-039, AC-009 (ISS-202) |
-| OQ-001 (prompt delivery / output flags) left unresolved when HOW freezes the extraction design | MEDIUM | Extraction contract designed blind; systematic noise → exit-3 loop; acceptance fails | FR-026–FR-030, A-001 |
-| Category enum drift between round-1 prompt taxonomy and validator | LOW-MEDIUM | Every run burns its single retry on a cosmetic mismatch | FR-015, FR-016 (ISS-206) |
-| Under deadline pressure, `claude -p` invocation borrows the harness stream-json backend "because it already works" | LOW | Standalone contract broken (FR-045, A-003); test seam stops working | FR-043, FR-045 |
+| SPEC GUARD or a literal-minded test reads AC-011/AC-002 counting words from spec.md instead of the contract convention → false FAIL or wrong assertion at build/verify | MEDIUM | Build-phase churn; erosion of spec authority (agents learn to prefer contracts over spec) | FR-021, AC-011, AC-002 (ISS-302/ISS-303) |
+| T-005/T-009 timeout tests written against int-typed `--timeout` → argparse rejects 0.2–0.5 s values; suite either fails or balloons past the 30 s target | MEDIUM | Immediate rework on the plan's highest-risk task | FR-004, FR-011, FR-013 (ISS-305) |
+| FINALIZE reached with the SC-001/AC-023 escalation still unrecorded → gate friction or, worse, silent waiver of the only live validation | LOW-MEDIUM | Governance gap on the single live acceptance gate | SC-001, AC-023 (ISS-301) |
+| mental-model.md atomicity claim consumed by a future maintainer or SUE tier without data-model.md's supersession note | LOW | Test asserting behavior ADR-007 explicitly rejected | FR-034, U-010 (ISS-304) |
+| claude CLI drift from the 2.1.214 spike baseline before the acceptance run | LOW-MEDIUM | Extraction retries burn; `.sue-debug` diagnosis needed | FR-026–FR-030 (accepted, mitigated by ADR-005; version pinned) |
 
-Most likely misimplemented requirement: FR-021 (counting ambiguity). Loosest acceptance criterion: AC-009 (passes even when a cited line number is out of range, because it only checks lines that were cited and resolvable). Missing requirement causing most rework: the ISS-202 render-time range behavior. First scope boundary violated under pressure: harness reuse (FR-045).
+Most likely misimplemented requirement: FR-004's timeout option (type contradiction, ISS-305). Loosest acceptance criterion: AC-002 (asserts a count the truncated-run header violates). Missing record causing most friction: the ISS-301 acceptance entry. First scope boundary violated under pressure: still harness reuse (FR-045) — but the T-013 AST import-scan tripwire is now designed, downgrading this from WHY2's assessment.
 
 ## Cross-Artifact Consistency
 
 | Check | Status | Notes |
 |-------|--------|-------|
-| Entities in spec match mental-model | PASS | All 8 Key Entities present and aligned in mental-model.md; one attribute-level divergence (atomic write, ISS-204) flagged |
-| Dependencies in spec match boundaries | PASS | claude CLI, spec read side, spec-dir write side, neutral temp dir, pytest stub, and the harness NON-boundary all consistent; no cycles |
-| Terms match glossary | PASS | Spec's Glossary Additions extend without conflict; two naming residuals flagged (ISS-205 collapsed rendering, ISS-206 category tokens) |
-| Scope aligns with boundaries | PASS | Out of Scope items map 1:1 to boundaries.md non-goals; concurrency and context-window limits now explicit |
-| Assumptions match assumptions.md | PASS | A-001..A-012 statuses in the spec table match assumptions.md exactly (A-004 validated at ef2643c9, A-008 validated, rest unvalidated/adopted) |
-| Open questions reference unknowns.md | PASS | OQ-001→U-001, OQ-002→U-002; Resolved-During-WHAT table accounts for U-003..U-010 individually |
+| Entities in spec match mental-model | FAIL | ISS-304: mental-model.md atomic-write lifecycle actively contradicts spec U-010/FR-034 (known since WHY1, still unpatched); ISS-309 collapsed-rendering omission. All 8 Key Entities otherwise map 1:1 into data-model.md, which explicitly follows the spec |
+| Dependencies in spec match boundaries | PASS | claude CLI, read/write sides, temp-cwd, pytest stub, harness NON-boundary all consistent across boundaries.md, plan.md, contracts; no cycles (dependencies.md verified) |
+| Terms match glossary | PASS | Contract counting convention ("content block") is defined in model-command-contract.md but absent from spec/glossary — tracked as the ISS-302 fix, not a new term conflict |
+| Scope aligns with boundaries | PASS | Out of Scope ↔ boundaries.md non-goals 1:1; plan adds no scope (UI-004 no-expansion honoured: ADR-004 explicitly rejected `--safe-mode` for v1) |
+| Assumptions match assumptions.md | PASS with note | Statuses internally consistent but stale against research.md's executed spikes (ISS-307): A-001/A-002 remain "unvalidated" after Grade-A validation/confirmation |
+| Open questions reference unknowns.md | PASS with note | OQ-001→U-001, OQ-002→U-002 intact; both now resolved in research.md while spec rows stay open (ISS-307, batched refresh) |
+
+## WHY3 Automation Coverage Check (BLOCKING)
+
+coverage-map.md exists and maps all 83 requirement rows. Zero rows carry `manual` or `none` coverage; zero rows carry `deferred-automation`. Two rows (SC-001, AC-023) carry `escalate`; state.json has no `deferred_risky_accepted` entry → **CRITICAL ISS-301 raised; PASS is barred until the record exists.** The escalation's substance is sound (spec-mandated manual gate with encoded tolerance); only the acceptance record is missing.
 
 ## Checks Performed With No Findings (Rule 4 — no rubber-stamping)
 
-- **LOC verification check:** no LOC claims citing single files or lacking a cloc command exist in spec.md or the WHAT-phase artifacts (the only size statement, A-005's "a few hundred lines", was already flagged in WHY1 and is tracked via ISS-209). Confidence: high.
-- **Resolution evidence check:** the Resolved-During-WHAT table's 8 resolutions each point to concrete encoded FR text (verifiable in place), not technology names; WHY1 ISS-001/ISS-002 are correctly NOT claimed resolved — they remain open as OQ-001/OQ-002 with unvalidated assumption statuses. Confidence: high.
-- **Flakiness management validation:** N/A at WHY2 by design — test-strategy.md/coverage-map.md are SENTINEL outputs that correctly do not exist yet.
-- **Untestable requirements:** none found; every FR has a When/If trigger and a countable constraint, and the 8 per-requirement testability-0.0 rows are parser artifacts (each contains numeric constraints), not genuinely untestable requirements. Confidence: medium-high — the parser artifact judgment is mine, not Understanding's.
-- **Missing actors:** none — single operator plus the model command subprocess; no schedulers, webhooks, or background jobs are implied anywhere in the design.
-- **Confidence statement:** overall confidence 0.85 that no CRITICAL/HIGH issue was missed. The residual risk sits in OQ-001/OQ-002 — external-CLI behavior that no amount of spec reading can validate; those are correctly parked as pre-HOW spikes rather than spec defects.
+- **LOC verification check:** no LOC claims citing single files or lacking a cloc command in any scanned artifact; ADR-001's "~700–900 lines" and ADR-005's "~150 lines" are forward estimates, not measured claims. Confidence: high.
+- **Resolution evidence check:** research.md's OQ-001/OQ-002 resolutions carry direct observations (pinned CLI version, byte-level output, debug-log contents), invocation protocol, and failure-mode analysis — genuine Grade-A resolutions, not name-only. The 8 Resolved-During-WHAT rows re-verified unchanged. No name-only resolution found. Confidence: high.
+- **Flakiness Management validation (WHY3):** test-strategy.md includes integration/e2e-surface tests and its Flakiness Management section covers all 5 mandated concerns with concrete values (detection: 5-run pre-merge loop; quarantine: skip-marker + tracked issue; taxonomy: timing-margin/state-leak with fixes; stability targets: <5% suite, 100% critical journeys; cadence: weekly with COMMANDER escalation). Format is a table rather than 5 subsections — substance complete; no issue raised. Confidence: high.
+- **Untestable requirements:** none; coverage-map.md maps every FR/AC/NFR/ERR/SC to enumerated tests or the recorded manual gate; the per-requirement testability-0.0 rows remain parser artifacts. Confidence: medium-high.
+- **Missing actors:** none — single operator + model subprocess; no schedulers, webhooks, or background jobs anywhere in spec or plan.
+- **Journal audit:** no low-confidence insights driving high-impact decisions (only two sub-0.6 entries, both TRACKER prediction records, a different mechanism).
+- **Confidence statement:** overall confidence 0.9 that no additional CRITICAL/HIGH issue was missed. The finding density at WHY3 (1 new MEDIUM, 3 new LOWs across ~19 artifacts) is consistent with a mature artifact set rather than insufficient analysis; the escalations are mechanical applications of the iteration rule to verified-unchanged text.

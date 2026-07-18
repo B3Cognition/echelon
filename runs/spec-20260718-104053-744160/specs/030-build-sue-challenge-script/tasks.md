@@ -12,10 +12,12 @@
 | Total tasks | 15 | 14 build tasks + 1 manual acceptance gate (T-S01) |
 | Parallelizable tasks | 0 | Single-file deliverable (`scripts/sue_challenge.py`) plus one test file; every task mutates the same files, so no two tasks are parallel-safe (see dependencies.md) |
 | Critical path | 14 tasks, 10 h most-likely | Proportional decomposition of GATEKEEPER's estimate (estimates.md); ORCHESTRATOR added no new estimates |
-| Effort range | 4–24 h (0.10–0.60 person-weeks) | GATEKEEPER optimistic–pessimistic interval, uncalibrated domain |
+| Effort range | 4–18 h (0.10–0.45 person-weeks) | GATEKEEPER consensus interval — pessimistic bound tightened at ASSESS2 (implementability-report.md), confidence medium |
 | Phases | 5 | foundation → core → integration → polish → acceptance |
 
 Test-First hard gate (constitution): every build task writes its named tests first and observes them fail before implementation. The **Test:** line of each task is the verification contract.
+
+Consensus pass (PLAN2, 2026-07-18): ASSESS2 scored all 15 tasks READY — none needing clarification, none blocked; no task was split, added, or re-sequenced, and the dependency chain is unchanged. WHY3 feedback applied at task level: T-002 gains the non-positive `--questions`/`--timeout` rejection vectors (ISS-308) and the sub-second timeout parsing clarification (ISS-305). The remaining WHY3 fixes (ISS-301 state record, ISS-302/ISS-303 spec rewordings, ISS-304 mental-model patch) are owned by COMMANDER, CARTOGRAPHER, and DISCOVER respectively — they are squad-artifact repairs, not build tasks.
 
 ---
 
@@ -64,18 +66,20 @@ Every executable task starts with one top-level canonical row:
   - `tests/unit/test_sue_challenge.py` - argument-handling behavior group (FR-044 group 1)
 
   **Description:**
-  Implement `parse_args` per contracts/cli-contract.md: exactly 1 positional argument (spec path, FR-001), `--questions` defaulting to 15 (FR-002), `--claude-cmd` defaulting to `claude` (FR-003), `--timeout` defaulting to 300 seconds (FR-004). Split the model command per shell quoting conventions with `shlex.split`, treating word 1 as the executable to availability-check (FR-007); a value splitting to zero words is an argument error on the exit-1 path. The usage/help text contains exactly 1 egress disclosure stating that challenged specification content is sent to the model provider via the model command (NFR-003). Argparse's native exit-2 convention is remapped so argument errors funnel to the exit-1 bad-input class (U-007). Tests first.
+  Implement `parse_args` per contracts/cli-contract.md: exactly 1 positional argument (spec path, FR-001), `--questions` defaulting to 15 (FR-002), `--claude-cmd` defaulting to `claude` (FR-003), `--timeout` defaulting to 300 seconds (FR-004). Split the model command per shell quoting conventions with `shlex.split`, treating word 1 as the executable to availability-check (FR-007); a value splitting to zero words is an argument error on the exit-1 path. The usage/help text contains exactly 1 egress disclosure stating that challenged specification content is sent to the model provider via the model command (NFR-003). Argparse's native exit-2 convention is remapped so argument errors funnel to the exit-1 bad-input class (U-007). Both numeric options enforce the data-model.md RunConfig `> 0` bounds: non-positive `--questions` or `--timeout` values are argument errors on the exit-1 path (ISS-308). `--timeout` parses as a positive number of seconds and accepts sub-second values — the timeout test matrix (test-strategy.md) drives 0.2–0.5 s budgets; ISS-305 routes the matching data-model.md/cli-contract.md type-row change (int → float) to ARCHITECT, and this task implements the float-seconds parse it prescribes. Tests first.
 
-  **Test:** pytest argv-vector tests assert defaults (15/`claude`/300), `shlex` splitting of quoted command lines, zero-word rejection, and exactly 1 egress-disclosure occurrence in captured `--help` text.
+  **Test:** pytest argv-vector tests assert defaults (15/`claude`/300), `shlex` splitting of quoted command lines, zero-word rejection, exactly 1 egress-disclosure occurrence in captured `--help` text, plus parametrized non-positive vectors (`--questions 0/-1`, `--timeout 0/-1` → exit-1 argument-error class, ISS-308) and a sub-second `--timeout 0.3` acceptance vector (ISS-305).
 
   **Acceptance Criteria:**
   - [ ] Defaults are exactly 15, `claude`, 300 (FR-002/FR-003/FR-004)
   - [ ] `--claude-cmd "claude --safe-mode"` splits to executable `claude` (FR-007)
   - [ ] `--help` output contains exactly 1 egress disclosure (NFR-003)
   - [ ] Argument errors never surface as exit code 2 (U-007 boundary)
+  - [ ] Non-positive `--questions`/`--timeout` values reject on the exit-1 path (ISS-308); sub-second positive `--timeout` values parse (ISS-305)
 
   **Test Tasks:**
   - [ ] Argument-handling group: defaults, overrides, quoting, zero-word value, help-text disclosure count
+  - [ ] Bounds vectors: non-positive `--questions`/`--timeout` rejection plus sub-second `--timeout` acceptance (ISS-308/ISS-305)
 
 - [ ] T-003 complexity=standard phase=foundation req=FR-005,FR-006,FR-012,FR-042,NFR-005 depends=T-002 target=.
 
