@@ -288,7 +288,8 @@ Every executable task starts with one top-level canonical row:
   **Test Tasks:**
   - [x] Partition/ranking property tests over shuffled inputs
 
-- [ ] T-011 complexity=standard phase=integration req=FR-035,FR-036,FR-037,FR-038,FR-039,FR-041,NFR-004 depends=T-010 target=.
+- [x] T-011 complexity=standard phase=integration req=FR-035,FR-036,FR-037,FR-038,FR-039,FR-041,NFR-004 depends=T-010 target=.
+  **Status:** DONE
 
   **Title:** Report and summary renderers (pure, golden-tested)
 
@@ -302,17 +303,18 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest golden-string tests cover section order, the 4 header facts, conditional truncation note, per-line evidence quoting against a known fixture spec, exactly 1 collapsed HTML details block, zero-finding and zero-question wording, out-of-range marker, and an NFR-004 double-render byte-diff.
 
   **Acceptance Criteria:**
-  - [ ] AC-002: header states exactly the 4 facts (FR-036)
-  - [ ] AC-008: audit appendix is exactly 1 collapsed expandable section (FR-038)
-  - [ ] AC-009: exactly 1 quoted spec line per cited evidence number (FR-039)
-  - [ ] AC-007 wording path: explicit 0-findings statement with full audit appendix (FR-041)
-  - [ ] Double render is byte-identical outside run date (NFR-004)
+  - [x] AC-002: header states exactly the 4 facts (FR-036)
+  - [x] AC-008: audit appendix is exactly 1 collapsed expandable section (FR-038)
+  - [x] AC-009: exactly 1 quoted spec line per cited evidence number (FR-039)
+  - [x] AC-007 wording path: explicit 0-findings statement with full audit appendix (FR-041)
+  - [x] Double render is byte-identical outside run date (NFR-004)
 
   **Test Tasks:**
-  - [ ] Golden report fixtures incl. line-0 plus beyond-range citations
-  - [ ] Summary top-3 plus per-class count tests
+  - [x] Golden report fixtures incl. line-0 plus beyond-range citations
+  - [x] Summary top-3 plus per-class count tests
 
-- [ ] T-012 complexity=complex phase=integration req=FR-008,FR-020,FR-034,FR-040,FR-042 depends=T-011 target=.
+- [x] T-012 complexity=complex phase=integration req=FR-008,FR-020,FR-034,FR-040,FR-042 depends=T-011 target=.
+  **Status:** DONE
 
   **Title:** Wire the main pipeline — end-to-end stubbed run green
 
@@ -326,15 +328,15 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest end-to-end stub run asserts exit 0, exactly 2 stub invocations, report present with correct content (AC-001/AC-021); rerun leaves exactly 1 report file holding only new content (AC-003); zero-question run skips round 2 and reports 0 questions (AC-006); sha256 of the spec file is unchanged across every outcome (AC-010); stdout summary lists per-class counts and top 3 (AC-005).
 
   **Acceptance Criteria:**
-  - [ ] AC-001: exactly 2 model calls, report written beside the spec, exit 0
-  - [ ] AC-003: rerun overwrites — exactly 1 report file remains
-  - [ ] AC-006: valid empty round-1 list skips round 2, exit 0
-  - [ ] AC-010: challenged spec byte-identical after every run outcome (FR-042)
-  - [ ] AC-005: summary states counts per verdict class plus top 3 in rank order (FR-040)
+  - [x] AC-001: exactly 2 model calls, report written beside the spec, exit 0
+  - [x] AC-003: rerun overwrites — exactly 1 report file remains
+  - [x] AC-006: valid empty round-1 list skips round 2, exit 0
+  - [x] AC-010: challenged spec byte-identical after every run outcome (FR-042)
+  - [x] AC-005: summary states counts per verdict class plus top 3 in rank order (FR-040)
 
   **Test Tasks:**
-  - [ ] Full stubbed end-to-end run (critical journey T-SEAM-01 — must never be flaky)
-  - [ ] Rerun-overwrite, zero-question, plus spec-hash invariance tests
+  - [x] Full stubbed end-to-end run (critical journey T-SEAM-01 — must never be flaky)
+  - [x] Rerun-overwrite, zero-question, plus spec-hash invariance tests
 
 ## Checkpoint: Integration Complete
 
@@ -347,7 +349,8 @@ Every executable task starts with one top-level canonical row:
 
 ## Phase: Polish
 
-- [ ] T-013 complexity=standard phase=polish req=FR-045,NFR-002 depends=T-012 target=.
+- [x] T-013 complexity=standard phase=polish req=FR-045,NFR-002 depends=T-012 target=.
+  **Status:** DONE
 
   **Title:** Standalone-contract gate — import scan and zero-install verification
 
@@ -360,14 +363,15 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest import-scan test parses `scripts/sue_challenge.py` with `ast` and fails on any non-stdlib or project-package import; a stubbed run under a clean environment completes with 0 additional installs.
 
   **Acceptance Criteria:**
-  - [ ] Import scan proves 0 project-package plus 0 third-party runtime imports (FR-045)
-  - [ ] Stubbed run succeeds on a fresh checkout with 0 additional installed components (NFR-002)
+  - [x] Import scan proves 0 project-package plus 0 third-party runtime imports (FR-045)
+  - [x] Stubbed run succeeds on a fresh checkout with 0 additional installed components (NFR-002)
 
   **Test Tasks:**
-  - [ ] AST-based import-scan test
-  - [ ] Clean-environment stub run assertion
+  - [x] AST-based import-scan test
+  - [x] Clean-environment stub run assertion
 
-- [ ] T-014 complexity=standard phase=polish req=FR-043,FR-044,FR-045,NFR-001,NFR-005 depends=T-013 target=.
+- [x] T-014 complexity=standard phase=polish req=FR-043,FR-044,FR-045,NFR-001,NFR-005 depends=T-013 target=.
+  **Status:** DONE
 
   **Title:** Coverage completion, exit-code matrix, NFR hardening, flakiness gate
 
@@ -381,14 +385,14 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest SC-003 matrix plus call-count bound plus stderr-line-count assertions all pass; `for i in 1 2 3 4 5; do pytest -m unit tests/unit/test_sue_challenge.py || exit 1; done` completes green.
 
   **Acceptance Criteria:**
-  - [ ] AC-022: whole suite passes offline with 0 network calls plus 0 live model commands installed (FR-044)
-  - [ ] SC-003: exit codes 1/2/3 each reproduce with exactly 1 diagnostic line (NFR-005)
-  - [ ] Call-counting stub proves ≤ 4 subprocess invocations per run (NFR-001 structural bound)
-  - [ ] 5 consecutive suite runs green (flakiness gate)
+  - [x] AC-022: whole suite passes offline with 0 network calls plus 0 live model commands installed (FR-044)
+  - [x] SC-003: exit codes 1/2/3 each reproduce with exactly 1 diagnostic line (NFR-005)
+  - [x] Call-counting stub proves ≤ 4 subprocess invocations per run (NFR-001 structural bound)
+  - [x] 5 consecutive suite runs green (flakiness gate)
 
   **Test Tasks:**
-  - [ ] Behavior-group coverage sweep against SENTINEL's coverage-map.md
-  - [ ] SC-003 exit-code matrix plus 5-run flakiness loop
+  - [x] Behavior-group coverage sweep against SENTINEL's coverage-map.md
+  - [x] SC-003 exit-code matrix plus 5-run flakiness loop
 
 ## Checkpoint: Polish Complete
 

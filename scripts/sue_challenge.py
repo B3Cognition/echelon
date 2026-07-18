@@ -37,6 +37,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 from typing import Callable
 
@@ -872,6 +873,121 @@ def rank_findings(findings: list[Finding]) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# Report and summary rendering (pure — FR-035..FR-039, FR-041, NFR-004)
+# ---------------------------------------------------------------------------
+
+
+def _one_line(text: str) -> str:
+    """Collapse model-controlled text for one-line render positions (pure).
+
+    Question text is only validated as non-empty, so embedded newlines could
+    otherwise break a markdown heading or a one-line summary entry.
+    """
+    return " ".join(text.split())
+
+
+def _quoted_evidence(spec: SpecDocument, line_numbers: list[int]) -> list[str]:
+    """Blockquote lines: exactly 1 quoted spec line per cited number (FR-039).
+
+    Out-of-range citations render the deterministic marker instead of failing
+    (ADR-007, ISS-202); an empty citation list states so explicitly.
+    """
+    if not line_numbers:
+        return ["  > (0 lines cited)"]
+    quoted = []
+    for number in line_numbers:
+        if 1 <= number <= len(spec.lines):
+            quoted.append(f"  > line {number}: {spec.lines[number - 1]}")
+        else:
+            quoted.append(f"  > line {number}: (not present in the specification)")
+    return quoted
+
+
+def render_report(
+    spec: SpecDocument,
+    run_date: str,
+    questions: list[SocraticQuestion],
+    findings: list[Finding],
+    audit_entries: list[tuple[SocraticQuestion, Answer]],
+    truncated: bool,
+) -> str:
+    """Render the full ``socratic-challenge.md`` body (contracts/report-format.md).
+
+    Exactly 3 sections in order: header, findings, audit appendix (FR-035).
+    Pure — the run date is injected, never read here, so identical validated
+    inputs give byte-identical bodies outside the run-date field (NFR-004).
+    ``findings`` must already carry the FR-033 ranking from rank_findings.
+    """
+    lines: list[str] = [
+        "# Socratic Challenge Report",
+        "",
+        f"- **Specification:** {spec.path}",
+        f"- **Run date:** {run_date}",
+        f"- **Questions:** {len(questions)}",
+        f"- **Findings:** {len(findings)}",
+    ]
+    if truncated:
+        lines.append(
+            "- **Note:** round 1 returned more questions than the configured "
+            f"maximum; truncated to the first {len(questions)}."
+        )
+    lines += ["", "## Findings", ""]
+    if not findings:
+        lines += [
+            "Exactly 0 findings were produced: the specification text answered "
+            "every question asked of it.",
+            "",
+        ]
+    for finding in findings:
+        lines += [
+            f"### {finding.rank}. [{finding.answer.verdict}] {_one_line(finding.question.question)}",
+            "",
+            f"- **Target:** {finding.question.target}",
+            "- **Evidence:**",
+            *_quoted_evidence(spec, finding.answer.evidence_lines),
+            "",
+            finding.answer.answer,
+            "",
+        ]
+    lines += [
+        "## Audit appendix",
+        "",
+        "<details>",
+        f"<summary>Audit appendix — {len(audit_entries)} ANSWERED question(s)</summary>",
+        "",
+    ]
+    for question, answer in audit_entries:
+        lines += [
+            f"### {question.id} — {_one_line(question.question)}",
+            "",
+            f"- **Answer:** {answer.answer}",
+            "- **Answering lines:**",
+            *_quoted_evidence(spec, answer.evidence_lines),
+            "",
+        ]
+    lines += ["</details>", ""]
+    return "\n".join(lines)
+
+
+def render_summary(findings: list[Finding]) -> str:
+    """Terminal summary (pure): per-verdict-class counts plus the top 3 (FR-040).
+
+    Human-oriented output with no machine-parsing contract (A-011).
+    """
+    contradicted = sum(1 for f in findings if f.answer.verdict == "CONTRADICTED")
+    unanswerable = sum(1 for f in findings if f.answer.verdict == "UNANSWERABLE")
+    lines = [f"Findings — CONTRADICTED: {contradicted}, UNANSWERABLE: {unanswerable}"]
+    if findings:
+        lines.append("Top findings:")
+        for finding in findings[:3]:
+            lines.append(
+                f"  {finding.rank}. [{finding.answer.verdict}] "
+                f"{_one_line(finding.question.question)}"
+            )
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Entry point (exit-code spine — ADR-006, NFR-005)
 # ---------------------------------------------------------------------------
 
@@ -899,10 +1015,50 @@ def main(argv: list[str] | None = None) -> int:
             EXIT_BAD_INPUT,
             f"bad input: cannot read specification '{config.spec_path}': {exc}",
         )
-    del spec
+    spec_dir = config.spec_path.resolve().parent
 
-    # Rendering and the main pipeline wiring land with T-011/T-012; the
-    # pre-flight exit-code spine ends here.
+    # Exactly 2 logical model calls per run (FR-008): the rounds are two
+    # sequential execute_round calls with no cross-round loop, so a round-2
+    # failure can never re-run round 1 (FR-031).
+    round1 = execute_round(
+        config,
+        build_round1_prompt(spec, config.max_questions),
+        lambda obj: validate_round1(obj, config.max_questions),
+        1,
+        spec_dir,
+    )
+    if isinstance(round1, RoundExit):
+        return fail(round1.exit_code, round1.diagnostic)
+    questions, truncated = round1
+
+    answers: list[Answer] = []
+    if questions:
+        round2 = execute_round(
+            config,
+            build_round2_prompt(spec, [(q.id, q.question) for q in questions]),
+            lambda obj: validate_round2(obj, questions),
+            2,
+            spec_dir,
+        )
+        if isinstance(round2, RoundExit):
+            return fail(round2.exit_code, round2.diagnostic)
+        answers = round2
+    # else: a valid empty round-1 list skips round 2 entirely (FR-020, AC-006).
+
+    findings, audit_entries = partition_answers(questions, answers)
+    ranked = rank_findings(findings)
+    report = render_report(
+        spec, date.today().isoformat(), questions, ranked, audit_entries, truncated
+    )
+    report_path = spec_dir / REPORT_FILENAME
+    try:
+        # Plain overwrite keeping 0 historical copies (FR-034, U-010).
+        report_path.write_text(report, encoding="utf-8")
+    except OSError as exc:
+        # Writability was pre-flighted but can be invalidated mid-run.
+        return fail(EXIT_BAD_INPUT, f"bad input: cannot write report '{report_path}': {exc}")
+    print(f"Report: {report_path}")
+    print(render_summary(ranked))
     return EXIT_SUCCESS
 
 

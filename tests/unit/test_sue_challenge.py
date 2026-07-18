@@ -4,24 +4,40 @@ The script is loaded via importlib (ADR-008) because scripts/ is not a package.
 All tests run offline: model commands are tmp_path-generated stub executables
 (FR-043); no network, no live model (SC-002).
 
-Covers tasks T-001..T-010: shared constants and dataclasses, argument handling
+Covers tasks T-001..T-014: shared constants and dataclasses, argument handling
 (FR-001..FR-004, FR-007, NFR-003), pre-flight and exit-code spine (FR-005,
 FR-006, FR-012, FR-042, NFR-005), prompt assembly (FR-014, FR-015, FR-018,
 FR-021, FR-022, FR-023), the isolated subprocess runner (FR-010, FR-011,
 FR-043), staged tolerant extraction (FR-026, FR-027), round-1/round-2 strict
 validation (FR-016, FR-017, FR-019, FR-020, FR-024, FR-025), the corrective
-retry loop with debug dumps (FR-013, FR-028..FR-031), and deterministic
-partition plus ranking (FR-009, FR-032, FR-033).
+retry loop with debug dumps (FR-013, FR-028..FR-031), deterministic partition
+plus ranking (FR-009, FR-032, FR-033), report and summary rendering (FR-035..
+FR-039, FR-041, NFR-004), the wired end-to-end pipeline (FR-008, FR-020,
+FR-034, FR-040, FR-042), the standalone-contract gate (FR-045, NFR-002), and
+the SC-003 exit-code matrix with the NFR-001 subprocess-invocation bound.
+
+FR-044 behavior-group coverage sweep (all 7 deterministic groups):
+1. argument handling      -> TestArgumentHandling
+2. prompt assembly        -> TestPromptAssembly
+3. extraction             -> TestExtractJsonObject
+4. validation + bijection -> TestValidateRound1, TestValidateRound2
+5. filtering + ranking    -> TestPartitionAndRank
+6. report rendering       -> TestRenderReport, TestRenderSummary
+7. exit codes             -> TestPreflight, TestExecuteRound, TestMainPipeline,
+                             TestExitCodeMatrixAndBounds
 """
 
 from __future__ import annotations
 
+import ast
 import dataclasses
+import hashlib
 import importlib.util
 import json
 import os
 import shlex
 import stat
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -1102,3 +1118,533 @@ class TestPartitionAndRank:
         questions, answers = self._fixture()
         findings, _ = sue.partition_answers(questions, answers)
         assert sue.rank_findings(findings) == sue.rank_findings(findings)
+
+
+# ---------------------------------------------------------------------------
+# T-011 — report and summary rendering (FR-035..FR-039, FR-041, NFR-004;
+# FR-044 group 6; AC-002, AC-007, AC-008, AC-009, AC-020)
+# ---------------------------------------------------------------------------
+
+
+_REPORT_SPEC_LINES = [
+    "# Demo Spec",
+    "The system does X.",
+    "The system does not do X.",
+    "A trailing line.",
+]
+
+
+def _report_spec() -> "sue.SpecDocument":
+    return sue.SpecDocument(path=Path("demo/spec.md"), lines=list(_REPORT_SPEC_LINES))
+
+
+def _render_fixture():
+    """Mixed-verdict fixture: 1 CONTRADICTED, 1 UNANSWERABLE, 1 ANSWERED."""
+    questions = _questions_for("Q1", "Q2", "Q3")
+    answers = [
+        sue.Answer(id="Q1", verdict="CONTRADICTED", answer="Both sides.", evidence_lines=[2, 3]),
+        sue.Answer(id="Q2", verdict="UNANSWERABLE", answer="The gap is G.", evidence_lines=[]),
+        sue.Answer(id="Q3", verdict="ANSWERED", answer="Line two says so.", evidence_lines=[2]),
+    ]
+    findings, audit = sue.partition_answers(questions, answers)
+    return questions, sue.rank_findings(findings), audit
+
+
+class TestRenderReport:
+    def _report(self, truncated=False):
+        questions, ranked, audit = _render_fixture()
+        return sue.render_report(_report_spec(), "2026-07-18", questions, ranked, audit, truncated)
+
+    def test_exactly_three_sections_in_order(self):
+        # FR-035: header, findings, audit appendix — in that order.
+        report = self._report()
+        header = report.index("# Socratic Challenge Report")
+        findings = report.index("## Findings")
+        audit = report.index("## Audit appendix")
+        assert header < findings < audit
+        assert report.count("## Findings") == 1
+        assert report.count("## Audit appendix") == 1
+
+    def test_header_states_exactly_four_facts(self):
+        # AC-002/FR-036: spec path, run date, question count, finding count.
+        report = self._report()
+        head = report.split("## Findings")[0]
+        assert "- **Specification:** demo/spec.md" in head
+        assert "- **Run date:** 2026-07-18" in head
+        assert "- **Questions:** 3" in head
+        assert "- **Findings:** 2" in head
+        # Exactly the 4 base facts: no truncation note without the flag.
+        assert len([l for l in head.splitlines() if l.startswith("- **")]) == 4
+        assert "truncated" not in head
+
+    def test_truncation_note_renders_only_when_flag_set(self):
+        # AC-020/FR-019/FR-036: exactly 1 truncation note when the flag is set.
+        report = self._report(truncated=True)
+        head = report.split("## Findings")[0]
+        assert head.count("truncated to the first 3") == 1
+        assert len([l for l in head.splitlines() if l.startswith("- **")]) == 5
+
+    def test_findings_entries_state_four_elements_in_rank_order(self):
+        # FR-037: verdict, question, target, evidence — ranked per FR-033.
+        report = self._report()
+        assert "### 1. [CONTRADICTED] Q1?" in report
+        assert "### 2. [UNANSWERABLE] Q2?" in report
+        assert report.index("### 1. [CONTRADICTED]") < report.index("### 2. [UNANSWERABLE]")
+        assert report.count("- **Target:** general") == 2
+        assert "- **Evidence:**" in report
+
+    def test_evidence_quotes_exactly_one_spec_line_per_cited_number(self):
+        # AC-009/FR-039/FR-018: quoted text is read from the spec, 1-based.
+        report = self._report()
+        assert "  > line 2: The system does X." in report
+        assert "  > line 3: The system does not do X." in report
+
+    def test_unanswerable_findings_state_the_named_gap(self):
+        # FR-039: the answer text (the named gap) renders in the entry body.
+        report = self._report()
+        assert "The gap is G." in report
+        assert "  > (0 lines cited)" in report
+
+    def test_out_of_range_citations_render_deterministic_marker(self):
+        # ADR-007/ISS-202: line 0 and beyond-range lines never fail rendering.
+        questions = _questions_for("Q1")
+        answers = [
+            sue.Answer(id="Q1", verdict="CONTRADICTED", answer="A.", evidence_lines=[0, 2, 999])
+        ]
+        findings, audit = sue.partition_answers(questions, answers)
+        report = sue.render_report(
+            _report_spec(), "2026-07-18", questions, sue.rank_findings(findings), audit, False
+        )
+        assert "  > line 0: (not present in the specification)" in report
+        assert "  > line 999: (not present in the specification)" in report
+        assert "  > line 2: The system does X." in report
+
+    def test_audit_appendix_is_exactly_one_collapsed_details_block(self):
+        # AC-008/FR-038: exactly 1 <details> block holding every ANSWERED entry.
+        report = self._report()
+        assert report.count("<details>") == 1
+        assert report.count("</details>") == 1
+        assert report.count("<summary>") == 1
+        assert "<summary>Audit appendix — 1 ANSWERED question(s)</summary>" in report
+        details = report.split("<details>")[1].split("</details>")[0]
+        assert "### Q3 — Q3?" in details
+        assert "- **Answer:** Line two says so." in details
+        assert "  > line 2: The system does X." in details
+
+    def test_zero_findings_statement_with_full_audit_appendix(self):
+        # AC-007/FR-041: the clean-specification outcome.
+        questions = _questions_for("Q1", "Q2")
+        answers = [_answer_obj(q.id, "ANSWERED") for q in questions]
+        findings, audit = sue.partition_answers(questions, answers)
+        report = sue.render_report(
+            _report_spec(), "2026-07-18", questions, sue.rank_findings(findings), audit, False
+        )
+        assert "0 findings" in report
+        assert "- **Findings:** 0" in report
+        assert "<summary>Audit appendix — 2 ANSWERED question(s)</summary>" in report
+        assert "### Q1 — Q1?" in report
+        assert "### Q2 — Q2?" in report
+
+    def test_zero_questions_report(self):
+        # AC-006/FR-020 wording path: 0 questions, 0 findings, 0 audit entries.
+        report = sue.render_report(_report_spec(), "2026-07-18", [], [], [], False)
+        assert "- **Questions:** 0" in report
+        assert "- **Findings:** 0" in report
+        assert "0 findings" in report
+        assert "<summary>Audit appendix — 0 ANSWERED question(s)</summary>" in report
+
+    def test_multiline_question_text_stays_on_one_heading_line(self):
+        # Model-controlled question text is only validated as non-empty; an
+        # embedded newline must not break the heading or summary line shape.
+        question = sue.SocraticQuestion(
+            id="Q1",
+            question="What\ndoes\n\n  X mean?",
+            target="general",
+            lines=[1],
+            category="ambiguity",
+        )
+        answer = sue.Answer(id="Q1", verdict="UNANSWERABLE", answer="Gap.", evidence_lines=[1])
+        ranked = sue.rank_findings([sue.Finding(rank=0, question=question, answer=answer)])
+        report = sue.render_report(_report_spec(), "2026-07-18", [question], ranked, [], False)
+        assert "### 1. [UNANSWERABLE] What does X mean?" in report
+        summary = sue.render_summary(ranked)
+        assert "1. [UNANSWERABLE] What does X mean?" in summary
+        # counts line + "Top findings:" label + exactly 1 one-line entry
+        assert len(summary.splitlines()) == 3
+
+    def test_double_render_is_byte_identical(self):
+        # NFR-004: identical validated inputs give byte-identical bodies.
+        assert self._report() == self._report()
+
+    def test_run_date_is_injected_and_isolated_to_one_line(self):
+        # NFR-004: outside the run-date field the bodies are identical.
+        questions, ranked, audit = _render_fixture()
+        spec = _report_spec()
+        one = sue.render_report(spec, "2026-07-18", questions, ranked, audit, False)
+        two = sue.render_report(spec, "2027-01-01", questions, ranked, audit, False)
+        differing = [
+            (a, b) for a, b in zip(one.splitlines(), two.splitlines()) if a != b
+        ]
+        assert differing == [("- **Run date:** 2026-07-18", "- **Run date:** 2027-01-01")]
+
+
+class TestRenderSummary:
+    def test_counts_per_verdict_class(self):
+        _, ranked, _ = _render_fixture()
+        summary = sue.render_summary(ranked)
+        assert "CONTRADICTED: 1" in summary
+        assert "UNANSWERABLE: 1" in summary
+
+    def test_top_three_in_rank_order(self):
+        # FR-040: at most 3 findings echoed, in FR-033 rank order.
+        questions = _questions_for("Q1", "Q2", "Q3", "Q4")
+        answers = [_answer_obj(q.id, "UNANSWERABLE") for q in questions[:3]] + [
+            _answer_obj("Q4", "CONTRADICTED")
+        ]
+        findings, _ = sue.partition_answers(questions, answers)
+        ranked = sue.rank_findings(findings)
+        summary = sue.render_summary(ranked)
+        assert "CONTRADICTED: 1" in summary
+        assert "UNANSWERABLE: 3" in summary
+        listed = [l for l in summary.splitlines() if l.strip().startswith(("1.", "2.", "3.", "4."))]
+        assert len(listed) == 3
+        assert listed[0].strip().startswith("1. [CONTRADICTED] Q4?")
+        assert listed[1].strip().startswith("2. [UNANSWERABLE] Q1?")
+        assert listed[2].strip().startswith("3. [UNANSWERABLE] Q2?")
+
+    def test_zero_findings_summary_states_zero_counts(self):
+        summary = sue.render_summary([])
+        assert "CONTRADICTED: 0" in summary
+        assert "UNANSWERABLE: 0" in summary
+
+
+# ---------------------------------------------------------------------------
+# T-012 — wired main pipeline, end-to-end through the stub seam
+# (FR-008, FR-020, FR-034, FR-040, FR-042; AC-001, AC-003, AC-005, AC-006,
+#  AC-010, AC-021)
+# ---------------------------------------------------------------------------
+
+
+def _round2_reply(verdicts: dict[str, str]) -> str:
+    return json.dumps(
+        {
+            "answers": [
+                {
+                    "id": qid,
+                    "verdict": verdict,
+                    "answer": f"answer for {qid}",
+                    "evidence_lines": [2],
+                }
+                for qid, verdict in verdicts.items()
+            ]
+        }
+    )
+
+
+def _full_round1_reply(id_question_pairs: list[tuple[str, str]]) -> str:
+    return json.dumps(
+        {
+            "questions": [
+                {
+                    "id": qid,
+                    "question": question,
+                    "target": "general",
+                    "lines": [2],
+                    "category": "ambiguity",
+                }
+                for qid, question in id_question_pairs
+            ]
+        }
+    )
+
+
+def _write_fixture_spec(tmp_path: Path) -> Path:
+    spec_dir = tmp_path / "specdir"
+    spec_dir.mkdir(exist_ok=True)
+    spec = spec_dir / "spec.md"
+    spec.write_text("\n".join(_REPORT_SPEC_LINES) + "\n")
+    return spec
+
+
+class TestMainPipeline:
+    def _happy_stub(self, tmp_path: Path, name: str = "happy"):
+        return _make_replay_stub(
+            tmp_path,
+            name,
+            [
+                _full_round1_reply(
+                    [("Q1", "Is X contradicted?"), ("Q2", "Is anything answered?")]
+                ),
+                _round2_reply({"Q1": "CONTRADICTED", "Q2": "ANSWERED"}),
+            ],
+        )
+
+    def test_full_run_two_calls_report_written_exit_0(self, tmp_path, capsys):
+        # AC-001/AC-021/FR-008: exactly 2 model calls, report beside the spec,
+        # exit 0 — entirely through the real stub subprocess seam (FR-043).
+        spec = _write_fixture_spec(tmp_path)
+        stub, count, _ = self._happy_stub(tmp_path)
+        rc = sue.main([str(spec), "--claude-cmd", shlex.quote(stub)])
+        assert rc == 0
+        assert int(count.read_text()) == 2
+        report_path = spec.parent / sue.REPORT_FILENAME
+        assert report_path.exists()
+        report = report_path.read_text()
+        assert "### 1. [CONTRADICTED] Is X contradicted?" in report
+        assert "  > line 2: The system does X." in report
+        assert "<summary>Audit appendix — 1 ANSWERED question(s)</summary>" in report
+        assert capsys.readouterr().err == ""
+
+    def test_stdout_summary_states_counts_and_top_findings(self, tmp_path, capsys):
+        # AC-005/FR-040: per-class counts plus top findings in rank order.
+        spec = _write_fixture_spec(tmp_path)
+        stub, _, _ = self._happy_stub(tmp_path)
+        assert sue.main([str(spec), "--claude-cmd", shlex.quote(stub)]) == 0
+        out = capsys.readouterr().out
+        assert "CONTRADICTED: 1" in out
+        assert "UNANSWERABLE: 0" in out
+        assert "1. [CONTRADICTED] Is X contradicted?" in out
+
+    def test_rerun_overwrites_keeping_exactly_one_report(self, tmp_path, capsys):
+        # AC-003/FR-034: plain overwrite, 0 historical copies.
+        spec = _write_fixture_spec(tmp_path)
+        first_stub, _, _ = _make_replay_stub(
+            tmp_path,
+            "first",
+            [
+                _full_round1_reply([("Q1", "FIRST-RUN-MARKER question?")]),
+                _round2_reply({"Q1": "UNANSWERABLE"}),
+            ],
+        )
+        assert sue.main([str(spec), "--claude-cmd", shlex.quote(first_stub)]) == 0
+        second_stub, _, _ = _make_replay_stub(
+            tmp_path,
+            "second",
+            [
+                _full_round1_reply([("Q1", "SECOND-RUN-MARKER question?")]),
+                _round2_reply({"Q1": "UNANSWERABLE"}),
+            ],
+        )
+        assert sue.main([str(spec), "--claude-cmd", shlex.quote(second_stub)]) == 0
+        reports = [p for p in spec.parent.iterdir() if "socratic-challenge" in p.name]
+        assert [p.name for p in reports] == [sue.REPORT_FILENAME]
+        content = reports[0].read_text()
+        assert "SECOND-RUN-MARKER" in content
+        assert "FIRST-RUN-MARKER" not in content
+        capsys.readouterr()
+
+    def test_zero_question_run_skips_round_2(self, tmp_path, capsys):
+        # AC-006/FR-020: valid empty round-1 list -> exactly 1 model call,
+        # zero-question report, exit 0.
+        spec = _write_fixture_spec(tmp_path)
+        stub, count, _ = _make_replay_stub(
+            tmp_path, "empty", [json.dumps({"questions": []})]
+        )
+        rc = sue.main([str(spec), "--claude-cmd", shlex.quote(stub)])
+        assert rc == 0
+        assert int(count.read_text()) == 1
+        report = (spec.parent / sue.REPORT_FILENAME).read_text()
+        assert "- **Questions:** 0" in report
+        assert "- **Findings:** 0" in report
+        assert "0 findings" in report
+        assert capsys.readouterr().err == ""
+
+    def test_spec_file_never_written_across_outcomes(self, tmp_path, capsys):
+        # AC-010/FR-042: the challenged spec is byte-identical after success,
+        # exit-3, and exit-2 outcomes.
+        spec = _write_fixture_spec(tmp_path)
+        digest_before = hashlib.sha256(spec.read_bytes()).hexdigest()
+        happy_stub, _, _ = self._happy_stub(tmp_path)
+        assert sue.main([str(spec), "--claude-cmd", shlex.quote(happy_stub)]) == 0
+        bad_stub, _, _ = _make_replay_stub(tmp_path, "bad", ["BAD", "BAD-AGAIN"])
+        assert sue.main([str(spec), "--claude-cmd", shlex.quote(bad_stub)]) == 3
+        assert sue.main([str(spec), "--claude-cmd", "sue-missing-cmd-98765"]) == 2
+        assert hashlib.sha256(spec.read_bytes()).hexdigest() == digest_before
+        capsys.readouterr()
+
+    def test_round1_double_failure_exits_3_writes_no_report(self, tmp_path, capsys):
+        # AC-015 through main: exit 3, dumps written, 0 reports.
+        spec = _write_fixture_spec(tmp_path)
+        stub, count, _ = _make_replay_stub(tmp_path, "r1bad", ["BAD", "BAD-AGAIN"])
+        rc = sue.main([str(spec), "--claude-cmd", shlex.quote(stub)])
+        assert rc == 3
+        assert int(count.read_text()) == 2
+        assert not (spec.parent / sue.REPORT_FILENAME).exists()
+        assert (spec.parent / sue.DEBUG_DIR_NAME).is_dir()
+        _one_stderr_line(capsys)
+
+    def test_round2_double_failure_adds_zero_round1_calls(self, tmp_path, capsys):
+        # FR-031 through the real pipeline: 1 round-1 call + 2 round-2 attempts.
+        spec = _write_fixture_spec(tmp_path)
+        stub, count, _ = _make_replay_stub(
+            tmp_path,
+            "r2bad",
+            [_full_round1_reply([("Q1", "A question?")]), "BAD", "BAD-AGAIN"],
+        )
+        rc = sue.main([str(spec), "--claude-cmd", shlex.quote(stub)])
+        assert rc == 3
+        assert int(count.read_text()) == 3
+        names = sorted(p.name for p in (spec.parent / sue.DEBUG_DIR_NAME).iterdir())
+        assert all(name.startswith("round2-") for name in names)
+        assert not (spec.parent / sue.REPORT_FILENAME).exists()
+        _one_stderr_line(capsys)
+
+    def test_retry_then_success_completes_at_exit_0(self, tmp_path, capsys):
+        # AC-016 end-to-end: invalid round-1 output, corrective retry succeeds,
+        # the run completes at exit code 0 with 3 total invocations.
+        spec = _write_fixture_spec(tmp_path)
+        stub, count, _ = _make_replay_stub(
+            tmp_path,
+            "recover",
+            [
+                "GARBAGE not json",
+                _full_round1_reply([("Q1", "A question?")]),
+                _round2_reply({"Q1": "ANSWERED"}),
+            ],
+        )
+        rc = sue.main([str(spec), "--claude-cmd", shlex.quote(stub)])
+        assert rc == 0
+        assert int(count.read_text()) == 3
+        assert (spec.parent / sue.REPORT_FILENAME).exists()
+        capsys.readouterr()
+
+    def test_truncation_note_lands_in_report_via_main(self, tmp_path, capsys):
+        # AC-020 end-to-end: over-cap round-1 output -> first-N kept, header
+        # carries exactly 1 truncation note.
+        spec = _write_fixture_spec(tmp_path)
+        stub, count, _ = _make_replay_stub(
+            tmp_path,
+            "overcap",
+            [
+                _full_round1_reply([("Q1", "One?"), ("Q2", "Two?"), ("Q3", "Three?")]),
+                _round2_reply({"Q1": "ANSWERED", "Q2": "ANSWERED"}),
+            ],
+        )
+        rc = sue.main([str(spec), "--claude-cmd", shlex.quote(stub), "--questions", "2"])
+        assert rc == 0
+        report = (spec.parent / sue.REPORT_FILENAME).read_text()
+        assert "- **Questions:** 2" in report
+        assert report.count("truncated to the first 2") == 1
+        capsys.readouterr()
+
+
+# ---------------------------------------------------------------------------
+# T-013 — standalone-contract gate (FR-045, NFR-002; feasibility risk-5
+# anti-coupling gate)
+# ---------------------------------------------------------------------------
+
+
+class TestStandaloneContract:
+    def _imported_top_level_modules(self) -> set[str]:
+        tree = ast.parse(SCRIPT_PATH.read_text())
+        modules: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules |= {alias.name.split(".")[0] for alias in node.names}
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    modules.add(node.module.split(".")[0])
+        return modules
+
+    def test_import_scan_zero_project_and_third_party_imports(self):
+        # FR-045: 0 orchestration-package imports, 0 non-stdlib imports.
+        modules = self._imported_top_level_modules()
+        forbidden = {"harness", "echelon", "codegen", "understanding"}
+        assert not modules & forbidden, f"project-package imports found: {modules & forbidden}"
+        non_stdlib = modules - set(sys.stdlib_module_names)
+        assert not non_stdlib, f"non-stdlib imports found: {non_stdlib}"
+
+    def test_source_references_zero_orchestration_config_or_state_files(self):
+        # FR-045/A-003: argv + spec file are the only inputs; no orchestration
+        # configuration or state file names appear in the source.
+        source = SCRIPT_PATH.read_text()
+        for needle in ("echelon-config", ".specify", "state.json", "definition.yaml"):
+            assert needle not in source, f"orchestration coupling: {needle!r} in script source"
+
+    def test_stubbed_run_completes_in_clean_environment(self, tmp_path):
+        # NFR-002/SC-005: a fresh-checkout-shaped run — out-of-repo cwd,
+        # minimal environment, standard runtime only — completes with exactly
+        # 1 command invocation and 0 additional installed components.
+        spec = _write_fixture_spec(tmp_path)
+        stub, count, _ = _make_replay_stub(
+            tmp_path,
+            "clean",
+            [
+                _full_round1_reply([("Q1", "A question?")]),
+                _round2_reply({"Q1": "ANSWERED"}),
+            ],
+        )
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH), str(spec), "--claude-cmd", shlex.quote(stub)],
+            cwd=tmp_path,
+            env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+        assert int(count.read_text()) == 2
+        assert (spec.parent / sue.REPORT_FILENAME).exists()
+
+
+# ---------------------------------------------------------------------------
+# T-014 — SC-003 exit-code matrix and the NFR-001 invocation bound
+# ---------------------------------------------------------------------------
+
+
+class TestExitCodeMatrixAndBounds:
+    def test_sc003_exit_1_bad_argument(self, tmp_path, capsys):
+        assert sue.main([]) == 1
+        line = _one_stderr_line(capsys)
+        assert "bad input" in line
+
+    def test_sc003_exit_1_missing_spec(self, tmp_path, capsys):
+        assert sue.main([str(tmp_path / "absent.md")]) == 1
+        line = _one_stderr_line(capsys)
+        assert "bad input" in line
+
+    def test_sc003_exit_2_missing_executable(self, tmp_path, capsys):
+        spec = _write_fixture_spec(tmp_path)
+        assert sue.main([str(spec), "--claude-cmd", "sue-missing-cmd-98765"]) == 2
+        line = _one_stderr_line(capsys)
+        assert "model command unavailable" in line
+
+    def test_sc003_exit_3_unusable_output(self, tmp_path, capsys):
+        spec = _write_fixture_spec(tmp_path)
+        stub, _, _ = _make_replay_stub(tmp_path, "matrix3", ["BAD", "BAD-AGAIN"])
+        assert sue.main([str(spec), "--claude-cmd", shlex.quote(stub)]) == 3
+        line = _one_stderr_line(capsys)
+        assert "unusable model output" in line
+
+    def test_at_most_four_subprocess_invocations_per_run(self, tmp_path, capsys):
+        # NFR-001 structural bound: the worst terminating success path is
+        # 2 attempts per round x 2 rounds = 4 subprocess invocations, bounding
+        # wall-clock at 4 timeout budgets plus local processing.
+        spec = _write_fixture_spec(tmp_path)
+        stub, count, _ = _make_replay_stub(
+            tmp_path,
+            "worst",
+            [
+                "GARBAGE round-1 attempt 1",
+                _full_round1_reply([("Q1", "A question?")]),
+                "GARBAGE round-2 attempt 1",
+                _round2_reply({"Q1": "ANSWERED"}),
+            ],
+        )
+        rc = sue.main([str(spec), "--claude-cmd", shlex.quote(stub)])
+        assert rc == 0
+        assert int(count.read_text()) == 4
+        capsys.readouterr()
+
+    def test_failure_paths_never_exceed_four_invocations(self, tmp_path, capsys):
+        # NFR-001 on the exit-3 path: a double round-2 failure terminates after
+        # 3 invocations (1 round-1 + 2 round-2) — under the 4-budget bound.
+        spec = _write_fixture_spec(tmp_path)
+        stub, count, _ = _make_replay_stub(
+            tmp_path,
+            "bounded",
+            [_full_round1_reply([("Q1", "A question?")]), "BAD", "BAD-AGAIN"],
+        )
+        assert sue.main([str(spec), "--claude-cmd", shlex.quote(stub)]) == 3
+        assert int(count.read_text()) <= 4
+        capsys.readouterr()
