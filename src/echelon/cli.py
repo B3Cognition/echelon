@@ -56,7 +56,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.4.1"
+CLI_VERSION = "3.5.0"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -3017,34 +3017,6 @@ def _find_current_run_dir(project_root: Path) -> Optional[Path]:
     return all_runs[0] if all_runs else None
 
 
-_SAFE_REWIND_PHASES: tuple[str, ...] = (
-    "phase3-how",
-    "phase3-sentinel",
-    "phase3-plan",
-)
-
-_REWIND_PHASE_ORDER: tuple[str, ...] = (
-    "phase3-how",
-    "phase3-sentinel",
-    "phase3-plan",
-    "phase3-consensus",
-    "checkpoint-plan",
-    "phase4-document",
-)
-
-_REWIND_REQUIRED_INPUTS: dict[str, tuple[str, ...]] = {
-    "phase3-how": ("spec.md",),
-    "phase3-sentinel": ("spec.md", "plan.md", "research.md", "data-model.md", "contracts/"),
-    "phase3-plan": (
-        "spec.md",
-        "plan.md",
-        "research.md",
-        "data-model.md",
-        "contracts/",
-        "test-strategy.md",
-    ),
-}
-
 _REWIND_CLEANUP_OUTPUTS: dict[str, tuple[str, ...]] = {
     "phase3-sentinel": (
         "test-strategy.md",
@@ -3106,12 +3078,27 @@ def _last_incomplete_dispatch_phase(run_state: dict) -> str | None:
     return phase_id
 
 
-def _blocked_non_escalation_recovery_command(run_state: dict) -> str | None:
+def _blocked_non_escalation_recovery_command(
+    run_state: dict,
+    *,
+    project_root: Path | None = None,
+) -> str | None:
     blocked_reason = str(run_state.get("blocked_reason") or "").strip()
     phase_id = _last_incomplete_dispatch_phase(run_state)
-    if _is_retryable_dispatch_block_reason(blocked_reason) and phase_id in _SAFE_REWIND_PHASES:
-        return f"echelon spec rewind {phase_id}"
-    return None
+    if not _is_retryable_dispatch_block_reason(blocked_reason) or not phase_id:
+        return None
+    if project_root is None:
+        return None
+    spec_dir, _ = _normalize_rewind_spec_dir(project_root, run_state)
+    if spec_dir is None:
+        return None
+    from harness.phase_checkpoints import load_checkpoint_ledger, resolve_checkpoint
+
+    try:
+        resolve_checkpoint(load_checkpoint_ledger(spec_dir), phase_id)
+    except (KeyError, OSError, ValueError, TypeError):
+        return None
+    return f"echelon spec rewind {phase_id}"
 
 
 def _blocked_failed_dispatch_phase(run_state: dict) -> str | None:
@@ -3160,7 +3147,11 @@ def _interrupted_retry_phase(run_state: dict) -> str | None:
     return _last_incomplete_dispatch_phase(run_state)
 
 
-def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
+def _classify_run_recovery(
+    run_state: dict,
+    *,
+    project_root: Path | None = None,
+) -> _RunRecoveryAction:
     status = str(run_state.get("status") or "").strip()
     reason = str(run_state.get("blocked_reason") or "").strip()
 
@@ -3259,7 +3250,10 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
             note="choose a valid phase from echelon spec status output",
         )
 
-    rewind = _blocked_non_escalation_recovery_command(run_state)
+    rewind = _blocked_non_escalation_recovery_command(
+        run_state,
+        project_root=project_root,
+    )
     if rewind:
         phase = str((run_state.get("last_dispatch") or {}).get("phase_id") or "").strip()
         return _RunRecoveryAction(
@@ -3381,7 +3375,11 @@ def _print_squad_summary(
 
     status = str(getattr(result, "status", "") or state.get("status") or "unknown")
     result_phase = str(getattr(result, "phase", "") or "")
-    action = _classify_run_recovery(state) if state else _RunRecoveryAction("advance")
+    action = (
+        _classify_run_recovery(state, project_root=project_root)
+        if state
+        else _RunRecoveryAction("advance")
+    )
     spec_id = str(state.get("spec_id") or "").strip()
     spec_dir = str(state.get("published_spec_dir") or state.get("spec_dir") or "").strip()
     if not spec_id and spec_dir:
@@ -3443,20 +3441,6 @@ def _print_squad_summary(
     _banner("SQUAD SUMMARY", fields, subtitle=f"{icon} {status_text}")
 
 
-def _rewind_constitution_is_real(project_root: Path) -> bool:
-    path = project_root / ".specify" / "memory" / "constitution.md"
-    if not path.exists():
-        return False
-    text = path.read_text(errors="replace")
-    template_markers = (
-        "[PROJECT_NAME]",
-        "[CONSTITUTION_VERSION]",
-        "[RATIFICATION_DATE]",
-        "[LAST_AMENDED_DATE]",
-    )
-    return not any(marker in text for marker in template_markers)
-
-
 def _normalize_rewind_spec_dir(project_root: Path, state: dict) -> tuple[Path | None, str | None]:
     ref = str(state.get("spec_dir") or "").strip()
     if ref:
@@ -3485,18 +3469,6 @@ def _normalize_rewind_spec_dir(project_root: Path, state: dict) -> tuple[Path | 
     return None, None
 
 
-def _collect_rewind_missing_inputs(spec_dir: Path, phase: str) -> list[str]:
-    missing: list[str] = []
-    for rel in _REWIND_REQUIRED_INPUTS.get(phase, ()):
-        path = spec_dir / rel.rstrip("/")
-        if rel.endswith("/"):
-            if not path.is_dir():
-                missing.append(rel)
-        elif not path.exists():
-            missing.append(rel)
-    return missing
-
-
 def _cleanup_rewind_outputs(spec_dir: Path, phase: str, run_dir: Path | None = None) -> list[str]:
     removed: list[str] = []
     roots = [spec_dir]
@@ -3516,7 +3488,13 @@ def _cleanup_rewind_outputs(spec_dir: Path, phase: str, run_dir: Path | None = N
     return removed
 
 
-def _reset_rewind_state(state: dict, phase: str, spec_dir_ref: str) -> dict:
+def _reset_rewind_state(
+    state: dict,
+    phase: str,
+    spec_dir_ref: str,
+    *,
+    checkpoint_phases_before_target: set[str] | None = None,
+) -> dict:
     rewound = dict(state)
     rewound["phase"] = phase
     rewound["status"] = "running"
@@ -3526,16 +3504,18 @@ def _reset_rewind_state(state: dict, phase: str, spec_dir_ref: str) -> dict:
     rewound["escalation_resolved"] = False
     rewound["escalation_resolver"] = None
     rewound.pop("phase_a_readiness_blockers", None)
-    if phase in _REWIND_PHASE_ORDER:
-        cutoff = _REWIND_PHASE_ORDER.index(phase)
-        downstream = set(_REWIND_PHASE_ORDER[cutoff:])
+    if checkpoint_phases_before_target is not None:
         completed = rewound.get("completed_phases")
         if isinstance(completed, list):
-            rewound["completed_phases"] = [p for p in completed if p not in downstream]
+            rewound["completed_phases"] = [
+                item for item in completed if item in checkpoint_phases_before_target
+            ]
         counts = rewound.get("phase_dispatch_counts")
         if isinstance(counts, dict):
             rewound["phase_dispatch_counts"] = {
-                key: value for key, value in counts.items() if key not in downstream
+                key: value
+                for key, value in counts.items()
+                if key in checkpoint_phases_before_target
             }
     return rewound
 
@@ -4088,7 +4068,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             current_state = {}
 
     if result_status in {"blocked", "interrupted"}:
-        action = _classify_run_recovery(current_state)
+        action = _classify_run_recovery(current_state, project_root=project_root)
         if action.kind == "human_resume":
             fields = [
                 ("reason", action.reason),
@@ -5617,7 +5597,7 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
             return "phase4-document"
         return None
 
-    action = _classify_run_recovery(current_state)
+    action = _classify_run_recovery(current_state, project_root=project_root)
     if action.kind == "retry_phase":
         return action.phase
     if action.kind in {"human_resume", "safe_rewind"}:
@@ -6208,7 +6188,7 @@ def _cmd_continue(
         )
         _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
 
-    action = _classify_run_recovery(state)
+    action = _classify_run_recovery(state, project_root=project_root)
     if action.kind == "safe_rewind":
         fields = [("blocked by", action.reason)]
         if action.note:
@@ -6291,21 +6271,13 @@ def _cmd_rewind(
     positional = [arg for arg in args if arg != "--confirm"]
     if len(positional) != 1:
         print(
-            "Usage: echelon spec rewind <phase-id> [--confirm]\n"
-            f"Supported phases: {', '.join(_SAFE_REWIND_PHASES)}",
+            "Usage: echelon spec rewind <checkpoint-phase-or-id> [--confirm]\n"
+            "Run `echelon spec checkpoint list` to see active-ledger targets.",
             file=sys.stderr,
         )
         sys.exit(1)
 
     target = positional[0].strip()
-    if target not in _SAFE_REWIND_PHASES:
-        print(
-            "✗ Unsupported rewind target.\n"
-            f"  Phase: {target}\n"
-            f"  Supported phases: {', '.join(_SAFE_REWIND_PHASES)}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
 
     squad_dir = _find_current_run_dir(project_root)
     if squad_dir is None or not (squad_dir / "state.json").exists():
@@ -6329,79 +6301,70 @@ def _cmd_rewind(
         )
         sys.exit(1)
 
-    checkpoint_ledger = spec_dir / ".echelon" / "checkpoints.json"
-    if checkpoint_ledger.exists():
-        from echelon.rewind import RewindError, prepare_rewind
+    from echelon.rewind import RewindError, prepare_rewind
+    from harness.phase_checkpoints import (
+        checkpoint_targets,
+        load_checkpoint_ledger,
+        resolve_checkpoint,
+    )
 
-        try:
-            result = prepare_rewind(
-                project_root=project_root,
-                spec=spec_dir.name,
-                spec_dir=spec_dir,
-                target=target,
-                confirm=confirm,
+    ledger = load_checkpoint_ledger(spec_dir)
+    try:
+        checkpoint = resolve_checkpoint(ledger, target)
+    except KeyError:
+        available = checkpoint_targets(ledger)
+        detail = (
+            f"checkpoint not found for spec {ledger.spec_id}: {target}\n"
+            + (
+                f"Available checkpoints: {', '.join(available)}"
+                if available
+                else "No checkpoints are recorded for this spec."
             )
-        except RewindError as exc:
-            print(f"✗ Cannot rewind to {target}.\n  {exc}", file=sys.stderr)
-            sys.exit(1)
-
-        if not result.applied:
-            print(result.message)
-            return
-
-        removed = _cleanup_rewind_outputs(spec_dir, target, squad_dir)
-        rewound = _reset_rewind_state(state, target, spec_dir_ref)
-        store.save(rewound)
-
-        _banner(
-            "REWIND COMPLETE",
-            [
-                ("spec", result.spec_id),
-                ("checkpoint", result.checkpoint_id),
-                ("from", result.from_commit[:7]),
-                ("to", result.to_commit[:7]),
-                ("backup", result.backup_ref or "(none)"),
-                ("cleaned", ", ".join(removed) if removed else "(none)"),
-                ("next", "echelon spec continue"),
-            ],
         )
+        print(f"✗ Cannot rewind to {target}.\n  {detail}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        result = prepare_rewind(
+            project_root=project_root,
+            spec=spec_dir.name,
+            spec_dir=spec_dir,
+            target=target,
+            confirm=confirm,
+        )
+    except RewindError as exc:
+        print(f"✗ Cannot rewind to {target}.\n  {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if not result.applied:
+        print(result.message)
         return
 
-    if not _rewind_constitution_is_real(project_root):
-        print(
-            f"✗ Cannot rewind to {target}.\n"
-            "  constitution.md is missing or still contains template placeholders.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    missing = _collect_rewind_missing_inputs(spec_dir, target)
-    if missing:
-        print(
-            f"✗ Cannot rewind to {target}.\n"
-            "  Missing required inputs:",
-            file=sys.stderr,
-        )
-        for item in missing:
-            print(f"  - {spec_dir / item.rstrip('/')}", file=sys.stderr)
-        print(
-            "  Next step: regenerate the missing upstream artifacts or rewind to an earlier safe phase.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    removed = _cleanup_rewind_outputs(spec_dir, target, squad_dir)
-    rewound = _reset_rewind_state(state, target, spec_dir_ref)
+    target_index = ledger.checkpoints.index(checkpoint)
+    checkpoint_phases_before_target = {
+        item.phase for item in ledger.checkpoints[:target_index]
+    }
+    removed = _cleanup_rewind_outputs(spec_dir, checkpoint.phase, squad_dir)
+    rewound = _reset_rewind_state(
+        state,
+        checkpoint.phase,
+        spec_dir_ref,
+        checkpoint_phases_before_target=checkpoint_phases_before_target,
+    )
     store.save(rewound)
 
-    details = [
-        ("run dir", str(squad_dir)),
-        ("phase", target),
-        ("spec dir", spec_dir_ref),
-        ("cleaned", ", ".join(removed) if removed else "(none)"),
-        ("next step", "echelon spec continue"),
-    ]
-    _banner("REWIND PREPARED", details)
+    _banner(
+        "REWIND COMPLETE",
+        [
+            ("spec", result.spec_id),
+            ("checkpoint", result.checkpoint_id),
+            ("from", result.from_commit[:7]),
+            ("to", result.to_commit[:7]),
+            ("backup", result.backup_ref or "(none)"),
+            ("cleaned", ", ".join(removed) if removed else "(none)"),
+            ("next", "echelon spec continue"),
+        ],
+    )
 
 
 def _cmd_repair_traceability(args: list[str], project_root: Path) -> None:

@@ -433,7 +433,7 @@ def root_continue(
 )
 def root_rewind(
     ctx: typer.Context,
-    phase_id: str = typer.Argument(..., help="Safe phase id to rewind to."),
+    phase_id: str = typer.Argument(..., help="Recorded checkpoint phase or ID to rewind to."),
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Compatibility alias for spec rewind."""
@@ -1124,7 +1124,7 @@ def spec_resume(
 )
 def spec_rewind(
     ctx: typer.Context,
-    phase_id: str = typer.Argument(..., help="Safe phase id to rewind to."),
+    phase_id: str = typer.Argument(..., help="Recorded checkpoint phase or ID to rewind to."),
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Rewind the active squad run to a safe checkpoint."""

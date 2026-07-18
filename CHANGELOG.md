@@ -46,6 +46,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-145 ledger-backed Phase A rewind** — `echelon spec rewind` now accepts
+  only checkpoint phases or IDs recorded in the active run's ledger. The same
+  ledger powers `checkpoint list`, error output, and automatic retry recovery;
+  confirmed rewind resets Git to the selected checkpoint and clears only state
+  completed after that ledger entry. Early checkpoints such as `phase1-what`
+  and `phase2-decide` are no longer rejected by a Phase 3 allowlist.
+
 - **Shared Node runtime discovery** — the installer now refreshes the pinned
   Context7, CodeGraph, and PerlGraph runtimes under
   `${ECHELON_HOME:-$HOME/.echelon}/node`. Primary-workspace wrappers and harness

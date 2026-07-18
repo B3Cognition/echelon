@@ -61,6 +61,15 @@ def test_re_publish_help_declares_manual_safety_flags():
 
 
 @pytest.mark.unit
+def test_spec_rewind_help_declares_a_ledger_checkpoint_target():
+    result = invoke_help("spec", "rewind")
+
+    assert result.exit_code == 0
+    assert "Recorded checkpoint phase or ID" in result.output
+    assert "Safe phase id" not in result.output
+
+
+@pytest.mark.unit
 def test_delivery_run_canonical_flags_route_to_harness_run(monkeypatch):
     from echelon.cli_app import run
 
