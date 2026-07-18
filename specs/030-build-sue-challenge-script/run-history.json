@@ -1,0 +1,12 @@
+{
+  "runs": [
+    {
+      "constitution_hash": "125af29efa38efbef28744c64f26125557c434e8d8c3e64be0c1d79d7e785025",
+      "phase": "A",
+      "run_id": "spec-20260718-104053-744160",
+      "spec_status": "planned",
+      "status": "done",
+      "timestamp": "2026-07-18T11:55:45.197870+00:00"
+    }
+  ]
+}
