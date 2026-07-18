@@ -8,7 +8,12 @@ import subprocess
 
 import pytest
 
-from echelon.cli import _cmd_repair_traceability, _cmd_rewind
+from echelon.cli import (
+    _ROADMAP_PHASES,
+    _cmd_repair_traceability,
+    _cmd_rewind,
+    _reset_rewind_state,
+)
 from echelon.rewind import RewindResult
 from echelon.spec_lifecycle import PhaseAExecutionLock
 from harness.phase_checkpoints import (
@@ -143,7 +148,7 @@ def test_rewind_phase3_sentinel_resets_state_and_cleans_downstream_artifacts(
     assert state["status"] == "running"
     assert state["phase"] == "phase3-sentinel"
     assert state["spec_dir"] == "specs/006-element-creator"
-    assert state["completed_phases"] == ["phase3-how"]
+    assert state["completed_phases"] == _ROADMAP_PHASES[:_ROADMAP_PHASES.index("phase3-sentinel")]
     assert state["phase_dispatch_counts"] == {"phase3-how": 1}
     assert not (spec_dir / "test-strategy.md").exists()
     assert not (spec_dir / "test-architecture.md").exists()
@@ -305,7 +310,7 @@ def test_rewind_accepts_and_resets_to_any_active_ledger_checkpoint(
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     assert received["target"] == "phase1-what"
     assert state["phase"] == "phase1-what"
-    assert state["completed_phases"] == ["phase1-why1"]
+    assert state["completed_phases"] == _ROADMAP_PHASES[:_ROADMAP_PHASES.index("phase1-what")]
     assert state["phase_dispatch_counts"] == {"phase1-why1": 1}
 
 
@@ -352,7 +357,7 @@ def test_rewind_phase1_what_uses_the_active_ledger_for_preview_and_confirm(
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     assert _git(tmp_path, "rev-parse", "HEAD") == checkpoint
     assert state["phase"] == "phase1-what"
-    assert state["completed_phases"] == []
+    assert state["completed_phases"] == _ROADMAP_PHASES[:_ROADMAP_PHASES.index("phase1-what")]
     assert state["phase_dispatch_counts"] == {}
 
 
@@ -376,6 +381,34 @@ def test_rewind_refuses_a_run_that_is_still_running(tmp_path: Path, capsys) -> N
     assert exc.value.code == 1
     assert "still running" in capsys.readouterr().err
     assert (run_dir / "state.json").exists()
+
+
+def test_rewind_reconstructs_primary_predecessors_for_the_roadmap() -> None:
+    """A checkpoint ledger is sparse; the roadmap still needs its prior phases."""
+    rewound = _reset_rewind_state(
+        {
+            "completed_phases": ["phase1-why2"],
+            "phase_dispatch_counts": {"phase1-why2": 1},
+        },
+        "phase1-what",
+        "runs/run-test/specs/001-demo",
+        checkpoint_phases_before_target={
+            "phase1-why1",
+            "phase1-constitution",
+            "phase1-why2",
+        },
+    )
+
+    assert rewound["completed_phases"] == [
+        "init",
+        "phase1-discover",
+        "phase1-synthesizer",
+        "phase1-modeler",
+        "phase1-tracker",
+        "phase1-why1",
+        "phase1-constitution",
+    ]
+    assert "phase1-why2" not in rewound["completed_phases"]
 
 
 def test_rewind_missing_checkpoint_exits_without_traceback(
@@ -467,7 +500,7 @@ def test_checkpoint_rewind_uses_run_local_ledger_and_resets_run_state(
     assert state["phase"] == "phase3-plan"
     assert state["blocked_reason"] is None
     assert "phase_a_readiness_blockers" not in state
-    assert state["completed_phases"] == ["phase3-how"]
+    assert state["completed_phases"] == _ROADMAP_PHASES[:_ROADMAP_PHASES.index("phase3-plan")]
     assert checkpoint_targets(load_checkpoint_ledger(run_spec_dir)) == [
         "phase3-how",
         "phase3-plan",

@@ -3506,16 +3506,28 @@ def _reset_rewind_state(
     rewound.pop("phase_a_readiness_blockers", None)
     if checkpoint_phases_before_target is not None:
         completed = rewound.get("completed_phases")
+        primary_predecessors: list[str] = []
+        if phase in _ROADMAP_PHASES:
+            primary_predecessors = _ROADMAP_PHASES[:_ROADMAP_PHASES.index(phase)]
         if isinstance(completed, list):
-            rewound["completed_phases"] = [
-                item for item in completed if item in checkpoint_phases_before_target
+            # Checkpoints are deliberately sparse: the roadmap's primary
+            # predecessors are known complete when rewinding to a later phase,
+            # even if no individual checkpoint was emitted for them.  Preserve
+            # any additional checkpointed branch phases after that backbone.
+            retained = [
+                item
+                for item in completed
+                if item in checkpoint_phases_before_target and item not in _ROADMAP_PHASES
+            ]
+            rewound["completed_phases"] = primary_predecessors + [
+                item for item in retained if item not in primary_predecessors
             ]
         counts = rewound.get("phase_dispatch_counts")
         if isinstance(counts, dict):
             rewound["phase_dispatch_counts"] = {
                 key: value
                 for key, value in counts.items()
-                if key in checkpoint_phases_before_target
+                if key in rewound.get("completed_phases", [])
             }
     return rewound
 
