@@ -46,6 +46,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-152 P0 RE synthesis recovery** — RE specification targets now have a
+  file-only result contract, so redundant agent state cannot reject completed
+  workspace synthesis. `echelon re continue` recognizes the exact 3.5.1
+  failure signature, validates every retained source overview, workspace
+  document, and architecture-domain document, then resumes downstream gates
+  without paying for another specification dispatch. Incomplete retained output
+  fails closed, and terminal blockers now include the controller's precise
+  validation detail.
+
 - **EGR-145 ledger-backed Phase A rewind** — `echelon spec rewind` now accepts
   only checkpoint phases or IDs recorded in the active run's ledger. The same
   ledger powers `checkpoint list`, error output, and automatic retry recovery;

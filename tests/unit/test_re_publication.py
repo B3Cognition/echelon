@@ -217,10 +217,15 @@ def write_valid_re_run(
     (workspace / "overview.md").write_text(f"# Workspace {run_id}\n", encoding="utf-8")
     (workspace / "relationships.md").write_text("# Relationships\n", encoding="utf-8")
     (workspace / "contracts.md").write_text("# Contracts\n", encoding="utf-8")
-    write_re_architecture_catalog(
-        run_re,
-        build_re_architecture_map(plan, run_re_dir=run_re),
-    )
+    architecture = build_re_architecture_map(plan, run_re_dir=run_re)
+    write_re_architecture_catalog(run_re, architecture)
+    workspace_domains = workspace / "domains"
+    workspace_domains.mkdir()
+    for domain_id in sorted({domain.domain_id for domain in architecture.domains}):
+        (workspace_domains / f"{domain_id}.md").write_text(
+            f"# Workspace domain {domain_id}\n",
+            encoding="utf-8",
+        )
     _write_json(
         run_re / "quality" / "semantic-quality-review.json",
         {

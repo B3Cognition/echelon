@@ -7552,6 +7552,9 @@ def _print_re_lifecycle_result(result: object) -> None:
         return
     reason = str(getattr(result, "blocked_reason", "RE lifecycle failed"))
     print(f"RE run {run_id or '(not created)'} blocked: {reason}", file=sys.stderr)
+    detail = str(getattr(result, "blocked_detail", "")).strip()
+    if detail:
+        print(f"  detail: {detail}", file=sys.stderr)
     raise SystemExit(1)
 
 

@@ -131,6 +131,9 @@ NEVER replace a deterministic target-quality failure with a generic dispatch fai
 
 Only when the controller target says `workspace-synthesis`, build the workspace union from current published sources, refreshed staged sources, empty sources, unavailable retained sources, and explicit removals in `re-workspace-inputs.json`. That target also writes source overviews; it must not modify any source-domain spec.
 
+ALWAYS return `state_updates: {}` for workspace synthesis and let the controller validate artifacts and mark the target complete.
+NEVER emit source inventory, domain lists, lifecycle routing, or `re_workspace_synthesis_complete` as agent state updates.
+
 Write exactly:
 
 - `$RE_OUTPUT_DIR/workspace/overview.md`
@@ -148,8 +151,7 @@ For an all-empty declared workspace, write overview, relationships, and contract
 echelon_result:
   verdict: DONE | BLOCKED
   phase_id: re-extract-2-specify
-  state_updates:
-    domains: [auth, api, data-layer]
+  state_updates: {}
   output_files:
     - $RE_OUTPUT_DIR/sources/{source-id}/overview.md
     - $RE_OUTPUT_DIR/sources/{source-id}/specs/{domain-id}/spec.md

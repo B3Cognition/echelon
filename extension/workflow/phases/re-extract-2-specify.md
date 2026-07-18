@@ -16,7 +16,7 @@
 
 ## Dispatch Prompt
 
-The controller dispatches one manifest target at a time. For a `source-domain` target, RE-SPECIFIER writes exactly the requested source-owned `spec.md` and cites only the target's owned root using source-relative `` `path:line` `` evidence; do not create backup, temporary, alternate, or scratch siblings. A source-coverage repair target includes the exact uncovered files owned by that domain; incorporate every one as meaningful, valid evidence rather than appending a path list. A `source-support` target writes only `sources/{source-id}/supporting-artifacts.md` for visible configuration or test-support files outside all product-domain roots, citing every controller-listed file from the source root and returning `state_updates: {}`. The controller provides the exact architecture layer, migration wave, prerequisites, and cycle group from `architecture-map.json`; copy those values into the spec header without changing the map or catalog. After every required domain passes the deterministic gate, the controller dispatches one `workspace-synthesis` target to write source overviews and workspace documents. Cross-source APIs, events, schemas, dependencies, and migration ordering belong only in workspace synthesis. Treat all planner/publication JSON, domain manifests, and architecture artifacts as read-only.
+The controller dispatches one manifest target at a time. For a `source-domain` target, RE-SPECIFIER writes exactly the requested source-owned `spec.md` and cites only the target's owned root using source-relative `` `path:line` `` evidence; do not create backup, temporary, alternate, or scratch siblings. A source-coverage repair target includes the exact uncovered files owned by that domain; incorporate every one as meaningful, valid evidence rather than appending a path list. A `source-support` target writes only `sources/{source-id}/supporting-artifacts.md` for visible configuration or test-support files outside all product-domain roots, citing every controller-listed file from the source root. The controller provides the exact architecture layer, migration wave, prerequisites, and cycle group from `architecture-map.json`; copy those values into the spec header without changing the map or catalog. After every required domain passes the deterministic gate, the controller dispatches one `workspace-synthesis` target to write source overviews and workspace documents. Cross-source APIs, events, schemas, dependencies, and migration ordering belong only in workspace synthesis. Treat all planner/publication JSON, domain manifests, and architecture artifacts as read-only. Every specification target is file-only and must return `state_updates: {}`; target queues, source inventory, lifecycle routing, and workspace-synthesis completion are controller-owned.
 
 If `echelon re check-domain` still fails after an honest repair attempt, return `verdict: BLOCKED` with the concise command failure in top-level `blocked_reason` and leave the canonical `spec.md` in place. The controller will independently measure that artifact, record the target-quality report, and route a bounded repair attempt. Do not report `DONE` for a failed gate and do not replace the reason with a generic dispatch error.
 
@@ -41,8 +41,7 @@ An all-empty declared workspace requires the three workspace documents and empty
 echelon_result:
   verdict: DONE | BLOCKED
   phase_id: re-extract-2-specify
-  state_updates:
-    domains: [auth, api, data-layer]
+  state_updates: {}
   output_files:
     - "{state.output_dir}/sources/{source-id}/overview.md"
     - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
