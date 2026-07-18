@@ -13,7 +13,6 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
-from freezegun import freeze_time
 
 # Add scripts/ directory to path so we can import the module directly
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
@@ -40,6 +39,19 @@ def _today() -> str:
 
 def _days_from_now(n: int) -> str:
     return (date.today() + timedelta(days=n)).isoformat()
+
+
+class _FixedDate(date):
+    """date subclass whose today() is pinned to 2026-05-01.
+
+    Monkeypatched over belief_parser.date so status classification sees a
+    stable "today" without requiring the freezegun package in the test env.
+    fromisoformat/arithmetic behave identically to date.
+    """
+
+    @classmethod
+    def today(cls):
+        return cls(2026, 5, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -229,14 +241,14 @@ class TestStatusClassification:
     # The two tests below cross-check status classification against fixed-date
     # fixtures at scripts/belief-parser-fixtures/. The fixtures use real calendar
     # dates that were "approaching expiry" when authored (April 2026); without
-    # freezing time, those dates rot into "expired" as the test runs forward in
+    # pinning time, those dates rot into "expired" as the test runs forward in
     # real time, producing false CI failures unrelated to parser correctness.
     # We pin today to 2026-05-01 so the fixture's expires=2026-05-15 (line 36
     # of sample-config.yml) sits at +14 days, satisfying the
     # "within 30 days" approaching_expiry contract.
-    @freeze_time("2026-05-01")
-    def test_sample_config_statuses(self):
+    def test_sample_config_statuses(self, monkeypatch):
         """Cross-check status classification on all sample-config.yml beliefs."""
+        monkeypatch.setattr(belief_parser, "date", _FixedDate)
         beliefs = belief_parser.parse_config_file(FIXTURES / "sample-config.yml")
         statuses = {b["config_key"]: b["status"] for b in beliefs}
 
@@ -245,9 +257,9 @@ class TestStatusClassification:
         assert statuses["limits.max_tokens"] == "low_confidence"
         assert statuses["analysis.convergence_delta"] == "fresh"
 
-    @freeze_time("2026-05-01")
-    def test_sample_agent_statuses(self):
+    def test_sample_agent_statuses(self, monkeypatch):
         """Cross-check status classification on all sample-agent.md beliefs."""
+        monkeypatch.setattr(belief_parser, "date", _FixedDate)
         beliefs = belief_parser.parse_agent_file(FIXTURES / "sample-agent.md")
         statuses = {b["belief_id"]: b["status"] for b in beliefs}
 
