@@ -4,17 +4,21 @@ The script is loaded via importlib (ADR-008) because scripts/ is not a package.
 All tests run offline: model commands are tmp_path-generated stub executables
 (FR-043); no network, no live model (SC-002).
 
-Covers tasks T-001..T-005: shared constants and dataclasses, argument handling
+Covers tasks T-001..T-010: shared constants and dataclasses, argument handling
 (FR-001..FR-004, FR-007, NFR-003), pre-flight and exit-code spine (FR-005,
 FR-006, FR-012, FR-042, NFR-005), prompt assembly (FR-014, FR-015, FR-018,
-FR-021, FR-022, FR-023), and the isolated subprocess runner (FR-010, FR-011,
-FR-043).
+FR-021, FR-022, FR-023), the isolated subprocess runner (FR-010, FR-011,
+FR-043), staged tolerant extraction (FR-026, FR-027), round-1/round-2 strict
+validation (FR-016, FR-017, FR-019, FR-020, FR-024, FR-025), the corrective
+retry loop with debug dumps (FR-013, FR-028..FR-031), and deterministic
+partition plus ranking (FR-009, FR-032, FR-033).
 """
 
 from __future__ import annotations
 
 import dataclasses
 import importlib.util
+import json
 import os
 import shlex
 import stat
@@ -524,3 +528,577 @@ class TestRunModelCall:
         outcome = sue.run_model_call(config, "x")
         assert outcome.kind == "ok"
         assert record.read_text().splitlines() == ["--safe-mode", "-p"]
+
+
+# ---------------------------------------------------------------------------
+# T-006 — staged tolerant JSON extraction (FR-026/FR-027; FR-044 group 3)
+# ---------------------------------------------------------------------------
+
+
+class TestExtractJsonObject:
+    def test_clean_json_object(self):
+        assert sue.extract_json_object('{"questions": []}') == {"questions": []}
+
+    def test_fenced_json_object(self):
+        raw = 'Here you go:\n```json\n{"a": 1}\n```\nHope that helps!'
+        assert sue.extract_json_object(raw) == {"a": 1}
+
+    def test_fence_without_language_tag(self):
+        assert sue.extract_json_object('```\n{"a": 1}\n```') == {"a": 1}
+
+    def test_prose_wrapped_nested_object(self):
+        raw = 'Sure! The answer is {"a": {"b": 2}} as requested.'
+        assert sue.extract_json_object(raw) == {"a": {"b": 2}}
+
+    def test_multiple_objects_first_wins(self):
+        raw = 'First {"first": 1} then {"second": 2}.'
+        assert sue.extract_json_object(raw) == {"first": 1}
+
+    def test_unparseable_first_candidate_falls_through_to_next(self):
+        raw = '{oops} then {"ok": true}'
+        assert sue.extract_json_object(raw) == {"ok": True}
+
+    def test_escaped_quote_and_brace_inside_string_literal(self):
+        raw = 'noise {"text": "a \\" quote and a } brace"} trailing'
+        assert sue.extract_json_object(raw) == {"text": 'a " quote and a } brace'}
+
+    def test_zero_objects_is_parse_failure_with_reason(self):
+        result = sue.extract_json_object("no json here at all")
+        assert isinstance(result, sue.ParseFailure)
+        assert result.reason
+        assert result.is_timeout is False
+
+    def test_empty_input_is_parse_failure(self):
+        assert isinstance(sue.extract_json_object(""), sue.ParseFailure)
+
+    def test_top_level_array_is_parse_failure(self):
+        # A JSON array at top level is not an object (T-006 contract).
+        assert isinstance(sue.extract_json_object('[{"a": 1}]'), sue.ParseFailure)
+
+    def test_never_raises_on_adversarial_input(self):
+        for raw in ["{", "}", '{"a"', "``` {", '{"a": "unterminated', "{not json}"]:
+            result = sue.extract_json_object(raw)
+            assert isinstance(result, (dict, sue.ParseFailure))
+
+    def test_brace_noise_extraction_stays_linear(self):
+        # Degenerate model output (a wall of braces) must fail fast on the
+        # parse-failure path, never hang past the subprocess timeout.
+        start = time.monotonic()
+        result = sue.extract_json_object("{" * 200_000)
+        elapsed = time.monotonic() - start
+        assert isinstance(result, sue.ParseFailure)
+        assert elapsed < 2.0, f"brace-noise extraction took {elapsed:.1f}s"
+
+
+# ---------------------------------------------------------------------------
+# T-007 — round-1 validation (FR-016/FR-017/FR-019/FR-020; FR-044 group 4)
+# ---------------------------------------------------------------------------
+
+
+def _q(qid="Q1", question="What does X mean?", target="general", lines=None, category="ambiguity"):
+    return {
+        "id": qid,
+        "question": question,
+        "target": target,
+        "lines": [1] if lines is None else lines,
+        "category": category,
+    }
+
+
+class TestValidateRound1:
+    def test_valid_questions_round_trip(self):
+        obj = {"questions": [_q(), _q(qid="Q2", category="contradiction", target="FR-001")]}
+        questions, truncated = sue.validate_round1(obj, 15)
+        assert truncated is False
+        assert [q.id for q in questions] == ["Q1", "Q2"]
+        assert isinstance(questions[0], sue.SocraticQuestion)
+        assert questions[1].target == "FR-001"
+        assert questions[1].category == "contradiction"
+
+    def test_empty_list_is_valid(self):
+        # FR-020: an empty question list is a success, not a failure.
+        questions, truncated = sue.validate_round1({"questions": []}, 15)
+        assert questions == []
+        assert truncated is False
+
+    def test_missing_questions_key_is_parse_failure(self):
+        result = sue.validate_round1({}, 15)
+        assert isinstance(result, sue.ParseFailure)
+        assert "questions" in result.reason
+
+    def test_questions_not_a_list_is_parse_failure(self):
+        assert isinstance(sue.validate_round1({"questions": "Q1"}, 15), sue.ParseFailure)
+
+    def test_item_not_an_object_is_parse_failure(self):
+        assert isinstance(sue.validate_round1({"questions": ["Q1"]}, 15), sue.ParseFailure)
+
+    def test_duplicate_ids_are_parse_failure_naming_offender(self):
+        # FR-017: duplicate question identifiers are a validation failure.
+        result = sue.validate_round1({"questions": [_q(), _q()]}, 15)
+        assert isinstance(result, sue.ParseFailure)
+        assert "duplicate" in result.reason
+        assert "Q1" in result.reason
+
+    @pytest.mark.parametrize(
+        "field,value,needle",
+        [
+            ("id", "Q0", "Q0"),
+            ("id", "q1", "q1"),
+            ("id", None, "id"),
+            ("question", "", "question"),
+            ("question", None, "question"),
+            ("target", "", "target"),
+            ("target", None, "target"),
+            ("lines", "1,2", "lines"),
+            ("lines", [1, "2"], "lines"),
+            ("lines", [True], "lines"),
+            ("lines", None, "lines"),
+            ("category", "speling", "speling"),
+            ("category", None, "category"),
+        ],
+    )
+    def test_field_violations_name_the_offender(self, field, value, needle):
+        item = _q()
+        item[field] = value
+        result = sue.validate_round1({"questions": [item]}, 15)
+        assert isinstance(result, sue.ParseFailure)
+        assert needle in result.reason
+
+    @pytest.mark.parametrize("field", ["id", "question", "target", "lines", "category"])
+    def test_missing_field_is_parse_failure(self, field):
+        item = _q()
+        del item[field]
+        result = sue.validate_round1({"questions": [item]}, 15)
+        assert isinstance(result, sue.ParseFailure)
+        assert field in result.reason
+
+    def test_extra_keys_are_tolerated(self):
+        # Strictness applies to the contract fields; models may add noise keys.
+        item = _q()
+        item["confidence"] = 0.9
+        questions, _ = sue.validate_round1({"questions": [item]}, 15)
+        assert questions[0].id == "Q1"
+
+    def test_truncation_boundary_exactly_n_keeps_all_without_flag(self):
+        items = [_q(qid=f"Q{i}") for i in range(1, 4)]
+        questions, truncated = sue.validate_round1({"questions": items}, 3)
+        assert [q.id for q in questions] == ["Q1", "Q2", "Q3"]
+        assert truncated is False
+
+    def test_truncation_boundary_n_plus_one_keeps_first_n_with_flag(self):
+        # FR-019: first N in returned order, truncation flag set.
+        items = [_q(qid=f"Q{i}") for i in range(1, 5)]
+        questions, truncated = sue.validate_round1({"questions": items}, 3)
+        assert [q.id for q in questions] == ["Q1", "Q2", "Q3"]
+        assert truncated is True
+
+
+# ---------------------------------------------------------------------------
+# T-008 — round-2 validation with identifier bijection (FR-024/FR-025; AC-018)
+# ---------------------------------------------------------------------------
+
+
+def _a(qid="Q1", verdict="ANSWERED", answer="Because the text says so.", evidence=None):
+    return {
+        "id": qid,
+        "verdict": verdict,
+        "answer": answer,
+        "evidence_lines": [1] if evidence is None else evidence,
+    }
+
+
+def _questions_for(*ids):
+    return [
+        sue.SocraticQuestion(
+            id=qid, question=f"{qid}?", target="general", lines=[1], category="ambiguity"
+        )
+        for qid in ids
+    ]
+
+
+class TestValidateRound2:
+    def test_exact_bijection_passes_in_round1_order(self):
+        obj = {"answers": [_a(qid="Q2", verdict="CONTRADICTED"), _a(qid="Q1")]}
+        answers = sue.validate_round2(obj, _questions_for("Q1", "Q2"))
+        assert [a.id for a in answers] == ["Q1", "Q2"]
+        assert isinstance(answers[0], sue.Answer)
+        assert answers[1].verdict == "CONTRADICTED"
+
+    def test_empty_answers_for_empty_questions(self):
+        assert sue.validate_round2({"answers": []}, []) == []
+
+    def test_missing_answers_key_is_parse_failure(self):
+        result = sue.validate_round2({}, _questions_for("Q1"))
+        assert isinstance(result, sue.ParseFailure)
+        assert "answers" in result.reason
+
+    def test_missing_id_names_offender(self):
+        result = sue.validate_round2({"answers": [_a(qid="Q1")]}, _questions_for("Q1", "Q2"))
+        assert isinstance(result, sue.ParseFailure)
+        assert "Q2" in result.reason
+
+    def test_duplicate_id_names_offender(self):
+        result = sue.validate_round2(
+            {"answers": [_a(qid="Q1"), _a(qid="Q1"), _a(qid="Q2")]},
+            _questions_for("Q1", "Q2"),
+        )
+        assert isinstance(result, sue.ParseFailure)
+        assert "Q1" in result.reason
+
+    def test_unknown_id_names_offender(self):
+        result = sue.validate_round2(
+            {"answers": [_a(qid="Q1"), _a(qid="Q9")]}, _questions_for("Q1")
+        )
+        assert isinstance(result, sue.ParseFailure)
+        assert "Q9" in result.reason
+
+    def test_missing_plus_unknown_names_every_offender(self):
+        # AC-018: the reason names every offending id, not just the first.
+        result = sue.validate_round2(
+            {"answers": [_a(qid="Q1"), _a(qid="Q9")]}, _questions_for("Q1", "Q2")
+        )
+        assert isinstance(result, sue.ParseFailure)
+        assert "Q2" in result.reason
+        assert "Q9" in result.reason
+
+    def test_pre_truncation_ids_are_unknown_after_truncation(self):
+        # Answers for questions cut by FR-019 truncation violate the bijection.
+        result = sue.validate_round2(
+            {"answers": [_a(qid="Q1"), _a(qid="Q2"), _a(qid="Q3")]},
+            _questions_for("Q1", "Q2"),
+        )
+        assert isinstance(result, sue.ParseFailure)
+        assert "Q3" in result.reason
+
+    @pytest.mark.parametrize(
+        "field,value,needle",
+        [
+            ("verdict", "MAYBE", "MAYBE"),
+            ("verdict", "answered", "answered"),
+            ("verdict", None, "verdict"),
+            ("answer", "", "answer"),
+            ("answer", None, "answer"),
+            ("evidence_lines", [1, "x"], "evidence_lines"),
+            ("evidence_lines", None, "evidence_lines"),
+            ("id", None, "id"),
+        ],
+    )
+    def test_field_violations_name_the_offender(self, field, value, needle):
+        item = _a()
+        item[field] = value
+        result = sue.validate_round2({"answers": [item]}, _questions_for("Q1"))
+        assert isinstance(result, sue.ParseFailure)
+        assert needle in result.reason
+
+    def test_item_not_an_object_is_parse_failure(self):
+        result = sue.validate_round2({"answers": ["Q1"]}, _questions_for("Q1"))
+        assert isinstance(result, sue.ParseFailure)
+
+    def test_adversarial_ids_yield_single_line_bounded_reason(self):
+        # FR-028/NFR-005: model-controlled ids are named through a truncated
+        # repr, so the reason stays one bounded line even when the id carries
+        # newlines and bulk content.
+        evil_id = "QX\nSECRET-LINE-TWO " + "Y" * 500
+        result = sue.validate_round2(
+            {"answers": [_a(qid=evil_id)]}, _questions_for("Q1")
+        )
+        assert isinstance(result, sue.ParseFailure)
+        assert "\n" not in result.reason
+        assert len(result.reason) < 300
+
+
+# ---------------------------------------------------------------------------
+# T-009 — retry prompt, round execution loop, debug dumps
+# (FR-013, FR-028..FR-031; AC-015, AC-016, AC-017)
+# ---------------------------------------------------------------------------
+
+
+def _round1_reply(*ids) -> str:
+    return json.dumps({"questions": [_q(qid=qid) for qid in ids]})
+
+
+def _make_replay_stub(tmp_path: Path, name: str, replies: list[str]) -> tuple[str, Path, Path]:
+    """Numbered replay-sequence stub: call N records stdin-N and replays reply-N."""
+    stub_dir = tmp_path / f"{name}-stub"
+    stub_dir.mkdir()
+    for i, content in enumerate(replies, start=1):
+        (stub_dir / f"reply-{i}.txt").write_text(content)
+    count_file = stub_dir / "count"
+    stub = _make_stub(
+        stub_dir / f"{name}.sh",
+        f'n=$(cat "{count_file}" 2>/dev/null || echo 0)\n'
+        "n=$((n+1))\n"
+        f'printf %s "$n" > "{count_file}"\n'
+        f'cat > "{stub_dir}/stdin-$n.txt"\n'
+        f'cat "{stub_dir}/reply-$n.txt"\n',
+    )
+    return stub, count_file, stub_dir
+
+
+class TestBuildRetryPrompt:
+    def test_timeout_retry_is_identical_prompt(self):
+        # FR-029: a timeout retry re-issues the same prompt, 0 appended text.
+        failure = sue.ParseFailure(reason="model call timed out", is_timeout=True)
+        assert sue.build_retry_prompt("ORIGINAL PROMPT", failure) == "ORIGINAL PROMPT"
+
+    def test_corrective_retry_keeps_original_and_names_reason(self):
+        # FR-028: original prompt + corrective instruction naming the failure.
+        failure = sue.ParseFailure(reason="duplicate question id Q3")
+        retry = sue.build_retry_prompt("ORIGINAL PROMPT", failure)
+        assert retry.startswith("ORIGINAL PROMPT")
+        assert "duplicate question id Q3" in retry
+        assert retry != "ORIGINAL PROMPT"
+
+
+class TestExecuteRound:
+    def _config(self, command: str, timeout: float = 10.0):
+        return sue.RunConfig(
+            spec_path=Path("spec.md"),
+            max_questions=15,
+            model_command=command,
+            timeout_seconds=timeout,
+        )
+
+    @staticmethod
+    def _r1_validator(obj):
+        return sue.validate_round1(obj, 15)
+
+    def test_valid_first_attempt_is_one_invocation(self, tmp_path):
+        stub, count, _ = _make_replay_stub(tmp_path, "ok", [_round1_reply("Q1")])
+        spec_dir = tmp_path / "specdir"
+        spec_dir.mkdir()
+        result = sue.execute_round(
+            self._config(shlex.quote(stub)), "PROMPT", self._r1_validator, 1, spec_dir
+        )
+        questions, truncated = result
+        assert [q.id for q in questions] == ["Q1"]
+        assert truncated is False
+        assert int(count.read_text()) == 1
+        assert not (spec_dir / sue.DEBUG_DIR_NAME).exists()
+
+    def test_invalid_then_valid_is_two_invocations(self, tmp_path):
+        # AC-016: first output invalid, retry valid — exactly 2 invocations.
+        stub, count, stub_dir = _make_replay_stub(
+            tmp_path, "retry", ["GARBAGE-MARKER-XYZ no json here", _round1_reply("Q1", "Q2")]
+        )
+        spec_dir = tmp_path / "specdir"
+        spec_dir.mkdir()
+        result = sue.execute_round(
+            self._config(shlex.quote(stub)), "PROMPT-BODY", self._r1_validator, 1, spec_dir
+        )
+        questions, _ = result
+        assert [q.id for q in questions] == ["Q1", "Q2"]
+        assert int(count.read_text()) == 2
+        assert not (spec_dir / sue.DEBUG_DIR_NAME).exists()
+        # FR-028: the retry carries the original prompt plus a corrective
+        # instruction, echoing 0 lines of the prior output.
+        second_stdin = (stub_dir / "stdin-2.txt").read_text()
+        first_stdin = (stub_dir / "stdin-1.txt").read_text()
+        assert first_stdin == "PROMPT-BODY"
+        assert second_stdin.startswith("PROMPT-BODY")
+        assert second_stdin != first_stdin
+        assert "GARBAGE-MARKER-XYZ" not in second_stdin
+
+    def test_double_failure_exits_3_with_four_dump_files(self, tmp_path):
+        # AC-015: second failure → exit 3, raw output of both attempts dumped.
+        stub, count, _ = _make_replay_stub(tmp_path, "bad", ["BAD-ONE", "BAD-TWO"])
+        spec_dir = tmp_path / "specdir"
+        spec_dir.mkdir()
+        result = sue.execute_round(
+            self._config(shlex.quote(stub)), "PROMPT", self._r1_validator, 1, spec_dir
+        )
+        assert isinstance(result, sue.RoundExit)
+        assert result.exit_code == sue.EXIT_UNUSABLE_OUTPUT == 3
+        assert result.diagnostic
+        assert int(count.read_text()) == 2
+        debug_dir = spec_dir / sue.DEBUG_DIR_NAME
+        names = sorted(p.name for p in debug_dir.iterdir())
+        assert names == [
+            "round1-attempt1-stderr.txt",
+            "round1-attempt1-stdout.txt",
+            "round1-attempt2-stderr.txt",
+            "round1-attempt2-stdout.txt",
+        ]
+        assert (debug_dir / "round1-attempt1-stdout.txt").read_text() == "BAD-ONE"
+        assert (debug_dir / "round1-attempt2-stdout.txt").read_text() == "BAD-TWO"
+
+    def test_double_timeout_exits_3_with_timeout_prefixed_dumps(self, tmp_path):
+        # AC-017 + FR-029 + FR-013: timeout retries re-issue the identical
+        # prompt, each attempt gets a fresh full budget, dumps carry the
+        # TIMEOUT first line (ISS-207).
+        stub_dir = tmp_path / "sleep-stub"
+        stub_dir.mkdir()
+        count_file = stub_dir / "count"
+        stub = _make_stub(
+            stub_dir / "sleeper.sh",
+            f'n=$(cat "{count_file}" 2>/dev/null || echo 0)\n'
+            "n=$((n+1))\n"
+            f'printf %s "$n" > "{count_file}"\n'
+            f'cat > "{stub_dir}/stdin-$n.txt"\n'
+            'printf "PARTIAL-OUT"\n'
+            "sleep 30\n",
+        )
+        spec_dir = tmp_path / "specdir"
+        spec_dir.mkdir()
+        timeout = 0.3
+        start = time.monotonic()
+        result = sue.execute_round(
+            self._config(shlex.quote(stub), timeout=timeout),
+            "IDENTICAL PROMPT",
+            self._r1_validator,
+            1,
+            spec_dir,
+        )
+        elapsed = time.monotonic() - start
+        assert isinstance(result, sue.RoundExit)
+        assert result.exit_code == 3
+        # FR-013: each attempt received its own fresh budget.
+        assert elapsed >= 2 * timeout
+        assert elapsed < 20
+        assert int(count_file.read_text()) == 2
+        assert (stub_dir / "stdin-1.txt").read_text() == "IDENTICAL PROMPT"
+        assert (stub_dir / "stdin-2.txt").read_text() == "IDENTICAL PROMPT"
+        debug_dir = spec_dir / sue.DEBUG_DIR_NAME
+        for attempt in (1, 2):
+            dump = (debug_dir / f"round1-attempt{attempt}-stdout.txt").read_text()
+            assert dump.splitlines()[0] == f"TIMEOUT after {timeout:g}s"
+            assert "PARTIAL-OUT" in dump
+
+    def test_validation_failure_retry_never_echoes_prior_output_lines(self, tmp_path):
+        # FR-028 through the *validation* failure path (not extraction): the
+        # first reply is valid JSON violating the bijection with a
+        # model-controlled multi-line id; the corrective retry must carry a
+        # single-line bounded reason, never the raw newline-embedded content.
+        evil_id = "Q1\nSECRET-LINE-TWO " + "Z" * 200
+        bad_reply = json.dumps(
+            {
+                "answers": [
+                    {"id": evil_id, "verdict": "ANSWERED", "answer": "a", "evidence_lines": []}
+                ]
+            }
+        )
+        good_reply = json.dumps({"answers": [_a(qid="Q1")]})
+        stub, count, stub_dir = _make_replay_stub(tmp_path, "evil", [bad_reply, good_reply])
+        spec_dir = tmp_path / "specdir"
+        spec_dir.mkdir()
+        questions = _questions_for("Q1")
+        result = sue.execute_round(
+            self._config(shlex.quote(stub)),
+            "R2 PROMPT",
+            lambda obj: sue.validate_round2(obj, questions),
+            2,
+            spec_dir,
+        )
+        assert [a.id for a in result] == ["Q1"]
+        assert int(count.read_text()) == 2
+        retry_stdin = (stub_dir / "stdin-2.txt").read_text()
+        # The raw newline-carrying model content never lands in the retry
+        # prompt; the corrective block appends exactly one bounded reason.
+        assert "Q1\nSECRET-LINE-TWO" not in retry_stdin
+        corrective = retry_stdin.removeprefix("R2 PROMPT")
+        assert "Z" * 100 not in corrective  # bulk id content truncated away
+
+    def test_dump_write_failure_still_returns_round_exit(self, tmp_path):
+        # The debug dump is best-effort: a file squatting on the .sue-debug
+        # name must not turn exit 3 into a traceback (NFR-005).
+        stub, count, _ = _make_replay_stub(tmp_path, "nodump", ["BAD-ONE", "BAD-TWO"])
+        spec_dir = tmp_path / "specdir"
+        spec_dir.mkdir()
+        (spec_dir / sue.DEBUG_DIR_NAME).write_text("a file, not a directory")
+        result = sue.execute_round(
+            self._config(shlex.quote(stub)), "PROMPT", self._r1_validator, 1, spec_dir
+        )
+        assert isinstance(result, sue.RoundExit)
+        assert result.exit_code == 3
+        assert "\n" not in result.diagnostic
+
+    def test_round2_double_failure_adds_zero_round1_calls(self, tmp_path):
+        # FR-031: a round-2 failure never re-runs round 1.
+        stub, count, _ = _make_replay_stub(
+            tmp_path, "seq", [_round1_reply("Q1"), "BAD", "BAD-AGAIN"]
+        )
+        spec_dir = tmp_path / "specdir"
+        spec_dir.mkdir()
+        config = self._config(shlex.quote(stub))
+        round1 = sue.execute_round(config, "R1 PROMPT", self._r1_validator, 1, spec_dir)
+        questions, _ = round1
+        assert int(count.read_text()) == 1
+        round2 = sue.execute_round(
+            config,
+            "R2 PROMPT",
+            lambda obj: sue.validate_round2(obj, questions),
+            2,
+            spec_dir,
+        )
+        assert isinstance(round2, sue.RoundExit)
+        # Exactly 2 round-2 attempts on top of the single round-1 call.
+        assert int(count.read_text()) == 3
+        names = sorted(p.name for p in (spec_dir / sue.DEBUG_DIR_NAME).iterdir())
+        assert len(names) == 4
+        assert all(name.startswith("round2-") for name in names)
+
+
+# ---------------------------------------------------------------------------
+# T-010 — deterministic partition and ranking (FR-009/FR-032/FR-033; AC-004)
+# ---------------------------------------------------------------------------
+
+
+def _answer_obj(qid: str, verdict: str):
+    return sue.Answer(id=qid, verdict=verdict, answer=f"answer for {qid}", evidence_lines=[1])
+
+
+class TestPartitionAndRank:
+    def _fixture(self):
+        questions = _questions_for("Q1", "Q2", "Q3", "Q4", "Q5")
+        verdicts = {
+            "Q1": "ANSWERED",
+            "Q2": "UNANSWERABLE",
+            "Q3": "CONTRADICTED",
+            "Q4": "ANSWERED",
+            "Q5": "CONTRADICTED",
+        }
+        answers = [_answer_obj(q.id, verdicts[q.id]) for q in questions]
+        return questions, answers
+
+    def test_partition_yields_exactly_two_groups(self):
+        questions, answers = self._fixture()
+        findings, audit = sue.partition_answers(questions, answers)
+        assert [f.question.id for f in findings] == ["Q2", "Q3", "Q5"]
+        assert all(f.answer.verdict in ("CONTRADICTED", "UNANSWERABLE") for f in findings)
+        assert [(q.id, a.verdict) for q, a in audit] == [
+            ("Q1", "ANSWERED"),
+            ("Q4", "ANSWERED"),
+        ]
+
+    def test_partition_is_answer_order_independent(self):
+        # The join runs over round-1 question order, so a shuffled answer list
+        # yields identical output.
+        questions, answers = self._fixture()
+        assert sue.partition_answers(questions, list(reversed(answers))) == (
+            sue.partition_answers(questions, answers)
+        )
+
+    def test_rank_contradicted_first_stable_dense(self):
+        # AC-004/FR-033: all CONTRADICTED before all UNANSWERABLE, round-1
+        # order within class, dense 1-based ranks.
+        questions, answers = self._fixture()
+        findings, _ = sue.partition_answers(questions, answers)
+        ranked = sue.rank_findings(findings)
+        assert [(f.rank, f.question.id, f.answer.verdict) for f in ranked] == [
+            (1, "Q3", "CONTRADICTED"),
+            (2, "Q5", "CONTRADICTED"),
+            (3, "Q2", "UNANSWERABLE"),
+        ]
+
+    def test_all_answered_yields_zero_findings(self):
+        questions = _questions_for("Q1", "Q2")
+        answers = [_answer_obj(q.id, "ANSWERED") for q in questions]
+        findings, audit = sue.partition_answers(questions, answers)
+        assert findings == []
+        assert len(audit) == 2
+        assert sue.rank_findings(findings) == []
+
+    def test_rank_is_pure_and_repeatable(self):
+        questions, answers = self._fixture()
+        findings, _ = sue.partition_answers(questions, answers)
+        assert sue.rank_findings(findings) == sue.rank_findings(findings)

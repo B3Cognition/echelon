@@ -164,7 +164,8 @@ Every executable task starts with one top-level canonical row:
   - [x] cwd/argv/stdin-recording stub tests
   - [x] Sleeping-stub timeout test with sub-second budget (suite stays under the 30 s pre-commit target)
 
-- [ ] T-006 complexity=standard phase=core req=FR-026,FR-027 depends=T-005 target=.
+- [x] T-006 complexity=standard phase=core req=FR-026,FR-027 depends=T-005 target=.
+  **Status:** DONE
 
   **Title:** Staged tolerant JSON extraction
 
@@ -178,13 +179,14 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest fixture matrix — clean JSON, fenced, prose-wrapped, multiple objects (first wins), zero objects, escaped-brace-in-string, top-level array — asserts the extracted dict or the ParseFailure reason.
 
   **Acceptance Criteria:**
-  - [ ] All 6 envelope fixture classes from test-strategy.md pass
-  - [ ] Zero-candidate input returns ParseFailure, never raises (FR-027)
+  - [x] All 6 envelope fixture classes from test-strategy.md pass
+  - [x] Zero-candidate input returns ParseFailure, never raises (FR-027)
 
   **Test Tasks:**
-  - [ ] Extraction fixture matrix as inline string fixtures
+  - [x] Extraction fixture matrix as inline string fixtures
 
-- [ ] T-007 complexity=standard phase=core req=FR-016,FR-017,FR-019,FR-020 depends=T-006 target=.
+- [x] T-007 complexity=standard phase=core req=FR-016,FR-017,FR-019,FR-020 depends=T-006 target=.
+  **Status:** DONE
 
   **Title:** Round-1 validation with truncation and empty-list success
 
@@ -198,15 +200,16 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest per-violation JSON fixtures (bad id, duplicate id, missing field, empty text, unknown category, non-integer line) each yield a ParseFailure naming the offender; boundary cases at exactly N (no flag) and N+1 (flag set, first N kept); empty list returns a valid empty result.
 
   **Acceptance Criteria:**
-  - [ ] Every field violation of FR-016 is rejected with a naming reason
-  - [ ] Duplicate ids are a parse failure (FR-017)
-  - [ ] Truncation keeps the first N in returned order, setting the flag only above N (FR-019)
-  - [ ] Empty question list validates successfully (FR-020)
+  - [x] Every field violation of FR-016 is rejected with a naming reason
+  - [x] Duplicate ids are a parse failure (FR-017)
+  - [x] Truncation keeps the first N in returned order, setting the flag only above N (FR-019)
+  - [x] Empty question list validates successfully (FR-020)
 
   **Test Tasks:**
-  - [ ] Per-violation fixture set plus N/N+1 truncation boundary tests
+  - [x] Per-violation fixture set plus N/N+1 truncation boundary tests
 
-- [ ] T-008 complexity=standard phase=core req=FR-024,FR-025 depends=T-007 target=.
+- [x] T-008 complexity=standard phase=core req=FR-024,FR-025 depends=T-007 target=.
+  **Status:** DONE
 
   **Title:** Round-2 validation with identifier bijection
 
@@ -220,14 +223,15 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest bijection matrix — one missing, one duplicated, one unknown, missing+unknown combined, answers for pre-truncation ids after truncation — asserts ParseFailure with every offender named; exact-match set passes.
 
   **Acceptance Criteria:**
-  - [ ] AC-018: missing, duplicate, plus unknown ids each classify as parse failure (FR-025)
-  - [ ] ParseFailure.reason names every offending id
-  - [ ] Verdicts outside the 3-value set are rejected (FR-024)
+  - [x] AC-018: missing, duplicate, plus unknown ids each classify as parse failure (FR-025)
+  - [x] ParseFailure.reason names every offending id
+  - [x] Verdicts outside the 3-value set are rejected (FR-024)
 
   **Test Tasks:**
-  - [ ] Bijection id-set matrix with offender-naming assertions
+  - [x] Bijection id-set matrix with offender-naming assertions
 
-- [ ] T-009 complexity=complex phase=core req=FR-013,FR-028,FR-029,FR-030,FR-031 depends=T-008 target=.
+- [x] T-009 complexity=complex phase=core req=FR-013,FR-028,FR-029,FR-030,FR-031 depends=T-008 target=.
+  **Status:** DONE
 
   **Title:** Round execution loop — corrective retry, debug dump, exit-3 path
 
@@ -241,15 +245,15 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest replay-sequence stubs prove: invalid→valid completes at exit 0 with exactly 2 invocations for that round (AC-016); invalid→invalid exits 3 with 4 dump files named per contract (AC-015); sleep→sleep exits 3 with TIMEOUT-prefixed dump lines (AC-017); a round-2 double failure leaves the round-1 invocation count at its prior value (FR-031).
 
   **Acceptance Criteria:**
-  - [ ] Corrective retry names the validation failure, echoing 0 prior-output lines (FR-028)
-  - [ ] Timeout retry re-issues the identical prompt (FR-029)
-  - [ ] Retry gets a fresh timeout budget equal to the configured value (FR-013)
-  - [ ] Second failure: exit 3, dumps for both attempts under `.sue-debug` (FR-030)
-  - [ ] Round-2 failure adds 0 round-1 calls (FR-031)
+  - [x] Corrective retry names the validation failure, echoing 0 prior-output lines (FR-028)
+  - [x] Timeout retry re-issues the identical prompt (FR-029)
+  - [x] Retry gets a fresh timeout budget equal to the configured value (FR-013)
+  - [x] Second failure: exit 3, dumps for both attempts under `.sue-debug` (FR-030)
+  - [x] Round-2 failure adds 0 round-1 calls (FR-031)
 
   **Test Tasks:**
-  - [ ] Replay-directory stub scenarios: invalid→valid, invalid→invalid, sleep→sleep
-  - [ ] Dump file naming plus TIMEOUT-line content assertions
+  - [x] Replay-directory stub scenarios: invalid→valid, invalid→invalid, sleep→sleep
+  - [x] Dump file naming plus TIMEOUT-line content assertions
 
 ## Checkpoint: Core Complete
 
@@ -262,7 +266,8 @@ Every executable task starts with one top-level canonical row:
 
 ## Phase: Integration
 
-- [ ] T-010 complexity=standard phase=integration req=FR-009,FR-032,FR-033 depends=T-009 target=.
+- [x] T-010 complexity=standard phase=integration req=FR-009,FR-032,FR-033 depends=T-009 target=.
+  **Status:** DONE
 
   **Title:** Deterministic partition and ranking (pure)
 
@@ -276,12 +281,12 @@ Every executable task starts with one top-level canonical row:
   **Test:** pytest mixed-verdict answer sets in shuffled round-1 order assert the two-class partition, contradictions-first ordering, within-class stability, and dense ranks (AC-004).
 
   **Acceptance Criteria:**
-  - [ ] AC-004: findings hold exactly the 2 verdict classes in FR-033 order
-  - [ ] Ranking is stable within class, dense from 1
-  - [ ] ANSWERED answers land only in audit entries (FR-032)
+  - [x] AC-004: findings hold exactly the 2 verdict classes in FR-033 order
+  - [x] Ranking is stable within class, dense from 1
+  - [x] ANSWERED answers land only in audit entries (FR-032)
 
   **Test Tasks:**
-  - [ ] Partition/ranking property tests over shuffled inputs
+  - [x] Partition/ranking property tests over shuffled inputs
 
 - [ ] T-011 complexity=standard phase=integration req=FR-035,FR-036,FR-037,FR-038,FR-039,FR-041,NFR-004 depends=T-010 target=.
 
