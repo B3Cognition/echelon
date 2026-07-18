@@ -1,0 +1,635 @@
+alerts:
+  architecture_erosion_threshold: 2
+  cost_overrun_cpi: 0.8
+  defect_spike_percent: 60
+  defect_spike_task_window: 3
+  improving_trend_count: 3
+  quality_first_pass_min_percent: 50
+  quality_warning_task_window: 4
+  schedule_drift_spi: 0.85
+analysis:
+  convergence_delta: 0.01
+  max_iterations: 10
+  mode: auto
+  token_budget_k: 999999
+assess:
+  defer_max_iterations: 3
+autonomy:
+  mode: banzai
+banzai:
+  auto_kill_threshold: 0.2
+  constitution_preset: null
+  defaults:
+    team_size: 1
+    tech_stack: infer
+    timeline: flexible
+  require_human_if:
+  - compliance requirements detected
+  - security-critical domain
+budget:
+  exhaustion_threshold_percent: 100
+  max_single_agent_percent: 50
+  reserve_percent: 5
+  tier1_discover_what_percent: 25
+  tier2_why_percent: 20
+  tier3_how_specialists_percent: 25
+  tier4_plan_assess_percent: 15
+  tier5_consensus_finalize_percent: 10
+build:
+  blocked_tasks_pause_threshold: 5
+  fix_cycle_limit: 3
+  gate_sequence:
+  - SPEC_GUARD
+  - CODE_REVIEWER
+  - TEST_GUARDIAN
+  invariant_check_frequency: 1
+  metacognition_frequency: 3
+  needs_context_max_retries: 3
+  phase_gate:
+  - INTEGRATOR
+  - VALIDATOR
+  verification:
+    max_passes: 3
+    minimum_coverage: 95
+    target_coverage: 100
+  visual_validation:
+    browser: chromium
+    checkpoints:
+    - per_phase
+    - before_complete
+    enabled: true
+build_budget:
+  implementation_percent: 50
+  integration_percent: 15
+  quality_gates_percent: 30
+  reserve_percent: 5
+ca_overlays:
+  soar:
+    chunking_enabled: true
+calibration:
+  correction_factor_max: 8.0
+  correction_factor_min: 0.3
+  low_accuracy_threshold: 0.5
+  min_sample_size: 3
+  trend_improvement_threshold: 0.05
+  trend_variance_stable: 0.05
+code_quality:
+  max_cyclomatic_complexity: 10
+  max_function_lines: 30
+  max_nesting_depth: 3
+convergence:
+  consecutive_passes: 2
+  defer_loop_limit: 3
+  issue_repeat_limit: 5
+  max_squad_iterations: 10
+  quality_delta_threshold: 0.01
+deploy:
+  blue_port: 3000
+  enabled: false
+  green_port: 3001
+  type: http
+discovery:
+  git_history_limit: 2500
+  git_history_lookback: 2 years ago
+  git_hotspots_count: 50
+  git_log_count: 100
+  max_lines_per_file: 5000
+  min_reference_architectures: 5
+  polyrepo_full_depth_threshold: 100
+drift:
+  consecutive_overrun_count: 3
+  consecutive_overrun_ratio: 1.5
+  min_sample_size: 3
+  phase_overrun_ratio: 1.3
+  single_task_overrun_ratio: 2.0
+  systematic_bias_percent: 50
+  systematic_bias_ratio: 1.2
+endocrine:
+  adrenaline:
+    budget_boost: 0.3
+    budget_threshold: 0.85
+    task_complexity_high: 0.8
+    task_complexity_low: 0.2
+  baselines:
+    build:
+    - 0.7
+    - 0.5
+    - 0.5
+    - 0.4
+    - 0.7
+    - 0.9
+    control:
+    - 0.5
+    - 0.5
+    - 0.5
+    - 0.5
+    - 0.5
+    - 0.5
+    exploration:
+    - 0.3
+    - 0.7
+    - 0.3
+    - 0.6
+    - 0.5
+    - 0.4
+    feasibility:
+    - 0.4
+    - 0.5
+    - 0.7
+    - 0.6
+    - 0.5
+    - 0.5
+    innovation:
+    - 0.2
+    - 0.8
+    - 0.2
+    - 0.6
+    - 0.5
+    - 0.3
+    learning:
+    - 0.2
+    - 0.6
+    - 0.4
+    - 0.8
+    - 0.7
+    - 0.3
+    solution:
+    - 0.4
+    - 0.6
+    - 0.4
+    - 0.7
+    - 0.5
+    - 0.5
+    validation:
+    - 0.4
+    - 0.3
+    - 0.8
+    - 0.4
+    - 0.4
+    - 0.7
+  circuit_breakers:
+    ceiling: 1.0
+    consecutive_extreme_reset: 5
+    floor: 0.0
+    max_change_per_cycle: 0.4
+  decay:
+    adrenaline: 0.6
+    cortisol: 0.8
+    dopamine: 0.85
+    norepinephrine: 0.7
+    oxytocin: 0.92
+    serotonin: 0.95
+  dynamics:
+    budget_pressure:
+      bands:
+      - delta: 0.0
+        upto: 0.4
+      - delta: 0.02
+        upto: 0.6
+      - delta: 0.05
+        upto: 0.8
+      - delta: 0.1
+        upto: 0.95
+      - delta: 0.15
+        upto: 1.0
+      critical_broadcast: 0.05
+    iteration_pressure:
+      bands:
+      - delta: 0.0
+        upto: 0.5
+      - delta: 0.03
+        upto: 0.75
+      - delta: 0.08
+        upto: 1.0
+    task_complexity:
+      agent_bump:
+        ARCHITECT: 0.1
+        DEBUGGER: 0.15
+        GATEKEEPER: 0.1
+        IMPLEMENTER: 0.1
+      archetype_base:
+        build: 0.8
+        control: 0.4
+        exploration: 0.4
+        feasibility: 0.6
+        innovation: 0.5
+        learning: 0.3
+        solution: 0.7
+        validation: 0.5
+      multiplier: 0.15
+  enabled: true
+  interpretations:
+    build:
+      overlays:
+        adrenaline_high: Execution pressure is on. Ship the smallest correct increment.
+          Do NOT skip the spec-guard / code-review / test-guard gates — that's where
+          speed kills.
+        norepinephrine_low: Detail focus slipping. You will miss off-by-one errors
+          and edge cases. Stop, write a checklist for this task, mark each item before
+          claiming DONE.
+        oxytocin_low: You're working in isolation when you shouldn't be. Re-read the
+          upstream agent's output (IMPLEMENTER → SPEC_GUARD, etc.) before drafting
+          your verdict.
+      summary: 'You ship under high adrenaline, high oxytocin (peer collaboration),
+        and
+
+        high norepinephrine (detail focus). HIGH adrenaline = ship and iterate;
+
+        do not skip review gates.
+
+        '
+    control:
+      overlays:
+        adrenaline_high: Budget pressure has propagated to your own hormones. Resist
+          reactive routing; check EVOI for each candidate dispatch before issuing.
+        cortisol_high: You are catastrophizing. Re-read the user request verbatim.
+          The squad is likely fine; you are interpreting noise as crisis.
+      summary: 'You orchestrate from a balanced baseline. Any hormone extreme on your
+        own
+
+        profile is a sign the squad is off-track — re-anchor on the constitution
+
+        and user intent.
+
+        '
+    exploration:
+      overlays:
+        adrenaline_high: Budget pressure rising. Stop opening new threads. Consolidate
+          findings and close the loop before iterating further.
+        cortisol_high: Something is going wrong (rare for your archetype). Escalate
+          to COMMANDER rather than producing more analysis.
+        dopamine_low: Curiosity slipping — you're going through the motions. Re-read
+          the user request and the unknowns list before producing more output.
+      summary: 'You operate under high dopamine (curiosity) and low cortisol (no fear
+        of
+
+        ambiguity). Open threads, keep questions live. Your value is in the
+
+        surface area you map, not the conclusions you reach.
+
+        '
+    feasibility:
+      overlays:
+        cortisol_high: Bias your verdict toward DEFER or KILL. Better to reject a
+          viable plan than approve a dangerous one. State your residual concerns explicitly.
+        serotonin_low: Judgment instability. Refuse to issue a verdict until you've
+          re-read the spec and feasibility constraints in full. Avoid PASS under destabilized
+          judgment.
+      summary: 'Your judgment is conservative but steady (high cortisol, elevated
+
+        serotonin). KILL, DEFER, and PASS verdicts have permanent consequences —
+
+        you are the kill gate.
+
+        '
+    innovation:
+      overlays:
+        cortisol_high: 'Fear is throttling exploration. Lower the bar: list five options
+          regardless of viability. Filtering is downstream.'
+        dopamine_low: Creativity has dried up. Stop generating options; re-read three
+          pitfalls.yaml entries from prior runs to seed fresh angles.
+      summary: 'You explore alternatives under high dopamine and low cortisol. Your
+        worst
+
+        output is the safe one — propose options the squad would otherwise miss,
+
+        even weak ones.
+
+        '
+    learning:
+      overlays:
+        cortisol_low: Under-reflection. You are summarizing instead of synthesizing.
+          Look for the pattern (cross-run for post-hoc agents; cross-phase for MONITOR),
+          not the local finding.
+        oxytocin_low: Siloed thinking. Read at least one prior run's evolution-report
+          (or, for MONITOR, scan the current run's reasoning-journal index) before
+          producing your output.
+      summary: 'You operate reflectively under high serotonin and high oxytocin. Your
+
+        value is the signal individual dispatches miss — whether that''s
+
+        real-time process drift (MONITOR''s beat) or cross-run pattern
+
+        extraction (AUDITOR, MIRROR, ADAPTIVE, REALIST, VETERAN, CONSOLIDATOR,
+
+        INTERNALIZER). Step back from the per-task view.
+
+        '
+    solution:
+      overlays:
+        dopamine_high: 'Creative drive may be over-tuning. Check: are you adding optionality,
+          capacity headroom, or domain detail the spec doesn''t ask for? Cut anything
+          not requirement-traced.'
+        serotonin_low: Rushed output risk. Stop generating new structure (ADRs / capacity
+          rows / domain sections); spend the next dispatch consolidating what's already
+          decided and double-checking trace coverage.
+      summary: 'You operate under high serotonin (calm confidence) and elevated dopamine
+
+        (creative). Your job is the simplest correct contribution — the smallest
+
+        architecture (ARCHITECT/ORCHESTRATOR/SENTINEL), the tightest capacity
+
+        model (BENCHMARK), the most specific domain answer (ORACLE) — that meets
+
+        the spec. Avoid over-engineering; avoid elaborating beyond what your
+
+        consumers (ARCHITECT, CARTOGRAPHER) will use.
+
+        '
+    validation:
+      overlays:
+        cortisol_high: Maximum vigilance. Reject anything you would normally let slide.
+          Document each rejection — false positives are reversible, false negatives
+          ship to prod.
+        cortisol_low: Under-vigilance. You are at risk of rubber-stamping. Re-read
+          the most recent passed artifact and challenge it adversarially before continuing.
+        norepinephrine_low: Focus slipping. Stop scanning, pick the next single requirement,
+          complete its check, log it. Single-task until focus recovers.
+      summary: 'You operate vigilantly under high cortisol and high norepinephrine.
+        HIGH
+
+        cortisol does NOT mean back off — it means tighten gate criteria. Your
+
+        value is in what you reject, not what you approve.
+
+        '
+  phase: 3
+evolution:
+  enabled: true
+  recommendations:
+    min_confidence: 3
+    require_downstream_evidence: true
+  signals:
+    declining_trend_runs: 3
+    min_sample_size: 5
+    recurring_pitfall_count: 3
+    recurring_rejection_count: 3
+    regression_delta: 0.1
+execution:
+  agent_timeout_seconds: 600
+  max_parallel_agents: 5
+  max_retries: 3
+  models:
+    build: opus
+    control: opus
+    exploration: opus
+    feasibility: opus
+    learning: sonnet
+    solution: opus
+    specialists: opus
+    verification: opus
+  thought_branches:
+    enabled: true
+    exploration_budget_per_branch: 10
+    max_branches: 5
+  worktree_isolation:
+    cleanup_on_fail: true
+    enabled: true
+feedback:
+  allow_manual_override: true
+  auto_feedback: true
+  expert_triage: true
+  max_expert_dispatches: 5
+  post_build_intent_check: true
+  post_build_validation: true
+golddigger:
+  mode2_policy: requested_only
+governance:
+  artifacts:
+    feasibility:
+      template: feasibility-template.md
+      tier: structural
+      verdict:
+        enum:
+        - PASS
+        - KILL
+        - DEFER
+        section: Kill / Defer / Pass Decision
+    intent-alignment-check:
+      cross_refs:
+      - against: spec.md
+        ids: REQ|FR|NFR
+      template: intent-alignment-check-template.md
+      tier: structural
+      verdict:
+        enum:
+        - ALIGNED
+        - DRIFT
+        section: Alignment Verdict
+  enabled: true
+  max_repair_attempts: 3
+  on_exhausted: warn
+harness:
+  llm:
+    cli: claude
+heuristics:
+  max_nesting_depth: 3
+  max_requirement_sentences: 3
+  max_sentence_words: 25
+implementability:
+  blocked_failure_threshold: 3
+internalization:
+  cold_start:
+    brier_min_pairs: 5
+    escalation_min_count: 3
+    phase_1_max_runs: 4
+    phase_2_max_runs: 9
+    promotion_correlation_threshold: 0.7
+    promotion_min_runs: 20
+  cross_validation:
+    CV-1:
+      condition: int_I01 >= 0.90 AND int_I13 < 0.50
+      flag: high-coverage-low-acceptance
+      requires_deferred: true
+    CV-2:
+      condition: int_I03 >= 0.90 AND int_I05 < 0.80
+      flag: high-terminology-low-accuracy
+      requires_deferred: false
+    CV-3:
+      condition: int_I01 >= 0.90 AND int_I03 < 0.40
+      flag: citation-stuffing-low-fidelity
+      requires_deferred: false
+  default_tier: deep
+  diagnostic_matrix:
+    internalization_high_threshold: 0.7
+    understanding_high_threshold: 0.7
+  disagreement:
+    critical_doubt_threshold: 2
+  enabled: true
+  evolution_signals:
+    min_consecutive_runs: 3
+    severity_thresholds:
+      critical: 0.4
+      high: 0.3
+      low: 0.1
+      medium: 0.2
+  tiers:
+    deep:
+      absorption_threshold: 0.8
+      agents:
+      - IMPLEMENTER
+      - ARCHITECT
+      - ORCHESTRATOR
+      - SENTINEL
+      - CARTOGRAPHER
+      - SCOUT
+      - SAGE
+      - SYNTHESIZER
+      - GATEKEEPER
+      - VALIDATOR
+      int_accuracy_threshold: 0.75
+    exempt:
+      agents:
+      - COMMANDER
+    minimal:
+      absorption_threshold: 0.4
+      agents:
+      - SCOREKEEPER
+      - TRACKER
+      - CHECKPOINT
+      - STRATEGIST
+      - PROGRESS_TRACKER
+      - VETERAN
+      int_accuracy_threshold: 0.4
+    moderate:
+      absorption_threshold: 0.65
+      agents:
+      - INVESTIGATOR
+      - GUARDIAN
+      - ORACLE
+      - BENCHMARK
+      - ADVOCATE
+      - MAVERICK
+      - SPEC_GUARD
+      - CODE_REVIEWER
+      - TEST_GUARDIAN
+      - DEBUGGER
+      - INTEGRATOR
+      - CHANGE_CONTROLLER
+      - MIRROR
+      - ADAPTIVE
+      - AUDITOR
+      - REALIST
+      - MONITOR
+      - MODELER
+      - GOLDDIGGER
+      int_accuracy_threshold: 0.6
+internalization_legacy:
+  estimated_time_minutes: 5
+  fail_below: 4
+  partial_min: 4
+  pass_threshold: 6
+knowledge_base:
+  low_confidence_threshold: 0.3
+  max_entries: 500
+  stale_threshold_months: 12
+lexicon_gate:
+  artifacts:
+    spec:
+      enabled: true
+      mode: derived
+      path: requirements.lexicon.md
+      source_ref: spec.md
+      type: spec
+    tasks:
+      enabled: true
+      spec_ref: requirements.lexicon.md
+      type: tasks
+  enabled: true
+  glossary_file: glossary.md
+  max_repair_attempts: 3
+  on_exhausted: warn
+limits:
+  wall_clock_timeout_minutes: 9999
+mempalace:
+  wing: echelon
+metacognition:
+  check_interval_tasks: 3
+  consecutive_fail_threshold: 3
+  max_tasks_without_check: 10
+quality:
+  target_review_cycles: 2.0
+quality_gates:
+  behavioral: 0.55
+  borderline_margin: 0.05
+  cognitive: 0.65
+  depth: 0.4
+  high_compound_threshold: 3
+  overall: 0.75
+  readability: 0.55
+  semantic: 0.65
+  structure: 0.75
+  testability: 0.75
+rice:
+  confidence_scale_values:
+    high: 1.0
+    low: 0.5
+    medium: 0.8
+  impact_scale_values:
+    high: 2
+    low: 0.5
+    massive: 3
+    medium: 1
+    minimal: 0.25
+  reach_scale_max: 10
+risk:
+  high_threshold: 0.5
+  low_threshold: 0.75
+  medium_min: 0.5
+runnable:
+  l2_hard: false
+  max_attempts: 3
+  on_exhausted: block
+scoring:
+  confidence_max: 1.0
+  confidence_min: 0.0
+  evidence_grades:
+  - A
+  - B
+  - C
+  - D
+  - E
+specialists:
+  always_test_architect: true
+  auto_performance_keywords:
+  - real-time
+  - concurrent
+  - throughput
+  - latency
+  - scalab
+  - high-load
+  auto_scientist: true
+  auto_security_keywords:
+  - auth
+  - login
+  - password
+  - token
+  - PII
+  - payment
+  - encrypt
+  - GDPR
+  - HIPAA
+  - compliance
+  guardian_mode: always_on
+  max_active: 5
+  risk_acceptance:
+    compliance_escalation_domains:
+    - GDPR
+    - HIPAA
+    - PCI-DSS
+    - SOC2
+    enabled: true
+    max_autonomous_residual: MEDIUM
+    min_evidence_grade: C
+stacks:
+  selected: []
+  target_archetypes: []
+tests:
+  min_api_endpoint: 4
+  min_class_service: 3
+  min_composite_component: 4
+  min_integration: 2
+  min_pure_function: 2
+  min_ui_component: 3
+tools:
+  understanding_cli: understanding

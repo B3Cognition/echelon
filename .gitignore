@@ -44,3 +44,9 @@ extension/scripts/node/re/node_modules/
 .claude/skills/
 .worktrees/
 docs/echelon-*run-*.md
+/runs/
+/.claude/
+!/.echelon/
+!/.echelon/config.yml
+/sources/*
+!/sources/README.md
