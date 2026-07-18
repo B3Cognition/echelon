@@ -48,16 +48,16 @@ Preserve user wording accurately, but quote only what is needed.
 
 ## Intent vs Spec Alignment
 
-`spec.md` does not exist yet (phase1, pre-CARTOGRAPHER); alignment is assessed against the staging knowledge base that will feed it.
+Originally assessed pre-CARTOGRAPHER against the staging knowledge base; rows updated 2026-07-18 at the phase2 alignment gate now that spec.md and GATEKEEPER's scope exist (see intent-alignment-check.md).
 
 | User Intent | Spec Says (staging artifacts) | Aligned? |
 |-------------|-------------------------------|----------|
 | UI-001/UI-005/UI-012 scope boundary (v1 tier only, standalone, non-goals excluded) | glossary.md, boundaries.md (explicit NON-boundary), assumptions.md A-003 all preserve the boundary faithfully | yes |
 | UI-007 interface + exit codes | mental-model.md exit-code state machine and Challenge Run entity match the design exactly | yes |
 | UI-008 isolation contract | Captured faithfully, AND correctly challenged: A-002/U-002 record that temp cwd may not fully deliver the isolation outcome — a challenge to the premise, not an override of intent | yes |
-| UI-009 report format incl. collapsed audit section | glossary/mental-model/boundaries describe the audit appendix but **dropped "collapsed"** (IN-REQ-2D4902546481) | no — restore in spec (RF-1) |
+| UI-009 report format incl. collapsed audit section | RF-1 closed: spec.md FR-038 and AC-008 restore the collapsed rendering; mvp-scope.md F4 carries it forward | yes |
 | UI-010 error handling | Captured faithfully; U-003/U-005/U-007 record genuine design silences for resolution, not deviations | yes |
-| UI-011 testing + acceptance | Captured faithfully; the flaky-acceptance contradiction proposes adding tolerance to an approved AC — a material AC edit that must be surfaced, not silent (RF-4) | unknown — pending CARTOGRAPHER |
+| UI-011 testing + acceptance | RF-4 substantially closed: tolerance encoded openly in AC-023/SC-001 with rationale in mvp-scope.md F6 — surfaced, not silent. Low-severity residual: the amendment is missing from spec.md's "Resolved During WHAT" table (intent-alignment-check.md DIV-001, CARTOGRAPHER at next spec touch) | yes |
 
 ## Red Flags
 
