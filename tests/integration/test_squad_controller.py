@@ -6,6 +6,7 @@ WHY3 + ASSESS2 (stage 1) before PLAN2 (stage 2) and before checkpoint-plan.
 """
 import sys
 import json
+import hashlib
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -2248,6 +2249,53 @@ class TestLexiconGateGuardDeterminism:
         assert nxt == "phase1-what"
         assert result.state_updates["lexicon_pass"] is False
 
+    def test_spec_gate_uses_controller_validation_not_agent_stale_failure(self, tmp_path):
+        """A valid artifact advances even if the agent reports stale failed state."""
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        source = """# Feature\n\n- **FR-001**: Render the dashboard.\n- **AC-001**: Given data, when rendering, then the dashboard is visible.\n"""
+        (spec_dir / "spec.md").write_text(source, encoding="utf-8")
+        (spec_dir / "glossary.md").write_text("", encoding="utf-8")
+        digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        (spec_dir / "requirements.lexicon.md").write_text(
+            f"""# SOURCE: spec.md
+# SOURCE_SHA256: {digest}
+ARTIFACT: SPEC
+TITLE: Dashboard
+
+REQ: FR-001
+GIVEN: data is available
+WHEN: the user opens the dashboard
+THEN: The system SHALL render the dashboard
+OUTPUT: The dashboard is visible
+DEPENDS: none
+EXAMPLE: AC-001
+
+AC: AC-001
+GIVEN: data is available
+WHEN: the user opens the dashboard
+THEN: The dashboard is visible
+""",
+            encoding="utf-8",
+        )
+        state = store.load()
+        state.update({
+            "iteration": 0,
+            "max_iterations": 10,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+        })
+        store.save(state)
+        result = self._result({"lexicon_pass": False, "lexicon_attempts": 3, "lexicon_findings": 55})
+
+        nxt = ctrl._evaluate_transitions(node, result)
+
+        assert nxt == "phase1-why2"
+        assert result.state_updates["lexicon_pass"] is True
+        assert result.state_updates["lexicon_attempts"] == 0
+        assert result.state_updates["lexicon_findings"] == 0
+
     def test_spec_gate_blocks_on_exhaustion_when_configured_hard(self, tmp_path):
         """A hard Lexicon gate cannot fall through after its final repair pass."""
         (tmp_path / ".echelon").mkdir()
@@ -2278,3 +2326,36 @@ class TestLexiconGateGuardDeterminism:
         state = store.load()
         assert state["status"] == "blocked"
         assert state["blocked_reason"] == "lexicon_gate_exhausted"
+
+    def test_spec_gate_blocks_when_agent_exhausts_its_repair_budget(self, tmp_path):
+        """The agent's repair cap must win over the broader squad iteration cap."""
+        (tmp_path / ".echelon").mkdir()
+        (tmp_path / ".echelon" / "config.yml").write_text(
+            "lexicon_gate:\n"
+            "  enabled: true\n"
+            "  max_repair_attempts: 3\n"
+            "  on_exhausted: block\n"
+            "  artifacts:\n"
+            "    spec:\n"
+            "      enabled: true\n"
+            "      path: requirements.lexicon.md\n",
+            encoding="utf-8",
+        )
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        st = store.load()
+        st["iteration"] = 0
+        st["max_iterations"] = 10
+        st["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(st)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+
+        nxt = ctrl._evaluate_transitions(
+            node,
+            self._result({"lexicon_pass": False, "lexicon_attempts": 3}),
+        )
+
+        assert nxt == "terminal-blocked"
+        assert store.load()["blocked_reason"] == "lexicon_gate_exhausted"

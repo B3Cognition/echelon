@@ -38,8 +38,9 @@ block: req
      | limit
      | placeholder
 
-req: "REQ:" ID _NL given when main_clause output? depends? constraint? example*
-ac: "AC:" ID _NL given when then_obs constraint?
+req: "REQ:" ID _NL given when main_clause output? req_metadata* example*
+req_metadata: depends | constraint
+ac: "AC:" ID _NL given when then_obs constraint*
 error_block: "ERROR:" ID _NL when recover error_code
 rule: "RULE:" ID _NL if_clause then_rule else_clause? except_clause?
 input_block: "INPUT:" TEXT _NL "TYPE:" TEXT _NL "REQUIRED:" TEXT _NL "SOURCE:" TEXT _NL "VALID_WHEN:" TEXT _NL example?

@@ -64,6 +64,13 @@ Use the Agent tool to dispatch a subagent with:
   - Do NOT run `understanding validate` or guess module commands; SAGE owns the formal Understanding validation skill in WHY2/WHY3.
   - For Lexicon Gate validation, use `lexicon validate "{spec_dir}/{lexicon_path}" --type {artifact_type} --source-ref "{spec_dir}/{source_ref}" --glossary "{spec_dir}/{glossary_file}" --json` and treat that result as authoritative for `lexicon_pass`.
 
+  Lexicon Repair Invariant:
+  - When the Lexicon gate is enabled, an amendment pass MUST run that validator before writing any completion summary. An artifact inventory, a prior journal entry, or a prior `lexicon_attempts` value is not validation evidence.
+  - If the validator returns findings, repair the current derived artifact and re-run it up to the configured repair budget. Fix `parse-error` before interpreting `source-id-missing`, because failed parsing can suppress all derived IDs.
+  - `NFR-…` IDs are valid `REQ: NFR-…` blocks in the controlled grammar. Do not describe NFRs as an unsupported grammar feature.
+  - If the current run state has `lexicon_attempts: 0`, its repair budget was reset by rewind; do not repeat an earlier exhaustion conclusion.
+  - NEVER return `lexicon_pass: false` with an old finding count unless you ran the validator in this dispatch and the result contains that count.
+
   Always complete ALL of the following before returning. Do NOT return until they are true:
   1. `{spec_dir}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.
   2. `{spec_dir}/00-overview.md` exists (your 1-2 page human-readable summary).
@@ -220,10 +227,12 @@ decision on the controlled outcome (the "re-dispatch"). COMMANDER does NOT run `
 **Controlled-outcome routing.** After the dispatch, read `state.json.lexicon_pass`:
 - `lexicon_pass == true` → proceed to `phase1-why2` (soft `understanding`/SAGE scoring runs there,
   once, on rich `spec.md`, after the derived requirements artifact is structurally clean).
-- `lexicon_pass == false AND iteration < max_iterations` → re-dispatch `phase1-what`
-  (`increment_iteration`). This is the only condition that re-dispatches CARTOGRAPHER on the
-  Lexicon outcome — see the transitions in `workflow/definition.yaml`.
-- `iteration >= max_iterations` → honor `lexicon_gate.on_exhausted`:
+- `lexicon_pass == false AND lexicon_attempts < max_repair_attempts AND iteration < max_iterations`
+  → re-dispatch `phase1-what` (`increment_iteration`). This is the only condition that
+  re-dispatches CARTOGRAPHER on the Lexicon outcome — see the transitions in
+  `workflow/definition.yaml`.
+- `lexicon_attempts >= max_repair_attempts` (or the secondary `iteration >= max_iterations` cap)
+  → honor `lexicon_gate.on_exhausted`:
   `warn` → proceed to `phase1-why2` with a `lexicon_gate_exhausted` warning journal entry;
   `block` → set `spec_status: blocked`, `blocked_reason: "lexicon gate not satisfied"`, and stop.
 

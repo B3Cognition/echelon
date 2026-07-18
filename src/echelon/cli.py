@@ -3140,6 +3140,87 @@ def _phase_a_readiness_traceability_blockers(run_state: dict) -> list[str]:
     ]
 
 
+def _verified_lexicon_gate_recovery_phase(
+    project_root: Path,
+    state: dict,
+) -> tuple[str, int] | None:
+    """Return the post-gate phase only for an independently valid artifact.
+
+    A hard Lexicon block can occur after the agent reports a stale failure even
+    though the derived artifact on disk was repaired.  Recovery must validate
+    the actual artifact, not trust either the old report or the presence of a
+    file.  This function deliberately has no repair behavior: an invalid
+    contract remains blocked and cannot be bypassed by ``spec continue``.
+    """
+    if str(state.get("blocked_reason") or "") != "lexicon_gate_exhausted":
+        return None
+    phase = str((state.get("last_dispatch") or {}).get("phase_id") or "")
+    next_phase = {
+        "phase1-what": "phase1-why2",
+        "phase3-plan": "phase3-consensus",
+    }.get(phase)
+    if next_phase is None:
+        return None
+
+    spec_ref = str(state.get("spec_dir") or "").strip()
+    if not spec_ref:
+        return None
+    spec_dir = Path(spec_ref)
+    if not spec_dir.is_absolute():
+        spec_dir = project_root / spec_dir
+
+    config: dict = {}
+    config_path = project_root / ".echelon" / "config.yml"
+    if config_path.is_file():
+        try:
+            import yaml
+
+            config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return None
+    gate = config.get("lexicon_gate", {}) if isinstance(config, dict) else {}
+    artifacts = gate.get("artifacts", {}) if isinstance(gate, dict) else {}
+    artifact_key = "spec" if phase == "phase1-what" else "tasks"
+    artifact = artifacts.get(artifact_key, {}) if isinstance(artifacts, dict) else {}
+    if isinstance(gate, dict) and gate.get("enabled") is False:
+        return None
+    if isinstance(artifact, dict) and artifact.get("enabled") is False:
+        return None
+
+    if phase != "phase1-what":
+        # Task-gate recovery has a distinct validator and is intentionally not
+        # conflated with the source-contract validator implemented here.
+        return None
+
+    derived_name = str(artifact.get("path") or "requirements.lexicon.md") if isinstance(artifact, dict) else "requirements.lexicon.md"
+    source_name = str(artifact.get("source_ref") or "spec.md") if isinstance(artifact, dict) else "spec.md"
+    glossary_name = str(gate.get("glossary_file") or "glossary.md") if isinstance(gate, dict) else "glossary.md"
+    derived_path = spec_dir / derived_name
+    source_path = spec_dir / source_name
+    glossary_path = spec_dir / glossary_name
+    if not derived_path.is_file() or not source_path.is_file():
+        return None
+
+    try:
+        from lexicon.source_contract import source_contract_findings
+        from lexicon.validity import validate as validate_lexicon
+
+        glossary: set[str] = set()
+        if glossary_path.is_file():
+            for raw in glossary_path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                terms = re.findall(r"\*\*([^*]+)\*\*", line)
+                glossary.update(term.strip() for term in terms or [line])
+        text = derived_path.read_text(encoding="utf-8")
+        report = validate_lexicon(text, glossary=glossary, artifact_type="SPEC")
+        findings = [*report.findings, *source_contract_findings(text, source_path)]
+    except Exception:
+        return None
+    return (next_phase, 0) if not findings else None
+
+
 def _interrupted_retry_phase(run_state: dict) -> str | None:
     phase_id = str(run_state.get("interrupted_phase") or run_state.get("phase") or "").strip()
     if phase_id and phase_id not in {"DONE", "terminal-blocked"}:
@@ -3505,6 +3586,23 @@ def _reset_rewind_state(
     rewound["escalation_resolved"] = False
     rewound["escalation_resolver"] = None
     rewound.pop("phase_a_readiness_blockers", None)
+    # A rewind reopens the target phase's owned repair loop.  Retaining an
+    # exhausted Lexicon certificate makes CARTOGRAPHER/ORCHESTRATOR conclude
+    # that they have no repair budget before they inspect the restored files.
+    # Reset only the gates whose owning phase is being revisited.
+    try:
+        phase_index = _ROADMAP_PHASES.index(phase)
+    except ValueError:
+        phase_index = len(_ROADMAP_PHASES)
+    if phase_index <= _ROADMAP_PHASES.index("phase1-what"):
+        rewound["lexicon_pass"] = None
+        rewound["lexicon_attempts"] = 0
+        rewound["lexicon_findings"] = 0
+        rewound.pop("lexicon_gate_exhausted", None)
+    if phase_index <= _ROADMAP_PHASES.index("phase3-plan"):
+        rewound["tasks_lexicon_pass"] = None
+        rewound["tasks_lexicon_attempts"] = 0
+        rewound.pop("tasks_lexicon_gate_exhausted", None)
     if checkpoint_phases_before_target is not None:
         completed = rewound.get("completed_phases")
         primary_predecessors: list[str] = []
@@ -5321,7 +5419,22 @@ def _ensure_active_continue_spec_context(
     project-root specs/<id> directory remains the build-harness target and is
     mirrored into the run-local copy only for missing files.
     """
-    spec_id = str(state.get("spec_id") or "").strip()
+    # ``specify_feature_directory`` is the original spec-kit allocation.  It
+    # carries the full ``NNN-slug`` name and is therefore more specific than a
+    # legacy ``spec_id: NNN`` / ``specs/NNN`` alias created by an interrupted
+    # run.  Prefer it whenever it still resolves to a directory; otherwise a
+    # resume can fork a shadow ``specs/NNN`` artifact tree and validate the
+    # wrong copy.
+    specified_ref = str(state.get("specify_feature_directory") or "").strip()
+    specified_dir: Path | None = None
+    if specified_ref:
+        candidate = Path(specified_ref)
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        if candidate.is_dir():
+            specified_dir = candidate
+
+    spec_id = specified_dir.name if specified_dir is not None else str(state.get("spec_id") or "").strip()
     spec_ref = str(state.get("spec_dir") or "").strip()
     published_ref = str(state.get("published_spec_dir") or "").strip()
 
@@ -5333,7 +5446,18 @@ def _ensure_active_continue_spec_context(
         spec_id = only_spec.name
 
     active_spec_dir = run_dir / "specs" / spec_id
-    published_spec_dir = project_root / "specs" / spec_id
+    is_project_published_spec = False
+    if specified_dir is not None:
+        try:
+            specified_dir.relative_to(project_root / "specs")
+            is_project_published_spec = True
+        except ValueError:
+            pass
+    published_spec_dir = (
+        specified_dir
+        if is_project_published_spec and specified_dir is not None
+        else project_root / "specs" / spec_id
+    )
 
     source_dirs: list[Path] = []
     if published_spec_dir.exists():
@@ -6200,6 +6324,21 @@ def _cmd_continue(
             flush=True,
         )
         _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
+
+    verified_recovery = _verified_lexicon_gate_recovery_phase(project_root, state)
+    if verified_recovery is not None:
+        next_phase, findings = verified_recovery
+        state["lexicon_pass"] = True
+        state["lexicon_findings"] = findings
+        state["lexicon_attempts"] = 0
+        state.pop("lexicon_gate_exhausted", None)
+        state["blocked_reason"] = None
+        print(
+            "[squad] Lexicon recovery verified on disk; resuming after the hard gate.",
+            flush=True,
+        )
+        start_phase(next_phase, verb="Continuing from verified Lexicon recovery")
+        return
 
     action = _classify_run_recovery(state, project_root=project_root)
     if action.kind == "safe_rewind":

@@ -71,6 +71,39 @@ EXAMPLE: AC-003
 """
 
 
+SPEC_WITH_MULTIPLE_CONSTRAINTS = """ARTIFACT: SPEC
+TITLE: Accessible run catalog
+
+REQ: FR-001
+GIVEN: a developer opens the run catalog
+WHEN: the catalog renders
+THEN: the catalog MUST expose accessible filtering controls
+OUTPUT: a keyboard-operable catalog
+CONSTRAINT: keyboard navigation follows the documented tab order
+CONSTRAINT: color contrast meets the documented accessibility threshold
+"""
+
+
+SPEC_WITH_CONSTRAINTS_BEFORE_DEPENDS = """ARTIFACT: SPEC
+TITLE: Accessible run catalog
+
+REQ: FR-001
+GIVEN: a developer opens the run catalog
+WHEN: the catalog renders
+THEN: the catalog MUST expose accessible filtering controls
+OUTPUT: a keyboard-operable catalog
+CONSTRAINT: keyboard navigation follows the documented tab order
+CONSTRAINT: color contrast meets the documented accessibility threshold
+DEPENDS: none
+EXAMPLE: AC-001
+
+AC: AC-001
+GIVEN: a developer opens the run catalog
+WHEN: the catalog renders
+THEN: the filtering controls accept keyboard input
+"""
+
+
 SPEC_WITH_TBR = """ARTIFACT: SPEC
 TITLE: Payments
 
@@ -124,6 +157,18 @@ def test_spec_with_depends_parses():
     """A REQ may declare a DEPENDS field listing other requirement IDs it
     depends on (or 'none'); the field is optional and parses cleanly."""
     assert parse_pass(SPEC_WITH_DEPENDS) is True
+
+
+@pytest.mark.unit
+def test_spec_with_multiple_constraints_parses():
+    """Independent measurable constraints must not invalidate their REQ block."""
+    assert parse_pass(SPEC_WITH_MULTIPLE_CONSTRAINTS) is True
+
+
+@pytest.mark.unit
+def test_spec_with_constraints_before_depends_parses():
+    """REQ metadata may be authored in the order shown by the derived template."""
+    assert parse_pass(SPEC_WITH_CONSTRAINTS_BEFORE_DEPENDS) is True
 
 
 @pytest.mark.unit

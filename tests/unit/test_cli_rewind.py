@@ -413,6 +413,24 @@ def test_rewind_reconstructs_primary_predecessors_for_the_roadmap() -> None:
     assert rewound["iteration"] == 0
 
 
+def test_rewind_to_what_resets_spec_lexicon_repair_state() -> None:
+    rewound = _reset_rewind_state(
+        {
+            "lexicon_pass": False,
+            "lexicon_attempts": 3,
+            "lexicon_findings": 55,
+            "lexicon_gate_exhausted": True,
+        },
+        "phase1-what",
+        "runs/spec-1/specs/001-demo",
+    )
+
+    assert rewound["lexicon_pass"] is None
+    assert rewound["lexicon_attempts"] == 0
+    assert rewound["lexicon_findings"] == 0
+    assert "lexicon_gate_exhausted" not in rewound
+
+
 def test_rewind_missing_checkpoint_exits_without_traceback(
     tmp_path: Path,
     capsys,

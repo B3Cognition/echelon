@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
 
-from echelon.cli import _classify_run_recovery, _cmd_continue, _next_continue_phase
+from echelon.cli import (
+    _classify_run_recovery,
+    _cmd_continue,
+    _ensure_active_continue_spec_context,
+    _next_continue_phase,
+)
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
 
 
@@ -47,6 +53,125 @@ def _record_run_checkpoint(run_dir: Path, spec_id: str, phase: str) -> None:
             created_at="2026-07-18T12:00:00Z",
         ),
     )
+
+
+def test_continue_prefers_specify_feature_directory_over_stale_short_spec_id(
+    tmp_path: Path,
+) -> None:
+    """A resume must keep the spec-kit slug, never fork into specs/<number>."""
+    run_dir = tmp_path / "runs" / "spec-test"
+    canonical = tmp_path / "specs" / "004-transform-selector-above-stat"
+    canonical.mkdir(parents=True)
+    (canonical / "spec.md").write_text("# Canonical spec\n", encoding="utf-8")
+
+    stale = run_dir / "specs" / "004"
+    stale.mkdir(parents=True)
+    (stale / "spec.md").write_text("# Stale alias\n", encoding="utf-8")
+
+    state, active = _ensure_active_continue_spec_context(
+        tmp_path,
+        run_dir,
+        {
+            "spec_id": "004",
+            "spec_dir": "runs/spec-test/specs/004",
+            "published_spec_dir": "specs/004",
+            "specify_feature_directory": "specs/004-transform-selector-above-stat",
+        },
+        sync_missing=True,
+    )
+
+    assert active == run_dir / "specs" / "004-transform-selector-above-stat"
+    assert state["spec_id"] == "004-transform-selector-above-stat"
+    assert state["spec_dir"] == "runs/spec-test/specs/004-transform-selector-above-stat"
+    assert state["published_spec_dir"] == "specs/004-transform-selector-above-stat"
+    assert (active / "spec.md").read_text(encoding="utf-8") == "# Canonical spec\n"
+
+
+def test_continue_derives_published_slug_from_run_local_specify_directory(
+    tmp_path: Path,
+) -> None:
+    """A run-local canonical reference must not become the published path."""
+    run_dir = tmp_path / "runs" / "spec-test"
+    canonical = run_dir / "specs" / "004-transform-selector-above-stat"
+    canonical.mkdir(parents=True)
+    (canonical / "spec.md").write_text("# Canonical spec\n", encoding="utf-8")
+    published = tmp_path / "specs" / "004-transform-selector-above-stat"
+    published.mkdir(parents=True)
+
+    state, active = _ensure_active_continue_spec_context(
+        tmp_path,
+        run_dir,
+        {
+            "spec_id": "004",
+            "spec_dir": "runs/spec-test/specs/004",
+            "published_spec_dir": "specs/004",
+            "specify_feature_directory": "runs/spec-test/specs/004-transform-selector-above-stat",
+        },
+        sync_missing=True,
+    )
+
+    assert active == canonical
+    assert state["published_spec_dir"] == "specs/004-transform-selector-above-stat"
+
+
+def test_continue_recovers_terminal_lexicon_block_after_independent_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repaired, valid derived contract resumes at WHY2 without another WHAT run."""
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "lexicon_gate_exhausted",
+            "spec_id": "001-demo",
+            "spec_dir": "runs/spec-test/specs/001-demo",
+            "completed_phases": ["phase1-constitution", "phase1-what"],
+            "last_dispatch": {"phase_id": "phase1-what"},
+            "user_message": "build the dashboard",
+            "autonomy_mode": "semi",
+        },
+    )
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    source = """# Feature\n\n- **FR-001**: Render the dashboard.\n- **AC-001**: Given data, when rendering, then the dashboard is visible.\n"""
+    (spec_dir / "spec.md").write_text(source, encoding="utf-8")
+    (spec_dir / "glossary.md").write_text("", encoding="utf-8")
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    (spec_dir / "requirements.lexicon.md").write_text(
+        f"""# SOURCE: spec.md
+# SOURCE_SHA256: {digest}
+ARTIFACT: SPEC
+TITLE: Dashboard
+
+REQ: FR-001
+GIVEN: data is available
+WHEN: the user opens the dashboard
+THEN: The system SHALL render the dashboard
+OUTPUT: The dashboard is visible
+DEPENDS: none
+EXAMPLE: AC-001
+
+AC: AC-001
+GIVEN: data is available
+WHEN: the user opens the dashboard
+THEN: The dashboard is visible
+""",
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_run", lambda args, **_kwargs: calls.append(args))
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "phase1-why2"
+    assert state["status"] == "running"
+    assert state["lexicon_pass"] is True
+    assert state["lexicon_findings"] == 0
+    assert calls == [["build the dashboard", "--mode", "semi"]]
 
 
 def test_continue_routes_to_constitution_without_phase_provenance(tmp_path: Path) -> None:

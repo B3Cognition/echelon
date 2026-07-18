@@ -1795,6 +1795,12 @@ class SquadController:
                 cfg = {"lexicon_gate": block}
         except Exception:
             cfg = {}
+        # The workflow conditions compare each controlled gate's repair count
+        # against the configured cap. Missing result fields must mean "zero
+        # reported repairs", never an indeterminate condition that falls
+        # through to a later phase.
+        cfg.setdefault("lexicon_attempts", 0)
+        cfg.setdefault("tasks_lexicon_attempts", 0)
         self._gate_config_cache = cfg
         return cfg
 
@@ -1830,14 +1836,58 @@ class SquadController:
         if not (spec_dir / "spec.md").is_file():
             return
         derived_name = str(spec_gate.get("path") or "requirements.lexicon.md").strip()
-        certificate = updates.get("lexicon_pass")
-        if isinstance(certificate, bool) and certificate and (spec_dir / derived_name).is_file():
-            return
+        derived_path = spec_dir / derived_name
+        source_name = str(spec_gate.get("source_ref") or "spec.md").strip()
+        glossary_name = str(spec_gate.get("glossary_file") or "glossary.md").strip()
+        source_path = spec_dir / source_name
+        glossary_path = spec_dir / glossary_name
+
+        # The result block is an agent-produced API response, not validation
+        # evidence.  Verify the exact on-disk artifact at the controller
+        # boundary so a stale narrative (or an omitted validator invocation)
+        # cannot turn a valid artifact into a terminal block, or an invalid one
+        # into a pass.
+        if derived_path.is_file() and source_path.is_file():
+            try:
+                from lexicon.source_contract import source_contract_findings
+                from lexicon.validity import validate as validate_lexicon
+
+                glossary: set[str] = set()
+                if glossary_path.is_file():
+                    import re
+
+                    for raw in glossary_path.read_text(encoding="utf-8").splitlines():
+                        line = raw.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        terms = re.findall(r"\*\*([^*]+)\*\*", line)
+                        glossary.update(term.strip() for term in terms or [line])
+
+                report = validate_lexicon(
+                    derived_path.read_text(encoding="utf-8"),
+                    glossary=glossary,
+                    artifact_type="SPEC",
+                )
+                findings = [*report.findings, *source_contract_findings(
+                    derived_path.read_text(encoding="utf-8"), source_path
+                )]
+                updates["lexicon_pass"] = not findings
+                updates["lexicon_findings"] = len(findings)
+                # A controller-certified pass ends the repair loop regardless
+                # of an agent's stale attempt counter.
+                if not findings:
+                    updates["lexicon_attempts"] = 0
+                return
+            except Exception:
+                # A validator failure is never evidence of a pass.  Preserve
+                # the normal failure path below so the configured gate policy
+                # remains authoritative.
+                pass
 
         updates["lexicon_pass"] = False
-        attempts = updates.get("lexicon_attempts")
+        attempts = updates.get("lexicon_attempts", state.get("lexicon_attempts"))
         updates["lexicon_attempts"] = attempts if isinstance(attempts, int) else 0
-        findings = updates.get("lexicon_findings")
+        findings = updates.get("lexicon_findings", state.get("lexicon_findings"))
         updates["lexicon_findings"] = findings if isinstance(findings, int) else 1
 
     def _lexicon_gate_must_block_on_exhaustion(
@@ -1852,18 +1902,37 @@ class SquadController:
         warning.  A `block` policy is a hard delivery contract: after the final
         repair attempt there is no valid transition to a later authoring phase.
         """
-        if node.id != "phase1-what":
+        gate_artifacts = {
+            "phase1-what": ("spec", "lexicon_pass", "lexicon_attempts"),
+            "phase3-plan": ("tasks", "tasks_lexicon_pass", "tasks_lexicon_attempts"),
+        }
+        gate_fields = gate_artifacts.get(node.id)
+        if gate_fields is None:
             return False
+        artifact_name, pass_key, attempts_key = gate_fields
         gate = self._lexicon_gate_config().get("lexicon_gate", {})
         if not isinstance(gate, dict) or str(gate.get("on_exhausted", "block")).lower() != "block":
             return False
         artifacts = gate.get("artifacts", {})
-        spec_gate = artifacts.get("spec", {}) if isinstance(artifacts, dict) else {}
-        if not isinstance(spec_gate, dict) or not spec_gate.get("enabled", False):
+        artifact_gate = artifacts.get(artifact_name, {}) if isinstance(artifacts, dict) else {}
+        if not isinstance(artifact_gate, dict) or not artifact_gate.get("enabled", False):
             return False
-        if int(state.get("iteration") or 0) < int(state.get("max_iterations") or self._max_iterations):
+        try:
+            repair_cap = int(gate.get("max_repair_attempts", 3))
+        except (TypeError, ValueError):
+            repair_cap = 3
+        reported_attempts = result.state_updates.get(attempts_key, state.get(attempts_key))
+        repair_attempts_exhausted = (
+            isinstance(reported_attempts, int)
+            and repair_cap > 0
+            and reported_attempts >= repair_cap
+        )
+        squad_iterations_exhausted = int(state.get("iteration") or 0) >= int(
+            state.get("max_iterations") or self._max_iterations
+        )
+        if not repair_attempts_exhausted and not squad_iterations_exhausted:
             return False
-        if result.state_updates.get("lexicon_pass") is True:
+        if result.state_updates.get(pass_key) is True:
             return False
 
         exhausted = self._state_store.load()
