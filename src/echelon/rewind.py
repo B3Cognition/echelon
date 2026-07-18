@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from echelon.git_helpers import (
+    GitHelperError,
     create_backup_ref,
     current_branch,
-    is_worktree_dirty,
     reset_branch_to_commit,
     run_git,
+    worktree_dirty_paths,
 )
 from harness.phase_checkpoints import checkpoint_targets, load_checkpoint_ledger, resolve_checkpoint
 
@@ -29,6 +30,17 @@ class RewindResult:
     to_commit: str
     backup_ref: str
     message: str
+
+
+def _active_spec_dirty_paths(project_root: Path, spec_dir: Path, paths: set[str]) -> list[str]:
+    """Find changed paths that would be overwritten as part of this spec rewind."""
+    try:
+        spec_path = spec_dir.resolve().relative_to(project_root.resolve()).as_posix()
+    except ValueError:
+        # A run-local spec directory outside the project cannot be classified safely.
+        return sorted(paths)
+    prefix = f"{spec_path}/"
+    return sorted(path for path in paths if path == spec_path or path.startswith(prefix))
 
 
 def _find_spec_dir(project_root: Path, spec: str) -> Path:
@@ -69,8 +81,15 @@ def prepare_rewind(
         raise RewindError(
             f"active branch {branch!r} does not match spec {checkpoint.spec_id!r}"
         )
-    if is_worktree_dirty(project_root):
-        raise RewindError("dirty worktree blocks rewind; commit, stash, or discard changes first")
+    dirty_paths = worktree_dirty_paths(project_root)
+    active_spec_dirty_paths = _active_spec_dirty_paths(
+        project_root, resolved_spec_dir, dirty_paths
+    )
+    if active_spec_dirty_paths:
+        raise RewindError(
+            "dirty active spec paths block rewind; commit, stash, or discard them first:\n  "
+            + "\n  ".join(active_spec_dirty_paths)
+        )
 
     head = run_git(project_root, "rev-parse", "HEAD").stdout.strip()
     if head == checkpoint.commit:
@@ -93,6 +112,8 @@ def prepare_rewind(
         f"Backup branch:\n  {backup_ref}\n\n"
         f"Continue with:\n  echelon spec rewind {checkpoint.phase} --confirm"
     )
+    if dirty_paths:
+        message += "\n\nWorkspace changes to preserve:\n  " + "\n  ".join(sorted(dirty_paths))
     if not confirm:
         return RewindResult(
             False,
@@ -104,8 +125,20 @@ def prepare_rewind(
             message,
         )
 
-    created = create_backup_ref(project_root, backup_ref, "HEAD")
-    reset_branch_to_commit(project_root, checkpoint.commit)
+    try:
+        created = create_backup_ref(project_root, backup_ref, "HEAD")
+        reset_branch_to_commit(
+            project_root,
+            checkpoint.commit,
+            preserve_worktree=bool(dirty_paths),
+        )
+    except GitHelperError as exc:
+        if dirty_paths:
+            raise RewindError(
+                "cannot rewind while preserving workspace changes; stash or resolve "
+                "the conflicting changes first"
+            ) from exc
+        raise RewindError(str(exc)) from exc
     return RewindResult(
         True,
         checkpoint.spec_id,

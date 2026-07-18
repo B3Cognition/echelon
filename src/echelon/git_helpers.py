@@ -47,6 +47,19 @@ def is_worktree_dirty(repo: Path, *, include_untracked: bool = True) -> bool:
     return bool(run_git(repo, *args, check=False).stdout.strip())
 
 
+def worktree_dirty_paths(repo: Path) -> set[str]:
+    """Return every changed path, including staged and untracked files."""
+    paths: set[str] = set()
+    for args in (
+        ("diff", "--name-only", "-z"),
+        ("diff", "--cached", "--name-only", "-z"),
+        ("ls-files", "--others", "--exclude-standard", "-z"),
+    ):
+        output = run_git(repo, *args).stdout
+        paths.update(path for path in output.split("\0") if path)
+    return paths
+
+
 def commit_exists(repo: Path, commit: str) -> bool:
     if not commit.strip():
         return False
@@ -69,7 +82,13 @@ def create_backup_ref(repo: Path, ref_name: str, target: str = "HEAD") -> str:
     return cleaned
 
 
-def reset_branch_to_commit(repo: Path, commit: str) -> None:
+def reset_branch_to_commit(
+    repo: Path,
+    commit: str,
+    *,
+    preserve_worktree: bool = False,
+) -> None:
     if not commit_exists(repo, commit):
         raise GitHelperError(f"checkpoint commit does not exist: {commit}")
-    run_git(repo, "reset", "--hard", commit)
+    mode = "--keep" if preserve_worktree else "--hard"
+    run_git(repo, "reset", mode, commit)

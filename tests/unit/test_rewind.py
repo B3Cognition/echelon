@@ -23,6 +23,9 @@ def _repo_with_checkpoint(tmp_path: Path) -> tuple[Path, Path, str, str]:
     _git(repo, "init", "-b", "001-demo")
     _git(repo, "config", "user.email", "test@example.com")
     _git(repo, "config", "user.name", "Test User")
+    config = repo / ".echelon" / "config.yml"
+    config.parent.mkdir()
+    config.write_text("lexicon_gate: warn\n", encoding="utf-8")
     spec_dir = repo / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("v1\n", encoding="utf-8")
@@ -71,11 +74,39 @@ def test_rewind_creates_backup_ref_and_resets_branch_when_confirmed(tmp_path: Pa
     assert _git(repo, "rev-parse", result.backup_ref) == later
 
 
-def test_rewind_refuses_dirty_worktree(tmp_path: Path) -> None:
+def test_rewind_refuses_dirty_active_spec_worktree(tmp_path: Path) -> None:
     repo, spec_dir, _checkpoint, _later = _repo_with_checkpoint(tmp_path)
     (spec_dir / "dirty.txt").write_text("dirty\n", encoding="utf-8")
 
-    with pytest.raises(RewindError, match="dirty worktree"):
+    with pytest.raises(RewindError, match="dirty active spec paths"):
+        prepare_rewind(project_root=repo, spec="001", target="phase3-plan", confirm=True)
+
+
+def test_rewind_preserves_dirty_workspace_config_outside_the_active_spec(
+    tmp_path: Path,
+) -> None:
+    repo, _spec_dir, checkpoint, _later = _repo_with_checkpoint(tmp_path)
+    config = repo / ".echelon" / "config.yml"
+    config.write_text("lexicon_gate: block\n", encoding="utf-8")
+
+    result = prepare_rewind(
+        project_root=repo,
+        spec="001",
+        target="phase3-plan",
+        confirm=True,
+    )
+
+    assert result.applied
+    assert _git(repo, "rev-parse", "HEAD") == checkpoint
+    assert config.read_text(encoding="utf-8") == "lexicon_gate: block\n"
+    assert ".echelon/config.yml" in _git(repo, "status", "--short")
+
+
+def test_rewind_refuses_dirty_files_owned_by_the_active_spec(tmp_path: Path) -> None:
+    repo, spec_dir, _checkpoint, _later = _repo_with_checkpoint(tmp_path)
+    (spec_dir / "spec.md").write_text("uncommitted spec edit\n", encoding="utf-8")
+
+    with pytest.raises(RewindError, match="dirty active spec paths"):
         prepare_rewind(project_root=repo, spec="001", target="phase3-plan", confirm=True)
 
 
