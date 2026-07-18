@@ -4,12 +4,23 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
 from echelon.cli import _cmd_repair_traceability, _cmd_rewind
 from echelon.rewind import RewindResult
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def _write_real_constitution(project_root: Path) -> None:
@@ -45,12 +56,36 @@ def _write_phase3_spec(project_root: Path) -> Path:
     return spec_dir
 
 
+def _record_checkpoints(
+    spec_dir: Path,
+    *phases: str,
+    commit: str = "abcdef0",
+) -> None:
+    for phase in phases:
+        record_checkpoint_metadata(
+            spec_dir,
+            PhaseCheckpoint(
+                id=phase,
+                spec_id=spec_dir.name,
+                phase=phase,
+                next_phase=phase,
+                commit=commit,
+                metadata_commit="",
+                source="auto",
+                run_id="squad-1",
+                created_at="2026-07-18T12:00:00Z",
+            ),
+        )
+
+
 def test_rewind_phase3_sentinel_resets_state_and_cleans_downstream_artifacts(
     tmp_path: Path,
+    monkeypatch,
     capsys,
 ) -> None:
     _write_real_constitution(tmp_path)
     spec_dir = _write_phase3_spec(tmp_path)
+    _record_checkpoints(spec_dir, "phase3-how", "phase3-sentinel")
     poisoned_spec_dir = (
         tmp_path
         / "runs"
@@ -83,6 +118,19 @@ def test_rewind_phase3_sentinel_resets_state_and_cleans_downstream_artifacts(
         },
     )
 
+    monkeypatch.setattr(
+        "echelon.rewind.prepare_rewind",
+        lambda **_kwargs: RewindResult(
+            applied=True,
+            spec_id=spec_dir.name,
+            checkpoint_id="phase3-sentinel",
+            from_commit="abcdef0",
+            to_commit="1234567",
+            backup_ref="echelon/backup/test",
+            message="Rewind complete.",
+        ),
+    )
+
     _cmd_rewind(["phase3-sentinel"], project_root=tmp_path)
 
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
@@ -96,17 +144,19 @@ def test_rewind_phase3_sentinel_resets_state_and_cleans_downstream_artifacts(
     assert not (spec_dir / "coverage-map.md").exists()
 
     captured = capsys.readouterr()
-    assert "REWIND PREPARED" in captured.out
+    assert "REWIND COMPLETE" in captured.out
     assert "phase3-sentinel" in captured.out
     assert "echelon spec continue" in captured.out
 
 
 def test_rewind_phase3_sentinel_cleans_run_local_shadow_outputs(
     tmp_path: Path,
+    monkeypatch,
     capsys,
 ) -> None:
     _write_real_constitution(tmp_path)
-    _write_phase3_spec(tmp_path)
+    spec_dir = _write_phase3_spec(tmp_path)
+    _record_checkpoints(spec_dir, "phase3-sentinel")
     run_dir = _write_run_state(
         tmp_path,
         {
@@ -122,6 +172,19 @@ def test_rewind_phase3_sentinel_cleans_run_local_shadow_outputs(
     for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
         (run_shadow / name).write_text(f"# {name}\n", encoding="utf-8")
 
+    monkeypatch.setattr(
+        "echelon.rewind.prepare_rewind",
+        lambda **_kwargs: RewindResult(
+            applied=True,
+            spec_id=spec_dir.name,
+            checkpoint_id="phase3-sentinel",
+            from_commit="abcdef0",
+            to_commit="1234567",
+            backup_ref="echelon/backup/test",
+            message="Rewind complete.",
+        ),
+    )
+
     _cmd_rewind(["phase3-sentinel"], project_root=tmp_path)
 
     assert not (run_shadow / "test-strategy.md").exists()
@@ -129,11 +192,10 @@ def test_rewind_phase3_sentinel_cleans_run_local_shadow_outputs(
     assert not (run_shadow / "coverage-map.md").exists()
 
 
-def test_rewind_phase3_sentinel_refuses_when_required_how_inputs_missing(
+def test_rewind_refuses_a_target_missing_from_the_active_ledger(
     tmp_path: Path,
     capsys,
 ) -> None:
-    _write_real_constitution(tmp_path)
     spec_dir = tmp_path / "specs" / "006-element-creator"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
@@ -152,15 +214,15 @@ def test_rewind_phase3_sentinel_refuses_when_required_how_inputs_missing(
     assert exc.value.code == 1
     captured = capsys.readouterr()
     assert "Cannot rewind to phase3-sentinel" in captured.err
-    assert "plan.md" in captured.err
+    assert "No checkpoints are recorded for this spec" in captured.err
 
 
-def test_rewind_rejects_unsupported_phase(
+def test_rewind_reports_targets_from_the_active_ledger(
     tmp_path: Path,
     capsys,
 ) -> None:
-    _write_real_constitution(tmp_path)
-    _write_phase3_spec(tmp_path)
+    spec_dir = _write_phase3_spec(tmp_path)
+    _record_checkpoints(spec_dir, "phase3-plan")
     _write_run_state(
         tmp_path,
         {
@@ -175,8 +237,117 @@ def test_rewind_rejects_unsupported_phase(
 
     assert exc.value.code == 1
     captured = capsys.readouterr()
-    assert "Unsupported rewind target" in captured.err
+    assert "checkpoint not found for spec 006-element-creator: phase3-consensus" in captured.err
     assert "phase3-consensus" in captured.err
+    assert "Available checkpoints: phase3-plan" in captured.err
+
+
+def test_rewind_accepts_and_resets_to_any_active_ledger_checkpoint(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "spec_dir": "runs/spec-20260618-073106-635192/specs/004-transform-selector",
+            "completed_phases": ["phase1-why1", "phase1-what", "phase2-decide"],
+            "phase_dispatch_counts": {
+                "phase1-why1": 1,
+                "phase1-what": 1,
+                "phase2-decide": 1,
+            },
+        },
+    )
+    spec_dir = run_dir / "specs" / "004-transform-selector"
+    spec_dir.mkdir(parents=True)
+    for phase in ("phase1-why1", "phase1-what", "phase2-decide"):
+        record_checkpoint_metadata(
+            spec_dir,
+            PhaseCheckpoint(
+                id=phase,
+                spec_id="004-transform-selector",
+                phase=phase,
+                next_phase=phase,
+                commit="abcdef0",
+                metadata_commit="",
+                source="auto",
+                run_id="squad-4",
+                created_at="2026-07-18T12:00:00Z",
+            ),
+        )
+
+    received: dict[str, object] = {}
+
+    def fake_prepare_rewind(**kwargs):
+        received.update(kwargs)
+        return RewindResult(
+            applied=True,
+            spec_id="004-transform-selector",
+            checkpoint_id="phase1-what",
+            from_commit="abcdef0",
+            to_commit="1234567",
+            backup_ref="echelon/backup/test",
+            message="Rewind complete.",
+        )
+
+    monkeypatch.setattr("echelon.rewind.prepare_rewind", fake_prepare_rewind)
+
+    _cmd_rewind(["phase1-what", "--confirm"], project_root=tmp_path)
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert received["target"] == "phase1-what"
+    assert state["phase"] == "phase1-what"
+    assert state["completed_phases"] == ["phase1-why1"]
+    assert state["phase_dispatch_counts"] == {"phase1-why1": 1}
+
+
+def test_rewind_phase1_what_uses_the_active_ledger_for_preview_and_confirm(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-b", "004-transform-selector")
+    _git(tmp_path, "config", "user.email", "tests@example.com")
+    _git(tmp_path, "config", "user.name", "Echelon Tests")
+    (tmp_path / ".gitignore").write_text(
+        "/runs/.current\n/runs/*/state.json\n/specs/*/.echelon/checkpoints.json\n",
+        encoding="utf-8",
+    )
+    spec_dir = tmp_path / "specs" / "004-transform-selector"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Initial\n", encoding="utf-8")
+    _git(tmp_path, "add", ".gitignore", "specs/004-transform-selector/spec.md")
+    _git(tmp_path, "commit", "-m", "checkpoint")
+    checkpoint = _git(tmp_path, "rev-parse", "HEAD")
+    _record_checkpoints(spec_dir, "phase1-what", commit=checkpoint)
+    (spec_dir / "spec.md").write_text("# Later\n", encoding="utf-8")
+    _git(tmp_path, "add", "specs/004-transform-selector/spec.md")
+    _git(tmp_path, "commit", "-m", "later")
+    later = _git(tmp_path, "rev-parse", "HEAD")
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "spec_dir": "specs/004-transform-selector",
+            "completed_phases": ["phase1-what", "phase2-decide"],
+            "phase_dispatch_counts": {"phase1-what": 1, "phase2-decide": 1},
+        },
+    )
+
+    _cmd_rewind(["phase1-what"], project_root=tmp_path)
+
+    assert _git(tmp_path, "rev-parse", "HEAD") == later
+    preview_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert preview_state["phase"] == "terminal-blocked"
+
+    _cmd_rewind(["phase1-what", "--confirm"], project_root=tmp_path)
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert _git(tmp_path, "rev-parse", "HEAD") == checkpoint
+    assert state["phase"] == "phase1-what"
+    assert state["completed_phases"] == []
+    assert state["phase_dispatch_counts"] == {}
 
 
 def test_rewind_missing_checkpoint_exits_without_traceback(
@@ -236,8 +407,8 @@ def test_checkpoint_rewind_uses_run_local_ledger_and_resets_run_state(
         },
     )
     run_spec_dir = run_dir / "specs" / "006-element-creator"
-    (run_spec_dir / ".echelon").mkdir(parents=True)
-    (run_spec_dir / ".echelon" / "checkpoints.json").write_text("{}\n", encoding="utf-8")
+    run_spec_dir.mkdir(parents=True)
+    _record_checkpoints(run_spec_dir, "phase3-how", "phase3-plan")
 
     received: dict[str, object] = {}
 

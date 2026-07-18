@@ -251,12 +251,21 @@ foundations:
   of changing branches under a live controller. Temporary real-Git tests cover
   both start and switch refusal, and no-LLM controller tests cover normal and
   manual duplicate execution.
+- Rewind now uses the same active run-local checkpoint ledger as `echelon spec
+  checkpoint list`. It accepts any recorded checkpoint phase or ID (including
+  early checkpoints such as `phase1-what`), rejects absent targets with the
+  ledger's available entries, and removes only completed-state provenance after
+  the selected entry. Confirmed rewind remains Git-backed: it creates a backup
+  ref and resets the active branch to the checkpoint commit before state is
+  resumed. Automatic retry guidance consults that same ledger instead of a
+  static Phase 3 list.
 
 EGR-151 is `fixed`. The `[Unreleased]` changelog entry records the ownership
-cutover and execution-lease guarantee. The final focused no-LLM EGR matrix
-passed **222 tests** on 2026-07-17; it covers lifecycle, Git, checkpoint,
-switch, delivery-isolation, CLI, KB-proposal, and controller paths. Historical
-full-suite evidence remains explicit rather than being overstated: the latest
-broad run retained 20 failures in target-preflight and CLI/template-contract
-areas outside this EGR slice. A dedicated landing worktree remains a future
-refinement beyond the active landing guard.
+cutover, execution-lease, and ledger-backed rewind guarantees. The final
+focused no-LLM EGR matrix passed **276 tests** on 2026-07-18; it covers
+lifecycle, Git, checkpoint, rewind, switch, delivery-isolation, CLI,
+KB-proposal, and controller paths. Historical full-suite evidence remains
+explicit rather than being overstated: the latest broad run retained 20 failures
+in target-preflight and CLI/template-contract areas outside this EGR slice. A
+dedicated landing worktree remains a future refinement beyond the active landing
+guard.
