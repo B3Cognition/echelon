@@ -2242,6 +2242,7 @@ class TestProductInputMappingRepair:
         store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
         state = store.load()
         state["product_input_mapping_repair_attempts"] = 2
+        state["product_input_mapping_repair"] = {"protocol_version": 2}
         store.save(state)
 
         repaired = ctrl._schedule_product_input_mapping_repair(
@@ -2251,6 +2252,27 @@ class TestProductInputMappingRepair:
         )
 
         assert repaired is False
+
+    def test_outdated_mapping_repair_protocol_gets_a_fresh_budget(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+        state = store.load()
+        state["product_input_mapping_repair_attempts"] = 2
+        state["product_input_mapping_repair"] = {"attempt": 2, "blockers": ["old"]}
+        state["phase_dispatch_counts"] = {"phase3-plan": 4}
+        store.save(state)
+
+        repaired = ctrl._schedule_product_input_mapping_repair(
+            "phase3-plan",
+            "invalid product input task mappings: "
+            "IN-REQ-1: unresolved disposition open_question",
+        )
+
+        state = store.load()
+        assert repaired is True
+        assert state["product_input_mapping_repair_attempts"] == 1
+        assert state["product_input_mapping_repair"]["protocol_version"] == 2
+        assert state["phase_dispatch_counts"]["phase3-plan"] == 0
 
 
 class TestLexiconGateGuardDeterminism:

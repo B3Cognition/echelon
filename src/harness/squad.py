@@ -77,6 +77,7 @@ MAX_PHASE_DISPATCHES = 5
 # to resolve its own product-input mapping omissions.  This is intentionally
 # bounded: the controller may demand evidence, but must never invent mappings.
 MAX_PRODUCT_INPUT_MAPPING_REPAIRS = 2
+PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION = 2
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
 JUDGMENT_STATE_UPDATE_KEYS = frozenset(
     {
@@ -736,7 +737,7 @@ class SquadController:
                 return SquadResult.from_state(self._state_store.load())
             product_input_error = self._apply_product_input_updates(result, phase)
             if product_input_error:
-                if self._schedule_product_input_mapping_repair(phase, product_input_error):
+                if self._schedule_product_input_mapping_repair(phase, product_input_error, result):
                     continue
                 self._block_after_executor_failure(phase, product_input_error, result)
                 return SquadResult.from_state(self._state_store.load())
@@ -932,6 +933,8 @@ class SquadController:
             return SquadResult.from_state(self._state_store.load())
         product_input_error = self._apply_product_input_updates(result, phase)
         if product_input_error:
+            if self._schedule_product_input_mapping_repair(phase, product_input_error, result):
+                return SquadResult.from_state(self._state_store.load())
             self._block_after_executor_failure(phase, product_input_error, result)
             return SquadResult.from_state(self._state_store.load())
 
@@ -1420,6 +1423,10 @@ class SquadController:
         traceability_path = Path(traceability_ref)
         if not traceability_path.is_absolute():
             traceability_path = self._project_root / traceability_path
+        catalog_ref = str(metadata.get("catalog") or "").strip()
+        catalog_path = Path(catalog_ref) if catalog_ref else None
+        if catalog_path is not None and not catalog_path.is_absolute():
+            catalog_path = self._project_root / catalog_path
         active_spec_dir = self._active_phase_a_spec_dir(state)
         enforce_direct_task_mappings = phase in {"phase3-plan", "phase3-consensus"}
         tasks_path = active_spec_dir / "tasks.md" if enforce_direct_task_mappings and active_spec_dir else None
@@ -1432,8 +1439,15 @@ class SquadController:
             from echelon.product_inputs import (
                 ProductInputError,
                 apply_product_input_updates,
+                repair_product_input_structural_units,
                 validate_product_input_traceability_paths,
             )
+            if catalog_path is not None:
+                repair_product_input_structural_units(
+                    traceability_path,
+                    catalog_path,
+                    apply=True,
+                )
             if updates:
                 apply_product_input_updates(
                     traceability_path,
@@ -1458,7 +1472,12 @@ class SquadController:
             self._state_store.save(repaired)
         return None
 
-    def _schedule_product_input_mapping_repair(self, phase: str, error: str) -> bool:
+    def _schedule_product_input_mapping_repair(
+        self,
+        phase: str,
+        error: str,
+        result: SquadAgentResult | None = None,
+    ) -> bool:
         """Re-dispatch PLAN with exact unresolved product-input evidence.
 
         Product-input mappings are authored by ORCHESTRATOR, not inferred by the
@@ -1476,17 +1495,56 @@ class SquadController:
             return False
 
         state = self._state_store.load()
+        existing_repair = state.get("product_input_mapping_repair")
+        protocol_version = (
+            existing_repair.get("protocol_version")
+            if isinstance(existing_repair, dict)
+            else None
+        )
         attempts = state.get("product_input_mapping_repair_attempts", 0)
         attempts = attempts if isinstance(attempts, int) else 0
+        # A repair protocol upgrade carries strictly more deterministic evidence
+        # than the prior prompt.  Give interrupted historical runs a fresh,
+        # bounded repair budget instead of preserving a spent, weaker loop.
+        protocol_upgraded = (
+            isinstance(existing_repair, dict)
+            and protocol_version != PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION
+        )
+        if protocol_upgraded:
+            attempts = 0
+            dispatch_counts = state.get("phase_dispatch_counts")
+            if isinstance(dispatch_counts, dict):
+                dispatch_counts[phase] = 0
         if attempts >= MAX_PRODUCT_INPUT_MAPPING_REPAIRS:
             return False
 
         detail = error.split(":", 1)[1].strip() if ":" in error else error
         blockers = [item.strip() for item in detail.split(";") if item.strip()]
+        hints: dict[str, object] = {}
+        payload = result.echelon_result if result is not None else None
+        updates = payload.get("product_input_updates") if isinstance(payload, dict) else None
+        active_spec_dir = self._active_phase_a_spec_dir(state)
+        if isinstance(updates, list) and active_spec_dir is not None:
+            try:
+                from echelon.product_inputs import build_product_input_mapping_repair_hints
+
+                hints = build_product_input_mapping_repair_hints(
+                    updates,
+                    active_spec_dir / "tasks.md",
+                    [
+                        str(value).strip()
+                        for value in state.get("implementation_targets", [])
+                        if str(value).strip()
+                    ],
+                )
+            except (OSError, ValueError) as exc:
+                logger.warning("Could not construct product-input repair hints: %s", exc)
         state["product_input_mapping_repair_attempts"] = attempts + 1
         state["product_input_mapping_repair"] = {
             "attempt": attempts + 1,
             "blockers": blockers,
+            "protocol_version": PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION,
+            **hints,
         }
         state["phase"] = phase
         state["status"] = "running"

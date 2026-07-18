@@ -262,6 +262,36 @@ def _render_product_input_context(state: dict) -> str:
                 "with task_ids whose req= values intersect that unit's spec_ids.",
                 "Do not return COMPLETE while any listed unit remains open_question or conflict.",
             ])
+        candidates = repair.get("candidates")
+        task_matrix = repair.get("task_requirement_matrix")
+        if isinstance(candidates, list) or isinstance(task_matrix, list):
+            lines.extend([
+                "",
+                "### Deterministic Mapping Worksheet",
+                "The controller derived this worksheet from canonical task rows after rejecting the prior proposal.",
+                "Do not repeat any task ID in an Invalid list. Use only a Direct list for its matching spec_ids.",
+                "If a requirement has no direct task, first edit the existing tasks.md canonical row(s) so their req= values honestly cover it; only then return its mapping.",
+                "For a structural/context-only input unit, return disposition: excluded with an evidence-backed rationale and empty spec_ids, task_ids, and targets.",
+                "Do not use Write on an existing planning artifact: Read it, then use Edit.",
+            ])
+        if isinstance(candidates, list):
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                unit_id = str(candidate.get("input_unit_id") or "(unknown)")
+                spec_ids = ", ".join(str(value) for value in candidate.get("spec_ids", []) if str(value)) or "(none)"
+                direct = ", ".join(str(value) for value in candidate.get("direct_task_ids", []) if str(value)) or "(none)"
+                invalid = ", ".join(str(value) for value in candidate.get("invalid_task_ids", []) if str(value)) or "(none)"
+                lines.append(f"- {unit_id}: spec_ids=[{spec_ids}]; Direct task IDs=[{direct}]; Invalid task IDs=[{invalid}]")
+        if isinstance(task_matrix, list):
+            lines.append("Current canonical task requirement matrix:")
+            for task in task_matrix:
+                if not isinstance(task, dict):
+                    continue
+                task_id = str(task.get("task_id") or "(unknown)")
+                requirements = ", ".join(str(value) for value in task.get("requirements", []) if str(value)) or "(none)"
+                target = str(task.get("target") or "(none)")
+                lines.append(f"- {task_id}: req=[{requirements}]; target={target}")
     if state.get("tasks_lexicon_pass") is False:
         lines.extend([
             "",
