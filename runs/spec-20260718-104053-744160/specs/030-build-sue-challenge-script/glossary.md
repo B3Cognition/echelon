@@ -102,3 +102,42 @@
 | round | SUE mechanism | One of the two model calls (generation / test) | echelon review loop | A PR review-fix iteration (`review-fix-{n}`) — unrelated |
 | finding | SUE report | An UNANSWERABLE or CONTRADICTED answer | understanding CLI / code review | A metric violation or review issue — different producers, same word |
 | challenge | SUE | The whole interrogation run against a spec | WHY phases (SAGE) | Adversarial assumption challenge inside the squad workflow |
+
+## Code Identifiers (planning vocabulary)
+
+Frozen design symbols from HOW artifacts (data-model.md, contracts/internal-interfaces.md, plan.md) plus test-harness vocabulary, registered here so planning artifacts (tasks.md) resolve under the lexicon term-resolution gate. Definitions restate — never redefine — the owning HOW artifact.
+
+- **sue_challenge** — module name of the deliverable script `scripts/sue_challenge.py` (ADR-001).
+- **test_sue_challenge** — module name of the unit-test file `tests/unit/test_sue_challenge.py` (ADR-008).
+- **RunConfig** — dataclass holding the parsed run configuration: spec path, question cap, model command, timeout (data-model.md).
+- **SpecDocument** — dataclass holding the challenged specification's path and newline-stripped lines (data-model.md).
+- **SocraticQuestion** — dataclass for one validated round-1 question: id, text, target, line references, category (data-model.md).
+- **CallOutcome** — dataclass classifying one subprocess invocation: kind ok/timeout/launch_missing/failed plus captured output (ADR-006).
+- **ParseFailure** — dataclass naming a validation or extraction failure; routed to the corrective-retry path (ADR-006).
+- **QUESTION_ID_RE** — shared module constant: the question-identifier regex `^Q[1-9][0-9]*$` (ADR-002).
+- **REPORT_FILENAME** — shared module constant: `socratic-challenge.md` (FR-034).
+- **DEBUG_DIR_NAME** — shared module constant: `.sue-debug` (FR-030).
+- **parse_args** — function: argv → RunConfig with the frozen v1 surface (contracts/cli-contract.md).
+- **load_spec** — function: read the challenged specification exactly once into a SpecDocument (FR-042).
+- **numbered_text** — pure function: prefix every specification line with its 1-based line number (FR-018).
+- **build_round1_prompt** — pure function assembling the round-1 question-generation prompt (FR-014).
+- **build_round2_prompt** — pure function assembling the round-2 answering prompt from (id, question) pairs only (FR-021/FR-022).
+- **build_retry_prompt** — pure function appending the corrective instruction on non-timeout parse failures (FR-028/FR-029).
+- **run_model_call** — function launching one isolated model subprocess and classifying its CallOutcome (contracts/model-command-contract.md).
+- **execute_round** — function running one round's ≤2-attempt retry loop including the debug dump and exit-3 path (FR-028–FR-031).
+- **extract_json_object** — pure function: staged tolerant JSON extraction from raw model output (ADR-005, FR-026).
+- **validate_round1** — pure function: strict round-1 schema validation with truncation and empty-list success (FR-016–FR-020).
+- **validate_round2** — pure function: strict round-2 schema validation with identifier bijection (FR-024/FR-025).
+- **partition_answers** — pure function splitting validated answers into findings and audit entries (FR-032).
+- **rank_findings** — pure function ordering findings contradictions-first, stable within class (FR-033).
+- **render_report** — pure function producing the 3-section challenge report body (FR-035–FR-041).
+- **render_summary** — pure function producing the terminal summary: per-class counts plus top 3 findings (FR-040).
+- **model_command** — RunConfig field: the operator-supplied challenge model command line (FR-003/FR-043).
+- **max_questions** — RunConfig field: the round-1 question cap, default 15 (FR-002).
+- **spec_dir** — the challenged specification's directory: report and debug-dump destination (FR-006/FR-030/FR-034).
+- **round_no** — execute_round parameter naming the round (1 or 2) for dump-file naming (report-format.md).
+- **launch_missing** — CallOutcome kind: executable not found at launch; maps to exit 2 only (ADR-006, U-007).
+- **tmp_path** — pytest per-test temporary-directory fixture; every stub, spec fixture, and recording file is tmp_path-scoped (ADR-008).
+- **W_OK** — `os.access` write-permission flag used by the pre-flight directory-writability check (FR-006).
+- **FileNotFoundError** — Python exception raised at subprocess launch when the executable is absent; classified launch_missing (ADR-006).
+- **TimeoutExpired** — `subprocess` exception raised when a model call exceeds its budget; classified timeout with partial output kept (FR-011).
