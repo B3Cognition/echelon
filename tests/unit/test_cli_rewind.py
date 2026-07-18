@@ -389,6 +389,7 @@ def test_rewind_reconstructs_primary_predecessors_for_the_roadmap() -> None:
         {
             "completed_phases": ["phase1-why2"],
             "phase_dispatch_counts": {"phase1-why2": 1},
+            "iteration": 6,
         },
         "phase1-what",
         "runs/run-test/specs/001-demo",
@@ -409,6 +410,7 @@ def test_rewind_reconstructs_primary_predecessors_for_the_roadmap() -> None:
         "phase1-constitution",
     ]
     assert "phase1-why2" not in rewound["completed_phases"]
+    assert rewound["iteration"] == 0
 
 
 def test_rewind_missing_checkpoint_exits_without_traceback(

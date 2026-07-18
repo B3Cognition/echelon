@@ -58,6 +58,7 @@ TERMINAL_PHASES = {"DONE", "done", PHASE_TERMINAL_BLOCKED}
 WHY_PHASES = frozenset({"phase1-why1", "phase1-why2"})
 ITERATIVE_PHASES = WHY_PHASES | frozenset(
     {
+        "phase1-what",
         "phase3-how",
         "phase3-sentinel",
         "phase3-plan",

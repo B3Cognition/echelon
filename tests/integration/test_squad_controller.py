@@ -2178,6 +2178,12 @@ class TestLexiconGateGuardDeterminism:
         assert "lexicon_gate" in cfg
         assert cfg["lexicon_gate"].get("enabled") is True
 
+    def test_spec_lexicon_gate_uses_the_iteration_dispatch_budget(self):
+        """WHAT retries are governed by max_iterations, not the generic cap."""
+        from harness.squad import ITERATIVE_PHASES
+
+        assert "phase1-what" in ITERATIVE_PHASES
+
     def test_tasks_gate_failure_redispatches_without_commander(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase3-plan")

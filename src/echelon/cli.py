@@ -3498,6 +3498,7 @@ def _reset_rewind_state(
     rewound = dict(state)
     rewound["phase"] = phase
     rewound["status"] = "running"
+    rewound["iteration"] = 0
     rewound["spec_dir"] = spec_dir_ref
     rewound["blocked_reason"] = None
     rewound["escalation_question"] = None
