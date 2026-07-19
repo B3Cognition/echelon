@@ -499,7 +499,9 @@ class TestRunModelCall:
             tmp_path / "sleeper.sh",
             f'cat > /dev/null\npwd > "{log}"\nprintf "partial-output"\nsleep 5\n',
         )
-        outcome = sue.run_model_call(self._config(tmp_path, shlex.quote(stub), timeout=0.3), "x")
+        # 1.0s budget: the stub must reach printf before the kill; sub-second
+        # budgets race with process startup under machine load (flake source).
+        outcome = sue.run_model_call(self._config(tmp_path, shlex.quote(stub), timeout=1.0), "x")
         assert outcome.kind == "timeout"
         assert "partial-output" in outcome.stdout
         # Temp cwd is removed on the timeout path too.
@@ -969,7 +971,10 @@ class TestExecuteRound:
         )
         spec_dir = tmp_path / "specdir"
         spec_dir.mkdir()
-        timeout = 0.3
+        # 1.0s budget: each attempt's stub must write count/stdin and printf
+        # before the kill; sub-second budgets race with process startup under
+        # machine load (flake source).
+        timeout = 1.0
         start = time.monotonic()
         result = sue.execute_round(
             self._config(shlex.quote(stub), timeout=timeout),
