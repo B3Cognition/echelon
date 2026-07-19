@@ -6,7 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- **Workspace human artifact wiki** — `echelon wiki build`, `status`, and
+- **#165 workspace human artifact wiki** — `echelon wiki build`, `status`, and
   `clean` generate and manage a deterministic, offline Markdown navigation vault
   for canonical `specs/` and published `re/` artifacts. The untracked vault
   includes evidence-backed relationships, aggregate views, provenance, safe
