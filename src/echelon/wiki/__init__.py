@@ -11,6 +11,17 @@ from echelon.wiki.model import (
     WikiSpec,
     WikiWarning,
 )
+from echelon.wiki.service import (
+    WikiBuildError,
+    WikiBuildResult,
+    WikiCleanError,
+    WikiStatusResult,
+    build_wiki,
+    capture_input_snapshot,
+    clean_wiki,
+    refresh_after_changed_command,
+    wiki_status,
+)
 
 __all__ = [
     "WikiArtifact",
@@ -21,6 +32,15 @@ __all__ = [
     "WikiSource",
     "WikiSpec",
     "WikiWarning",
+    "WikiBuildError",
+    "WikiBuildResult",
+    "WikiCleanError",
+    "WikiStatusResult",
+    "build_wiki",
     "canonical_input_hashes",
+    "capture_input_snapshot",
+    "clean_wiki",
     "discover_wiki_model",
+    "refresh_after_changed_command",
+    "wiki_status",
 ]
