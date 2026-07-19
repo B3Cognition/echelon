@@ -74,6 +74,8 @@ spec_app = typer.Typer(
         "                    [--re-policy none|cached-only|changed|refresh-all]\n"
         "                    [--re-max-inner <n>]\n"
         "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
+        "  publish <spec-id-or-branch> | publish --all\n"
+        "                    Commit spec-only snapshots to the local default branch.\n"
         "  targets <spec_id>  Display every task grouped by delivery target.\n"
         "  drop-target <spec_id> <target> --confirm\n"
         "                    Remove an unused target from an unfinished run.\n"
@@ -1248,6 +1250,68 @@ def spec_switch(
     exit_code = run_spec_switch_command(args, project_root=Path.cwd())
     if exit_code:
         raise typer.Exit(exit_code)
+
+
+@spec_app.command("publish")
+def spec_publish(
+    spec_or_id: Optional[str] = typer.Argument(
+        None,
+        help="Canonical local spec branch name or unique numeric ID.",
+    ),
+    publish_all: bool = typer.Option(
+        False,
+        "--all",
+        help="Publish every canonical local spec branch in one commit.",
+    ),
+) -> None:
+    """Publish committed spec snapshots to the local default branch.
+
+    Copies only matching specs/<id>/ trees. Uses local branches only.
+
+    This does not merge implementation history.
+
+    It does not fetch, push, or delete source branches.
+    """
+    from echelon.spec_publish import SpecPublishError, publish_specs
+
+    identity = str(spec_or_id or "").strip()
+    if bool(identity) == publish_all:
+        raise typer.BadParameter("choose exactly one spec identity or --all")
+
+    try:
+        result = publish_specs(
+            Path.cwd(),
+            identity=identity or None,
+            publish_all=publish_all,
+        )
+    except SpecPublishError as exc:
+        typer.echo(f"Spec publish failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if result.created_commit:
+        typer.echo(
+            f"Published specs to local {result.default_branch} commit "
+            f"{result.default_commit}."
+        )
+    else:
+        typer.echo(
+            "No publication commit was needed; the local default-branch "
+            "snapshots are current."
+        )
+    for published in result.published:
+        state = "updated" if published.changed else "unchanged"
+        typer.echo(
+            f"  {published.spec_id}: {published.source_branch}@"
+            f"{published.source_commit[:12]} ({state})"
+        )
+    typer.echo(
+        "Source branches retained: "
+        + ", ".join(item.source_branch for item in result.published)
+    )
+    typer.echo("Nothing was pushed, fetched, merged, or deleted.")
+    typer.echo(f"Default-branch worktree: {result.destination_worktree}")
+    typer.echo(f"To share: git push origin {result.default_branch}")
+    typer.echo("Refresh navigation: echelon wiki build")
 
 
 @spec_app.command("drop-target")
