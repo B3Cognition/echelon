@@ -1025,6 +1025,14 @@ def main(argv: list[str] | None = None) -> int:
             EXIT_BAD_INPUT,
             f"bad input: cannot read specification '{config.spec_path}': {exc}",
         )
+    if not any(line.strip() for line in spec.lines):
+        # FR-005: an empty specification is unchallengeable — reject before
+        # any model call rather than embedding a zero-line prompt (FR-014).
+        return fail(
+            EXIT_BAD_INPUT,
+            f"bad input: specification '{config.spec_path}' is empty or "
+            "whitespace-only — nothing to challenge",
+        )
     spec_dir = config.spec_path.resolve().parent
 
     # Exactly 2 logical model calls per run (FR-008): the rounds are two

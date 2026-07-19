@@ -497,6 +497,12 @@ def main(argv: list | None = None) -> int:
             "report path itself — rename it to challenge it",
         )
     spec = v1.load_spec(config.spec_path)
+    if not any(line.strip() for line in spec.lines):
+        return v1.fail(
+            v1.EXIT_BAD_INPUT,
+            f"bad input: specification '{config.spec_path}' is empty or "
+            "whitespace-only — nothing to challenge",
+        )
 
     readers: list[ReaderResult] = []
     dropped: list[str] = []

@@ -46,7 +46,7 @@ A specification author receives a challenge report about their specification. Th
 - **AC-009**: Given a round-2 answer cites evidence line numbers, when the report renders that answer, then the report quotes exactly 1 line of text per cited number, as read from the specification file (FR-039, FR-018).
 - **AC-010**: Given any challenge run, when the run finishes with any exit code, then the challenged specification file received exactly 0 writes, leaving its content unchanged (FR-042, FR-001).
 - **AC-011**: Given a stub model command that records its prompt, when round 2 executes, then the recorded prompt holds exactly 2 content blocks — specification text plus question identifiers with texts (FR-021) — with exactly 0 round-1 categories, targets, line tags, or reasoning (FR-022).
-- **AC-012**: Given a stub model command that records its working directory, when either round executes, then the recorded directory is exactly 1 newly created temporary directory outside the repository (FR-010, AC-011).
+- **AC-012**: Given a stub model command that records its working directory, when either round executes, then the recorded directory is exactly 1 newly created temporary directory under the platform's default temporary root, distinct from the specification's directory and from the invoking working directory (FR-010, AC-011).
 
 ---
 
@@ -110,13 +110,13 @@ The command surface is fixed by the approved design: 1 positional argument, 3 op
 
 - **FR-001**: When invoked, the challenge script MUST accept exactly 1 positional argument: the path of the specification file to challenge (FR-005, FR-042).
   - **User Story:** Scenario 1 | **Priority:** MVP
-- **FR-002**: When invoked, the challenge script MUST accept a question-count option, defaulting to exactly 15, that caps round-1 questions (FR-015, FR-019). Values below 1 MUST be rejected on the exit-code-1 argument path.
+- **FR-002**: When invoked, the challenge script MUST accept a question-count option, defaulting to exactly 15, that caps round-1 questions (FR-015, FR-019). Non-numeric, non-integer, and below-1 values MUST be rejected on the exit-code-1 argument path, mirroring FR-004.
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-003**: When invoked, the challenge script MUST accept a model-command option, defaulting to `claude`, that names exactly 1 challenge model command line (FR-007, FR-043).
   - **User Story:** Scenario 4 | **Priority:** MVP
 - **FR-004**: When invoked, the challenge script MUST accept a timeout option, defaulting to exactly 300 seconds, that bounds each model call (FR-011, FR-013). Non-numeric, non-finite, zero, or negative values MUST be rejected on the exit-code-1 argument path.
   - **User Story:** Scenario 3 | **Priority:** MVP
-- **FR-005**: If the specification path is missing or unreadable, the challenge script MUST exit with code 1 after launching exactly 0 model calls (ERR-001, AC-013).
+- **FR-005**: If the specification path is missing, unreadable, or contains 0 non-whitespace characters (an empty specification is unchallengeable), the challenge script MUST exit with code 1 after launching exactly 0 model calls (ERR-001, AC-013).
   - **User Story:** Scenario 3 | **Priority:** MVP
 - **FR-006**: If the specification's directory is not writable for the report, the challenge script MUST exit with code 1 after launching exactly 0 model calls (ERR-002, AC-019).
   - **User Story:** Scenario 3 | **Priority:** MVP
@@ -127,7 +127,7 @@ The command surface is fixed by the approved design: 1 positional argument, 3 op
 
 Two isolated model calls are the entire analytical mechanism. Isolation keeps the reading blind: no repository context, no carried-over reasoning.
 
-- **FR-008**: When a challenge run executes, the challenge script MUST perform exactly 2 logical model calls: round-1 question generation (FR-014) plus round-2 answering (FR-021).
+- **FR-008**: When a challenge run executes, the challenge script MUST perform exactly 2 logical model calls: round-1 question generation (FR-014) plus round-2 answering (FR-021) — except exactly 1 when valid round-1 output contains 0 questions, in which case FR-020 governs and round 2 never launches.
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-009**: When filtering, ranking, or rendering after round 2, the challenge script MUST perform exactly 0 further model calls (FR-032, FR-040).
   - **User Story:** Scenario 1 | **Priority:** MVP
@@ -135,7 +135,7 @@ Two isolated model calls are the entire analytical mechanism. Isolation keeps th
   - **User Story:** Scenario 2 | **Priority:** MVP
 - **FR-011**: If a model subprocess exceeds its timeout budget (default 300 seconds, FR-004), the challenge script MUST end that call, classifying it as a parse failure routed to FR-028 (ERR-005).
   - **User Story:** Scenario 3 | **Priority:** MVP
-- **FR-012**: If the model-command executable named by FR-007 cannot be found, the challenge script MUST exit with code 2, printing exactly 1 message that contains an installation pointer (ERR-003, AC-014).
+- **FR-012**: If the model-command executable named by FR-007 cannot be found, the challenge script MUST exit with code 2, printing exactly 1 message that contains an installation pointer — defined testably as exactly 1 URL occurrence in the message (ERR-003, AC-014).
   - **User Story:** Scenario 3 | **Priority:** MVP
 - **FR-013**: When a corrective retry launches under FR-028, the challenge script MUST grant that retry exactly 1 fresh timeout budget equal to the FR-004 value (NFR-001).
   - **User Story:** Scenario 3 | **Priority:** MVP
@@ -186,7 +186,7 @@ Model output is untrusted input. Extraction is tolerant; validation is strict; r
   - **User Story:** Scenario 3 | **Priority:** MVP
 - **FR-029**: When the first failure in a round was a timeout (FR-011), the corrective retry MUST re-issue the same prompt with exactly 0 appended corrective text (FR-028).
   - **User Story:** Scenario 3 | **Priority:** MVP
-- **FR-030**: On the second parse failure in the same round, the challenge script MUST exit with code 3 after saving the raw output of the failing calls into exactly 1 directory named `.sue-debug` beside the specification (ERR-004, AC-015). For a timed-out call, the saved raw output is whatever partial output was drained within the shutdown grace period of exactly 5 seconds (subprocess ended by process-group kill; the up-to-4 grace periods are counted inside NFR-001's +60-second allowance), possibly empty. The debug dump itself is best-effort: if it cannot be written, the exit-3 outcome stands and its single diagnostic line names the failed dump (governs over ERR-004's save wording).
+- **FR-030**: On the second parse failure in the same round, the challenge script MUST exit with code 3 after saving the raw output of the failing calls into exactly 1 directory named `.sue-debug` beside the specification (ERR-004, AC-015). For a timed-out call, the saved raw output is whatever partial output was drained within the shutdown grace period of exactly 5 seconds (subprocess ended by process-group kill; the up-to-4 grace periods are counted inside NFR-001's +60-second allowance), possibly empty. The debug dump itself is best-effort: if it cannot be written, the exit-3 outcome stands and its single diagnostic line names the failed dump (governs over ERR-004's save wording). Dump lifecycle: both failing attempts of the round are saved as separate files (`round{N}-attempt{1,2}-stdout/stderr`); successive failing runs overwrite files of the same names and the directory is never cleared by the script.
   - **User Story:** Scenario 3 | **Priority:** MVP
 - **FR-031**: When a round-2 failure ends the run under FR-030, the challenge script MUST NOT re-run round 1 — exactly 0 additional round-1 calls occur (FR-008).
   - **User Story:** Scenario 3 | **Priority:** MVP
@@ -209,7 +209,7 @@ Everything after round 2 is pure local computation, repeatable and fully unit-te
   - **User Story:** Scenario 2 | **Priority:** MVP
 - **FR-038**: The audit appendix MUST list every ANSWERED question with its answering lines, rendered as exactly 1 collapsed section the reader can expand (AC-008, FR-032).
   - **User Story:** Scenario 2 | **Priority:** MVP
-- **FR-039**: For each cited evidence line number, the report MUST quote exactly 1 line of text from the specification file, stating the named gap from the answer text for UNANSWERABLE findings (FR-018, AC-009). A cited line number outside the specification's line range MUST render as a deterministic `(not present in the specification)` marker rather than failing the run.
+- **FR-039**: For each cited evidence line number, the report MUST quote exactly 1 line of text from the specification file, stating the named gap from the answer text for UNANSWERABLE findings — satisfied by rendering the FR-024 answer text verbatim; no separate gap field exists in the answer schema (FR-018, AC-009). A cited line number outside the specification's line range MUST render as a deterministic `(not present in the specification)` marker rather than failing the run.
   - **User Story:** Scenario 2 | **Priority:** MVP
 - **FR-040**: After writing the report, the challenge script MUST print a terminal summary stating the finding count per verdict class plus the top 3 findings in rank order, then exit with code 0 (AC-005, FR-034).
   - **User Story:** Scenario 1 | **Priority:** MVP
@@ -241,7 +241,7 @@ The model-command option doubles as the test seam, and the script stays free of 
 
 - **NFR-001**: When a challenge run terminates on any path, its wall-clock duration MUST be at most 4 timeout budgets (FR-004, FR-013) plus 60 seconds of local processing.
   - **Category:** Reliability | **Measurable Target:** wall-clock ≤ (4 × configured timeout) + 60 seconds on every terminating path
-- **NFR-002**: When run from a fresh repository checkout, the challenge script plus its unit tests MUST execute with exactly 0 additional installed components beyond the standard runtime plus the model command itself (FR-044, FR-045).
+- **NFR-002**: When run from a fresh repository checkout, the challenge script plus its unit tests MUST execute with exactly 0 additional installed components beyond the standard runtime plus the model command itself (FR-044, FR-045). The standard runtime is CPython ≥ 3.11 with its standard library only; the unit tests may additionally import pytest and nothing else.
   - **Category:** Portability | **Measurable Target:** 0 additional installations on a fresh checkout (model command excluded)
 - **NFR-003**: The script's usage text MUST contain exactly 1 disclosure stating that challenged specification content is sent to the model provider via the model command (FR-003, FR-043).
   - **Category:** Privacy | **Measurable Target:** 1 egress disclosure statement present in the usage text

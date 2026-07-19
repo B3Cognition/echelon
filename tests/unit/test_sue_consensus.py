@@ -390,6 +390,15 @@ class TestScenario:
         report = (tmp_path / "socratic-consensus.md").read_text()
         assert "RETENTION-CHECK" in report
 
+    def test_empty_spec_exit_1(self, tmp_path, capsys):
+        spec = tmp_path / "spec.md"
+        spec.write_text("   \n\n")
+        stub = _replay_stub(tmp_path, [])
+        rc = v2.main([str(spec), "--claude-cmd", shlex.quote(stub)])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "empty or whitespace-only" in err
+
     def test_report_path_collision_rejected(self, tmp_path, capsys):
         spec = tmp_path / "socratic-consensus.md"
         spec.write_text("previous report\n")
