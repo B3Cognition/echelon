@@ -28,6 +28,7 @@ Thumbs.db
 /specs/004-run-finalize-hardening/*
 !/specs/004-run-finalize-hardening/spec.md
 !/specs/004-run-finalize-hardening/plan.md
+!/specs/030-build-sue-challenge-script/
 .github/*
 !.github/workflows/
 .specify/squad/
