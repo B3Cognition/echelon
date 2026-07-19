@@ -302,6 +302,7 @@ def test_typer_front_door_declares_all_top_level_commands():
         "status",
         "verify-spec",
         "version",
+        "wiki",
         "workspace",
     }.issubset(command.commands)
 

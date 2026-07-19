@@ -102,6 +102,11 @@ kb_app = typer.Typer(
     help="Validate and apply Phase A knowledge-base proposals.",
     no_args_is_help=True,
 )
+wiki_app = typer.Typer(
+    add_completion=False,
+    help="Build and inspect local human navigation for Echelon artifacts.",
+    no_args_is_help=True,
+)
 
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(spec_app, name="spec")
@@ -112,9 +117,73 @@ app.add_typer(delivery_app, name="delivery")
 app.add_typer(harness_app, name="harness", hidden=True)
 app.add_typer(re_app, name="re")
 app.add_typer(kb_app, name="kb")
+app.add_typer(wiki_app, name="wiki")
 workspace_app.add_typer(workspace_sources_app, name="sources")
 spec_app.add_typer(spec_checkpoint_app, name="checkpoint")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
+
+
+@wiki_app.command("build")
+def wiki_build() -> None:
+    """Build the local read-only Markdown wiki."""
+    from echelon.wiki.service import WikiBuildError, build_wiki
+
+    try:
+        result = build_wiki(Path.cwd())
+    except WikiBuildError as exc:
+        typer.echo(f"Wiki build failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Wiki generated: {result.output_dir}")
+    typer.echo(f"Home: {result.home_path}")
+    typer.echo(
+        f"Inputs: {result.input_count}; outputs: {result.output_count}; "
+        f"warnings: {result.warning_count}"
+    )
+    typer.echo(
+        "Optional viewer: open the generated directory as an Obsidian vault "
+        "(https://obsidian.md/download)."
+    )
+
+
+@wiki_app.command("status")
+def wiki_status_command() -> None:
+    """Report whether the generated wiki matches canonical artifacts."""
+    from echelon.wiki.service import wiki_status
+
+    status = wiki_status(Path.cwd())
+    typer.echo(f"State: {status.state}")
+    typer.echo(f"Path: {status.output_dir}")
+    if status.workspace_revision:
+        typer.echo(f"Revision: {status.workspace_revision}")
+    typer.echo(f"Dirty canonical inputs: {'yes' if status.workspace_dirty else 'no'}")
+    for label, paths in (
+        ("Added", status.added_inputs),
+        ("Changed", status.changed_inputs),
+        ("Removed", status.removed_inputs),
+    ):
+        if paths:
+            typer.echo(f"{label}:")
+            for path in paths:
+                typer.echo(f"  - {path}")
+    typer.echo(status.message)
+    if status.state == "invalid":
+        raise typer.Exit(code=1)
+
+
+@wiki_app.command("clean")
+def wiki_clean() -> None:
+    """Remove a manifest-owned generated wiki."""
+    from echelon.wiki.service import WikiCleanError, clean_wiki
+
+    try:
+        removed = clean_wiki(Path.cwd())
+    except WikiCleanError as exc:
+        typer.echo(f"Wiki clean failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    if removed is None:
+        typer.echo("Wiki is absent; nothing to clean.")
+    else:
+        typer.echo(f"Removed: {removed}")
 
 
 def _ctx_args(ctx: typer.Context) -> list[str]:
@@ -1834,4 +1903,18 @@ def run(argv: list[str] | None = None) -> None:
         legacy_cli = _legacy_cli()
         typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
         return
+    from echelon.wiki import service as wiki_service
+
+    project_root = Path.cwd()
+    try:
+        before = wiki_service.capture_input_snapshot(project_root)
+    except Exception:
+        before = None
     app(args=argv, standalone_mode=False)
+    try:
+        refreshed = wiki_service.refresh_after_changed_command(project_root, before)
+    except Exception as exc:
+        typer.echo(f"warning: wiki auto-refresh failed: {exc}", err=True)
+    else:
+        if refreshed is not None:
+            typer.echo(f"Wiki auto-refreshed: {refreshed.home_path}")

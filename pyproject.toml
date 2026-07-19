@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "echelon"
-version = "3.5.3"
+version = "3.6.0"
 description = "Multi-agent cognitive system with SOAR-powered build pipeline, MemPalace requirements memory, and 34-metric requirements quality analysis"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -62,6 +62,7 @@ markers = [
   "integration: Integration tests (may need Docker/git)",
   "system: System tests (full Docker + fixture repos)",
   "e2e: End-to-end smoke tests",
+  "performance: Reference performance budgets",
   "docker: Tests that require Docker daemon",
   "docker_image(name): Tests that require a local Docker image",
   "deployed_extension: Tests that require an installed .specify/extensions/echelon copy",
