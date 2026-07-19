@@ -62,6 +62,49 @@ class TestScanIds:
         ])
         assert v3.scan_requirement_ids(spec) == {"FR-001", "AC-012", "NFR-004"}
 
+    def test_non_behavioural_families_excluded_by_default(self):
+        spec = v1.SpecDocument(path=Path("x"), lines=[
+            "FR-001 holds; assumption A-003 and open question OQ-002 and U-007",
+        ])
+        assert v3.scan_requirement_ids(spec) == {"FR-001"}
+
+    def test_families_opt_in(self):
+        spec = v1.SpecDocument(path=Path("x"), lines=["FR-001 and A-003"])
+        assert v3.scan_requirement_ids(spec, ("FR", "A")) == {"FR-001", "A-003"}
+
+
+class TestLabelGrounding:
+    LINE = "the system MUST display an inline error and retain the last valid card rendering."
+
+    def test_spec_words_accepted(self):
+        assert v3._label_grounded("display inline error", self.LINE)
+        assert v3._label_grounded("The System", self.LINE)
+
+    def test_paraphrase_rejected(self):
+        assert not v3._label_grounded("show validation message", self.LINE)
+
+    def test_validate_graph_enforces_anchor(self):
+        lines = ["- **FR-001**: the system MUST write the report."]
+        result = v3.validate_graph(
+            {"requirements": {"FR-001": {"edges": [
+                {"s": "system", "type": "performs", "t": "generate output",
+                 "line": 1, "conf": 0.9}]}}},
+            {"FR-001"}, 1, spec_lines=lines,
+        )
+        assert isinstance(result, v1.ParseFailure)
+        assert "must reuse the specification's own words" in result.reason
+
+    def test_validate_graph_accepts_anchored_labels(self):
+        lines = ["- **FR-001**: the system MUST write the report."]
+        result = v3.validate_graph(
+            {"requirements": {"FR-001": {"edges": [
+                {"s": "system", "type": "performs", "t": "write report",
+                 "line": 1, "conf": 0.9}]}}},
+            {"FR-001"}, 1, spec_lines=lines,
+        )
+        reqs, ungrounded = result
+        assert len(reqs["FR-001"].edges) == 1 and ungrounded == 0
+
 
 class TestScoring:
     def test_identical_graphs_score_1(self):

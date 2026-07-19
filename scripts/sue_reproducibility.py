@@ -42,6 +42,11 @@ EDGE_TYPES = (
 
 REQ_ID_RE = re.compile(r"\b((?:REQ|FR|AC|NFR|ERR|SC|U|OQ|A)-[0-9]{1,4}[a-z]?)\b")
 
+# v3.1: behavioural unit families scored by default; assumption/decision/open-
+# question families (A-, U-, OQ-, SC-) dilute agreement with non-behavioural
+# units and are opt-in via --families.
+DEFAULT_FAMILIES = ("REQ", "FR", "AC", "NFR", "ERR")
+
 FRAMINGS = (
     ("structural", "Read structurally: map entities, relations and obligations "
      "precisely as written."),
@@ -135,12 +140,28 @@ def norm(label: str) -> str:
     return " ".join(words)
 
 
-def scan_requirement_ids(spec) -> set:
-    """Deterministic set of requirement-unit ids present in the spec text."""
+def scan_requirement_ids(spec, families: tuple = DEFAULT_FAMILIES) -> set:
+    """Deterministic set of requirement-unit ids present in the spec text,
+    restricted to the given id families (v3.1 unit-scope rule)."""
     found: set[str] = set()
     for line in spec.lines:
         found.update(REQ_ID_RE.findall(line))
-    return found
+    return {rid for rid in found if rid.rsplit("-", 1)[0] in families}
+
+
+def _words(text: str) -> set:
+    """Punctuation-insensitive normalized word set."""
+    return {
+        word for word in
+        (re.sub(r"[^a-z0-9]", "", token) for token in norm(text).split())
+        if word
+    }
+
+
+def _label_grounded(label: str, line_text: str) -> bool:
+    """v3.1 vocabulary anchor: every word of the normalized label must appear
+    in the normalized text of the cited line (labels reuse spec words)."""
+    return _words(label) <= _words(line_text)
 
 
 # ── Extraction prompt + validation ───────────────────────────────────────────
@@ -156,7 +177,9 @@ def build_extraction_prompt(spec, framing_suffix: str, known_ids: set) -> str:
         f"Edge types (closed set): {', '.join(EDGE_TYPES)}.\n"
         f"{_EXEMPLAR}\n\n"
         "Rules: every edge and assumption carries the source line number it is "
-        "grounded in; 1-3 behavioural assertions (given/when/then, line-cited) per "
+        "grounded in; every word of an edge's s/t label MUST appear verbatim in "
+        "the cited line (reuse the specification's own words — never paraphrase "
+        "node labels); 1-3 behavioural assertions (given/when/then, line-cited) per "
         "requirement that mandates observable behaviour; use ONLY requirement ids "
         f"that appear in the specification (they include: {ids_hint}).\n\n"
         "SPECIFICATION (line-numbered):\n"
@@ -169,9 +192,11 @@ def build_extraction_prompt(spec, framing_suffix: str, known_ids: set) -> str:
     )
 
 
-def validate_graph(payload: dict, known_ids: set, max_line: int):
+def validate_graph(payload: dict, known_ids: set, max_line: int,
+                   spec_lines: list | None = None):
     """Strict graph validation. Returns (dict req->ReqInterpretation, ungrounded)
-    or v1.ParseFailure."""
+    or v1.ParseFailure. With spec_lines, enforces the v3.1 vocabulary anchor:
+    edge labels must reuse words of the cited line."""
     reqs = payload.get("requirements")
     if not isinstance(reqs, dict) or not reqs:
         return v1.ParseFailure(reason="requirements must be a non-empty object")
@@ -205,6 +230,18 @@ def validate_graph(payload: dict, known_ids: set, max_line: int):
             if not (1 <= line <= max_line):
                 ungrounded += 1
                 continue  # dropped from scoring, counted as diagnostic
+            if spec_lines is not None:
+                cited = spec_lines[line - 1]
+                for label in (s, t):
+                    if not _label_grounded(label, cited):
+                        return v1.ParseFailure(
+                            reason=(
+                                f"{req_id}.edges[{i}] label {label!r} uses words "
+                                f"not present in cited line {line} — node labels "
+                                "must reuse the specification's own words from "
+                                "the cited line"
+                            )
+                        )
             edges.append(Edge(s=s.strip(), type=etype, t=t.strip(),
                               line=line, conf=float(conf)))
         assumptions = []
@@ -484,6 +521,7 @@ def parse_args(argv: list) -> tuple:
     )
     parser.add_argument("spec_path", type=Path)
     parser.add_argument("--readers", type=v1._positive_int, default=3)
+    parser.add_argument("--families", default=",".join(DEFAULT_FAMILIES))
     parser.add_argument("--claude-cmd", default=v1.DEFAULT_MODEL_COMMAND)
     parser.add_argument("--timeout", type=v1._positive_float,
                         default=v1.DEFAULT_TIMEOUT_SECONDS)
@@ -524,12 +562,15 @@ def main(argv: list | None = None) -> int:
             f"bad input: specification '{config.spec_path}' is empty or "
             "whitespace-only — nothing to measure",
         )
-    known_ids = scan_requirement_ids(spec)
+    families = tuple(
+        f.strip().upper() for f in options.families.split(",") if f.strip()
+    )
+    known_ids = scan_requirement_ids(spec, families)
     if not known_ids:
         return v1.fail(
             v1.EXIT_BAD_INPUT,
             f"bad input: specification '{config.spec_path}' contains no "
-            "recognizable requirement ids (REQ-/FR-/AC-/NFR-...)",
+            f"recognizable requirement ids in families {', '.join(families)}",
         )
 
     readers: list[ReaderGraph] = []
@@ -539,7 +580,8 @@ def main(argv: list | None = None) -> int:
         outcome = v1.execute_round(
             config,
             build_extraction_prompt(spec, suffix, known_ids),
-            lambda payload: validate_graph(payload, known_ids, len(spec.lines)),
+            lambda payload: validate_graph(payload, known_ids, len(spec.lines),
+                                           spec_lines=spec.lines),
             round_no=reader_no,
             spec_dir=spec_dir,
         )
