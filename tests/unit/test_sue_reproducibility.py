@@ -192,6 +192,25 @@ class TestWitnesses:
         assert v3.find_witnesses([_reader(1, a), _reader(2, b)]) == ([], 0)
 
 
+class TestSharedEvidence:
+    def test_identical_citations_full_overlap(self):
+        reqs = {"FR-001": _interp([_edge("system", "write report", line=1)])}
+        assert v3.shared_evidence([_reader(1, reqs), _reader(2, reqs)]) == 1.0
+
+    def test_disjoint_citations_zero_overlap(self):
+        a = {"FR-001": _interp([_edge("system", "write report", line=1)])}
+        b = {"FR-001": _interp([_edge("system", "write report", line=2)])}
+        assert v3.shared_evidence([_reader(1, a), _reader(2, b)]) == 0.0
+
+    def test_polarity_opposed_witness_kind(self):
+        a = {"FR-001": _interp(assertions=[v3.Assertion(
+            given="a rule", when="save", then="the file persists", lines=[3])])}
+        b = {"FR-001": _interp(assertions=[v3.Assertion(
+            given="a rule", when="save", then="the write is rejected", lines=[3])])}
+        witnesses, _ = v3.find_witnesses([_reader(1, a), _reader(2, b)])
+        assert witnesses[0].kind == "polarity-opposed"
+
+
 class TestThinConsensus:
     def test_high_agreement_over_thin_content_flagged(self):
         reqs = {"FR-001": _interp([_edge("system", "write report")])}
@@ -337,7 +356,8 @@ class TestScenario:
         assert rc == 0
         report = (tmp_path / "semantic-reproducibility.md").read_text()
         assert "Divergence witness candidates" in report
-        assert "W1. FR-002" in report
+        assert "W1. [polarity-opposed] FR-002" in report
+        assert "shared evidence base" in report
         assert "the save is blocked until review" in report
         sidecar = json.loads((tmp_path / "semantic-reproducibility.json").read_text())
         assert len(sidecar["witnesses"]) == 1
