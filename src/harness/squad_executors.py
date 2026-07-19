@@ -120,14 +120,31 @@ def _canonical_echelon_result_contract(ext_dir: Path) -> str:
     )
 
 
-def _allowed_state_updates_contract(allowed_state_updates: object) -> str:
-    """Render the deterministic state-update allowlist for an agent prompt."""
+def _allowed_state_updates_contract(
+    allowed_state_updates: object,
+    *,
+    required_state_updates: object = None,
+    state_update_types: object = None,
+    state_update_enums: object = None,
+    allowed_verdicts: object = None,
+) -> str:
+    """Render the deterministic dispatch-scoped result contract."""
+    required = {str(key) for key in (required_state_updates or [])}
+    value_types = {
+        str(key): str(value_type)
+        for key, value_type in (state_update_types or {}).items()
+    }
+    value_enums = {
+        str(key): list(values)
+        for key, values in (state_update_enums or {}).items()
+    }
     lines = [
         "\n\n---",
         "## Allowed state_updates for this dispatch",
         "The harness validates `echelon_result.state_updates` before mutating state.",
         "Return only the keys listed here; use `state_updates: {}` when no state",
-        "changes are needed. Any other state_updates key blocks the run.",
+        "changes are needed. Undeclared reporting-only keys are quarantined and",
+        "never written to state. Missing or invalid required routing keys block.",
         "Put task counts, report summaries, evidence, and diagnostics in journal_entries, never state_updates.",
         "",
     ]
@@ -145,7 +162,18 @@ def _allowed_state_updates_contract(allowed_state_updates: object) -> str:
         keys = [str(key) for key in allowed_state_updates]
         if keys:
             lines.append("Allowed keys:")
-            lines.extend(f"- `{key}`" for key in keys)
+            for key in keys:
+                annotations = []
+                if key in value_types:
+                    annotations.append(value_types[key])
+                if key in required:
+                    annotations.append("required")
+                if key in value_enums:
+                    annotations.append(
+                        "one of " + "|".join(str(value) for value in value_enums[key])
+                    )
+                suffix = f" ({', '.join(annotations)})" if annotations else ""
+                lines.append(f"- `{key}`{suffix}")
         else:
             lines.extend(
                 [
@@ -155,6 +183,9 @@ def _allowed_state_updates_contract(allowed_state_updates: object) -> str:
                     "```",
                 ]
             )
+    if allowed_verdicts is not None:
+        verdicts = [f"`{verdict}`" for verdict in allowed_verdicts]
+        lines.extend(["", "Allowed verdicts: " + ", ".join(verdicts)])
     return "\n".join(lines)
 
 
@@ -485,6 +516,65 @@ class PhaseExecutor(ABC):
         from harness.paths import runs_dir as _runs_dir
         self._squad_dir = squad_dir if squad_dir is not None else _runs_dir(project_root)
 
+    def _result_contract(self, node: "PhaseNode", agent_entry: dict | None = None):
+        """Resolve the narrowest contract for this concrete agent dispatch."""
+        from harness.echelon_result_schema import EchelonResultContract
+
+        if hasattr(node, "result_contract"):
+            return node.result_contract(agent_entry)
+        entry = agent_entry or {}
+        allowed = entry.get(
+            "allowed_state_updates", getattr(node, "allowed_state_updates", None)
+        )
+        required = entry.get(
+            "required_state_updates", getattr(node, "required_state_updates", [])
+        )
+        value_types = entry.get(
+            "state_update_types", getattr(node, "state_update_types", {})
+        )
+        value_enums = entry.get(
+            "state_update_enums", getattr(node, "state_update_enums", {})
+        )
+        verdicts = entry.get(
+            "allowed_verdicts", getattr(node, "allowed_verdicts", None)
+        )
+        unexpected = entry.get(
+            "unexpected_state_updates",
+            getattr(node, "unexpected_state_updates", "quarantine"),
+        )
+        return EchelonResultContract(
+            allowed_state_update_keys=(
+                frozenset(str(key) for key in allowed)
+                if allowed is not None
+                else None
+            ),
+            required_state_update_keys=frozenset(str(key) for key in (required or [])),
+            state_update_types={
+                str(key): str(value_type)
+                for key, value_type in (value_types or {}).items()
+            },
+            state_update_enums={
+                str(key): frozenset(values)
+                for key, values in (value_enums or {}).items()
+            },
+            allowed_verdicts=(
+                frozenset(str(verdict) for verdict in verdicts)
+                if verdicts is not None
+                else None
+            ),
+            unexpected_state_updates=str(unexpected),
+        )
+
+    def _exec_agent_with_contract(self, prompt: str, result_contract):
+        """Use provider-side result-only repair when the provider supports it."""
+        if getattr(type(self._provider), "supports_result_contract", False):
+            return self._provider.exec_agent(
+                str(self._project_root),
+                prompt,
+                result_contract=result_contract,
+            )
+        return self._provider.exec_agent(str(self._project_root), prompt)
+
     def _project_config_path(self) -> Path:
         canonical = self._project_root / ".echelon" / "config.yml"
         if canonical.exists():
@@ -518,14 +608,17 @@ class PhaseExecutor(ABC):
         node: "PhaseNode",
         result: "SquadAgentResult",
         allowed_state_updates: object = None,
+        result_contract=None,
     ) -> "SquadAgentResult":
         """Validate result state updates before executor-side direct state writes."""
         if result.echelon_result is None:
             return result
 
         from harness.echelon_result_schema import (
+            EchelonResultContract,
             EchelonResultValidationError,
             validate_echelon_result,
+            validate_echelon_result_contract,
         )
         from harness.squad_provider import SquadAgentResult
 
@@ -536,12 +629,25 @@ class PhaseExecutor(ABC):
                 # blocked-state metadata, not applied through phase state_updates.
                 result.echelon_result = validate_echelon_result(result.echelon_result)
                 return result
-            result.echelon_result = validate_echelon_result(
+            contract = result_contract or self._result_contract(node)
+            if allowed_state_updates is not None:
+                contract = EchelonResultContract(
+                    allowed_state_update_keys=frozenset(allowed_state_updates),
+                    required_state_update_keys=contract.required_state_update_keys,
+                    state_update_types=contract.state_update_types,
+                    state_update_enums=contract.state_update_enums,
+                    allowed_verdicts=contract.allowed_verdicts,
+                    unexpected_state_updates=contract.unexpected_state_updates,
+                )
+            outcome = validate_echelon_result_contract(
                 result.echelon_result,
-                allowed_state_update_keys=getattr(
-                    node, "allowed_state_updates", None
-                ) if allowed_state_updates is None else allowed_state_updates,
+                contract,
             )
+            result.echelon_result = outcome.result
+            if outcome.quarantined_state_updates:
+                result.quarantined_state_updates.update(
+                    outcome.quarantined_state_updates
+                )
             return result
         except EchelonResultValidationError as exc:
             return SquadAgentResult(
@@ -579,7 +685,23 @@ class PhaseExecutor(ABC):
         from datetime import datetime, timezone
         from harness.journal_entry_validator import prepare_journal_entries_for_append
 
-        entries = (result.echelon_result or {}).get("journal_entries", [])
+        entries = list((result.echelon_result or {}).get("journal_entries", []))
+        if result.quarantined_state_updates:
+            entries.insert(
+                0,
+                {
+                    "type": "state_contract_warning",
+                    "agent": "speckit-echelon-commander",
+                    "data": {
+                        "dropped_keys": sorted(result.quarantined_state_updates),
+                        "action": "quarantined",
+                        "reason": (
+                            "undeclared reporting fields were excluded from the "
+                            "state mutation control plane"
+                        ),
+                    },
+                },
+            )
         if not entries:
             return
 
@@ -747,7 +869,13 @@ class PhaseExecutor(ABC):
         prompt = (
             prompt
             + _routing_contract(node)
-            + _allowed_state_updates_contract(node.allowed_state_updates)
+            + _allowed_state_updates_contract(
+                node.allowed_state_updates,
+                required_state_updates=getattr(node, "required_state_updates", []),
+                state_update_types=getattr(node, "state_update_types", {}),
+                state_update_enums=getattr(node, "state_update_enums", {}),
+                allowed_verdicts=getattr(node, "allowed_verdicts", None),
+            )
             + _canonical_echelon_result_contract(self._ext_dir)
         )
 
@@ -771,16 +899,19 @@ class PhaseExecutor(ABC):
             if rel:
                 pre_path = self._ext_dir / rel
                 if pre_path.exists():
+                    result_contract = self._result_contract(node, entry)
                     prompt = self._assemble_pre_dispatch_prompt(
                         pre_path,
                         entry,
                         state_store.load(),
-                        node.allowed_state_updates,
+                        result_contract,
                     )
-                    result = self._provider.exec_agent(
-                        str(self._project_root), prompt
+                    result = self._exec_agent_with_contract(
+                        prompt, result_contract
                     )
-                    result = self._validate_result_state_updates(node, result)
+                    result = self._validate_result_state_updates(
+                        node, result, result_contract=result_contract
+                    )
                     if result.blocked:
                         return result
                     self._write_journal_entries(result, node.id)
@@ -795,9 +926,15 @@ class PhaseExecutor(ABC):
         agent_path: Path,
         entry: dict,
         state: dict,
-        allowed_state_updates: object = None,
+        result_contract,
     ) -> str:
         """Build a real prompt for a generic pre-dispatch agent."""
+        if not hasattr(result_contract, "allowed_state_update_keys"):
+            from harness.echelon_result_schema import EchelonResultContract
+
+            result_contract = EchelonResultContract(
+                allowed_state_update_keys=frozenset(result_contract or [])
+            )
         agent_text = agent_path.read_text()
         squad_dir_str = state.get("squad_dir", str(self._squad_dir))
         staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
@@ -816,7 +953,13 @@ class PhaseExecutor(ABC):
             + _render_product_input_context(state)
             + _render_published_re_context(state)
             + self._extension_path_context()
-            + _allowed_state_updates_contract(allowed_state_updates)
+            + _allowed_state_updates_contract(
+                result_contract.allowed_state_update_keys,
+                required_state_updates=result_contract.required_state_update_keys,
+                state_update_types=result_contract.state_update_types,
+                state_update_enums=result_contract.state_update_enums,
+                allowed_verdicts=result_contract.allowed_verdicts,
+            )
             + _canonical_echelon_result_contract(self._ext_dir)
         )
 
@@ -919,8 +1062,11 @@ class AgentExecutor(PhaseExecutor):
             return pre_dispatch_result
         state = state_store.load()  # re-load after pre_dispatch
         prompt = self._assemble_prompt(node, state)
-        result = self._provider.exec_agent(str(self._project_root), prompt)
-        result = self._validate_result_state_updates(node, result)
+        result_contract = self._result_contract(node)
+        result = self._exec_agent_with_contract(prompt, result_contract)
+        result = self._validate_result_state_updates(
+            node, result, result_contract=result_contract
+        )
         if result.blocked:
             return result
         self._write_journal_entries(result, node.id)
@@ -995,6 +1141,10 @@ class StagedParallelExecutor(PhaseExecutor):
         state: dict,
         extra_files: Optional[list] = None,
         allowed_state_updates: object = None,
+        required_state_updates: object = None,
+        state_update_types: object = None,
+        state_update_enums: object = None,
+        allowed_verdicts: object = None,
     ) -> str:
         """Build a prompt for a single staged agent.
 
@@ -1074,7 +1224,13 @@ class StagedParallelExecutor(PhaseExecutor):
         return (
             _shared_agent_contract()
             + prompt
-            + _allowed_state_updates_contract(allowed_state_updates)
+            + _allowed_state_updates_contract(
+                allowed_state_updates,
+                required_state_updates=required_state_updates,
+                state_update_types=state_update_types,
+                state_update_enums=state_update_enums,
+                allowed_verdicts=allowed_verdicts,
+            )
             + _canonical_echelon_result_contract(self._ext_dir)
         )
 
@@ -1099,18 +1255,27 @@ class StagedParallelExecutor(PhaseExecutor):
                     or agent_entry.get("id")
                     or agent_entry.get("agent", "")
                 )
+                result_contract = self._result_contract(node, agent_entry)
                 prompt = self._build_agent_prompt(
                     agent_entry,
                     state,
-                    allowed_state_updates=getattr(node, "allowed_state_updates", None),
+                    allowed_state_updates=result_contract.allowed_state_update_keys,
+                    required_state_updates=result_contract.required_state_update_keys,
+                    state_update_types=result_contract.state_update_types,
+                    state_update_enums=result_contract.state_update_enums,
+                    allowed_verdicts=result_contract.allowed_verdicts,
                 )
                 futures[pool.submit(
-                    self._provider.exec_agent, str(self._project_root), prompt
-                )] = mode_label
+                    self._exec_agent_with_contract, prompt, result_contract
+                )] = (mode_label, result_contract)
 
             for future in as_completed(futures):
-                label = futures[future]
-                result = self._validate_result_state_updates(node, future.result())
+                label, result_contract = futures[future]
+                result = self._validate_result_state_updates(
+                    node,
+                    future.result(),
+                    result_contract=result_contract,
+                )
                 if result.blocked:
                     return result
                 stage1_results[label] = result
@@ -1145,14 +1310,23 @@ class StagedParallelExecutor(PhaseExecutor):
 
         state = state_store.load()
         for agent_entry in stage2_agents:
+            result_contract = self._result_contract(node, agent_entry)
             prompt = self._build_agent_prompt(
                 agent_entry,
                 state,
                 extra_files=[impl_report_path] if impl_report_path else [],
-                allowed_state_updates=getattr(node, "allowed_state_updates", None),
+                allowed_state_updates=result_contract.allowed_state_update_keys,
+                required_state_updates=result_contract.required_state_update_keys,
+                state_update_types=result_contract.state_update_types,
+                state_update_enums=result_contract.state_update_enums,
+                allowed_verdicts=result_contract.allowed_verdicts,
             )
-            stage2_result = self._provider.exec_agent(str(self._project_root), prompt)
-            stage2_result = self._validate_result_state_updates(node, stage2_result)
+            stage2_result = self._exec_agent_with_contract(prompt, result_contract)
+            stage2_result = self._validate_result_state_updates(
+                node,
+                stage2_result,
+                result_contract=result_contract,
+            )
             if stage2_result.blocked:
                 return stage2_result
             stage2_payload = stage2_result.echelon_result or {}
@@ -1202,17 +1376,28 @@ class ConditionalSequentialExecutor(PhaseExecutor):
             if rel:
                 path = self._ext_dir / rel
                 if path.exists():
+                    result_contract = self._result_contract(node, agent_entry)
                     prompt = (
                         _shared_agent_contract()
                         + path.read_text()
                         + _render_product_input_context(state)
-                        + _allowed_state_updates_contract(node.allowed_state_updates)
+                        + _allowed_state_updates_contract(
+                            result_contract.allowed_state_update_keys,
+                            required_state_updates=result_contract.required_state_update_keys,
+                            state_update_types=result_contract.state_update_types,
+                            state_update_enums=result_contract.state_update_enums,
+                            allowed_verdicts=result_contract.allowed_verdicts,
+                        )
                         + _canonical_echelon_result_contract(self._ext_dir)
                     )
-                    result = self._provider.exec_agent(
-                        str(self._project_root), prompt
+                    result = self._exec_agent_with_contract(
+                        prompt, result_contract
                     )
-                    result = self._validate_result_state_updates(node, result)
+                    result = self._validate_result_state_updates(
+                        node,
+                        result,
+                        result_contract=result_contract,
+                    )
                     if result.blocked:
                         return result
                     self._write_journal_entries(result, node.id)

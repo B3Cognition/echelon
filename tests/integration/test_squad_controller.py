@@ -823,6 +823,20 @@ class TestSquadControllerBasics:
     ):
         """phase3-consensus can legitimately repeat up to max_iterations."""
         provider = _mock_provider("PASS")
+        default_result = provider.exec_agent.return_value
+
+        def consensus_result(project_root: str, prompt: str, *args, **kwargs):
+            if "Operate in **PLAN2** mode" in prompt:
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={"verdict": "COMPLETE", "state_updates": {}},
+                    raw_output="",
+                    duration_ms=100,
+                    timed_out=False,
+                )
+            return default_result
+
+        provider.exec_agent.side_effect = consensus_result
         ctrl, store = _controller(tmp_path, provider, mode="semi")
         store.initialize("r", "semi", "msg", 0, "phase3-consensus", max_iterations=10)
         state = store.load()
@@ -1057,7 +1071,7 @@ class TestSquadControllerBasics:
                         "state_updates": {
                             "spec_id": "001-test",
                             "spec_dir": "specs/001-test",
-                            "spec_status": "drafted",
+                            "spec_status": "planned",
                             "lexicon_pass": True,
                         },
                     },
@@ -1354,7 +1368,13 @@ class TestConsensusAcceptWithRiskRouting:
             if "Operate in **ASSESS2** mode" in prompt:
                 return SquadAgentResult(
                     exit_code=0,
-                    echelon_result={"verdict": "PASS", "state_updates": {}},
+                    echelon_result={
+                        "verdict": "PASS",
+                        "state_updates": {
+                            "gate_decision": "accept_with_risk",
+                            "phase_recommendation": "advance_past_consensus_to_delivery",
+                        },
+                    },
                     raw_output="",
                     duration_ms=0,
                     timed_out=False,
@@ -1364,11 +1384,7 @@ class TestConsensusAcceptWithRiskRouting:
                     exit_code=0,
                     echelon_result={
                         "verdict": "COMPLETE",
-                        "state_updates": {
-                            "gate_decision": "accept_with_risk",
-                            "convergence_forced": True,
-                            "phase_recommendation": "advance_past_consensus_to_delivery",
-                        },
+                        "state_updates": {},
                     },
                     raw_output="",
                     duration_ms=0,
@@ -1906,7 +1922,7 @@ class TestCommanderJudgmentStateUpdates:
             timed_out=False,
         )
 
-    def test_invalid_judgment_state_update_blocks_before_mutation(self, tmp_path):
+    def test_unknown_judgment_reporting_state_is_quarantined_before_mutation(self, tmp_path):
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(
             exit_code=0,
@@ -1929,12 +1945,13 @@ class TestCommanderJudgmentStateUpdates:
         )
         state = store.load()
 
-        assert next_phase == "terminal-blocked"
-        assert state["status"] == "blocked"
-        assert state["phase"] == "terminal-blocked"
+        assert next_phase == "phase1-why1"
+        assert state.get("status") != "blocked"
         assert "unauthorized_key" not in state
-        assert "unauthorized_key" in state["blocked_reason"]
-        assert "judgment state_updates validation failed" in state["blocked_reason"]
+        journal = tmp_path / "squad" / "run-test" / "reasoning-journal.jsonl"
+        entries = [json.loads(line) for line in journal.read_text().splitlines()]
+        assert entries[0]["type"] == "state_contract_warning"
+        assert entries[0]["data"]["dropped_keys"] == ["unauthorized_key"]
 
     def test_valid_judgment_iteration_update_still_persists(self, tmp_path):
         provider = _mock_provider()

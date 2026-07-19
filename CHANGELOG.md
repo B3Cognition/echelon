@@ -6,6 +6,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Dispatch-scoped result contracts** — Phase A agents now receive typed,
+  per-agent verdict and `state_updates` contracts. Undeclared reporting fields
+  are quarantined and journaled instead of blocking completed work, while
+  reserved writes, invalid authoritative values, and missing routing data stay
+  fail-closed with one result-only repair attempt. Consensus ownership is now
+  explicit for WHY3, ASSESS2, and PLAN2, preventing planning metrics from
+  expanding persistent squad state.
+
+- **Lexicon requirement dependencies** — the SPEC dependency gate now follows
+  `DEPENDS` entries nested under `req_metadata`, restoring missing-target,
+  self-dependency, and cycle findings.
+
 - **RE continuation orientation** — `echelon re continue` now prints a branded
   controller-owned summary before provider dispatch, including the active run,
   authoritative phase, source/domain progress, workspace-synthesis status,

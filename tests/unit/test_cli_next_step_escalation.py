@@ -288,7 +288,8 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
     assert "READY TO BUILD" not in captured.out
     assert "RUN BLOCKED" in captured.out
     assert "missing_echelon_result" in captured.out
-    assert "echelon spec rewind phase3-sentinel" in captured.out
+    assert "echelon spec continue" in captured.out
+    assert "will retry the blocked phase; it was not marked complete" in captured.out
 
 
 def test_blocked_incomplete_discover_prioritizes_retry_over_constitution(

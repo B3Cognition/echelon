@@ -356,6 +356,35 @@ def test_judgment_dispatch_continues_id_sequence_after_executor_writes(tmp_path)
     assert entries[1]["id"] == 2
 
 
+def test_commander_judgment_quarantines_invented_reporting_state(tmp_path):
+    ctrl, _provider = _squad_controller(tmp_path)
+    result = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {
+                "next_phase": "phase1-discover",
+                "total_tasks": 61,
+            },
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+
+    applied = ctrl._apply_judgment_state_updates(result, "phase1-discover")
+    ctrl._write_journal_entries(result, "phase1-discover")
+
+    state = ctrl._state_store.load()
+    assert applied is True
+    assert state["next_phase"] == "phase1-discover"
+    assert "total_tasks" not in state
+    entries = _read_journal(tmp_path, squad_dir=tmp_path / "squad" / "run-test")
+    assert entries[0]["type"] == "state_contract_warning"
+    assert entries[0]["data"]["dropped_keys"] == ["total_tasks"]
+
+
 # ── Structural: no direct >> reasoning-journal.jsonl appends in spec files ───
 
 _DIRECT_APPEND_RE = re.compile(r">>\s*.*reasoning-journal\.jsonl")
@@ -742,7 +771,8 @@ def test_assemble_prompt_includes_allowed_state_updates(tmp_path):
     assert "## Allowed state_updates for this dispatch" in prompt
     assert "- `spec_id`" in prompt
     assert "- `spec_dir`" in prompt
-    assert "Any other state_updates key blocks the run." in prompt
+    assert "Undeclared reporting-only keys are quarantined" in prompt
+    assert "Missing or invalid required routing keys block." in prompt
     assert "Put task counts, report summaries, evidence, and diagnostics in journal_entries" in prompt
 
 
@@ -804,8 +834,8 @@ def test_agent_prompt_includes_authoritative_implementation_target_contract(tmp_
     assert "Do not infer or add another implementation target" in prompt
 
 
-def test_pre_dispatch_blocks_unallowed_state_updates_before_mutation(tmp_path):
-    """Pre-dispatch agents must obey the phase state_update allowlist."""
+def test_pre_dispatch_quarantines_unallowed_state_updates_before_mutation(tmp_path):
+    """Pre-dispatch reporting fields never enter the state mutation plane."""
     from harness.phase_graph import PhaseNode
 
     squad_dir = tmp_path / "squad" / "run-test"
@@ -846,19 +876,16 @@ def test_pre_dispatch_blocks_unallowed_state_updates_before_mutation(tmp_path):
     result = ex._run_pre_dispatch(node, state_store.load(), state_store)
 
     state = state_store.load()
-    assert result is not None
-    assert result.verdict == "BLOCKED"
-    assert (
-        "state_updates key 'unexpected' is not allowed"
-        in result.state_updates["blocked_reason"]
-    )
+    assert result is None
     assert "unexpected" not in state
     assert not state.get("blocked_reason")
-    assert not (squad_dir / "reasoning-journal.jsonl").exists()
+    journal = _read_journal(tmp_path, squad_dir=squad_dir)
+    assert journal[0]["type"] == "state_contract_warning"
+    assert journal[0]["data"]["dropped_keys"] == ["unexpected"]
 
 
-def test_agent_execute_blocks_unallowed_state_updates_before_journal_write(tmp_path):
-    """Normal agent dispatch must validate allowlists before journal mutation."""
+def test_agent_execute_quarantines_unallowed_state_updates_before_state_write(tmp_path):
+    """Normal agent dispatch retains artifacts/journal without expanding state."""
     from harness.phase_graph import PhaseNode
 
     squad_dir = tmp_path / "squad" / "run-test"
@@ -890,12 +917,11 @@ def test_agent_execute_blocks_unallowed_state_updates_before_journal_write(tmp_p
 
     result = ex.execute(node, state_store)
 
-    assert result.blocked is True
-    assert (
-        "state_updates key 'unexpected' is not allowed"
-        in result.state_updates["blocked_reason"]
-    )
-    assert not (squad_dir / "reasoning-journal.jsonl").exists()
+    assert result.blocked is False
+    assert result.state_updates == {}
+    assert result.quarantined_state_updates == {"unexpected": True}
+    journal = _read_journal(tmp_path, squad_dir=squad_dir)
+    assert journal[0]["type"] == "state_contract_warning"
 
 
 def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
@@ -1155,7 +1181,7 @@ def test_staged_prompt_uses_state_spec_dir_before_other_specs(tmp_path):
     assert "WRONG TASKS 063" not in prompt
 
 
-def test_staged_parallel_blocks_state_update_outside_allowlist(tmp_path):
+def test_staged_parallel_quarantines_state_update_outside_allowlist(tmp_path):
     squad_dir = tmp_path / "squad" / "run-test"
     state_store = SquadStateStore(squad_dir)
     state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
@@ -1191,9 +1217,113 @@ def test_staged_parallel_blocks_state_update_outside_allowlist(tmp_path):
 
     result = executor.execute(node, state_store)
 
-    assert result.verdict == "BLOCKED"
-    assert "not allowed" in result.state_updates["blocked_reason"]
+    assert result.verdict == "PASS"
     assert "unexpected" not in state_store.load()
+    entries = _read_journal(tmp_path, squad_dir=squad_dir)
+    assert entries[0]["type"] == "state_contract_warning"
+    assert entries[0]["data"]["dropped_keys"] == ["unexpected"]
+
+
+def test_plan2_reporting_state_is_quarantined_without_blocking(tmp_path):
+    ex = _executor(tmp_path)
+    node = SimpleNamespace(
+        id="phase3-consensus",
+        allowed_state_updates=["tasks_lexicon_pass", "tasks_lexicon_attempts"],
+        required_state_updates=[],
+        state_update_types={
+            "tasks_lexicon_pass": "boolean",
+            "tasks_lexicon_attempts": "integer",
+        },
+        allowed_verdicts=["COMPLETE", "BLOCKED"],
+    )
+    result = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "COMPLETE",
+            "state_updates": {
+                "phase3_plan_verdict": "COMPLETE",
+                "critical_path_length_days": 118,
+                "total_tasks": 61,
+                "parallelizable_tasks": 40,
+                "high_risk_tasks": 9,
+                "blocking_gates": [],
+                "test_automation_coverage": 0.92,
+            },
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+
+    validated = ex._validate_result_state_updates(node, result)
+
+    assert validated.verdict == "COMPLETE"
+    assert validated.state_updates == {}
+    assert set(validated.quarantined_state_updates) == {
+        "phase3_plan_verdict",
+        "critical_path_length_days",
+        "total_tasks",
+        "parallelizable_tasks",
+        "high_risk_tasks",
+        "blocking_gates",
+        "test_automation_coverage",
+    }
+
+
+def test_quarantined_state_updates_are_recorded_as_controller_journal_warning(tmp_path):
+    ex = _executor(tmp_path)
+    result = _result()
+    result.quarantined_state_updates = {"total_tasks": 61, "high_risk_tasks": 9}
+
+    ex._write_journal_entries(result, "phase3-consensus")
+
+    entries = _read_journal(tmp_path)
+    assert len(entries) == 1
+    assert entries[0]["type"] == "state_contract_warning"
+    assert entries[0]["data"]["dropped_keys"] == ["high_risk_tasks", "total_tasks"]
+    assert entries[0]["data"]["action"] == "quarantined"
+
+
+def test_staged_prompt_uses_agent_specific_state_contract(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "plan2.md").write_text("# PLAN2\nRole-specific instructions.")
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/plan2.md"
+    graph.all_phase_ids.return_value = []
+    ex = StagedParallelExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    entry = {
+        "id": "speckit-echelon-orchestrator",
+        "mode": "PLAN2",
+        "allowed_state_updates": ["tasks_lexicon_pass", "tasks_lexicon_attempts"],
+        "required_state_updates": [],
+        "state_update_types": {
+            "tasks_lexicon_pass": "boolean",
+            "tasks_lexicon_attempts": "integer",
+        },
+        "allowed_verdicts": ["COMPLETE", "BLOCKED"],
+    }
+
+    prompt = ex._build_agent_prompt(
+        entry,
+        state,
+        allowed_state_updates=entry["allowed_state_updates"],
+        required_state_updates=entry["required_state_updates"],
+        state_update_types=entry["state_update_types"],
+        allowed_verdicts=entry["allowed_verdicts"],
+    )
+
+    assert "- `tasks_lexicon_pass` (boolean)" in prompt
+    assert "- `tasks_lexicon_attempts` (integer)" in prompt
+    assert "Allowed verdicts: `COMPLETE`, `BLOCKED`" in prompt
+    assert "quality_scores" not in prompt
 
 
 def test_staged_prompt_includes_directory_context_pack_contents(tmp_path):

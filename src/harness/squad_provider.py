@@ -5,15 +5,17 @@ import json
 import os
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 import yaml
 
 from harness.echelon_result_schema import (
+    EchelonResultContract,
     EchelonResultValidationError,
     validate_echelon_result,
+    validate_echelon_result_contract,
 )
 from harness.llm_provider import AICodingCliProvider
 
@@ -73,6 +75,7 @@ class SquadAgentResult:
     echelon_result_repair_attempted: bool = False
     echelon_result_repair_succeeded: bool = False
     provider_limit_message: str = ""
+    quarantined_state_updates: dict = field(default_factory=dict)
 
     @property
     def verdict(self) -> Optional[str]:
@@ -277,13 +280,19 @@ def _validate_or_block_echelon_result(
 
 def _validate_echelon_result_or_reason(
     echelon_result: object,
-) -> tuple[Optional[dict], Optional[str]]:
+    result_contract: EchelonResultContract | None = None,
+) -> tuple[Optional[dict], Optional[str], dict]:
     if echelon_result is None:
-        return None, "missing echelon_result"
+        return None, "missing echelon_result", {}
     try:
-        return validate_echelon_result(echelon_result), None
+        if result_contract is not None:
+            outcome = validate_echelon_result_contract(
+                echelon_result, result_contract
+            )
+            return outcome.result, None, outcome.quarantined_state_updates
+        return validate_echelon_result(echelon_result), None, {}
     except EchelonResultValidationError as exc:
-        return None, str(exc)
+        return None, str(exc), {}
 
 
 def _build_echelon_result_repair_prompt(
@@ -316,11 +325,14 @@ class SquadCliProvider(AICodingCliProvider):
     Adds output capture + echelon_result: extraction on top of streaming.
     """
 
+    supports_result_contract = True
+
     def exec_agent(
         self,
         project_root: str,
         prompt: str,
         timeout_ms: Optional[int] = None,
+        result_contract: EchelonResultContract | None = None,
     ) -> SquadAgentResult:
         start = time.monotonic()
         git_before = _git_boundary_snapshot(project_root)
@@ -342,8 +354,13 @@ class SquadCliProvider(AICodingCliProvider):
                 backend_result.stderr,
             )
         parsed_result = _extract_echelon_result(raw)
-        echelon_result, validation_reason = _validate_echelon_result_or_reason(
-            parsed_result
+        (
+            echelon_result,
+            validation_reason,
+            quarantined_state_updates,
+        ) = _validate_echelon_result_or_reason(
+            parsed_result,
+            result_contract,
         )
         repair_attempted = False
         repair_succeeded = False
@@ -370,11 +387,17 @@ class SquadCliProvider(AICodingCliProvider):
             cost_usd += repair_result.cost_usd
             if repair_result.exit_code == 0 and not repair_result.timed_out:
                 repair_parsed = _extract_echelon_result(repair_result.stdout)
-                repaired, repair_reason = _validate_echelon_result_or_reason(
-                    repair_parsed
+                (
+                    repaired,
+                    repair_reason,
+                    repair_quarantined,
+                ) = _validate_echelon_result_or_reason(
+                    repair_parsed,
+                    result_contract,
                 )
                 if repaired is not None:
                     echelon_result = repaired
+                    quarantined_state_updates = repair_quarantined
                     repair_succeeded = True
                 else:
                     validation_reason = repair_reason or validation_reason
@@ -398,4 +421,5 @@ class SquadCliProvider(AICodingCliProvider):
             echelon_result_repair_attempted=repair_attempted,
             echelon_result_repair_succeeded=repair_succeeded,
             provider_limit_message=provider_limit_message,
+            quarantined_state_updates=quarantined_state_updates,
         )

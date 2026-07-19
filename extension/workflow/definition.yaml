@@ -347,6 +347,10 @@ phases:
       - escalation_recommended_answer
       - escalation_default_answer
       - shadow_output_recovered
+    state_update_types:
+      status: string
+    state_update_enums:
+      status: [blocked]
     transitions:
       - to: phase1-tracker
         condition: "verdict = STOP_AND_ASK OR verdict = ESCALATE"
@@ -453,6 +457,16 @@ phases:
       - status
       - blocked_reason
       - shadow_output_recovered
+    state_update_types:
+      spec_id: string
+      spec_dir: string
+      spec_status: string
+      lexicon_pass: boolean
+      lexicon_attempts: integer
+      status: string
+    state_update_enums:
+      spec_status: [planned, blocked]
+      status: [blocked]
     transitions:
       # Lexicon gate (INERT unless lexicon_gate.enabled in echelon-config.yml).
       # CARTOGRAPHER runs the in-dispatch repair loop (the "fix"); this is the
@@ -493,6 +507,12 @@ phases:
       - blocked_reason
       - status
       - shadow_output_recovered
+    state_update_types:
+      dependency_checks: object
+      quality_scores: quality_scores
+      status: string
+    state_update_enums:
+      status: [blocked]
     transitions:
       - to: checkpoint-assess
         condition: "no_CRITICAL_issues AND quality_gates.pass"
@@ -548,6 +568,12 @@ phases:
       - feasibility_structural_pass
       - feasibility_structural_attempts
       - shadow_output_recovered
+    state_update_types:
+      status: string
+      feasibility_structural_pass: boolean
+      feasibility_structural_attempts: integer
+    state_update_enums:
+      status: [blocked, killed]
     transitions:
       # Feasibility structural gate (INERT unless governance.enabled in echelon-config.yml).
       # GATEKEEPER runs the in-dispatch repair loop (the "fix"); this is the
@@ -620,6 +646,12 @@ phases:
       - escalation_recommended_answer
       - escalation_default_answer
       - shadow_output_recovered
+    state_update_types:
+      intent_alignment_check_structural_pass: boolean
+      intent_alignment_check_structural_attempts: integer
+      status: string
+    state_update_enums:
+      status: [blocked]
     transitions:
       # Intent alignment check structural gate (INERT unless governance.enabled in echelon-config.yml).
       # TRACKER runs the in-dispatch repair loop (the "fix"); this is the
@@ -826,6 +858,12 @@ phases:
       - plan_status
       - blocked_reason
       - shadow_output_recovered
+    state_update_types:
+      tasks_lexicon_pass: boolean
+      tasks_lexicon_attempts: integer
+      plan_status: string
+    state_update_enums:
+      plan_status: [blocked]
     timing_window_transition:        # closes phase3-solution, opens phase4-build
       close: phase3-solution
       open: phase4-build
@@ -862,6 +900,12 @@ phases:
         mode: WHY3
         stage: 1
         tier: exploration
+        allowed_state_updates:
+          - quality_scores
+        state_update_types:
+          quality_scores: quality_scores
+        state_update_enums: {}
+        allowed_verdicts: [PASS, FAIL, BLOCKED]
         context_pack:
           - spec.md
           - constitution.md
@@ -883,6 +927,22 @@ phases:
         mode: ASSESS2
         stage: 1
         tier: feasibility
+        allowed_state_updates:
+          - gate_decision
+          - phase_recommendation
+          - implementability_metrics
+          - feasibility_structural_pass
+          - feasibility_structural_attempts
+        state_update_types:
+          gate_decision: string
+          phase_recommendation: string
+          implementability_metrics: object
+          feasibility_structural_pass: boolean
+          feasibility_structural_attempts: integer
+        state_update_enums:
+          gate_decision: [PASS, REJECTED, accept_with_risk]
+          phase_recommendation: [proceed-to-build, phase3-how, advance_past_consensus_to_delivery]
+        allowed_verdicts: [PASS, REJECTED, BLOCKED]
         context_pack:
           - spec.md
           - constitution.md
@@ -904,6 +964,14 @@ phases:
         stage: 2                           # dispatched AFTER stage 1 completes
         depends_on: [speckit-echelon-gatekeeper-assess2]   # needs implementability-report.md
         tier: solution
+        allowed_state_updates:
+          - tasks_lexicon_pass
+          - tasks_lexicon_attempts
+        state_update_types:
+          tasks_lexicon_pass: boolean
+          tasks_lexicon_attempts: integer
+        state_update_enums: {}
+        allowed_verdicts: [COMPLETE, DONE, BLOCKED]
         context_pack:
           - spec.md
           - constitution.md
@@ -926,13 +994,25 @@ phases:
     allowed_state_updates:
       - quality_scores
       - gate_decision
-      - convergence_forced
       - phase_recommendation
       - implementability_metrics
       - feasibility_structural_pass
       - feasibility_structural_attempts
       - tasks_lexicon_pass
       - tasks_lexicon_attempts
+    state_update_types:
+      quality_scores: quality_scores
+      gate_decision: string
+      phase_recommendation: string
+      implementability_metrics: object
+      feasibility_structural_pass: boolean
+      feasibility_structural_attempts: integer
+      tasks_lexicon_pass: boolean
+      tasks_lexicon_attempts: integer
+    state_update_enums:
+      gate_decision: [PASS, REJECTED, accept_with_risk]
+      phase_recommendation: [proceed-to-build, phase3-how, advance_past_consensus_to_delivery]
+    unexpected_state_updates: quarantine
 
     transitions:
       - to: checkpoint-plan
@@ -1019,6 +1099,12 @@ phases:
       - constitution_quality_findings
       - blocked_reason
       - status
+    state_update_types:
+      constitution_quality_pass: boolean
+      constitution_quality_attempts: integer
+      status: string
+    state_update_enums:
+      status: [blocked]
     transitions:
       - to: done
         condition: always
@@ -1047,6 +1133,12 @@ phases:
       - tasks_quality_findings
       - blocked_reason
       - status
+    state_update_types:
+      tasks_quality_pass: boolean
+      tasks_quality_attempts: integer
+      status: string
+    state_update_enums:
+      status: [blocked]
     transitions:
       - to: done
         condition: always
@@ -1073,6 +1165,12 @@ phases:
       - adr_quality_findings
       - blocked_reason
       - status
+    state_update_types:
+      adr_quality_pass: boolean
+      adr_quality_attempts: integer
+      status: string
+    state_update_enums:
+      status: [blocked]
     transitions:
       - to: done
         condition: always

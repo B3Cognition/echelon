@@ -24,8 +24,10 @@ from echelon.spec_lifecycle import (
 )
 from harness.condition_evaluator import ConditionEvaluator
 from harness.echelon_result_schema import (
+    EchelonResultContract,
     EchelonResultValidationError,
     validate_echelon_result,
+    validate_echelon_result_contract,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.phase_a_readiness import (
@@ -99,6 +101,18 @@ JUDGMENT_STATE_UPDATE_KEYS = frozenset(
         "dependency_fallbacks",
         "shadow_output_recovered",
     }
+)
+JUDGMENT_RESULT_CONTRACT = EchelonResultContract(
+    allowed_state_update_keys=JUDGMENT_STATE_UPDATE_KEYS,
+    state_update_types={
+        "iteration": "integer",
+        "status": "string",
+        "escalation_resolved": "boolean",
+    },
+    state_update_enums={
+        "status": frozenset({"running", "blocked", "done", "interrupted", "killed"}),
+    },
+    unexpected_state_updates="quarantine",
 )
 
 logger = logging.getLogger(__name__)
@@ -1755,9 +1769,13 @@ class SquadController:
         phase: str,
     ) -> bool:
         try:
-            result.echelon_result = validate_echelon_result(
+            outcome = validate_echelon_result_contract(
                 result.echelon_result,
-                allowed_state_update_keys=JUDGMENT_STATE_UPDATE_KEYS,
+                JUDGMENT_RESULT_CONTRACT,
+            )
+            result.echelon_result = outcome.result
+            result.quarantined_state_updates.update(
+                outcome.quarantined_state_updates
             )
             return True
         except EchelonResultValidationError as exc:
@@ -2268,6 +2286,7 @@ class SquadController:
         if commander_path.exists():
             context = commander_path.read_text() + "\n\n" + context
         judgment = self._provider.exec_agent(str(self._project_root), context)
+        self._ensure_judgment_state_updates_allowed(judgment, node.id)
         # COMMANDER writes most journal entries directly via journal-append.sh
         # during LLM execution.  This catches any entries it returns in
         # echelon_result.journal_entries[] that it didn't write itself.
@@ -2332,6 +2351,8 @@ class SquadController:
             )
 
         result = self._provider.exec_agent(str(self._project_root), context)
+        if not self._ensure_judgment_state_updates_allowed(result, blocked_phase):
+            return result
         requested_phase = str(
             result.state_updates.get("next_phase")
             or result.state_updates.get("phase")
@@ -2381,7 +2402,23 @@ class SquadController:
         from datetime import datetime, timezone
         from harness.journal_entry_validator import prepare_journal_entries_for_append
 
-        entries = (result.echelon_result or {}).get("journal_entries", [])
+        entries = list((result.echelon_result or {}).get("journal_entries", []))
+        if result.quarantined_state_updates:
+            entries.insert(
+                0,
+                {
+                    "type": "state_contract_warning",
+                    "agent": "speckit-echelon-commander",
+                    "data": {
+                        "dropped_keys": sorted(result.quarantined_state_updates),
+                        "action": "quarantined",
+                        "reason": (
+                            "undeclared reporting fields were excluded from the "
+                            "state mutation control plane"
+                        ),
+                    },
+                },
+            )
         if not entries:
             return
 

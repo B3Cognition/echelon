@@ -247,6 +247,13 @@ phases:
     allowed_state_updates:
       - quality_scores
       - golddigger_requests
+    required_state_updates:
+      - quality_scores
+    state_update_types:
+      quality_scores: quality_scores
+    state_update_enums:
+      golddigger_requests: [none, needed]
+    allowed_verdicts: [PASS, FAIL, BLOCKED]
     transitions:
       - to: done
         condition: always
@@ -261,6 +268,39 @@ phases:
         "quality_scores",
         "golddigger_requests",
     ]
+    assert graph.get("phase1-discover").required_state_updates == ["quality_scores"]
+    assert graph.get("phase1-discover").state_update_types == {
+        "quality_scores": "quality_scores"
+    }
+    assert graph.get("phase1-discover").state_update_enums == {
+        "golddigger_requests": ["none", "needed"]
+    }
+    assert graph.get("phase1-discover").allowed_verdicts == [
+        "PASS",
+        "FAIL",
+        "BLOCKED",
+    ]
+
+
+def test_phase3_consensus_declares_per_agent_result_contracts():
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+    node = graph.get("phase3-consensus")
+    contracts = {entry["mode"]: entry for entry in node.agents}
+
+    assert contracts["WHY3"]["allowed_state_updates"] == ["quality_scores"]
+    assert contracts["WHY3"].get("required_state_updates", []) == []
+    assert contracts["ASSESS2"]["allowed_state_updates"] == [
+        "gate_decision",
+        "phase_recommendation",
+        "implementability_metrics",
+        "feasibility_structural_pass",
+        "feasibility_structural_attempts",
+    ]
+    assert contracts["PLAN2"]["allowed_state_updates"] == [
+        "tasks_lexicon_pass",
+        "tasks_lexicon_attempts",
+    ]
+    assert "total_tasks" not in contracts["PLAN2"]["allowed_state_updates"]
 
 
 def test_experimental_artifact_quality_phases_are_registered():
