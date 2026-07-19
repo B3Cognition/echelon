@@ -114,7 +114,7 @@ The command surface is fixed by the approved design: 1 positional argument, 3 op
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-003**: When invoked, the challenge script MUST accept a model-command option, defaulting to `claude`, that names exactly 1 challenge model command line (FR-007, FR-043).
   - **User Story:** Scenario 4 | **Priority:** MVP
-- **FR-004**: When invoked, the challenge script MUST accept a timeout option, defaulting to exactly 300 seconds, that bounds each model call (FR-011, FR-013).
+- **FR-004**: When invoked, the challenge script MUST accept a timeout option, defaulting to exactly 300 seconds, that bounds each model call (FR-011, FR-013). Non-numeric, non-finite, zero, or negative values MUST be rejected on the exit-code-1 argument path.
   - **User Story:** Scenario 3 | **Priority:** MVP
 - **FR-005**: If the specification path is missing or unreadable, the challenge script MUST exit with code 1 after launching exactly 0 model calls (ERR-001, AC-013).
   - **User Story:** Scenario 3 | **Priority:** MVP
@@ -178,7 +178,7 @@ Round 2 is a blind reader: a fresh call that sees only the specification text an
 
 Model output is untrusted input. Extraction is tolerant; validation is strict; recovery is bounded to exactly 1 retry per round.
 
-- **FR-026**: When raw model output is received, the challenge script MUST extract exactly 1 JSON object from it, tolerating surrounding non-JSON text plus code fences (FR-016, FR-024). When more than 1 candidate object is extractable, the first extractable object wins, in this precedence: whole-output parse, first fenced block, first balanced-brace candidate.
+- **FR-026**: When raw model output is received, the challenge script MUST extract exactly 1 JSON object from it, tolerating surrounding non-JSON text plus code fences (FR-016, FR-024). When more than 1 candidate object is extractable, the first extractable object wins, in this precedence: whole-output parse, first fenced block, first balanced-brace candidate. A candidate that parses to a non-object JSON value (for example a bare array) is a parse failure at that precedence level, not a fall-through.
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-027**: If exactly 0 JSON objects can be extracted from raw model output, the challenge script MUST classify that output as a parse failure routed to FR-028 (FR-026).
   - **User Story:** Scenario 3 | **Priority:** MVP
@@ -186,7 +186,7 @@ Model output is untrusted input. Extraction is tolerant; validation is strict; r
   - **User Story:** Scenario 3 | **Priority:** MVP
 - **FR-029**: When the first failure in a round was a timeout (FR-011), the corrective retry MUST re-issue the same prompt with exactly 0 appended corrective text (FR-028).
   - **User Story:** Scenario 3 | **Priority:** MVP
-- **FR-030**: On the second parse failure in the same round, the challenge script MUST exit with code 3 after saving the raw output of the failing calls into exactly 1 directory named `.sue-debug` beside the specification (ERR-004, AC-015). For a timed-out call, the saved raw output is whatever partial output was drained within the shutdown grace period, possibly empty.
+- **FR-030**: On the second parse failure in the same round, the challenge script MUST exit with code 3 after saving the raw output of the failing calls into exactly 1 directory named `.sue-debug` beside the specification (ERR-004, AC-015). For a timed-out call, the saved raw output is whatever partial output was drained within the shutdown grace period of exactly 5 seconds (subprocess ended by process-group kill; the up-to-4 grace periods are counted inside NFR-001's +60-second allowance), possibly empty. The debug dump itself is best-effort: if it cannot be written, the exit-3 outcome stands and its single diagnostic line names the failed dump (governs over ERR-004's save wording).
   - **User Story:** Scenario 3 | **Priority:** MVP
 - **FR-031**: When a round-2 failure ends the run under FR-030, the challenge script MUST NOT re-run round 1 — exactly 0 additional round-1 calls occur (FR-008).
   - **User Story:** Scenario 3 | **Priority:** MVP
@@ -199,7 +199,7 @@ Everything after round 2 is pure local computation, repeatable and fully unit-te
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-033**: When ranking findings, the challenge script MUST place all CONTRADICTED findings before all UNANSWERABLE findings, preserving round-1 question order within each of the 2 classes (FR-032, AC-004).
   - **User Story:** Scenario 1 | **Priority:** MVP
-- **FR-034**: When a run succeeds, the challenge script MUST write exactly 1 report file named `socratic-challenge.md` in the specification's directory, replacing any previous report while keeping 0 historical copies (FR-035, AC-003). If the report path resolves to the challenged specification file itself, the run MUST reject with exit code 1 before any model call — FR-042 takes precedence and the challenged file is never written. If writing the report or the debug dump fails after the model rounds, the run exits with code 1.
+- **FR-034**: When a run succeeds, the challenge script MUST write exactly 1 report file named `socratic-challenge.md` in the specification's directory, replacing any previous report while keeping 0 historical copies (FR-035, AC-003). If the report path resolves to the challenged specification file itself, the run MUST reject with exit code 1 before any model call — FR-042 takes precedence and the challenged file is never written. If writing the report fails after a successful run, the run exits with code 1.
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-035**: The challenge report MUST contain exactly 3 sections in order: header (FR-036), findings (FR-037), audit appendix (FR-038).
   - **User Story:** Scenario 2 | **Priority:** MVP
