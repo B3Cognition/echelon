@@ -7670,6 +7670,141 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
 
 # ── RE lifecycle and publication subcommands ────────────────────────────────
 
+_RE_PHASE_LABELS = {
+    "re-extract-0-preflight": "preflight",
+    "re-extract-1-analyze": "source analysis",
+    "re-extract-2-specify": "domain specification and workspace synthesis",
+    "re-extract-3-verify": "coverage verification",
+    "re-extract-4-expand": "coverage expansion",
+    "re-extract-5-validate": "semantic validation",
+    "re-extract-6-checklist": "extraction checklist",
+    "re-extract-7-constitute": "constitution generation",
+}
+
+
+def _read_re_summary_state(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _re_source_progress(state: dict) -> str:
+    raw_states = state.get("re_source_states")
+    source_states = raw_states if isinstance(raw_states, dict) else {}
+    raw_order = state.get("re_source_order")
+    ordered = (
+        [value for value in raw_order if isinstance(value, str)]
+        if isinstance(raw_order, list)
+        else []
+    )
+    source_ids = list(
+        dict.fromkeys(
+            [*ordered, *(key for key in source_states if isinstance(key, str))]
+        )
+    )
+    if not source_ids:
+        return "not initialized"
+    statuses = [
+        str(source_states.get(source_id, {}).get("status") or "pending")
+        if isinstance(source_states.get(source_id), dict)
+        else "pending"
+        for source_id in source_ids
+    ]
+    passed = statuses.count("passed")
+    summary = f"{passed}/{len(source_ids)} passed"
+    partial = statuses.count("partial_quality_debt")
+    active = statuses.count("active")
+    pending = statuses.count("pending")
+    extras: list[str] = []
+    if partial:
+        extras.append(f"{partial} partial")
+    if active:
+        extras.append(f"{active} active")
+    if pending:
+        extras.append(f"{pending} pending")
+    return summary + (" · " + " · ".join(extras) if extras else "")
+
+
+def _re_domain_count(run_re_dir: Path) -> str:
+    architecture = _read_re_summary_state(
+        run_re_dir / "workspace" / "architecture-map.json"
+    )
+    domains = architecture.get("domains")
+    if not isinstance(domains, list):
+        return "not available"
+    return str(len(domains))
+
+
+def _print_re_continue_summary(
+    project_root: Path,
+    *,
+    re_max_inner: int | None,
+) -> None:
+    """Print controller-owned RE orientation before any provider dispatch."""
+    from harness.re_lifecycle import resolve_current_re_run
+
+    run_dir = resolve_current_re_run(project_root)
+    if run_dir is None:
+        return
+    run_re_dir = run_dir / "re"
+    outer = _read_re_summary_state(run_dir / "state.json")
+    inner = _read_re_summary_state(run_re_dir / "state.json")
+    status = str(outer.get("status") or inner.get("status") or "unknown")
+    phase = str(inner.get("phase") or outer.get("phase") or "unknown")
+    phase_label = _RE_PHASE_LABELS.get(phase, "current controller phase")
+    coverage = inner.get("coverage_threshold")
+    resolution = inner.get("resolution_threshold")
+    quality = (
+        f"coverage {coverage}% · resolution {resolution}%"
+        if isinstance(coverage, int) and isinstance(resolution, int)
+        else "not initialized"
+    )
+    raw_budgets = inner.get("re_source_budgets")
+    source_budget = (
+        raw_budgets.get("max_source_cycles")
+        if isinstance(raw_budgets, dict)
+        else None
+    )
+    budget_candidates = (
+        re_max_inner,
+        outer.get("re_max_inner"),
+        inner.get("re_max_inner"),
+        source_budget,
+    )
+    effective_budgets = [
+        value
+        for value in budget_candidates
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+    ]
+    effective_budget = max(effective_budgets, default=None)
+
+    fields = [
+        ("run", run_dir.name),
+        ("status", f"{status} → continuing"),
+        ("phase", f"{phase} — {phase_label}"),
+        ("policy", str(outer.get("re_policy") or "unknown")),
+        ("sources", _re_source_progress(inner)),
+        ("domains", _re_domain_count(run_re_dir)),
+        (
+            "synthesis",
+            "complete"
+            if inner.get("re_workspace_synthesis_complete") is True
+            else "pending",
+        ),
+        ("quality", quality),
+    ]
+    if effective_budget:
+        fields.append(("repair budget", f"{effective_budget} source-local attempts"))
+    fields.append(("artifacts", str(run_re_dir)))
+    _banner(
+        "RE CONTINUE",
+        fields,
+        subtitle="Controller state before provider dispatch.",
+    )
+
+
 def _parse_re_lifecycle_options(
     args: list[str],
     *,
@@ -7784,7 +7919,9 @@ def _cmd_re_continue(args: list[str]) -> None:
         )
         if positional:
             raise ValueError("echelon re continue does not accept positional arguments")
-        result = _re_lifecycle_controller(Path.cwd()).continue_run(re_max_inner)
+        project_root = Path.cwd()
+        _print_re_continue_summary(project_root, re_max_inner=re_max_inner)
+        result = _re_lifecycle_controller(project_root).continue_run(re_max_inner)
     except (ReLifecycleError, ValueError) as exc:
         print(f"echelon re continue: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc

@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **RE continuation orientation** — `echelon re continue` now prints a branded
+  controller-owned summary before provider dispatch, including the active run,
+  authoritative phase, source/domain progress, workspace-synthesis status,
+  quality thresholds, effective repair budget, and artifact directory.
+
 - **Default-branch wiki catalog** — `echelon wiki build`, `status`, and
   command-triggered refresh now read the configured local default-branch commit
   through a temporary detached worktree when another branch is active. This
