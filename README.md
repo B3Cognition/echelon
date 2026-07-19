@@ -495,16 +495,16 @@ echelon wiki clean    # remove only a manifest-owned generated vault
 The Markdown works in an ordinary viewer. Obsidian is optional but recommended
 for backlinks and graph navigation; Echelon does not install or launch it.
 
-The wiki reads `specs/` from the currently checked-out workspace. Phase A specs
-usually live on separate canonical branches, so publish committed spec-only
-snapshots to the local default-branch catalog before building a complete wiki:
+The wiki reads `specs/` and `re/` from the configured local default branch,
+without switching the active checkout. Phase A specs usually live on separate
+canonical branches, so publish committed spec-only snapshots to that catalog
+before building a complete wiki:
 
 ```bash
 echelon spec publish 003  # spec-only snapshot commit on local main
 echelon spec publish --all
+echelon wiki build        # reads the local default-branch catalog
 git push origin main      # explicit; publish never pushes
-git switch main
-echelon wiki build
 ```
 
 `publish` discovers canonical local spec branches only, copies each matching
@@ -514,11 +514,17 @@ implementation history, fetch, push, or delete branches. Use the full canonical
 branch name instead of its numeric ID when desired, for example
 `echelon spec publish 003-add-feature-opta-search`.
 
+Build, status, and command-triggered refresh all resolve the same configured
+local default branch. When another branch is active, Echelon reads the exact
+default-branch commit through a temporary detached worktree and removes it when
+the operation finishes; it never fetches, switches, or modifies the caller's
+checkout.
+
 After the first explicit build, successful Echelon commands automatically rebuild
-the wiki only when they changed canonical inputs under `specs/` or `re/`. There is
-no background watcher: manual edits, pulls, and checkouts make `wiki status` stale
-until the next `echelon wiki build`. Disable command-triggered refresh locally with
-an override in `.echelon/local.yml` (which takes precedence over
+the wiki only when they changed catalog inputs under `specs/` or `re/`. There is
+no background watcher: manual edits and pulls make `wiki status` stale until the
+next `echelon wiki build`. Disable command-triggered refresh locally with an
+override in `.echelon/local.yml` (which takes precedence over
 `.echelon/config.yml`):
 
 ```yaml
