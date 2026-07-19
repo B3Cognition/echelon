@@ -52,3 +52,37 @@ Arm B gap-fill: v2 consensus on 064 (029 already has committed v2 data).
 As pre-registered in the protocol (three outcomes, matched-budget thresholds).
 Adjudication of pooled deduplicated findings is BLIND to arm labels; primary
 judge = operator, secondary = LLM panel.
+
+---
+
+## RESULT (2026-07-19; artifacts: docs/superpowers/experiments/2026-07-19-reasoning-layer/)
+
+Expectations: E1 partially refuted (seed 1 → APORIA_UNDEFINED/UNDERDETERMINED —
+the machine's finer taxonomy beat the pre-registered "contradiction" label);
+E2 half-refuted (euthyphro resolved the "subtle" seed in 1 turn; real adaptivity
+showed on seed 2: 5- and 4-turn chains); E3 confirmed 3/3 identical;
+E4 confirmed 3/3 readers; E5 confirmed (5 stable CONTRADICTED incl. 2 novel).
+
+Blind adjudication: 46 pooled items; same-family panel (3 judges, severity
+correlations 0.89-0.95 — overconfident, mildly generous to D) + independent
+cross-family judge (Codex; correlations to panel 0.60-0.73). Four-judge means:
+A 2.58/1.96 · B 2.53/2.00 · C 1.39/1.27 · D 2.37/1.92. Ordering stable under
+the cross-family correction. C's packaging handicap (last-answer-only) is real
+and bounded: even the extreme 3/2 rescoring ceiling (C ≈ 2.43/1.73) cannot
+produce a matched-budget win at 4× D's call cost (C 2.18 calls/item vs
+D 0.29; D at 25% of C's calls satisfies the <30% limb).
+
+**VERDICT (Codex audit, adopted): modified outcome 2.** One-shot J-graph
+extraction (arm D) proceeds as the ONLY automated Reasoning Graph candidate —
+as an INSTRUMENTED PILOT, not a completed promotion: the direct H-D2 test
+(≥80% of C-trace completeness, blind auditability, graph-only contradiction
+detection) is still required and can demote to outcome 3. Outcome 1 is closed
+on these data. Dialectic remains a manual Forensic deep-dive tool (its unique
+values: aporia taxonomy, long chains on genuinely hard seeds, and better
+defect classification than the pre-registration's own labels).
+
+Follow-up requirements (from the audit): full-chain C packaging + equivalent
+D provenance in one blinded template; matched calls AND tokens; semantic
+dedup before yield analysis; pre-registered cross-family judges + human
+primary; direct scoring of precision, evidence-link completeness, blind
+auditability, graph-only contradiction detection.
