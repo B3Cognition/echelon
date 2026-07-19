@@ -153,10 +153,19 @@ def _spec_overview(model: WikiModel, spec: WikiSpec) -> str:
         f"Lifecycle status: `{spec.lifecycle_status}`",
         "",
         f"Implementation targets: {targets}",
-        "",
-        "## Reading Path",
-        "",
     ]
+    if spec.publication_branch and spec.publication_commit:
+        lines.extend(
+            [
+                "",
+                "## Publication Provenance",
+                "",
+                f"Published from branch: `{spec.publication_branch}`",
+                "",
+                f"Source commit: `{spec.publication_commit[:12]}`",
+            ]
+        )
+    lines.extend(["", "## Reading Path", ""])
     by_name = {
         Path(_artifact_for(model, artifact_id).source_path).name: _artifact_for(model, artifact_id)
         for artifact_id in spec.artifact_ids

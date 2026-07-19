@@ -65,6 +65,29 @@ def test_render_writes_navigation_views_and_self_contained_projection(tmp_path: 
 
 
 @pytest.mark.unit
+def test_spec_overview_displays_publication_provenance(tmp_path: Path) -> None:
+    project_root, _model = _workspace(tmp_path)
+    (project_root / "specs/001-demo/.echelon-publication.json").write_text(
+        "{\n"
+        '  "schema_version": 1,\n'
+        '  "source_branch": "001-demo",\n'
+        f'  "source_commit": "{"a" * 40}",\n'
+        '  "spec_id": "001-demo"\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    model = discover_wiki_model(
+        project_root, generated_at="2026-07-19T10:00:00Z"
+    )
+
+    render_wiki(model, project_root, tmp_path / "out")
+
+    overview = (tmp_path / "out/Specs/001-demo/Overview.md").read_text()
+    assert "Published from branch: `001-demo`" in overview
+    assert "Source commit: `aaaaaaaaaaaa`" in overview
+
+
+@pytest.mark.unit
 def test_render_writes_reverse_engineering_source_and_domain_pages(tmp_path: Path) -> None:
     project_root, _model = _workspace(tmp_path)
     re_spec = project_root / "re/sources/api/specs/auth/spec.md"
