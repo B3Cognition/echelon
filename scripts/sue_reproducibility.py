@@ -47,6 +47,11 @@ REQ_ID_RE = re.compile(r"\b((?:REQ|FR|AC|NFR|ERR|SC|U|OQ|A)-[0-9]{1,4}[a-z]?)\b"
 # units and are opt-in via --families.
 DEFAULT_FAMILIES = ("REQ", "FR", "AC", "NFR", "ERR")
 
+# v3.2: extraction is chunked so per-call output stays bounded — large specs
+# timed out producing one giant graph (found live: spec 030, 6/6 attempts at
+# 300s with zero bytes). Small specs fit one chunk and behave as before.
+CHUNK_SIZE = 20
+
 FRAMINGS = (
     ("structural", "Read structurally: map entities, relations and obligations "
      "precisely as written."),
@@ -115,6 +120,7 @@ class ReaderGraph:
     framing: str
     requirements: dict  # req_id -> ReqInterpretation
     ungrounded_edges: int
+    failed_chunks: int = 0
 
 
 @dataclass(frozen=True)
@@ -181,6 +187,17 @@ def _label_grounded(label: str, line_text: str) -> bool:
 # ── Extraction prompt + validation ───────────────────────────────────────────
 
 
+def chunk_ids(known_ids: set, size: int | None = None) -> list:
+    """Deterministic slicing of scored unit ids into extraction chunks.
+
+    `size` defaults to the module's CHUNK_SIZE at call time (not def time),
+    so tests and callers can adjust it."""
+    if size is None:
+        size = CHUNK_SIZE
+    ordered = sorted(known_ids)
+    return [set(ordered[i:i + size]) for i in range(0, len(ordered), size)]
+
+
 def build_extraction_prompt(spec, framing_suffix: str, known_ids: set) -> str:
     ids_hint = ", ".join(sorted(known_ids)[:400])
     return (
@@ -194,8 +211,8 @@ def build_extraction_prompt(spec, framing_suffix: str, known_ids: set) -> str:
         "grounded in; every word of an edge's s/t label MUST appear verbatim in "
         "the cited line (reuse the specification's own words — never paraphrase "
         "node labels); 1-3 behavioural assertions (given/when/then, line-cited) per "
-        "requirement that mandates observable behaviour; use ONLY requirement ids "
-        f"that appear in the specification (they include: {ids_hint}).\n\n"
+        "requirement that mandates observable behaviour; extract ONLY these "
+        f"requirement units and no others: {ids_hint}.\n\n"
         "SPECIFICATION (line-numbered):\n"
         f"{v1.numbered_text(spec)}\n\n"
         "Return ONLY a JSON object: {\"requirements\": {\"<REQ-ID>\": {\"edges\": "
@@ -432,6 +449,11 @@ def render_report(spec, spec_path: Path, readers: list, per_req: dict,
     lines.append(f"- **Witnesses (behavioural incompatibilities):** {len(witnesses)}")
     ungrounded = ", ".join(f"R{r.reader_no}={r.ungrounded_edges}" for r in readers)
     lines.append(f"- **Ungrounded edges dropped:** {ungrounded}")
+    if any(r.failed_chunks for r in readers):
+        chunk_note = ", ".join(
+            f"R{r.reader_no}={r.failed_chunks}" for r in readers if r.failed_chunks
+        )
+        lines.append(f"- **Failed extraction chunks (coverage gaps):** {chunk_note}")
     lines.append("")
     lines.append("## Per-requirement agreement (worst first)")
     lines.append("")
@@ -587,25 +609,37 @@ def main(argv: list | None = None) -> int:
             f"recognizable requirement ids in families {', '.join(families)}",
         )
 
+    chunks = chunk_ids(known_ids)
     readers: list[ReaderGraph] = []
     dropped: list[str] = []
     for reader_no in range(1, options.readers + 1):
         name, suffix = FRAMINGS[(reader_no - 1) % len(FRAMINGS)]
-        outcome = v1.execute_round(
-            config,
-            build_extraction_prompt(spec, suffix, known_ids),
-            lambda payload: validate_graph(payload, known_ids, len(spec.lines),
-                                           spec_lines=spec.lines),
-            round_no=reader_no,
-            spec_dir=spec_dir,
-        )
-        if isinstance(outcome, v1.RoundExit):
+        merged: dict = {}
+        ungrounded_total = 0
+        failed_chunks = 0
+        for chunk_no, chunk in enumerate(chunks, start=1):
+            outcome = v1.execute_round(
+                config,
+                build_extraction_prompt(spec, suffix, chunk),
+                lambda payload, _chunk=chunk: validate_graph(
+                    payload, _chunk, len(spec.lines), spec_lines=spec.lines
+                ),
+                round_no=reader_no * 100 + chunk_no,
+                spec_dir=spec_dir,
+            )
+            if isinstance(outcome, v1.RoundExit):
+                failed_chunks += 1
+                continue
+            requirements, ungrounded = outcome
+            merged.update(requirements)
+            ungrounded_total += ungrounded
+        if failed_chunks * 2 > len(chunks):
             dropped.append(f"R{reader_no}({name})")
             continue
-        requirements, ungrounded = outcome
         readers.append(ReaderGraph(reader_no=reader_no, framing=name,
-                                   requirements=requirements,
-                                   ungrounded_edges=ungrounded))
+                                   requirements=merged,
+                                   ungrounded_edges=ungrounded_total,
+                                   failed_chunks=failed_chunks))
     if len(readers) < 2:
         return v1.fail(
             v1.EXIT_UNUSABLE_OUTPUT,

@@ -199,6 +199,22 @@ class TestFractureLines:
         assert v3.fracture_lines(readers, per, []) == {}
 
 
+class TestChunking:
+    def test_small_set_single_chunk(self):
+        ids = {f"FR-{i:03d}" for i in range(1, 6)}
+        assert v3.chunk_ids(ids) == [ids]
+
+    def test_large_set_deterministic_slices(self):
+        ids = {f"FR-{i:03d}" for i in range(1, 46)}
+        chunks = v3.chunk_ids(ids, size=20)
+        assert [len(c) for c in chunks] == [20, 20, 5]
+        assert chunks[0] == set(sorted(ids)[:20])
+        rejoined = set()
+        for chunk in chunks:
+            rejoined |= chunk
+        assert rejoined == ids
+
+
 class TestValidateGraph:
     def test_unknown_requirement_id_rejected(self):
         result = v3.validate_graph(
@@ -322,6 +338,53 @@ class TestScenario:
         rc = v3.main([str(spec), "--claude-cmd", shlex.quote(stub)])
         assert rc == 3
         assert "fewer than 2 readers" in capsys.readouterr().err
+
+    def test_chunked_extraction_merges_per_reader(self, tmp_path, monkeypatch):
+        """CHUNK_SIZE=1 forces 2 chunks per reader; merged graphs must cover
+        both units and score as one interpretation."""
+        monkeypatch.setattr(v3, "CHUNK_SIZE", 1)
+        spec = tmp_path / "spec.md"
+        spec.write_text(_SPEC + "\n")
+
+        def _chunk_json(req_only):
+            full = json.loads(_graph_json())
+            return json.dumps(
+                {"requirements": {req_only: full["requirements"][req_only]}}
+            )
+
+        per_reader = [_chunk_json("FR-001"), _chunk_json("FR-002")]
+        stub = _replay_stub(tmp_path, per_reader * 3)
+        rc = v3.main([str(spec), "--claude-cmd", shlex.quote(stub)])
+        assert rc == 0
+        sidecar = json.loads((tmp_path / "semantic-reproducibility.json").read_text())
+        assert sidecar["semantic_reproducibility"] == 1.0
+        for reader in sidecar["readers"]:
+            assert set(reader["requirements"]) == {"FR-001", "FR-002"}
+
+    def test_failed_chunk_degrades_not_kills(self, tmp_path, monkeypatch):
+        """One chunk failing both attempts costs coverage, not the reader —
+        only a majority of failed chunks drops the reader."""
+        monkeypatch.setattr(v3, "CHUNK_SIZE", 1)
+        spec = tmp_path / "spec.md"
+        spec.write_text(_SPEC + "\n")
+
+        def _chunk_json(req_only):
+            full = json.loads(_graph_json())
+            return json.dumps(
+                {"requirements": {req_only: full["requirements"][req_only]}}
+            )
+
+        responses = (
+            [_chunk_json("FR-001"), "garbage", "garbage"]      # R1: FR-002 chunk dies
+            + [_chunk_json("FR-001"), _chunk_json("FR-002")]   # R2 full
+            + [_chunk_json("FR-001"), _chunk_json("FR-002")]   # R3 full
+        )
+        stub = _replay_stub(tmp_path, responses)
+        rc = v3.main([str(spec), "--claude-cmd", shlex.quote(stub)])
+        assert rc == 0
+        report = (tmp_path / "semantic-reproducibility.md").read_text()
+        assert "Failed extraction chunks (coverage gaps):** R1=1" in report
+        assert "3 completed" in report
 
     def test_no_requirement_ids_exit_1(self, tmp_path, capsys):
         spec = tmp_path / "spec.md"
