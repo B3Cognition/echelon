@@ -75,6 +75,11 @@ EGRESS_DISCLOSURE = (
     "is sent to the model provider via the model command."
 )
 
+# Non-stdin provider protocols (copilot-argv) pass the prompt via process
+# arguments — locally visible in process listings and bounded by the OS argv
+# limit. Guarded here; disclosed in the spec's Limitations.
+ARGV_PROMPT_LIMIT = 200_000
+
 ROUND1_PROMPT_TEMPLATE = """\
 You are challenging a software specification through Socratic questioning.
 
@@ -426,10 +431,27 @@ def _kill_process_group(process: subprocess.Popen) -> None:
         process.kill()
 
 
+class ArgvTransportOverflow(ValueError):
+    """Prompt too large for an argv-transport provider protocol."""
+
+
 def build_model_invocation(config: RunConfig, prompt: str) -> ModelInvocation:
-    """Translate the common call into a provider-specific CLI invocation."""
+    """Translate the common call into a provider-specific CLI invocation.
+
+    The default Claude protocol keeps the stdin guarantee: the prompt never
+    enters argv, so spec text stays out of process listings. Argv-transport
+    protocols (copilot-argv) lose that guarantee — the exposure is disclosed
+    in the spec's Limitations — and are size-guarded against the OS argv limit.
+    """
     words = shlex.split(config.model_command)
     if config.model_protocol == "copilot-argv":
+        if len(prompt) > ARGV_PROMPT_LIMIT:
+            raise ArgvTransportOverflow(
+                f"prompt is {len(prompt)} chars; the argv-transport protocol "
+                f"'{config.model_protocol}' is limited to {ARGV_PROMPT_LIMIT} "
+                "chars (OS argv bound) — use a stdin-protocol provider for "
+                "specifications this large"
+            )
         return ModelInvocation(
             argv=words + [
                 "-p",
@@ -452,6 +474,10 @@ def run_model_call(config: RunConfig, prompt: str) -> CallOutcome:
     """
     try:
         invocation = build_model_invocation(config, prompt)
+    except ArgvTransportOverflow as exc:
+        return CallOutcome(
+            kind="failed", stdout="", stderr=str(exc), duration_seconds=0.0,
+        )
     except ValueError as exc:
         return CallOutcome(
             kind="failed",

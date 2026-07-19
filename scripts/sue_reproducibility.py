@@ -780,7 +780,8 @@ def parse_args(argv: list) -> tuple:
         "--readers",
         type=v1._positive_int,
         default=3,
-        help="readers per model command; framings repeat in a fixed cycle",
+        help="readers PER MODEL command (total readers = models × this value; "
+             "cost scales accordingly); framings repeat in a fixed cycle",
     )
     parser.add_argument("--families", default=",".join(DEFAULT_FAMILIES))
     parser.add_argument(
@@ -819,6 +820,9 @@ def main(argv: list | None = None) -> int:
         )
         for model_command in model_commands
     }
+    # Duplicate --model-cmd entries intentionally collapse to one RunConfig
+    # here (dict key dedupe): their ReaderJobs still run separately and share
+    # the config — identical readers, one preflight. Not a bug.
     config = configs[model_commands[0]]
     for candidate in configs.values():
         failure = v1.preflight(candidate)

@@ -498,6 +498,29 @@ class TestRunModelCall:
         ]
         assert invocation.stdin_text is None
 
+    def test_copilot_oversized_prompt_is_guarded_not_launched(self, tmp_path):
+        """Argv-transport prompts are size-guarded against the OS argv limit;
+        the failure is a named failed CallOutcome, never a subprocess launch."""
+        config = sue.RunConfig(
+            spec_path=tmp_path / "spec.md",
+            max_questions=1,
+            model_command="copilot",
+            timeout_seconds=10,
+            model_protocol="copilot-argv",
+        )
+        huge = "x" * (sue.ARGV_PROMPT_LIMIT + 1)
+        with pytest.raises(sue.ArgvTransportOverflow):
+            sue.build_model_invocation(config, huge)
+        outcome = sue.run_model_call(config, huge)
+        assert outcome.kind == "failed"
+        assert "argv" in outcome.stderr and "200000" in outcome.stderr
+
+    def test_claude_stdin_protocol_has_no_size_guard(self, tmp_path):
+        config = self._config(tmp_path, "claude")
+        huge = "x" * (sue.ARGV_PROMPT_LIMIT + 1)
+        invocation = sue.build_model_invocation(config, huge)
+        assert invocation.stdin_text == huge
+
     def test_recording_stub_cwd_argv_stdin(self, tmp_path):
         record = tmp_path / "record"
         record.mkdir()
