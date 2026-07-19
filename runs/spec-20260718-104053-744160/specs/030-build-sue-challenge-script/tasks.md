@@ -391,7 +391,9 @@ Every executable task starts with one top-level canonical row:
 
 ## Phase: Acceptance
 
-- [ ] T-S01 complexity=standard phase=acceptance req=FR-034 depends=T-014 target=.
+- [x] T-S01 complexity=standard phase=acceptance req=FR-034 depends=T-014 target=.
+
+  **Acceptance evidence (2026-07-19):** live run against `specs/029-builder-spec-workbench/spec.md` completed on attempt 1 of 3 — 13 findings (1 CONTRADICTED, 12 UNANSWERABLE), report at `specs/029-builder-spec-workbench/socratic-challenge.md`. AC-023 overlap satisfied: finding #13 directly matches known issue 3 (undefined/dangling active-run pointer, REQ-002 exactly-one-marker impossibility); findings #10 and #1 additionally overlap issues 2 (sanctioned-command enumeration underlying the score-recording loop) and 1 (journal-view SHOULD vs binding AC-010 tension). Adjudicated by the operator.
 
   **Title:** Manual live acceptance run against spec 029 (FINALIZE gate)
 
