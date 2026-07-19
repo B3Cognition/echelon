@@ -122,3 +122,30 @@ pairs. Extraction returning zero requirements = reader failure.
 
 Counterfactual minimal-clarification search, Justification Graph claim records,
 cross-model-family readers, workflow integration, full SRP corpus run.
+
+## Addendum 2026-07-19 — debt to the research report (review findings)
+
+Post-build review against the source research report identified four gaps;
+two fixed in v3.2, two recorded as v4 scope:
+
+1. **Fixed — no single-scalar headline:** the report warns against one
+   confidence number; reports now headline a measurement vector (convergence,
+   witness candidates + filtered phrasing variants, assumption load, thin
+   consensus, coverage). SR remains one component, never the story.
+2. **Fixed — witness honesty:** normalized-string inequality mistook phrasing
+   variants for behavioural conflict (live case W1: one spec line restated
+   twice). Witnesses are now word-overlap-screened, reported as *candidates*,
+   and the section is labelled heuristic. Exhibited behavioural verification
+   (the report's Grounded Divergence Witness standard) is v4.
+   **Fixed — untrusted convergence:** per-requirement `thin_consensus` flag
+   (high agreement over minimal content) operationalizes the report's "the
+   agents converged, but the convergence is not trustworthy" state, matching
+   the live vagueness result.
+3. **v4 debt — two-layer separation:** the report requires distinct
+   Understanding and Reasoning graphs; v3 merges knowledge, assumptions and
+   assertions into one requirement-local object. The Justification Graph
+   (claims/evidence/inference records) restores the second layer.
+4. **v4 debt — critical-fact retention + cross-model-family readers:**
+   retention exists only in v2's elenchus guard; v3 has no multi-round
+   evidence-retention measure. Heterogeneous model families remain the H4
+   experiment prerequisite.

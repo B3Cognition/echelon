@@ -341,14 +341,22 @@ def score_requirements(readers: list) -> dict:
             near += _near_misses(a, b)
         edge_counts = [len(r.requirements[req_id].edges) for r in readers if req_id in r.requirements]
         assumption_counts = [len(r.requirements[req_id].assumptions) for r in readers if req_id in r.requirements]
+        score = sum(pair_scores) / len(pair_scores) if pair_scores else 1.0
+        mean_edges = sum(edge_counts) / len(edge_counts) if edge_counts else 0.0
         result[req_id] = {
-            "score": sum(pair_scores) / len(pair_scores) if pair_scores else 1.0,
+            "score": score,
             "readers_covering": len(edge_counts),
-            "mean_edges": sum(edge_counts) / len(edge_counts) if edge_counts else 0.0,
+            "mean_edges": mean_edges,
             "assumption_load": (
                 sum(assumption_counts) / len(assumption_counts) if assumption_counts else 0.0
             ),
             "near_misses": near,
+            # "Converged but not trustworthy": high agreement over minimal
+            # content — the vagueness failure mode measured live (a vague
+            # mutant SCORED HIGHER). Agreement without substance is flagged,
+            # never celebrated.
+            "thin_consensus": bool(score >= 0.8 and mean_edges <= 1.5
+                                   and len(edge_counts) >= 2),
         }
     return result
 
@@ -362,9 +370,28 @@ def overall_score(per_req: dict) -> float:
 # ── Witnesses + localization (pure) ─────────────────────────────────────────
 
 
-def find_witnesses(readers: list) -> list:
-    """Grounded behavioural incompatibilities: same (given, when), different then."""
+def _then_overlap(a: str, b: str) -> float:
+    """Word-set Jaccard of two then-clauses (phrasing-variant detector)."""
+    wa, wb = _words(a), _words(b)
+    if not wa and not wb:
+        return 1.0
+    return len(wa & wb) / len(wa | wb)
+
+
+PHRASING_VARIANT_OVERLAP = 0.34
+
+
+def find_witnesses(readers: list) -> tuple:
+    """Witness CANDIDATES: same (given, when), materially different then.
+
+    Two then-clauses whose word overlap is >= PHRASING_VARIANT_OVERLAP are a
+    phrasing variant (same meaning, different words — found live: W1 restated
+    one spec line twice), counted but never a witness. True behavioural
+    verification (exhibiting the incompatibility) is v4; everything reported
+    here is a candidate, and is labelled so. Returns (candidates, variant_count).
+    """
     witnesses: list[Witness] = []
+    variants = 0
     all_reqs = sorted({r for reader in readers for r in reader.requirements})
     for req_id in all_reqs:
         situations: dict = {}
@@ -377,18 +404,20 @@ def find_witnesses(readers: list) -> list:
                     (reader.reader_no, assertion)
                 )
         for situation, entries in situations.items():
-            thens = {norm(a.then) for _, a in entries}
-            if len(thens) < 2:
-                continue
             grounded = [(no, a) for no, a in entries if a.lines]
             distinct: dict = {}
             for no, assertion in grounded:
                 distinct.setdefault(norm(assertion.then), (no, assertion))
-            if len(distinct) >= 2:
-                sides = sorted(distinct.values(), key=lambda pair: pair[0])[:2]
-                witnesses.append(Witness(req_id=req_id, situation=situation,
-                                         sides=sides))
-    return witnesses
+            if len(distinct) < 2:
+                continue
+            sides = sorted(distinct.values(), key=lambda pair: pair[0])[:2]
+            overlap = _then_overlap(sides[0][1].then, sides[1][1].then)
+            if overlap >= PHRASING_VARIANT_OVERLAP:
+                variants += 1
+                continue
+            witnesses.append(Witness(req_id=req_id, situation=situation,
+                                     sides=sides))
+    return witnesses, variants
 
 
 def fracture_lines(readers: list, per_req: dict, witnesses: list,
@@ -435,7 +464,8 @@ def _grade(score: float) -> str:
 
 def render_report(spec, spec_path: Path, readers: list, per_req: dict,
                   sr: float, witnesses: list, fractures: dict,
-                  run_date: str, dropped: list) -> str:
+                  run_date: str, dropped: list,
+                  phrasing_variants: int = 0) -> str:
     lines: list[str] = []
     lines.append("# Semantic Reproducibility Report")
     lines.append("")
@@ -445,8 +475,19 @@ def render_report(spec, spec_path: Path, readers: list, per_req: dict,
         f"- **Readers:** {len(readers)} completed"
         + (f" ({len(dropped)} dropped: {', '.join(dropped)})" if dropped else "")
     )
-    lines.append(f"- **Semantic reproducibility:** {sr:.3f} — {_grade(sr)}")
-    lines.append(f"- **Witnesses (behavioural incompatibilities):** {len(witnesses)}")
+    thin = sorted(r for r, v in per_req.items() if v.get("thin_consensus"))
+    mean_load = (
+        sum(v["assumption_load"] for v in per_req.values()) / len(per_req)
+        if per_req else 0.0
+    )
+    lines.append("- **Measurement vector** (no single number tells this story):")
+    lines.append(f"  - semantic convergence: {sr:.3f} — {_grade(sr)}")
+    lines.append(f"  - witness candidates (unverified): {len(witnesses)}"
+                 f" · phrasing variants filtered: {phrasing_variants}")
+    lines.append(f"  - assumption load (mean/req): {mean_load:.2f}")
+    lines.append(f"  - untrusted convergence (thin consensus): {len(thin)}"
+                 + (f" — {', '.join(thin[:8])}" if thin else ""))
+    lines.append(f"  - requirements measured: {len(per_req)}")
     ungrounded = ", ".join(f"R{r.reader_no}={r.ungrounded_edges}" for r in readers)
     lines.append(f"- **Ungrounded edges dropped:** {ungrounded}")
     if any(r.failed_chunks for r in readers):
@@ -466,10 +507,11 @@ def render_report(spec, spec_path: Path, readers: list, per_req: dict,
             f"| {values['near_misses']} |"
         )
     lines.append("")
-    lines.append("## Divergence witnesses")
+    lines.append("## Divergence witness candidates "
+                 "(heuristic — behavioural verification is v4)")
     lines.append("")
     if not witnesses:
-        lines.append("None — no grounded behavioural incompatibility was exhibited.")
+        lines.append("None — no materially divergent grounded then-clauses found.")
         lines.append("")
     ordered = sorted(witnesses, key=lambda w: per_req.get(w.req_id, {}).get("score", 1.0))
     for index, witness in enumerate(ordered, start=1):
@@ -525,6 +567,9 @@ def build_sidecar(spec_path: Path, readers: list, per_req: dict, sr: float,
         ],
         "per_requirement": per_req,
         "semantic_reproducibility": sr,
+        "thin_consensus": sorted(
+            r for r, v in per_req.items() if v.get("thin_consensus")
+        ),
         "witnesses": [
             {
                 "requirement": w.req_id,
@@ -650,12 +695,13 @@ def main(argv: list | None = None) -> int:
 
     per_req = score_requirements(readers)
     sr = overall_score(per_req)
-    witnesses = find_witnesses(readers)
+    witnesses, phrasing_variants = find_witnesses(readers)
     fractures = fracture_lines(readers, per_req, witnesses)
     run_date = datetime.now().strftime("%Y-%m-%d")
 
     report = render_report(spec, config.spec_path, readers, per_req, sr,
-                           witnesses, fractures, run_date, dropped)
+                           witnesses, fractures, run_date, dropped,
+                           phrasing_variants=phrasing_variants)
     sidecar = build_sidecar(config.spec_path, readers, per_req, sr, witnesses,
                             fractures, run_date)
     try:

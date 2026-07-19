@@ -160,26 +160,51 @@ class TestWitnesses:
     def test_conflicting_then_yields_witness(self):
         a = {"FR-001": _interp(assertions=[self._assertion("the file persists")])}
         b = {"FR-001": _interp(assertions=[self._assertion("the save is blocked")])}
-        witnesses = v3.find_witnesses([_reader(1, a), _reader(2, b)])
-        assert len(witnesses) == 1
+        witnesses, variants = v3.find_witnesses([_reader(1, a), _reader(2, b)])
+        assert len(witnesses) == 1 and variants == 0
         assert witnesses[0].req_id == "FR-001"
 
     def test_agreeing_then_no_witness(self):
         a = {"FR-001": _interp(assertions=[self._assertion("The File Persists")])}
         b = {"FR-001": _interp(assertions=[self._assertion("the file persists")])}
-        assert v3.find_witnesses([_reader(1, a), _reader(2, b)]) == []
+        assert v3.find_witnesses([_reader(1, a), _reader(2, b)]) == ([], 0)
+
+    def test_phrasing_variant_is_not_a_witness(self):
+        """Live regression (W1): same meaning restated must count as a
+        phrasing variant, never a witness candidate."""
+        a = {"FR-001": _interp(assertions=[self._assertion(
+            "two model calls occur and the report lands beside the specification")])}
+        b = {"FR-001": _interp(assertions=[self._assertion(
+            "exactly 2 model calls occur and the report lands in the specification directory")])}
+        witnesses, variants = v3.find_witnesses([_reader(1, a), _reader(2, b)])
+        assert witnesses == [] and variants == 1
 
     def test_ungrounded_side_cannot_witness(self):
         a = {"FR-001": _interp(assertions=[self._assertion("the file persists")])}
         b = {"FR-001": _interp(assertions=[self._assertion("the save is blocked", lines=())])}
-        assert v3.find_witnesses([_reader(1, a), _reader(2, b)]) == []
+        assert v3.find_witnesses([_reader(1, a), _reader(2, b)]) == ([], 0)
 
     def test_different_situations_no_witness(self):
         a = {"FR-001": _interp(assertions=[v3.Assertion(
             given="a valid rule", when="save", then="persists", lines=[3])])}
         b = {"FR-001": _interp(assertions=[v3.Assertion(
             given="an invalid rule", when="save", then="blocked", lines=[4])])}
-        assert v3.find_witnesses([_reader(1, a), _reader(2, b)]) == []
+        assert v3.find_witnesses([_reader(1, a), _reader(2, b)]) == ([], 0)
+
+
+class TestThinConsensus:
+    def test_high_agreement_over_thin_content_flagged(self):
+        reqs = {"FR-001": _interp([_edge("system", "write report")])}
+        per = v3.score_requirements([_reader(1, reqs), _reader(2, reqs)])
+        assert per["FR-001"]["thin_consensus"] is True
+
+    def test_rich_agreement_not_flagged(self):
+        rich = _interp([_edge("system", "write report"),
+                        _edge("system", "print summary", line=2),
+                        _edge("operator", "run script", line=3)])
+        per = v3.score_requirements([_reader(1, {"FR-001": rich}),
+                                     _reader(2, {"FR-001": rich})])
+        assert per["FR-001"]["thin_consensus"] is False
 
 
 class TestFractureLines:
@@ -311,7 +336,7 @@ class TestScenario:
         rc = v3.main([str(spec), "--claude-cmd", shlex.quote(stub)])
         assert rc == 0
         report = (tmp_path / "semantic-reproducibility.md").read_text()
-        assert "Divergence witnesses" in report
+        assert "Divergence witness candidates" in report
         assert "W1. FR-002" in report
         assert "the save is blocked until review" in report
         sidecar = json.loads((tmp_path / "semantic-reproducibility.json").read_text())
