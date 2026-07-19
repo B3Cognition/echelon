@@ -50,6 +50,10 @@ def _catalog_dirty(project_root: Path) -> bool:
     return bool(result.stdout.strip())
 
 
+def _remove_temporary_parent(path: Path) -> None:
+    shutil.rmtree(path)
+
+
 @contextmanager
 def wiki_catalog_source(project_root: Path) -> Iterator[WikiCatalogSource]:
     """Yield the caller root or a pinned local default-branch worktree."""
@@ -66,12 +70,30 @@ def wiki_catalog_source(project_root: Path) -> Iterator[WikiCatalogSource]:
         yield WikiCatalogSource(root, root, None, None, False, False)
         return
 
+    configured = _configured_default_branch(root)
     try:
-        branch, revision = resolve_phase_a_default_branch(
-            root, _configured_default_branch(root)
-        )
+        branch, revision = resolve_phase_a_default_branch(root, configured)
+    except PhaseAGitError as exc:
+        if configured.strip():
+            raise WikiCatalogError(str(exc)) from exc
+        try:
+            revision_result = run_git(root, "rev-parse", "HEAD", check=False)
+            live_revision = (
+                revision_result.stdout.strip()
+                if revision_result.returncode == 0
+                else None
+            )
+            dirty = _catalog_dirty(root)
+        except GitHelperError as git_exc:
+            raise WikiCatalogError(str(git_exc)) from git_exc
+        yield WikiCatalogSource(root, root, None, live_revision, dirty, False)
+        return
+    except (GitHelperError, OSError) as exc:
+        raise WikiCatalogError(str(exc)) from exc
+
+    try:
         current = run_git(root, "branch", "--show-current").stdout.strip()
-    except (GitHelperError, PhaseAGitError, OSError) as exc:
+    except GitHelperError as exc:
         raise WikiCatalogError(str(exc)) from exc
 
     if current == branch:
@@ -101,9 +123,24 @@ def wiki_catalog_source(project_root: Path) -> Iterator[WikiCatalogSource]:
             target = source_root / ".echelon/local.yml"
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(local_config, target)
-        yield WikiCatalogSource(root, source_root, branch, revision, False, True)
     except (GitHelperError, OSError) as exc:
+        if added:
+            run_git(
+                root,
+                "worktree",
+                "remove",
+                "--force",
+                str(source_root),
+                check=False,
+            )
+            run_git(root, "worktree", "prune", check=False)
+        try:
+            _remove_temporary_parent(temporary_parent)
+        except OSError:
+            pass
         raise WikiCatalogError(str(exc)) from exc
+    try:
+        yield WikiCatalogSource(root, source_root, branch, revision, False, True)
     finally:
         cleanup_error: Exception | None = None
         if added:
@@ -113,9 +150,12 @@ def wiki_catalog_source(project_root: Path) -> Iterator[WikiCatalogSource]:
             except (GitHelperError, OSError) as exc:
                 cleanup_error = exc
         if cleanup_error is None:
-            shutil.rmtree(temporary_parent, ignore_errors=True)
+            try:
+                _remove_temporary_parent(temporary_parent)
+            except OSError as exc:
+                cleanup_error = exc
         if cleanup_error is not None:
             raise WikiCatalogError(
                 f"could not remove temporary wiki catalog worktree; retained at "
-                f"{source_root}: {cleanup_error}"
+                f"{temporary_parent}: {cleanup_error}"
             ) from cleanup_error

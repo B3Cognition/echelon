@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import subprocess
+import shutil
 from pathlib import Path
 
 import pytest
 
-from echelon.wiki.catalog_source import wiki_catalog_source
+from echelon.wiki.catalog_source import WikiCatalogError, wiki_catalog_source
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -55,6 +56,35 @@ def test_default_branch_caller_uses_live_workspace(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_unconfigured_nonstandard_branch_falls_back_to_live_workspace(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path / "repo", branch="trunk")
+
+    with wiki_catalog_source(repo) as source:
+        assert source.workspace_root == repo.resolve()
+        assert source.source_root == repo.resolve()
+        assert source.branch is None
+        assert source.revision == _git(repo, "rev-parse", "HEAD")
+        assert source.dirty is False
+        assert source.temporary is False
+
+
+@pytest.mark.unit
+def test_explicit_missing_default_branch_is_an_error(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path / "repo", branch="trunk")
+    config_dir = repo / ".echelon"
+    config_dir.mkdir()
+    (config_dir / "config.yml").write_text(
+        "target_default_branch: missing\n", encoding="utf-8"
+    )
+
+    with pytest.raises(WikiCatalogError, match="missing locally"):
+        with wiki_catalog_source(repo):
+            pass
+
+
+@pytest.mark.unit
 def test_feature_branch_uses_pinned_temporary_default_worktree(tmp_path: Path) -> None:
     repo = _init_repo(tmp_path / "repo")
     master_commit = _git(repo, "rev-parse", "master")
@@ -101,3 +131,28 @@ def test_local_config_overrides_committed_default_and_is_available_in_source(
         ) == (config_dir / "local.yml").read_text(encoding="utf-8")
 
     assert (config_dir / "local.yml").is_file()
+
+
+@pytest.mark.unit
+def test_temporary_parent_cleanup_failure_is_reported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    _git(repo, "switch", "-c", "004-feature")
+    retained_parent: Path | None = None
+
+    def fail_cleanup(path: Path) -> None:
+        raise OSError(f"cannot remove {path}")
+
+    with pytest.raises(WikiCatalogError, match="retained at"):
+        with wiki_catalog_source(repo) as source:
+            retained_parent = source.source_root.parent
+            monkeypatch.setattr(
+                "echelon.wiki.catalog_source._remove_temporary_parent",
+                fail_cleanup,
+            )
+
+    assert retained_parent is not None
+    assert retained_parent.exists()
+    monkeypatch.undo()
+    shutil.rmtree(retained_parent)

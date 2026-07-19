@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -212,6 +213,34 @@ def test_failed_rebuild_preserves_previous_valid_vault(
 
     assert first.home_path.read_bytes() == home_before
     assert wiki_status(project_root).state == "fresh"
+
+
+@pytest.mark.unit
+def test_catalog_cleanup_failure_preserves_previous_valid_vault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _master_worktree, _caller_head = _workspace_with_feature_and_published_master(
+        tmp_path
+    )
+    first = build_wiki(repo, now=lambda: FIXED_NOW)
+    home_before = first.home_path.read_bytes()
+    retained: list[Path] = []
+
+    def fail_cleanup(path: Path) -> None:
+        retained.append(path)
+        raise OSError(f"cannot remove {path}")
+
+    monkeypatch.setattr(
+        "echelon.wiki.catalog_source._remove_temporary_parent", fail_cleanup
+    )
+
+    with pytest.raises(WikiBuildError, match="retained at"):
+        build_wiki(repo, now=lambda: FIXED_NOW)
+
+    assert first.home_path.read_bytes() == home_before
+    monkeypatch.undo()
+    for path in retained:
+        shutil.rmtree(path)
 
 
 @pytest.mark.unit
