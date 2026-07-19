@@ -4,7 +4,38 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Delivery finalization recovery** — a documentation-only delivery slice no
+  longer fails merely because every canonical task is already terminal. Ralph
+  still requires exact task IDs for implementation progress, while the build
+  contract now permits the report-driven README/CHANGELOG updates needed to
+  close the documentation gate.
+- **Spec-result recovery** — a rejected non-authoritative `state_updates` key
+  now retries the originating phase instead of recommending an unsafe rewind.
+
+- **Patch-release support** — release metadata tooling and the GitHub release
+  workflow now accept the immediate next patch version as well as the next
+  minor version.
+
 ### Added
+
+- **#166 local spec catalog publication** — `echelon spec publish <id>` and
+  `echelon spec publish --all` copy committed spec-only snapshots from canonical
+  local Phase A branches into one local default-branch catalog commit. This
+  gives the existing main-only human wiki a complete, Git-native input surface
+  without making wiki generation branch-aware or merging implementation
+  history. Publication is atomic, retains source branches, records branch and
+  commit provenance, refuses dirty/conflicting worktrees, and never fetches,
+  pushes, or deletes branches.
+
+- **#165 workspace human artifact wiki** — `echelon wiki build`, `status`, and
+  `clean` generate and manage a deterministic, offline Markdown navigation vault
+  for canonical `specs/` and published `re/` artifacts. The untracked vault
+  includes evidence-backed relationships, aggregate views, provenance, safe
+  freshness reporting, and optional Obsidian configuration. Existing vaults
+  refresh after successful Echelon commands that change canonical inputs unless
+  `.echelon/local.yml` sets `wiki.auto_refresh: false`.
 
 - **EGR-151 / #164 exclusive Phase A GitOps** — Echelon now owns Phase A
   branch lifecycle end-to-end: workspace initialization disables competing
@@ -45,6 +76,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   direct Figma URLs use `FIGMA_ACCESS_TOKEN` without publishing credentials.
 
 ### Fixed
+
+- **EGR-152 P0 RE synthesis recovery** — RE specification targets now have a
+  file-only result contract, so redundant agent state cannot reject completed
+  workspace synthesis. `echelon re continue` recognizes the exact 3.5.1
+  failure signature, validates every retained source overview, workspace
+  document, and architecture-domain document, then resumes downstream gates
+  without paying for another specification dispatch. Incomplete retained output
+  fails closed, and terminal blockers now include the controller's precise
+  validation detail.
+
+- **EGR-145 ledger-backed Phase A rewind** — `echelon spec rewind` now accepts
+  only checkpoint phases or IDs recorded in the active run's ledger. The same
+  ledger powers `checkpoint list`, error output, and automatic retry recovery;
+  confirmed rewind resets Git to the selected checkpoint and clears only state
+  completed after that ledger entry. Early checkpoints such as `phase1-what`
+  and `phase2-decide` are no longer rejected by a Phase 3 allowlist.
 
 - **Shared Node runtime discovery** — the installer now refreshes the pinned
   Context7, CodeGraph, and PerlGraph runtimes under

@@ -58,6 +58,7 @@ TERMINAL_PHASES = {"DONE", "done", PHASE_TERMINAL_BLOCKED}
 WHY_PHASES = frozenset({"phase1-why1", "phase1-why2"})
 ITERATIVE_PHASES = WHY_PHASES | frozenset(
     {
+        "phase1-what",
         "phase3-how",
         "phase3-sentinel",
         "phase3-plan",
@@ -72,6 +73,11 @@ MAX_CONVERGENCE_GUARD_FIRES = 3
 # Max dispatches of any single phase per run before forcing escalation.
 # WHY phases are governed separately by why_fail_count; this cap applies to all others.
 MAX_PHASE_DISPATCHES = 5
+# A planning agent gets the original pass plus two controller-directed repairs
+# to resolve its own product-input mapping omissions.  This is intentionally
+# bounded: the controller may demand evidence, but must never invent mappings.
+MAX_PRODUCT_INPUT_MAPPING_REPAIRS = 2
+PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION = 2
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
 JUDGMENT_STATE_UPDATE_KEYS = frozenset(
     {
@@ -636,6 +642,18 @@ class SquadController:
 
             if phase in TERMINAL_PHASES:
                 state = self._state_store.load()
+                # ``terminal-blocked`` is not finalization.  It is a hard stop
+                # requested by a guard, and must never be converted into a
+                # readiness check or a successful completion merely because an
+                # earlier banzai handler temporarily set status=running.
+                if phase == PHASE_TERMINAL_BLOCKED:
+                    if state.get("status") != "blocked":
+                        state["status"] = "blocked"
+                        state["blocked_reason"] = (
+                            state.get("blocked_reason") or "terminal_blocked"
+                        )
+                        self._state_store.save(state)
+                    return SquadResult.from_state(self._state_store.load())
                 # Preserve "blocked" status set by guards (e.g. consecutive-fail).
                 # Only write "done" when not already in a terminal-blocked state.
                 if state.get("status") != "blocked":
@@ -719,6 +737,8 @@ class SquadController:
                 return SquadResult.from_state(self._state_store.load())
             product_input_error = self._apply_product_input_updates(result, phase)
             if product_input_error:
+                if self._schedule_product_input_mapping_repair(phase, product_input_error, result):
+                    continue
                 self._block_after_executor_failure(phase, product_input_error, result)
                 return SquadResult.from_state(self._state_store.load())
 
@@ -913,6 +933,8 @@ class SquadController:
             return SquadResult.from_state(self._state_store.load())
         product_input_error = self._apply_product_input_updates(result, phase)
         if product_input_error:
+            if self._schedule_product_input_mapping_repair(phase, product_input_error, result):
+                return SquadResult.from_state(self._state_store.load())
             self._block_after_executor_failure(phase, product_input_error, result)
             return SquadResult.from_state(self._state_store.load())
 
@@ -1401,6 +1423,10 @@ class SquadController:
         traceability_path = Path(traceability_ref)
         if not traceability_path.is_absolute():
             traceability_path = self._project_root / traceability_path
+        catalog_ref = str(metadata.get("catalog") or "").strip()
+        catalog_path = Path(catalog_ref) if catalog_ref else None
+        if catalog_path is not None and not catalog_path.is_absolute():
+            catalog_path = self._project_root / catalog_path
         active_spec_dir = self._active_phase_a_spec_dir(state)
         enforce_direct_task_mappings = phase in {"phase3-plan", "phase3-consensus"}
         tasks_path = active_spec_dir / "tasks.md" if enforce_direct_task_mappings and active_spec_dir else None
@@ -1413,8 +1439,15 @@ class SquadController:
             from echelon.product_inputs import (
                 ProductInputError,
                 apply_product_input_updates,
+                repair_product_input_structural_units,
                 validate_product_input_traceability_paths,
             )
+            if catalog_path is not None:
+                repair_product_input_structural_units(
+                    traceability_path,
+                    catalog_path,
+                    apply=True,
+                )
             if updates:
                 apply_product_input_updates(
                     traceability_path,
@@ -1432,7 +1465,97 @@ class SquadController:
                     return "invalid product input task mappings: " + "; ".join(blockers)
         except (OSError, ProductInputError) as exc:
             return f"invalid product input updates: {exc}"
+        if phase in {"phase3-plan", "phase3-consensus"}:
+            repaired = self._state_store.load()
+            repaired.pop("product_input_mapping_repair", None)
+            repaired.pop("product_input_mapping_repair_attempts", None)
+            self._state_store.save(repaired)
         return None
+
+    def _schedule_product_input_mapping_repair(
+        self,
+        phase: str,
+        error: str,
+        result: SquadAgentResult | None = None,
+    ) -> bool:
+        """Re-dispatch PLAN with exact unresolved product-input evidence.
+
+        Product-input mappings are authored by ORCHESTRATOR, not inferred by the
+        controller.  A missing/invalid update therefore gets a bounded repair
+        pass with the ledger blockers injected into its prompt; only exhaustion
+        becomes a terminal block.
+        """
+        if phase not in {"phase3-plan", "phase3-consensus"}:
+            return False
+        prefixes = (
+            "invalid product input task mappings:",
+            "invalid product input updates:",
+        )
+        if not error.startswith(prefixes):
+            return False
+
+        state = self._state_store.load()
+        existing_repair = state.get("product_input_mapping_repair")
+        protocol_version = (
+            existing_repair.get("protocol_version")
+            if isinstance(existing_repair, dict)
+            else None
+        )
+        attempts = state.get("product_input_mapping_repair_attempts", 0)
+        attempts = attempts if isinstance(attempts, int) else 0
+        # A repair protocol upgrade carries strictly more deterministic evidence
+        # than the prior prompt.  Give interrupted historical runs a fresh,
+        # bounded repair budget instead of preserving a spent, weaker loop.
+        protocol_upgraded = (
+            isinstance(existing_repair, dict)
+            and protocol_version != PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION
+        )
+        if protocol_upgraded:
+            attempts = 0
+            dispatch_counts = state.get("phase_dispatch_counts")
+            if isinstance(dispatch_counts, dict):
+                dispatch_counts[phase] = 0
+        if attempts >= MAX_PRODUCT_INPUT_MAPPING_REPAIRS:
+            return False
+
+        detail = error.split(":", 1)[1].strip() if ":" in error else error
+        blockers = [item.strip() for item in detail.split(";") if item.strip()]
+        hints: dict[str, object] = {}
+        payload = result.echelon_result if result is not None else None
+        updates = payload.get("product_input_updates") if isinstance(payload, dict) else None
+        active_spec_dir = self._active_phase_a_spec_dir(state)
+        if isinstance(updates, list) and active_spec_dir is not None:
+            try:
+                from echelon.product_inputs import build_product_input_mapping_repair_hints
+
+                hints = build_product_input_mapping_repair_hints(
+                    updates,
+                    active_spec_dir / "tasks.md",
+                    [
+                        str(value).strip()
+                        for value in state.get("implementation_targets", [])
+                        if str(value).strip()
+                    ],
+                )
+            except (OSError, ValueError) as exc:
+                logger.warning("Could not construct product-input repair hints: %s", exc)
+        state["product_input_mapping_repair_attempts"] = attempts + 1
+        state["product_input_mapping_repair"] = {
+            "attempt": attempts + 1,
+            "blockers": blockers,
+            "protocol_version": PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION,
+            **hints,
+        }
+        state["phase"] = phase
+        state["status"] = "running"
+        state["blocked_reason"] = None
+        self._state_store.save(state)
+        print(
+            f"[squad] ~ {phase} product-input mapping repair "
+            f"({attempts + 1}/{MAX_PRODUCT_INPUT_MAPPING_REPAIRS})",
+            flush=True,
+        )
+        return True
 
     def _published_phase_a_spec_dir(self, state: dict, active_spec_dir: Path) -> Path:
         published_ref = str(state.get("published_spec_dir") or "").strip()
@@ -1794,8 +1917,153 @@ class SquadController:
                 cfg = {"lexicon_gate": block}
         except Exception:
             cfg = {}
+        # The workflow conditions compare each controlled gate's repair count
+        # against the configured cap. Missing result fields must mean "zero
+        # reported repairs", never an indeterminate condition that falls
+        # through to a later phase.
+        cfg.setdefault("lexicon_attempts", 0)
+        cfg.setdefault("tasks_lexicon_attempts", 0)
         self._gate_config_cache = cfg
         return cfg
+
+    def _enforce_spec_lexicon_gate_result(
+        self,
+        node: PhaseNode,
+        state: dict,
+        result: SquadAgentResult,
+    ) -> None:
+        """Keep an enabled derived-spec gate from falling through on omission.
+
+        CARTOGRAPHER owns generation and repair, but its result is still a
+        controller contract.  A missing certificate or derived artifact is a
+        failed attempt, never an invitation for a judgment agent to bypass the
+        deterministic self-loop.
+        """
+
+        if node.id != "phase1-what":
+            return
+        gate = self._lexicon_gate_config().get("lexicon_gate", {})
+        if not isinstance(gate, dict) or not gate.get("enabled", False):
+            return
+        artifacts = gate.get("artifacts", {})
+        spec_gate = artifacts.get("spec", {}) if isinstance(artifacts, dict) else {}
+        if not isinstance(spec_gate, dict) or not spec_gate.get("enabled", False):
+            return
+
+        updates = result.state_updates
+        spec_dir_ref = str(updates.get("spec_dir") or state.get("spec_dir") or "").strip()
+        spec_dir = Path(spec_dir_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        if not (spec_dir / "spec.md").is_file():
+            return
+        derived_name = str(spec_gate.get("path") or "requirements.lexicon.md").strip()
+        derived_path = spec_dir / derived_name
+        source_name = str(spec_gate.get("source_ref") or "spec.md").strip()
+        glossary_name = str(spec_gate.get("glossary_file") or "glossary.md").strip()
+        source_path = spec_dir / source_name
+        glossary_path = spec_dir / glossary_name
+
+        # The result block is an agent-produced API response, not validation
+        # evidence.  Verify the exact on-disk artifact at the controller
+        # boundary so a stale narrative (or an omitted validator invocation)
+        # cannot turn a valid artifact into a terminal block, or an invalid one
+        # into a pass.
+        if derived_path.is_file() and source_path.is_file():
+            try:
+                from lexicon.source_contract import source_contract_findings
+                from lexicon.validity import validate as validate_lexicon
+
+                glossary: set[str] = set()
+                if glossary_path.is_file():
+                    import re
+
+                    for raw in glossary_path.read_text(encoding="utf-8").splitlines():
+                        line = raw.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        terms = re.findall(r"\*\*([^*]+)\*\*", line)
+                        glossary.update(term.strip() for term in terms or [line])
+
+                report = validate_lexicon(
+                    derived_path.read_text(encoding="utf-8"),
+                    glossary=glossary,
+                    artifact_type="SPEC",
+                )
+                findings = [*report.findings, *source_contract_findings(
+                    derived_path.read_text(encoding="utf-8"), source_path
+                )]
+                updates["lexicon_pass"] = not findings
+                updates["lexicon_findings"] = len(findings)
+                # A controller-certified pass ends the repair loop regardless
+                # of an agent's stale attempt counter.
+                if not findings:
+                    updates["lexicon_attempts"] = 0
+                return
+            except Exception:
+                # A validator failure is never evidence of a pass.  Preserve
+                # the normal failure path below so the configured gate policy
+                # remains authoritative.
+                pass
+
+        updates["lexicon_pass"] = False
+        attempts = updates.get("lexicon_attempts", state.get("lexicon_attempts"))
+        updates["lexicon_attempts"] = attempts if isinstance(attempts, int) else 0
+        findings = updates.get("lexicon_findings", state.get("lexicon_findings"))
+        updates["lexicon_findings"] = findings if isinstance(findings, int) else 1
+
+    def _lexicon_gate_must_block_on_exhaustion(
+        self,
+        node: PhaseNode,
+        state: dict,
+        result: SquadAgentResult,
+    ) -> bool:
+        """Block an enabled hard Lexicon gate instead of falling through.
+
+        A `warn` policy deliberately permits downstream review with a recorded
+        warning.  A `block` policy is a hard delivery contract: after the final
+        repair attempt there is no valid transition to a later authoring phase.
+        """
+        gate_artifacts = {
+            "phase1-what": ("spec", "lexicon_pass", "lexicon_attempts"),
+            "phase3-plan": ("tasks", "tasks_lexicon_pass", "tasks_lexicon_attempts"),
+        }
+        gate_fields = gate_artifacts.get(node.id)
+        if gate_fields is None:
+            return False
+        artifact_name, pass_key, attempts_key = gate_fields
+        gate = self._lexicon_gate_config().get("lexicon_gate", {})
+        if not isinstance(gate, dict) or str(gate.get("on_exhausted", "block")).lower() != "block":
+            return False
+        artifacts = gate.get("artifacts", {})
+        artifact_gate = artifacts.get(artifact_name, {}) if isinstance(artifacts, dict) else {}
+        if not isinstance(artifact_gate, dict) or not artifact_gate.get("enabled", False):
+            return False
+        try:
+            repair_cap = int(gate.get("max_repair_attempts", 3))
+        except (TypeError, ValueError):
+            repair_cap = 3
+        reported_attempts = result.state_updates.get(attempts_key, state.get(attempts_key))
+        repair_attempts_exhausted = (
+            isinstance(reported_attempts, int)
+            and repair_cap > 0
+            and reported_attempts >= repair_cap
+        )
+        squad_iterations_exhausted = int(state.get("iteration") or 0) >= int(
+            state.get("max_iterations") or self._max_iterations
+        )
+        if not repair_attempts_exhausted and not squad_iterations_exhausted:
+            return False
+        if result.state_updates.get(pass_key) is True:
+            return False
+
+        exhausted = self._state_store.load()
+        exhausted["phase"] = PHASE_TERMINAL_BLOCKED
+        exhausted["status"] = "blocked"
+        exhausted["blocked_reason"] = "lexicon_gate_exhausted"
+        exhausted["lexicon_gate_exhausted"] = True
+        self._state_store.save(exhausted)
+        return True
 
     def _governance_config(self) -> dict:
         """Load the `governance` block so governance.* resolves in transition conditions.
@@ -1856,6 +2124,9 @@ class SquadController:
         state = self._state_store.load()
         if node.id in WHY_PHASES:
             self._normalize_why_result_quality_scores(result)
+        self._enforce_spec_lexicon_gate_result(node, state, result)
+        if self._lexicon_gate_must_block_on_exhaustion(node, state, result):
+            return PHASE_TERMINAL_BLOCKED
         # Merge order (lowest→highest precedence): lexicon_gate config, governance
         # config, then state, then result.state_updates — so freshly-written values
         # (quality_scores, tasks_lexicon_pass, etc.) win, while config-namespace
@@ -2061,9 +2332,21 @@ class SquadController:
             )
 
         result = self._provider.exec_agent(str(self._project_root), context)
+        requested_phase = str(
+            result.state_updates.get("next_phase")
+            or result.state_updates.get("phase")
+            or ""
+        ).strip()
+        if requested_phase and requested_phase not in self._graph.all_phase_ids():
+            self._block_after_judgment_validation_failure(
+                blocked_phase,
+                f"judgment returned invalid next_phase {requested_phase!r}",
+            )
+            return result
         if not self._apply_judgment_state_updates(
             result,
             blocked_phase,
+            exclude_keys={"next_phase", "phase"},
             delete_null=True,
         ):
             return result
@@ -2076,6 +2359,17 @@ class SquadController:
                 "phase": capped_phase,
                 "resolver": "COMMANDER-banzai",
             }
+            self._state_store.save(recovered)
+        if requested_phase:
+            recovered = self._state_store.load()
+            recovered["phase"] = requested_phase
+            recovered.pop("next_phase", None)
+            self._state_store.save(recovered)
+        elif blocked_phase and blocked_phase != PHASE_TERMINAL_BLOCKED:
+            # A judgment that only answers the question resumes the phase that
+            # raised it; it must not leave the controller on terminal-blocked.
+            recovered = self._state_store.load()
+            recovered["phase"] = blocked_phase
             self._state_store.save(recovered)
         self._write_journal_entries(result, blocked_phase)
 

@@ -7,6 +7,7 @@ Echelon normalize CLI contracts incrementally without rewriting harness logic.
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import Optional
 
@@ -74,6 +75,8 @@ spec_app = typer.Typer(
         "                    [--re-policy none|cached-only|changed|refresh-all]\n"
         "                    [--re-max-inner <n>]\n"
         "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
+        "  publish <spec-id-or-branch> | publish --all\n"
+        "                    Commit spec-only snapshots to the local default branch.\n"
         "  targets <spec_id>  Display every task grouped by delivery target.\n"
         "  drop-target <spec_id> <target> --confirm\n"
         "                    Remove an unused target from an unfinished run.\n"
@@ -102,6 +105,11 @@ kb_app = typer.Typer(
     help="Validate and apply Phase A knowledge-base proposals.",
     no_args_is_help=True,
 )
+wiki_app = typer.Typer(
+    add_completion=False,
+    help="Build and inspect local human navigation for Echelon artifacts.",
+    no_args_is_help=True,
+)
 
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(spec_app, name="spec")
@@ -112,9 +120,73 @@ app.add_typer(delivery_app, name="delivery")
 app.add_typer(harness_app, name="harness", hidden=True)
 app.add_typer(re_app, name="re")
 app.add_typer(kb_app, name="kb")
+app.add_typer(wiki_app, name="wiki")
 workspace_app.add_typer(workspace_sources_app, name="sources")
 spec_app.add_typer(spec_checkpoint_app, name="checkpoint")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
+
+
+@wiki_app.command("build")
+def wiki_build() -> None:
+    """Build the local read-only Markdown wiki."""
+    from echelon.wiki.service import WikiBuildError, build_wiki
+
+    try:
+        result = build_wiki(Path.cwd())
+    except WikiBuildError as exc:
+        typer.echo(f"Wiki build failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"Wiki generated: {result.output_dir}")
+    typer.echo(f"Home: {result.home_path}")
+    typer.echo(
+        f"Inputs: {result.input_count}; outputs: {result.output_count}; "
+        f"warnings: {result.warning_count}"
+    )
+    typer.echo(
+        "Optional viewer: open the generated directory as an Obsidian vault "
+        "(https://obsidian.md/download)."
+    )
+
+
+@wiki_app.command("status")
+def wiki_status_command() -> None:
+    """Report whether the generated wiki matches canonical artifacts."""
+    from echelon.wiki.service import wiki_status
+
+    status = wiki_status(Path.cwd())
+    typer.echo(f"State: {status.state}")
+    typer.echo(f"Path: {status.output_dir}")
+    if status.workspace_revision:
+        typer.echo(f"Revision: {status.workspace_revision}")
+    typer.echo(f"Dirty canonical inputs: {'yes' if status.workspace_dirty else 'no'}")
+    for label, paths in (
+        ("Added", status.added_inputs),
+        ("Changed", status.changed_inputs),
+        ("Removed", status.removed_inputs),
+    ):
+        if paths:
+            typer.echo(f"{label}:")
+            for path in paths:
+                typer.echo(f"  - {path}")
+    typer.echo(status.message)
+    if status.state == "invalid":
+        raise typer.Exit(code=1)
+
+
+@wiki_app.command("clean")
+def wiki_clean() -> None:
+    """Remove a manifest-owned generated wiki."""
+    from echelon.wiki.service import WikiCleanError, clean_wiki
+
+    try:
+        removed = clean_wiki(Path.cwd())
+    except WikiCleanError as exc:
+        typer.echo(f"Wiki clean failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    if removed is None:
+        typer.echo("Wiki is absent; nothing to clean.")
+    else:
+        typer.echo(f"Removed: {removed}")
 
 
 def _ctx_args(ctx: typer.Context) -> list[str]:
@@ -433,7 +505,7 @@ def root_continue(
 )
 def root_rewind(
     ctx: typer.Context,
-    phase_id: str = typer.Argument(..., help="Safe phase id to rewind to."),
+    phase_id: str = typer.Argument(..., help="Recorded checkpoint phase or ID to rewind to."),
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Compatibility alias for spec rewind."""
@@ -1124,7 +1196,7 @@ def spec_resume(
 )
 def spec_rewind(
     ctx: typer.Context,
-    phase_id: str = typer.Argument(..., help="Safe phase id to rewind to."),
+    phase_id: str = typer.Argument(..., help="Recorded checkpoint phase or ID to rewind to."),
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Rewind the active squad run to a safe checkpoint."""
@@ -1179,6 +1251,82 @@ def spec_switch(
     exit_code = run_spec_switch_command(args, project_root=Path.cwd())
     if exit_code:
         raise typer.Exit(exit_code)
+
+
+@spec_app.command("publish")
+def spec_publish(
+    spec_or_id: Optional[str] = typer.Argument(
+        None,
+        help="Canonical local spec branch name or unique numeric ID.",
+    ),
+    publish_all: bool = typer.Option(
+        False,
+        "--all",
+        help="Publish every canonical local spec branch in one commit.",
+    ),
+) -> None:
+    """Publish committed spec snapshots to the local default branch.
+
+    Copies only matching specs/<id>/ trees. Uses local branches only.
+
+    This does not merge implementation history.
+
+    It does not fetch, push, or delete source branches.
+
+    Selected spec paths must be clean. The default-branch worktree must be clean.
+    """
+    from echelon.spec_publish import SpecPublishError, publish_specs
+
+    identity = str(spec_or_id or "").strip()
+    if bool(identity) == publish_all:
+        raise typer.BadParameter("choose exactly one spec identity or --all")
+
+    try:
+        result = publish_specs(
+            Path.cwd(),
+            identity=identity or None,
+            publish_all=publish_all,
+        )
+    except SpecPublishError as exc:
+        typer.echo(f"Spec publish failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if result.created_commit:
+        typer.echo(
+            f"Published specs to local {result.default_branch} commit "
+            f"{result.default_commit}."
+        )
+    else:
+        typer.echo(
+            "No publication commit was needed; the local default-branch "
+            "snapshots are current."
+        )
+    for published in result.published:
+        state = "updated" if published.changed else "unchanged"
+        typer.echo(
+            f"  {published.spec_id}: {published.source_branch}@"
+            f"{published.source_commit[:12]} ({state})"
+        )
+    typer.echo(
+        "Source branches retained: "
+        + ", ".join(item.source_branch for item in result.published)
+    )
+    typer.echo("Nothing was pushed, fetched, merged, or deleted.")
+    typer.echo(f"Default-branch worktree: {result.destination_worktree}")
+    for warning in result.warnings:
+        typer.echo(f"Warning: {warning}", err=True)
+    quoted_branch = shlex.quote(result.default_branch)
+    typer.echo(f"To share: git push origin {quoted_branch}")
+    if result.caller_on_default:
+        typer.echo("Refresh navigation: echelon wiki build")
+    elif result.destination_worktree.exists():
+        typer.echo(
+            f"Refresh navigation: cd {shlex.quote(str(result.destination_worktree))} && "
+            "echelon wiki build"
+        )
+    else:
+        typer.echo(f"Next: git switch {quoted_branch}")
+        typer.echo("Refresh navigation: echelon wiki build")
 
 
 @spec_app.command("drop-target")
@@ -1834,4 +1982,18 @@ def run(argv: list[str] | None = None) -> None:
         legacy_cli = _legacy_cli()
         typer.echo(f"echelon {legacy_cli.CLI_VERSION}")
         return
+    from echelon.wiki import service as wiki_service
+
+    project_root = Path.cwd()
+    try:
+        before = wiki_service.capture_input_snapshot(project_root)
+    except Exception:
+        before = None
     app(args=argv, standalone_mode=False)
+    try:
+        refreshed = wiki_service.refresh_after_changed_command(project_root, before)
+    except Exception as exc:
+        typer.echo(f"warning: wiki auto-refresh failed: {exc}", err=True)
+    else:
+        if refreshed is not None:
+            typer.echo(f"Wiki auto-refreshed: {refreshed.home_path}")

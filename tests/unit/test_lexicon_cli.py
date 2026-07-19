@@ -154,3 +154,20 @@ def test_source_ref_rejects_derived_spec_ids_absent_from_source(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["ok"] is False
     assert any(f["code"] == "source-id-extra" for f in payload["findings"])
+
+
+@pytest.mark.unit
+def test_source_ref_accepts_suffixed_acceptance_criterion_ids(tmp_path):
+    """Rich specs use AC-004b for edge cases; the derived contract must retain it."""
+    source_text = RICH_SOURCE_SPEC.replace("AC-001", "AC-001b")
+    source = _write(tmp_path, "spec.md", source_text)
+    derived_text = _derived_spec(source_text).replace("AC-001", "AC-001b")
+    derived = _write(tmp_path, "requirements.lexicon.md", derived_text)
+
+    result = runner.invoke(
+        app,
+        ["validate", derived, "--type", "spec", "--source-ref", source, "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["ok"] is True

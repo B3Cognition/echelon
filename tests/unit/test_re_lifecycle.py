@@ -354,7 +354,11 @@ def test_resume_records_typed_answer_before_continuing(
         def run(self):
             from harness.re_controller import ReControllerResult
 
-            return ReControllerResult(completed=False, blocked_reason="still_blocked")
+            return ReControllerResult(
+                completed=False,
+                blocked_reason="still_blocked",
+                blocked_detail="state update was rejected",
+            )
 
     monkeypatch.setattr(
         "harness.re_lifecycle.ReExtractionController", FakeExtractionController
@@ -368,6 +372,7 @@ def test_resume_records_typed_answer_before_continuing(
     result = controller.resume("Use the public v2 contract")
 
     assert result.status == "blocked"
+    assert result.blocked_detail == "state update was rejected"
     state = json.loads((run_dir / "state.json").read_text())
     assert state["blocked_decision"]["status"] == "resolved"
     assert state["resume_metadata"]["source"] == "echelon re resume"

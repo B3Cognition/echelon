@@ -15,7 +15,11 @@ _SOURCE_RE = re.compile(r"^#\s*SOURCE:\s*(?P<source>.+?)\s*$", re.MULTILINE)
 _SOURCE_SHA_RE = re.compile(
     r"^#\s*SOURCE_SHA256:\s*(?P<sha>[0-9a-fA-F]{64})\s*$", re.MULTILINE
 )
-_SOURCE_ID_RE = re.compile(r"\b(?:FR|NFR|REQ|AC|ERR|ERROR)-\d+\b")
+# Acceptance criteria commonly carry a letter suffix for edge-case variants
+# (for example ``AC-004b``).  Treat the complete identifier as one source ID;
+# stopping at the numeric prefix makes an otherwise faithful derived contract
+# look as though it invented the suffix and dropped the base criterion.
+_SOURCE_ID_RE = re.compile(r"\b(?:FR|NFR|REQ|AC|ERR|ERROR)-\d+(?:[A-Za-z][A-Za-z0-9_-]*)?\b")
 
 
 def source_contract_findings(derived_text: str, source_ref: Path) -> list[Finding]:

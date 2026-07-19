@@ -457,10 +457,11 @@ phases:
       # Lexicon gate (INERT unless lexicon_gate.enabled in echelon-config.yml).
       # CARTOGRAPHER runs the in-dispatch repair loop (the "fix"); this is the
       # COMMANDER-level re-dispatch on the controlled validator outcome (the
-      # "re-dispatch"), capped by convergence.max_squad_iterations. When the gate
+      # "re-dispatch"), capped by the Cartographer repair budget. The broader
+      # convergence iteration cap remains a secondary safety net. When the gate
       # is disabled this condition is false and flow falls through unchanged.
       - to: phase1-what
-        condition: "lexicon_gate.enabled AND NOT lexicon_pass AND iteration < max_iterations"
+        condition: "lexicon_gate.enabled AND NOT lexicon_pass AND lexicon_attempts < lexicon_gate.max_repair_attempts AND iteration < max_iterations"
         action: increment_iteration
       - to: phase1-why2
         condition: always
@@ -551,7 +552,8 @@ phases:
       # Feasibility structural gate (INERT unless governance.enabled in echelon-config.yml).
       # GATEKEEPER runs the in-dispatch repair loop (the "fix"); this is the
       # COMMANDER-level re-dispatch on the controlled validator outcome (the
-      # "re-dispatch"), capped by convergence.max_squad_iterations. When the gate
+      # "re-dispatch"), capped by the Orchestrator repair budget. The broader
+      # convergence iteration cap remains a secondary safety net. When the gate
       # is disabled this condition is false and flow falls through unchanged.
       - to: phase2-decide
         # Mirrors the proven phase1-what guard shape: references only keys the
@@ -841,7 +843,7 @@ phases:
         # is intentionally NOT in the condition — it is unresolvable as state and made
         # the guard indeterminate; gate enablement is enforced by ORCHESTRATOR only
         # emitting tasks_lexicon_pass when artifacts.tasks.enabled (see phase3-plan.md).
-        condition: "lexicon_gate.enabled AND NOT tasks_lexicon_pass AND iteration < max_iterations"
+        condition: "lexicon_gate.enabled AND NOT tasks_lexicon_pass AND tasks_lexicon_attempts < lexicon_gate.max_repair_attempts AND iteration < max_iterations"
         action: increment_iteration
       - to: phase3-consensus
         condition: always

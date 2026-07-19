@@ -178,6 +178,19 @@ advertising invalid ones.
 - `tests/unit/test_cli_continue.py`
 - new focused rewind tests under `tests/unit/`
 
+### Resolution (2026-07-18)
+
+Fixed. The active run's `spec_dir/.echelon/checkpoints.json` is now the sole
+rewind-target authority. `echelon spec rewind <checkpoint-phase-or-id>` resolves
+that ledger before any branch or state mutation, reports its available entries
+for an unknown target, and no longer has a static Phase 3 allowlist. The same
+ledger gates automatic retry-to-rewind guidance. On confirmed rewind, Git resets
+to the selected checkpoint and state retains only phases recorded before that
+ledger entry. Real-Git coverage exercises `phase1-what` preview and confirmation;
+focused lifecycle/checkpoint/rewind verification passed 276 tests without an
+LLM, Docker, or network access. Checkpoint coverage policy remains EGR-144, and
+explicit phase rerun remains EGR-146.
+
 ## EGR-146: Define And Implement `echelon spec rerun` Phase Semantics
 
 **Priority:** P1
@@ -234,4 +247,3 @@ Recommended design direction:
 - `src/harness/squad_state.py`
 - `extension/workflow/definition.yaml`
 - tests under `tests/unit/` and `tests/integration/`
-

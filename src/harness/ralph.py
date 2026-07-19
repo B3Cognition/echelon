@@ -1856,7 +1856,10 @@ class RalphController:
             tasks_path.read_text(encoding="utf-8", errors="replace"),
             selected_task_ids=self._target_task_ids(),
         )
-        if summary.total_tasks <= 0:
+        if (
+            summary.total_tasks <= 0
+            or summary.terminal_tasks >= summary.total_tasks
+        ):
             return
 
         build_result["passed"] = False
@@ -2654,7 +2657,8 @@ class RalphController:
             "Use `spec_file` and `tasks_file` as read-only inputs for understanding the requested work.\n"
             "Use `spec_dir` as read-only context except for the documentation phase outputs named below.\n"
             "Do not edit `tasks_file`, `spec_file`, or any file under `spec_dir` for progress tracking during a build slice.\n"
-            "TECH WRITER may write only `documentation-impact-report.md` under `spec_dir`; DOCS VERIFIER may write only `docs-verification-report.md` under `spec_dir`.\n"
+            "TECH WRITER may write `documentation-impact-report.md` under `spec_dir`; DOCS VERIFIER may write `docs-verification-report.md` under `spec_dir`.\n"
+            "If the impact report requires documentation updates, IMPLEMENTER may update only `README.md` and `CHANGELOG.md` as specified by that report, then DOCS VERIFIER must re-validate the reports.\n"
             "When all canonical task IDs are already complete but either documentation report is missing or invalid, run TECH WRITER and DOCS VERIFIER before writing a done marker.\n"
             "Report completed progress only by writing `completed_task_ids` to the harness build status marker; Ralph owns task progress writes.\n"
             "Do not inspect, read, or search for harness source, Ralph code, ralph.py, fulfillment_runner.py, or Echelon implementation internals. Ralph owns harness decisions and provides the only build-slice contract through this prompt, the named spec inputs, and the harness build status marker.\n"
@@ -2772,8 +2776,9 @@ class RalphController:
                 "## Build Rules",
                 "- Read/search/edit/test inside `worktree`.",
                 "- Read spec inputs only for understanding; Ralph owns progress writes.",
-                "- TECH WRITER may write only `documentation-impact-report.md` under `spec_dir`.",
-                "- DOCS VERIFIER may write only `docs-verification-report.md` under `spec_dir`.",
+                "- TECH WRITER may write `documentation-impact-report.md` under `spec_dir`.",
+                "- DOCS VERIFIER may write `docs-verification-report.md` under `spec_dir`.",
+                "- If the impact report requires documentation updates, IMPLEMENTER may update only `README.md` and `CHANGELOG.md` as specified by that report, then DOCS VERIFIER must re-validate the reports.",
                 "- If all task IDs are complete but documentation reports are missing, run the documentation phases before reporting done.",
                 "- Report completed progress through the harness build status marker.",
             ]

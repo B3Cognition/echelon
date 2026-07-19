@@ -215,7 +215,8 @@ def resolve_product_inputs(
                 "task_ids": [],
                 "targets": [],
             }
-            for unit in catalog_units if unit["role"] == "requirement"
+            for unit in catalog_units
+            if unit["role"] == "requirement" and unit.get("traceability_required", True)
         ],
         "references": [
             {"input_unit_id": unit["id"], "state": "reviewed_unused", "rationale": "Awaiting analysis."}
@@ -426,6 +427,97 @@ def apply_product_input_updates(
     _write_traceability_markdown(traceability_path.with_suffix(".md"), candidate)
 
 
+def build_product_input_mapping_repair_hints(
+    updates: Sequence[object],
+    tasks_path: Path,
+    declared_targets: Sequence[str],
+) -> dict[str, object]:
+    """Return the exact direct-task choices for a rejected PLAN mapping proposal.
+
+    This diagnostic is intentionally derived only from the canonical task rows.
+    It does not infer semantic mappings or write the controller-owned ledger;
+    it prevents an agent from repeatedly citing context-only ``INFRA`` tasks as
+    proof for a product-input requirement.
+    """
+    tasks = _task_metadata(tasks_path)
+    declared = set(declared_targets)
+    matrix = [
+        {
+            "task_id": task_id,
+            "requirements": sorted(metadata["requirements"]),
+            "target": next(iter(sorted(metadata["targets"])), ""),
+        }
+        for task_id, metadata in sorted(tasks.items())
+    ]
+    candidates: list[dict[str, object]] = []
+    for update in updates:
+        if not isinstance(update, dict):
+            continue
+        unit_id = str(update.get("input_unit_id") or "").strip()
+        if not unit_id:
+            continue
+        spec_ids = sorted({str(value) for value in update.get("spec_ids", []) if str(value).strip()})
+        task_ids = [str(value) for value in update.get("task_ids", []) if str(value).strip()]
+        direct = [
+            task_id for task_id, metadata in sorted(tasks.items())
+            if (metadata["requirements"] & set(spec_ids)) and (metadata["targets"] & declared)
+        ]
+        candidates.append({
+            "input_unit_id": unit_id,
+            "spec_ids": spec_ids,
+            "direct_task_ids": direct,
+            "invalid_task_ids": [task_id for task_id in task_ids if task_id not in direct],
+        })
+    return {"candidates": candidates, "task_requirement_matrix": matrix}
+
+
+def repair_product_input_structural_units(
+    traceability_path: Path,
+    catalog_path: Path,
+    *,
+    apply: bool,
+) -> tuple[str, ...]:
+    """Exclude legacy Markdown scaffolding from a requirement traceability ledger.
+
+    Early input packages represented every non-empty Markdown line as a
+    requirement.  Heading-only, table-header, and separator lines provide
+    useful context but no independently implementable product obligation.  The
+    repair is deterministic and deliberately limited to those syntactic forms.
+    """
+    try:
+        ledger = json.loads(traceability_path.read_text(encoding="utf-8"))
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    requirements = ledger.get("requirements") if isinstance(ledger, dict) else None
+    units = catalog.get("units") if isinstance(catalog, dict) else None
+    if not isinstance(requirements, list) or not isinstance(units, list):
+        return ()
+
+    structural_ids = _structural_catalog_unit_ids(units)
+    repaired: list[str] = []
+    for entry in requirements:
+        if not isinstance(entry, dict):
+            continue
+        unit_id = str(entry.get("input_unit_id") or "")
+        if unit_id not in structural_ids:
+            continue
+        if str(entry.get("disposition") or "") == "excluded":
+            continue
+        entry.update({
+            "disposition": "excluded",
+            "rationale": "Markdown structural context; retained in the immutable input catalog but not an independently implementable requirement.",
+            "spec_ids": [],
+            "task_ids": [],
+            "targets": [],
+        })
+        repaired.append(unit_id)
+    if apply and repaired:
+        _write_json(traceability_path, ledger)
+        _write_traceability_markdown(traceability_path.with_suffix(".md"), ledger)
+    return tuple(repaired)
+
+
 def _normalize_declaration(declaration: ProductInputDeclaration) -> ProductInputDeclaration:
     if declaration.role not in _ROLES or not declaration.location.strip():
         raise ProductInputError("invalid product input declaration")
@@ -514,14 +606,25 @@ def _unitize(role: str, declaration_id: str, locator: str, snapshot: str, digest
     if text is None:
         return [_unit(role, declaration_id, locator, snapshot, digest, media_type, "file", "binary/design evidence")]
     units: list[dict[str, object]] = []
-    for line_number, line in enumerate(text.splitlines(), start=1):
+    source_lines = text.splitlines()
+    for line_number, line in enumerate(source_lines, start=1):
         statement = line.strip()
         if statement:
-            units.append(_unit(role, declaration_id, locator, snapshot, digest, media_type, f"line:{line_number}", statement))
+            units.append(_unit(
+                role,
+                declaration_id,
+                locator,
+                snapshot,
+                digest,
+                media_type,
+                f"line:{line_number}",
+                statement,
+                traceability_required=not _is_markdown_scaffolding(source_lines, line_number - 1),
+            ))
     return units or [_unit(role, declaration_id, locator, snapshot, digest, media_type, "file", "empty input file")]
 
 
-def _unit(role: str, declaration_id: str, locator: str, snapshot: str, digest: str, media_type: str, locator_suffix: str, statement: str) -> dict[str, object]:
+def _unit(role: str, declaration_id: str, locator: str, snapshot: str, digest: str, media_type: str, locator_suffix: str, statement: str, *, traceability_required: bool = True) -> dict[str, object]:
     prefix = "REQ" if role == "requirement" else "REF"
     stable = f"{role}:{locator}:{locator_suffix}:{digest}".encode("utf-8")
     return {
@@ -533,6 +636,39 @@ def _unit(role: str, declaration_id: str, locator: str, snapshot: str, digest: s
         "sha256": digest,
         "media_type": media_type,
         "statement": statement,
+        "traceability_required": traceability_required,
+    }
+
+
+def _is_markdown_scaffolding(lines: Sequence[str], index: int) -> bool:
+    """Identify Markdown structure that is useful context but not a requirement."""
+    statement = lines[index].strip()
+    if re.fullmatch(r"#{1,6}\s+.+", statement):
+        return True
+    if re.fullmatch(r"\*\*[^*]+\*\*", statement):
+        return True
+    if _is_markdown_table_separator(statement):
+        return True
+    next_line = lines[index + 1].strip() if index + 1 < len(lines) else ""
+    return statement.startswith("|") and statement.endswith("|") and _is_markdown_table_separator(next_line)
+
+
+def _is_markdown_table_separator(statement: str) -> bool:
+    cells = [cell.strip() for cell in statement.strip("|").split("|")]
+    return len(cells) >= 2 and all(re.fullmatch(r":?-{3,}:?", cell) for cell in cells)
+
+
+def _structural_catalog_unit_ids(units: Sequence[object]) -> set[str]:
+    statements = [
+        str(unit.get("statement") or "") if isinstance(unit, dict) else ""
+        for unit in units
+    ]
+    return {
+        str(unit.get("id"))
+        for index, unit in enumerate(units)
+        if isinstance(unit, dict)
+        and unit.get("role") == "requirement"
+        and _is_markdown_scaffolding(statements, index)
     }
 
 

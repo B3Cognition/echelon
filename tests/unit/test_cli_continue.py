@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
 
-from echelon.cli import _cmd_continue, _next_continue_phase
+from echelon.cli import (
+    _classify_run_recovery,
+    _cmd_continue,
+    _ensure_active_continue_spec_context,
+    _next_continue_phase,
+    _phase_a_readiness_candidate_dirs,
+)
+from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +35,209 @@ def _write_real_constitution(project_root: Path) -> None:
     const = project_root / ".specify" / "memory" / "constitution.md"
     const.parent.mkdir(parents=True)
     const.write_text("# Constitution\n\nReal project rules.\n", encoding="utf-8")
+
+
+def _record_run_checkpoint(run_dir: Path, spec_id: str, phase: str) -> None:
+    spec_dir = run_dir / "specs" / spec_id
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    record_checkpoint_metadata(
+        spec_dir,
+        PhaseCheckpoint(
+            id=phase,
+            spec_id=spec_id,
+            phase=phase,
+            next_phase=phase,
+            commit="abcdef0",
+            metadata_commit="",
+            source="auto",
+            run_id=run_dir.name,
+            created_at="2026-07-18T12:00:00Z",
+        ),
+    )
+
+
+def test_continue_prefers_specify_feature_directory_over_stale_short_spec_id(
+    tmp_path: Path,
+) -> None:
+    """A resume must keep the spec-kit slug, never fork into specs/<number>."""
+    run_dir = tmp_path / "runs" / "spec-test"
+    canonical = tmp_path / "specs" / "004-transform-selector-above-stat"
+    canonical.mkdir(parents=True)
+    (canonical / "spec.md").write_text("# Canonical spec\n", encoding="utf-8")
+
+    stale = run_dir / "specs" / "004"
+    stale.mkdir(parents=True)
+    (stale / "spec.md").write_text("# Stale alias\n", encoding="utf-8")
+
+    state, active = _ensure_active_continue_spec_context(
+        tmp_path,
+        run_dir,
+        {
+            "spec_id": "004",
+            "spec_dir": "runs/spec-test/specs/004",
+            "published_spec_dir": "specs/004",
+            "specify_feature_directory": "specs/004-transform-selector-above-stat",
+        },
+        sync_missing=True,
+    )
+
+    assert active == run_dir / "specs" / "004-transform-selector-above-stat"
+    assert state["spec_id"] == "004-transform-selector-above-stat"
+    assert state["spec_dir"] == "runs/spec-test/specs/004-transform-selector-above-stat"
+    assert state["published_spec_dir"] == "specs/004-transform-selector-above-stat"
+    assert (active / "spec.md").read_text(encoding="utf-8") == "# Canonical spec\n"
+
+
+def test_continue_derives_published_slug_from_run_local_specify_directory(
+    tmp_path: Path,
+) -> None:
+    """A run-local canonical reference must not become the published path."""
+    run_dir = tmp_path / "runs" / "spec-test"
+    canonical = run_dir / "specs" / "004-transform-selector-above-stat"
+    canonical.mkdir(parents=True)
+    (canonical / "spec.md").write_text("# Canonical spec\n", encoding="utf-8")
+    published = tmp_path / "specs" / "004-transform-selector-above-stat"
+    published.mkdir(parents=True)
+
+    state, active = _ensure_active_continue_spec_context(
+        tmp_path,
+        run_dir,
+        {
+            "spec_id": "004",
+            "spec_dir": "runs/spec-test/specs/004",
+            "published_spec_dir": "specs/004",
+            "specify_feature_directory": "runs/spec-test/specs/004-transform-selector-above-stat",
+        },
+        sync_missing=True,
+    )
+
+    assert active == canonical
+    assert state["published_spec_dir"] == "specs/004-transform-selector-above-stat"
+
+
+def test_readiness_candidates_exclude_stale_short_spec_alias_when_slug_is_known(
+    tmp_path: Path,
+) -> None:
+    """A full spec-kit slug must prevent readiness from inspecting specs/<number>."""
+    run_dir = tmp_path / "runs" / "spec-test"
+    active = run_dir / "specs" / "004-transform-selector-above-stat"
+    published = tmp_path / "specs" / "004-transform-selector-above-stat"
+    active.mkdir(parents=True)
+    published.mkdir(parents=True)
+
+    candidates = _phase_a_readiness_candidate_dirs(
+        tmp_path,
+        {
+            "spec_id": "004",
+            "spec_dir": "runs/spec-test/specs/004-transform-selector-above-stat",
+            "published_spec_dir": "specs/004-transform-selector-above-stat",
+            "specify_feature_directory": "runs/spec-test/specs/004-transform-selector-above-stat",
+        },
+        run_dir,
+        active_spec_dir=active,
+        published_spec_dir=published,
+    )
+
+    assert active in candidates
+    assert published in candidates
+    assert run_dir / "specs" / "004" not in candidates
+    assert tmp_path / "specs" / "004" not in candidates
+
+
+def test_continue_recovers_terminal_lexicon_block_after_independent_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A repaired, valid derived contract resumes at WHY2 without another WHAT run."""
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "lexicon_gate_exhausted",
+            "spec_id": "001-demo",
+            "spec_dir": "runs/spec-test/specs/001-demo",
+            "completed_phases": ["phase1-constitution", "phase1-what"],
+            "last_dispatch": {"phase_id": "phase1-what"},
+            "user_message": "build the dashboard",
+            "autonomy_mode": "semi",
+        },
+    )
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    source = """# Feature\n\n- **FR-001**: Render the dashboard.\n- **AC-001**: Given data, when rendering, then the dashboard is visible.\n"""
+    (spec_dir / "spec.md").write_text(source, encoding="utf-8")
+    (spec_dir / "glossary.md").write_text("", encoding="utf-8")
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    (spec_dir / "requirements.lexicon.md").write_text(
+        f"""# SOURCE: spec.md
+# SOURCE_SHA256: {digest}
+ARTIFACT: SPEC
+TITLE: Dashboard
+
+REQ: FR-001
+GIVEN: data is available
+WHEN: the user opens the dashboard
+THEN: The system SHALL render the dashboard
+OUTPUT: The dashboard is visible
+DEPENDS: none
+EXAMPLE: AC-001
+
+AC: AC-001
+GIVEN: data is available
+WHEN: the user opens the dashboard
+THEN: The dashboard is visible
+""",
+        encoding="utf-8",
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_run", lambda args, **_kwargs: calls.append(args))
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "phase1-why2"
+    assert state["status"] == "running"
+    assert state["lexicon_pass"] is True
+    assert state["lexicon_findings"] == 0
+    assert calls == [["build the dashboard", "--mode", "semi"]]
+
+
+def test_continue_honors_persisted_banzai_judgment_after_readiness_misroute(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A historic terminal block must honor COMMANDER's saved executable route."""
+    _write_real_constitution(tmp_path)
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_a_readiness_failed",
+            "escalation_resolved": True,
+            "escalation_resolver": "COMMANDER-banzai",
+            "next_phase": "checkpoint-assess",
+            "spec_id": "004-transform-selector-above-stat",
+            "spec_dir": "runs/spec-test/specs/004-transform-selector-above-stat",
+            "user_message": "add transform selector",
+            "autonomy_mode": "banzai",
+        },
+    )
+    spec_dir = run_dir / "specs" / "004-transform-selector-above-stat"
+    spec_dir.mkdir(parents=True)
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_run", lambda args, **_kwargs: calls.append(args))
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["phase"] == "checkpoint-assess"
+    assert state["status"] == "running"
+    assert state["blocked_reason"] is None
+    assert "next_phase" not in state
+    assert calls == [["add transform selector", "--mode", "banzai"]]
 
 
 def test_continue_routes_to_constitution_without_phase_provenance(tmp_path: Path) -> None:
@@ -551,7 +762,7 @@ def test_continue_blocked_non_escalation_run_points_to_rewind(
     capsys,
 ) -> None:
     _write_real_constitution(tmp_path)
-    _write_run_state(
+    run_dir = _write_run_state(
         tmp_path,
         {
             "status": "blocked",
@@ -559,8 +770,10 @@ def test_continue_blocked_non_escalation_run_points_to_rewind(
             "blocked_reason": "missing_echelon_result",
             "last_dispatch": {"phase_id": "phase3-sentinel"},
             "completed_phases": ["phase1-constitution", "phase3-how"],
+            "spec_dir": "runs/spec-test/specs/001-demo",
         },
     )
+    _record_run_checkpoint(run_dir, "001-demo", "phase3-sentinel")
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
@@ -907,7 +1120,7 @@ def test_continue_points_retryable_phase3_failure_to_rewind(
     capsys,
 ) -> None:
     _write_real_constitution(tmp_path)
-    _write_run_state(
+    run_dir = _write_run_state(
         tmp_path,
         {
             "status": "blocked",
@@ -915,14 +1128,68 @@ def test_continue_points_retryable_phase3_failure_to_rewind(
             "blocked_reason": "agent_exit_code_1",
             "last_dispatch": {"phase_id": "phase3-sentinel"},
             "completed_phases": ["phase1-constitution", "phase3-how"],
+            "spec_dir": "runs/spec-test/specs/001-demo",
         },
     )
+    _record_run_checkpoint(run_dir, "001-demo", "phase3-sentinel")
 
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
     captured = capsys.readouterr()
     assert "echelon spec rewind phase3-sentinel" in captured.out
     assert 'echelon spec resume "<your answer>"' not in captured.out
+
+
+def test_recovery_suggests_any_checkpointed_phase_from_the_active_ledger(
+    tmp_path: Path,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "missing_echelon_result",
+            "last_dispatch": {"phase_id": "phase1-what"},
+            "spec_dir": "runs/spec-test/specs/004-transform-selector",
+        },
+    )
+    _record_run_checkpoint(run_dir, "004-transform-selector", "phase1-what")
+
+    action = _classify_run_recovery(
+        json.loads((run_dir / "state.json").read_text(encoding="utf-8")),
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "safe_rewind"
+    assert action.command == "echelon spec rewind phase1-what"
+
+
+def test_recovery_retries_completed_phase_after_state_update_validation_failure(
+    tmp_path: Path,
+) -> None:
+    """A rejected result is incomplete even if an earlier pass completed the phase."""
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": (
+                "echelon_result validation failed: echelon_result.state_updates key "
+                "'phase3_plan_verdict' is not allowed for this phase"
+            ),
+            "last_dispatch": {"phase_id": "phase3-consensus", "verdict": "BLOCKED"},
+            "completed_phases": ["phase3-plan", "phase3-consensus"],
+        },
+    )
+
+    action = _classify_run_recovery(
+        json.loads((run_dir / "state.json").read_text(encoding="utf-8")),
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.phase == "phase3-consensus"
+    assert action.command == "echelon spec continue"
 
 
 def test_continue_manual_block_does_not_claim_human_resume(

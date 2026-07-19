@@ -167,8 +167,10 @@ ARTIFACT: SPEC
 TITLE: <real title>
 ```
 
-Each normative requirement from `spec.md` is a `REQ` block; acceptance criteria are `AC`
-blocks; error paths are `ERROR` blocks:
+Each normative requirement from `spec.md` is a `REQ` block, including every `NFR-…` ID
+(`REQ: NFR-001` is valid); acceptance criteria are `AC` blocks; error paths are `ERROR`
+blocks. Source-ID equivalence is exact: every FR, NFR, AC, and error ID in `spec.md` must
+appear in the derived artifact under the corresponding block type.
 
 ```
 REQ: <ID>
@@ -177,7 +179,7 @@ WHEN: <trigger>
 THEN: <subject> MUST <action> <object>      # EXACTLY ONE uppercase modal: MUST / MUST NOT / SHALL / SHOULD / MAY
 OUTPUT: <observable result>                  # REQUIRED on every REQ
 DEPENDS: <comma-separated REQ IDs this requirement builds on, or 'none'>  # optional
-CONSTRAINT: <metric comparator value unit>   # optional
+CONSTRAINT: <metric comparator value unit>   # optional; repeat for independent constraints
 EXAMPLE: <AC-ID>                             # REQUIRED: >=1 ref to an AC block that exercises this REQ
 
 AC: <ID>
@@ -221,7 +223,10 @@ $LEXICON validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
 
 1. Parse the JSON: `ok` (bool) and `findings[]` (each has `code`, `message`, `line`, `span`).
 2. If `ok` is true → the spec is lexicon-clean. Stop the loop; set `lexicon_pass: true`.
-3. If `ok` is false → apply the LOCALIZED fix for each finding **at its `line`**, leaving every
+3. If `ok` is false → repair `parse-error` findings before interpreting any `source-id-missing`
+   findings. A parse failure prevents deterministic block extraction, so it can make every source
+   ID appear missing. Only after a parse-clean re-run may a source-ID finding establish that an
+   ID is truly absent. Then apply the LOCALIZED fix for each finding **at its `line`**, leaving every
    passing block byte-for-byte unchanged (locality — never rewrite the whole spec):
 
    | `code`            | Localized repair                                                            |
@@ -254,6 +259,11 @@ $LEXICON validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
 
 ALWAYS treat the `lexicon validate` verdict as the source of truth for structural validity.
 NEVER report `lexicon_pass: true` without a final validator run that returned `ok: true`.
+
+ALWAYS distinguish a parser failure from a grammar limitation by repairing the reported parse
+line and re-running the validator before classifying any source-ID findings.
+NEVER declare the Lexicon grammar incapable of representing NFRs: represent each NFR as a
+`REQ: NFR-…` block and let the validator decide.
 
 ALWAYS repair only the spans named in `findings[]`, preserving passing blocks verbatim.
 NEVER regenerate the whole spec in response to a single finding.

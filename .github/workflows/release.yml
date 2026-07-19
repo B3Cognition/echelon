@@ -30,8 +30,8 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.0$ ]]; then
-            echo "::error::Release tag must match vMAJOR.MINOR.0; got '$tag'."
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must match vMAJOR.MINOR.PATCH; got '$tag'."
             exit 1
           fi
 
@@ -67,7 +67,7 @@ jobs:
           module = importlib.util.module_from_spec(spec)
           sys.modules[spec.name] = module
           spec.loader.exec_module(module)
-          module.require_next_minor_release(previous_version, expected)
+          module.require_next_release(previous_version, expected)
           module.validate_release_metadata(root, expected)
           PY
 

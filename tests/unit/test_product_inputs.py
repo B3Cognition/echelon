@@ -33,24 +33,67 @@ def test_requirement_folder_is_snapshotted_with_stable_catalog(tmp_path: Path) -
     assert len(catalog["units"]) == 2
     assert all(unit["id"].startswith("IN-REQ-") for unit in catalog["units"])
     ledger = json.loads(resolution.traceability_path.read_text(encoding="utf-8"))
-    assert ledger["requirements"] == [
-        {
-            "disposition": "open_question",
-            "input_unit_id": catalog["units"][0]["id"],
-            "rationale": "Awaiting specification analysis.",
-            "spec_ids": [],
-            "task_ids": [],
-            "targets": [],
-        },
-        {
-            "disposition": "open_question",
-            "input_unit_id": catalog["units"][1]["id"],
-            "rationale": "Awaiting specification analysis.",
-            "spec_ids": [],
-            "task_ids": [],
-            "targets": [],
-        },
-    ]
+    assert ledger["requirements"] == [{
+        "disposition": "open_question",
+        "input_unit_id": catalog["units"][1]["id"],
+        "rationale": "Awaiting specification analysis.",
+        "spec_ids": [],
+        "task_ids": [],
+        "targets": [],
+    }]
+
+
+def test_requirement_catalog_keeps_markdown_scaffolding_as_context_only(tmp_path: Path) -> None:
+    """Headings and table syntax inform agents but must not require traceability."""
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+
+    project = tmp_path / "workspace"
+    source = project / "requirements.md"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "# Transform reference\n\n"
+        "**Available transforms**\n\n"
+        "| Transform | Meaning |\n"
+        "| --- | --- |\n"
+        "| Standard | Raw total |\n",
+        encoding="utf-8",
+    )
+
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs" / "run-1",
+        [parse_input_declaration("requirement:requirements.md")],
+    )
+
+    catalog = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))["units"]
+    ledger = json.loads(resolution.traceability_path.read_text(encoding="utf-8"))
+
+    assert len(catalog) == 5
+    assert [unit["traceability_required"] for unit in catalog] == [False, False, False, False, True]
+    assert [entry["input_unit_id"] for entry in ledger["requirements"]] == [catalog[-1]["id"]]
+
+
+def test_structural_input_repair_updates_legacy_traceability_ledger(tmp_path: Path) -> None:
+    from echelon.product_inputs import repair_product_input_structural_units
+
+    catalog_path = tmp_path / "catalog.json"
+    traceability_path = tmp_path / "traceability.json"
+    catalog_path.write_text(json.dumps({"units": [
+        {"id": "IN-REQ-1", "role": "requirement", "statement": "# Reference"},
+        {"id": "IN-REQ-2", "role": "requirement", "statement": "| Name | Meaning |"},
+        {"id": "IN-REQ-3", "role": "requirement", "statement": "| --- | --- |"},
+        {"id": "IN-REQ-4", "role": "requirement", "statement": "| Standard | Raw total |"},
+    ]}), encoding="utf-8")
+    traceability_path.write_text(json.dumps({"requirements": [
+        {"input_unit_id": f"IN-REQ-{index}", "disposition": "open_question", "rationale": "old", "spec_ids": [], "task_ids": [], "targets": []}
+        for index in range(1, 5)
+    ]}), encoding="utf-8")
+
+    repaired = repair_product_input_structural_units(traceability_path, catalog_path, apply=True)
+    ledger = json.loads(traceability_path.read_text(encoding="utf-8"))
+
+    assert repaired == ("IN-REQ-1", "IN-REQ-2", "IN-REQ-3")
+    assert [entry["disposition"] for entry in ledger["requirements"]] == ["excluded", "excluded", "excluded", "open_question"]
 
 
 def test_secret_and_hidden_files_are_recorded_but_never_snapshotted(tmp_path: Path) -> None:
@@ -479,6 +522,113 @@ def test_prompt_contract_uses_snapshot_paths_and_structured_updates() -> None:
     assert "spec_ids: [FR-001, AC-001]" in prompt
     assert "task_ids: []" in prompt
     assert "targets: []" in prompt
+
+
+def test_product_input_context_includes_controller_mapping_repair() -> None:
+    from harness.squad_executors import _render_product_input_context
+
+    prompt = _render_product_input_context({
+        "product_inputs": {
+            "manifest": "runs/one/inputs/manifest.json",
+            "catalog": "runs/one/inputs/catalog.json",
+            "traceability": "runs/one/inputs/traceability.json",
+            "requirement_context": "runs/one/inputs/requirement-context.md",
+            "reference_context": "runs/one/inputs/reference-context.md",
+        },
+        "product_input_mapping_repair": {
+            "attempt": 1,
+            "blockers": ["IN-REQ-1: unresolved disposition open_question"],
+        },
+    })
+
+    assert "Product Input Mapping Repair" in prompt
+    assert "IN-REQ-1: unresolved disposition open_question" in prompt
+    assert "Do not return COMPLETE" in prompt
+
+
+def test_product_input_context_exposes_deterministic_mapping_worksheet() -> None:
+    from harness.squad_executors import _render_product_input_context
+
+    prompt = _render_product_input_context({
+        "product_inputs": {
+            "manifest": "runs/one/inputs/manifest.json",
+            "catalog": "runs/one/inputs/catalog.json",
+            "traceability": "runs/one/inputs/traceability.json",
+            "requirement_context": "runs/one/inputs/requirement-context.md",
+            "reference_context": "runs/one/inputs/reference-context.md",
+        },
+        "product_input_mapping_repair": {
+            "attempt": 1,
+            "blockers": ["IN-REQ-1: task T-002 does not reference the mapped specification IDs"],
+            "candidates": [{
+                "input_unit_id": "IN-REQ-1",
+                "spec_ids": ["FR-001"],
+                "direct_task_ids": ["T-001"],
+                "invalid_task_ids": ["T-002"],
+            }],
+            "task_requirement_matrix": [
+                {"task_id": "T-001", "requirements": ["FR-001"], "target": "sources/web"},
+            ],
+        },
+    })
+
+    assert "Deterministic Mapping Worksheet" in prompt
+    assert "Direct task IDs=[T-001]" in prompt
+    assert "Invalid task IDs=[T-002]" in prompt
+    assert "T-001: req=[FR-001]; target=sources/web" in prompt
+
+
+def test_product_input_mapping_repair_shows_candidate_direct_task_options(tmp_path: Path) -> None:
+    from echelon.product_inputs import build_product_input_mapping_repair_hints
+
+    tasks_path = tmp_path / "tasks.md"
+    tasks_path.write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-001 depends=none target=sources/web\n"
+        "- [ ] T-002 complexity=standard phase=build req=INFRA depends=none target=sources/web\n",
+        encoding="utf-8",
+    )
+
+    hints = build_product_input_mapping_repair_hints(
+        [
+            {
+                "input_unit_id": "IN-REQ-1",
+                "spec_ids": ["FR-001"],
+                "task_ids": ["T-001", "T-002"],
+            }
+        ],
+        tasks_path,
+        ["sources/web"],
+    )
+
+    assert hints["candidates"] == [{
+        "input_unit_id": "IN-REQ-1",
+        "spec_ids": ["FR-001"],
+        "direct_task_ids": ["T-001"],
+        "invalid_task_ids": ["T-002"],
+    }]
+    assert hints["task_requirement_matrix"] == [
+        {"task_id": "T-001", "requirements": ["FR-001"], "target": "sources/web"},
+        {"task_id": "T-002", "requirements": ["INFRA"], "target": "sources/web"},
+    ]
+
+
+def test_product_input_context_requires_tasks_lexicon_repair_before_completion() -> None:
+    from harness.squad_executors import _render_product_input_context
+
+    prompt = _render_product_input_context({
+        "product_inputs": {
+            "manifest": "runs/one/inputs/manifest.json",
+            "catalog": "runs/one/inputs/catalog.json",
+            "traceability": "runs/one/inputs/traceability.json",
+            "requirement_context": "runs/one/inputs/requirement-context.md",
+            "reference_context": "runs/one/inputs/reference-context.md",
+        },
+        "tasks_lexicon_pass": False,
+        "tasks_lexicon_attempts": 1,
+    })
+
+    assert "Tasks Lexicon Repair" in prompt
+    assert "must return ok=true" in prompt
 
 
 def test_plan_phase_requires_direct_product_input_task_mappings() -> None:

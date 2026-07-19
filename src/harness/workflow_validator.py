@@ -43,6 +43,7 @@ KNOWN_CONDITION_FIELDS = frozenset({
     # Nested config-derived gates merged into evaluation state.
     "governance.enabled",
     "lexicon_gate.enabled",
+    "lexicon_gate.max_repair_attempts",
     # Build-task-loop progress predicates.
     "all_phase_groups_complete",
     "all_tasks_complete",

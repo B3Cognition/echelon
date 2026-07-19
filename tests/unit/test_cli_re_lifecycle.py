@@ -1,9 +1,32 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
+
+
+@pytest.mark.unit
+def test_re_lifecycle_block_prints_precise_controller_detail(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _print_re_lifecycle_result
+
+    with pytest.raises(SystemExit) as exc:
+        _print_re_lifecycle_result(
+            SimpleNamespace(
+                status="blocked",
+                run_id="re-1",
+                blocked_reason="re_agent_result_invalid",
+                blocked_detail="state_updates key was rejected",
+            )
+        )
+
+    assert exc.value.code == 1
+    error = capsys.readouterr().err
+    assert "re_agent_result_invalid" in error
+    assert "state_updates key was rejected" in error
 
 
 @pytest.mark.unit

@@ -127,7 +127,8 @@ def _allowed_state_updates_contract(allowed_state_updates: object) -> str:
         "## Allowed state_updates for this dispatch",
         "The harness validates `echelon_result.state_updates` before mutating state.",
         "Return only the keys listed here; use `state_updates: {}` when no state",
-        "changes are needed. Any other top-level key blocks the run.",
+        "changes are needed. Any other state_updates key blocks the run.",
+        "Put task counts, report summaries, evidence, and diagnostics in journal_entries, never state_updates.",
         "",
     ]
     if allowed_state_updates is None:
@@ -225,7 +226,7 @@ def _render_product_input_context(state: dict) -> str:
     required = ("manifest", "catalog", "traceability", "requirement_context", "reference_context")
     if not all(str(inputs.get(key) or "").strip() for key in required):
         return ""
-    return "\n".join([
+    lines = [
         "## Product Input Contract",
         f"PRODUCT_INPUT_MANIFEST={inputs['manifest']}",
         f"PRODUCT_INPUT_CATALOG={inputs['catalog']}",
@@ -247,8 +248,62 @@ def _render_product_input_context(state: dict) -> str:
         "  spec_ids: [FR-001, AC-001]",
         "  task_ids: []",
         "  targets: []",
-        "",
-    ])
+    ]
+    repair = state.get("product_input_mapping_repair")
+    if isinstance(repair, dict):
+        blockers = repair.get("blockers")
+        if isinstance(blockers, list) and blockers:
+            lines.extend([
+                "",
+                "## Product Input Mapping Repair (Controller-Enforced)",
+                "The prior planning result did not resolve these ledger entries:",
+                *[f"- {str(blocker)}" for blocker in blockers],
+                "Read PRODUCT_INPUT_TRACEABILITY before editing tasks.",
+                "Return one canonical product_input_updates entry for every unresolved unit, "
+                "with task_ids whose req= values intersect that unit's spec_ids.",
+                "Do not return COMPLETE while any listed unit remains open_question or conflict.",
+            ])
+        candidates = repair.get("candidates")
+        task_matrix = repair.get("task_requirement_matrix")
+        if isinstance(candidates, list) or isinstance(task_matrix, list):
+            lines.extend([
+                "",
+                "### Deterministic Mapping Worksheet",
+                "The controller derived this worksheet from canonical task rows after rejecting the prior proposal.",
+                "Do not repeat any task ID in an Invalid list. Use only a Direct list for its matching spec_ids.",
+                "If a requirement has no direct task, first edit the existing tasks.md canonical row(s) so their req= values honestly cover it; only then return its mapping.",
+                "For a structural/context-only input unit, return disposition: excluded with an evidence-backed rationale and empty spec_ids, task_ids, and targets.",
+                "Do not use Write on an existing planning artifact: Read it, then use Edit.",
+            ])
+        if isinstance(candidates, list):
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                unit_id = str(candidate.get("input_unit_id") or "(unknown)")
+                spec_ids = ", ".join(str(value) for value in candidate.get("spec_ids", []) if str(value)) or "(none)"
+                direct = ", ".join(str(value) for value in candidate.get("direct_task_ids", []) if str(value)) or "(none)"
+                invalid = ", ".join(str(value) for value in candidate.get("invalid_task_ids", []) if str(value)) or "(none)"
+                lines.append(f"- {unit_id}: spec_ids=[{spec_ids}]; Direct task IDs=[{direct}]; Invalid task IDs=[{invalid}]")
+        if isinstance(task_matrix, list):
+            lines.append("Current canonical task requirement matrix:")
+            for task in task_matrix:
+                if not isinstance(task, dict):
+                    continue
+                task_id = str(task.get("task_id") or "(unknown)")
+                requirements = ", ".join(str(value) for value in task.get("requirements", []) if str(value)) or "(none)"
+                target = str(task.get("target") or "(none)")
+                lines.append(f"- {task_id}: req=[{requirements}]; target={target}")
+    if state.get("tasks_lexicon_pass") is False:
+        lines.extend([
+            "",
+            "## Tasks Lexicon Repair (Controller-Enforced)",
+            "The previous PLAN result failed the tasks hard gate.",
+            "Run the authoritative tasks validator, repair every finding in tasks.md or glossary.md, "
+            "then rerun it. Do not treat parse_pass or a soft score as success: the result must return ok=true.",
+            "Do not return COMPLETE with tasks_lexicon_pass: false.",
+        ])
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _render_published_re_context(state: dict) -> str:
@@ -381,6 +436,15 @@ def _routing_contract(node: "PhaseNode") -> str:
 
     if re.search(r"\balignment\s*=", condition_text):
         fields.append(("alignment", "ALIGNED | DRIFT | STOP_AND_ASK"))
+
+    if re.search(r"\blexicon_pass\b", condition_text):
+        fields.append(("lexicon_pass", "true | false  # required when the spec Lexicon gate is enabled"))
+        fields.append(("lexicon_attempts", "<integer>"))
+        fields.append(("lexicon_findings", "<integer>"))
+
+    if "tasks_lexicon_pass" in condition_text:
+        fields.append(("tasks_lexicon_pass", "true | false  # required when the tasks Lexicon gate is enabled"))
+        fields.append(("tasks_lexicon_attempts", "<integer>"))
 
     if not fields:
         return ""

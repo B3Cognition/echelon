@@ -112,6 +112,20 @@ def resolve_checkpoint(ledger: CheckpointLedger, target: str) -> PhaseCheckpoint
     return matches[-1]
 
 
+def checkpoint_targets(ledger: CheckpointLedger) -> list[str]:
+    """Return the distinct phase/id selectors accepted by one checkpoint ledger."""
+
+    seen: set[str] = set()
+    targets: list[str] = []
+    for checkpoint in ledger.checkpoints:
+        for value in (checkpoint.phase, checkpoint.id):
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            targets.append(value)
+    return targets
+
+
 def new_checkpoint_id(phase: str, source: str = "auto") -> str:
     if source == "auto":
         return phase

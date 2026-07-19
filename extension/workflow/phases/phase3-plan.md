@@ -107,10 +107,12 @@ COMMANDER does NOT run `lexicon` itself.
 `echelon_result.state_updates` and reads `state.json.tasks_lexicon_pass`:
 - `tasks_lexicon_pass == true` → proceed to `phase3-consensus` (soft `understanding`/consensus
   scoring runs there, once, on a structurally-clean `tasks.md`).
-- `tasks_lexicon_pass == false AND iteration < max_iterations` → re-dispatch `phase3-plan`
-  (`increment_iteration`). This is the only condition that re-dispatches ORCHESTRATOR on the
-  Lexicon outcome — see the transitions in `workflow/definition.yaml`.
-- `iteration >= max_iterations` → honor `lexicon_gate.on_exhausted`:
+- `tasks_lexicon_pass == false AND tasks_lexicon_attempts < max_repair_attempts AND iteration < max_iterations`
+  → re-dispatch `phase3-plan` (`increment_iteration`). This is the only condition that
+  re-dispatches ORCHESTRATOR on the Lexicon outcome — see the transitions in
+  `workflow/definition.yaml`.
+- `tasks_lexicon_attempts >= max_repair_attempts` (or the secondary `iteration >= max_iterations` cap)
+  → honor `lexicon_gate.on_exhausted`:
   `warn` → proceed to `phase3-consensus` with a `lexicon_gate_exhausted` warning journal entry;
   `block` → set `plan_status: blocked`, `blocked_reason: "tasks lexicon gate not satisfied"`, stop.
 

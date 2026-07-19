@@ -556,6 +556,7 @@ class TestOuterLoopConvergence:
         assert "documentation-impact-report.md" in prompt
         assert "DOCS VERIFIER" in prompt
         assert "docs-verification-report.md" in prompt
+        assert "If the impact report requires documentation updates" in prompt
         assert "progress/report updates" not in prompt
         assert "external spec artifacts are read-only inputs; never write to them from the build agent" not in prompt
 
@@ -3438,6 +3439,43 @@ class TestOuterLoopConvergence:
 
         assert build_result["passed"] is False
         assert build_result["build_status"] == "missing_task_ids"
+
+    def test_accepts_empty_completed_task_ids_for_terminal_task_finalization(
+        self, tmp_path: Path
+    ) -> None:
+        """A documentation-only finalization slice must not re-complete task rows."""
+        build_result = {
+            "passed": True,
+            "build_status": "done",
+            "task_ids": [],
+        }
+        controller, _provider, _gitops, _state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"], cwd=worktree, check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"], cwd=worktree, check=True
+        )
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [x] T-001 complexity=standard phase=base req=FR-001 depends=none\n"
+            "  **Status:** DONE\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True)
+        (spec_dir / "documentation-impact-report.md").write_text(
+            "# Documentation Impact Report\n", encoding="utf-8"
+        )
+
+        controller._enforce_completed_task_ids(build_result, str(worktree))
+
+        assert build_result["passed"] is True
+        assert build_result["build_status"] == "done"
 
     def test_llm_build_blocks_when_real_repo_gets_dirty(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

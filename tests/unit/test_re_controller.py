@@ -29,6 +29,22 @@ class _ShallowSpecifierProvider:
     def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
         phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
         self.phases.append(phase)
+        if phase == "re-extract-2-specify" and "workspace-synthesis" in prompt:
+            re_dir = Path(prompt.split("RE output directory: ", 1)[1].split("\n", 1)[0])
+            architecture = json.loads(
+                (re_dir / "workspace" / "architecture-map.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            domain_root = re_dir / "workspace" / "domains"
+            domain_root.mkdir(parents=True, exist_ok=True)
+            for domain_id in sorted(
+                {domain["domain_id"] for domain in architecture["domains"]}
+            ):
+                (domain_root / f"{domain_id}.md").write_text(
+                    f"# Workspace domain {domain_id}\n",
+                    encoding="utf-8",
+                )
         payload: dict[str, object] = {
             "verdict": "DONE",
             "state_updates": {},
@@ -104,6 +120,161 @@ def _extension_root(root: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"# {name}\n", encoding="utf-8")
     return extension_root
+
+
+def _strand_completed_workspace_synthesis(run_dir: Path) -> None:
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "status": "blocked",
+            "phase": "re-extract-2-specify",
+            "blocked_reason": "re_agent_result_invalid",
+            "re_agent_result_detail": (
+                "state_updates key 're_workspace_synthesis_complete' is not allowed"
+            ),
+            "last_dispatch": {
+                "phase_id": "re-extract-2-specify",
+                "agent": "specifier",
+                "post_dispatch_complete": False,
+                "dispatched_at": "2026-07-18T06:36:15Z",
+            },
+            "mode": "workspace",
+            "coverage_threshold": 99,
+            "resolution_threshold": 99,
+            "max_verify_expand_iterations": 5,
+            "max_validate_iterations": 5,
+            "verify_expand_iterations": 0,
+            "validate_iterations": 0,
+            "re_convergence_schema_version": 1,
+            "re_source_convergence_quality_contract_version": 1,
+            "re_source_coverage_repair_protocol_version": 1,
+            "re_semantic_quality_review_protocol_version": 2,
+            "re_target_quality_protocol_version": 1,
+            "re_source_budgets": {
+                "max_source_cycles": 5,
+                "max_domain_repairs": 5,
+                "max_source_reanalysis": 5,
+            },
+            "re_source_order": ["api"],
+            "re_source_states": {
+                "api": {
+                    "status": "passed",
+                    "source_cycles": 1,
+                    "domain_repairs": {},
+                    "source_reanalysis": 0,
+                    "coverage_pct": 100,
+                }
+            },
+            "re_specification_targets": [{"kind": "workspace-synthesis"}],
+            "re_workspace_synthesis_complete": False,
+            "re_domain_partition_version": DOMAIN_PARTITION_VERSION,
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_specification_targets_discard_agent_state_updates() -> None:
+    payload = {
+        "verdict": "DONE",
+        "state_updates": {
+            "domains": ["api"],
+            "re_workspace_synthesis_complete": True,
+        },
+    }
+
+    sanitized = ReExtractionController._agent_result_without_controller_keys(
+        payload,
+        {"kind": "workspace-synthesis"},
+    )
+
+    assert sanitized["state_updates"] == {}
+
+
+@pytest.mark.unit
+def test_workspace_synthesis_prompt_declares_file_only_result_contract(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+
+    prompt = controller._specification_target_prompt({"kind": "workspace-synthesis"})
+
+    assert "state_updates: {}" in prompt
+    assert "controller-owned" in prompt
+
+
+@pytest.mark.unit
+def test_continue_recovers_valid_completed_workspace_synthesis_without_redispatch(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _strand_completed_workspace_synthesis(run_dir)
+    provider = _ShallowSpecifierProvider()
+
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert "re-extract-2-specify" not in provider.phases
+    assert provider.phases == [
+        "re-extract-5-validate",
+        "re-extract-6-checklist",
+        "re-extract-7-constitute",
+    ]
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert state["re_workspace_synthesis_complete"] is True
+    assert state["last_dispatch"]["post_dispatch_complete"] is True
+    assert "re_agent_result_detail" not in state
+    assert "recovered completed workspace synthesis" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_continue_does_not_recover_incomplete_workspace_synthesis(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _strand_completed_workspace_synthesis(run_dir)
+    (run_dir / "re" / "workspace" / "domains" / "001-re-domain.md").unlink()
+
+    class IncompleteWorkspaceProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            if self.phases[-1] == "re-extract-2-specify":
+                (
+                    run_dir
+                    / "re"
+                    / "workspace"
+                    / "domains"
+                    / "001-re-domain.md"
+                ).unlink(missing_ok=True)
+            return result
+
+    provider = IncompleteWorkspaceProvider()
+
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert not result.completed
+    assert result.blocked_reason == "re_workspace_synthesis_incomplete"
+    assert provider.phases.count("re-extract-2-specify") == 1
+    assert result.blocked_detail is not None
+    assert "workspace/domains/001-re-domain.md" in result.blocked_detail
 
 
 @pytest.mark.unit

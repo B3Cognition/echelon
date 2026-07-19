@@ -44,6 +44,7 @@ class ReLifecycleResult:
     run_id: str = ""
     phase: str = ""
     blocked_reason: str = ""
+    blocked_detail: str = ""
     generation: int = 0
     no_work: bool = False
 
@@ -209,6 +210,7 @@ class ReLifecycleController:
                 run_id=run_dir.name,
                 phase=str(state.get("phase") or ""),
                 blocked_reason=str(state.get("blocked_reason") or "human input required"),
+                blocked_detail=str(state.get("blocked_detail") or ""),
             )
         return self._execute_run(run_dir, state, re_max_inner=re_max_inner)
 
@@ -300,12 +302,15 @@ class ReLifecycleController:
                 state["phase"] = self._controller_phase(run_dir)
                 if outcome.blocked_detail:
                     state["blocked_detail"] = outcome.blocked_detail
+                else:
+                    state.pop("blocked_detail", None)
                 self._save_state(run_dir, state)
                 return ReLifecycleResult(
                     status="blocked",
                     run_id=run_dir.name,
                     phase=str(state["phase"]),
                     blocked_reason=str(state["blocked_reason"]),
+                    blocked_detail=str(state.get("blocked_detail") or ""),
                 )
             state["extraction_complete"] = True
             state["publication_pending"] = True
@@ -352,6 +357,7 @@ class ReLifecycleController:
         state["publication_complete"] = True
         state["generation"] = publication.generation
         state.pop("blocked_reason", None)
+        state.pop("blocked_detail", None)
         self._save_state(run_dir, state)
         return ReLifecycleResult(
             status="done",

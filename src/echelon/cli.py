@@ -56,7 +56,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.4.1"
+CLI_VERSION = "3.7.1"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -3017,34 +3017,6 @@ def _find_current_run_dir(project_root: Path) -> Optional[Path]:
     return all_runs[0] if all_runs else None
 
 
-_SAFE_REWIND_PHASES: tuple[str, ...] = (
-    "phase3-how",
-    "phase3-sentinel",
-    "phase3-plan",
-)
-
-_REWIND_PHASE_ORDER: tuple[str, ...] = (
-    "phase3-how",
-    "phase3-sentinel",
-    "phase3-plan",
-    "phase3-consensus",
-    "checkpoint-plan",
-    "phase4-document",
-)
-
-_REWIND_REQUIRED_INPUTS: dict[str, tuple[str, ...]] = {
-    "phase3-how": ("spec.md",),
-    "phase3-sentinel": ("spec.md", "plan.md", "research.md", "data-model.md", "contracts/"),
-    "phase3-plan": (
-        "spec.md",
-        "plan.md",
-        "research.md",
-        "data-model.md",
-        "contracts/",
-        "test-strategy.md",
-    ),
-}
-
 _REWIND_CLEANUP_OUTPUTS: dict[str, tuple[str, ...]] = {
     "phase3-sentinel": (
         "test-strategy.md",
@@ -3106,12 +3078,27 @@ def _last_incomplete_dispatch_phase(run_state: dict) -> str | None:
     return phase_id
 
 
-def _blocked_non_escalation_recovery_command(run_state: dict) -> str | None:
+def _blocked_non_escalation_recovery_command(
+    run_state: dict,
+    *,
+    project_root: Path | None = None,
+) -> str | None:
     blocked_reason = str(run_state.get("blocked_reason") or "").strip()
     phase_id = _last_incomplete_dispatch_phase(run_state)
-    if _is_retryable_dispatch_block_reason(blocked_reason) and phase_id in _SAFE_REWIND_PHASES:
-        return f"echelon spec rewind {phase_id}"
-    return None
+    if not _is_retryable_dispatch_block_reason(blocked_reason) or not phase_id:
+        return None
+    if project_root is None:
+        return None
+    spec_dir, _ = _normalize_rewind_spec_dir(project_root, run_state)
+    if spec_dir is None:
+        return None
+    from harness.phase_checkpoints import load_checkpoint_ledger, resolve_checkpoint
+
+    try:
+        resolve_checkpoint(load_checkpoint_ledger(spec_dir), phase_id)
+    except (KeyError, OSError, ValueError, TypeError):
+        return None
+    return f"echelon spec rewind {phase_id}"
 
 
 def _blocked_failed_dispatch_phase(run_state: dict) -> str | None:
@@ -3153,6 +3140,87 @@ def _phase_a_readiness_traceability_blockers(run_state: dict) -> list[str]:
     ]
 
 
+def _verified_lexicon_gate_recovery_phase(
+    project_root: Path,
+    state: dict,
+) -> tuple[str, int] | None:
+    """Return the post-gate phase only for an independently valid artifact.
+
+    A hard Lexicon block can occur after the agent reports a stale failure even
+    though the derived artifact on disk was repaired.  Recovery must validate
+    the actual artifact, not trust either the old report or the presence of a
+    file.  This function deliberately has no repair behavior: an invalid
+    contract remains blocked and cannot be bypassed by ``spec continue``.
+    """
+    if str(state.get("blocked_reason") or "") != "lexicon_gate_exhausted":
+        return None
+    phase = str((state.get("last_dispatch") or {}).get("phase_id") or "")
+    next_phase = {
+        "phase1-what": "phase1-why2",
+        "phase3-plan": "phase3-consensus",
+    }.get(phase)
+    if next_phase is None:
+        return None
+
+    spec_ref = str(state.get("spec_dir") or "").strip()
+    if not spec_ref:
+        return None
+    spec_dir = Path(spec_ref)
+    if not spec_dir.is_absolute():
+        spec_dir = project_root / spec_dir
+
+    config: dict = {}
+    config_path = project_root / ".echelon" / "config.yml"
+    if config_path.is_file():
+        try:
+            import yaml
+
+            config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return None
+    gate = config.get("lexicon_gate", {}) if isinstance(config, dict) else {}
+    artifacts = gate.get("artifacts", {}) if isinstance(gate, dict) else {}
+    artifact_key = "spec" if phase == "phase1-what" else "tasks"
+    artifact = artifacts.get(artifact_key, {}) if isinstance(artifacts, dict) else {}
+    if isinstance(gate, dict) and gate.get("enabled") is False:
+        return None
+    if isinstance(artifact, dict) and artifact.get("enabled") is False:
+        return None
+
+    if phase != "phase1-what":
+        # Task-gate recovery has a distinct validator and is intentionally not
+        # conflated with the source-contract validator implemented here.
+        return None
+
+    derived_name = str(artifact.get("path") or "requirements.lexicon.md") if isinstance(artifact, dict) else "requirements.lexicon.md"
+    source_name = str(artifact.get("source_ref") or "spec.md") if isinstance(artifact, dict) else "spec.md"
+    glossary_name = str(gate.get("glossary_file") or "glossary.md") if isinstance(gate, dict) else "glossary.md"
+    derived_path = spec_dir / derived_name
+    source_path = spec_dir / source_name
+    glossary_path = spec_dir / glossary_name
+    if not derived_path.is_file() or not source_path.is_file():
+        return None
+
+    try:
+        from lexicon.source_contract import source_contract_findings
+        from lexicon.validity import validate as validate_lexicon
+
+        glossary: set[str] = set()
+        if glossary_path.is_file():
+            for raw in glossary_path.read_text(encoding="utf-8").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                terms = re.findall(r"\*\*([^*]+)\*\*", line)
+                glossary.update(term.strip() for term in terms or [line])
+        text = derived_path.read_text(encoding="utf-8")
+        report = validate_lexicon(text, glossary=glossary, artifact_type="SPEC")
+        findings = [*report.findings, *source_contract_findings(text, source_path)]
+    except Exception:
+        return None
+    return (next_phase, 0) if not findings else None
+
+
 def _interrupted_retry_phase(run_state: dict) -> str | None:
     phase_id = str(run_state.get("interrupted_phase") or run_state.get("phase") or "").strip()
     if phase_id and phase_id not in {"DONE", "terminal-blocked"}:
@@ -3160,7 +3228,11 @@ def _interrupted_retry_phase(run_state: dict) -> str | None:
     return _last_incomplete_dispatch_phase(run_state)
 
 
-def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
+def _classify_run_recovery(
+    run_state: dict,
+    *,
+    project_root: Path | None = None,
+) -> _RunRecoveryAction:
     status = str(run_state.get("status") or "").strip()
     reason = str(run_state.get("blocked_reason") or "").strip()
 
@@ -3259,7 +3331,25 @@ def _classify_run_recovery(run_state: dict) -> _RunRecoveryAction:
             note="choose a valid phase from echelon spec status output",
         )
 
-    rewind = _blocked_non_escalation_recovery_command(run_state)
+    # Schema rejection happens after an agent dispatch but before its result is
+    # committed.  The last dispatch is therefore incomplete even when an older
+    # successful pass appears in completed_phases; retrying it is safe and does
+    # not require deleting its planning artifacts.
+    if reason.startswith("echelon_result validation failed:"):
+        phase = _last_incomplete_dispatch_phase(run_state)
+        if phase:
+            return _RunRecoveryAction(
+                "retry_phase",
+                reason=reason,
+                phase=phase,
+                command="echelon spec continue",
+                note="will retry the phase with the rejected result; no rewind is required",
+            )
+
+    rewind = _blocked_non_escalation_recovery_command(
+        run_state,
+        project_root=project_root,
+    )
     if rewind:
         phase = str((run_state.get("last_dispatch") or {}).get("phase_id") or "").strip()
         return _RunRecoveryAction(
@@ -3381,7 +3471,11 @@ def _print_squad_summary(
 
     status = str(getattr(result, "status", "") or state.get("status") or "unknown")
     result_phase = str(getattr(result, "phase", "") or "")
-    action = _classify_run_recovery(state) if state else _RunRecoveryAction("advance")
+    action = (
+        _classify_run_recovery(state, project_root=project_root)
+        if state
+        else _RunRecoveryAction("advance")
+    )
     spec_id = str(state.get("spec_id") or "").strip()
     spec_dir = str(state.get("published_spec_dir") or state.get("spec_dir") or "").strip()
     if not spec_id and spec_dir:
@@ -3443,20 +3537,6 @@ def _print_squad_summary(
     _banner("SQUAD SUMMARY", fields, subtitle=f"{icon} {status_text}")
 
 
-def _rewind_constitution_is_real(project_root: Path) -> bool:
-    path = project_root / ".specify" / "memory" / "constitution.md"
-    if not path.exists():
-        return False
-    text = path.read_text(errors="replace")
-    template_markers = (
-        "[PROJECT_NAME]",
-        "[CONSTITUTION_VERSION]",
-        "[RATIFICATION_DATE]",
-        "[LAST_AMENDED_DATE]",
-    )
-    return not any(marker in text for marker in template_markers)
-
-
 def _normalize_rewind_spec_dir(project_root: Path, state: dict) -> tuple[Path | None, str | None]:
     ref = str(state.get("spec_dir") or "").strip()
     if ref:
@@ -3485,18 +3565,6 @@ def _normalize_rewind_spec_dir(project_root: Path, state: dict) -> tuple[Path | 
     return None, None
 
 
-def _collect_rewind_missing_inputs(spec_dir: Path, phase: str) -> list[str]:
-    missing: list[str] = []
-    for rel in _REWIND_REQUIRED_INPUTS.get(phase, ()):
-        path = spec_dir / rel.rstrip("/")
-        if rel.endswith("/"):
-            if not path.is_dir():
-                missing.append(rel)
-        elif not path.exists():
-            missing.append(rel)
-    return missing
-
-
 def _cleanup_rewind_outputs(spec_dir: Path, phase: str, run_dir: Path | None = None) -> list[str]:
     removed: list[str] = []
     roots = [spec_dir]
@@ -3516,26 +3584,64 @@ def _cleanup_rewind_outputs(spec_dir: Path, phase: str, run_dir: Path | None = N
     return removed
 
 
-def _reset_rewind_state(state: dict, phase: str, spec_dir_ref: str) -> dict:
+def _reset_rewind_state(
+    state: dict,
+    phase: str,
+    spec_dir_ref: str,
+    *,
+    checkpoint_phases_before_target: set[str] | None = None,
+) -> dict:
     rewound = dict(state)
     rewound["phase"] = phase
     rewound["status"] = "running"
+    rewound["iteration"] = 0
     rewound["spec_dir"] = spec_dir_ref
     rewound["blocked_reason"] = None
     rewound["escalation_question"] = None
     rewound["escalation_resolved"] = False
     rewound["escalation_resolver"] = None
     rewound.pop("phase_a_readiness_blockers", None)
-    if phase in _REWIND_PHASE_ORDER:
-        cutoff = _REWIND_PHASE_ORDER.index(phase)
-        downstream = set(_REWIND_PHASE_ORDER[cutoff:])
+    # A rewind reopens the target phase's owned repair loop.  Retaining an
+    # exhausted Lexicon certificate makes CARTOGRAPHER/ORCHESTRATOR conclude
+    # that they have no repair budget before they inspect the restored files.
+    # Reset only the gates whose owning phase is being revisited.
+    try:
+        phase_index = _ROADMAP_PHASES.index(phase)
+    except ValueError:
+        phase_index = len(_ROADMAP_PHASES)
+    if phase_index <= _ROADMAP_PHASES.index("phase1-what"):
+        rewound["lexicon_pass"] = None
+        rewound["lexicon_attempts"] = 0
+        rewound["lexicon_findings"] = 0
+        rewound.pop("lexicon_gate_exhausted", None)
+    if phase_index <= _ROADMAP_PHASES.index("phase3-plan"):
+        rewound["tasks_lexicon_pass"] = None
+        rewound["tasks_lexicon_attempts"] = 0
+        rewound.pop("tasks_lexicon_gate_exhausted", None)
+    if checkpoint_phases_before_target is not None:
         completed = rewound.get("completed_phases")
+        primary_predecessors: list[str] = []
+        if phase in _ROADMAP_PHASES:
+            primary_predecessors = _ROADMAP_PHASES[:_ROADMAP_PHASES.index(phase)]
         if isinstance(completed, list):
-            rewound["completed_phases"] = [p for p in completed if p not in downstream]
+            # Checkpoints are deliberately sparse: the roadmap's primary
+            # predecessors are known complete when rewinding to a later phase,
+            # even if no individual checkpoint was emitted for them.  Preserve
+            # any additional checkpointed branch phases after that backbone.
+            retained = [
+                item
+                for item in completed
+                if item in checkpoint_phases_before_target and item not in _ROADMAP_PHASES
+            ]
+            rewound["completed_phases"] = primary_predecessors + [
+                item for item in retained if item not in primary_predecessors
+            ]
         counts = rewound.get("phase_dispatch_counts")
         if isinstance(counts, dict):
             rewound["phase_dispatch_counts"] = {
-                key: value for key, value in counts.items() if key not in downstream
+                key: value
+                for key, value in counts.items()
+                if key in rewound.get("completed_phases", [])
             }
     return rewound
 
@@ -4088,7 +4194,7 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             current_state = {}
 
     if result_status in {"blocked", "interrupted"}:
-        action = _classify_run_recovery(current_state)
+        action = _classify_run_recovery(current_state, project_root=project_root)
         if action.kind == "human_resume":
             fields = [
                 ("reason", action.reason),
@@ -5328,7 +5434,22 @@ def _ensure_active_continue_spec_context(
     project-root specs/<id> directory remains the build-harness target and is
     mirrored into the run-local copy only for missing files.
     """
-    spec_id = str(state.get("spec_id") or "").strip()
+    # ``specify_feature_directory`` is the original spec-kit allocation.  It
+    # carries the full ``NNN-slug`` name and is therefore more specific than a
+    # legacy ``spec_id: NNN`` / ``specs/NNN`` alias created by an interrupted
+    # run.  Prefer it whenever it still resolves to a directory; otherwise a
+    # resume can fork a shadow ``specs/NNN`` artifact tree and validate the
+    # wrong copy.
+    specified_ref = str(state.get("specify_feature_directory") or "").strip()
+    specified_dir: Path | None = None
+    if specified_ref:
+        candidate = Path(specified_ref)
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        if candidate.is_dir():
+            specified_dir = candidate
+
+    spec_id = specified_dir.name if specified_dir is not None else str(state.get("spec_id") or "").strip()
     spec_ref = str(state.get("spec_dir") or "").strip()
     published_ref = str(state.get("published_spec_dir") or "").strip()
 
@@ -5340,7 +5461,18 @@ def _ensure_active_continue_spec_context(
         spec_id = only_spec.name
 
     active_spec_dir = run_dir / "specs" / spec_id
-    published_spec_dir = project_root / "specs" / spec_id
+    is_project_published_spec = False
+    if specified_dir is not None:
+        try:
+            specified_dir.relative_to(project_root / "specs")
+            is_project_published_spec = True
+        except ValueError:
+            pass
+    published_spec_dir = (
+        specified_dir
+        if is_project_published_spec and specified_dir is not None
+        else project_root / "specs" / spec_id
+    )
 
     source_dirs: list[Path] = []
     if published_spec_dir.exists():
@@ -5543,7 +5675,17 @@ def _phase_a_readiness_candidate_dirs(
     add(active_spec_dir)
     add(published_spec_dir)
 
-    spec_id = str(current_state.get("spec_id") or "").strip()
+    # A complete spec-kit name is authoritative.  A legacy ``spec_id: 004``
+    # must not cause a second ``specs/004`` artifact tree to be inspected once
+    # state already identifies ``004-feature-name``.
+    canonical_spec_id = ""
+    for key in ("specify_feature_directory", "spec_dir", "published_spec_dir"):
+        candidate_id = _spec_id_from_ref(str(current_state.get(key) or ""))
+        if re.fullmatch(r"\d{3,4}-[A-Za-z0-9][A-Za-z0-9._-]*", candidate_id):
+            canonical_spec_id = candidate_id
+            break
+
+    spec_id = canonical_spec_id or str(current_state.get("spec_id") or "").strip()
     if spec_id:
         add(project_root / "specs" / spec_id)
         if run_dir is not None:
@@ -5554,6 +5696,10 @@ def _phase_a_readiness_candidate_dirs(
         if not ref:
             continue
         add(Path(ref))
+
+    specified_ref = str(current_state.get("specify_feature_directory") or "").strip()
+    if specified_ref:
+        add(Path(specified_ref))
 
     staging_ref = str(current_state.get("staging_dir") or "").strip()
     if staging_ref:
@@ -5617,7 +5763,7 @@ def _next_continue_phase(project_root: Path) -> Optional[str]:
             return "phase4-document"
         return None
 
-    action = _classify_run_recovery(current_state)
+    action = _classify_run_recovery(current_state, project_root=project_root)
     if action.kind == "retry_phase":
         return action.phase
     if action.kind in {"human_resume", "safe_rewind"}:
@@ -5895,7 +6041,7 @@ def _print_roadmap(state: dict, workflow_path: Path | None = None) -> None:
     completed_set = {str(phase) for phase in completed}
     counts = state.get("phase_dispatch_counts")
     counts = counts if isinstance(counts, dict) else {}
-    current = state.get("current_phase")
+    current = state.get("current_phase") or state.get("phase")
     ld = state.get("last_dispatch")
     if not current and isinstance(ld, dict):
         current = ld.get("phase_id") or ld.get("phase")
@@ -6020,7 +6166,7 @@ def _cmd_status(project_root: Path) -> None:
         ])
     else:
         run_status = state.get("status", "unknown")
-        _ld = state.get("current_phase") or state.get("last_dispatch")
+        _ld = state.get("current_phase") or state.get("phase") or state.get("last_dispatch")
         if isinstance(_ld, dict):
             _ld = _ld.get("phase_id") or _ld.get("phase") or str(_ld)
         current_phase = _ld or "—"
@@ -6208,7 +6354,47 @@ def _cmd_continue(
         )
         _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
 
-    action = _classify_run_recovery(state)
+    verified_recovery = _verified_lexicon_gate_recovery_phase(project_root, state)
+    if verified_recovery is not None:
+        next_phase, findings = verified_recovery
+        state["lexicon_pass"] = True
+        state["lexicon_findings"] = findings
+        state["lexicon_attempts"] = 0
+        state.pop("lexicon_gate_exhausted", None)
+        state["blocked_reason"] = None
+        print(
+            "[squad] Lexicon recovery verified on disk; resuming after the hard gate.",
+            flush=True,
+        )
+        start_phase(next_phase, verb="Continuing from verified Lexicon recovery")
+        return
+
+    # Echelon versions before the banzai-routing fix persisted a COMMANDER
+    # ``next_phase`` as inert metadata, then incorrectly entered Phase-A
+    # finalization from ``terminal-blocked``.  Recover that exact historic
+    # state without treating the readiness failure as a reason to rewind.
+    persisted_banzai_phase = str(state.get("next_phase") or "").strip()
+    if (
+        state.get("status") == "blocked"
+        and state.get("phase") == "terminal-blocked"
+        and state.get("blocked_reason") == "phase_a_readiness_failed"
+        and state.get("escalation_resolver") == "COMMANDER-banzai"
+        and state.get("escalation_resolved") is True
+        and persisted_banzai_phase in _ROADMAP_PHASES
+    ):
+        state.pop("next_phase", None)
+        print(
+            "[squad] Recovering the persisted banzai COMMANDER route before finalization.",
+            flush=True,
+        )
+        start_phase(
+            persisted_banzai_phase,
+            verb="Continuing from accepted banzai judgment",
+            clear_recovery=True,
+        )
+        return
+
+    action = _classify_run_recovery(state, project_root=project_root)
     if action.kind == "safe_rewind":
         fields = [("blocked by", action.reason)]
         if action.note:
@@ -6291,21 +6477,13 @@ def _cmd_rewind(
     positional = [arg for arg in args if arg != "--confirm"]
     if len(positional) != 1:
         print(
-            "Usage: echelon spec rewind <phase-id> [--confirm]\n"
-            f"Supported phases: {', '.join(_SAFE_REWIND_PHASES)}",
+            "Usage: echelon spec rewind <checkpoint-phase-or-id> [--confirm]\n"
+            "Run `echelon spec checkpoint list` to see active-ledger targets.",
             file=sys.stderr,
         )
         sys.exit(1)
 
     target = positional[0].strip()
-    if target not in _SAFE_REWIND_PHASES:
-        print(
-            "✗ Unsupported rewind target.\n"
-            f"  Phase: {target}\n"
-            f"  Supported phases: {', '.join(_SAFE_REWIND_PHASES)}",
-            file=sys.stderr,
-        )
-        sys.exit(1)
 
     squad_dir = _find_current_run_dir(project_root)
     if squad_dir is None or not (squad_dir / "state.json").exists():
@@ -6329,79 +6507,90 @@ def _cmd_rewind(
         )
         sys.exit(1)
 
-    checkpoint_ledger = spec_dir / ".echelon" / "checkpoints.json"
-    if checkpoint_ledger.exists():
-        from echelon.rewind import RewindError, prepare_rewind
+    from echelon.rewind import RewindError, prepare_rewind
+    from harness.phase_checkpoints import (
+        checkpoint_targets,
+        load_checkpoint_ledger,
+        resolve_checkpoint,
+        write_checkpoint_ledger,
+    )
 
-        try:
-            result = prepare_rewind(
-                project_root=project_root,
-                spec=spec_dir.name,
-                spec_dir=spec_dir,
-                target=target,
-                confirm=confirm,
+    ledger = load_checkpoint_ledger(spec_dir)
+    try:
+        checkpoint = resolve_checkpoint(ledger, target)
+    except KeyError:
+        available = checkpoint_targets(ledger)
+        detail = (
+            f"checkpoint not found for spec {ledger.spec_id}: {target}\n"
+            + (
+                f"Available checkpoints: {', '.join(available)}"
+                if available
+                else "No checkpoints are recorded for this spec."
             )
-        except RewindError as exc:
-            print(f"✗ Cannot rewind to {target}.\n  {exc}", file=sys.stderr)
-            sys.exit(1)
-
-        if not result.applied:
-            print(result.message)
-            return
-
-        removed = _cleanup_rewind_outputs(spec_dir, target, squad_dir)
-        rewound = _reset_rewind_state(state, target, spec_dir_ref)
-        store.save(rewound)
-
-        _banner(
-            "REWIND COMPLETE",
-            [
-                ("spec", result.spec_id),
-                ("checkpoint", result.checkpoint_id),
-                ("from", result.from_commit[:7]),
-                ("to", result.to_commit[:7]),
-                ("backup", result.backup_ref or "(none)"),
-                ("cleaned", ", ".join(removed) if removed else "(none)"),
-                ("next", "echelon spec continue"),
-            ],
         )
-        return
+        print(f"✗ Cannot rewind to {target}.\n  {detail}", file=sys.stderr)
+        sys.exit(1)
 
-    if not _rewind_constitution_is_real(project_root):
+    from echelon.spec_lifecycle import (
+        PhaseAExecutionLock,
+        SpecLifecycleLocked,
+        SpecRunExecutionLock,
+    )
+
+    try:
+        with PhaseAExecutionLock.acquire(project_root, f"rewind-{os.getpid()}"):
+            with SpecRunExecutionLock.acquire(squad_dir, f"rewind-{os.getpid()}"):
+                result = prepare_rewind(
+                    project_root=project_root,
+                    spec=spec_dir.name,
+                    spec_dir=spec_dir,
+                    target=target,
+                    confirm=confirm,
+                )
+                if not result.applied:
+                    print(result.message)
+                    return
+
+                target_index = ledger.checkpoints.index(checkpoint)
+                retained_ledger = type(ledger)(
+                    spec_id=ledger.spec_id,
+                    checkpoints=ledger.checkpoints[: target_index + 1],
+                )
+                write_checkpoint_ledger(spec_dir, retained_ledger)
+                checkpoint_phases_before_target = {
+                    item.phase for item in ledger.checkpoints[:target_index]
+                }
+                removed = _cleanup_rewind_outputs(spec_dir, checkpoint.phase, squad_dir)
+                rewound = _reset_rewind_state(
+                    state,
+                    checkpoint.phase,
+                    spec_dir_ref,
+                    checkpoint_phases_before_target=checkpoint_phases_before_target,
+                )
+                store.save(rewound)
+    except SpecLifecycleLocked:
         print(
-            f"✗ Cannot rewind to {target}.\n"
-            "  constitution.md is missing or still contains template placeholders.",
+            "✗ Cannot rewind while the active spec run is still running.\n"
+            "  Interrupt it and wait for `echelon spec status` to show INTERRUPTED, then retry.",
             file=sys.stderr,
         )
         sys.exit(1)
-
-    missing = _collect_rewind_missing_inputs(spec_dir, target)
-    if missing:
-        print(
-            f"✗ Cannot rewind to {target}.\n"
-            "  Missing required inputs:",
-            file=sys.stderr,
-        )
-        for item in missing:
-            print(f"  - {spec_dir / item.rstrip('/')}", file=sys.stderr)
-        print(
-            "  Next step: regenerate the missing upstream artifacts or rewind to an earlier safe phase.",
-            file=sys.stderr,
-        )
+    except RewindError as exc:
+        print(f"✗ Cannot rewind to {target}.\n  {exc}", file=sys.stderr)
         sys.exit(1)
 
-    removed = _cleanup_rewind_outputs(spec_dir, target, squad_dir)
-    rewound = _reset_rewind_state(state, target, spec_dir_ref)
-    store.save(rewound)
-
-    details = [
-        ("run dir", str(squad_dir)),
-        ("phase", target),
-        ("spec dir", spec_dir_ref),
-        ("cleaned", ", ".join(removed) if removed else "(none)"),
-        ("next step", "echelon spec continue"),
-    ]
-    _banner("REWIND PREPARED", details)
+    _banner(
+        "REWIND COMPLETE",
+        [
+            ("spec", result.spec_id),
+            ("checkpoint", result.checkpoint_id),
+            ("from", result.from_commit[:7]),
+            ("to", result.to_commit[:7]),
+            ("backup", result.backup_ref or "(none)"),
+            ("cleaned", ", ".join(removed) if removed else "(none)"),
+            ("next", "echelon spec continue"),
+        ],
+    )
 
 
 def _cmd_repair_traceability(args: list[str], project_root: Path) -> None:
@@ -7556,6 +7745,9 @@ def _print_re_lifecycle_result(result: object) -> None:
         return
     reason = str(getattr(result, "blocked_reason", "RE lifecycle failed"))
     print(f"RE run {run_id or '(not created)'} blocked: {reason}", file=sys.stderr)
+    detail = str(getattr(result, "blocked_detail", "")).strip()
+    if detail:
+        print(f"  detail: {detail}", file=sys.stderr)
     raise SystemExit(1)
 
 

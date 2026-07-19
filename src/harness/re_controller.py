@@ -124,6 +124,8 @@ class ReExtractionController:
     def _run_locked(self) -> ReControllerResult:
         plan = self._load_plan()
         state = self._load_state()
+        if self._recover_rejected_workspace_synthesis(state, plan):
+            self._save_state(state)
         if self._migrate_workspace_source_convergence(state):
             self._save_state(state)
         if self._upgrade_source_convergence_quality_contract(state):
@@ -1480,6 +1482,15 @@ class ReExtractionController:
         incomplete artifact. A BLOCKED response with a passing target remains
         an explicit agent blocker instead of being silently accepted.
         """
+        if (
+            target.get("kind") == "workspace-synthesis"
+            and agent_block_detail is None
+        ):
+            synthesis_error = self._workspace_synthesis_error(plan)
+            if synthesis_error is not None:
+                state["re_agent_result_detail"] = synthesis_error
+                return self._block(state, "re_workspace_synthesis_incomplete")
+
         target_report = self._target_quality_report(plan, target)
         if target_report is not None and not target_report.passed:
             source_id = str(target["source_id"])
@@ -1633,7 +1644,9 @@ class ReExtractionController:
                 "\n## Controller-Owned Specification Target\n"
                 "Generate source overviews and workspace synthesis only. All required "
                 "source-domain specs have already been dispatched independently. Do not "
-                "create, rename, or rewrite any source-domain spec.\n"
+                "create, rename, or rewrite any source-domain spec. Return an "
+                "`echelon_result` with `state_updates: {}`; lifecycle routing and "
+                "workspace-synthesis completion are controller-owned.\n"
             )
         if kind == "source-support":
             source_id = target.get("source_id")
@@ -2192,6 +2205,90 @@ class ReExtractionController:
             blocked_detail=detail if isinstance(detail, str) and detail.strip() else None,
         )
 
+    def _workspace_synthesis_error(self, plan: ReExecutionPlan) -> str | None:
+        """Return a deterministic error for an incomplete staged synthesis."""
+        required = [
+            self._run_re_dir / "workspace" / "overview.md",
+            self._run_re_dir / "workspace" / "relationships.md",
+            self._run_re_dir / "workspace" / "contracts.md",
+        ]
+        required.extend(
+            self._run_re_dir / "sources" / source.id / "overview.md"
+            for source in plan.refresh_sources
+        )
+        try:
+            architecture = load_re_architecture_map(
+                self._run_re_dir / "workspace" / "architecture-map.json"
+            )
+        except ValueError as exc:
+            return f"workspace synthesis architecture map is invalid: {exc}"
+        required.extend(
+            self._run_re_dir / "workspace" / "domains" / f"{domain_id}.md"
+            for domain_id in sorted(
+                {domain.domain_id for domain in architecture.domains}
+            )
+        )
+
+        invalid: list[str] = []
+        for path in required:
+            relative = path.relative_to(self._run_re_dir).as_posix()
+            try:
+                if (
+                    path.is_symlink()
+                    or not path.is_file()
+                    or not path.read_text(encoding="utf-8").strip()
+                ):
+                    invalid.append(relative)
+            except OSError:
+                invalid.append(relative)
+        if invalid:
+            return "workspace synthesis has missing or empty artifacts: " + ", ".join(
+                invalid
+            )
+        return None
+
+    def _recover_rejected_workspace_synthesis(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+    ) -> bool:
+        """Accept one known stranded synthesis only after artifact validation."""
+        detail = state.get("re_agent_result_detail")
+        last_dispatch = state.get("last_dispatch")
+        targets = state.get("re_specification_targets")
+        if not (
+            state.get("status") == "blocked"
+            and state.get("blocked_reason") == "re_agent_result_invalid"
+            and state.get("phase") == "re-extract-2-specify"
+            and isinstance(detail, str)
+            and "re_workspace_synthesis_complete" in detail
+            and isinstance(last_dispatch, dict)
+            and last_dispatch.get("phase_id") == "re-extract-2-specify"
+            and last_dispatch.get("agent") == "specifier"
+            and last_dispatch.get("post_dispatch_complete") is False
+            and isinstance(targets, list)
+            and bool(targets)
+            and isinstance(targets[0], dict)
+            and targets[0].get("kind") == "workspace-synthesis"
+        ):
+            return False
+        if self._workspace_synthesis_error(plan) is not None:
+            return False
+
+        target = targets[0]
+        recovered = complete_dispatch(state, {"state_updates": {}})
+        state.clear()
+        state.update(recovered)
+        self._complete_specification_target(state, target)
+        state["status"] = "in_progress"
+        state.pop("blocked_reason", None)
+        state.pop("re_agent_result_detail", None)
+        print(
+            "[re] recovered completed workspace synthesis from validated staged artifacts",
+            flush=True,
+        )
+        return True
+
     @staticmethod
     def _agent_result_without_controller_keys(
         payload: dict, target: dict[str, object] | None = None
@@ -2199,10 +2296,15 @@ class ReExtractionController:
         updates = payload.get("state_updates")
         if not isinstance(updates, dict):
             return payload
-        if isinstance(target, dict) and target.get("kind") == "source-support":
-            # A supporting-artifacts target has no state transition. Providers
-            # sometimes report a descriptive `sources` list; never let that
-            # non-routing metadata block the deterministic coverage repair.
+        if isinstance(target, dict) and target.get("kind") in {
+            "source-domain",
+            "source-support",
+            "workspace-synthesis",
+        }:
+            # Specification targets produce files; their queue and completion
+            # transitions are controller-owned. Providers sometimes report
+            # descriptive inventory or completion metadata, but none of it may
+            # mutate RE routing state.
             return {**payload, "state_updates": {}}
         controlled = {
             "max_validate_iterations",

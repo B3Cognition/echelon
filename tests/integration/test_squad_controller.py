@@ -6,6 +6,7 @@ WHY3 + ASSESS2 (stage 1) before PLAN2 (stage 2) and before checkpoint-plan.
 """
 import sys
 import json
+import hashlib
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -2026,6 +2027,68 @@ class TestCommanderJudgmentStateUpdates:
 
         assert store.load()["why_fail_count"] == 0
 
+    def test_banzai_escalation_applies_commander_next_phase(self, tmp_path):
+        """A banzai judgment route must replace terminal-blocked, not become metadata."""
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "next_phase": "checkpoint-assess",
+                    "escalation_question": None,
+                    "escalation_resolved": True,
+                    "escalation_resolver": "COMMANDER-banzai",
+                    "blocked_reason": None,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "terminal-blocked", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "status": "running",
+                "escalation_question": "Two consecutive WHY2 failures",
+                "blocked_reason": "consecutive_why_fails",
+            }
+        )
+        store.save(state)
+
+        ctrl._judgment_dispatch_escalation(
+            "Two consecutive WHY2 failures",
+            "phase1-why2",
+            recovery_reason="consecutive_why_fails",
+        )
+
+        resumed = store.load()
+        assert resumed["phase"] == "checkpoint-assess"
+        assert "next_phase" not in resumed
+
+    def test_terminal_blocked_never_runs_phase_a_finalization(self, tmp_path):
+        """A terminal block is a stop state, even if an earlier handler set running."""
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "terminal-blocked", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "status": "running",
+                "blocked_reason": "consecutive_why_fails",
+                "escalation_question": "Two consecutive WHY2 failures",
+            }
+        )
+        store.save(state)
+
+        with patch.object(ctrl, "_publish_terminal_phase_a_artifacts_if_available") as publish:
+            result = ctrl.run("msg", "banzai")
+
+        assert result.status == "blocked"
+        assert store.load()["blocked_reason"] == "consecutive_why_fails"
+        publish.assert_not_called()
+
     def test_banzai_phase_dispatch_limit_recovery_resets_capped_phase(self, tmp_path):
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(
@@ -2141,13 +2204,75 @@ class TestStructuralGuardDeterminism:
         st = store.load()
         st["iteration"] = 0
         st["max_iterations"] = 3
+        st["spec_dir"] = "runs/run-test/specs/001-demo"
         store.save(st)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
         with patch.object(ctrl, "_judgment_dispatch",
                           side_effect=AssertionError("guard punted to COMMANDER")):
             nxt = ctrl._evaluate_transitions(
                 node, self._result({"feasibility_structural_pass": False})
             )
         assert nxt == "phase2-decide"
+
+
+class TestProductInputMappingRepair:
+    def test_plan_mapping_failure_is_requeued_with_controller_context(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+
+        repaired = ctrl._schedule_product_input_mapping_repair(
+            "phase3-plan",
+            "invalid product input task mappings: "
+            "IN-REQ-1: unresolved disposition open_question",
+        )
+
+        state = store.load()
+        assert repaired is True
+        assert state["phase"] == "phase3-plan"
+        assert state["status"] == "running"
+        assert state["product_input_mapping_repair_attempts"] == 1
+        assert state["product_input_mapping_repair"]["blockers"] == [
+            "IN-REQ-1: unresolved disposition open_question"
+        ]
+
+    def test_plan_mapping_repair_stops_after_bounded_attempts(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+        state = store.load()
+        state["product_input_mapping_repair_attempts"] = 2
+        state["product_input_mapping_repair"] = {"protocol_version": 2}
+        store.save(state)
+
+        repaired = ctrl._schedule_product_input_mapping_repair(
+            "phase3-plan",
+            "invalid product input task mappings: "
+            "IN-REQ-1: unresolved disposition open_question",
+        )
+
+        assert repaired is False
+
+    def test_outdated_mapping_repair_protocol_gets_a_fresh_budget(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+        state = store.load()
+        state["product_input_mapping_repair_attempts"] = 2
+        state["product_input_mapping_repair"] = {"attempt": 2, "blockers": ["old"]}
+        state["phase_dispatch_counts"] = {"phase3-plan": 4}
+        store.save(state)
+
+        repaired = ctrl._schedule_product_input_mapping_repair(
+            "phase3-plan",
+            "invalid product input task mappings: "
+            "IN-REQ-1: unresolved disposition open_question",
+        )
+
+        state = store.load()
+        assert repaired is True
+        assert state["product_input_mapping_repair_attempts"] == 1
+        assert state["product_input_mapping_repair"]["protocol_version"] == 2
+        assert state["phase_dispatch_counts"]["phase3-plan"] == 0
 
 
 class TestLexiconGateGuardDeterminism:
@@ -2174,6 +2299,12 @@ class TestLexiconGateGuardDeterminism:
         assert "lexicon_gate" in cfg
         assert cfg["lexicon_gate"].get("enabled") is True
 
+    def test_spec_lexicon_gate_uses_the_iteration_dispatch_budget(self):
+        """WHAT retries are governed by max_iterations, not the generic cap."""
+        from harness.squad import ITERATIVE_PHASES
+
+        assert "phase1-what" in ITERATIVE_PHASES
+
     def test_tasks_gate_failure_redispatches_without_commander(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase3-plan")
@@ -2191,3 +2322,160 @@ class TestLexiconGateGuardDeterminism:
                           side_effect=AssertionError("guard punted to COMMANDER — not deterministic")):
             nxt = ctrl._evaluate_transitions(node, self._result({"tasks_lexicon_pass": True}))
         assert nxt == "phase3-consensus"   # deterministic fall-through on gate pass
+
+    def test_spec_gate_missing_result_redispatches_without_commander(self, tmp_path):
+        """An omitted certificate cannot bypass an enabled spec Lexicon gate."""
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        st = store.load()
+        st["iteration"] = 0
+        st["max_iterations"] = 3
+        st["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(st)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+
+        with patch.object(
+            ctrl,
+            "_judgment_dispatch",
+            side_effect=AssertionError("missing Lexicon result punted to COMMANDER"),
+        ):
+            nxt = ctrl._evaluate_transitions(node, self._result({}))
+
+        assert nxt == "phase1-what"
+
+    def test_spec_gate_rejects_claimed_pass_without_derived_artifact(self, tmp_path):
+        """A declared pass is invalid until the derived requirements exist."""
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        st = store.load()
+        st["iteration"] = 0
+        st["max_iterations"] = 3
+        st["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(st)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+        result = self._result({"lexicon_pass": True})
+
+        with patch.object(
+            ctrl,
+            "_judgment_dispatch",
+            side_effect=AssertionError("missing artifact punted to COMMANDER"),
+        ):
+            nxt = ctrl._evaluate_transitions(node, result)
+
+        assert nxt == "phase1-what"
+        assert result.state_updates["lexicon_pass"] is False
+
+    def test_spec_gate_uses_controller_validation_not_agent_stale_failure(self, tmp_path):
+        """A valid artifact advances even if the agent reports stale failed state."""
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        source = """# Feature\n\n- **FR-001**: Render the dashboard.\n- **AC-001**: Given data, when rendering, then the dashboard is visible.\n"""
+        (spec_dir / "spec.md").write_text(source, encoding="utf-8")
+        (spec_dir / "glossary.md").write_text("", encoding="utf-8")
+        digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        (spec_dir / "requirements.lexicon.md").write_text(
+            f"""# SOURCE: spec.md
+# SOURCE_SHA256: {digest}
+ARTIFACT: SPEC
+TITLE: Dashboard
+
+REQ: FR-001
+GIVEN: data is available
+WHEN: the user opens the dashboard
+THEN: The system SHALL render the dashboard
+OUTPUT: The dashboard is visible
+DEPENDS: none
+EXAMPLE: AC-001
+
+AC: AC-001
+GIVEN: data is available
+WHEN: the user opens the dashboard
+THEN: The dashboard is visible
+""",
+            encoding="utf-8",
+        )
+        state = store.load()
+        state.update({
+            "iteration": 0,
+            "max_iterations": 10,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+        })
+        store.save(state)
+        result = self._result({"lexicon_pass": False, "lexicon_attempts": 3, "lexicon_findings": 55})
+
+        nxt = ctrl._evaluate_transitions(node, result)
+
+        assert nxt == "phase1-why2"
+        assert result.state_updates["lexicon_pass"] is True
+        assert result.state_updates["lexicon_attempts"] == 0
+        assert result.state_updates["lexicon_findings"] == 0
+
+    def test_spec_gate_blocks_on_exhaustion_when_configured_hard(self, tmp_path):
+        """A hard Lexicon gate cannot fall through after its final repair pass."""
+        (tmp_path / ".echelon").mkdir()
+        (tmp_path / ".echelon" / "config.yml").write_text(
+            "lexicon_gate:\n"
+            "  enabled: true\n"
+            "  on_exhausted: block\n"
+            "  artifacts:\n"
+            "    spec:\n"
+            "      enabled: true\n"
+            "      path: requirements.lexicon.md\n",
+            encoding="utf-8",
+        )
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        st = store.load()
+        st["iteration"] = 3
+        st["max_iterations"] = 3
+        st["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(st)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+
+        nxt = ctrl._evaluate_transitions(node, self._result({}))
+
+        assert nxt == "terminal-blocked"
+        state = store.load()
+        assert state["status"] == "blocked"
+        assert state["blocked_reason"] == "lexicon_gate_exhausted"
+
+    def test_spec_gate_blocks_when_agent_exhausts_its_repair_budget(self, tmp_path):
+        """The agent's repair cap must win over the broader squad iteration cap."""
+        (tmp_path / ".echelon").mkdir()
+        (tmp_path / ".echelon" / "config.yml").write_text(
+            "lexicon_gate:\n"
+            "  enabled: true\n"
+            "  max_repair_attempts: 3\n"
+            "  on_exhausted: block\n"
+            "  artifacts:\n"
+            "    spec:\n"
+            "      enabled: true\n"
+            "      path: requirements.lexicon.md\n",
+            encoding="utf-8",
+        )
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        st = store.load()
+        st["iteration"] = 0
+        st["max_iterations"] = 10
+        st["spec_dir"] = "runs/run-test/specs/001-demo"
+        store.save(st)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+
+        nxt = ctrl._evaluate_transitions(
+            node,
+            self._result({"lexicon_pass": False, "lexicon_attempts": 3}),
+        )
+
+        assert nxt == "terminal-blocked"
+        assert store.load()["blocked_reason"] == "lexicon_gate_exhausted"
