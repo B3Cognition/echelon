@@ -51,9 +51,12 @@ Never edit `tasks.md`, `spec.md`, `progress-report.md`, or other spec artifacts
 to record build progress during a harness build slice. Treat spec artifact paths
 as read-only inputs unless the command is explicitly a spec-authoring,
 reopen/reconcile, or verify-spec reconcile command. The documentation phase is
-the narrow delivery-build exception: TECH WRITER may write only
+the narrow delivery-build exception: TECH WRITER may write
 `documentation-impact-report.md` under `spec_dir`, and DOCS VERIFIER may write
-only `docs-verification-report.md` under `spec_dir`. For delivery builds,
+`docs-verification-report.md` under `spec_dir`. If that impact report requires
+documentation updates, IMPLEMENTER may update only `README.md` and
+`CHANGELOG.md` as specified by the report, then DOCS VERIFIER must re-validate
+the reports. For delivery builds,
 progress is reported only through `$HARNESS_BUILD_STATUS_FILE.completed_task_ids`;
 Ralph performs the deterministic `tasks.md` update after the build invocation
 returns.

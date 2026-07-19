@@ -68,6 +68,13 @@ def test_next_minor_version_examples() -> None:
     assert module.next_minor_version(module.Version.parse("3.9.6")).text == "4.0.0"
 
 
+def test_next_patch_version_examples() -> None:
+    module = load_module()
+
+    assert module.next_patch_version(module.Version.parse("3.0.81")).text == "3.0.82"
+    assert module.next_patch_version(module.Version.parse("3.9.6")).text == "3.9.7"
+
+
 def test_next_minor_rejects_minor_greater_than_nine() -> None:
     module = load_module()
 
@@ -84,6 +91,16 @@ def test_require_next_minor_release_accepts_only_computed_boundary() -> None:
         module.require_next_minor_release("3.0.80", "3.5.0")
 
 
+def test_require_next_release_accepts_only_immediate_patch_or_minor() -> None:
+    module = load_module()
+
+    module.require_next_release("3.0.80", "3.0.81")
+    module.require_next_release("3.0.80", "3.1.0")
+
+    with pytest.raises(module.ReleaseError, match="next patch or minor"):
+        module.require_next_release("3.0.80", "3.0.82")
+
+
 def test_dry_run_does_not_write_files(tmp_path: Path) -> None:
     module = load_module()
     write_project(tmp_path, "3.0.81")
@@ -93,6 +110,17 @@ def test_dry_run_does_not_write_files(tmp_path: Path) -> None:
     assert result.old_version == "3.0.81"
     assert result.new_version == "3.1.0"
     assert read_pyproject_version(tmp_path) == "3.0.81"
+
+
+def test_prepare_release_can_prepare_a_patch_metadata_update(tmp_path: Path) -> None:
+    module = load_module()
+    write_project(tmp_path, "3.0.81")
+
+    result = module.prepare_release(tmp_path, bump="patch")
+
+    assert result.old_version == "3.0.81"
+    assert result.new_version == "3.0.82"
+    assert read_pyproject_version(tmp_path) == "3.0.82"
 
 
 def test_prepare_release_updates_all_metadata(tmp_path: Path) -> None:

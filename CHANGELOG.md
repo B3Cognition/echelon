@@ -4,6 +4,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Delivery finalization recovery** — a documentation-only delivery slice no
+  longer fails merely because every canonical task is already terminal. Ralph
+  still requires exact task IDs for implementation progress, while the build
+  contract now permits the report-driven README/CHANGELOG updates needed to
+  close the documentation gate.
+- **Spec-result recovery** — a rejected non-authoritative `state_updates` key
+  now retries the originating phase instead of recommending an unsafe rewind.
+
+- **Patch-release support** — release metadata tooling and the GitHub release
+  workflow now accept the immediate next patch version as well as the next
+  minor version.
+
 ### Added
 
 - **#166 local spec catalog publication** — `echelon spec publish <id>` and

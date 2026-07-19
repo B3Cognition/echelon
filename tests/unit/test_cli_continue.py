@@ -1164,6 +1164,34 @@ def test_recovery_suggests_any_checkpointed_phase_from_the_active_ledger(
     assert action.command == "echelon spec rewind phase1-what"
 
 
+def test_recovery_retries_completed_phase_after_state_update_validation_failure(
+    tmp_path: Path,
+) -> None:
+    """A rejected result is incomplete even if an earlier pass completed the phase."""
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": (
+                "echelon_result validation failed: echelon_result.state_updates key "
+                "'phase3_plan_verdict' is not allowed for this phase"
+            ),
+            "last_dispatch": {"phase_id": "phase3-consensus", "verdict": "BLOCKED"},
+            "completed_phases": ["phase3-plan", "phase3-consensus"],
+        },
+    )
+
+    action = _classify_run_recovery(
+        json.loads((run_dir / "state.json").read_text(encoding="utf-8")),
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.phase == "phase3-consensus"
+    assert action.command == "echelon spec continue"
+
+
 def test_continue_manual_block_does_not_claim_human_resume(
     tmp_path: Path,
     capsys,

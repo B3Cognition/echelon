@@ -56,7 +56,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.7.0"
+CLI_VERSION = "3.7.1"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -3330,6 +3330,21 @@ def _classify_run_recovery(
             command="echelon spec run --next-phase <phase-id>",
             note="choose a valid phase from echelon spec status output",
         )
+
+    # Schema rejection happens after an agent dispatch but before its result is
+    # committed.  The last dispatch is therefore incomplete even when an older
+    # successful pass appears in completed_phases; retrying it is safe and does
+    # not require deleting its planning artifacts.
+    if reason.startswith("echelon_result validation failed:"):
+        phase = _last_incomplete_dispatch_phase(run_state)
+        if phase:
+            return _RunRecoveryAction(
+                "retry_phase",
+                reason=reason,
+                phase=phase,
+                command="echelon spec continue",
+                note="will retry the phase with the rejected result; no rewind is required",
+            )
 
     rewind = _blocked_non_escalation_recovery_command(
         run_state,

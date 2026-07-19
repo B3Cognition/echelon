@@ -66,12 +66,30 @@ def next_minor_version(version: Version) -> Version:
     return Version(version.major, version.minor + 1, 0)
 
 
+def next_patch_version(version: Version) -> Version:
+    return Version(version.major, version.minor, version.patch + 1)
+
+
 def require_next_minor_release(previous_version: str, release_version: str) -> None:
     expected = next_minor_version(Version.parse(previous_version)).text
     if release_version != expected:
         raise ReleaseError(
             f"release version {release_version} is not the closest next minor "
             f"after {previous_version}; expected {expected}"
+        )
+
+
+def require_next_release(previous_version: str, release_version: str) -> None:
+    previous = Version.parse(previous_version)
+    expected = {
+        next_patch_version(previous).text,
+        next_minor_version(previous).text,
+    }
+    if release_version not in expected:
+        choices = " or ".join(sorted(expected))
+        raise ReleaseError(
+            f"release version {release_version} is not the next patch or minor "
+            f"after {previous_version}; expected {choices}"
         )
 
 
@@ -162,10 +180,21 @@ def validate_release_metadata(root: Path, expected_version: str) -> None:
         )
 
 
-def prepare_release(root: Path, dry_run: bool = False) -> ReleaseResult:
+def prepare_release(
+    root: Path,
+    dry_run: bool = False,
+    *,
+    bump: str = "minor",
+) -> ReleaseResult:
     root = root.resolve()
     old_version = _read_package_version(root)
-    new_version = next_minor_version(Version.parse(old_version)).text
+    version = Version.parse(old_version)
+    if bump == "minor":
+        new_version = next_minor_version(version).text
+    elif bump == "patch":
+        new_version = next_patch_version(version).text
+    else:
+        raise ReleaseError(f"unsupported release bump: {bump}")
     replacements: list[tuple[Path, str, bool]] = []
     changed: list[Path] = []
 
@@ -199,10 +228,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="print the planned release version without writing files",
     )
+    parser.add_argument(
+        "--patch",
+        action="store_true",
+        help="prepare the next patch release instead of the next minor release",
+    )
     args = parser.parse_args(argv)
 
     try:
-        result = prepare_release(Path(__file__).resolve().parents[1], dry_run=args.dry_run)
+        result = prepare_release(
+            Path(__file__).resolve().parents[1],
+            dry_run=args.dry_run,
+            bump="patch" if args.patch else "minor",
+        )
     except ReleaseError as exc:
         print(f"prepare-release: {exc}", file=sys.stderr)
         return 1

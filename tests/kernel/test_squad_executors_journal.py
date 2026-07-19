@@ -742,7 +742,8 @@ def test_assemble_prompt_includes_allowed_state_updates(tmp_path):
     assert "## Allowed state_updates for this dispatch" in prompt
     assert "- `spec_id`" in prompt
     assert "- `spec_dir`" in prompt
-    assert "Any other top-level key blocks the run." in prompt
+    assert "Any other state_updates key blocks the run." in prompt
+    assert "Put task counts, report summaries, evidence, and diagnostics in journal_entries" in prompt
 
 
 def test_assemble_prompt_includes_empty_allowed_state_updates(tmp_path):

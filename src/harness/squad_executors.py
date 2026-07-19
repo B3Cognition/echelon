@@ -127,7 +127,8 @@ def _allowed_state_updates_contract(allowed_state_updates: object) -> str:
         "## Allowed state_updates for this dispatch",
         "The harness validates `echelon_result.state_updates` before mutating state.",
         "Return only the keys listed here; use `state_updates: {}` when no state",
-        "changes are needed. Any other top-level key blocks the run.",
+        "changes are needed. Any other state_updates key blocks the run.",
+        "Put task counts, report summaries, evidence, and diagnostics in journal_entries, never state_updates.",
         "",
     ]
     if allowed_state_updates is None:
