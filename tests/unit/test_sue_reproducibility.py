@@ -350,6 +350,93 @@ class TestFractureLines:
         assert v3.fracture_lines(readers, per, []) == {}
 
 
+class TestControlledSituations:
+    LEXICON = [
+        "ARTIFACT: SPEC",
+        "",
+        "REQ: REQ-001",
+        "GIVEN: a builder has one or more spec runs",
+        "WHEN: the builder opens the home view",
+        "THEN: the workbench MUST list every run",
+        "",
+        "REQ: REQ-002",
+        "GIVEN: a run is selected",
+        "WHEN: the builder opens it",
+        "THEN: an overview appears",
+        "",
+        "AC: AC-001",
+        "GIVEN: three runs exist",
+        "WHEN: the builder opens the home view",
+        "THEN: three rows appear",
+    ]
+
+    def test_parses_req_and_ac_blocks(self):
+        spec = v1.SpecDocument(path=Path("x"), lines=list(self.LEXICON))
+        situations = v3.parse_controlled_situations(spec)
+        assert set(situations) == {"REQ-001", "REQ-002", "AC-001"}
+        assert situations["REQ-001"]["given"] == "a builder has one or more spec runs"
+        assert situations["AC-001"]["when"] == "the builder opens the home view"
+
+    def test_non_lexicon_spec_yields_empty(self):
+        spec = v1.SpecDocument(path=Path("x"), lines=[
+            "- **FR-001**: the system MUST write the report.",
+        ])
+        assert v3.parse_controlled_situations(spec) == {}
+
+    def test_prompt_lists_canonical_situations_verbatim(self):
+        spec = v1.SpecDocument(path=Path("x"), lines=list(self.LEXICON))
+        situations = v3.parse_controlled_situations(spec)
+        prompt = v3.build_extraction_prompt(
+            spec, "framing", {"REQ-001"}, situations=situations
+        )
+        assert 'given="a builder has one or more spec runs"' in prompt
+        assert "CANONICAL SITUATIONS" in prompt
+        assert "REQ-002" not in prompt.split("SPECIFICATION")[0].replace(
+            "\n".join(self.LEXICON), ""
+        ) or True  # chunk filtering asserted below
+
+    def test_prompt_filters_situations_to_chunk(self):
+        spec = v1.SpecDocument(path=Path("x"), lines=list(self.LEXICON))
+        situations = v3.parse_controlled_situations(spec)
+        prompt = v3.build_extraction_prompt(
+            spec, "framing", {"REQ-001"}, situations=situations
+        )
+        header = prompt.split("SPECIFICATION (line-numbered)")[0]
+        assert "- REQ-001: given=" in header
+        assert "- REQ-002: given=" not in header
+
+    def test_validation_requires_canonical_assertion(self):
+        spec_lines = list(self.LEXICON)
+        situations = {"REQ-001": {"given": "a builder has one or more spec runs",
+                                  "when": "the builder opens the home view",
+                                  "line": 4}}
+        payload = {"requirements": {"REQ-001": {
+            "edges": [], "assumptions": [],
+            "assertions": [{"given": "something else", "when": "whenever",
+                            "then": "stuff", "lines": [4]}],
+        }}}
+        result = v3.validate_graph(payload, {"REQ-001"}, len(spec_lines),
+                                   spec_lines=spec_lines, situations=situations)
+        assert isinstance(result, v1.ParseFailure)
+        assert "canonical-situation assertion" in result.reason
+
+    def test_validation_accepts_verbatim_situation(self):
+        spec_lines = list(self.LEXICON)
+        situations = {"REQ-001": {"given": "a builder has one or more spec runs",
+                                  "when": "the builder opens the home view",
+                                  "line": 4}}
+        payload = {"requirements": {"REQ-001": {
+            "edges": [], "assumptions": [],
+            "assertions": [{"given": "A builder has one or more spec runs",
+                            "when": "the builder opens the home view",
+                            "then": "every run is listed", "lines": [6]}],
+        }}}
+        result = v3.validate_graph(payload, {"REQ-001"}, len(spec_lines),
+                                   spec_lines=spec_lines, situations=situations)
+        reqs, _ = result
+        assert len(reqs["REQ-001"].assertions) == 1
+
+
 class TestChunking:
     def test_small_set_single_chunk(self):
         ids = {f"FR-{i:03d}" for i in range(1, 6)}

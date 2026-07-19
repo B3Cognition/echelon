@@ -272,6 +272,45 @@ def build_reader_jobs(
     return jobs
 
 
+_BLOCK_HEAD_RE = re.compile(r"^(?:REQ|AC):\s+((?:REQ|AC)-[0-9]{1,4}[a-z]?)\s*$")
+_FIELD_RE = re.compile(r"^(GIVEN|WHEN):\s+(.*\S)\s*$")
+
+
+def parse_controlled_situations(spec) -> dict:
+    """Canonical situations from controlled-grammar (lexicon) REQ/AC blocks.
+
+    The lexicon grammar guarantees `REQ:`/`AC:` headers followed by GIVEN/WHEN
+    field lines, so a deterministic line scan suffices (stdlib only — FR-045
+    forbids importing the lexicon package). Returns
+    {unit_id: {"given": str, "when": str, "line": int}} for units carrying both
+    fields. Non-lexicon specs return {} and the witness channel reports itself
+    as situation-less (sampling-lottery mode, cross-run intersection required).
+    """
+    situations: dict = {}
+    current_id: str | None = None
+    fields: dict = {}
+    for line_no, line in enumerate(spec.lines, start=1):
+        head = _BLOCK_HEAD_RE.match(line.strip())
+        if head:
+            if current_id and "GIVEN" in fields and "WHEN" in fields:
+                situations[current_id] = fields
+            current_id = head.group(1)
+            fields = {}
+            continue
+        if current_id is None:
+            continue
+        field = _FIELD_RE.match(line.strip())
+        if field:
+            fields[field.group(1)] = field.group(2)
+            fields.setdefault("line", line_no)
+    if current_id and "GIVEN" in fields and "WHEN" in fields:
+        situations[current_id] = fields
+    return {
+        unit_id: {"given": f["GIVEN"], "when": f["WHEN"], "line": f["line"]}
+        for unit_id, f in situations.items()
+    }
+
+
 def chunk_ids(known_ids: set, size: int | None = None) -> list:
     """Deterministic slicing of scored unit ids into extraction chunks.
 
@@ -283,8 +322,27 @@ def chunk_ids(known_ids: set, size: int | None = None) -> list:
     return [set(ordered[i:i + size]) for i in range(0, len(ordered), size)]
 
 
-def build_extraction_prompt(spec, framing_suffix: str, known_ids: set) -> str:
+def build_extraction_prompt(spec, framing_suffix: str, known_ids: set,
+                            situations: dict | None = None) -> str:
     ids_hint = ", ".join(sorted(known_ids)[:400])
+    situation_block = ""
+    relevant = {
+        unit_id: s for unit_id, s in (situations or {}).items()
+        if unit_id in known_ids
+    }
+    if relevant:
+        listed = "\n".join(
+            f"- {unit_id}: given=\"{s['given']}\" when=\"{s['when']}\""
+            for unit_id, s in sorted(relevant.items())
+        )
+        situation_block = (
+            "\nCANONICAL SITUATIONS (copy given/when VERBATIM — do not reword): "
+            "for each unit below, include exactly 1 assertion whose given and "
+            "when are copied verbatim from this list and whose then states the "
+            "outcome as YOU understand it from the whole specification, with "
+            "cited lines:\n"
+            f"{listed}\n"
+        )
     return (
         "You are one isolated reader in a semantic-reproducibility measurement. "
         "Read the line-numbered specification below and extract your complete "
@@ -297,7 +355,8 @@ def build_extraction_prompt(spec, framing_suffix: str, known_ids: set) -> str:
         "the cited line (reuse the specification's own words — never paraphrase "
         "node labels); 1-3 behavioural assertions (given/when/then, line-cited) per "
         "requirement that mandates observable behaviour; extract ONLY these "
-        f"requirement units and no others: {ids_hint}.\n\n"
+        f"requirement units and no others: {ids_hint}.\n"
+        f"{situation_block}\n"
         "SPECIFICATION (line-numbered):\n"
         f"{v1.numbered_text(spec)}\n\n"
         "Return ONLY a JSON object: {\"requirements\": {\"<REQ-ID>\": {\"edges\": "
@@ -309,7 +368,8 @@ def build_extraction_prompt(spec, framing_suffix: str, known_ids: set) -> str:
 
 
 def validate_graph(payload: dict, known_ids: set, max_line: int,
-                   spec_lines: list | None = None):
+                   spec_lines: list | None = None,
+                   situations: dict | None = None):
     """Strict graph validation. Returns (dict req->ReqInterpretation, ungrounded)
     or v1.ParseFailure. With spec_lines, enforces the v3.1 vocabulary anchor:
     edge labels must reuse words of the cited line."""
@@ -382,6 +442,17 @@ def validate_graph(payload: dict, known_ids: set, max_line: int,
                 return v1.ParseFailure(reason=f"{req_id}.assertions[{i}].lines must be integers")
             assertions.append(Assertion(given=g.strip(), when=w.strip(),
                                         then=t_.strip(), lines=list(lines)))
+        canonical = (situations or {}).get(req_id)
+        if canonical is not None:
+            expected = (norm(canonical["given"]), norm(canonical["when"]))
+            if not any(a.situation == expected and a.lines for a in assertions):
+                return v1.ParseFailure(
+                    reason=(
+                        f"{req_id} is missing the canonical-situation assertion: "
+                        f"exactly 1 assertion must copy given=\"{canonical['given']}\" "
+                        f"when=\"{canonical['when']}\" verbatim, with cited lines"
+                    )
+                )
         out[req_id] = ReqInterpretation(edges=edges, assumptions=assumptions,
                                         assertions=assertions)
     return out, ungrounded
@@ -855,6 +926,11 @@ def main(argv: list | None = None) -> int:
             f"recognizable requirement ids in families {', '.join(families)}",
         )
 
+    # Canonical situations from the controlled grammar (lexicon GIVEN/WHEN
+    # fields): every reader answers the SAME situations, so witness-channel
+    # collisions are guaranteed by construction instead of sampled by luck
+    # (the 27-vs-0 A/B instability). Empty for non-lexicon specs.
+    situations = parse_controlled_situations(spec)
     chunks = chunk_ids(known_ids)
     jobs = build_reader_jobs(model_commands, options.readers, FRAMINGS)
     readers: list[ReaderGraph] = []
@@ -867,9 +943,11 @@ def main(argv: list | None = None) -> int:
         for chunk_no, chunk in enumerate(chunks, start=1):
             outcome = v1.execute_round(
                 reader_config,
-                build_extraction_prompt(spec, job.framing_suffix, chunk),
+                build_extraction_prompt(spec, job.framing_suffix, chunk,
+                                        situations=situations),
                 lambda payload, _chunk=chunk: validate_graph(
-                    payload, _chunk, len(spec.lines), spec_lines=spec.lines
+                    payload, _chunk, len(spec.lines), spec_lines=spec.lines,
+                    situations=situations,
                 ),
                 round_no=job.reader_no * 100 + chunk_no,
                 spec_dir=spec_dir,
