@@ -9,6 +9,7 @@ import re
 import signal
 import shutil
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +54,8 @@ from harness.squad_executors import (
 )
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from harness.squad_state import SquadStateStore
+from harness.prompt_markdown import read_prompt_markdown
+from harness.terminal import color_text
 
 
 PHASE_TERMINAL_BLOCKED = "terminal-blocked"
@@ -221,6 +224,38 @@ def _blocked_banner(phase: str, reason: str, question: str) -> None:
             ("discard with", "echelon spec run --reset \"<new task>\""),
         ],
     )
+
+
+def _format_phase_dispatch_line(
+    node: PhaseNode,
+    graph: PhaseGraph,
+    ext_dir: Path,
+    *,
+    file: object = None,
+    suffix: str = "",
+) -> str:
+    """Render a squad phase dispatch line, using agent frontmatter color."""
+    label = node.label or node.id
+    target = file if file is not None else sys.stdout
+    phase_id = color_text(
+        node.id,
+        _agent_frontmatter_color(node, graph, ext_dir),
+        file=target,
+    )
+    return f"\n[squad] ▶ {phase_id}  {label}{suffix}"
+
+
+def _agent_frontmatter_color(node: PhaseNode, graph: PhaseGraph, ext_dir: Path) -> str:
+    if not node.agent:
+        return ""
+    rel = graph.agent_file(node.agent)
+    if not rel:
+        return ""
+    path = ext_dir / rel
+    if not path.exists():
+        return ""
+    color = read_prompt_markdown(path).metadata.get("color")
+    return color if isinstance(color, str) else ""
 
 
 @dataclass
@@ -697,7 +732,6 @@ class SquadController:
                 )
 
             node = self._graph.get(phase)
-            label = node.label or node.id
 
             if self._skip_phase_if_condition_false(node):
                 continue
@@ -734,7 +768,10 @@ class SquadController:
                 self._state_store.save(s)
                 return SquadResult.from_state(self._state_store.load())
 
-            print(f"\n[squad] ▶ {node.id}  {label}", flush=True)
+            print(
+                _format_phase_dispatch_line(node, self._graph, self._ext_dir),
+                flush=True,
+            )
 
             executor = self._executors.get(node.type)
             if executor is None:
@@ -930,7 +967,15 @@ class SquadController:
         label = node.label or node.id
         if self._skip_phase_if_condition_false(node, manual_phase_run=True):
             return SquadResult.from_state(self._state_store.load())
-        print(f"\n[squad] ▶ {node.id}  {label}  (manual phase run)", flush=True)
+        print(
+            _format_phase_dispatch_line(
+                node,
+                self._graph,
+                self._ext_dir,
+                suffix="  (manual phase run)",
+            ),
+            flush=True,
+        )
 
         executor = self._executors.get(node.type)
         if executor is None:

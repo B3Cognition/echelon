@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import json
+import inspect
 import re
 import shutil
-import subprocess
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from harness.prompt_markdown import read_prompt_markdown
 from harness.quality_scores import (
     normalize_why_quality_scores,
     render_quality_gate_context,
@@ -59,6 +60,16 @@ def _shared_agent_contract() -> str:
         "- NEVER treat calibration priors as optional when a matching belief "
         "register exists.\n\n"
     )
+
+
+def _read_prompt_body(path: Path) -> str:
+    """Read a prompt markdown file and strip runtime frontmatter metadata."""
+    return read_prompt_markdown(path).body
+
+
+def _read_prompt_metadata(path: Path) -> dict[str, object]:
+    """Read runtime frontmatter metadata from a prompt markdown file."""
+    return dict(read_prompt_markdown(path).metadata)
 
 
 _FALLBACK_ECHELON_RESULT_TEMPLATE = """# Echelon result contract template.
@@ -565,15 +576,30 @@ class PhaseExecutor(ABC):
             unexpected_state_updates=str(unexpected),
         )
 
-    def _exec_agent_with_contract(self, prompt: str, result_contract):
+    def _exec_agent_with_contract(
+        self,
+        prompt: str,
+        result_contract,
+        prompt_metadata: dict[str, object] | None = None,
+    ):
         """Use provider-side result-only repair when the provider supports it."""
+        kwargs: dict[str, object] = {}
         if getattr(type(self._provider), "supports_result_contract", False):
-            return self._provider.exec_agent(
-                str(self._project_root),
-                prompt,
-                result_contract=result_contract,
+            kwargs["result_contract"] = result_contract
+        try:
+            parameters = inspect.signature(self._provider.exec_agent).parameters.values()
+            accepts_prompt_metadata = any(
+                parameter.name == "prompt_metadata"
+                or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters
             )
-        return self._provider.exec_agent(str(self._project_root), prompt)
+        except (TypeError, ValueError):
+            accepts_prompt_metadata = False
+        if getattr(type(self._provider), "supports_prompt_metadata", False) or (
+            prompt_metadata and accepts_prompt_metadata
+        ):
+            kwargs["prompt_metadata"] = prompt_metadata or {}
+        return self._provider.exec_agent(str(self._project_root), prompt, **kwargs)
 
     def _project_config_path(self) -> Path:
         canonical = self._project_root / ".echelon" / "config.yml"
@@ -763,13 +789,13 @@ class PhaseExecutor(ABC):
             if rel:
                 agent_path = self._ext_dir / rel
                 if agent_path.exists():
-                    static_parts.append(agent_path.read_text())
+                    static_parts.append(_read_prompt_body(agent_path))
 
         # 2. Phase spec file (context pack assembly instructions + echelon_result schema)
         if node.spec_file:
             spec_path = self._ext_dir / node.spec_file
             if spec_path.exists():
-                static_parts.append(spec_path.read_text())
+                static_parts.append(_read_prompt_body(spec_path))
 
         # 3. Context pack files (read each that exists on disk).
         # Translate .specify/squad/ paths before resolving — definition.yaml context_pack
@@ -906,8 +932,11 @@ class PhaseExecutor(ABC):
                         state_store.load(),
                         result_contract,
                     )
+                    prompt_metadata = _read_prompt_metadata(pre_path)
                     result = self._exec_agent_with_contract(
-                        prompt, result_contract
+                        prompt,
+                        result_contract,
+                        prompt_metadata,
                     )
                     result = self._validate_result_state_updates(
                         node, result, result_contract=result_contract
@@ -926,7 +955,7 @@ class PhaseExecutor(ABC):
         agent_path: Path,
         entry: dict,
         state: dict,
-        result_contract,
+        result_contract=None,
     ) -> str:
         """Build a real prompt for a generic pre-dispatch agent."""
         if not hasattr(result_contract, "allowed_state_update_keys"):
@@ -935,7 +964,7 @@ class PhaseExecutor(ABC):
             result_contract = EchelonResultContract(
                 allowed_state_update_keys=frozenset(result_contract or [])
             )
-        agent_text = agent_path.read_text()
+        agent_text = _read_prompt_body(agent_path)
         squad_dir_str = state.get("squad_dir", str(self._squad_dir))
         staging_dir_str = state.get("staging_dir", str(self._squad_dir / "staging"))
         context_dir_str = state.get("context_dir", str(self._squad_dir / "context"))
@@ -943,7 +972,7 @@ class PhaseExecutor(ABC):
             _shared_agent_contract()
             + agent_text
             + "\n\n"
-            + f"# Squad Run Context\n"
+            + "# Squad Run Context\n"
             + f"SQUAD_DIR={squad_dir_str}\n"
             + f"STAGING_DIR={staging_dir_str}\n"
             + f"CONTEXT_DIR={context_dir_str}\n"
@@ -1063,7 +1092,18 @@ class AgentExecutor(PhaseExecutor):
         state = state_store.load()  # re-load after pre_dispatch
         prompt = self._assemble_prompt(node, state)
         result_contract = self._result_contract(node)
-        result = self._exec_agent_with_contract(prompt, result_contract)
+        prompt_metadata: dict[str, object] = {}
+        if node.agent:
+            rel = self._graph.agent_file(node.agent)
+            if rel:
+                agent_path = self._ext_dir / rel
+                if agent_path.exists():
+                    prompt_metadata = _read_prompt_metadata(agent_path)
+        result = self._exec_agent_with_contract(
+            prompt,
+            result_contract,
+            prompt_metadata,
+        )
         result = self._validate_result_state_updates(
             node, result, result_contract=result_contract
         )
@@ -1117,7 +1157,7 @@ class CommanderInternalExecutor(PhaseExecutor):
         self, node: "PhaseNode", state_store: "SquadStateStore"
     ) -> "SquadAgentResult":
         from harness.squad_provider import SquadAgentResult
-        print(f"[squad]   (commander_internal — harness no-op)", flush=True)
+        print("[squad]   (commander_internal — harness no-op)", flush=True)
         return SquadAgentResult(
             exit_code=0,
             echelon_result={"verdict": "DONE", "state_updates": {}},

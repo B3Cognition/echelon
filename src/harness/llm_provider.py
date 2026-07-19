@@ -97,12 +97,13 @@ class AICodingCliProvider:
         *,
         extra_env: Mapping[str, str] | None = None,
         timeout_ms: int | None = None,
+        request_metadata: Mapping[str, object] | None = None,
     ) -> CliRunResult:
         self.last_stdout = ""
         self.last_stderr = ""
         self.last_token_usage = 0
         timeout_s = (timeout_ms / 1000.0) if timeout_ms else self._timeout_s
-        metadata = _request_metadata(extra_env)
+        metadata = _request_metadata(extra_env, request_metadata)
         containment_violation = _containment_cwd_violation(worktree_path, metadata)
         if containment_violation is not None:
             self._record_result(containment_violation)
@@ -126,12 +127,13 @@ class AICodingCliProvider:
         *,
         timeout_ms: int | None = None,
         extra_env: Mapping[str, str] | None = None,
+        request_metadata: Mapping[str, object] | None = None,
     ) -> CliRunResult:
         self.last_stdout = ""
         self.last_stderr = ""
         self.last_token_usage = 0
         timeout_s = (timeout_ms / 1000.0) if timeout_ms else self._timeout_s
-        metadata = _request_metadata(extra_env)
+        metadata = _request_metadata(extra_env, request_metadata)
         containment_violation = _containment_cwd_violation(project_root, metadata)
         if containment_violation is not None:
             self._record_result(containment_violation)
@@ -167,11 +169,15 @@ def _debug_llm_enabled() -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-def _request_metadata(extra_env: Mapping[str, str] | None) -> dict[str, object]:
+def _request_metadata(
+    extra_env: Mapping[str, str] | None,
+    request_metadata: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    metadata = dict(request_metadata or {})
     containment = _containment_metadata(extra_env)
-    if not containment:
-        return {}
-    return {"containment": containment}
+    if containment:
+        metadata["containment"] = containment
+    return metadata
 
 
 def _containment_metadata(extra_env: Mapping[str, str] | None) -> dict[str, object]:

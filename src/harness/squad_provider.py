@@ -326,6 +326,7 @@ class SquadCliProvider(AICodingCliProvider):
     """
 
     supports_result_contract = True
+    supports_prompt_metadata = True
 
     def exec_agent(
         self,
@@ -333,14 +334,14 @@ class SquadCliProvider(AICodingCliProvider):
         prompt: str,
         timeout_ms: Optional[int] = None,
         result_contract: EchelonResultContract | None = None,
+        prompt_metadata: Optional[dict[str, object]] = None,
     ) -> SquadAgentResult:
         start = time.monotonic()
         git_before = _git_boundary_snapshot(project_root)
-        backend_result = self.run_agent_result(
-            project_root,
-            prompt,
-            timeout_ms=timeout_ms,
-        )
+        run_kwargs: dict[str, object] = {"timeout_ms": timeout_ms}
+        if prompt_metadata:
+            run_kwargs["request_metadata"] = {"prompt_metadata": prompt_metadata}
+        backend_result = self.run_agent_result(project_root, prompt, **run_kwargs)
         _verify_git_boundary(project_root, git_before)
         duration_ms = int((time.monotonic() - start) * 1000)
         exit_code = backend_result.exit_code
@@ -379,9 +380,7 @@ class SquadCliProvider(AICodingCliProvider):
             )
             repair_git_before = _git_boundary_snapshot(project_root)
             repair_result = self.run_agent_result(
-                project_root,
-                repair_prompt,
-                timeout_ms=timeout_ms,
+                project_root, repair_prompt, **run_kwargs
             )
             _verify_git_boundary(project_root, repair_git_before)
             cost_usd += repair_result.cost_usd

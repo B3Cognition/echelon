@@ -12,7 +12,12 @@ import os
 
 import pytest
 
-from harness.terminal import print_banner, print_escalation_banner
+from harness.terminal import color_text, print_banner, print_escalation_banner
+
+
+class _TTYBuffer(io.StringIO):
+    def isatty(self) -> bool:
+        return True
 
 
 @pytest.mark.unit
@@ -72,3 +77,29 @@ class TestEscalationBanner:
         captured = capsys.readouterr()
         assert "BLOCKED" in captured.err
         assert "infra_failure" in captured.err
+
+
+@pytest.mark.unit
+class TestColorText:
+    """Test ANSI styling helper for Echelon-owned terminal output."""
+
+    def test_known_color_styles_text_on_tty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("NO_COLOR", raising=False)
+
+        styled = color_text("CHIEF", "blue", file=_TTYBuffer())
+
+        assert styled == "\033[34mCHIEF\033[0m"
+
+    def test_no_color_disables_styling(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NO_COLOR", "1")
+
+        styled = color_text("CHIEF", "blue", file=_TTYBuffer())
+
+        assert styled == "CHIEF"
+
+    def test_unknown_color_returns_plain_text(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("NO_COLOR", raising=False)
+
+        styled = color_text("CHIEF", "sparkle", file=_TTYBuffer())
+
+        assert styled == "CHIEF"
