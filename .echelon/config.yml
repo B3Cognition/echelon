@@ -221,15 +221,15 @@ endocrine:
   interpretations:
     build:
       overlays:
-        adrenaline_high: Execution pressure is on. Ship the smallest correct increment.
-          Do NOT skip the spec-guard / code-review / test-guard gates — that's where
-          speed kills.
+        adrenaline_high: "Execution pressure is on. Ship the smallest correct increment.\
+          \ Do NOT skip the spec-guard / code-review / test-guard gates \u2014 that's\
+          \ where speed kills."
         norepinephrine_low: Detail focus slipping. You will miss off-by-one errors
           and edge cases. Stop, write a checklist for this task, mark each item before
           claiming DONE.
-        oxytocin_low: You're working in isolation when you shouldn't be. Re-read the
-          upstream agent's output (IMPLEMENTER → SPEC_GUARD, etc.) before drafting
-          your verdict.
+        oxytocin_low: "You're working in isolation when you shouldn't be. Re-read\
+          \ the upstream agent's output (IMPLEMENTER \u2192 SPEC_GUARD, etc.) before\
+          \ drafting your verdict."
       summary: 'You ship under high adrenaline, high oxytocin (peer collaboration),
         and
 
@@ -244,22 +244,17 @@ endocrine:
           reactive routing; check EVOI for each candidate dispatch before issuing.
         cortisol_high: You are catastrophizing. Re-read the user request verbatim.
           The squad is likely fine; you are interpreting noise as crisis.
-      summary: 'You orchestrate from a balanced baseline. Any hormone extreme on your
-        own
-
-        profile is a sign the squad is off-track — re-anchor on the constitution
-
-        and user intent.
-
-        '
+      summary: "You orchestrate from a balanced baseline. Any hormone extreme on your\
+        \ own\nprofile is a sign the squad is off-track \u2014 re-anchor on the constitution\n\
+        and user intent.\n"
     exploration:
       overlays:
         adrenaline_high: Budget pressure rising. Stop opening new threads. Consolidate
           findings and close the loop before iterating further.
         cortisol_high: Something is going wrong (rare for your archetype). Escalate
           to COMMANDER rather than producing more analysis.
-        dopamine_low: Curiosity slipping — you're going through the motions. Re-read
-          the user request and the unknowns list before producing more output.
+        dopamine_low: "Curiosity slipping \u2014 you're going through the motions.\
+          \ Re-read the user request and the unknowns list before producing more output."
       summary: 'You operate under high dopamine (curiosity) and low cortisol (no fear
         of
 
@@ -275,27 +270,18 @@ endocrine:
         serotonin_low: Judgment instability. Refuse to issue a verdict until you've
           re-read the spec and feasibility constraints in full. Avoid PASS under destabilized
           judgment.
-      summary: 'Your judgment is conservative but steady (high cortisol, elevated
-
-        serotonin). KILL, DEFER, and PASS verdicts have permanent consequences —
-
-        you are the kill gate.
-
-        '
+      summary: "Your judgment is conservative but steady (high cortisol, elevated\n\
+        serotonin). KILL, DEFER, and PASS verdicts have permanent consequences \u2014\
+        \nyou are the kill gate.\n"
     innovation:
       overlays:
         cortisol_high: 'Fear is throttling exploration. Lower the bar: list five options
           regardless of viability. Filtering is downstream.'
         dopamine_low: Creativity has dried up. Stop generating options; re-read three
           pitfalls.yaml entries from prior runs to seed fresh angles.
-      summary: 'You explore alternatives under high dopamine and low cortisol. Your
-        worst
-
-        output is the safe one — propose options the squad would otherwise miss,
-
-        even weak ones.
-
-        '
+      summary: "You explore alternatives under high dopamine and low cortisol. Your\
+        \ worst\noutput is the safe one \u2014 propose options the squad would otherwise\
+        \ miss,\neven weak ones.\n"
     learning:
       overlays:
         cortisol_low: Under-reflection. You are summarizing instead of synthesizing.
@@ -304,17 +290,11 @@ endocrine:
         oxytocin_low: Siloed thinking. Read at least one prior run's evolution-report
           (or, for MONITOR, scan the current run's reasoning-journal index) before
           producing your output.
-      summary: 'You operate reflectively under high serotonin and high oxytocin. Your
-
-        value is the signal individual dispatches miss — whether that''s
-
-        real-time process drift (MONITOR''s beat) or cross-run pattern
-
-        extraction (AUDITOR, MIRROR, ADAPTIVE, REALIST, VETERAN, CONSOLIDATOR,
-
-        INTERNALIZER). Step back from the per-task view.
-
-        '
+      summary: "You operate reflectively under high serotonin and high oxytocin. Your\n\
+        value is the signal individual dispatches miss \u2014 whether that's\nreal-time\
+        \ process drift (MONITOR's beat) or cross-run pattern\nextraction (AUDITOR,\
+        \ MIRROR, ADAPTIVE, REALIST, VETERAN, CONSOLIDATOR,\nINTERNALIZER). Step back\
+        \ from the per-task view.\n"
     solution:
       overlays:
         dopamine_high: 'Creative drive may be over-tuning. Check: are you adding optionality,
@@ -323,36 +303,24 @@ endocrine:
         serotonin_low: Rushed output risk. Stop generating new structure (ADRs / capacity
           rows / domain sections); spend the next dispatch consolidating what's already
           decided and double-checking trace coverage.
-      summary: 'You operate under high serotonin (calm confidence) and elevated dopamine
-
-        (creative). Your job is the simplest correct contribution — the smallest
-
-        architecture (ARCHITECT/ORCHESTRATOR/SENTINEL), the tightest capacity
-
-        model (BENCHMARK), the most specific domain answer (ORACLE) — that meets
-
-        the spec. Avoid over-engineering; avoid elaborating beyond what your
-
-        consumers (ARCHITECT, CARTOGRAPHER) will use.
-
-        '
+      summary: "You operate under high serotonin (calm confidence) and elevated dopamine\n\
+        (creative). Your job is the simplest correct contribution \u2014 the smallest\n\
+        architecture (ARCHITECT/ORCHESTRATOR/SENTINEL), the tightest capacity\nmodel\
+        \ (BENCHMARK), the most specific domain answer (ORACLE) \u2014 that meets\n\
+        the spec. Avoid over-engineering; avoid elaborating beyond what your\nconsumers\
+        \ (ARCHITECT, CARTOGRAPHER) will use.\n"
     validation:
       overlays:
-        cortisol_high: Maximum vigilance. Reject anything you would normally let slide.
-          Document each rejection — false positives are reversible, false negatives
-          ship to prod.
+        cortisol_high: "Maximum vigilance. Reject anything you would normally let\
+          \ slide. Document each rejection \u2014 false positives are reversible,\
+          \ false negatives ship to prod."
         cortisol_low: Under-vigilance. You are at risk of rubber-stamping. Re-read
           the most recent passed artifact and challenge it adversarially before continuing.
         norepinephrine_low: Focus slipping. Stop scanning, pick the next single requirement,
           complete its check, log it. Single-task until focus recovers.
-      summary: 'You operate vigilantly under high cortisol and high norepinephrine.
-        HIGH
-
-        cortisol does NOT mean back off — it means tighten gate criteria. Your
-
-        value is in what you reject, not what you approve.
-
-        '
+      summary: "You operate vigilantly under high cortisol and high norepinephrine.\
+        \ HIGH\ncortisol does NOT mean back off \u2014 it means tighten gate criteria.\
+        \ Your\nvalue is in what you reject, not what you approve.\n"
   phase: 3
 evolution:
   enabled: true
@@ -633,3 +601,5 @@ tests:
   min_ui_component: 3
 tools:
   understanding_cli: understanding
+container_cli: podman
+verify_command: python -m pytest tests/unit tests/kernel -q
