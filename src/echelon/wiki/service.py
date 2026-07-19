@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 import tempfile
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
 
+from echelon.wiki.catalog_source import WikiCatalogSource, wiki_catalog_source
 from echelon.wiki.discovery import SCHEMA_VERSION, canonical_input_hashes, discover_wiki_model
 from echelon.wiki.render import RenderResult, WikiRenderError, render_wiki
 from harness.config import get_full_resolved_config
@@ -37,6 +37,8 @@ class WikiBuildResult:
     input_count: int
     output_count: int
     warning_count: int
+    catalog_branch: str | None
+    catalog_revision: str | None
 
 
 @dataclass(frozen=True)
@@ -58,31 +60,6 @@ def wiki_output_dir(project_root: Path) -> Path:
 def _utc_iso(value: datetime) -> str:
     normalized = value.astimezone(timezone.utc).replace(microsecond=0)
     return normalized.isoformat().replace("+00:00", "Z")
-
-
-def _git(project_root: Path, args: list[str]) -> str | None:
-    try:
-        result = subprocess.run(
-            ["git", *args],
-            cwd=project_root,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except OSError:
-        return None
-    if result.returncode != 0:
-        return None
-    return result.stdout.strip()
-
-
-def _git_revision(project_root: Path) -> str | None:
-    return _git(project_root, ["rev-parse", "HEAD"])
-
-
-def _git_dirty(project_root: Path) -> bool:
-    output = _git(project_root, ["status", "--porcelain", "--", "specs", "re"])
-    return bool(output)
 
 
 def _manifest_path(output_dir: Path) -> Path:
@@ -111,7 +88,7 @@ def _load_valid_manifest(output_dir: Path) -> dict[str, object] | None:
 
 
 def _manifest_payload(
-    project_root: Path,
+    source: WikiCatalogSource,
     generated_at: str,
     inputs: dict[str, str],
     render_result: RenderResult,
@@ -122,8 +99,9 @@ def _manifest_payload(
         "schema_version": SCHEMA_VERSION,
         "generator_version": GENERATOR_VERSION,
         "generated_at": generated_at,
-        "workspace_revision": _git_revision(project_root),
-        "workspace_dirty": _git_dirty(project_root),
+        "catalog_branch": source.branch,
+        "workspace_revision": source.revision,
+        "workspace_dirty": source.dirty,
         "inputs": dict(sorted(inputs.items())),
         "outputs": list(render_result.output_pages),
         "relationships": [asdict(edge) for edge in model.relationships],
@@ -171,18 +149,30 @@ def build_wiki(
     runtime.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".wiki-staging-", dir=runtime))
     try:
-        model = discover_wiki_model(root, generated_at=generated_at)
-        inputs = canonical_input_hashes(root, artifacts=model.artifacts)
-        render_result = render_wiki(model, root, staging)
-        broken_required = [
-            warning
-            for warning in render_result.warnings
-            if warning.code == "broken-link" and warning.source_path in render_result.required_pages
-        ]
-        if broken_required:
-            raise WikiRenderError(broken_required[0].message)
-        payload = _manifest_payload(root, generated_at, inputs, render_result, model)
-        _write_manifest(_manifest_path(staging), payload)
+        with wiki_catalog_source(root) as source:
+            model = replace(
+                discover_wiki_model(source.source_root, generated_at=generated_at),
+                workspace_name=root.name,
+                workspace_root=str(root),
+            )
+            inputs = canonical_input_hashes(
+                source.source_root, artifacts=model.artifacts
+            )
+            render_result = render_wiki(model, source.source_root, staging)
+            broken_required = [
+                warning
+                for warning in render_result.warnings
+                if warning.code == "broken-link"
+                and warning.source_path in render_result.required_pages
+            ]
+            if broken_required:
+                raise WikiRenderError(broken_required[0].message)
+            payload = _manifest_payload(
+                source, generated_at, inputs, render_result, model
+            )
+            _write_manifest(_manifest_path(staging), payload)
+            catalog_branch = source.branch
+            catalog_revision = source.revision
         _publish_staging(staging, output)
     except Exception as exc:
         if staging.exists():
@@ -196,6 +186,8 @@ def build_wiki(
         input_count=len(inputs),
         output_count=len(render_result.output_pages) + 1,
         warning_count=len(render_result.warnings),
+        catalog_branch=catalog_branch,
+        catalog_revision=catalog_revision,
     )
 
 
@@ -203,44 +195,49 @@ def wiki_status(project_root: Path) -> WikiStatusResult:
     """Compare the current canonical inputs with the last valid manifest."""
     root = project_root.resolve()
     output = wiki_output_dir(root)
-    revision = _git_revision(root)
-    dirty = _git_dirty(root)
-    if not output.exists():
-        return WikiStatusResult(
-            "absent", output, revision, dirty, (), (), (), "Run `echelon wiki build`."
+    with wiki_catalog_source(root) as source:
+        revision = source.revision
+        dirty = source.dirty
+        if not output.exists():
+            return WikiStatusResult(
+                "absent", output, revision, dirty, (), (), (), "Run `echelon wiki build`."
+            )
+        manifest = _load_valid_manifest(output)
+        if manifest is None:
+            return WikiStatusResult(
+                "invalid",
+                output,
+                revision,
+                dirty,
+                (),
+                (),
+                (),
+                "The output directory is not a valid Echelon wiki; inspect it before removal.",
+            )
+        previous_raw = manifest["inputs"]
+        assert isinstance(previous_raw, dict)
+        previous = {str(key): str(value) for key, value in previous_raw.items()}
+        current = canonical_input_hashes(source.source_root)
+        added = tuple(sorted(set(current) - set(previous)))
+        removed = tuple(sorted(set(previous) - set(current)))
+        changed = tuple(
+            sorted(
+                path
+                for path in set(current) & set(previous)
+                if current[path] != previous[path]
+            )
         )
-    manifest = _load_valid_manifest(output)
-    if manifest is None:
+        stale = bool(added or removed or changed)
         return WikiStatusResult(
-            "invalid",
+            "stale" if stale else "fresh",
             output,
             revision,
             dirty,
-            (),
-            (),
-            (),
-            "The output directory is not a valid Echelon wiki; inspect it before removal.",
+            added,
+            changed,
+            removed,
+            "Run `echelon wiki build`." if stale else "Wiki inputs match the manifest.",
         )
-    previous_raw = manifest["inputs"]
-    assert isinstance(previous_raw, dict)
-    previous = {str(key): str(value) for key, value in previous_raw.items()}
-    current = canonical_input_hashes(root)
-    added = tuple(sorted(set(current) - set(previous)))
-    removed = tuple(sorted(set(previous) - set(current)))
-    changed = tuple(
-        sorted(path for path in set(current) & set(previous) if current[path] != previous[path])
-    )
-    stale = bool(added or removed or changed)
-    return WikiStatusResult(
-        "stale" if stale else "fresh",
-        output,
-        revision,
-        dirty,
-        added,
-        changed,
-        removed,
-        "Run `echelon wiki build`." if stale else "Wiki inputs match the manifest.",
-    )
 
 
 def clean_wiki(project_root: Path) -> Path | None:
@@ -261,7 +258,8 @@ def capture_input_snapshot(project_root: Path) -> dict[str, str] | None:
     output = wiki_output_dir(project_root)
     if _load_valid_manifest(output) is None:
         return None
-    return canonical_input_hashes(project_root)
+    with wiki_catalog_source(project_root) as source:
+        return canonical_input_hashes(source.source_root)
 
 
 def _auto_refresh_enabled(project_root: Path) -> bool:
@@ -281,7 +279,8 @@ def refresh_after_changed_command(
     """Rebuild an existing vault only when this command changed its inputs."""
     if before is None or not _auto_refresh_enabled(project_root):
         return None
-    after = canonical_input_hashes(project_root)
+    with wiki_catalog_source(project_root) as source:
+        after = canonical_input_hashes(source.source_root)
     before_artifacts = {
         path: digest
         for path, digest in before.items()
