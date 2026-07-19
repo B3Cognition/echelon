@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import echelon.spec_publish as spec_publish_module
 from echelon.spec_publish import (
     SpecPublishError,
     discover_publication_sources,
@@ -239,4 +240,152 @@ def test_publish_rejects_same_number_destination_collision_before_mutation(
     assert _git(repo, "rev-parse", "main") == main_before
     assert (old / "spec.md").read_text() == "# Old\n"
     assert not (repo / "specs/001-new").exists()
+    assert _git(repo, "status", "--short") == ""
+
+
+@pytest.mark.unit
+def test_publish_refuses_dirty_selected_spec_in_linked_worktree(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# Committed\n")
+    linked = tmp_path / "first-worktree"
+    _git(repo, "worktree", "add", str(linked), "001-first")
+    (linked / "specs/001-first/spec.md").write_text("# Dirty\n", encoding="utf-8")
+
+    with pytest.raises(SpecPublishError, match="001-first.*uncommitted"):
+        publish_specs(repo, identity="001")
+
+
+@pytest.mark.unit
+def test_publish_from_spec_branch_uses_temporary_default_worktree(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# First\n")
+    _git(repo, "switch", "001-first")
+    caller_head = _git(repo, "rev-parse", "HEAD")
+
+    result = publish_specs(repo, identity="001")
+
+    assert _git(repo, "branch", "--show-current") == "001-first"
+    assert _git(repo, "rev-parse", "HEAD") == caller_head
+    assert result.destination_worktree != repo
+    assert not result.destination_worktree.exists()
+    assert _git(repo, "show", "main:specs/001-first/spec.md") == "# First"
+
+
+@pytest.mark.unit
+def test_publish_uses_clean_secondary_default_worktree(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# First\n")
+    _git(repo, "switch", "001-first")
+    default_worktree = tmp_path / "main-worktree"
+    _git(repo, "worktree", "add", str(default_worktree), "main")
+
+    result = publish_specs(repo, identity="001")
+
+    assert result.destination_worktree == default_worktree.resolve()
+    assert result.caller_on_default is False
+    assert (default_worktree / "specs/001-first/spec.md").is_file()
+
+
+@pytest.mark.unit
+def test_publish_refuses_dirty_secondary_default_worktree(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# First\n")
+    _git(repo, "switch", "001-first")
+    default_worktree = tmp_path / "main-worktree"
+    _git(repo, "worktree", "add", str(default_worktree), "main")
+    (default_worktree / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+
+    with pytest.raises(SpecPublishError, match="default-branch worktree.*dirty"):
+        publish_specs(repo, identity="001")
+
+
+@pytest.mark.unit
+def test_unrelated_dirty_source_worktree_does_not_block_publish(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# First\n")
+    _git(repo, "switch", "001-first")
+    (repo / "notes.tmp").write_text("keep me\n", encoding="utf-8")
+
+    result = publish_specs(repo, identity="001")
+
+    assert result.created_commit is True
+    assert (repo / "notes.tmp").read_text(encoding="utf-8") == "keep me\n"
+    assert _git(repo, "status", "--short") == "?? notes.tmp"
+
+
+@pytest.mark.unit
+def test_commit_failure_rolls_back_existing_and_new_destinations(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# First v1\n")
+    publish_specs(repo, identity="001")
+    _create_spec_branch(repo, "002-second", "# Second\n")
+    _git(repo, "switch", "001-first")
+    (repo / "specs/001-first/spec.md").write_text("# First v2\n", encoding="utf-8")
+    _git(repo, "add", "specs/001-first/spec.md")
+    _git(repo, "commit", "-m", "docs: update first")
+    _git(repo, "switch", "main")
+    main_before = _git(repo, "rev-parse", "main")
+    original_run_git = spec_publish_module.run_git
+
+    def fail_commit(path: Path, *args: str, **kwargs: object):
+        if args and args[0] == "commit":
+            raise spec_publish_module.GitHelperError("injected commit failure")
+        return original_run_git(path, *args, **kwargs)
+
+    monkeypatch.setattr(spec_publish_module, "run_git", fail_commit)
+
+    with pytest.raises(SpecPublishError, match="injected commit failure"):
+        publish_specs(repo, publish_all=True)
+
+    assert _git(repo, "rev-parse", "main") == main_before
+    assert (repo / "specs/001-first/spec.md").read_text() == "# First v1\n"
+    assert not (repo / "specs/002-second").exists()
+    assert (repo / "README.md").read_text() == "# Test repository\n"
+    assert _git(repo, "status", "--short") == ""
+
+
+@pytest.mark.unit
+def test_concurrent_default_ref_change_rolls_back_publication_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# First\n")
+    main_before = _git(repo, "rev-parse", "main")
+    tree = _git(repo, "rev-parse", "main^{tree}")
+    concurrent = _git(
+        repo,
+        "commit-tree",
+        tree,
+        "-p",
+        main_before,
+        "-m",
+        "concurrent main update",
+    )
+    original_assert = spec_publish_module._assert_default_ref_unchanged
+
+    def move_default_ref(path: Path, branch: str, expected: str) -> None:
+        _git(repo, "update-ref", f"refs/heads/{branch}", concurrent, expected)
+        original_assert(path, branch, expected)
+
+    monkeypatch.setattr(
+        spec_publish_module,
+        "_assert_default_ref_unchanged",
+        move_default_ref,
+    )
+
+    with pytest.raises(SpecPublishError, match="changed during publication"):
+        publish_specs(repo, identity="001")
+
+    assert _git(repo, "rev-parse", "main") == concurrent
+    assert not (repo / "specs/001-first").exists()
     assert _git(repo, "status", "--short") == ""
