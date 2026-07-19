@@ -2,11 +2,26 @@
 
 from __future__ import annotations
 
+import io
+import json
 import re
+import shutil
+import subprocess
+import tarfile
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from pathlib import PurePosixPath
 
-from echelon.git_helpers import GitHelperError, run_git
+from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
+from echelon.git_helpers import (
+    GitHelperError,
+    current_branch,
+    is_worktree_dirty,
+    run_git,
+)
+from echelon.phase_a_git import PhaseAGitError, resolve_phase_a_default_branch
+from harness.config import get_full_resolved_config
 
 
 CANONICAL_SPEC_BRANCH_RE = re.compile(
@@ -25,6 +40,25 @@ class SpecPublicationSource:
     branch: str
     commit: str
     source_path: str
+
+
+@dataclass(frozen=True)
+class PublishedSpec:
+    spec_id: str
+    source_branch: str
+    source_commit: str
+    changed: bool
+
+
+@dataclass(frozen=True)
+class SpecPublishResult:
+    default_branch: str
+    previous_default_commit: str
+    default_commit: str
+    created_commit: bool
+    destination_worktree: Path
+    caller_on_default: bool
+    published: tuple[PublishedSpec, ...]
 
 
 def discover_publication_sources(
@@ -122,3 +156,305 @@ def resolve_publication_sources(
             f"ambiguous spec identity {cleaned_identity!r}: {candidates}"
         )
     return tuple(matches)
+
+
+def _git_bytes(repo: Path, *args: str) -> bytes:
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            timeout=120,
+        )
+    except FileNotFoundError as exc:
+        raise SpecPublishError("could not execute git: git is not available") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise SpecPublishError(f"git {' '.join(args)} timed out in {repo}") from exc
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        raise SpecPublishError(
+            f"git {' '.join(args)} failed in {repo}: {stderr.strip()}"
+        )
+    return result.stdout
+
+
+def _configured_default_branch(project_root: Path) -> str:
+    resolved = get_full_resolved_config(project_root)
+    configured = resolved.get("target_default_branch", "")
+    if not configured and isinstance(resolved.get("harness"), dict):
+        configured = resolved["harness"].get("target_default_branch", "")
+    return str(configured or "")
+
+
+def _materialize_source(
+    project_root: Path,
+    source: SpecPublicationSource,
+    staging_root: Path,
+) -> Path:
+    """Extract one exact committed spec subtree into an isolated directory."""
+
+    archive = _git_bytes(
+        project_root,
+        "archive",
+        "--format=tar",
+        source.commit,
+        "--",
+        source.source_path,
+    )
+    expected = PurePosixPath(source.source_path)
+    destination = staging_root / source.spec_id
+    destination.mkdir(parents=True)
+
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as payload:
+            for member in payload.getmembers():
+                member_path = PurePosixPath(member.name)
+                if member.isdir() and member_path in expected.parents:
+                    continue
+                if (
+                    member_path.is_absolute()
+                    or ".." in member_path.parts
+                    or member_path != expected
+                    and expected not in member_path.parents
+                ):
+                    raise SpecPublishError(
+                        f"unsafe archive path {member.name!r} for {source.branch}"
+                    )
+                relative = member_path.relative_to(expected)
+                target = destination.joinpath(*relative.parts)
+                if member.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                    continue
+                if not member.isfile():
+                    raise SpecPublishError(
+                        f"unsupported archive entry {member.name!r} for "
+                        f"{source.branch}; links are not publishable"
+                    )
+                target.parent.mkdir(parents=True, exist_ok=True)
+                extracted = payload.extractfile(member)
+                if extracted is None:
+                    raise SpecPublishError(
+                        f"could not read archive entry {member.name!r}"
+                    )
+                with target.open("wb") as output:
+                    shutil.copyfileobj(extracted, output)
+    except tarfile.TarError as exc:
+        raise SpecPublishError(
+            f"invalid Git archive for {source.branch}: {exc}"
+        ) from exc
+
+    manifest = {
+        "schema_version": 1,
+        "source_branch": source.branch,
+        "source_commit": source.commit,
+        "spec_id": source.spec_id,
+    }
+    (destination / ".echelon-publication.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return destination
+
+
+def _destination_collisions(
+    destination_worktree: Path,
+    sources: tuple[SpecPublicationSource, ...],
+) -> None:
+    specs_root = destination_worktree / "specs"
+    if not specs_root.is_dir():
+        return
+    selected = {source.spec_id for source in sources}
+    selected_numbers = {int(source.spec_number): source.spec_id for source in sources}
+    for path in specs_root.iterdir():
+        if not path.is_dir() or path.name in selected:
+            continue
+        match = re.match(r"^(\d{3,})-", path.name)
+        if match is None:
+            continue
+        number = int(match.group(1))
+        if number in selected_numbers:
+            raise SpecPublishError(
+                "destination identity collision: "
+                f"specs/{path.name} already exists but publication selected "
+                f"{selected_numbers[number]}"
+            )
+
+
+def _restore_destinations(
+    destination_worktree: Path,
+    destinations: tuple[str, ...],
+    backup_root: Path,
+) -> None:
+    for spec_id in destinations:
+        destination = destination_worktree / "specs" / spec_id
+        if destination.exists():
+            shutil.rmtree(destination)
+        backup = backup_root / spec_id
+        if backup.exists():
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(backup, destination)
+    run_git(
+        destination_worktree,
+        "reset",
+        "--quiet",
+        "HEAD",
+        "--",
+        *(f"specs/{spec_id}" for spec_id in destinations),
+        check=False,
+    )
+
+
+def publish_specs(
+    project_root: Path,
+    *,
+    identity: str | None = None,
+    publish_all: bool = False,
+) -> SpecPublishResult:
+    """Publish committed canonical spec snapshots in one local default commit."""
+
+    root = Path(project_root).resolve()
+    try:
+        default_branch, default_commit = resolve_phase_a_default_branch(
+            root,
+            _configured_default_branch(root),
+        )
+    except (GitHelperError, PhaseAGitError) as exc:
+        raise SpecPublishError(str(exc)) from exc
+    sources = resolve_publication_sources(
+        root,
+        identity=identity,
+        publish_all=publish_all,
+        default_branch=default_branch,
+    )
+
+    if current_branch(root) != default_branch:
+        raise SpecPublishError(
+            f"local default branch {default_branch!r} must be checked out to publish"
+        )
+    if is_worktree_dirty(root):
+        raise SpecPublishError(
+            f"default-branch worktree {root} is dirty; commit or clean it first"
+        )
+    _destination_collisions(root, sources)
+
+    spec_ids = tuple(source.spec_id for source in sources)
+    paths = tuple(f"specs/{spec_id}" for spec_id in spec_ids)
+    with tempfile.TemporaryDirectory(prefix="echelon-spec-publish-") as temporary:
+        temporary_root = Path(temporary)
+        materialized_root = temporary_root / "materialized"
+        backup_root = temporary_root / "backup"
+        materialized_root.mkdir()
+        backup_root.mkdir()
+        staged_sources = {
+            source.spec_id: _materialize_source(root, source, materialized_root)
+            for source in sources
+        }
+        for spec_id in spec_ids:
+            destination = root / "specs" / spec_id
+            if destination.exists():
+                shutil.copytree(destination, backup_root / spec_id)
+
+        try:
+            for spec_id in spec_ids:
+                destination = root / "specs" / spec_id
+                if destination.exists():
+                    shutil.rmtree(destination)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(staged_sources[spec_id], destination)
+
+            run_git(root, "add", "-A", "--", *paths)
+            staged_output = run_git(
+                root,
+                "diff",
+                "--cached",
+                "--name-only",
+                "-z",
+                "--",
+                *paths,
+            ).stdout
+            staged_paths = tuple(path for path in staged_output.split("\0") if path)
+            allowed = tuple(path + "/" for path in paths)
+            unexpected = [
+                path
+                for path in staged_paths
+                if not any(path == root_path or path.startswith(prefix)
+                           for root_path, prefix in zip(paths, allowed))
+            ]
+            if unexpected:
+                raise SpecPublishError(
+                    "publication staged paths outside the selected specs: "
+                    + ", ".join(unexpected)
+                )
+
+            changed_ids = {
+                spec_id
+                for spec_id, path in zip(spec_ids, paths)
+                if any(item == path or item.startswith(path + "/") for item in staged_paths)
+            }
+            if not staged_paths:
+                published = tuple(
+                    PublishedSpec(
+                        spec_id=source.spec_id,
+                        source_branch=source.branch,
+                        source_commit=source.commit,
+                        changed=False,
+                    )
+                    for source in sources
+                )
+                return SpecPublishResult(
+                    default_branch=default_branch,
+                    previous_default_commit=default_commit,
+                    default_commit=default_commit,
+                    created_commit=False,
+                    destination_worktree=root,
+                    caller_on_default=True,
+                    published=published,
+                )
+
+            current_default = run_git(
+                root, "rev-parse", f"refs/heads/{default_branch}^{{commit}}"
+            ).stdout.strip()
+            if current_default != default_commit:
+                raise SpecPublishError(
+                    f"default branch {default_branch} changed during publication; retry"
+                )
+            message = build_echelon_commit_message(
+                f"docs: publish specs {', '.join(spec_ids)}",
+                EchelonCommitMetadata(
+                    origin="workspace",
+                    action="spec-publish",
+                    spec_id=",".join(spec_ids),
+                ),
+            )
+            run_git(root, "commit", "-m", message, "--", *paths)
+            new_commit = run_git(root, "rev-parse", "HEAD^{commit}").stdout.strip()
+        except Exception:
+            current_default = run_git(
+                root,
+                "rev-parse",
+                f"refs/heads/{default_branch}^{{commit}}",
+                check=False,
+            ).stdout.strip()
+            if current_default == default_commit:
+                _restore_destinations(root, spec_ids, backup_root)
+            raise
+
+    published = tuple(
+        PublishedSpec(
+            spec_id=source.spec_id,
+            source_branch=source.branch,
+            source_commit=source.commit,
+            changed=source.spec_id in changed_ids,
+        )
+        for source in sources
+    )
+    return SpecPublishResult(
+        default_branch=default_branch,
+        previous_default_commit=default_commit,
+        default_commit=new_commit,
+        created_commit=True,
+        destination_worktree=root,
+        caller_on_default=True,
+        published=published,
+    )
