@@ -88,6 +88,56 @@ def test_discovery_namespaces_ids_and_records_explicit_target_relationship(
 
 
 @pytest.mark.unit
+def test_discovery_records_structured_traceability_dependencies_and_deferrals(
+    tmp_path: Path,
+) -> None:
+    _write_yaml(tmp_path / ".echelon/config.yml", {"sources": []})
+    spec = _write_spec(tmp_path / "specs/001-demo")
+    (spec / "spec.md").write_text(
+        "# Demo\n\nREQ: FR-001\nDEPENDS: none\n\nREQ: FR-002\nDEPENDS: FR-001\n",
+        encoding="utf-8",
+    )
+    (spec / "tasks.md").write_text("# Tasks\n\n- [x] T-001 Build it\n", encoding="utf-8")
+    (spec / "traceability-matrix.md").write_text(
+        "# Traceability\n\n"
+        "| Requirement | Task | Source Location | Test File | Status |\n"
+        "| --- | --- | --- | --- | --- |\n"
+        "| FR-001 | T-001 | `src/demo.py` | `tests/test_demo.py` | COVERED |\n",
+        encoding="utf-8",
+    )
+    (spec / "deferred-scope.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "entries": [
+                    {
+                        "entry_id": "DS-001",
+                        "status": "deferred",
+                        "selected_ids": ["FR-002"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    model = discover_wiki_model(tmp_path, generated_at="2026-07-18T10:00:00Z")
+    edges = {(edge.kind, edge.source_id, edge.target_id): edge for edge in model.relationships}
+
+    assert ("depends_on", "001-demo:FR-002", "001-demo:FR-001") in edges
+    assert ("implements", "001-demo:T-001", "001-demo:FR-001") in edges
+    assert (
+        "verifies",
+        "artifact:specs/001-demo/traceability-matrix.md",
+        "001-demo:FR-001",
+    ) in edges
+    assert ("defers", "spec:001-demo", "001-demo:FR-002") in edges
+    assert edges[("defers", "spec:001-demo", "001-demo:FR-002")].evidence_key == (
+        "entries:DS-001:selected_ids:FR-002"
+    )
+
+
+@pytest.mark.unit
 def test_discovery_reads_published_re_sources_and_domains(tmp_path: Path) -> None:
     _write_yaml(
         tmp_path / ".echelon/config.yml",

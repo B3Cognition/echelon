@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -9,7 +10,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from echelon.wiki.model import WikiArtifact, WikiModel, WikiSpec, WikiWarning
+from echelon.wiki.model import (
+    WikiArtifact,
+    WikiDomain,
+    WikiModel,
+    WikiSource,
+    WikiSpec,
+    WikiWarning,
+)
 
 
 REQUIRED_PAGES = (
@@ -211,13 +219,15 @@ def _reverse_engineering(model: WikiModel) -> str:
     ]
     if model.sources:
         for source in model.sources:
-            lines.append(f"- `{source.source_id}` — `{source.path}`")
+            lines.append(
+                f"- {_link(source.source_id, _source_page_path(source))} — `{source.path}`"
+            )
     else:
         lines.append("- None")
     lines.extend(["", "## Domains", ""])
     if model.domains:
         for domain in model.domains:
-            destination = f"../{_artifact_projection(domain.source_path)}"
+            destination = _domain_page_path(domain)
             lines.append(f"- {_link(domain.title, destination)} — `{domain.source_id}`")
     else:
         lines.append("- No published RE domains.")
@@ -226,6 +236,68 @@ def _reverse_engineering(model: WikiModel) -> str:
 
 def _artifact_projection(source_path: str) -> str:
     return f"Artifacts/{source_path}"
+
+
+def _page_component(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-.") or "item"
+    if safe == value:
+        return safe
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+    return f"{safe}--{digest}"
+
+
+def _source_page_path(source: WikiSource) -> str:
+    return f"Sources/{_page_component(source.source_id)}.md"
+
+
+def _domain_page_path(domain: WikiDomain) -> str:
+    source = _page_component(domain.source_id)
+    domain_id = _page_component(domain.domain_id)
+    return f"Domains/{source}--{domain_id}.md"
+
+
+def _re_source_page(model: WikiModel, source: WikiSource) -> str:
+    lines = [
+        _frontmatter(model, "re-source", source.stable_id).rstrip(),
+        "",
+        f"# {source.source_id}",
+        "",
+        f"Configured source: `{source.path}`",
+        "",
+        (
+            f"Published artifacts: `{source.published_path}`"
+            if source.published_path
+            else "Published artifacts: unavailable"
+        ),
+        "",
+        "## Domains",
+        "",
+    ]
+    domains = [domain for domain in model.domains if domain.source_id == source.source_id]
+    if domains:
+        for domain in domains:
+            lines.append(f"- {_link(domain.title, f'../{_domain_page_path(domain)}')}")
+    else:
+        lines.append("- None")
+    return "\n".join(lines)
+
+
+def _re_domain_page(model: WikiModel, domain: WikiDomain) -> str:
+    return "\n".join(
+        [
+            _frontmatter(model, "re-domain", domain.stable_id).rstrip(),
+            "",
+            f"# {domain.title}",
+            "",
+            f"Source: `{domain.source_id}`",
+            "",
+            f"Domain ID: `{domain.domain_id}`",
+            "",
+            f"Canonical artifact: `{domain.source_path}`",
+            "",
+            f"- {_link('Open canonical projection', f'../../{_artifact_projection(domain.source_path)}')}",
+        ]
+    )
 
 
 def _view(model: WikiModel, kind: str, title: str, predicate) -> str:
@@ -342,7 +414,10 @@ def validate_rendered_links(output_dir: Path) -> tuple[WikiWarning, ...]:
     root = output_dir.resolve()
     warnings: list[WikiWarning] = []
     for page in sorted(output_dir.rglob("*.md")):
-        text = _without_fenced_code(page.read_text(encoding="utf-8"))
+        text = page.read_text(encoding="utf-8")
+        if "](" not in text:
+            continue
+        text = _without_fenced_code(text)
         for raw_target in _MARKDOWN_LINK_RE.findall(text):
             target = raw_target.strip().strip("<>")
             parsed = urlsplit(target)
@@ -369,6 +444,18 @@ def render_wiki(model: WikiModel, project_root: Path, output_dir: Path) -> Rende
     _write_page(output_dir, "Home.md", _home(model))
     _write_page(output_dir, "Specs/Index.md", _spec_index(model))
     _write_page(output_dir, "Reverse Engineering/Index.md", _reverse_engineering(model))
+    for source in model.sources:
+        _write_page(
+            output_dir,
+            f"Reverse Engineering/{_source_page_path(source)}",
+            _re_source_page(model, source),
+        )
+    for domain in model.domains:
+        _write_page(
+            output_dir,
+            f"Reverse Engineering/{_domain_page_path(domain)}",
+            _re_domain_page(model, domain),
+        )
     _write_page(output_dir, "Views/Active Work.md", _active_work(model))
     _write_page(output_dir, "Views/Requirements.md", _requirements(model))
     _write_page(

@@ -6,6 +6,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Workspace human artifact wiki** — `echelon wiki build`, `status`, and
+  `clean` generate and manage a deterministic, offline Markdown navigation vault
+  for canonical `specs/` and published `re/` artifacts. The untracked vault
+  includes evidence-backed relationships, aggregate views, provenance, safe
+  freshness reporting, and optional Obsidian configuration. Existing vaults
+  refresh after successful Echelon commands that change canonical inputs unless
+  `.echelon/local.yml` sets `wiki.auto_refresh: false`.
+
 - **EGR-151 / #164 exclusive Phase A GitOps** — Echelon now owns Phase A
   branch lifecycle end-to-end: workspace initialization disables competing
   spec-kit Git hooks, fresh specs start as checkpoint-gated sibling branches

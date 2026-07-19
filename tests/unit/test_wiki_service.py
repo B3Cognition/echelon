@@ -145,6 +145,25 @@ def test_refresh_rebuilds_only_when_existing_vault_inputs_change(tmp_path: Path)
 
 
 @pytest.mark.unit
+def test_refresh_does_not_run_when_only_resolved_config_changes(tmp_path: Path) -> None:
+    project_root = _workspace(tmp_path)
+    build_wiki(project_root, now=lambda: FIXED_NOW)
+    before = capture_input_snapshot(project_root)
+    assert before is not None
+    _write_yaml(
+        project_root / ".echelon/local.yml",
+        {"workspace": {"git_role": "orchestration"}},
+    )
+
+    refreshed = refresh_after_changed_command(
+        project_root, before, now=lambda: FIXED_NOW
+    )
+
+    assert refreshed is None
+    assert wiki_status(project_root).state == "stale"
+
+
+@pytest.mark.unit
 def test_local_config_can_disable_auto_refresh(tmp_path: Path) -> None:
     project_root = _workspace(tmp_path)
     build_wiki(project_root, now=lambda: FIXED_NOW)

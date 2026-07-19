@@ -95,24 +95,37 @@ def _allowed_paths(project_root: Path) -> tuple[list[Path], list[WikiWarning]]:
     return paths, warnings
 
 
-def canonical_input_hashes(project_root: Path) -> dict[str, str]:
+def canonical_input_hashes(
+    project_root: Path,
+    *,
+    artifacts: Iterable[WikiArtifact] | None = None,
+) -> dict[str, str]:
     """Hash safe config identity and every allowed canonical artifact file."""
     root = project_root.resolve()
     safe_config = json.dumps(
         _safe_config_payload(root), sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     result = {"@config/workspace": _sha256(safe_config)}
-    paths, _warnings = _allowed_paths(root)
-    for path in paths:
-        result[path.relative_to(root).as_posix()] = _sha256(path.read_bytes())
+    if artifacts is None:
+        paths, _warnings = _allowed_paths(root)
+        for path in paths:
+            result[path.relative_to(root).as_posix()] = _sha256(path.read_bytes())
+    else:
+        for artifact in artifacts:
+            result[artifact.source_path] = artifact.sha256
     return dict(sorted(result.items()))
 
 
-def _title(path: Path) -> str:
+def _title(path: Path, data: bytes | None = None) -> str:
     if path.suffix.lower() != ".md":
         return path.name
     try:
-        for line in path.read_text(encoding="utf-8").splitlines():
+        text = (
+            data.decode("utf-8")
+            if data is not None
+            else path.read_text(encoding="utf-8")
+        )
+        for line in text.splitlines():
             if line.startswith("# "):
                 title = line[2:].strip()
                 if title:
@@ -182,6 +195,122 @@ def _ids(path: Path, pattern: re.Pattern[str], namespace: str) -> tuple[str, ...
     except (OSError, UnicodeDecodeError):
         return ()
     return tuple(f"{namespace}:{match}" for match in sorted(matches))
+
+
+def _spec_relationships(
+    project_root: Path,
+    spec_dir: Path,
+    spec_id: str,
+    requirement_ids: tuple[str, ...],
+    task_ids: tuple[str, ...],
+) -> tuple[list[WikiRelationship], list[WikiWarning]]:
+    relationships: list[WikiRelationship] = []
+    warnings: list[WikiWarning] = []
+    known_requirements = set(requirement_ids)
+    known_tasks = set(task_ids)
+
+    spec_path = spec_dir / "spec.md"
+    try:
+        spec_lines = spec_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        spec_lines = []
+    current_requirement: str | None = None
+    for line_number, line in enumerate(spec_lines, start=1):
+        if line.startswith("REQ:"):
+            match = _REQUIREMENT_RE.search(line[4:])
+            current_requirement = f"{spec_id}:{match.group(0)}" if match else None
+        elif line.startswith("DEPENDS:") and current_requirement:
+            for dependency in sorted(set(_REQUIREMENT_RE.findall(line[8:]))):
+                target = f"{spec_id}:{dependency}"
+                if current_requirement in known_requirements and target in known_requirements:
+                    relationships.append(
+                        WikiRelationship(
+                            "depends_on",
+                            current_requirement,
+                            target,
+                            spec_path.relative_to(project_root).as_posix(),
+                            f"line:{line_number}:DEPENDS:{dependency}",
+                        )
+                    )
+
+    trace_path = spec_dir / "traceability-matrix.md"
+    if trace_path.is_file():
+        try:
+            trace_lines = trace_path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            trace_lines = []
+        for line_number, line in enumerate(trace_lines, start=1):
+            if not line.strip().startswith("|"):
+                continue
+            cells = [
+                cell.strip().strip("`")
+                for cell in line.strip().strip("|").split("|")
+            ]
+            if len(cells) < 5 or cells[0].lower() in {"requirement", "---"}:
+                continue
+            requirement_match = _REQUIREMENT_RE.search(cells[0])
+            task_match = _TASK_RE.search(cells[1])
+            if not requirement_match:
+                continue
+            requirement = f"{spec_id}:{requirement_match.group(0)}"
+            if requirement not in known_requirements:
+                continue
+            evidence_path = trace_path.relative_to(project_root).as_posix()
+            evidence_key = f"row:{line_number}"
+            if task_match:
+                task = f"{spec_id}:{task_match.group(0)}"
+                if task in known_tasks:
+                    relationships.append(
+                        WikiRelationship(
+                            "implements", task, requirement, evidence_path, evidence_key
+                        )
+                    )
+            if cells[4].upper() in {"COVERED", "PARTIAL"} and cells[2] != "—":
+                relationships.append(
+                    WikiRelationship(
+                        "verifies",
+                        f"artifact:{evidence_path}",
+                        requirement,
+                        evidence_path,
+                        evidence_key,
+                    )
+                )
+
+    ledger_path = spec_dir / "deferred-scope.json"
+    if ledger_path.is_file():
+        try:
+            payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            warnings.append(
+                WikiWarning(
+                    "invalid-deferred-scope",
+                    "Deferred-scope relationships could not be parsed.",
+                    ledger_path.relative_to(project_root).as_posix(),
+                )
+            )
+        else:
+            entries = payload.get("entries", []) if isinstance(payload, dict) else []
+            if isinstance(entries, list):
+                for entry in entries:
+                    if not isinstance(entry, dict) or entry.get("status") != "deferred":
+                        continue
+                    entry_id = str(entry.get("entry_id") or "unknown")
+                    selected = entry.get("selected_ids", [])
+                    if not isinstance(selected, list):
+                        continue
+                    for selected_id in selected:
+                        target = f"{spec_id}:{selected_id}"
+                        if target in known_requirements or target in known_tasks:
+                            relationships.append(
+                                WikiRelationship(
+                                    "defers",
+                                    f"spec:{spec_id}",
+                                    target,
+                                    ledger_path.relative_to(project_root).as_posix(),
+                                    f"entries:{entry_id}:selected_ids:{selected_id}",
+                                )
+                            )
+    return relationships, warnings
 
 
 def _published_index(project_root: Path) -> dict[str, Any]:
@@ -329,7 +458,7 @@ def _artifact_records(project_root: Path, paths: Iterable[Path]) -> tuple[WikiAr
                 stable_id=f"artifact:{relative}",
                 source_path=relative,
                 projection_path=f"Artifacts/{relative}",
-                title=_title(path),
+                title=_title(path, data),
                 kind=_artifact_kind(relative),
                 sha256=_sha256(data),
                 size_bytes=len(data),
@@ -345,8 +474,20 @@ def discover_wiki_model(project_root: Path, *, generated_at: str) -> WikiModel:
     paths, warnings = _allowed_paths(root)
     artifacts = _artifact_records(root, paths)
     sources = _sources(root)
+    domains = _domains(root)
     source_ids = {source.source_id for source in sources}
     relationships: list[WikiRelationship] = []
+    for domain in domains:
+        if domain.source_id in source_ids:
+            relationships.append(
+                WikiRelationship(
+                    "derived_from",
+                    domain.stable_id,
+                    f"source:{domain.source_id}",
+                    domain.source_path,
+                    "published-domain-path",
+                )
+            )
     specs: list[WikiSpec] = []
     specs_root = root / "specs"
     if specs_root.is_dir():
@@ -356,6 +497,21 @@ def discover_wiki_model(project_root: Path, *, generated_at: str) -> WikiModel:
             spec_id = spec_dir.name
             frontmatter = read_frontmatter(spec_dir)
             status = str(frontmatter.get("status") or "phase_a")
+            supersedes = frontmatter.get("supersedes", [])
+            if isinstance(supersedes, str):
+                supersedes = [supersedes]
+            if isinstance(supersedes, list):
+                for superseded in supersedes:
+                    if isinstance(superseded, str) and superseded.strip():
+                        relationships.append(
+                            WikiRelationship(
+                                "supersedes",
+                                f"spec:{spec_id}",
+                                f"spec:{superseded.strip()}",
+                                (spec_dir / "spec.md").relative_to(root).as_posix(),
+                                f"frontmatter:supersedes:{superseded.strip()}",
+                            )
+                        )
             targets_path = spec_dir / "targets.yml"
             targets = _targets(targets_path)
             for target in targets:
@@ -374,6 +530,43 @@ def discover_wiki_model(project_root: Path, *, generated_at: str) -> WikiModel:
                 for artifact in artifacts
                 if Path(artifact.source_path).is_relative_to(Path("specs") / spec_id)
             )
+            requirement_ids = _ids(spec_dir / "spec.md", _REQUIREMENT_RE, spec_id)
+            task_ids = _ids(spec_dir / "tasks.md", _TASK_RE, spec_id)
+            for artifact_id in artifact_ids:
+                relationships.append(
+                    WikiRelationship(
+                        "contains",
+                        f"spec:{spec_id}",
+                        artifact_id,
+                        f"specs/{spec_id}",
+                        "path-containment",
+                    )
+                )
+            for requirement_id in requirement_ids:
+                relationships.append(
+                    WikiRelationship(
+                        "contains",
+                        f"spec:{spec_id}",
+                        requirement_id,
+                        f"specs/{spec_id}/spec.md",
+                        f"identifier:{requirement_id.split(':', 1)[1]}",
+                    )
+                )
+            for task_id in task_ids:
+                relationships.append(
+                    WikiRelationship(
+                        "contains",
+                        f"spec:{spec_id}",
+                        task_id,
+                        f"specs/{spec_id}/tasks.md",
+                        f"identifier:{task_id.split(':', 1)[1]}",
+                    )
+                )
+            explicit, relationship_warnings = _spec_relationships(
+                root, spec_dir, spec_id, requirement_ids, task_ids
+            )
+            relationships.extend(explicit)
+            warnings.extend(relationship_warnings)
             specs.append(
                 WikiSpec(
                     stable_id=f"spec:{spec_id}",
@@ -382,8 +575,8 @@ def discover_wiki_model(project_root: Path, *, generated_at: str) -> WikiModel:
                     title=_title(spec_dir / "spec.md"),
                     lifecycle_status=status,
                     targets=targets,
-                    requirement_ids=_ids(spec_dir / "spec.md", _REQUIREMENT_RE, spec_id),
-                    task_ids=_ids(spec_dir / "tasks.md", _TASK_RE, spec_id),
+                    requirement_ids=requirement_ids,
+                    task_ids=task_ids,
                     artifact_ids=artifact_ids,
                 )
             )
@@ -393,7 +586,7 @@ def discover_wiki_model(project_root: Path, *, generated_at: str) -> WikiModel:
         workspace_name=root.name,
         workspace_root=str(root),
         sources=sources,
-        domains=_domains(root),
+        domains=domains,
         specs=tuple(specs),
         artifacts=artifacts,
         relationships=tuple(

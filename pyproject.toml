@@ -62,6 +62,7 @@ markers = [
   "integration: Integration tests (may need Docker/git)",
   "system: System tests (full Docker + fixture repos)",
   "e2e: End-to-end smoke tests",
+  "performance: Reference performance budgets",
   "docker: Tests that require Docker daemon",
   "docker_image(name): Tests that require a local Docker image",
   "deployed_extension: Tests that require an installed .specify/extensions/echelon copy",

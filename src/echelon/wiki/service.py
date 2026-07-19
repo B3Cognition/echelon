@@ -171,8 +171,8 @@ def build_wiki(
     runtime.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".wiki-staging-", dir=runtime))
     try:
-        inputs = canonical_input_hashes(root)
         model = discover_wiki_model(root, generated_at=generated_at)
+        inputs = canonical_input_hashes(root, artifacts=model.artifacts)
         render_result = render_wiki(model, root, staging)
         broken_required = [
             warning
@@ -282,6 +282,16 @@ def refresh_after_changed_command(
     if before is None or not _auto_refresh_enabled(project_root):
         return None
     after = canonical_input_hashes(project_root)
-    if after == before:
+    before_artifacts = {
+        path: digest
+        for path, digest in before.items()
+        if path.startswith(("specs/", "re/"))
+    }
+    after_artifacts = {
+        path: digest
+        for path, digest in after.items()
+        if path.startswith(("specs/", "re/"))
+    }
+    if after_artifacts == before_artifacts:
         return None
     return build_wiki(project_root, now=now)

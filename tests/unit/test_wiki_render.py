@@ -65,6 +65,31 @@ def test_render_writes_navigation_views_and_self_contained_projection(tmp_path: 
 
 
 @pytest.mark.unit
+def test_render_writes_reverse_engineering_source_and_domain_pages(tmp_path: Path) -> None:
+    project_root, _model = _workspace(tmp_path)
+    re_spec = project_root / "re/sources/api/specs/auth/spec.md"
+    re_spec.parent.mkdir(parents=True)
+    re_spec.write_text("# Authentication Domain\n", encoding="utf-8")
+    (project_root / "re/index.json").write_text(
+        '{"sources":{"api":{"published_path":"re/sources/api"}}}\n',
+        encoding="utf-8",
+    )
+    model = discover_wiki_model(project_root, generated_at="2026-07-18T10:00:00Z")
+
+    render_wiki(model, project_root, tmp_path / "out")
+
+    re_index = (tmp_path / "out/Reverse Engineering/Index.md").read_text()
+    assert "[api](Sources/api.md)" in re_index
+    assert "[Authentication Domain](Domains/api--auth.md)" in re_index
+    source_page = (tmp_path / "out/Reverse Engineering/Sources/api.md").read_text()
+    assert "Published artifacts: `re/sources/api`" in source_page
+    assert "[Authentication Domain](../Domains/api--auth.md)" in source_page
+    domain_page = (tmp_path / "out/Reverse Engineering/Domains/api--auth.md").read_text()
+    assert "[Open canonical projection](../../Artifacts/re/sources/api/specs/auth/spec.md)" in domain_page
+    assert validate_rendered_links(tmp_path / "out") == ()
+
+
+@pytest.mark.unit
 def test_projection_preserves_frontmatter_and_fenced_code(tmp_path: Path) -> None:
     project_root, _model = _workspace(tmp_path)
     source = project_root / "specs/001-demo/spec.md"
