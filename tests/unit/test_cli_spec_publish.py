@@ -39,6 +39,7 @@ def test_publish_help_explains_spec_only_local_behavior() -> None:
     assert "does not merge implementation history" in result.output
     assert "local branches only" in result.output
     assert "does not fetch, push, or delete" in result.output
+    assert "must be clean" in result.output
     assert "--all" in result.output
 
 
@@ -70,7 +71,57 @@ def test_publish_success_reports_commit_retained_branches_and_no_push(
     assert "Source branches retained" in result.output
     assert "Nothing was pushed" in result.output
     assert "git push origin main" in result.output
+    assert "git switch main" in result.output
     assert "echelon wiki build" in result.output
+
+
+@pytest.mark.unit
+def test_publish_points_wiki_build_at_persistent_default_worktree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    default_worktree = tmp_path / "main worktree"
+    default_worktree.mkdir()
+    fixture = _result_fixture()
+    fixture = SpecPublishResult(
+        **{
+            **fixture.__dict__,
+            "destination_worktree": default_worktree,
+        }
+    )
+    monkeypatch.setattr(
+        "echelon.spec_publish.publish_specs",
+        lambda *_args, **_kwargs: fixture,
+    )
+
+    result = CliRunner().invoke(app, ["spec", "publish", "003"])
+
+    assert result.exit_code == 0
+    assert f"cd '{default_worktree}'" in result.output
+    assert "echelon wiki build" in result.output
+
+
+@pytest.mark.unit
+def test_publish_quotes_generated_branch_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _result_fixture()
+    fixture = SpecPublishResult(
+        **{
+            **fixture.__dict__,
+            "default_branch": "release;echo unsafe",
+        }
+    )
+    monkeypatch.setattr(
+        "echelon.spec_publish.publish_specs",
+        lambda *_args, **_kwargs: fixture,
+    )
+
+    result = CliRunner().invoke(app, ["spec", "publish", "003"])
+
+    assert result.exit_code == 0
+    assert "git push origin 'release;echo unsafe'" in result.output
+    assert "git switch 'release;echo unsafe'" in result.output
 
 
 @pytest.mark.unit

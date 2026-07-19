@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from echelon.wiki.discovery import canonical_input_hashes, discover_wiki_model
+from echelon.wiki.model import WikiWarning
 
 
 def _write_yaml(path: Path, payload: object) -> None:
@@ -85,6 +86,68 @@ def test_discovery_namespaces_ids_and_records_explicit_target_relationship(
         and edge.evidence_path == "specs/001-demo/targets.yml"
         for edge in model.relationships
     )
+
+
+@pytest.mark.unit
+def test_discovery_reads_spec_publication_provenance(tmp_path: Path) -> None:
+    _write_yaml(tmp_path / ".echelon/config.yml", {"sources": []})
+    spec = _write_spec(tmp_path / "specs/003-search")
+    (spec / ".echelon-publication.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "spec_id": "003-search",
+                "source_branch": "003-search",
+                "source_commit": "a" * 40,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    model = discover_wiki_model(tmp_path, generated_at="2026-07-19T10:00:00Z")
+
+    assert model.specs[0].publication_branch == "003-search"
+    assert model.specs[0].publication_commit == "a" * 40
+    assert not any(
+        warning.code == "invalid-spec-publication" for warning in model.warnings
+    )
+
+
+@pytest.mark.unit
+def test_discovery_warns_and_ignores_mismatched_publication_manifest(
+    tmp_path: Path,
+) -> None:
+    _write_yaml(tmp_path / ".echelon/config.yml", {"sources": []})
+    spec = _write_spec(tmp_path / "specs/003-search")
+    manifest = spec / ".echelon-publication.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "spec_id": "003-other",
+                "source_branch": "003-other",
+                "source_commit": "not-a-commit",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    model = discover_wiki_model(tmp_path, generated_at="2026-07-19T10:00:00Z")
+
+    assert model.specs[0].publication_branch is None
+    assert model.specs[0].publication_commit is None
+    warnings = [
+        warning
+        for warning in model.warnings
+        if warning.code == "invalid-spec-publication"
+    ]
+    assert warnings == [
+        WikiWarning(
+            "invalid-spec-publication",
+            "Publication manifest is invalid or does not match its spec directory.",
+            "specs/003-search/.echelon-publication.json",
+        )
+    ]
 
 
 @pytest.mark.unit

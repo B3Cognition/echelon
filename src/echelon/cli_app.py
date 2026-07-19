@@ -7,6 +7,7 @@ Echelon normalize CLI contracts incrementally without rewriting harness logic.
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import Optional
 
@@ -1271,6 +1272,8 @@ def spec_publish(
     This does not merge implementation history.
 
     It does not fetch, push, or delete source branches.
+
+    Selected spec paths must be clean. The default-branch worktree must be clean.
     """
     from echelon.spec_publish import SpecPublishError, publish_specs
 
@@ -1310,8 +1313,20 @@ def spec_publish(
     )
     typer.echo("Nothing was pushed, fetched, merged, or deleted.")
     typer.echo(f"Default-branch worktree: {result.destination_worktree}")
-    typer.echo(f"To share: git push origin {result.default_branch}")
-    typer.echo("Refresh navigation: echelon wiki build")
+    for warning in result.warnings:
+        typer.echo(f"Warning: {warning}", err=True)
+    quoted_branch = shlex.quote(result.default_branch)
+    typer.echo(f"To share: git push origin {quoted_branch}")
+    if result.caller_on_default:
+        typer.echo("Refresh navigation: echelon wiki build")
+    elif result.destination_worktree.exists():
+        typer.echo(
+            f"Refresh navigation: cd {shlex.quote(str(result.destination_worktree))} && "
+            "echelon wiki build"
+        )
+    else:
+        typer.echo(f"Next: git switch {quoted_branch}")
+        typer.echo("Refresh navigation: echelon wiki build")
 
 
 @spec_app.command("drop-target")

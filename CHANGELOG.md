@@ -6,6 +6,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **#166 local spec catalog publication** — `echelon spec publish <id>` and
+  `echelon spec publish --all` copy committed spec-only snapshots from canonical
+  local Phase A branches into one local default-branch catalog commit. This
+  gives the existing main-only human wiki a complete, Git-native input surface
+  without making wiki generation branch-aware or merging implementation
+  history. Publication is atomic, retains source branches, records branch and
+  commit provenance, refuses dirty/conflicting worktrees, and never fetches,
+  pushes, or deletes branches.
+
 - **#165 workspace human artifact wiki** — `echelon wiki build`, `status`, and
   `clean` generate and manage a deterministic, offline Markdown navigation vault
   for canonical `specs/` and published `re/` artifacts. The untracked vault

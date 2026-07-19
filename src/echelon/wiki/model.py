@@ -35,6 +35,8 @@ class WikiSpec:
     requirement_ids: tuple[str, ...]
     task_ids: tuple[str, ...]
     artifact_ids: tuple[str, ...]
+    publication_branch: str | None = None
+    publication_commit: str | None = None
 
 
 @dataclass(frozen=True)

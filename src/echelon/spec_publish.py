@@ -10,7 +10,7 @@ import subprocess
 import tarfile
 import tempfile
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Iterator
@@ -18,7 +18,6 @@ from typing import Iterator
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from echelon.git_helpers import (
     GitHelperError,
-    is_worktree_dirty,
     run_git,
 )
 from echelon.phase_a_git import PhaseAGitError, resolve_phase_a_default_branch
@@ -60,6 +59,7 @@ class SpecPublishResult:
     destination_worktree: Path
     caller_on_default: bool
     published: tuple[PublishedSpec, ...]
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -232,6 +232,7 @@ def _materialize_source(
                 target = destination.joinpath(*relative.parts)
                 if member.isdir():
                     target.mkdir(parents=True, exist_ok=True)
+                    target.chmod(member.mode & 0o777)
                     continue
                 if not member.isfile():
                     raise SpecPublishError(
@@ -246,6 +247,7 @@ def _materialize_source(
                     )
                 with target.open("wb") as output:
                     shutil.copyfileobj(extracted, output)
+                target.chmod(member.mode & 0o777)
     except tarfile.TarError as exc:
         raise SpecPublishError(
             f"invalid Git archive for {source.branch}: {exc}"
@@ -288,6 +290,42 @@ def _destination_collisions(
             )
 
 
+def _validated_specs_root(
+    destination_worktree: Path,
+    sources: tuple[SpecPublicationSource, ...],
+) -> Path:
+    worktree_root = destination_worktree.resolve()
+    specs_root = worktree_root / "specs"
+    if specs_root.is_symlink():
+        raise SpecPublishError(
+            f"publication path {specs_root} is a symlink; replace it with a "
+            "worktree-local directory first"
+        )
+    if specs_root.exists() and not specs_root.is_dir():
+        raise SpecPublishError(
+            f"publication path {specs_root} is not a directory"
+        )
+    if specs_root.resolve() != worktree_root / "specs":
+        raise SpecPublishError(
+            f"publication path {specs_root} escapes the destination worktree"
+        )
+    for source in sources:
+        destination = specs_root / source.spec_id
+        if destination.is_symlink():
+            raise SpecPublishError(
+                f"publication destination {destination} is a symlink; remove it first"
+            )
+        if destination.exists() and not destination.is_dir():
+            raise SpecPublishError(
+                f"publication destination {destination} is not a directory"
+            )
+        if destination.resolve() != specs_root / source.spec_id:
+            raise SpecPublishError(
+                f"publication destination {destination} escapes {specs_root}"
+            )
+    return specs_root
+
+
 def _list_worktrees(project_root: Path) -> tuple[GitWorktree, ...]:
     output = run_git(project_root, "worktree", "list", "--porcelain").stdout
     worktrees: list[GitWorktree] = []
@@ -310,23 +348,23 @@ def _validate_source_worktrees(
     sources: tuple[SpecPublicationSource, ...],
     worktrees: tuple[GitWorktree, ...],
 ) -> None:
-    by_branch = {worktree.branch: worktree for worktree in worktrees}
     for source in sources:
-        worktree = by_branch.get(source.branch)
-        if worktree is None:
-            continue
-        dirty = run_git(
-            worktree.path,
-            "status",
-            "--porcelain",
-            "--",
-            source.source_path,
-        ).stdout.strip()
-        if dirty:
-            raise SpecPublishError(
-                f"source branch {source.branch} has uncommitted changes in "
-                f"{source.source_path} at {worktree.path}; commit or clean them first"
-            )
+        for worktree in worktrees:
+            if worktree.branch != source.branch:
+                continue
+            dirty = run_git(
+                worktree.path,
+                "status",
+                "--porcelain",
+                "--",
+                source.source_path,
+            ).stdout.strip()
+            if dirty:
+                raise SpecPublishError(
+                    f"source branch {source.branch} has uncommitted changes in "
+                    f"{source.source_path} at {worktree.path}; "
+                    "commit or clean them first"
+                )
 
 
 @contextmanager
@@ -334,6 +372,7 @@ def _publication_worktree(
     project_root: Path,
     default_branch: str,
     worktrees: tuple[GitWorktree, ...],
+    cleanup_warnings: list[str],
 ) -> Iterator[tuple[Path, bool]]:
     """Yield a clean checked-out default worktree or a removable temporary one."""
 
@@ -343,7 +382,8 @@ def _publication_worktree(
         None,
     )
     if existing is not None:
-        if is_worktree_dirty(existing.path):
+        dirty = run_git(existing.path, "status", "--porcelain").stdout.strip()
+        if dirty:
             raise SpecPublishError(
                 f"default-branch worktree {existing.path} is dirty; "
                 "commit or clean it first"
@@ -351,33 +391,57 @@ def _publication_worktree(
         yield existing.path, existing.path == root
         return
 
-    with tempfile.TemporaryDirectory(prefix="echelon-spec-publish-worktree-") as temp:
-        destination = Path(temp) / "default"
-        try:
-            run_git(
-                root,
-                "worktree",
-                "add",
-                "--quiet",
-                str(destination),
-                default_branch,
-            )
-            yield destination.resolve(), False
-        finally:
-            removal = run_git(
-                root,
-                "worktree",
-                "remove",
-                "--force",
-                str(destination),
-                check=False,
-            )
-            run_git(root, "worktree", "prune", check=False)
-            if removal.returncode != 0 and destination.exists():
-                raise SpecPublishError(
-                    f"could not remove temporary publication worktree {destination}: "
-                    f"{removal.stderr.strip()}"
+    temporary_root = Path(tempfile.mkdtemp(prefix="echelon-spec-publish-worktree-"))
+    destination = temporary_root / "default"
+    added = False
+    try:
+        run_git(
+            root,
+            "worktree",
+            "add",
+            "--quiet",
+            str(destination),
+            default_branch,
+        )
+        added = True
+        yield destination.resolve(), False
+    finally:
+        if not added:
+            shutil.rmtree(temporary_root, ignore_errors=True)
+        else:
+            try:
+                removal = run_git(
+                    root,
+                    "worktree",
+                    "remove",
+                    "--force",
+                    str(destination),
+                    check=False,
                 )
+            except GitHelperError as exc:
+                cleanup_warnings.append(
+                    f"temporary worktree cleanup failure at {destination}: {exc}"
+                )
+            else:
+                if removal.returncode != 0:
+                    cleanup_warnings.append(
+                        f"temporary worktree cleanup failure at {destination}: "
+                        f"{removal.stderr.strip()}"
+                    )
+                else:
+                    try:
+                        prune = run_git(root, "worktree", "prune", check=False)
+                    except GitHelperError as exc:
+                        cleanup_warnings.append(
+                            f"temporary worktree prune exception: {exc}"
+                        )
+                    else:
+                        if prune.returncode != 0:
+                            cleanup_warnings.append(
+                                "temporary worktree prune failure: "
+                                f"{prune.stderr.strip()}"
+                            )
+                    shutil.rmtree(temporary_root, ignore_errors=True)
 
 
 def _assert_default_ref_unchanged(
@@ -409,7 +473,7 @@ def _restore_destinations(
         backup = backup_root / spec_id
         if backup.exists():
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(backup, destination)
+            shutil.copytree(backup, destination, symlinks=True)
     run_git(
         destination_worktree,
         "reset",
@@ -417,7 +481,6 @@ def _restore_destinations(
         captured_commit,
         "--",
         *(f"specs/{spec_id}" for spec_id in destinations),
-        check=False,
     )
 
 
@@ -432,6 +495,7 @@ def _publish_into_worktree(
 ) -> SpecPublishResult:
     spec_ids = tuple(source.spec_id for source in sources)
     paths = tuple(f"specs/{spec_id}" for spec_id in spec_ids)
+    _validated_specs_root(destination_worktree, sources)
     _destination_collisions(destination_worktree, sources)
     with tempfile.TemporaryDirectory(prefix="echelon-spec-publish-") as temporary:
         temporary_root = Path(temporary)
@@ -448,7 +512,11 @@ def _publish_into_worktree(
         for spec_id in spec_ids:
             destination = destination_worktree / "specs" / spec_id
             if destination.exists():
-                shutil.copytree(destination, backup_root / spec_id)
+                shutil.copytree(
+                    destination,
+                    backup_root / spec_id,
+                    symlinks=True,
+                )
 
         try:
             for spec_id in spec_ids:
@@ -528,20 +596,23 @@ def _publish_into_worktree(
                 destination_worktree, "rev-parse", "HEAD^{commit}"
             ).stdout.strip()
         except Exception as exc:
-            _restore_destinations(
-                destination_worktree,
-                spec_ids,
-                backup_root,
-                default_commit,
-            )
-            residual = run_git(
-                destination_worktree,
-                "status",
-                "--porcelain",
-                "--",
-                *paths,
-                check=False,
-            ).stdout.strip()
+            try:
+                _restore_destinations(
+                    destination_worktree,
+                    spec_ids,
+                    backup_root,
+                    default_commit,
+                )
+                residual = run_git(
+                    destination_worktree,
+                    "status",
+                    "--porcelain",
+                ).stdout.strip()
+            except Exception as rollback_exc:
+                raise SpecPublishError(
+                    f"publication failed and rollback failed in "
+                    f"{destination_worktree}: {rollback_exc}"
+                ) from exc
             if residual:
                 raise SpecPublishError(
                     f"publication failed and rollback left changes in "
@@ -595,11 +666,14 @@ def publish_specs(
         )
         worktrees = _list_worktrees(root)
         _validate_source_worktrees(sources, worktrees)
-        with _publication_worktree(root, default_branch, worktrees) as (
+        cleanup_warnings: list[str] = []
+        with _publication_worktree(
+            root, default_branch, worktrees, cleanup_warnings
+        ) as (
             destination_worktree,
             caller_on_default,
         ):
-            return _publish_into_worktree(
+            result = _publish_into_worktree(
                 root,
                 destination_worktree,
                 caller_on_default=caller_on_default,
@@ -607,6 +681,7 @@ def publish_specs(
                 default_commit=default_commit,
                 sources=sources,
             )
+        return replace(result, warnings=tuple(cleanup_warnings))
     except SpecPublishError:
         raise
     except (GitHelperError, PhaseAGitError) as exc:

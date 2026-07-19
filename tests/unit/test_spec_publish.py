@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -222,6 +224,28 @@ def test_republish_replaces_snapshot_exactly_and_removes_stale_files(
 
 
 @pytest.mark.unit
+def test_publish_preserves_committed_executable_mode(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(
+        repo,
+        "001-first",
+        "# First\n",
+        extra_files={"specs/001-first/check.sh": "#!/bin/sh\nexit 0\n"},
+    )
+    _git(repo, "switch", "001-first")
+    script = repo / "specs/001-first/check.sh"
+    script.chmod(0o755)
+    _git(repo, "add", "specs/001-first/check.sh")
+    _git(repo, "commit", "-m", "test: make spec helper executable")
+    _git(repo, "switch", "main")
+
+    publish_specs(repo, identity="001")
+
+    published_mode = (repo / "specs/001-first/check.sh").stat().st_mode
+    assert published_mode & 0o111
+
+
+@pytest.mark.unit
 def test_publish_rejects_same_number_destination_collision_before_mutation(
     tmp_path: Path,
 ) -> None:
@@ -244,6 +268,53 @@ def test_publish_rejects_same_number_destination_collision_before_mutation(
 
 
 @pytest.mark.unit
+def test_publish_uses_local_default_branch_override(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    config_root = repo / ".echelon"
+    config_root.mkdir()
+    (config_root / "config.yml").write_text(
+        "target_default_branch: missing-committed-value\n",
+        encoding="utf-8",
+    )
+    (config_root / "local.yml").write_text(
+        "target_default_branch: main\n",
+        encoding="utf-8",
+    )
+    _git(repo, "add", ".echelon")
+    _git(repo, "commit", "-m", "chore: configure branch override")
+    _create_spec_branch(repo, "001-first", "# First\n")
+
+    result = publish_specs(repo, identity="001")
+
+    assert result.default_branch == "main"
+    assert result.created_commit is True
+
+
+@pytest.mark.unit
+def test_publish_rejects_symlinked_specs_root_without_mutating_target(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# First\n")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel.txt"
+    sentinel.write_text("do not touch\n", encoding="utf-8")
+    os.symlink(outside, repo / "specs")
+    _git(repo, "add", "specs")
+    _git(repo, "commit", "-m", "test: symlink specs root")
+    main_before = _git(repo, "rev-parse", "main")
+
+    with pytest.raises(SpecPublishError, match="specs.*symlink"):
+        publish_specs(repo, identity="001")
+
+    assert sentinel.read_text(encoding="utf-8") == "do not touch\n"
+    assert not (outside / "001-first").exists()
+    assert _git(repo, "rev-parse", "main") == main_before
+    assert _git(repo, "status", "--short") == ""
+
+
+@pytest.mark.unit
 def test_publish_refuses_dirty_selected_spec_in_linked_worktree(
     tmp_path: Path,
 ) -> None:
@@ -252,6 +323,22 @@ def test_publish_refuses_dirty_selected_spec_in_linked_worktree(
     linked = tmp_path / "first-worktree"
     _git(repo, "worktree", "add", str(linked), "001-first")
     (linked / "specs/001-first/spec.md").write_text("# Dirty\n", encoding="utf-8")
+
+    with pytest.raises(SpecPublishError, match="001-first.*uncommitted"):
+        publish_specs(repo, identity="001")
+
+
+@pytest.mark.unit
+def test_publish_checks_every_checkout_of_selected_source_branch(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# Committed\n")
+    dirty = tmp_path / "first-dirty"
+    clean = tmp_path / "first-clean"
+    _git(repo, "worktree", "add", str(dirty), "001-first")
+    _git(repo, "worktree", "add", "--force", str(clean), "001-first")
+    (dirty / "specs/001-first/spec.md").write_text("# Dirty\n", encoding="utf-8")
 
     with pytest.raises(SpecPublishError, match="001-first.*uncommitted"):
         publish_specs(repo, identity="001")
@@ -304,6 +391,28 @@ def test_publish_refuses_dirty_secondary_default_worktree(tmp_path: Path) -> Non
 
 
 @pytest.mark.unit
+def test_publish_fails_closed_when_default_status_check_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# First\n")
+    original_run_git = spec_publish_module.run_git
+
+    def fail_status(path: Path, *args: str, **kwargs: object):
+        if path.resolve() == repo.resolve() and args[:2] == ("status", "--porcelain"):
+            raise spec_publish_module.GitHelperError("injected status failure")
+        return original_run_git(path, *args, **kwargs)
+
+    monkeypatch.setattr(spec_publish_module, "run_git", fail_status)
+
+    with pytest.raises(SpecPublishError, match="injected status failure"):
+        publish_specs(repo, identity="001")
+
+    assert not (repo / "specs/001-first").exists()
+
+
+@pytest.mark.unit
 def test_unrelated_dirty_source_worktree_does_not_block_publish(
     tmp_path: Path,
 ) -> None:
@@ -317,6 +426,88 @@ def test_unrelated_dirty_source_worktree_does_not_block_publish(
     assert result.created_commit is True
     assert (repo / "notes.tmp").read_text(encoding="utf-8") == "keep me\n"
     assert _git(repo, "status", "--short") == "?? notes.tmp"
+
+
+@pytest.mark.unit
+def test_cleanup_failure_reports_warning_without_hiding_successful_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# First\n")
+    _git(repo, "switch", "001-first")
+    original_run_git = spec_publish_module.run_git
+
+    def fail_remove(path: Path, *args: str, **kwargs: object):
+        if args[:3] == ("worktree", "remove", "--force"):
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                1,
+                stdout="",
+                stderr="injected cleanup failure",
+            )
+        return original_run_git(path, *args, **kwargs)
+
+    monkeypatch.setattr(spec_publish_module, "run_git", fail_remove)
+
+    result = publish_specs(repo, identity="001")
+
+    assert result.created_commit is True
+    assert _git(repo, "show", "main:specs/001-first/spec.md") == "# First"
+    assert result.destination_worktree.exists()
+    assert any("cleanup failure" in warning for warning in result.warnings)
+    _git(repo, "worktree", "remove", "--force", str(result.destination_worktree))
+    shutil.rmtree(result.destination_worktree.parent, ignore_errors=True)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "failure_command",
+    ["remove", "prune", "prune-nonzero"],
+)
+def test_cleanup_git_exception_never_hides_successful_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_command: str,
+) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# First\n")
+    _git(repo, "switch", "001-first")
+    original_run_git = spec_publish_module.run_git
+
+    def fail_cleanup(path: Path, *args: str, **kwargs: object):
+        is_remove = args[:3] == ("worktree", "remove", "--force")
+        is_prune = args[:2] == ("worktree", "prune")
+        if failure_command == "prune-nonzero" and is_prune:
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                1,
+                stdout="",
+                stderr="injected prune nonzero",
+            )
+        if (failure_command == "remove" and is_remove) or (
+            failure_command == "prune" and is_prune
+        ):
+            raise spec_publish_module.GitHelperError(
+                f"injected {failure_command} exception"
+            )
+        return original_run_git(path, *args, **kwargs)
+
+    monkeypatch.setattr(spec_publish_module, "run_git", fail_cleanup)
+
+    result = publish_specs(repo, identity="001")
+
+    assert result.created_commit is True
+    assert _git(repo, "show", "main:specs/001-first/spec.md") == "# First"
+    expected = (
+        "injected prune nonzero"
+        if failure_command == "prune-nonzero"
+        else f"{failure_command} exception"
+    )
+    assert any(expected in item for item in result.warnings)
+    if result.destination_worktree.exists():
+        _git(repo, "worktree", "remove", "--force", str(result.destination_worktree))
+        shutil.rmtree(result.destination_worktree.parent, ignore_errors=True)
 
 
 @pytest.mark.unit
@@ -350,6 +541,44 @@ def test_commit_failure_rolls_back_existing_and_new_destinations(
     assert (repo / "specs/001-first/spec.md").read_text() == "# First v1\n"
     assert not (repo / "specs/002-second").exists()
     assert (repo / "README.md").read_text() == "# Test repository\n"
+    assert _git(repo, "status", "--short") == ""
+
+
+@pytest.mark.unit
+def test_commit_failure_restores_nested_symlink_without_touching_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = _init_repo(tmp_path)
+    _create_spec_branch(repo, "001-first", "# First v1\n")
+    publish_specs(repo, identity="001")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "sentinel.txt"
+    sentinel.write_text("do not touch\n", encoding="utf-8")
+    link = repo / "specs/001-first/external"
+    os.symlink(outside, link)
+    _git(repo, "add", "specs/001-first/external")
+    _git(repo, "commit", "-m", "test: add nested spec symlink")
+    _git(repo, "switch", "001-first")
+    (repo / "specs/001-first/spec.md").write_text("# First v2\n", encoding="utf-8")
+    _git(repo, "add", "specs/001-first/spec.md")
+    _git(repo, "commit", "-m", "docs: update first")
+    _git(repo, "switch", "main")
+    original_run_git = spec_publish_module.run_git
+
+    def fail_commit(path: Path, *args: str, **kwargs: object):
+        if args and args[0] == "commit":
+            raise spec_publish_module.GitHelperError("injected commit failure")
+        return original_run_git(path, *args, **kwargs)
+
+    monkeypatch.setattr(spec_publish_module, "run_git", fail_commit)
+
+    with pytest.raises(SpecPublishError, match="injected commit failure"):
+        publish_specs(repo, identity="001")
+
+    assert link.is_symlink()
+    assert sentinel.read_text(encoding="utf-8") == "do not touch\n"
     assert _git(repo, "status", "--short") == ""
 
 

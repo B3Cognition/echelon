@@ -32,6 +32,8 @@ _TEXT_SUFFIXES = {".md", ".json", ".yaml", ".yml", ".txt", ".csv"}
 _COPIED_ATTACHMENT_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp"}
 _REQUIREMENT_RE = re.compile(r"(?<![A-Z0-9-])(?:FR|NFR|REQ)-\d+(?![A-Z0-9-])")
 _TASK_RE = re.compile(r"(?<![A-Z0-9-])(?:RF\d+-T\d+|T-\d+)(?![A-Z0-9-])")
+_CANONICAL_SPEC_ID_RE = re.compile(r"^\d{3,}-[a-z0-9]+(?:-[a-z0-9]+)*$")
+_PUBLICATION_COMMIT_RE = re.compile(r"^[0-9a-f]{40,64}$")
 
 
 def _sha256(data: bytes) -> str:
@@ -195,6 +197,41 @@ def _ids(path: Path, pattern: re.Pattern[str], namespace: str) -> tuple[str, ...
     except (OSError, UnicodeDecodeError):
         return ()
     return tuple(f"{namespace}:{match}" for match in sorted(matches))
+
+
+def _publication_provenance(
+    project_root: Path,
+    spec_dir: Path,
+    spec_id: str,
+) -> tuple[str | None, str | None, WikiWarning | None]:
+    manifest_path = spec_dir / ".echelon-publication.json"
+    if not manifest_path.is_file():
+        return None, None, None
+    relative = manifest_path.relative_to(project_root).as_posix()
+    invalid = WikiWarning(
+        "invalid-spec-publication",
+        "Publication manifest is invalid or does not match its spec directory.",
+        relative,
+    )
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None, None, invalid
+    if not isinstance(payload, dict):
+        return None, None, invalid
+
+    source_branch = payload.get("source_branch")
+    source_commit = payload.get("source_commit")
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("spec_id") != spec_id
+        or source_branch != spec_id
+        or _CANONICAL_SPEC_ID_RE.fullmatch(spec_id) is None
+        or not isinstance(source_commit, str)
+        or _PUBLICATION_COMMIT_RE.fullmatch(source_commit) is None
+    ):
+        return None, None, invalid
+    return source_branch, source_commit, None
 
 
 def _spec_relationships(
@@ -567,6 +604,11 @@ def discover_wiki_model(project_root: Path, *, generated_at: str) -> WikiModel:
             )
             relationships.extend(explicit)
             warnings.extend(relationship_warnings)
+            publication_branch, publication_commit, publication_warning = (
+                _publication_provenance(root, spec_dir, spec_id)
+            )
+            if publication_warning is not None:
+                warnings.append(publication_warning)
             specs.append(
                 WikiSpec(
                     stable_id=f"spec:{spec_id}",
@@ -578,6 +620,8 @@ def discover_wiki_model(project_root: Path, *, generated_at: str) -> WikiModel:
                     requirement_ids=requirement_ids,
                     task_ids=task_ids,
                     artifact_ids=artifact_ids,
+                    publication_branch=publication_branch,
+                    publication_commit=publication_commit,
                 )
             )
     return WikiModel(

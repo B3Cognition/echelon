@@ -495,6 +495,25 @@ echelon wiki clean    # remove only a manifest-owned generated vault
 The Markdown works in an ordinary viewer. Obsidian is optional but recommended
 for backlinks and graph navigation; Echelon does not install or launch it.
 
+The wiki reads `specs/` from the currently checked-out workspace. Phase A specs
+usually live on separate canonical branches, so publish committed spec-only
+snapshots to the local default-branch catalog before building a complete wiki:
+
+```bash
+echelon spec publish 003  # spec-only snapshot commit on local main
+echelon spec publish --all
+git push origin main      # explicit; publish never pushes
+git switch main
+echelon wiki build
+```
+
+`publish` discovers canonical local spec branches only, copies each matching
+`specs/<id>/` tree with source branch/commit provenance, and creates at most one
+local default-branch commit. It retains the source branches and does not merge
+implementation history, fetch, push, or delete branches. Use the full canonical
+branch name instead of its numeric ID when desired, for example
+`echelon spec publish 003-add-feature-opta-search`.
+
 After the first explicit build, successful Echelon commands automatically rebuild
 the wiki only when they changed canonical inputs under `specs/` or `re/`. There is
 no background watcher: manual edits, pulls, and checkouts make `wiki status` stale
@@ -767,6 +786,9 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon spec change <id> "<desc>"` | `speckit.echelon.change` | Handle spec change during build |
 | `echelon cicd` | — | Retired; re-run `echelon delivery init` to auto-detect high-confidence `verify_command` |
 | `echelon spec status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
+| `echelon spec publish <numeric-id>` | — | Copy the matching committed `specs/<id>/` snapshot from its unique canonical local branch to the local default branch and commit it; source branches are retained and nothing is pushed |
+| `echelon spec publish <canonical-branch>` | — | Publish one exact canonical local spec branch by full name without merging implementation history |
+| `echelon spec publish --all` | — | Atomically publish every unambiguous canonical local spec branch in one local default-branch commit |
 | `echelon spec targets <id>` | — | Read-only task ownership report: display every canonical task grouped by explicit `target=` ownership, including `UNOWNED`, `CROSS-TARGET`, and target/path mismatch diagnostics; exits nonzero when ownership is invalid |
 | `echelon spec artifacts <id>` | — | Generate or refresh `specs/<id>-*/ARTIFACTS.md`, the deterministic human map of spec-folder outputs |
 | `echelon wiki build` | — | Build the local, read-only human-navigation vault from canonical `specs/` and published `re/` artifacts |
