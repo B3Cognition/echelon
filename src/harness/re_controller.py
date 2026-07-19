@@ -29,6 +29,7 @@ from harness.re_domain_manifest import (
 from harness.re_planner import ReExecutionPlan
 from harness.re_quality_gate import (
     ReQualityReport,
+    ReSpecQualityFailure,
     ReSourceQualityReport,
     quality_target_for_domain,
     validate_semantic_quality_review,
@@ -87,6 +88,7 @@ _ARCHITECTURE_OVERLAY_OUTPUTS = frozenset(
 )
 _TARGET_QUALITY_PROTOCOL_VERSION = 1
 _SEMANTIC_QUALITY_REVIEW_PROTOCOL_VERSION = 2
+_SEMANTIC_DOMAIN_AUDIT_PROTOCOL_VERSION = 1
 
 
 class ReExtractionController:
@@ -201,6 +203,43 @@ class ReExtractionController:
                 if self._source_convergence_enabled(state):
                     self._report_source_start(state, plan, target)
 
+            semantic_target: dict[str, str] | None = None
+            if phase == "re-extract-5-validate":
+                semantic_target = self._next_semantic_validation_target(state, plan)
+                if semantic_target is None:
+                    aggregate = self._semantic_validation_payload(state, plan)
+                    semantic_report, semantic_error = validate_semantic_quality_review(
+                        self._run_re_dir, plan, aggregate
+                    )
+                    if semantic_error is not None or semantic_report is None:
+                        state["re_agent_result_detail"] = semantic_error or (
+                            "semantic quality review was unavailable"
+                        )
+                        return self._block(state, "re_semantic_quality_review_invalid")
+                    if semantic_report.passed:
+                        self._clear_semantic_quality_debt(state, plan)
+                    semantic_report_path = write_re_semantic_quality_report(
+                        self._run_re_dir, semantic_report
+                    )
+                    state["re_semantic_quality_report"] = str(semantic_report_path)
+                    if not semantic_report.passed:
+                        if self._source_convergence_enabled(state):
+                            scheduled = self._schedule_source_semantic_repair(
+                                state, plan, semantic_report
+                            )
+                        else:
+                            state["re_quality_gate_report"] = str(semantic_report_path)
+                            scheduled = self._schedule_quality_repair(
+                                state, semantic_report
+                            )
+                        if scheduled is not None:
+                            return scheduled
+                        state = self._load_state()
+                        continue
+                    state["phase"] = "re-extract-6-checklist"
+                    self._save_state(state)
+                    continue
+
             state = write_last_dispatch(state, phase, _PHASES[phase])
             self._save_state(state)
             if phase == "re-extract-1-analyze":
@@ -211,7 +250,14 @@ class ReExtractionController:
                 payload = self._analysis_result()
             else:
                 result = self._provider.exec_agent(
-                    str(self._project_root), self._prompt_for(phase, state, plan, target)
+                    str(self._project_root),
+                    self._prompt_for(
+                        phase,
+                        state,
+                        plan,
+                        target,
+                        semantic_target=semantic_target,
+                    ),
                 )
                 if phase == "re-extract-2-specify" and target is not None:
                     cleanup_error = self._clean_noncanonical_target_artifacts(
@@ -304,6 +350,12 @@ class ReExtractionController:
                     payload.get("semantic_quality_review")
                     if isinstance(payload, dict)
                     else None,
+                    expected_domains={
+                        (
+                            str(semantic_target["source_id"]),
+                            str(semantic_target["domain_id"]),
+                        )
+                    },
                 )
                 if semantic_error is not None or semantic_report is None:
                     error = semantic_error or "semantic quality review was unavailable"
@@ -319,27 +371,12 @@ class ReExtractionController:
                     continue
                 state.pop("re_semantic_review_invalid_attempts", None)
                 state.pop("re_semantic_review_invalid_error", None)
-                if semantic_report.passed:
-                    self._clear_semantic_quality_debt(state, plan)
-                semantic_report_path = write_re_semantic_quality_report(
-                    self._run_re_dir, semantic_report
+                raw_review = payload["semantic_quality_review"]["domains"][0]
+                self._store_semantic_domain_audit(
+                    state, plan, semantic_target, raw_review
                 )
-                state["re_semantic_quality_report"] = str(semantic_report_path)
-                if not semantic_report.passed:
-                    if self._source_convergence_enabled(state):
-                        scheduled = self._schedule_source_semantic_repair(
-                            state, plan, semantic_report
-                        )
-                        if scheduled is not None:
-                            return scheduled
-                        state = self._load_state()
-                        continue
-                    state["re_quality_gate_report"] = str(semantic_report_path)
-                    scheduled = self._schedule_quality_repair(state, semantic_report)
-                    if scheduled is not None:
-                        return scheduled
-                    state = self._load_state()
-                    continue
+                self._save_state(state)
+                continue
             self._save_state(state)
 
             if phase == "re-extract-2-specify":
@@ -1136,6 +1173,10 @@ class ReExtractionController:
             source_state["status"] = "active"
             state["re_active_source_id"] = source_id
             state["re_specification_targets"] = targets
+            audits = state.get("re_semantic_domain_audits")
+            if isinstance(audits, dict):
+                for target in targets:
+                    audits.pop(f"{source_id}/{target['domain_id']}", None)
             state["re_workspace_synthesis_complete"] = False
             state["phase"] = "re-extract-2-specify"
             self._reported_source_id = None
@@ -1208,12 +1249,113 @@ class ReExtractionController:
         self._save_state(state)
         return None
 
+    def _semantic_validation_targets(
+        self, plan: ReExecutionPlan
+    ) -> list[dict[str, str]]:
+        targets: list[dict[str, str]] = []
+        for source in plan.refresh_sources:
+            manifest = load_domain_manifest(
+                domain_manifest_path(self._run_re_dir, source.id)
+            )
+            for domain in manifest.domains:
+                targets.append(
+                    {
+                        "source_id": source.id,
+                        "domain_id": domain.domain_id,
+                    }
+                )
+        return targets
+
+    def _semantic_target_fingerprints(
+        self, target: dict[str, str], plan: ReExecutionPlan
+    ) -> tuple[str, str]:
+        source = next(
+            source
+            for source in plan.refresh_sources
+            if source.id == target["source_id"]
+        )
+        source_fingerprint = hashlib.sha256(
+            json.dumps(
+                source.fingerprint.to_json_dict(), sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+        ).hexdigest()
+        spec_path = (
+            self._run_re_dir
+            / "sources"
+            / target["source_id"]
+            / "specs"
+            / target["domain_id"]
+            / "spec.md"
+        )
+        spec_fingerprint = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+        return source_fingerprint, spec_fingerprint
+
+    def _next_semantic_validation_target(
+        self, state: dict, plan: ReExecutionPlan
+    ) -> dict[str, str] | None:
+        audits = state.get("re_semantic_domain_audits")
+        if not isinstance(audits, dict):
+            audits = {}
+        for target in self._semantic_validation_targets(plan):
+            key = f"{target['source_id']}/{target['domain_id']}"
+            source_fingerprint, spec_fingerprint = self._semantic_target_fingerprints(
+                target, plan
+            )
+            record = audits.get(key)
+            if not isinstance(record, dict) or (
+                record.get("protocol_version")
+                != _SEMANTIC_DOMAIN_AUDIT_PROTOCOL_VERSION
+                or record.get("source_fingerprint") != source_fingerprint
+                or record.get("spec_fingerprint") != spec_fingerprint
+                or not isinstance(record.get("review"), dict)
+            ):
+                return target
+        return None
+
+    def _store_semantic_domain_audit(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+        target: dict[str, str],
+        review: dict[str, object],
+    ) -> None:
+        source_fingerprint, spec_fingerprint = self._semantic_target_fingerprints(
+            target, plan
+        )
+        audits = state.setdefault("re_semantic_domain_audits", {})
+        if not isinstance(audits, dict):
+            audits = {}
+            state["re_semantic_domain_audits"] = audits
+        key = f"{target['source_id']}/{target['domain_id']}"
+        audits[key] = {
+            "protocol_version": _SEMANTIC_DOMAIN_AUDIT_PROTOCOL_VERSION,
+            "source_id": target["source_id"],
+            "domain_id": target["domain_id"],
+            "source_fingerprint": source_fingerprint,
+            "spec_fingerprint": spec_fingerprint,
+            "review": review,
+        }
+
+    def _semantic_validation_payload(
+        self, state: dict, plan: ReExecutionPlan
+    ) -> dict[str, object]:
+        audits = state.get("re_semantic_domain_audits")
+        if not isinstance(audits, dict):
+            audits = {}
+        domains = [
+            audits[f"{target['source_id']}/{target['domain_id']}"]["review"]
+            for target in self._semantic_validation_targets(plan)
+        ]
+        return {"schema_version": 1, "domains": domains}
+
     def _prompt_for(
         self,
         phase: str,
         state: dict,
         plan: ReExecutionPlan,
         target: dict[str, object] | None = None,
+        *,
+        semantic_target: dict[str, str] | None = None,
     ) -> str:
         agent = _PHASES[phase]
         agent_path = self._extension_root / "agents" / "re" / f"{agent}.md"
@@ -1237,17 +1379,19 @@ class ReExtractionController:
         if phase == "re-extract-2-specify" and target is not None:
             prompt += self._specification_target_prompt(target)
         if phase == "re-extract-5-validate":
-            prompt += self._semantic_domain_inventory_prompt(plan)
+            if semantic_target is None:
+                raise ValueError("semantic validation target is required")
+            prompt += self._semantic_domain_inventory_prompt(semantic_target)
             semantic_error = state.get("re_semantic_review_invalid_error")
             if isinstance(semantic_error, str) and semantic_error:
                 prompt += (
                     "\n## Controller Validation Feedback\n"
                     "Your previous semantic_quality_review was rejected: "
                     f"{semantic_error}\n"
-                    "Regenerate the complete review. Each REPAIR finding requires "
+                    "Regenerate the requested domain review. Each REPAIR finding requires "
                     "valid owned-domain source evidence in exact `path:line` or "
                     "`path:start-end` form; path-only prose is invalid. Return DONE "
-                    "only after the complete review satisfies this contract.\n"
+                    "only after the domain review satisfies this contract.\n"
                 )
         resume_answer = state.get("resume_answer")
         if isinstance(resume_answer, str) and resume_answer.strip():
@@ -1259,21 +1403,15 @@ class ReExtractionController:
             )
         return prompt
 
-    def _semantic_domain_inventory_prompt(self, plan: ReExecutionPlan) -> str:
+    @staticmethod
+    def _semantic_domain_inventory_prompt(target: dict[str, str]) -> str:
+        key = f"{target['source_id']}/{target['domain_id']}"
         lines = [
-            "\n## Required Semantic Domain Inventory",
-            "Your final echelon_result.semantic_quality_review.domains list must contain exactly one record for each source/domain below. Do not return only the currently failing domain.",
+            "\n## Requested Semantic Domain",
+            f"Requested semantic domain: `{key}`",
+            "Your final echelon_result.semantic_quality_review.domains list must contain exactly one record for this domain and no sibling domains.",
             "Do not write RE_VALIDATOR_RESULT.yaml, semantic-quality-review-validator.json, ECHELON_RESULT.yaml, or any other sidecar result file. The controller reads only the final echelon_result block in your response.",
         ]
-        for source in plan.refresh_sources:
-            try:
-                manifest = load_domain_manifest(
-                    domain_manifest_path(self._run_re_dir, source.id)
-                )
-            except ValueError:
-                continue
-            for domain in manifest.domains:
-                lines.append(f"- {source.id}/{domain.domain_id}")
         lines.append("")
         return "\n".join(lines)
 

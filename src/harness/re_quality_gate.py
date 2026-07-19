@@ -136,6 +136,7 @@ def validate_semantic_quality_review(
     run_re_dir: Path,
     plan: ReExecutionPlan,
     payload: object,
+    expected_domains: set[tuple[str, str]] | None = None,
 ) -> tuple[ReQualityReport | None, str | None]:
     """Validate the validator's complete, source-evidenced domain audit.
 
@@ -161,6 +162,10 @@ def validate_semantic_quality_review(
                 expected[(source.id, domain.domain_id)] = (source, domain)
     except ValueError as exc:
         return None, f"semantic quality review manifest invalid: {exc}"
+    if expected_domains is not None:
+        if not expected_domains or not expected_domains.issubset(expected):
+            return None, "semantic quality review requested domain inventory is invalid"
+        expected = {key: expected[key] for key in expected_domains}
 
     seen: set[tuple[str, str]] = set()
     failures: list[ReSpecQualityFailure] = []
