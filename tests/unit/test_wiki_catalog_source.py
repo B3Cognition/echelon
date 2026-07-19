@@ -156,3 +156,36 @@ def test_temporary_parent_cleanup_failure_is_reported(
     assert retained_parent.exists()
     monkeypatch.undo()
     shutil.rmtree(retained_parent)
+
+
+@pytest.mark.unit
+def test_setup_and_cleanup_failures_report_retained_temporary_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = _init_repo(tmp_path / "repo")
+    _git(repo, "switch", "-c", "004-feature")
+    config_dir = repo / ".echelon"
+    config_dir.mkdir()
+    (config_dir / "local.yml").write_text("wiki: {}\n", encoding="utf-8")
+    retained: list[Path] = []
+
+    def fail_copy(*_args: object, **_kwargs: object) -> None:
+        raise OSError("cannot copy local override")
+
+    def fail_cleanup(path: Path) -> None:
+        retained.append(path)
+        raise OSError(f"cannot remove {path}")
+
+    monkeypatch.setattr("echelon.wiki.catalog_source.shutil.copy2", fail_copy)
+    monkeypatch.setattr(
+        "echelon.wiki.catalog_source._remove_temporary_parent", fail_cleanup
+    )
+
+    with pytest.raises(WikiCatalogError, match="retained at"):
+        with wiki_catalog_source(repo):
+            pass
+
+    assert len(retained) == 1
+    assert retained[0].exists()
+    monkeypatch.undo()
+    shutil.rmtree(retained[0])
