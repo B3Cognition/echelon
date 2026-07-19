@@ -83,6 +83,13 @@ class TestLabelGrounding:
     def test_paraphrase_rejected(self):
         assert not v3._label_grounded("show validation message", self.LINE)
 
+    def test_trailing_punctuation_cannot_shield_singularization(self):
+        # Live regression: "commands," in the line vs "commands" in the label
+        # must compare equal after normalization (order-of-operations bug).
+        line = "run changes occur only through sanctioned commands, leaving state alone"
+        assert v3._label_grounded("sanctioned commands", line)
+        assert v3._label_grounded("sanctioned command", line)
+
     def test_validate_graph_enforces_anchor(self):
         lines = ["- **FR-001**: the system MUST write the report."]
         result = v3.validate_graph(

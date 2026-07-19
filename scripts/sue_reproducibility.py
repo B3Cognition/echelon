@@ -149,12 +149,26 @@ def scan_requirement_ids(spec, families: tuple = DEFAULT_FAMILIES) -> set:
     return {rid for rid in found if rid.rsplit("-", 1)[0] in families}
 
 
+def _singular(word: str) -> str:
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
+
+
 def _words(text: str) -> set:
-    """Punctuation-insensitive normalized word set."""
+    """Punctuation-insensitive normalized word set.
+
+    Tokenize on non-alphanumerics FIRST, then singularize — running
+    normalization before punctuation stripping lets trailing punctuation
+    shield a token from singularization ("commands," vs "commands"), which
+    falsely fails legal labels (found live: 1-in-234 comparator error killed
+    a fully compliant reader)."""
     return {
-        word for word in
-        (re.sub(r"[^a-z0-9]", "", token) for token in norm(text).split())
-        if word
+        _singular(token)
+        for token in re.findall(r"[a-z0-9]+", text.lower())
+        if token not in ("a", "an", "the")
     }
 
 
