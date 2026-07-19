@@ -343,6 +343,16 @@ def preflight(config: RunConfig) -> tuple[int, str] | None:
             EXIT_BAD_INPUT,
             f"bad input: specification directory '{spec_dir}' is not writable for the report",
         )
+    # FR-034/FR-042 collision: the report must never overwrite its own input.
+    if spec_path.resolve() == spec_dir / REPORT_FILENAME:
+        return (
+            EXIT_BAD_INPUT,
+            (
+                f"bad input: challenged file '{spec_path}' is the report path itself "
+                f"('{REPORT_FILENAME}') — the report would overwrite its input; "
+                "rename the file to challenge it"
+            ),
+        )
     executable = shlex.split(config.model_command)[0]
     if shutil.which(executable) is None:
         return (

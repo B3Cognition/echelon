@@ -83,7 +83,7 @@ A developer maintaining the challenge script runs its automated unit tests. The 
 
 - **AC-021**: Given a stub executable configured as the model command, when a full challenge run executes, then the run completes end-to-end (FR-043, FR-003) using exactly 0 live model calls.
 - **AC-022**: Given the repository's automated test suite, when the challenge script's unit tests run, then all tests pass with exactly 0 network calls plus exactly 0 live model commands installed (FR-044, SC-002).
-- **AC-023**: Given exactly 1 manual live acceptance run against the designated acceptance target, when the run completes, then a report exists whose findings overlap at least 1 of the 3 named known issues, within at most 3 total attempts (SC-001, FR-034).
+- **AC-023**: Given exactly 1 manual live acceptance run against the designated acceptance target (`specs/029-builder-spec-workbench/spec.md`), when the run completes, then a report exists whose findings overlap at least 1 of the 3 named known issues — (1) the REQ-009 "time order" vs AC-010 "most recent first" ordering conflict, (2) the REQ-017/REQ-019/REQ-028 quality-score recording loop, (3) the undefined active-run pointer of REQ-002 — within at most 3 total attempts (SC-001, FR-034).
 
 ---
 
@@ -110,7 +110,7 @@ The command surface is fixed by the approved design: 1 positional argument, 3 op
 
 - **FR-001**: When invoked, the challenge script MUST accept exactly 1 positional argument: the path of the specification file to challenge (FR-005, FR-042).
   - **User Story:** Scenario 1 | **Priority:** MVP
-- **FR-002**: When invoked, the challenge script MUST accept a question-count option, defaulting to exactly 15, that caps round-1 questions (FR-015, FR-019).
+- **FR-002**: When invoked, the challenge script MUST accept a question-count option, defaulting to exactly 15, that caps round-1 questions (FR-015, FR-019). Values below 1 MUST be rejected on the exit-code-1 argument path.
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-003**: When invoked, the challenge script MUST accept a model-command option, defaulting to `claude`, that names exactly 1 challenge model command line (FR-007, FR-043).
   - **User Story:** Scenario 4 | **Priority:** MVP
@@ -120,7 +120,7 @@ The command surface is fixed by the approved design: 1 positional argument, 3 op
   - **User Story:** Scenario 3 | **Priority:** MVP
 - **FR-006**: If the specification's directory is not writable for the report, the challenge script MUST exit with code 1 after launching exactly 0 model calls (ERR-002, AC-019).
   - **User Story:** Scenario 3 | **Priority:** MVP
-- **FR-007**: When parsing the model-command option, the challenge script MUST split the value into words per shell quoting conventions, treating exactly 1 leading word as the executable checked by FR-012 (FR-003).
+- **FR-007**: When parsing the model-command option, the challenge script MUST split the value into words per POSIX shell quoting conventions (`shlex` semantics, platform-independent), treating exactly 1 leading word as the executable checked by FR-012 (FR-003).
   - **User Story:** Scenario 4 | **Priority:** MVP
 
 #### Model Invocation & Isolation
@@ -131,7 +131,7 @@ Two isolated model calls are the entire analytical mechanism. Isolation keeps th
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-009**: When filtering, ranking, or rendering after round 2, the challenge script MUST perform exactly 0 further model calls (FR-032, FR-040).
   - **User Story:** Scenario 1 | **Priority:** MVP
-- **FR-010**: When launching any model subprocess, the challenge script MUST set the subprocess working directory to exactly 1 newly created neutral temporary directory, keeping repository-level ambient context away from the model (AC-012, OQ-002).
+- **FR-010**: When launching any model subprocess, the challenge script MUST set the subprocess working directory to exactly 1 newly created neutral temporary directory, keeping repository-level ambient context away from the model (AC-012, OQ-002). Each model subprocess receives its own newly created directory, deleted on a best-effort basis when the call completes.
   - **User Story:** Scenario 2 | **Priority:** MVP
 - **FR-011**: If a model subprocess exceeds its timeout budget (default 300 seconds, FR-004), the challenge script MUST end that call, classifying it as a parse failure routed to FR-028 (ERR-005).
   - **User Story:** Scenario 3 | **Priority:** MVP
@@ -154,7 +154,7 @@ Round 1 turns the specification into at most N Socratic challenge questions. Its
   - **User Story:** Scenario 3 | **Priority:** MVP
 - **FR-018**: When embedding the specification in either prompt, the challenge script MUST prefix every line with its line number, starting at exactly 1, making each cited reference checkable per FR-039 (FR-014, FR-021).
   - **User Story:** Scenario 2 | **Priority:** MVP
-- **FR-019**: If valid round-1 output contains more than N questions (FR-002, default 15), the challenge script MUST keep only the first N questions in returned order, recording a truncation note in the report header (FR-036).
+- **FR-019**: If valid round-1 output contains more than N questions (FR-002, default 15), the challenge script MUST keep only the first N questions in returned order, recording a truncation note in the report header (FR-036). The kept N questions define both the round-2 prompt and the FR-025 identifier set.
   - **User Story:** Scenario 3 | **Priority:** MVP
 - **FR-020**: If valid round-1 output contains exactly 0 questions, the challenge script MUST complete the run without round 2, producing a report that records 0 questions (FR-036) plus exit code 0 (AC-006).
   - **User Story:** Scenario 1 | **Priority:** MVP
@@ -171,14 +171,14 @@ Round 2 is a blind reader: a fresh call that sees only the specification text an
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-024**: When round-2 output is received, the challenge script MUST validate that each answer carries exactly 1 question identifier, exactly 1 verdict from FR-023, exactly 1 answer text, plus a list of integer evidence line references (FR-025).
   - **User Story:** Scenario 1 | **Priority:** MVP
-- **FR-025**: If any round-1 question identifier appears 0 times or more than 1 time in the round-2 answers, the challenge script MUST classify the output as a parse failure routed to FR-028 (AC-018).
+- **FR-025**: If the round-2 answer identifiers are not exactly a bijection of the kept round-1 question identifiers — any kept identifier appearing 0 times or more than 1 time, or any answer carrying an identifier outside the kept set — the challenge script MUST classify the output as a parse failure routed to FR-028 (AC-018, FR-019).
   - **User Story:** Scenario 3 | **Priority:** MVP
 
 #### Output Extraction & Retry
 
 Model output is untrusted input. Extraction is tolerant; validation is strict; recovery is bounded to exactly 1 retry per round.
 
-- **FR-026**: When raw model output is received, the challenge script MUST extract exactly 1 JSON object from it, tolerating surrounding non-JSON text plus code fences (FR-016, FR-024).
+- **FR-026**: When raw model output is received, the challenge script MUST extract exactly 1 JSON object from it, tolerating surrounding non-JSON text plus code fences (FR-016, FR-024). When more than 1 candidate object is extractable, the first extractable object wins, in this precedence: whole-output parse, first fenced block, first balanced-brace candidate.
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-027**: If exactly 0 JSON objects can be extracted from raw model output, the challenge script MUST classify that output as a parse failure routed to FR-028 (FR-026).
   - **User Story:** Scenario 3 | **Priority:** MVP
@@ -186,7 +186,7 @@ Model output is untrusted input. Extraction is tolerant; validation is strict; r
   - **User Story:** Scenario 3 | **Priority:** MVP
 - **FR-029**: When the first failure in a round was a timeout (FR-011), the corrective retry MUST re-issue the same prompt with exactly 0 appended corrective text (FR-028).
   - **User Story:** Scenario 3 | **Priority:** MVP
-- **FR-030**: On the second parse failure in the same round, the challenge script MUST exit with code 3 after saving the raw output of the failing calls into exactly 1 directory named `.sue-debug` beside the specification (ERR-004, AC-015).
+- **FR-030**: On the second parse failure in the same round, the challenge script MUST exit with code 3 after saving the raw output of the failing calls into exactly 1 directory named `.sue-debug` beside the specification (ERR-004, AC-015). For a timed-out call, the saved raw output is whatever partial output was drained within the shutdown grace period, possibly empty.
   - **User Story:** Scenario 3 | **Priority:** MVP
 - **FR-031**: When a round-2 failure ends the run under FR-030, the challenge script MUST NOT re-run round 1 — exactly 0 additional round-1 calls occur (FR-008).
   - **User Story:** Scenario 3 | **Priority:** MVP
@@ -199,7 +199,7 @@ Everything after round 2 is pure local computation, repeatable and fully unit-te
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-033**: When ranking findings, the challenge script MUST place all CONTRADICTED findings before all UNANSWERABLE findings, preserving round-1 question order within each of the 2 classes (FR-032, AC-004).
   - **User Story:** Scenario 1 | **Priority:** MVP
-- **FR-034**: When a run succeeds, the challenge script MUST write exactly 1 report file named `socratic-challenge.md` in the specification's directory, replacing any previous report while keeping 0 historical copies (FR-035, AC-003).
+- **FR-034**: When a run succeeds, the challenge script MUST write exactly 1 report file named `socratic-challenge.md` in the specification's directory, replacing any previous report while keeping 0 historical copies (FR-035, AC-003). If the report path resolves to the challenged specification file itself, the run MUST reject with exit code 1 before any model call — FR-042 takes precedence and the challenged file is never written. If writing the report or the debug dump fails after the model rounds, the run exits with code 1.
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-035**: The challenge report MUST contain exactly 3 sections in order: header (FR-036), findings (FR-037), audit appendix (FR-038).
   - **User Story:** Scenario 2 | **Priority:** MVP
@@ -209,7 +209,7 @@ Everything after round 2 is pure local computation, repeatable and fully unit-te
   - **User Story:** Scenario 2 | **Priority:** MVP
 - **FR-038**: The audit appendix MUST list every ANSWERED question with its answering lines, rendered as exactly 1 collapsed section the reader can expand (AC-008, FR-032).
   - **User Story:** Scenario 2 | **Priority:** MVP
-- **FR-039**: For each cited evidence line number, the report MUST quote exactly 1 line of text from the specification file, stating the named gap from the answer text for UNANSWERABLE findings (FR-018, AC-009).
+- **FR-039**: For each cited evidence line number, the report MUST quote exactly 1 line of text from the specification file, stating the named gap from the answer text for UNANSWERABLE findings (FR-018, AC-009). A cited line number outside the specification's line range MUST render as a deterministic `(not present in the specification)` marker rather than failing the run.
   - **User Story:** Scenario 2 | **Priority:** MVP
 - **FR-040**: After writing the report, the challenge script MUST print a terminal summary stating the finding count per verdict class plus the top 3 findings in rank order, then exit with code 0 (AC-005, FR-034).
   - **User Story:** Scenario 1 | **Priority:** MVP

@@ -270,6 +270,19 @@ class TestPreflight:
         assert not marker.exists()
         _one_stderr_line(capsys)
 
+    def test_spec_named_as_report_exit_1_never_overwritten(self, tmp_path, capsys):
+        """FR-034/FR-042 collision: challenging a file named socratic-challenge.md
+        must exit 1 before any model call, leaving the file byte-identical."""
+        spec = tmp_path / sue.REPORT_FILENAME
+        original = "# A previous report being (wrongly) challenged\n"
+        spec.write_text(original)
+        stub, marker = self._call_marker_stub(tmp_path)
+        rc = sue.main([str(spec), "--claude-cmd", shlex.quote(stub)])
+        assert rc == 1
+        assert not marker.exists()
+        assert spec.read_text() == original
+        _one_stderr_line(capsys)
+
     def test_spec_path_is_directory_exit_1(self, tmp_path, capsys):
         stub, marker = self._call_marker_stub(tmp_path)
         rc = sue.main([str(tmp_path), "--claude-cmd", shlex.quote(stub)])
