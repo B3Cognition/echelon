@@ -160,6 +160,15 @@ class RunConfig:
     max_questions: int
     model_command: str
     timeout_seconds: float
+    model_protocol: str = "claude-stdin"
+
+
+@dataclass(frozen=True)
+class ModelInvocation:
+    """Provider-specific argv and prompt transport for one model call."""
+
+    argv: list[str]
+    stdin_text: str | None
 
 
 @dataclass(frozen=True)
@@ -417,16 +426,32 @@ def _kill_process_group(process: subprocess.Popen) -> None:
         process.kill()
 
 
+def build_model_invocation(config: RunConfig, prompt: str) -> ModelInvocation:
+    """Translate the common call into a provider-specific CLI invocation."""
+    words = shlex.split(config.model_command)
+    if config.model_protocol == "copilot-argv":
+        return ModelInvocation(
+            argv=words + [
+                "-p",
+                prompt,
+                "-s",
+                "--no-custom-instructions",
+            ],
+            stdin_text=None,
+        )
+    return ModelInvocation(argv=words + ["-p"], stdin_text=prompt)
+
+
 def run_model_call(config: RunConfig, prompt: str) -> CallOutcome:
     """One model subprocess invocation per the frozen contract shape.
 
-    argv is ``shlex.split(model_command) + ["-p"]``; the prompt travels on
-    stdin (never argv, so spec text stays out of process listings); cwd is a
-    fresh neutral temp directory created and removed here (FR-010). Never
-    raises to callers.
+    The default Claude protocol appends ``-p`` and sends the prompt on stdin.
+    Provider-specific protocols may require a different transport. The cwd is
+    always a fresh neutral temp directory created and removed here (FR-010).
+    Never raises to callers.
     """
     try:
-        argv = shlex.split(config.model_command) + ["-p"]
+        invocation = build_model_invocation(config, prompt)
     except ValueError as exc:
         return CallOutcome(
             kind="failed",
@@ -441,7 +466,7 @@ def run_model_call(config: RunConfig, prompt: str) -> CallOutcome:
             # start_new_session makes the child a process-group leader so a
             # timeout kill reaches any grandchildren holding the output pipes.
             process = subprocess.Popen(
-                argv,
+                invocation.argv,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -464,7 +489,10 @@ def run_model_call(config: RunConfig, prompt: str) -> CallOutcome:
                 duration_seconds=time.monotonic() - start,
             )
         try:
-            stdout, stderr = process.communicate(input=prompt, timeout=config.timeout_seconds)
+            stdout, stderr = process.communicate(
+                input=invocation.stdin_text,
+                timeout=config.timeout_seconds,
+            )
         except subprocess.TimeoutExpired:
             _kill_process_group(process)
             try:

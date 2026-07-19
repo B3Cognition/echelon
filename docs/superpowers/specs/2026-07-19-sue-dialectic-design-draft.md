@@ -7,8 +7,11 @@
 > An adaptive dialectic sequence surfaces more precise and more severe problems
 > than an independent batch of questions.
 
-v4 (two-layer graphs, retention, heterogeneous readers) proceeds only after this
-gate, so improvements are attributable to one variable at a time.
+v4's full Justification Graph, temporal retention, and exhibited behavioural
+witnesses proceed only after this gate, so improvements are attributable to one
+variable at a time. Heterogeneous provider adapters and the unconfounded
+model × framing matrix already exist in v3.3 because they do not depend on
+dialectic traces.
 
 ## Tool shape
 
@@ -61,6 +64,10 @@ of the Grounded Divergence Witness (two equally valid readings via one chain).
    covering the two strongest defect channels. Meno (criterion of recognition)
    and Cratylus (naming/synonymy) are added only after checking redundancy vs
    `understanding` testability metrics and lexicon term-resolution respectively.
+5. **Provider control:** path-stability experiments use v3.3's explicit provider
+   adapters and full provider × framing matrix. Provider, model tag, and lens are
+   separate factors; cycling each model through a different lens is forbidden
+   because it confounds model-family and question-policy effects.
 
 ## Experimental gate (same corpus: v2 stable findings + labelled mutants)
 

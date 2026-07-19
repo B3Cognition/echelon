@@ -45,6 +45,69 @@ def _reader(no, reqs, framing="structural", ungrounded=0):
     )
 
 
+class TestModelCommands:
+    def test_explicit_copilot_provider_spec(self):
+        command = v3.parse_model_command("copilot=copilot --no-color")
+        assert command.provider == "copilot"
+        assert command.command == "copilot --no-color"
+        assert command.model_tag == "copilot"
+
+    def test_legacy_claude_command_is_inferred(self):
+        command = v3.parse_model_command("claude --model sonnet")
+        assert command.provider == "claude"
+        assert command.command == "claude --model sonnet"
+
+    def test_unknown_stub_keeps_legacy_claude_protocol(self):
+        command = v3.parse_model_command("/tmp/replay-stub")
+        assert command.provider == "claude"
+
+    def test_copilot_command_rejects_embedded_prompt_flag(self):
+        with pytest.raises(v1.ArgumentFailure, match="without -p"):
+            v3.parse_model_command("copilot=copilot -p")
+
+    def test_malformed_legacy_command_uses_argument_failure(self):
+        with pytest.raises(v1.ArgumentFailure, match="shell-parseable"):
+            v3.parse_model_command('stub "unterminated')
+
+
+class TestReaderJobs:
+    def test_two_models_receive_the_same_three_framings(self):
+        commands = [
+            v3.ModelCommand("claude", "claude", "claude"),
+            v3.ModelCommand("copilot", "copilot", "copilot"),
+        ]
+        jobs = v3.build_reader_jobs(commands, 3, v3.FRAMINGS)
+        assert [
+            (job.model_command.provider, job.framing_name)
+            for job in jobs
+        ] == [
+            ("claude", "structural"),
+            ("claude", "behavioural"),
+            ("claude", "adversarial"),
+            ("copilot", "structural"),
+            ("copilot", "behavioural"),
+            ("copilot", "adversarial"),
+        ]
+        assert [job.reader_no for job in jobs] == list(range(1, 7))
+
+    def test_sidecar_keeps_provider_model_and_framing_separate(self):
+        reader = v3.ReaderGraph(
+            reader_no=1,
+            framing="structural",
+            provider="copilot",
+            model_tag="copilot",
+            requirements={},
+            ungrounded_edges=0,
+        )
+        sidecar = v3.build_sidecar(
+            Path("spec.md"), [reader], {}, 1.0, [], {}, "2026-07-19"
+        )
+        encoded = sidecar["readers"][0]
+        assert encoded["provider"] == "copilot"
+        assert encoded["model_tag"] == "copilot"
+        assert encoded["framing"] == "structural"
+
+
 class TestNorm:
     def test_articles_case_plural(self):
         assert v3.norm("The Builders") == "builder"
@@ -192,23 +255,67 @@ class TestWitnesses:
         assert v3.find_witnesses([_reader(1, a), _reader(2, b)]) == ([], 0)
 
 
-class TestSharedEvidence:
-    def test_identical_citations_full_overlap(self):
+class TestEvidenceMetrics:
+    def test_identical_citations_have_full_overlap_and_coverage(self):
         reqs = {"FR-001": _interp([_edge("system", "write report", line=1)])}
-        assert v3.shared_evidence([_reader(1, reqs), _reader(2, reqs)]) == 1.0
+        metrics = v3.evidence_metrics([_reader(1, reqs), _reader(2, reqs)])
+        assert metrics["mean_overlap"] == 1.0
+        assert metrics["coverage"] == 1.0
+        assert metrics["per_requirement"]["FR-001"]["overlap"] == 1.0
 
-    def test_disjoint_citations_zero_overlap(self):
+    def test_disjoint_citations_have_zero_overlap(self):
         a = {"FR-001": _interp([_edge("system", "write report", line=1)])}
         b = {"FR-001": _interp([_edge("system", "write report", line=2)])}
-        assert v3.shared_evidence([_reader(1, a), _reader(2, b)]) == 0.0
+        metrics = v3.evidence_metrics([_reader(1, a), _reader(2, b)])
+        assert metrics["mean_overlap"] == 0.0
+        assert metrics["coverage"] == 1.0
 
-    def test_polarity_opposed_witness_kind(self):
+    def test_no_evidence_is_na_not_perfect_overlap(self):
+        reqs = {"FR-001": _interp()}
+        metrics = v3.evidence_metrics([_reader(1, reqs), _reader(2, reqs)])
+        assert metrics["mean_overlap"] is None
+        assert metrics["coverage"] == 0.0
+        assert metrics["per_requirement"]["FR-001"]["overlap"] is None
+
+    def test_evidence_is_compared_per_requirement(self):
+        left = {
+            "FR-001": _interp([_edge("system", "write report", line=1)]),
+            "FR-002": _interp([_edge("system", "read report", line=2)]),
+        }
+        right = {
+            "FR-001": _interp([_edge("system", "write report", line=1)]),
+            "FR-002": _interp([_edge("system", "read report", line=3)]),
+        }
+        metrics = v3.evidence_metrics([_reader(1, left), _reader(2, right)])
+        assert metrics["per_requirement"]["FR-001"]["overlap"] == 1.0
+        assert metrics["per_requirement"]["FR-002"]["overlap"] == 0.0
+        assert metrics["mean_overlap"] == 0.5
+
+    def test_missing_reader_evidence_reduces_reader_coverage(self):
+        reqs = {"FR-001": _interp([_edge("system", "write report", line=1)])}
+        metrics = v3.evidence_metrics(
+            [_reader(1, reqs), _reader(2, reqs), _reader(3, {})]
+        )
+        requirement = metrics["per_requirement"]["FR-001"]
+        assert requirement["overlap"] == 0.0
+        assert requirement["reader_coverage"] == pytest.approx(2 / 3)
+
+    def test_negation_asymmetric_witness_kind(self):
         a = {"FR-001": _interp(assertions=[v3.Assertion(
             given="a rule", when="save", then="the file persists", lines=[3])])}
         b = {"FR-001": _interp(assertions=[v3.Assertion(
             given="a rule", when="save", then="the write is rejected", lines=[3])])}
         witnesses, _ = v3.find_witnesses([_reader(1, a), _reader(2, b)])
-        assert witnesses[0].kind == "polarity-opposed"
+        assert witnesses[0].kind == "negation-asymmetric"
+
+    def test_negation_asymmetry_does_not_claim_semantic_opposition(self):
+        a = {"FR-001": _interp(assertions=[v3.Assertion(
+            given="a rule", when="save", then="the file persists", lines=[3])])}
+        b = {"FR-001": _interp(assertions=[v3.Assertion(
+            given="a rule", when="save",
+            then="the file not only persists but is replicated", lines=[3])])}
+        witnesses, _ = v3.find_witnesses([_reader(1, a), _reader(2, b)])
+        assert witnesses[0].kind == "negation-asymmetric"
 
 
 class TestThinConsensus:
@@ -356,11 +463,14 @@ class TestScenario:
         assert rc == 0
         report = (tmp_path / "semantic-reproducibility.md").read_text()
         assert "Divergence witness candidates" in report
-        assert "W1. [polarity-opposed] FR-002" in report
-        assert "shared evidence base" in report
+        assert "W1. [negation-asymmetric] FR-002" in report
+        assert "evidence overlap (mean/requirement)" in report
+        assert "evidence coverage" in report
         assert "the save is blocked until review" in report
         sidecar = json.loads((tmp_path / "semantic-reproducibility.json").read_text())
         assert len(sidecar["witnesses"]) == 1
+        assert "evidence" in sidecar
+        assert "shared_evidence" not in sidecar
         assert "FR-002" in sidecar["fracture_lines"]
 
     def test_reader_dropout_degrades(self, tmp_path):

@@ -117,7 +117,17 @@ class TestDataclasses:
     @pytest.mark.parametrize(
         "name,expected_fields",
         [
-            ("RunConfig", {"spec_path", "max_questions", "model_command", "timeout_seconds"}),
+            (
+                "RunConfig",
+                {
+                    "spec_path",
+                    "max_questions",
+                    "model_command",
+                    "timeout_seconds",
+                    "model_protocol",
+                },
+            ),
+            ("ModelInvocation", {"argv", "stdin_text"}),
             ("SpecDocument", {"path", "lines"}),
             ("SocraticQuestion", {"id", "question", "target", "lines", "category"}),
             ("Answer", {"id", "verdict", "answer", "evidence_lines"}),
@@ -462,6 +472,31 @@ class TestRunModelCall:
             model_command=command,
             timeout_seconds=timeout,
         )
+
+    def test_claude_model_invocation_uses_stdin_and_one_print_flag(self, tmp_path):
+        config = self._config(tmp_path, "claude")
+        invocation = sue.build_model_invocation(config, "PROMPT")
+        assert invocation.argv == ["claude", "-p"]
+        assert invocation.stdin_text == "PROMPT"
+
+    def test_copilot_model_invocation_passes_prompt_as_argument(self, tmp_path):
+        config = sue.RunConfig(
+            spec_path=tmp_path / "spec.md",
+            max_questions=1,
+            model_command="copilot --no-color",
+            timeout_seconds=10,
+            model_protocol="copilot-argv",
+        )
+        invocation = sue.build_model_invocation(config, "PROMPT")
+        assert invocation.argv == [
+            "copilot",
+            "--no-color",
+            "-p",
+            "PROMPT",
+            "-s",
+            "--no-custom-instructions",
+        ]
+        assert invocation.stdin_text is None
 
     def test_recording_stub_cwd_argv_stdin(self, tmp_path):
         record = tmp_path / "record"

@@ -4,9 +4,9 @@
 K isolated readers each extract a typed interpretation graph (entities, edges,
 assumptions, behavioural assertions — every element line-grounded) from the
 challenged specification. Deterministic anchor alignment scores per-requirement
-and overall agreement (semantic reproducibility), exhibits grounded divergence
-witnesses (same given/when, incompatible then), and attributes divergences to
-fracture lines. Reports: semantic-reproducibility.md + .json beside the spec.
+and overall agreement (semantic reproducibility), identifies heuristic
+divergence candidates, and attributes divergences to fracture lines. Reports:
+semantic-reproducibility.md + .json beside the spec.
 Design: docs/superpowers/specs/2026-07-19-sue-v3-reproducibility-design.md
 """
 from __future__ import annotations
@@ -14,6 +14,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shlex
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -121,6 +122,27 @@ class ReaderGraph:
     requirements: dict  # req_id -> ReqInterpretation
     ungrounded_edges: int
     failed_chunks: int = 0
+    provider: str = "claude"
+    model_tag: str = "claude"
+
+
+@dataclass(frozen=True)
+class ModelCommand:
+    provider: str
+    command: str
+    model_tag: str
+
+    @property
+    def protocol(self) -> str:
+        return "copilot-argv" if self.provider == "copilot" else "claude-stdin"
+
+
+@dataclass(frozen=True)
+class ReaderJob:
+    reader_no: int
+    framing_name: str
+    framing_suffix: str
+    model_command: ModelCommand
 
 
 NEGATION_MARKERS = frozenset(
@@ -134,7 +156,7 @@ class Witness:
     req_id: str
     situation: tuple
     sides: list  # [(reader_no, Assertion), (reader_no, Assertion)]
-    kind: str = "candidate"  # "polarity-opposed" when exactly one side negates
+    kind: str = "candidate"  # "negation-asymmetric" when one side has a marker
 
 
 # ── Normalization + requirement scan (pure) ──────────────────────────────────
@@ -194,11 +216,60 @@ def _label_grounded(label: str, line_text: str) -> bool:
 # ── Extraction prompt + validation ───────────────────────────────────────────
 
 
-def shlex_first_word(command: str) -> str:
-    """First word of a model command line — the reader's model tag."""
-    import shlex as _shlex
-    words = _shlex.split(command)
-    return Path(words[0]).name if words else "?"
+def parse_model_command(value: str) -> ModelCommand:
+    """Parse ``provider=command`` or infer a legacy command's provider."""
+    explicit_provider, separator, explicit_command = value.partition("=")
+    if separator and explicit_provider in {"claude", "copilot"}:
+        provider = explicit_provider
+        command = explicit_command
+    else:
+        command = value
+        provider = ""
+    if not command.strip():
+        raise v1.ArgumentFailure("model command must not be empty")
+    try:
+        command_words = shlex.split(command)
+    except ValueError as exc:
+        raise v1.ArgumentFailure(f"model command is not shell-parseable: {exc}") from None
+    model_tag = Path(command_words[0]).name
+    if not provider:
+        provider = "copilot" if model_tag == "copilot" else "claude"
+    if provider == "copilot" and any(
+        word == "-p" or word == "--prompt" or word.startswith("--prompt=")
+        for word in command_words[1:]
+    ):
+        raise v1.ArgumentFailure(
+            "copilot model command must be specified without -p/--prompt; "
+            "SUE supplies the prompt"
+        )
+    return ModelCommand(
+        provider=provider,
+        command=command,
+        model_tag=model_tag,
+    )
+
+
+def build_reader_jobs(
+    model_commands: list[ModelCommand],
+    readers_per_model: int,
+    framings: tuple,
+) -> list[ReaderJob]:
+    """Build an unconfounded model × framing reader matrix."""
+    jobs: list[ReaderJob] = []
+    reader_no = 1
+    for model_command in model_commands:
+        for offset in range(readers_per_model):
+            framing_name, framing_suffix = framings[offset % len(framings)]
+            jobs.append(
+                ReaderJob(
+                    reader_no=reader_no,
+                    framing_name=framing_name,
+                    framing_suffix=framing_suffix,
+                    model_command=model_command,
+                )
+            )
+            reader_no += 1
+    return jobs
 
 
 def chunk_ids(known_ids: set, size: int | None = None) -> list:
@@ -430,31 +501,64 @@ def find_witnesses(readers: list) -> tuple:
                 variants += 1
                 continue
             negated = [bool(_words(a.then) & NEGATION_MARKERS) for _, a in sides]
-            kind = "polarity-opposed" if negated[0] != negated[1] else "candidate"
+            kind = (
+                "negation-asymmetric"
+                if negated[0] != negated[1]
+                else "candidate"
+            )
             witnesses.append(Witness(req_id=req_id, situation=situation,
                                      sides=sides, kind=kind))
     return witnesses, variants
 
 
-def shared_evidence(readers: list) -> float:
-    """Cross-reader evidence-base overlap (parallel adaptation of the report's
-    critical-fact retention): |lines cited by ALL readers| / |lines cited by ANY|.
-    A converging evidence base means readers agree on WHERE the meaning lives."""
-    per_reader: list[set] = []
-    for reader in readers:
-        cited: set[int] = set()
-        for interp in reader.requirements.values():
-            cited.update(e.line for e in interp.edges)
-            for assertion in interp.assertions:
-                cited.update(assertion.lines)
-        per_reader.append(cited)
-    union = set().union(*per_reader) if per_reader else set()
-    if not union:
-        return 1.0
-    shared = per_reader[0]
-    for cited in per_reader[1:]:
-        shared = shared & cited
-    return len(shared) / len(union)
+def _evidence_lines(interp: ReqInterpretation | None) -> set[int]:
+    if interp is None:
+        return set()
+    cited = {edge.line for edge in interp.edges}
+    for assertion in interp.assertions:
+        cited.update(assertion.lines)
+    return cited
+
+
+def evidence_metrics(readers: list) -> dict:
+    """Requirement-local evidence overlap and citation coverage.
+
+    This compares where parallel readers found evidence. It does not measure
+    temporal critical-fact retention, which requires dialectic rounds.
+    """
+    requirement_ids = sorted(
+        {req_id for reader in readers for req_id in reader.requirements}
+    )
+    per_requirement: dict = {}
+    nonempty_cells = 0
+    overlaps: list[float] = []
+    for req_id in requirement_ids:
+        per_reader = [
+            _evidence_lines(reader.requirements.get(req_id))
+            for reader in readers
+        ]
+        nonempty = sum(bool(lines) for lines in per_reader)
+        nonempty_cells += nonempty
+        union = set().union(*per_reader) if per_reader else set()
+        if union:
+            intersection = set(per_reader[0])
+            for cited in per_reader[1:]:
+                intersection &= cited
+            overlap: float | None = len(intersection) / len(union)
+            overlaps.append(overlap)
+        else:
+            overlap = None
+        per_requirement[req_id] = {
+            "overlap": overlap,
+            "reader_coverage": nonempty / len(readers) if readers else 0.0,
+            "union_lines": len(union),
+        }
+    total_cells = len(requirement_ids) * len(readers)
+    return {
+        "mean_overlap": sum(overlaps) / len(overlaps) if overlaps else None,
+        "coverage": nonempty_cells / total_cells if total_cells else 0.0,
+        "per_requirement": per_requirement,
+    }
 
 
 def fracture_lines(readers: list, per_req: dict, witnesses: list,
@@ -503,7 +607,7 @@ def render_report(spec, spec_path: Path, readers: list, per_req: dict,
                   sr: float, witnesses: list, fractures: dict,
                   run_date: str, dropped: list,
                   phrasing_variants: int = 0,
-                  evidence_overlap: float = 1.0) -> str:
+                  evidence: dict | None = None) -> str:
     lines: list[str] = []
     lines.append("# Semantic Reproducibility Report")
     lines.append("")
@@ -525,7 +629,20 @@ def render_report(spec, spec_path: Path, readers: list, per_req: dict,
     lines.append(f"  - assumption load (mean/req): {mean_load:.2f}")
     lines.append(f"  - untrusted convergence (thin consensus): {len(thin)}"
                  + (f" — {', '.join(thin[:8])}" if thin else ""))
-    lines.append(f"  - shared evidence base (all readers): {evidence_overlap:.2f}")
+    evidence = evidence or {
+        "mean_overlap": None,
+        "coverage": 0.0,
+        "per_requirement": {},
+    }
+    overlap_text = (
+        "N/A"
+        if evidence["mean_overlap"] is None
+        else f"{evidence['mean_overlap']:.2f}"
+    )
+    lines.append(
+        f"  - evidence overlap (mean/requirement): {overlap_text}"
+    )
+    lines.append(f"  - evidence coverage: {evidence['coverage']:.2f}")
     lines.append(f"  - requirements measured: {len(per_req)}")
     ungrounded = ", ".join(f"R{r.reader_no}={r.ungrounded_edges}" for r in readers)
     lines.append(f"- **Ungrounded edges dropped:** {ungrounded}")
@@ -580,7 +697,7 @@ def render_report(spec, spec_path: Path, readers: list, per_req: dict,
 
 def build_sidecar(spec_path: Path, readers: list, per_req: dict, sr: float,
                   witnesses: list, fractures: dict, run_date: str,
-                  shared_evidence_value: float = 1.0) -> dict:
+                  evidence: dict | None = None) -> dict:
     return {
         "specification": str(spec_path),
         "run_date": run_date,
@@ -588,6 +705,8 @@ def build_sidecar(spec_path: Path, readers: list, per_req: dict, sr: float,
             {
                 "reader": r.reader_no,
                 "framing": r.framing,
+                "provider": r.provider,
+                "model_tag": r.model_tag,
                 "ungrounded_edges": r.ungrounded_edges,
                 # v4 layer separation: understanding (what the text asserts)
                 # vs proto-justification (what the reading relies on / implies).
@@ -620,7 +739,11 @@ def build_sidecar(spec_path: Path, readers: list, per_req: dict, sr: float,
         "thin_consensus": sorted(
             r for r, v in per_req.items() if v.get("thin_consensus")
         ),
-        "shared_evidence": shared_evidence_value,
+        "evidence": evidence or {
+            "mean_overlap": None,
+            "coverage": 0.0,
+            "per_requirement": {},
+        },
         "witnesses": [
             {
                 "requirement": w.req_id,
@@ -653,37 +776,51 @@ def parse_args(argv: list) -> tuple:
         ),
     )
     parser.add_argument("spec_path", type=Path)
-    parser.add_argument("--readers", type=v1._positive_int, default=3)
+    parser.add_argument(
+        "--readers",
+        type=v1._positive_int,
+        default=3,
+        help="readers per model command; framings repeat in a fixed cycle",
+    )
     parser.add_argument("--families", default=",".join(DEFAULT_FAMILIES))
-    parser.add_argument("--claude-cmd", action="append", default=None,
-                        help="repeatable; multiple commands cycle across "
-                             "readers (heterogeneous reader families)")
+    parser.add_argument(
+        "--model-cmd",
+        "--claude-cmd",
+        dest="model_commands",
+        action="append",
+        default=None,
+        help="repeatable PROVIDER=COMMAND; each model receives every reader framing",
+    )
     parser.add_argument("--timeout", type=v1._positive_float,
                         default=v1.DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--json", action="store_true")
     options = parser.parse_args(argv)
-    commands = options.claude_cmd or [v1.DEFAULT_MODEL_COMMAND]
-    configs = [
-        v1.RunConfig(
-            spec_path=options.spec_path,
-            max_questions=1,
-            model_command=command,
-            timeout_seconds=options.timeout,
-        )
-        for command in commands
+    commands = [
+        parse_model_command(value)
+        for value in (options.model_commands or [v1.DEFAULT_MODEL_COMMAND])
     ]
-    return configs, options
+    return commands, options
 
 
 def main(argv: list | None = None) -> int:
     try:
-        configs, options = parse_args(
+        model_commands, options = parse_args(
             list(sys.argv[1:]) if argv is None else list(argv)
         )
     except v1.ArgumentFailure as exc:
         return v1.fail(v1.EXIT_BAD_INPUT, f"bad input: {exc}")
-    config = configs[0]
-    for candidate in configs:
+    configs = {
+        model_command: v1.RunConfig(
+            spec_path=options.spec_path,
+            max_questions=1,
+            model_command=model_command.command,
+            timeout_seconds=options.timeout,
+            model_protocol=model_command.protocol,
+        )
+        for model_command in model_commands
+    }
+    config = configs[model_commands[0]]
+    for candidate in configs.values():
         failure = v1.preflight(candidate)
         if failure is not None:
             return v1.fail(*failure)
@@ -715,25 +852,22 @@ def main(argv: list | None = None) -> int:
         )
 
     chunks = chunk_ids(known_ids)
+    jobs = build_reader_jobs(model_commands, options.readers, FRAMINGS)
     readers: list[ReaderGraph] = []
     dropped: list[str] = []
-    for reader_no in range(1, options.readers + 1):
-        name, suffix = FRAMINGS[(reader_no - 1) % len(FRAMINGS)]
-        reader_config = configs[(reader_no - 1) % len(configs)]
-        model_tag = shlex_first_word(reader_config.model_command)
-        if len(configs) > 1:
-            name = f"{name}/{model_tag}"
+    for job in jobs:
+        reader_config = configs[job.model_command]
         merged: dict = {}
         ungrounded_total = 0
         failed_chunks = 0
         for chunk_no, chunk in enumerate(chunks, start=1):
             outcome = v1.execute_round(
                 reader_config,
-                build_extraction_prompt(spec, suffix, chunk),
+                build_extraction_prompt(spec, job.framing_suffix, chunk),
                 lambda payload, _chunk=chunk: validate_graph(
                     payload, _chunk, len(spec.lines), spec_lines=spec.lines
                 ),
-                round_no=reader_no * 100 + chunk_no,
+                round_no=job.reader_no * 100 + chunk_no,
                 spec_dir=spec_dir,
             )
             if isinstance(outcome, v1.RoundExit):
@@ -743,17 +877,29 @@ def main(argv: list | None = None) -> int:
             merged.update(requirements)
             ungrounded_total += ungrounded
         if failed_chunks * 2 > len(chunks):
-            dropped.append(f"R{reader_no}({name})")
+            dropped_label = job.framing_name
+            if len(model_commands) > 1:
+                dropped_label += f"/{job.model_command.model_tag}"
+            dropped.append(
+                f"R{job.reader_no}({dropped_label})"
+            )
             continue
-        readers.append(ReaderGraph(reader_no=reader_no, framing=name,
-                                   requirements=merged,
-                                   ungrounded_edges=ungrounded_total,
-                                   failed_chunks=failed_chunks))
+        readers.append(
+            ReaderGraph(
+                reader_no=job.reader_no,
+                framing=job.framing_name,
+                provider=job.model_command.provider,
+                model_tag=job.model_command.model_tag,
+                requirements=merged,
+                ungrounded_edges=ungrounded_total,
+                failed_chunks=failed_chunks,
+            )
+        )
     if len(readers) < 2:
         return v1.fail(
             v1.EXIT_UNUSABLE_OUTPUT,
             "unusable model output: fewer than 2 readers completed "
-            f"({len(readers)} of {options.readers}; dropped: "
+            f"({len(readers)} of {len(jobs)}; dropped: "
             f"{', '.join(dropped) or 'none'})",
         )
 
@@ -761,16 +907,16 @@ def main(argv: list | None = None) -> int:
     sr = overall_score(per_req)
     witnesses, phrasing_variants = find_witnesses(readers)
     fractures = fracture_lines(readers, per_req, witnesses)
-    evidence_overlap = shared_evidence(readers)
+    evidence = evidence_metrics(readers)
     run_date = datetime.now().strftime("%Y-%m-%d")
 
     report = render_report(spec, config.spec_path, readers, per_req, sr,
                            witnesses, fractures, run_date, dropped,
                            phrasing_variants=phrasing_variants,
-                           evidence_overlap=evidence_overlap)
+                           evidence=evidence)
     sidecar = build_sidecar(config.spec_path, readers, per_req, sr, witnesses,
                             fractures, run_date,
-                            shared_evidence_value=evidence_overlap)
+                            evidence=evidence)
     try:
         (spec_dir / REPORT_FILENAME).write_text(report, encoding="utf-8")
         (spec_dir / JSON_FILENAME).write_text(

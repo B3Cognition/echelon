@@ -73,10 +73,11 @@ spec vocabulary, no articles), and demands strict JSON:
 
 For each requirement, group assertions across readers by normalized `(given, when)`.
 A **witness candidate** is a group where two readers' `then` clauses differ after
-normalization. It is a **witness** when both assertions cite spec lines (grounded)
-— rendered side by side with both line citations and both readers named. Witness
-count feeds the report and JSON; witnesses are ranked by (requirement score
-ascending) — divergence in already-low-agreement requirements first.
+normalization. Candidates with sufficient word overlap are filtered as phrasing
+variants. Candidates where exactly one side contains a negation marker are labelled
+`negation-asymmetric`; that label describes syntax, not semantic opposition.
+Every retained item remains an unverified candidate even when both sides cite the
+specification. Candidates are ranked by requirement score ascending.
 
 ## Localization (provenance attribution, v3.0)
 
@@ -89,10 +90,13 @@ the sentences a clarification pass should target. No counterfactual re-runs
 
 ## Report + JSON sidecar
 
-Markdown: header (spec, date, K, overall SR score, grade), per-requirement table
-(score, edges, assumptions, near-misses), witnesses section, fracture-lines
-section, diagnostics (ungrounded rates, dropped readers). JSON mirrors all of it
-with raw per-reader graphs included — the SRP experiment consumes this.
+Markdown: measurement-vector header (semantic convergence, witness candidates,
+phrasing variants, assumption load, thin consensus, requirement-local evidence
+overlap and evidence coverage), per-requirement table, candidate section,
+fracture-lines section, and diagnostics. JSON mirrors all of it with provider
+provenance and two explicitly named schema compartments per requirement:
+`understanding` and `proto_justification`. The latter is a storage seam, not a
+completed Justification Graph.
 
 ## Degradation
 
@@ -103,8 +107,9 @@ pairs. Extraction returning zero requirements = reader failure.
 
 `tests/unit/test_sue_reproducibility.py`, same replay-stub seam:
 - Pure units: normalization, requirement-id scan, Jaccard/scoring (incl.
-  both-empty=1.0, near-miss counting), witness grouping + grounding rule,
-  fracture-line ranking, report/JSON rendering.
+  both-empty=1.0, near-miss counting), candidate grouping and phrasing filtering,
+  requirement-local evidence overlap/coverage, provider parsing, model × framing
+  job construction, fracture-line ranking, report/JSON rendering.
 - Scenarios: identical graphs → SR=1.0, no witnesses; disjoint graphs → low SR;
   conflicting `then` → witness rendered with both citations; reader dropout;
   unknown requirement key → retry path; empty spec / collision guards.
@@ -120,13 +125,14 @@ pairs. Extraction returning zero requirements = reader failure.
 
 ## Non-goals (v3.1+)
 
-Counterfactual minimal-clarification search, Justification Graph claim records,
-cross-model-family readers, workflow integration, full SRP corpus run.
+Counterfactual minimal-clarification search, full Justification Graph claim
+records, temporal critical-fact retention, exhibited behavioural witnesses,
+workflow integration, full SRP corpus run.
 
 ## Addendum 2026-07-19 — debt to the research report (review findings)
 
-Post-build review against the source research report identified four gaps;
-two fixed in v3.2, two recorded as v4 scope:
+Post-build review against the source research report identified five gaps.
+Three were fixed in v3.2; two remained v4 scope:
 
 1. **Fixed — no single-scalar headline:** the report warns against one
    confidence number; reports now headline a measurement vector (convergence,
@@ -137,15 +143,41 @@ two fixed in v3.2, two recorded as v4 scope:
    twice). Witnesses are now word-overlap-screened, reported as *candidates*,
    and the section is labelled heuristic. Exhibited behavioural verification
    (the report's Grounded Divergence Witness standard) is v4.
-   **Fixed — untrusted convergence:** per-requirement `thin_consensus` flag
+3. **Fixed — untrusted convergence:** per-requirement `thin_consensus` flag
    (high agreement over minimal content) operationalizes the report's "the
    agents converged, but the convergence is not trustworthy" state, matching
    the live vagueness result.
-3. **v4 debt — two-layer separation:** the report requires distinct
+4. **v4 debt — two-layer separation:** the report requires distinct
    Understanding and Reasoning graphs; v3 merges knowledge, assumptions and
    assertions into one requirement-local object. The Justification Graph
    (claims/evidence/inference records) restores the second layer.
-4. **v4 debt — critical-fact retention + cross-model-family readers:**
+5. **v4 debt — critical-fact retention + cross-model-family readers:**
    retention exists only in v2's elenchus guard; v3 has no multi-round
    evidence-retention measure. Heterogeneous model families remain the H4
    experiment prerequisite.
+
+## Addendum 2026-07-19 — v3.3 gate-independent corrections
+
+The gate-independent parts of findings 4 and 5 are now implemented without
+claiming that the dialectic-dependent work is complete:
+
+1. **Provider adapters:** repeatable `--model-cmd PROVIDER=COMMAND` supports
+   Claude's stdin protocol and Copilot's `-p PROMPT -s` protocol.
+   `--claude-cmd` remains a backward-compatible alias. Copilot necessarily puts
+   the prompt in argv; this provider-specific process-list exposure is a stated
+   limitation.
+2. **Unconfounded H4 matrix:** `--readers K` means K readers per configured
+   model. Every model receives the same framing sequence; provider, model tag,
+   and framing are separate sidecar fields. Two models with K=3 produce six
+   readers, not a three-reader command/framing cycle.
+3. **Layer schema seam:** sidecars store typed edges under `understanding` and
+   assumptions/assertions under `proto_justification`. This is structural
+   preparation only. Claims, evidence nodes, inference/attack/revision edges,
+   and the full Justification Graph still require dialectic traces.
+4. **Evidence diagnostic:** v3 reports requirement-local evidence overlap plus
+   evidence coverage. Empty evidence is `N/A`, never perfect agreement. This is
+   cross-reader citation agreement, not critical-fact retention; temporal
+   retention remains gated on dialogue rounds.
+5. **Candidate honesty:** one-sided negation markers produce the syntactic label
+   `negation-asymmetric`, never `polarity-opposed`. Behavioural exhibition
+   remains v4 work after the dialectic gate.
