@@ -76,6 +76,56 @@ mutant ground truth. Dialectic promotes to v4 ONLY if it shows at least one of:
 higher finding precision; sharper localization of the breakdown point; higher
 severity of stable findings; fewer shallow phrasing findings — at matched budget.
 
+## Experimental protocol (2026-07-19 — the reasoning-layer decision)
+
+The gate decides the ARCHITECTURE question: **what source should the Reasoning
+Graph be built from?** Two hypotheses:
+
+- **H-D1 (detection):** adaptive chains (question_{t+1} conditioned on
+  answer_t) surface more severe, better-localized defects than independent
+  batch questioning at MATCHED budget.
+- **H-D2 (representation):** a reasoning graph built from the dialogue trace
+  is more complete and auditable than one built by one-shot introspection.
+
+**Four arms, one model family (cross-family is the separate H4 axis):**
+A) v1 batch (data exists: 030, 029, 071, 063, 064, 069, 070);
+B) v2 consensus+elenchus (data exists: 029, 030);
+C) dialectic — 2 lenses, ≤7 turns, seeded from v2 stable findings;
+D) **one-shot J-graph extraction** — reader emits claims/evidence/inference in
+one call (v3 extractor with a different schema). Arm D is mandatory: if C beats
+questions but not D, building the dialogue engine for the graph is unjustified.
+
+**Corpus, three ground-truth tiers:** (1) injected mutants (absolute truth,
+probe method, 2-3 per 2 specs); (2) documented known issues (029 list, 030
+committed reports); (3) novel findings on the ru-sixth-sense corpus
+(063/064/069/070/071 — v1 reports committed 2026-07-19), blind-adjudicated.
+
+**Metrics.** H-D1: precision (text-verifiable share), severity profile
+(contradiction > behavioural gap > boundary > definitional), localization
+(names the minimal missing decision — binary, adjudicated), all normalized
+per token/dollar including retries. H-D2: graph completeness (% claims with
+evidence links), auditability (blind 1-5: can a human reconstruct WHY),
+contradiction detection from the graph alone. Stability: K=3 reruns —
+operator-sequence agreement (C), graph agreement (D); the A/B discipline.
+
+**Blinding:** findings from all arms pooled, deduplicated, presented WITHOUT
+arm labels; primary judge = the operator, secondary = LLM panel (judge-panel
+agreement is itself reported).
+
+**Pre-registered decision rule (all three outcomes legitimate):**
+1. C wins H-D1 and H-D2 → Reasoning Graph from dialectic traces.
+2. C adds nothing over B but D yields a usable graph (≥80% of C-trace
+   completeness at <30% cost) → build the layer via one-shot; dialectic stays
+   a manual Forensic tool.
+3. Neither adds value → the reasoning layer waits; question tiers suffice.
+
+Thresholds: C promotes iff at matched budget it improves ≥1 of {precision,
+severity, localization} AND degrades none. Expected outcomes are WRITTEN DOWN
+before the runs (falsification twice paid for itself; now it is standard).
+
+Smoke scale: 2 specs × (2-3 mutants + known issues); C: 2 lenses × ~5 seeds ×
+≤7 turns + 3× stability; D: 3 readers × 2 specs. ≈ $40-60.
+
 ## v4 hand-off (after the gate)
 
 Dialogue trace maps natively to the Justification Graph:
