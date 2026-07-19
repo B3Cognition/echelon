@@ -134,7 +134,9 @@ class ModelCommand:
 
     @property
     def protocol(self) -> str:
-        return "copilot-argv" if self.provider == "copilot" else "claude-stdin"
+        return v1.PROVIDERS.get(
+            self.provider, v1.PROVIDERS["claude"]
+        )["protocol"]
 
 
 @dataclass(frozen=True)
@@ -219,9 +221,16 @@ def _label_grounded(label: str, line_text: str) -> bool:
 def parse_model_command(value: str) -> ModelCommand:
     """Parse ``provider=command`` or infer a legacy command's provider."""
     explicit_provider, separator, explicit_command = value.partition("=")
-    if separator and explicit_provider in {"claude", "copilot"}:
+    if separator and explicit_provider in v1.PROVIDERS:
         provider = explicit_provider
         command = explicit_command
+    elif (separator and explicit_provider
+          and " " not in explicit_provider and "/" not in explicit_provider
+          and explicit_provider.isalpha()):
+        raise v1.ArgumentFailure(
+            f"unsupported model provider prefix {explicit_provider!r}; "
+            f"supported: {', '.join(sorted(v1.PROVIDERS))}"
+        )
     else:
         command = value
         provider = ""
@@ -233,7 +242,7 @@ def parse_model_command(value: str) -> ModelCommand:
         raise v1.ArgumentFailure(f"model command is not shell-parseable: {exc}") from None
     model_tag = Path(command_words[0]).name
     if not provider:
-        provider = "copilot" if model_tag == "copilot" else "claude"
+        provider = model_tag if model_tag in v1.PROVIDERS else "claude"
     if provider == "copilot" and any(
         word == "-p" or word == "--prompt" or word.startswith("--prompt=")
         for word in command_words[1:]
@@ -869,7 +878,10 @@ def parse_args(argv: list) -> tuple:
     options = parser.parse_args(argv)
     commands = [
         parse_model_command(value)
-        for value in (options.model_commands or [v1.DEFAULT_MODEL_COMMAND])
+        # Environment resolution supplies exactly ONE provider (never a second
+        # family into a v3 run); explicit --model-cmd overrides everything.
+        for value in (options.model_commands
+                      or [v1.resolve_model_command(None)[0]])
     ]
     return commands, options
 

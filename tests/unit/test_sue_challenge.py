@@ -473,6 +473,67 @@ class TestRunModelCall:
             timeout_seconds=timeout,
         )
 
+    def test_explicit_selection_overrides_all_env_signals(self):
+        # Design test 1: explicit beats ECHELON_LLM and runtime markers.
+        env = {"ECHELON_LLM": "claude", "CODEX_THREAD_ID": "t-1"}
+        command, protocol = sue.resolve_model_command("codex=mycodex", env)
+        assert (command, protocol) == ("mycodex", "codex-stdin")
+
+    def test_echelon_llm_codex_selects_codex_protocol(self):
+        command, protocol = sue.resolve_model_command(None, {"ECHELON_LLM": "codex"})
+        assert (command, protocol) == ("codex", "codex-stdin")
+
+    def test_codex_thread_marker_selects_codex_without_echelon_llm(self):
+        command, protocol = sue.resolve_model_command(None, {"CODEX_THREAD_ID": "t"})
+        assert protocol == "codex-stdin"
+
+    def test_claude_fallback_without_signals(self):
+        command, protocol = sue.resolve_model_command(None, {})
+        assert (command, protocol) == ("claude", "claude-stdin")
+
+    def test_invalid_echelon_llm_falls_through_to_markers(self):
+        command, protocol = sue.resolve_model_command(
+            None, {"ECHELON_LLM": "gemini", "CODEX_CI": "1"})
+        assert protocol == "codex-stdin"
+
+    def test_env_copilot_is_ignored_with_warning(self, capsys):
+        # Review finding 2: argv-transport providers must be explicit — an
+        # ambient env var must never silently enable prompt-in-argv exposure.
+        command, protocol = sue.resolve_model_command(
+            None, {"ECHELON_LLM": "copilot"})
+        assert (command, protocol) == ("claude", "claude-stdin")
+        assert "ECHELON_LLM=copilot ignored" in capsys.readouterr().err
+
+    def test_unsupported_explicit_prefix_fails_before_subprocess(self):
+        with pytest.raises(sue.ArgumentFailure, match="unsupported model provider"):
+            sue.resolve_model_command("gemini=gemini", {})
+
+    def test_unknown_bare_basename_keeps_claude_stdin_protocol(self, tmp_path):
+        command, protocol = sue.resolve_model_command("/x/stub.sh --flag", {})
+        assert protocol == "claude-stdin"
+
+    def test_codex_invocation_uses_stdin_and_isolated_exec_args(self, tmp_path):
+        # Design test 5: prompt on stdin, ephemeral read-only exec sandbox.
+        config = sue.RunConfig(
+            spec_path=tmp_path / "spec.md", max_questions=1,
+            model_command="codex", timeout_seconds=10,
+            model_protocol="codex-stdin",
+        )
+        invocation = sue.build_model_invocation(config, "PROMPT")
+        assert invocation.argv == [
+            "codex", "exec", "--ephemeral", "--skip-git-repo-check",
+            "--sandbox", "read-only", "-",
+        ]
+        assert invocation.stdin_text == "PROMPT"
+
+    def test_model_cmd_and_claude_cmd_are_aliases(self, tmp_path):
+        spec = tmp_path / "spec.md"
+        spec.write_text("# s\n")
+        for flag in ("--model-cmd", "--claude-cmd"):
+            config = sue.parse_args([str(spec), flag, "claude=/x/claude"])
+            assert config.model_command == "/x/claude"
+            assert config.model_protocol == "claude-stdin"
+
     def test_claude_model_invocation_uses_stdin_and_one_print_flag(self, tmp_path):
         config = self._config(tmp_path, "claude")
         invocation = sue.build_model_invocation(config, "PROMPT")
@@ -1251,16 +1312,18 @@ class TestRenderReport:
         assert report.count("## Findings") == 1
         assert report.count("## Audit appendix") == 1
 
-    def test_header_states_exactly_four_facts(self):
-        # AC-002/FR-036: spec path, run date, question count, finding count.
+    def test_header_states_exactly_five_facts(self):
+        # AC-002/FR-036: spec path, run date, provider, question count,
+        # finding count (provider fact added by runtime provider selection).
         report = self._report()
         head = report.split("## Findings")[0]
         assert "- **Specification:** demo/spec.md" in head
         assert "- **Run date:** 2026-07-18" in head
+        assert "- **Provider:** claude" in head
         assert "- **Questions:** 3" in head
         assert "- **Findings:** 2" in head
-        # Exactly the 4 base facts: no truncation note without the flag.
-        assert len([l for l in head.splitlines() if l.startswith("- **")]) == 4
+        # Exactly the 5 base facts: no truncation note without the flag.
+        assert len([l for l in head.splitlines() if l.startswith("- **")]) == 5
         assert "truncated" not in head
 
     def test_truncation_note_renders_only_when_flag_set(self):
@@ -1268,7 +1331,8 @@ class TestRenderReport:
         report = self._report(truncated=True)
         head = report.split("## Findings")[0]
         assert head.count("truncated to the first 3") == 1
-        assert len([l for l in head.splitlines() if l.startswith("- **")]) == 5
+        # 5 base facts (incl. provider) + the truncation note.
+        assert len([l for l in head.splitlines() if l.startswith("- **")]) == 6
 
     def test_findings_entries_state_four_elements_in_rank_order(self):
         # FR-037: verdict, question, target, evidence — ranked per FR-033.

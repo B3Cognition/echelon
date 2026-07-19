@@ -203,7 +203,7 @@ Everything after round 2 is pure local computation, repeatable and fully unit-te
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-035**: The challenge report MUST contain exactly 3 sections in order: header (FR-036), findings (FR-037), audit appendix (FR-038).
   - **User Story:** Scenario 2 | **Priority:** MVP
-- **FR-036**: The report header MUST state exactly 4 base facts — specification path, run date, question count, finding count — plus the FR-019 truncation note when truncation occurred (AC-002). The run date is the ISO calendar date `YYYY-MM-DD` in the operator's local timezone, rendered as the single `**Run date:**` header bullet; NFR-004's byte-identical comparison excludes exactly that line.
+- **FR-036**: The report header MUST state exactly 5 base facts — specification path, run date, resolved model provider, question count, finding count — plus the FR-019 truncation note when truncation occurred (AC-002). The run date is the ISO calendar date `YYYY-MM-DD` in the operator's local timezone, rendered as the single `**Run date:**` header bullet; NFR-004's byte-identical comparison excludes exactly that line. The provider fact keeps environment-resolved runs auditable (runtime provider selection, 2026-07-19); it is stable across reruns and participates in NFR-004's comparison.
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-037**: Each findings entry MUST state exactly 4 elements: the verdict, the question, the target requirement identifier, plus the evidence rendered per FR-039 (FR-033).
   - **User Story:** Scenario 2 | **Priority:** MVP

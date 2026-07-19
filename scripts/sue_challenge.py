@@ -80,6 +80,79 @@ EGRESS_DISCLOSURE = (
 # limit. Guarded here; disclosed in the spec's Limitations.
 ARGV_PROMPT_LIMIT = 200_000
 
+# Runtime provider selection (design: 2026-07-19-sue-runtime-provider-selection).
+# Environment resolution is restricted to STDIN-protocol providers: copilot's
+# argv transport exposes the prompt in process listings and must therefore be
+# an explicit operator choice, never an ambient env effect.
+PROVIDERS = {
+    "claude": {"default_command": "claude", "protocol": "claude-stdin"},
+    "codex": {"default_command": "codex", "protocol": "codex-stdin"},
+    "copilot": {"default_command": "copilot", "protocol": "copilot-argv"},
+}
+ENV_RESOLVABLE_PROVIDERS = ("claude", "codex")
+_PROVIDER_PREFIX_RE = re.compile(r"^([a-z][a-z0-9_-]*)=(.*)$", re.DOTALL)
+
+
+def resolve_model_command(explicit: str | None, env: dict | None = None):
+    """Resolve (command, protocol) per the fixed precedence.
+
+    1. explicit ``PROVIDER=COMMAND`` or bare command (provider inferred from
+       the executable basename; unknown basenames keep the Claude-compatible
+       stdin protocol for backward compatibility);
+    2. ``ECHELON_LLM`` — stdin providers only (copilot ignored with a warning);
+    3. runtime markers (``CODEX_THREAD_ID`` / ``CODEX_CI`` select codex);
+    4. the ``claude`` default.
+
+    An unknown EXPLICIT provider prefix raises ArgumentFailure before any
+    model call.
+    """
+    env = os.environ if env is None else env
+    if explicit is not None:
+        match = _PROVIDER_PREFIX_RE.match(explicit)
+        if match and " " not in match.group(1) and "/" not in match.group(1):
+            prefix, command = match.group(1), match.group(2)
+            if prefix in PROVIDERS:
+                if not command.strip():
+                    raise ArgumentFailure("model command must not be empty")
+                return command, PROVIDERS[prefix]["protocol"]
+            raise ArgumentFailure(
+                f"unsupported model provider prefix {prefix!r}; "
+                f"supported: {', '.join(sorted(PROVIDERS))}"
+            )
+        try:
+            words = shlex.split(explicit)
+        except ValueError as exc:
+            raise ArgumentFailure(
+                f"model command is not shell-parseable: {exc}"
+            ) from None
+        if not words:
+            raise ArgumentFailure("model command must not be empty")
+        basename = Path(words[0]).name
+        provider = basename if basename in PROVIDERS else "claude"
+        return explicit, PROVIDERS[provider]["protocol"]
+    env_choice = (env.get("ECHELON_LLM") or "").strip().lower()
+    if env_choice in ENV_RESOLVABLE_PROVIDERS:
+        spec = PROVIDERS[env_choice]
+        return spec["default_command"], spec["protocol"]
+    if env_choice == "copilot":
+        print(
+            "sue: ECHELON_LLM=copilot ignored — the copilot argv transport "
+            "exposes prompt text in process listings and must be selected "
+            "explicitly via --model-cmd copilot=...",
+            file=sys.stderr,
+        )
+    if env.get("CODEX_THREAD_ID") or env.get("CODEX_CI"):
+        spec = PROVIDERS["codex"]
+        return spec["default_command"], spec["protocol"]
+    return DEFAULT_MODEL_COMMAND, PROVIDERS["claude"]["protocol"]
+
+
+def provider_of_protocol(protocol: str) -> str:
+    for name, spec in PROVIDERS.items():
+        if spec["protocol"] == protocol:
+            return name
+    return "claude"
+
 ROUND1_PROMPT_TEMPLATE = """\
 You are challenging a software specification through Socratic questioning.
 
@@ -297,11 +370,16 @@ def parse_args(argv: list[str]) -> RunConfig:
         help=f"cap on round-1 questions (default: {DEFAULT_QUESTION_COUNT})",
     )
     parser.add_argument(
+        "--model-cmd",
         "--claude-cmd",
-        default=DEFAULT_MODEL_COMMAND,
+        dest="claude_cmd",
+        default=None,
         metavar="CMD",
         help=(
-            "model command line, split per shell quoting conventions "
+            "model command line, optionally PROVIDER=COMMAND "
+            "(claude|codex|copilot); when omitted, the provider resolves from "
+            "ECHELON_LLM or runtime markers, defaulting to "
+            f"{DEFAULT_MODEL_COMMAND!r}; split per shell quoting conventions "
             f"(default: {DEFAULT_MODEL_COMMAND})"
         ),
     )
@@ -313,17 +391,19 @@ def parse_args(argv: list[str]) -> RunConfig:
         help="per-model-call budget in seconds (default: 300)",
     )
     namespace = parser.parse_args(argv)
+    command, protocol = resolve_model_command(namespace.claude_cmd)
     try:
-        words = shlex.split(namespace.claude_cmd)
+        words = shlex.split(command)
     except ValueError as exc:
-        raise ArgumentFailure(f"--claude-cmd value is not shell-parseable: {exc}") from None
+        raise ArgumentFailure(f"model command is not shell-parseable: {exc}") from None
     if not words:
-        raise ArgumentFailure("--claude-cmd value splits to zero words")
+        raise ArgumentFailure("model command splits to zero words")
     return RunConfig(
         spec_path=namespace.spec_path,
         max_questions=namespace.questions,
-        model_command=namespace.claude_cmd,
+        model_command=command,
         timeout_seconds=namespace.timeout,
+        model_protocol=protocol,
     )
 
 
@@ -444,6 +524,21 @@ def build_model_invocation(config: RunConfig, prompt: str) -> ModelInvocation:
     in the spec's Limitations — and are size-guarded against the OS argv limit.
     """
     words = shlex.split(config.model_command)
+    if config.model_protocol == "codex-stdin":
+        # Isolated non-interactive Codex reader: ephemeral (no session
+        # persisted), read-only sandbox, prompt on stdin ("-"). Flags from the
+        # provider-selection design; verified against the installed CLI at
+        # first live run (preflight exits 2 while the binary is absent).
+        return ModelInvocation(
+            argv=words + [
+                "exec",
+                "--ephemeral",
+                "--skip-git-repo-check",
+                "--sandbox", "read-only",
+                "-",
+            ],
+            stdin_text=prompt,
+        )
     if config.model_protocol == "copilot-argv":
         if len(prompt) > ARGV_PROMPT_LIMIT:
             raise ArgvTransportOverflow(
@@ -974,6 +1069,7 @@ def render_report(
     findings: list[Finding],
     audit_entries: list[tuple[SocraticQuestion, Answer]],
     truncated: bool,
+    provider: str = "claude",
 ) -> str:
     """Render the full ``socratic-challenge.md`` body (contracts/report-format.md).
 
@@ -987,6 +1083,7 @@ def render_report(
         "",
         f"- **Specification:** {spec.path}",
         f"- **Run date:** {run_date}",
+        f"- **Provider:** {provider}",
         f"- **Questions:** {len(questions)}",
         f"- **Findings:** {len(findings)}",
     ]
@@ -1120,7 +1217,8 @@ def main(argv: list[str] | None = None) -> int:
     findings, audit_entries = partition_answers(questions, answers)
     ranked = rank_findings(findings)
     report = render_report(
-        spec, date.today().isoformat(), questions, ranked, audit_entries, truncated
+        spec, date.today().isoformat(), questions, ranked, audit_entries,
+        truncated, provider=provider_of_protocol(config.model_protocol),
     )
     report_path = spec_dir / REPORT_FILENAME
     try:

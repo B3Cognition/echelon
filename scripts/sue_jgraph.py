@@ -197,14 +197,19 @@ def parse_args(argv: list):
     parser.add_argument("--readers", type=v1._positive_int, default=3)
     parser.add_argument("--focus", default="",
                         help="optional focus-area hint shared by all readers")
-    parser.add_argument("--claude-cmd", default=v1.DEFAULT_MODEL_COMMAND)
+    parser.add_argument("--model-cmd", "--claude-cmd", dest="claude_cmd",
+                        default=None,
+                        help="PROVIDER=COMMAND or bare command; resolves from "
+                             "ECHELON_LLM/markers when omitted")
     parser.add_argument("--timeout", type=v1._positive_float,
                         default=v1.DEFAULT_TIMEOUT_SECONDS)
     options = parser.parse_args(argv)
+    command, protocol = v1.resolve_model_command(options.claude_cmd)
     config = v1.RunConfig(
         spec_path=options.spec_path,
         max_questions=1,
-        model_command=options.claude_cmd,
+        model_command=command,
+        model_protocol=protocol,
         timeout_seconds=options.timeout,
     )
     return config, options
