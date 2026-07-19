@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,17 @@ def test_wiki_build_prints_home_and_optional_obsidian_note(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     _workspace(tmp_path)
+    subprocess.run(["git", "init", "-b", "master"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "user.name", "Echelon Tests"], cwd=tmp_path, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "echelon@example.test"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "fixture"], cwd=tmp_path, check=True)
 
     result = CliRunner().invoke(app, ["wiki", "build"])
 
@@ -43,6 +55,7 @@ def test_wiki_build_prints_home_and_optional_obsidian_note(
     assert "Obsidian" in result.output
     assert "optional" in result.output.lower()
     assert "https://obsidian.md/download" in result.output
+    assert "Catalog: master@" in result.output
 
 
 @pytest.mark.unit

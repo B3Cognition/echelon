@@ -128,7 +128,7 @@ delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
 
 @wiki_app.command("build")
 def wiki_build() -> None:
-    """Build the local read-only Markdown wiki."""
+    """Build from the configured local default branch without switching branches."""
     from echelon.wiki.service import WikiBuildError, build_wiki
 
     try:
@@ -142,6 +142,10 @@ def wiki_build() -> None:
         f"Inputs: {result.input_count}; outputs: {result.output_count}; "
         f"warnings: {result.warning_count}"
     )
+    if result.catalog_branch and result.catalog_revision:
+        typer.echo(
+            f"Catalog: {result.catalog_branch}@{result.catalog_revision[:12]}"
+        )
     typer.echo(
         "Optional viewer: open the generated directory as an Obsidian vault "
         "(https://obsidian.md/download)."
@@ -1317,16 +1321,7 @@ def spec_publish(
         typer.echo(f"Warning: {warning}", err=True)
     quoted_branch = shlex.quote(result.default_branch)
     typer.echo(f"To share: git push origin {quoted_branch}")
-    if result.caller_on_default:
-        typer.echo("Refresh navigation: echelon wiki build")
-    elif result.destination_worktree.exists():
-        typer.echo(
-            f"Refresh navigation: cd {shlex.quote(str(result.destination_worktree))} && "
-            "echelon wiki build"
-        )
-    else:
-        typer.echo(f"Next: git switch {quoted_branch}")
-        typer.echo("Refresh navigation: echelon wiki build")
+    typer.echo("Refresh navigation: echelon wiki build")
 
 
 @spec_app.command("drop-target")

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,6 +45,58 @@ def _workspace(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def _write_spec(root: Path, spec_id: str) -> None:
+    spec = root / "specs" / spec_id
+    spec.mkdir(parents=True, exist_ok=True)
+    (spec / "spec.md").write_text(
+        f"---\nstatus: phase_a\n---\n# {spec_id}\n\n- **FR-001** Work.\n",
+        encoding="utf-8",
+    )
+    (spec / "plan.md").write_text(f"# Plan for {spec_id}\n", encoding="utf-8")
+    (spec / "tasks.md").write_text("# Tasks\n\n- [ ] T-001 Work\n", encoding="utf-8")
+
+
+def _workspace_with_feature_and_published_master(
+    tmp_path: Path,
+) -> tuple[Path, Path, str]:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "master")
+    _git(repo, "config", "user.name", "Echelon Tests")
+    _git(repo, "config", "user.email", "echelon@example.test")
+    _write_yaml(
+        repo / ".echelon/config.yml",
+        {"target_default_branch": "master", "sources": [], "wiki": {"auto_refresh": True}},
+    )
+    _write_spec(repo, "001-one")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-m", "publish 001")
+    _git(repo, "switch", "-c", "004-feature")
+    _write_spec(repo, "004-four")
+    _git(repo, "add", "specs/004-four")
+    _git(repo, "commit", "-m", "author 004")
+    caller_head = _git(repo, "rev-parse", "HEAD")
+
+    master_worktree = tmp_path / "master-worktree"
+    _git(repo, "worktree", "add", str(master_worktree), "master")
+    for spec_id in ("002-two", "003-three", "004-four"):
+        _write_spec(master_worktree, spec_id)
+    _git(master_worktree, "add", "specs")
+    _git(master_worktree, "commit", "-m", "publish remaining specs")
+    return repo, master_worktree, caller_head
+
+
 @pytest.mark.unit
 def test_build_writes_valid_manifest_and_fresh_status(tmp_path: Path) -> None:
     project_root = _workspace(tmp_path)
@@ -63,6 +117,85 @@ def test_build_writes_valid_manifest_and_fresh_status(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_feature_branch_build_uses_default_catalog_without_switching(
+    tmp_path: Path,
+) -> None:
+    repo, _master_worktree, caller_head = _workspace_with_feature_and_published_master(
+        tmp_path
+    )
+
+    result = build_wiki(repo, now=lambda: FIXED_NOW)
+
+    assert _git(repo, "branch", "--show-current") == "004-feature"
+    assert _git(repo, "rev-parse", "HEAD") == caller_head
+    assert result.catalog_branch == "master"
+    assert result.catalog_revision == _git(repo, "rev-parse", "master")
+    for spec_id in ("001-one", "002-two", "003-three", "004-four"):
+        assert (result.output_dir / f"Specs/{spec_id}/Overview.md").is_file()
+    assert wiki_status(repo).state == "fresh"
+
+
+@pytest.mark.unit
+def test_default_catalog_commit_makes_feature_branch_wiki_stale(
+    tmp_path: Path,
+) -> None:
+    repo, master_worktree, _caller_head = _workspace_with_feature_and_published_master(
+        tmp_path
+    )
+    build_wiki(repo, now=lambda: FIXED_NOW)
+    _write_spec(master_worktree, "005-five")
+    _git(master_worktree, "add", "specs/005-five")
+    _git(master_worktree, "commit", "-m", "publish 005")
+
+    status = wiki_status(repo)
+
+    assert status.state == "stale"
+    assert "specs/005-five/spec.md" in status.added_inputs
+    assert status.workspace_revision == _git(repo, "rev-parse", "master")
+
+
+@pytest.mark.unit
+def test_refresh_tracks_default_catalog_changes_from_feature_branch(
+    tmp_path: Path,
+) -> None:
+    repo, master_worktree, caller_head = _workspace_with_feature_and_published_master(
+        tmp_path
+    )
+    build_wiki(repo, now=lambda: FIXED_NOW)
+    before = capture_input_snapshot(repo)
+    assert before is not None
+    _write_spec(master_worktree, "005-five")
+    _git(master_worktree, "add", "specs/005-five")
+    _git(master_worktree, "commit", "-m", "publish 005")
+
+    refreshed = refresh_after_changed_command(repo, before, now=lambda: FIXED_NOW)
+
+    assert refreshed is not None
+    assert (refreshed.output_dir / "Specs/005-five/Overview.md").is_file()
+    assert refreshed.catalog_revision == _git(repo, "rev-parse", "master")
+    assert _git(repo, "branch", "--show-current") == "004-feature"
+    assert _git(repo, "rev-parse", "HEAD") == caller_head
+
+
+@pytest.mark.unit
+def test_uncommitted_feature_spec_is_ignored_by_default_catalog(
+    tmp_path: Path,
+) -> None:
+    repo, _master_worktree, _caller_head = _workspace_with_feature_and_published_master(
+        tmp_path
+    )
+    build_wiki(repo, now=lambda: FIXED_NOW)
+    feature_spec = repo / "specs/004-four/spec.md"
+    feature_spec.write_text("# Unpublished feature-only edit\n", encoding="utf-8")
+
+    status = wiki_status(repo)
+
+    assert status.state == "fresh"
+    projection = repo / ".echelon/runtime/wiki/Artifacts/specs/004-four/spec.md"
+    assert "Unpublished feature-only edit" not in projection.read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
 def test_failed_rebuild_preserves_previous_valid_vault(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -80,6 +213,34 @@ def test_failed_rebuild_preserves_previous_valid_vault(
 
     assert first.home_path.read_bytes() == home_before
     assert wiki_status(project_root).state == "fresh"
+
+
+@pytest.mark.unit
+def test_catalog_cleanup_failure_preserves_previous_valid_vault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, _master_worktree, _caller_head = _workspace_with_feature_and_published_master(
+        tmp_path
+    )
+    first = build_wiki(repo, now=lambda: FIXED_NOW)
+    home_before = first.home_path.read_bytes()
+    retained: list[Path] = []
+
+    def fail_cleanup(path: Path) -> None:
+        retained.append(path)
+        raise OSError(f"cannot remove {path}")
+
+    monkeypatch.setattr(
+        "echelon.wiki.catalog_source._remove_temporary_parent", fail_cleanup
+    )
+
+    with pytest.raises(WikiBuildError, match="retained at"):
+        build_wiki(repo, now=lambda: FIXED_NOW)
+
+    assert first.home_path.read_bytes() == home_before
+    monkeypatch.undo()
+    for path in retained:
+        shutil.rmtree(path)
 
 
 @pytest.mark.unit

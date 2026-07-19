@@ -6,6 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Default-branch wiki catalog** — `echelon wiki build`, `status`, and
+  command-triggered refresh now read the configured local default-branch commit
+  through a temporary detached worktree when another branch is active. This
+  prevents published specs from disappearing from the wiki while preserving
+  the caller's branch and honoring `.echelon/local.yml` overrides.
 - **Delivery finalization recovery** — a documentation-only delivery slice no
   longer fails merely because every canonical task is already terminal. Ralph
   still requires exact task IDs for implementation progress, while the build
