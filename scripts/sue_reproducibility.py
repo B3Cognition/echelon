@@ -177,12 +177,33 @@ def norm(label: str) -> str:
     return " ".join(words)
 
 
+_ID_PATTERN = r"(?:REQ|FR|AC|NFR|ERR|SC|U|OQ|A)-[0-9]{1,4}[a-z]?"
+_DEF_SITE_RE = re.compile(
+    rf"^(?:[-*]\s*)?\*\*({_ID_PATTERN})\*\*\s*:"        # markdown: - **FR-001**:
+    rf"|^(?:REQ|FR|AC|NFR|ERR|SC|U|OQ|A):\s+({_ID_PATTERN})\s*$"  # lexicon head
+    rf"|^({_ID_PATTERN})\s*:"                            # plain: FR-001: ...
+    rf"|^#+\s+({_ID_PATTERN})\b"                         # heading: ### FR-001
+)
+
+
 def scan_requirement_ids(spec, families: tuple = DEFAULT_FAMILIES) -> set:
     """Deterministic set of requirement-unit ids present in the spec text,
-    restricted to the given id families (v3.1 unit-scope rule)."""
-    found: set[str] = set()
+    restricted to the given id families (v3.1 unit-scope rule) and anchored
+    to DEFINITION SITES: a unit counts only where it is defined — markdown
+    `- **ID**:` items, lexicon `FAMILY: ID` block heads, plain `ID:` lines,
+    or `# ID` headings — never where it is merely mentioned. Cross-references
+    to another spec's ids inside prose otherwise become phantom units that
+    distort SR in both directions (hallucinated-edge zeros, both-empty 1.0s
+    — the spec-030 REQ-* case). A spec with no recognizable definition sites
+    falls back to the any-mention scan rather than measuring zero units."""
+    defined: set[str] = set()
+    mentioned: set[str] = set()
     for line in spec.lines:
-        found.update(REQ_ID_RE.findall(line))
+        match = _DEF_SITE_RE.match(line.strip())
+        if match:
+            defined.add(next(g for g in match.groups() if g))
+        mentioned.update(REQ_ID_RE.findall(line))
+    found = defined or mentioned
     return {rid for rid in found if rid.rsplit("-", 1)[0] in families}
 
 

@@ -119,11 +119,44 @@ class TestNorm:
 
 
 class TestScanIds:
-    def test_finds_mixed_id_families(self):
+    def test_definition_sites_exclude_cross_references(self):
+        # The spec-030 phantom-unit defect: ids quoted inside another unit's
+        # prose (cross-references to a different spec) must not become units.
+        spec = v1.SpecDocument(path=Path("x"), lines=[
+            "- **AC-023**: findings overlap the REQ-009 ordering conflict "
+            "and the undefined pointer of REQ-002.",
+            "- **FR-034**: the report MUST be written beside the spec.",
+        ])
+        assert v3.scan_requirement_ids(spec) == {"AC-023", "FR-034"}
+
+    def test_markdown_definition_sites_counted(self):
         spec = v1.SpecDocument(path=Path("x"), lines=[
             "- **FR-001**: ...", "AC-012 and NFR-004 apply", "no ids here",
         ])
-        assert v3.scan_requirement_ids(spec) == {"FR-001", "AC-012", "NFR-004"}
+        # AC-012/NFR-004 are mentions only; a definition site exists, so the
+        # fallback does not fire.
+        assert v3.scan_requirement_ids(spec) == {"FR-001"}
+
+    def test_lexicon_block_heads_are_definition_sites(self):
+        spec = v1.SpecDocument(path=Path("x"), lines=[
+            "REQ: REQ-001", "GIVEN: a builder", "AC: AC-005",
+            "THEN: behaves like REQ-099",
+        ])
+        assert v3.scan_requirement_ids(spec) == {"REQ-001", "AC-005"}
+
+    def test_plain_colon_definitions_counted(self):
+        spec = v1.SpecDocument(path=Path("x"), lines=[
+            "FR-007: the run MUST exit 0.", "see FR-008 for details",
+        ])
+        assert v3.scan_requirement_ids(spec) == {"FR-007"}
+
+    def test_mention_only_spec_falls_back_to_any_mention(self):
+        # A spec with no recognizable definition sites keeps the old
+        # any-mention behaviour rather than scanning zero units.
+        spec = v1.SpecDocument(path=Path("x"), lines=[
+            "AC-012 and NFR-004 apply", "no ids here",
+        ])
+        assert v3.scan_requirement_ids(spec) == {"AC-012", "NFR-004"}
 
     def test_non_behavioural_families_excluded_by_default(self):
         spec = v1.SpecDocument(path=Path("x"), lines=[
