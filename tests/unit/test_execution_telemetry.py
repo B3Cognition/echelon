@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from echelon.telemetry.model import ExecutionSpan, PhaseTimingEvent, TokenUsage
+from echelon.telemetry.model import (
+    ExecutionSpan,
+    PhaseTimingEvent,
+    TokenUsage,
+    aggregate_token_usage,
+)
 from echelon.telemetry.phase_timing import (
     main as phase_timing_main,
     record_phase_finish,
@@ -31,11 +36,38 @@ def test_token_usage_preserves_known_components() -> None:
     assert usage.known is True
 
 
+def test_token_usage_uses_details_when_provider_aggregate_is_zero() -> None:
+    usage = TokenUsage.from_mapping(
+        {"input_tokens": 10, "output_tokens": 4, "total_tokens": 0}
+    )
+
+    assert usage.total == 14
+
+
+def test_aggregate_token_usage_preserves_observed_components() -> None:
+    usage = aggregate_token_usage(
+        (
+            TokenUsage(input_tokens=10, output_tokens=4, reported_total_tokens=0),
+            TokenUsage(output_tokens=2),
+        )
+    )
+
+    assert usage.input_tokens == 10
+    assert usage.output_tokens == 6
+    assert usage.total == 16
+
+
 def test_missing_provider_usage_remains_unknown() -> None:
     usage = TokenUsage.unknown()
 
     assert usage.known is False
     assert usage.total is None
+
+
+def test_store_rejects_invalid_dispatch_lifecycle_reason(tmp_path: Path) -> None:
+    store = TelemetryStore(tmp_path, workflow="spec", run_id="spec-1", profile={}, trace_id="a" * 32)
+    with pytest.raises(ValueError, match="invalid dispatch lifecycle reason"):
+        store.append_event({"type": "dispatch", "trace_id": "a" * 32, "phase": "x", "agent": "a", "attempt": 1, "reason": "invented", "outcome": "OK", "event_time": "now", "started_at": "now", "ended_at": "now", "duration_ms": 0, "model": "", "blocker": ""})
 
 
 def test_store_writes_manifest_and_append_only_spans(tmp_path: Path) -> None:

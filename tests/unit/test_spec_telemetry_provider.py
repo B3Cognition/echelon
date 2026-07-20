@@ -55,10 +55,18 @@ def test_successful_dispatch_emits_one_content_free_span(tmp_path: Path) -> None
     assert span.attributes["echelon.workflow.phase"] == "phase1-what"
     assert span.attributes["echelon.agent.name"] == "specifier"
     assert span.attributes["echelon.dispatch.kind"] == "phase"
+    assert span.attributes["echelon.dispatch.reason"] == "initial"
     assert span.attributes["gen_ai.response.model"] == "gpt-test"
     raw = (tmp_path / "telemetry/spans.jsonl").read_text(encoding="utf-8")
     assert "secret prompt" not in raw
     assert "secret response" not in raw
+    event = (tmp_path / "telemetry/events.jsonl").read_text(encoding="utf-8")
+    assert '"reason":"initial"' in event
+
+
+def test_dispatch_context_rejects_unbounded_reason() -> None:
+    with pytest.raises(ValueError, match="invalid dispatch reason"):
+        DispatchContext("phase", "agent", "phase", 1, reason="llm_invented")
 
 
 def test_provider_exception_emits_error_span_and_propagates(tmp_path: Path) -> None:

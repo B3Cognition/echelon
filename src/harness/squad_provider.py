@@ -78,6 +78,9 @@ class SquadAgentResult:
     model_name: str = ""
     echelon_result_repair_attempted: bool = False
     echelon_result_repair_succeeded: bool = False
+    echelon_result_repair_duration_ms: int | None = None
+    echelon_result_repair_model_name: str = ""
+    echelon_result_repair_outcome: str = ""
     provider_limit_message: str = ""
     quarantined_state_updates: dict = field(default_factory=dict)
     stderr: str = ""
@@ -373,6 +376,9 @@ class SquadCliProvider(AICodingCliProvider):
         )
         repair_attempted = False
         repair_succeeded = False
+        repair_duration_ms: int | None = None
+        repair_model_name = ""
+        repair_outcome = ""
 
         if (
             echelon_result is None
@@ -387,9 +393,13 @@ class SquadCliProvider(AICodingCliProvider):
                 validation_reason,
             )
             repair_git_before = _git_boundary_snapshot(project_root)
+            repair_started = time.monotonic()
             repair_result = self.run_agent_result(
                 project_root, repair_prompt, **run_kwargs
             )
+            repair_duration_ms = int((time.monotonic() - repair_started) * 1000)
+            repair_model_name = _provider_model_name(repair_result.metadata)
+            repair_outcome = "OK" if repair_result.exit_code == 0 and not repair_result.timed_out else "ERROR"
             _verify_git_boundary(project_root, repair_git_before)
             cost_usd += repair_result.cost_usd
             token_usage += int(repair_result.token_usage or 0)
@@ -437,6 +447,9 @@ class SquadCliProvider(AICodingCliProvider):
             model_name=model_name,
             echelon_result_repair_attempted=repair_attempted,
             echelon_result_repair_succeeded=repair_succeeded,
+            echelon_result_repair_duration_ms=repair_duration_ms,
+            echelon_result_repair_model_name=repair_model_name,
+            echelon_result_repair_outcome=repair_outcome,
             provider_limit_message=provider_limit_message,
             quarantined_state_updates=quarantined_state_updates,
             stderr=backend_result.stderr,

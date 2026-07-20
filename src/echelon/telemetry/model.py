@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Iterable, Mapping
 
 
 _TOKEN_KEYS = (
@@ -62,14 +62,36 @@ class TokenUsage:
     def total(self) -> int | None:
         if not self.known:
             return None
-        if self.reported_total_tokens is not None:
+        component_total = sum(int(getattr(self, name) or 0) for name in _TOKEN_KEYS)
+        # Some providers emit a zero aggregate while still supplying usable
+        # per-category counts. Preserve the more informative observation.
+        if self.reported_total_tokens is not None and not (
+            self.reported_total_tokens == 0 and component_total > 0
+        ):
             return self.reported_total_tokens
-        return sum(int(getattr(self, name) or 0) for name in _TOKEN_KEYS)
+        return component_total
 
     def to_json_dict(self) -> dict[str, int | None]:
         result = {name: getattr(self, name) for name in _TOKEN_KEYS}
         result["total_tokens"] = self.total
         return result
+
+
+def aggregate_token_usage(usages: Iterable[TokenUsage]) -> TokenUsage:
+    """Combine observed dispatch usage without inventing missing components."""
+    known = tuple(usage for usage in usages if usage.known)
+    if not known:
+        return TokenUsage.unknown()
+
+    def component(name: str) -> int | None:
+        values = [getattr(usage, name) for usage in known]
+        observed = [value for value in values if value is not None]
+        return sum(observed) if observed else None
+
+    return TokenUsage(
+        **{name: component(name) for name in _TOKEN_KEYS},
+        reported_total_tokens=sum(int(usage.total or 0) for usage in known),
+    )
 
 
 @dataclass(frozen=True)

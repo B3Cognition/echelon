@@ -18,6 +18,8 @@ from echelon.telemetry.store import TelemetryStore
 
 logger = logging.getLogger(__name__)
 
+DISPATCH_REASONS = frozenset({"initial", "planned_iteration", "semantic_repair", "deterministic_repair", "provider_retry", "resume", "manual_rerun"})
+
 
 @dataclass(frozen=True)
 class DispatchContext:
@@ -25,6 +27,11 @@ class DispatchContext:
     agent: str
     kind: str
     attempt: int
+    reason: str = "initial"
+
+    def __post_init__(self) -> None:
+        if self.reason not in DISPATCH_REASONS:
+            raise ValueError(f"invalid dispatch reason: {self.reason!r}")
 
 
 class InstrumentedProvider:
@@ -111,6 +118,23 @@ class InstrumentedProvider:
                         token_usage=_token_usage(result),
                     )
                 )
+                self._store.append_event({
+                    "schema_version": 1, "type": "dispatch", "trace_id": self._store.trace_id,
+                    "phase": context.phase, "agent": context.agent, "attempt": context.attempt,
+                    "reason": context.reason, "outcome": status, "event_time": _timestamp(ended),
+                    "started_at": _timestamp(started), "ended_at": _timestamp(ended),
+                    "duration_ms": duration_ms, "model": str(getattr(result, "model_name", "") or ""),
+                    "blocker": _blocker(result),
+                })
+                if bool(getattr(result, "echelon_result_repair_attempted", False)):
+                    self._store.append_event({
+                        "schema_version": 1, "type": "dispatch", "trace_id": self._store.trace_id,
+                        "phase": context.phase, "agent": context.agent, "attempt": context.attempt + 1,
+                        "reason": "provider_retry", "outcome": str(getattr(result, "echelon_result_repair_outcome", "ERROR") or "ERROR"),
+                        "event_time": _timestamp(ended), "started_at": _timestamp(ended), "ended_at": _timestamp(ended),
+                        "duration_ms": int(getattr(result, "echelon_result_repair_duration_ms", 0) or 0),
+                        "model": str(getattr(result, "echelon_result_repair_model_name", "") or ""), "blocker": "",
+                    })
             except Exception:
                 logger.warning(
                     "Could not persist telemetry span for workflow=%s phase=%s",
@@ -148,6 +172,7 @@ def _attributes(
         "echelon.agent.name": context.agent,
         "echelon.dispatch.kind": context.kind,
         "echelon.dispatch.attempt": context.attempt,
+        "echelon.dispatch.reason": context.reason,
         "echelon.result.verdict": str(getattr(result, "verdict", None) or "UNKNOWN"),
         "gen_ai.operation.name": "agent",
     }
@@ -165,6 +190,15 @@ def _attributes(
             getattr(result, "echelon_result_repair_succeeded", False)
         )
     return attributes
+
+
+def _blocker(result: object | None) -> str:
+    updates = getattr(result, "state_updates", {})
+    if isinstance(updates, dict):
+        value = updates.get("blocked_reason")
+        if isinstance(value, str) and value:
+            return value
+    return ""
 
 
 def _timestamp(value: datetime) -> str:

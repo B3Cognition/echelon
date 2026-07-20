@@ -28,6 +28,7 @@ from harness.squad import (
 from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
+from echelon.telemetry.spec_adapter import analyze_spec_run
 
 DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
 EXT_YML = EXT_ROOT / "extension/extension.yml"
@@ -2254,6 +2255,44 @@ class TestStructuralGuardDeterminism:
 
 
 class TestProductInputMappingRepair:
+    def test_dispatch_reason_is_controller_owned(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+        assert ctrl._dispatch_reason("phase3-plan", 1) == "initial"
+        assert ctrl._dispatch_reason("phase3-plan", 2) == "planned_iteration"
+        assert ctrl._dispatch_reason("phase1-what", 2) == "semantic_repair"
+        state = store.load()
+        state["product_input_mapping_repair"] = {"protocol_version": 2}
+        store.save(state)
+        assert ctrl._dispatch_reason("phase3-plan", 2) == "deterministic_repair"
+
+    def test_blocker_event_survives_mutable_state_rewrite(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+        ctrl._block_after_executor_failure(
+            "phase3-plan", "agent_exit_code_1", SquadAgentResult(1, None, "", 0, False)
+        )
+        state = store.load()
+        state["blocked_reason"] = "rewritten"
+        store.save(state)
+        events = [json.loads(line) for line in ctrl._telemetry_store.events_path.read_text().splitlines()]
+        assert events[-1]["type"] == "blocker"
+        assert events[-1]["reason"] == "agent_exit_code_1"
+
+    def test_analyzer_uses_controller_blocker_history_not_state(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+        result = SquadAgentResult(1, None, "", 0, False)
+        ctrl._block_after_executor_failure("phase3-plan", "agent_exit_code_1", result)
+        ctrl._block_after_executor_failure("phase3-plan", "agent_exit_code_1", result)
+        state = store.load()
+        state["blocked_reason_history"] = []
+        store.save(state)
+
+        report = analyze_spec_run(store.squad_dir)
+
+        assert report.workflow_metrics["repeated_blockers"] == {"agent_exit_code_1": 2}
+
     def test_plan_mapping_failure_is_requeued_with_controller_context(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)

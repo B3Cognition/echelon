@@ -15,6 +15,7 @@ from echelon.telemetry.model import ExecutionSpan, PhaseTimingEvent, TelemetryDi
 
 TELEMETRY_SCHEMA_VERSION = 1
 OTEL_SEMCONV_VERSION = "1.43.0"
+_DISPATCH_REASONS = frozenset({"initial", "planned_iteration", "semantic_repair", "deterministic_repair", "provider_retry", "resume", "manual_rerun"})
 
 
 def _utc_now() -> str:
@@ -96,6 +97,18 @@ class TelemetryStore:
         """Append a content-free lifecycle event to the run event stream."""
         if event.get("trace_id") != self.trace_id:
             raise ValueError("event trace id does not match telemetry manifest")
+        if event.get("type") == "dispatch":
+            required = ("phase", "agent", "attempt", "reason", "outcome", "event_time", "started_at", "ended_at", "duration_ms")
+            if any(event.get(key) is None or event.get(key) == "" for key in required):
+                raise ValueError("invalid dispatch lifecycle event")
+            if event.get("reason") not in _DISPATCH_REASONS:
+                raise ValueError("invalid dispatch lifecycle reason")
+            if isinstance(event.get("attempt"), bool) or not isinstance(event.get("attempt"), int) or event["attempt"] < 1:
+                raise ValueError("invalid dispatch lifecycle attempt")
+            if isinstance(event.get("duration_ms"), bool) or not isinstance(event.get("duration_ms"), int) or event["duration_ms"] < 0:
+                raise ValueError("invalid dispatch lifecycle duration")
+            if not isinstance(event.get("model"), str) or not isinstance(event.get("blocker"), str):
+                raise ValueError("invalid dispatch lifecycle metadata")
         with self._write_lock:
             self.ensure_manifest()
             record = json.dumps(dict(event), separators=(",", ":"), sort_keys=True)

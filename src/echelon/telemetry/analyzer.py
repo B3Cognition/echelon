@@ -20,6 +20,7 @@ class RunAnalysis:
     domain_repairs_by_source: dict[str, int]
     partial_debt_source_count: int
     tokens: TokenUsage
+    known_token_dispatches: int
     unknown_token_dispatches: int
     active_duration_ms: int | None
     wall_clock_duration_ms: int | None
@@ -40,8 +41,30 @@ class RunAnalysis:
     provenance: dict[str, str] = field(default_factory=dict)
     diagnostics: tuple[str, ...] = ()
 
+    @property
+    def token_coverage(self) -> float | None:
+        """Share of recorded provider dispatches that reported token usage.
+
+        ``None`` deliberately means that no dispatch telemetry is available, not
+        that every dispatch failed to report usage.
+        """
+        dispatches = self.known_token_dispatches + self.unknown_token_dispatches
+        return self.known_token_dispatches / dispatches if dispatches else None
+
+    @property
+    def token_status(self) -> str:
+        if not self.tokens.known:
+            return "unavailable"
+        if self.unknown_token_dispatches:
+            return "partial"
+        return "complete"
+
     def to_json_dict(self) -> dict[str, object]:
         payload = asdict(self)
         payload["tokens"] = self.tokens.to_json_dict()
         payload["tokens"]["known"] = self.tokens.known
+        payload["tokens"]["known_dispatches"] = self.known_token_dispatches
+        payload["tokens"]["unknown_dispatches"] = self.unknown_token_dispatches
+        payload["tokens"]["coverage"] = self.token_coverage
+        payload["tokens"]["status"] = self.token_status
         return payload

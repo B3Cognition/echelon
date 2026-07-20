@@ -47,6 +47,19 @@ def _openai_config(features: dict[str, object] | None = None) -> HarnessConfig:
     )
 
 
+def _registry_tool_payload(registry, name: str, args: dict[str, object]) -> dict[str, object]:
+    message = registry.execute_message({
+        "id": f"call_{name}",
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(args)},
+    })
+    content = message.get("content")
+    assert isinstance(content, str)
+    parsed = json.loads(content)
+    assert isinstance(parsed, dict)
+    return parsed
+
+
 def test_cli_run_result_defaults() -> None:
     result = CliRunResult(exit_code=0, stdout="ok", stderr="")
 
@@ -1366,6 +1379,12 @@ def test_openai_compatible_backend_sends_tool_registry_when_enabled(
     )
 
     assert result.exit_code == 0
+    assert captured["payload"]["messages"][0]["role"] == "system"
+    assert "Prefer bulk context tools first" in captured["payload"]["messages"][0]["content"]
+    assert captured["payload"]["messages"][1] == {
+        "role": "user",
+        "content": "Write an artifact.",
+    }
     tool_names = [
         tool["function"]["name"]
         for tool in captured["payload"]["tools"]
@@ -1374,7 +1393,195 @@ def test_openai_compatible_backend_sends_tool_registry_when_enabled(
     assert "write_file" in tool_names
     assert "grep_files" in tool_names
     assert "list_files" in tool_names
+    assert "read_many_files" in tool_names
+    assert "list_tree_with_sizes" in tool_names
+    assert "grep_context" in tool_names
+    assert "read_domain_pack" in tool_names
+    assert "read_re_analysis_pack" in tool_names
+    assert "codegraph_context" in tool_names
+    assert "perlgraph_context" in tool_names
     assert captured["payload"]["tool_choice"] == "auto"
+
+
+def test_openai_compatible_registry_executes_bulk_context_tools(tmp_path) -> None:
+    from harness.ai_cli_backends.openai_compatible import _OpenAIToolRegistry
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "alpha.py").write_text(
+        "one\nneedle here\nthree\n", encoding="utf-8"
+    )
+    (tmp_path / "src" / "beta.py").write_text("beta\n", encoding="utf-8")
+    source_root = tmp_path / "sources" / "source-a"
+    domain_root = source_root / "domain"
+    domain_root.mkdir(parents=True)
+    (domain_root / "main.pl").write_text("print 'needle';\n", encoding="utf-8")
+    run_re = tmp_path / "runs" / "re-1" / "re"
+    (run_re / "sources" / "source-a" / "specs" / "001-re-domain").mkdir(
+        parents=True
+    )
+    (run_re / "sources" / "source-a" / "domain-manifest.json").write_text(
+        json.dumps({
+            "source_id": "source-a",
+            "domains": [{
+                "domain_id": "001-re-domain",
+                "root": "domain",
+                "source_file_count": 1,
+            }],
+        }),
+        encoding="utf-8",
+    )
+    (run_re / "sources" / "source-a" / "analysis.json").write_text(
+        json.dumps({"summary": "analysis"}),
+        encoding="utf-8",
+    )
+    (run_re / "sources" / "source-a" / "codegraph-summary.json").write_text(
+        json.dumps({"symbols": ["main"]}),
+        encoding="utf-8",
+    )
+    (run_re / "sources" / "source-a" / "perlgraph-summary.json").write_text(
+        json.dumps({"packages": ["Source::A"]}),
+        encoding="utf-8",
+    )
+    (run_re / "re-source-index.json").write_text(
+        json.dumps({
+            "sources": [{
+                "id": "source-a",
+                "absolute_path": str(source_root),
+                "path": "sources/source-a",
+            }]
+        }),
+        encoding="utf-8",
+    )
+    (run_re / "re-execution-plan.json").write_text(
+        json.dumps({"profile": "balanced"}),
+        encoding="utf-8",
+    )
+    (run_re / "workspace").mkdir()
+    (run_re / "workspace" / "domain-catalog.md").write_text(
+        "| source-a | 001-re-domain | domain |\n",
+        encoding="utf-8",
+    )
+    (run_re / "sources" / "source-a" / "specs" / "001-re-domain" / "spec.md").write_text(
+        "# Existing spec\n",
+        encoding="utf-8",
+    )
+
+    registry = _OpenAIToolRegistry(tmp_path, {})
+
+    many = _registry_tool_payload(
+        registry,
+        "read_many_files",
+        {"paths": ["src/alpha.py", "src/beta.py"], "limit_per_file": 10},
+    )
+    assert many["status"] == "ok"
+    assert [item["path"] for item in many["files"]] == ["src/alpha.py", "src/beta.py"]
+    assert "needle here" in many["files"][0]["content"]
+
+    tree = _registry_tool_payload(
+        registry,
+        "list_tree_with_sizes",
+        {"path": "src", "max_entries": 10},
+    )
+    assert tree["status"] == "ok"
+    assert {"path": "src/alpha.py", "type": "file", "size": 22} in tree["entries"]
+
+    grep = _registry_tool_payload(
+        registry,
+        "grep_context",
+        {"pattern": "needle", "path": "src", "before": 1, "after": 1},
+    )
+    assert grep["status"] == "ok"
+    assert grep["matches"][0]["path"] == "src/alpha.py"
+    assert "one" in grep["matches"][0]["context"]
+    assert "three" in grep["matches"][0]["context"]
+
+    analysis_pack = _registry_tool_payload(
+        registry,
+        "read_re_analysis_pack",
+        {"run_dir": "runs/re-1/re"},
+    )
+    assert analysis_pack["status"] == "ok"
+    assert "re-execution-plan.json" in analysis_pack["files"]
+    assert "workspace/domain-catalog.md" in analysis_pack["files"]
+
+    domain_pack = _registry_tool_payload(
+        registry,
+        "read_domain_pack",
+        {
+            "run_dir": "runs/re-1/re",
+            "source_id": "source-a",
+            "domain_id": "001-re-domain",
+        },
+    )
+    assert domain_pack["status"] == "ok"
+    assert domain_pack["owned_root"] == "domain"
+    assert domain_pack["source_files"][0]["path"] == "sources/source-a/domain/main.pl"
+    assert "# Existing spec" in domain_pack["target_spec"]["content"]
+
+    codegraph = _registry_tool_payload(
+        registry,
+        "codegraph_context",
+        {"run_dir": "runs/re-1/re", "source_id": "source-a"},
+    )
+    assert codegraph["status"] == "ok"
+    assert "codegraph-summary.json" in codegraph["files"]
+
+    perlgraph = _registry_tool_payload(
+        registry,
+        "perlgraph_context",
+        {"run_dir": "runs/re-1/re", "source_id": "source-a"},
+    )
+    assert perlgraph["status"] == "ok"
+    assert "perlgraph-summary.json" in perlgraph["files"]
+
+
+def test_openai_compatible_tool_call_summary_includes_bulk_args() -> None:
+    from harness.ai_cli_backends.openai_compatible import _tool_call_summary
+
+    summary = _tool_call_summary({
+        "type": "function",
+        "function": {
+            "name": "read_many_files",
+            "arguments": json.dumps({
+                "paths": [
+                    "runs/re-1/re/re-execution-plan.json",
+                    "runs/re-1/re/re-source-index.json",
+                    "runs/re-1/re/workspace/domain-catalog.md",
+                    "runs/re-1/re/workspace/architecture-map.json",
+                ],
+                "limit_per_file": 200,
+            }),
+        },
+    })
+
+    assert "paths=4" in summary
+    assert "re-execution-plan.json" in summary
+    assert "+1 more" in summary
+    assert "limit_per_file=200" in summary
+
+
+def test_openai_compatible_tool_result_summary_previews_bulk_results() -> None:
+    from harness.ai_cli_backends.openai_compatible import _tool_result_status
+
+    status = _tool_result_status({
+        "role": "tool",
+        "tool_call_id": "call_read_many_files",
+        "content": json.dumps({
+            "status": "ok",
+            "files": [
+                {"path": "runs/re-1/re/re-execution-plan.json"},
+                {"path": "runs/re-1/re/re-source-index.json"},
+                {"path": "runs/re-1/re/workspace/domain-catalog.md"},
+                {"path": "runs/re-1/re/workspace/architecture-map.json"},
+            ],
+            "truncated": False,
+        }),
+    })
+
+    assert "files=4" in status
+    assert "re-execution-plan.json" in status
+    assert "+1 more" in status
+    assert "truncated=false" in status
 
 
 def test_openai_compatible_backend_sends_web_tools_when_enabled(
@@ -1513,11 +1720,95 @@ def test_openai_compatible_backend_executes_nonstreaming_write_file_tool_call(
     assert result.metadata["tool_call_count"] == 1
     assert result.token_usage == 17
     captured = capsys.readouterr()
-    assert "[openai-compatible] turn 1/9: request" in captured.err
+    assert "[openai-compatible] turn 1: request" in captured.err
+    assert "tool_rounds=0/24" in captured.err
+    assert "messages=2" in captured.err
+    assert "[openai-compatible] tool budget: rounds=1/24 calls_total=0" in captured.err
     assert "[openai-compatible] tool write_file: spec.md" in captured.err
-    assert "[openai-compatible] tool write_file result: ok" in captured.err
+    assert "[openai-compatible] tool write_file result: ok bytes=14 path=spec.md" in captured.err
+    assert "[openai-compatible] turn 1 summary:" in captured.err
+    assert "model_text=0 chars" in captured.err
+    assert "tool_time=" in captured.err
+    assert "tool_budget=1/24" in captured.err
+    assert "[openai-compatible] turn 2: request" in captured.err
+    assert "messages=4" in captured.err
+    assert "  llm> echelon_result:" in captured.err
+    assert "  llm>   verdict: DONE" in captured.err
+    assert "[openai-compatible] turn 2 summary:" in captured.err
+    assert "tool_budget=1/24" in captured.err
     assert "[openai-compatible] final: finish_reason=stop" in captured.err
+    assert "elapsed=" in captured.err
     assert "[openai-compatible]" not in result.stdout
+
+
+def test_openai_compatible_tool_round_limit_reports_last_context(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "choices": [
+                    {
+                        "message": {
+                            "content": "Need one more file before finalizing.",
+                            "tool_calls": [
+                                {
+                                    "id": "call_read",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "read_file",
+                                        "arguments": json.dumps({"path": "missing.md"}),
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+                "usage": {"total_tokens": 11},
+            }).encode()
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        lambda request, timeout: FakeResponse(),
+    )
+
+    result = OpenAICompatibleBackend(
+        _openai_config(
+            features={
+                "streaming": False,
+                "tool_calls": True,
+                "max_tool_rounds": 0,
+            }
+        )
+    ).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Read and finish.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 1
+    assert result.metadata["provider_error_code"] == "tool_round_limit"
+    assert result.metadata["last_tool_name"] == "read_file"
+    assert result.metadata["last_tool_summary"] == "missing.md"
+    assert result.metadata["last_model_preview"] == "Need one more file before finalizing."
+    assert "last_tool=read_file missing.md" in result.stderr
+    assert "last_model_preview=Need one more file before finalizing." in result.stderr
+    captured = capsys.readouterr()
+    assert "[openai-compatible] final: failed reason=tool_round_limit" in captured.err
+    assert "last_tool=read_file missing.md" in captured.err
+    assert "last_model_preview=Need one more file before finalizing." in captured.err
 
 
 def test_openai_compatible_backend_executes_fetch_url_tool_call(
@@ -1620,7 +1911,7 @@ def test_openai_compatible_backend_executes_fetch_url_tool_call(
     assert tool_payload["truncated"] is True
     captured = capsys.readouterr()
     assert "[openai-compatible] tool fetch_url: https://example.com/page" in captured.err
-    assert "[openai-compatible] tool fetch_url result: ok" in captured.err
+    assert "[openai-compatible] tool fetch_url result: ok http_status=200 chars=20 truncated=true" in captured.err
 
 
 def test_openai_compatible_backend_executes_web_search_tool_call(
@@ -1728,7 +2019,7 @@ def test_openai_compatible_backend_executes_web_search_tool_call(
 
 
 def test_openai_compatible_backend_executes_streamed_tool_call_chunks(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, capsys
 ) -> None:
     from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
 
@@ -1801,6 +2092,12 @@ def test_openai_compatible_backend_executes_streamed_tool_call_chunks(
     assert result.metadata["streamed"] is True
     assert result.metadata["tool_call_count"] == 1
     assert result.token_usage == 16
+    captured = capsys.readouterr()
+    assert "[openai-compatible] stream: tool_call_delta" in captured.err
+    assert "args_chars=" in captured.err
+    assert "[openai-compatible] stream: content_delta chars=" in captured.err
+    assert "  llm> echelon_result:" in captured.err
+    assert "[openai-compatible] tool write_file result: ok bytes=12 path=notes.md" in captured.err
 
 
 def test_openai_compatible_backend_tool_rejects_path_escape(

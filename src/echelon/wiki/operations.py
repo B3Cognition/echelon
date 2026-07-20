@@ -49,7 +49,7 @@ def render_operations(project_root: Path, output_dir: Path) -> tuple[str, ...]:
 
 
 def _run_page(report: RunAnalysis) -> str:
-    token = f"{report.tokens.total:,}" if report.tokens.total is not None else "unknown"
+    token = _token_summary(report)
     active = (
         f"{report.active_duration_ms / 60_000:.1f} minutes"
         if report.active_duration_ms is not None
@@ -85,7 +85,7 @@ def _run_page(report: RunAnalysis) -> str:
     if report.by_phase:
         lines.extend(["", "## Phase cost", "", "| Phase | Dispatches | Tokens | Duration |", "|---|---:|---:|---:|"])
         lines.extend(
-            f"| `{phase}` | {values['dispatches']} | {values['tokens']} | {values['duration_ms'] / 1000:.1f}s |"
+            f"| `{phase}` | {values['dispatches']} | {_bucket_tokens(values)} | {values['duration_ms'] / 1000:.1f}s |"
             for phase, values in report.by_phase.items()
         )
     if report.workflow == "spec":
@@ -123,14 +123,46 @@ def _performance(reports: tuple[RunAnalysis, ...]) -> str:
 
 
 def _tokens(reports: tuple[RunAnalysis, ...]) -> str:
-    lines = ["# Token Usage", "", "| Run | Tokens | Unknown dispatches | Ceiling |", "|---|---:|---:|---|"]
+    lines = [
+        "# Token Usage",
+        "",
+        "| Run | Observed tokens | Coverage | Status | Ceiling |",
+        "|---|---:|---:|---|---|",
+    ]
     for report in reports:
-        total = str(report.tokens.total) if report.tokens.total is not None else "unknown"
+        total = str(report.tokens.total) if report.tokens.total is not None else "unavailable"
+        coverage = (
+            f"{report.token_coverage:.0%} "
+            f"({report.known_token_dispatches}/{report.known_token_dispatches + report.unknown_token_dispatches})"
+            if report.token_coverage is not None
+            else "unavailable"
+        )
         lines.append(
             f"| [{report.run_id}]({_report_link(report)}) | {total} | "
-            f"{report.unknown_token_dispatches} | {report.compliance.get('token_ceiling', 'unknown')} |"
+            f"{coverage} | {report.token_status} | {report.compliance.get('token_ceiling', 'unknown')} |"
         )
     return "\n".join(lines)
+
+
+def _token_summary(report: RunAnalysis) -> str:
+    if report.tokens.total is None:
+        return "unavailable (no provider usage telemetry)"
+    total = f"{report.tokens.total:,}"
+    if report.token_status != "partial":
+        return total
+    dispatches = report.known_token_dispatches + report.unknown_token_dispatches
+    return (
+        f"{total} observed (partial; {report.known_token_dispatches}/"
+        f"{dispatches} dispatches reported)"
+    )
+
+
+def _bucket_tokens(values: dict[str, int]) -> str:
+    total = str(values["tokens"])
+    unknown = values.get("unknown_token_dispatches", 0)
+    if not unknown:
+        return total
+    return f"{total} observed (partial; {values.get('known_token_dispatches', 0)}/{values['dispatches']})"
 
 
 def _repeated(reports: tuple[RunAnalysis, ...]) -> str:

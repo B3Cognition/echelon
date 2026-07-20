@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 from echelon.telemetry.analyzer import RunAnalysis
-from echelon.telemetry.model import ExecutionSpan, TokenUsage
+from echelon.telemetry.model import ExecutionSpan, TokenUsage, aggregate_token_usage
 from echelon.telemetry.store import TelemetryStore
 from harness.re_profiles import migrate_legacy_re_profile
 
@@ -20,7 +20,7 @@ def analyze_re_run(run_dir: Path) -> RunAnalysis:
     manifest = _read_object(run / "telemetry" / "manifest.json")
     profile = _profile(outer, inner, manifest)
     spans, span_diagnostics = _spans(run, profile, manifest)
-    tokens, unknown_dispatches = _tokens(outer, inner, spans)
+    tokens, known_dispatches, unknown_dispatches = _tokens(spans)
     active_duration = _optional_nonnegative(
         outer.get("active_duration_ms", inner.get("re_active_duration_ms"))
     )
@@ -68,6 +68,11 @@ def analyze_re_run(run_dir: Path) -> RunAnalysis:
     diagnostics = [item.message for item in span_diagnostics]
     if not tokens.known:
         diagnostics.append("provider token usage is unavailable")
+    elif unknown_dispatches:
+        diagnostics.append(
+            "provider token usage is partial: "
+            f"{unknown_dispatches} dispatches did not report usage"
+        )
     if active_duration is None:
         diagnostics.append("active execution duration is unavailable")
     wall_clock = _wall_clock_duration(run)
@@ -83,6 +88,7 @@ def analyze_re_run(run_dir: Path) -> RunAnalysis:
         domain_repairs_by_source=dict(sorted(repairs.items())),
         partial_debt_source_count=partial,
         tokens=tokens,
+        known_token_dispatches=known_dispatches,
         unknown_token_dispatches=unknown_dispatches,
         active_duration_ms=active_duration,
         wall_clock_duration_ms=wall_clock,
@@ -202,11 +208,7 @@ def _spans(
     return store.read_spans()
 
 
-def _tokens(
-    outer: Mapping[str, object],
-    inner: Mapping[str, object],
-    spans: Iterable[ExecutionSpan],
-) -> tuple[TokenUsage, int]:
+def _tokens(spans: Iterable[ExecutionSpan]) -> tuple[TokenUsage, int, int]:
     span_list = tuple(spans)
     known_totals = [
         span.token_usage.total
@@ -215,27 +217,23 @@ def _tokens(
     ]
     unknown = sum(1 for span in span_list if not span.token_usage.known)
     if known_totals:
-        return TokenUsage(reported_total_tokens=sum(known_totals)), unknown
-    explicit_unknown = _nonnegative(
-        outer.get(
-            "unknown_token_dispatches", inner.get("re_unknown_token_dispatches")
+        return (
+            aggregate_token_usage(span.token_usage for span in span_list),
+            len(known_totals),
+            unknown,
         )
-    )
-    if "token_usage" in outer and explicit_unknown == 0:
-        return TokenUsage(reported_total_tokens=_nonnegative(outer["token_usage"])), 0
-    if "re_token_usage" in inner and explicit_unknown == 0:
-        return TokenUsage(reported_total_tokens=_nonnegative(inner["re_token_usage"])), 0
-    return TokenUsage.unknown(), explicit_unknown or unknown
+    return TokenUsage.unknown(), 0, unknown
 
 
 def _by_phase(spans: Iterable[ExecutionSpan]) -> dict[str, dict[str, int]]:
     result: dict[str, dict[str, int]] = {}
     for span in spans:
         phase = str(span.attributes.get("echelon.workflow.phase") or span.name)
-        bucket = result.setdefault(phase, {"dispatches": 0, "duration_ms": 0, "tokens": 0})
+        bucket = result.setdefault(phase, {"dispatches": 0, "duration_ms": 0, "tokens": 0, "known_token_dispatches": 0, "unknown_token_dispatches": 0})
         bucket["dispatches"] += 1
         bucket["duration_ms"] += span.duration_ms
         bucket["tokens"] += int(span.token_usage.total or 0)
+        bucket["known_token_dispatches" if span.token_usage.known else "unknown_token_dispatches"] += 1
     return dict(sorted(result.items()))
 
 

@@ -795,6 +795,7 @@ class SquadController:
 
             if self._budget_exhausted():
                 self._state_store.set_blocked("token_budget_exhausted")
+                self._record_blocker_event(phase, "token_budget_exhausted")
                 return SquadResult(
                     status="budget_exhausted",
                     phase=phase,
@@ -828,6 +829,7 @@ class SquadController:
                 s["phase_dispatch_limit"] = phase_limit
                 s["status"] = "blocked"
                 self._state_store.save(s)
+                self._record_blocker_event(phase, "phase_dispatch_limit")
                 print(
                     f"[squad] ✗ phase dispatch limit: {phase!r} dispatched "
                     f"{dispatch_count}× (limit {phase_limit}) — forcing escalation",
@@ -856,6 +858,7 @@ class SquadController:
                         agent=str(node.agent or node.type),
                         kind="repair" if dispatch_count > 1 else "phase",
                         attempt=dispatch_count,
+                        reason=self._dispatch_reason(phase, dispatch_count),
                     )
                 ):
                     result = executor.execute(node, self._state_store)
@@ -1077,6 +1080,7 @@ class SquadController:
                     agent=str(node.agent or node.type),
                     kind="repair" if attempt > 1 else "phase",
                     attempt=attempt,
+                    reason="manual_rerun",
                 )
             ):
                 result = executor.execute(node, self._state_store)
@@ -1844,10 +1848,28 @@ class SquadController:
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
         self._state_store.save(state)
+        self._record_blocker_event(phase, reason)
         detail = "phase not marked complete"
         if reason == "provider_session_limit":
             detail = f"missing_echelon_result; provider: {result.provider_limit_message}"
         print(f"[squad] ✗ {phase} blocked: {reason} ({detail})", flush=True)
+
+    def _record_blocker_event(self, phase: str, reason: str) -> None:
+        from datetime import datetime, timezone
+
+        try:
+            self._telemetry_store.append_event(
+                {
+                    "schema_version": 1,
+                    "type": "blocker",
+                    "trace_id": self._telemetry_store.trace_id,
+                    "phase": phase,
+                    "reason": reason,
+                    "event_time": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        except Exception:
+            logger.warning("Could not persist blocker lifecycle event", exc_info=True)
 
     def _preserve_cartographer_spec_context(self, state: dict) -> None:
         """Record an existing CARTOGRAPHER spec before blocking a failed dispatch."""
@@ -2451,6 +2473,17 @@ class SquadController:
                 if next_phase:
                     return next_phase
         return "DONE"
+
+    def _dispatch_reason(self, phase: str, attempt: int) -> str:
+        """Choose telemetry reason from controller state, never model output."""
+        state = self._state_store.load()
+        if phase == "phase1-what" and state.get("cartographer_resume_existing_spec"):
+            return "resume"
+        if state.get("product_input_mapping_repair"):
+            return "deterministic_repair"
+        if phase == "phase1-what" and attempt > 1:
+            return "semantic_repair"
+        return "planned_iteration" if attempt > 1 else "initial"
 
     def _judgment_dispatch(
         self,

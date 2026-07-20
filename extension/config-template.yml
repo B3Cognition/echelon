@@ -1230,7 +1230,7 @@ harness:
   #   #   json_mode: false
   #   #   structured_outputs: false
   #   #   tool_calls: true
-  #   #   max_tool_rounds: 8
+  #   #   max_tool_rounds: 24
   #   #   web_tools: false
   #   #   web_timeout_s: 10
   #   #   web_search_url: https://duckduckgo.com/html/
