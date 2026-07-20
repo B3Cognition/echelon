@@ -28,6 +28,9 @@ full run-local `{spec_dir}`. CARTOGRAPHER MUST author a first-pass `spec.md`
 there from the supplied templates. It must never create, switch, rename, or
 discover a branch or another spec directory.
 
+Treat `spec_dir` as authoritative. NEVER prefix it with `${SQUAD_DIR}` or
+replace it with a discovered or reconstructed spec path.
+
 On resumed/amendment passes, reuse `{spec_dir}` when `{spec_dir}/spec.md`
 exists. A reserved run-local directory without `spec.md` is a first WHAT pass:
 write the specification in that exact directory.

@@ -93,7 +93,9 @@ if command -v specify &>/dev/null; then
   # which silently defaults every agent's hormones to 0.5 because get_baseline
   # then never reaches the CONFIG_FILE fallback.
   if _resolver_out=$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_ 2>/dev/null); then
-    if [[ -n "$_resolver_out" ]] && printf '%s\n' "$_resolver_out" | grep -q '^ECHELON_CFG_'; then
+    if [[ -n "$_resolver_out" ]] \
+      && printf '%s\n' "$_resolver_out" | grep -q '^ECHELON_CFG_' \
+      && ! printf '%s\n' "$_resolver_out" | grep -Eq '^ECHELON_CFG_[^=]*-.*='; then
       # shellcheck disable=SC1090
       eval "$_resolver_out"
       _ECHELON_RESOLVER_OK=true
