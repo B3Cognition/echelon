@@ -244,6 +244,10 @@ def test_semantic_review_requires_complete_domain_audit_and_evidence(
     assert report.failures[0].semantic_findings == (
         "The retry exhaustion behavior is absent from the failure scenarios.",
     )
+    record = report.failures[0].semantic_finding_records[0]
+    assert record.finding_id.startswith("ref-")
+    assert record.category == "error-recovery"
+    assert record.source_evidence == ("`src/file-1.ts:1`",)
 
 
 @pytest.mark.unit

@@ -69,11 +69,7 @@ critical_findings: []
 
 ## Feedback Report Sections
 
-Write `{spec_dir}/feedback-report.md` with:
-
-- Effort accuracy summary
-- Architecture decision outcomes table
-- Requirements coverage matrix
-- Risk prediction accuracy
-- Test strategy effectiveness
-- Critical findings list for speckit-echelon-commander (COMMANDER) triage
+Write `{spec_dir}/feedback-report.md` using the complete
+`extension/templates/feedback-report-template.md`. This appendix retains only
+the auto-feedback YAML schema above; the template is the canonical Markdown
+format for the report.

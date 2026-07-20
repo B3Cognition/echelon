@@ -187,6 +187,11 @@ types:
     required_data_fields: [summary]
     optional_data_fields: [artifacts, domains]
 
+  state_contract_warning:
+    description: "Harness quarantined undeclared agent reporting fields instead of mutating squad state"
+    agents: [speckit-echelon-commander]
+    required_data_fields: [dropped_keys, action, reason]
+
   convergence_check:
     description: "Convergence detection result"
     agents: [speckit-echelon-commander]

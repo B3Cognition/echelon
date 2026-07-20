@@ -91,7 +91,13 @@ def test_phase_run_constitution_does_not_require_task_lexicon_config(
         def __init__(self, _config: object) -> None:
             pass
 
-        def exec_agent(self, project_root: str, _prompt: str, timeout_ms: int | None = None) -> SquadAgentResult:
+        def exec_agent(
+            self,
+            project_root: str,
+            _prompt: str,
+            timeout_ms: int | None = None,
+            **_kwargs: object,
+        ) -> SquadAgentResult:
             constitution = Path(project_root) / ".specify" / "memory" / "constitution.md"
             constitution.parent.mkdir(parents=True, exist_ok=True)
             constitution.write_text("# Constitution\n\nReal governance.\n", encoding="utf-8")
@@ -147,7 +153,13 @@ def test_phase_run_records_manual_replay_and_targets_spec_dir(
         def __init__(self, _config: object) -> None:
             pass
 
-        def exec_agent(self, project_root: str, _prompt: str, timeout_ms: int | None = None) -> SquadAgentResult:
+        def exec_agent(
+            self,
+            project_root: str,
+            _prompt: str,
+            timeout_ms: int | None = None,
+            **_kwargs: object,
+        ) -> SquadAgentResult:
             constitution = Path(project_root) / ".specify" / "memory" / "constitution.md"
             constitution.parent.mkdir(parents=True, exist_ok=True)
             constitution.write_text("# Constitution\n\nReal governance.\n", encoding="utf-8")
@@ -215,7 +227,13 @@ def test_phase_run_experimental_artifact_quality_phases(
         def __init__(self, _config: object) -> None:
             pass
 
-        def exec_agent(self, project_root: str, _prompt: str, timeout_ms: int | None = None) -> SquadAgentResult:
+        def exec_agent(
+            self,
+            project_root: str,
+            _prompt: str,
+            timeout_ms: int | None = None,
+            **_kwargs: object,
+        ) -> SquadAgentResult:
             target = Path(project_root) / "specs" / "001-demo" / report_name
             target.write_text("# Quality Report\n\nPass.\n", encoding="utf-8")
             return SquadAgentResult(

@@ -7,6 +7,70 @@ import pytest
 from harness.ai_cli_backend import CliRunResult
 from harness.config import HarnessConfig, LlmConfig
 from harness.squad_provider import PhaseAGitBoundaryError, SquadCliProvider
+from harness.echelon_result_schema import EchelonResultContract
+
+
+def test_squad_provider_preserves_normalized_token_usage(monkeypatch, tmp_path) -> None:
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="codex"),
+    )
+    provider = SquadCliProvider(config)
+
+    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+        return CliRunResult(
+            exit_code=0,
+            stdout="echelon_result:\n  verdict: PASS\n  state_updates: {}\n",
+            stderr="",
+            token_usage=17,
+            metadata={
+                "token_usage_details": {
+                    "input_tokens": 10,
+                    "output_tokens": 4,
+                    "cache_read_input_tokens": 3,
+                },
+                "response_model": "gpt-test",
+            },
+        )
+
+    monkeypatch.setattr(provider, "run_agent_result", fake_run_agent_result)
+
+    result = provider.exec_agent(str(tmp_path), "prompt")
+
+    assert result.token_usage == 17
+    assert result.token_usage_details == {
+        "input_tokens": 10,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 3,
+    }
+    assert result.provider_name == "codex"
+    assert result.model_name == "gpt-test"
+
+
+def test_squad_provider_preserves_backend_stderr(monkeypatch, tmp_path) -> None:
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="openai-compatible"),
+    )
+    provider = SquadCliProvider(config)
+
+    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+        return CliRunResult(
+            exit_code=1,
+            stdout="",
+            stderr="OpenAI-compatible API key file is not readable",
+        )
+
+    monkeypatch.setattr(provider, "run_agent_result", fake_run_agent_result)
+
+    result = provider.exec_agent(str(tmp_path), "prompt")
+
+    assert result.exit_code == 1
+    assert result.stderr == "OpenAI-compatible API key file is not readable"
 
 
 def test_squad_provider_parses_codex_backend_echelon_result(monkeypatch, tmp_path) -> None:
@@ -197,6 +261,100 @@ def test_squad_provider_does_not_accept_failed_repair_invocation(monkeypatch, tm
     assert result.echelon_result is None
     assert result.echelon_result_repair_attempted is True
     assert result.echelon_result_repair_succeeded is False
+
+
+def test_squad_provider_repairs_missing_required_dispatch_state(monkeypatch, tmp_path) -> None:
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="codex"),
+    )
+    provider = SquadCliProvider(config)
+    prompts: list[str] = []
+    contract = EchelonResultContract(
+        allowed_state_update_keys=frozenset({"tasks_lexicon_pass"}),
+        required_state_update_keys=frozenset({"tasks_lexicon_pass"}),
+        state_update_types={"tasks_lexicon_pass": "boolean"},
+        allowed_verdicts=frozenset({"COMPLETE", "BLOCKED"}),
+        unexpected_state_updates="quarantine",
+    )
+
+    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return CliRunResult(
+                exit_code=0,
+                stdout=(
+                    "echelon_result:\n"
+                    "  verdict: COMPLETE\n"
+                    "  state_updates:\n"
+                    "    tasks_lexicon_pas: true\n"
+                ),
+                stderr="",
+            )
+        return CliRunResult(
+            exit_code=0,
+            stdout=(
+                "echelon_result:\n"
+                "  verdict: COMPLETE\n"
+                "  state_updates:\n"
+                "    tasks_lexicon_pass: true\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(provider, "run_agent_result", fake_run_agent_result)
+
+    result = provider.exec_agent(str(tmp_path), "original prompt", result_contract=contract)
+
+    assert len(prompts) == 2
+    assert "required state_updates" in prompts[1]
+    assert result.state_updates == {"tasks_lexicon_pass": True}
+    assert result.echelon_result_repair_attempted is True
+    assert result.echelon_result_repair_succeeded is True
+
+
+def test_squad_provider_quarantines_extra_reporting_state_without_repair(
+    monkeypatch, tmp_path
+) -> None:
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="codex"),
+    )
+    provider = SquadCliProvider(config)
+    calls = 0
+    contract = EchelonResultContract(
+        allowed_state_update_keys=frozenset(),
+        allowed_verdicts=frozenset({"COMPLETE", "BLOCKED"}),
+        unexpected_state_updates="quarantine",
+    )
+
+    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+        nonlocal calls
+        calls += 1
+        return CliRunResult(
+            exit_code=0,
+            stdout=(
+                "echelon_result:\n"
+                "  verdict: COMPLETE\n"
+                "  state_updates:\n"
+                "    total_tasks: 61\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(provider, "run_agent_result", fake_run_agent_result)
+
+    result = provider.exec_agent(str(tmp_path), "original prompt", result_contract=contract)
+
+    assert calls == 1
+    assert result.verdict == "COMPLETE"
+    assert result.state_updates == {}
+    assert result.quarantined_state_updates == {"total_tasks": 61}
+    assert result.echelon_result_repair_attempted is False
 
 
 @pytest.mark.parametrize("mutation", ["branch", "commit"])

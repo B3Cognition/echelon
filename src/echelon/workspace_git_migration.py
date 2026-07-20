@@ -138,6 +138,7 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         "/.specify/",
         "/runs/",
         "/.claude/",
+        "/.claude-work/",
         "!/.echelon/",
         "!/.echelon/config.yml",
         "/.echelon/local.yml",

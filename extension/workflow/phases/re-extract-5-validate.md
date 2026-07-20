@@ -13,13 +13,18 @@
 
 ## Dispatch Prompt
 
-Instruct RE-VALIDATOR to audit every refreshed source-domain independently against its owned code and tests. It must apply the ambiguity, underspecification, consistency, source-evidence, error/recovery, FR, NFR, and acceptance-scenario taxonomy. It must return one complete `semantic_quality_review` record per refreshed domain: `PASS` with no findings, or `REPAIR` with at least one valid owned-domain backticked `path:line` or `path:start-end` citation per finding. It must not edit any spec; the controller routes repair domains to RE-SPECIFIER. Path-only prose, unverifiable locations, generated spec paths, quality reports, run artifacts, and evidence from another domain are invalid as `source_evidence`.
+Instruct RE-VALIDATOR to audit only the source-domain requested by the controller against its owned code and tests. It must apply the ambiguity, underspecification, consistency, source-evidence, error/recovery, FR, NFR, and acceptance-scenario taxonomy. It must return exactly one complete `semantic_quality_review` record for that domain: `PASS` with no findings, or `REPAIR` with at least one valid owned-domain backticked `path:line` or `path:start-end` citation per finding. It must not edit any spec or audit sibling domains; the controller persists completed audits and routes repair domains to RE-SPECIFIER. Path-only prose, unverifiable locations, generated spec paths, quality reports, run artifacts, and evidence from another domain are invalid as `source_evidence`.
+
+Audit the shared `Behavior Coverage` table for public operations, configuration
+keys, errors and recovery, boundaries, operator-visible behavior, tests, and
+evidence scope. The table is an index, not proof. Verify any `Evidence Scope:
+exhaustive` claim against the cited branches or invariant test.
 
 ## Expected Outputs
 
-- An `echelon_result.semantic_quality_review` object covering every refreshed domain exactly once.
+- An `echelon_result.semantic_quality_review` object covering the requested domain exactly once.
 
-The controller validates and persists the audit under `{state.output_dir}/quality/semantic-quality-review.json`. Empty sources have no record; an all-empty workspace returns an empty domain list.
+The controller validates and persists the domain audit in run state, then assembles `{state.output_dir}/quality/semantic-quality-review.json` after every domain has a current audit.
 
 ## echelon_result Schema
 
@@ -40,5 +45,5 @@ echelon_result:
     - type: phase_complete
       phase: re-extract-5-validate
       data:
-        summary: "Completed source-evidenced semantic audits for every refreshed domain"
+        summary: "Completed the requested source-evidenced semantic domain audit"
 ```

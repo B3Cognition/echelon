@@ -19,6 +19,18 @@ logger = logging.getLogger(__name__)
 
 AUTONOMY_MODES = {"guided", "semi", "banzai"}
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
+PHASE_A_IDENTITY_KEYS = frozenset(
+    {
+        "spec_id",
+        "spec_number",
+        "spec_dir",
+        "published_spec_dir",
+        "feature_branch",
+        "phase_a_default_branch",
+        "phase_a_base_commit",
+        "specify_feature_directory",
+    }
+)
 
 if TYPE_CHECKING:
     from harness.squad_provider import SquadAgentResult
@@ -220,7 +232,19 @@ class SquadStateStore:
         if from_phase not in completed:
             completed.append(from_phase)
         state["completed_phases"] = completed
+        identity_is_bootstrapped = bool(state.get("feature_branch"))
         for key, value in result.state_updates.items():
+            if identity_is_bootstrapped and key in PHASE_A_IDENTITY_KEYS:
+                if state.get(key) != value:
+                    logger.warning(
+                        "Ignoring agent attempt to change controller-owned Phase A identity "
+                        "%s: %r -> %r (run_id=%s)",
+                        key,
+                        state.get(key),
+                        value,
+                        state.get("run_id", "?"),
+                    )
+                continue
             if key == "status":
                 self._transition_status(state, value)
             else:

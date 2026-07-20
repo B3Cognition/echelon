@@ -56,7 +56,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.7.1"
+CLI_VERSION = "3.7.6"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -3610,9 +3610,10 @@ def _reset_rewind_state(
     except ValueError:
         phase_index = len(_ROADMAP_PHASES)
     if phase_index <= _ROADMAP_PHASES.index("phase1-what"):
-        rewound["lexicon_pass"] = None
+        rewound.pop("lexicon_pass", None)
         rewound["lexicon_attempts"] = 0
-        rewound["lexicon_findings"] = 0
+        rewound.pop("lexicon_findings", None)
+        rewound["lexicon_evaluation"] = "pending"
         rewound.pop("lexicon_gate_exhausted", None)
     if phase_index <= _ROADMAP_PHASES.index("phase3-plan"):
         rewound["tasks_lexicon_pass"] = None
@@ -4826,6 +4827,20 @@ def _select_squad_dir(
             raise SystemExit(1) from exc
         return outcome.run_dir, True
 
+    def choose_active_run() -> bool:
+        """Return whether an interactive user chose to continue the active run."""
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return False
+
+        active_message = str(state.get("user_message") or "").strip()
+        branch = str(state.get("feature_branch") or "current branch").strip()
+        answer = input(
+            f"Active spec {existing_dir.name} on {branch}.\n"
+            f"  Current task: {active_message or '(not recorded)'}\n"
+            "Continue current spec/branch or start a new spec? [c/N] "
+        ).strip().lower()
+        return answer in {"c", "continue"}
+
     if reset:
         return start_fresh()
 
@@ -4847,6 +4862,12 @@ def _select_squad_dir(
 
     # Different task → new run dir (preserves old one, doesn't overwrite)
     if user_message and user_message != state.get("user_message", ""):
+        if choose_active_run():
+            print(
+                f"[squad] continuing {existing_dir.name}; keeping its current task",
+                flush=True,
+            )
+            return existing_dir, False
         return start_fresh()
 
     # Same task, resumable status → resume in existing dir
@@ -5280,6 +5301,11 @@ def _cmd_run(
     state_store = SquadStateStore(squad_dir)
     product_inputs = None
     existing_state = state_store.load()
+    run_message = message
+    if not is_fresh:
+        existing_message = str(existing_state.get("user_message") or "").strip()
+        if existing_message:
+            run_message = existing_message
     existing_inputs = existing_state.get("product_inputs") if existing_state else None
     if existing_inputs and not reset:
         declared_before = existing_inputs.get("declarations") if isinstance(existing_inputs, dict) else None
@@ -5357,20 +5383,20 @@ def _cmd_run(
     _banner("SQUAD RUN", [
         ("Run ID", run_id),
         ("Mode", mode),
-        ("Task", (message[:80] + "…") if len(message) > 80 else message),
+        ("Task", (run_message[:80] + "…") if len(run_message) > 80 else run_message),
         ("Dir", str(squad_dir.name)),
         ("Implementation targets", ", ".join(implementation_targets)),
         ("Published RE", "ignored" if ignore_re else "latest"),
     ])
 
-    result = controller.run(user_message=message, mode=mode, next_phase_override=next_phase)
+    result = controller.run(user_message=run_message, mode=mode, next_phase_override=next_phase)
 
     _print_squad_summary(
         project_root,
         squad_dir,
         result,
         mode=mode,
-        message=message,
+        message=run_message,
         implementation_targets=implementation_targets,
     )
     _print_next_steps(project_root, result.status)
@@ -6357,6 +6383,7 @@ def _cmd_continue(
     verified_recovery = _verified_lexicon_gate_recovery_phase(project_root, state)
     if verified_recovery is not None:
         next_phase, findings = verified_recovery
+        state["lexicon_evaluation"] = "passed"
         state["lexicon_pass"] = True
         state["lexicon_findings"] = findings
         state["lexicon_attempts"] = 0
@@ -7402,18 +7429,15 @@ def _resolve_escalation_option(answer: str, options: object) -> dict | None:
 def _preserve_active_spec_context(project_root: Path, state: dict) -> None:
     """Record the current spec branch/dir before resume re-dispatch.
 
-    CARTOGRAPHER may be re-dispatched after a human escalation. If the first
-    pass already created the spec-kit branch and spec directory, resume must
-    continue enhancing that spec, not call speckit.specify again and allocate a
-    new branch number.
+    CARTOGRAPHER may be re-dispatched after a human escalation. Resume must
+    continue using the same Echelon-owned branch and full spec directory.
     """
     if state.get("phase") != "phase1-what":
         return
 
     # Phase A bootstrap reserves a run-local target path before CARTOGRAPHER
-    # has called spec-kit.  A directory alone is therefore not evidence of an
-    # existing spec; carrying this flag into the first WHAT pass suppresses
-    # the required `speckit.specify` invocation.
+    # authors the first spec. A directory alone is therefore not evidence of
+    # an existing spec; the resume flag is set only once spec.md exists.
     state.pop("cartographer_resume_existing_spec", None)
 
     spec_dir = state.get("spec_dir")
@@ -7670,15 +7694,154 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
 
 # ── RE lifecycle and publication subcommands ────────────────────────────────
 
+_RE_PHASE_LABELS = {
+    "re-extract-0-preflight": "preflight",
+    "re-extract-1-analyze": "source analysis",
+    "re-extract-2-specify": "domain specification and workspace synthesis",
+    "re-extract-3-verify": "coverage verification",
+    "re-extract-4-expand": "coverage expansion",
+    "re-extract-5-validate": "semantic validation",
+    "re-extract-6-checklist": "extraction checklist",
+    "re-extract-7-constitute": "constitution generation",
+}
+
+
+def _read_re_summary_state(path: Path) -> dict:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _re_source_progress(state: dict) -> str:
+    raw_states = state.get("re_source_states")
+    source_states = raw_states if isinstance(raw_states, dict) else {}
+    raw_order = state.get("re_source_order")
+    ordered = (
+        [value for value in raw_order if isinstance(value, str)]
+        if isinstance(raw_order, list)
+        else []
+    )
+    source_ids = list(
+        dict.fromkeys(
+            [*ordered, *(key for key in source_states if isinstance(key, str))]
+        )
+    )
+    if not source_ids:
+        return "not initialized"
+    statuses = [
+        str(source_states.get(source_id, {}).get("status") or "pending")
+        if isinstance(source_states.get(source_id), dict)
+        else "pending"
+        for source_id in source_ids
+    ]
+    passed = statuses.count("passed")
+    summary = f"{passed}/{len(source_ids)} passed"
+    partial = statuses.count("partial_quality_debt")
+    active = statuses.count("active")
+    pending = statuses.count("pending")
+    extras: list[str] = []
+    if partial:
+        extras.append(f"{partial} partial")
+    if active:
+        extras.append(f"{active} active")
+    if pending:
+        extras.append(f"{pending} pending")
+    return summary + (" · " + " · ".join(extras) if extras else "")
+
+
+def _re_domain_count(run_re_dir: Path) -> str:
+    architecture = _read_re_summary_state(
+        run_re_dir / "workspace" / "architecture-map.json"
+    )
+    domains = architecture.get("domains")
+    if not isinstance(domains, list):
+        return "not available"
+    return str(len(domains))
+
+
+def _print_re_continue_summary(
+    project_root: Path,
+    *,
+    re_max_inner: int | None,
+) -> None:
+    """Print controller-owned RE orientation before any provider dispatch."""
+    from harness.re_lifecycle import resolve_current_re_run
+
+    run_dir = resolve_current_re_run(project_root)
+    if run_dir is None:
+        return
+    run_re_dir = run_dir / "re"
+    outer = _read_re_summary_state(run_dir / "state.json")
+    inner = _read_re_summary_state(run_re_dir / "state.json")
+    status = str(outer.get("status") or inner.get("status") or "unknown")
+    phase = str(inner.get("phase") or outer.get("phase") or "unknown")
+    phase_label = _RE_PHASE_LABELS.get(phase, "current controller phase")
+    coverage = inner.get("coverage_threshold")
+    resolution = inner.get("resolution_threshold")
+    quality = (
+        f"coverage {coverage}% · resolution {resolution}%"
+        if isinstance(coverage, int) and isinstance(resolution, int)
+        else "not initialized"
+    )
+    raw_budgets = inner.get("re_source_budgets")
+    source_budget = (
+        raw_budgets.get("max_source_cycles")
+        if isinstance(raw_budgets, dict)
+        else None
+    )
+    budget_candidates = (
+        re_max_inner,
+        outer.get("re_max_inner"),
+        inner.get("re_max_inner"),
+        source_budget,
+    )
+    effective_budgets = [
+        value
+        for value in budget_candidates
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0
+    ]
+    effective_budget = max(effective_budgets, default=None)
+
+    fields = [
+        ("run", run_dir.name),
+        ("status", f"{status} → continuing"),
+        ("phase", f"{phase} — {phase_label}"),
+        ("policy", str(outer.get("re_policy") or "unknown")),
+        ("sources", _re_source_progress(inner)),
+        ("domains", _re_domain_count(run_re_dir)),
+        (
+            "synthesis",
+            "complete"
+            if inner.get("re_workspace_synthesis_complete") is True
+            else "pending",
+        ),
+        ("quality", quality),
+    ]
+    if effective_budget:
+        fields.append(("repair budget", f"{effective_budget} source-local attempts"))
+    fields.append(("artifacts", str(run_re_dir)))
+    _banner(
+        "RE CONTINUE",
+        fields,
+        subtitle="Controller state before provider dispatch.",
+    )
+
+
 def _parse_re_lifecycle_options(
     args: list[str],
     *,
     allow_policy: bool,
     allow_reset: bool,
-) -> tuple[str, int | None, bool, list[str]]:
+) -> tuple[str, int | None, bool, bool, str | None, int | None, int | None, list[str]]:
     policy = "changed"
     re_max_inner: int | None = None
     reset = False
+    no_reuse = False
+    profile: str | None = None
+    token_limit: int | None = None
+    time_limit_minutes: int | None = None
     positional: list[str] = []
     index = 0
     while index < len(args):
@@ -7690,6 +7853,32 @@ def _parse_re_lifecycle_options(
             index += 2
         elif arg.startswith("--re-policy=") and allow_policy:
             policy = arg.split("=", 1)[1].strip()
+            index += 1
+        elif arg == "--profile" and allow_policy:
+            if index + 1 >= len(args):
+                raise ValueError("--profile requires fast, balanced, or high")
+            profile = args[index + 1].strip()
+            index += 2
+        elif arg.startswith("--profile=") and allow_policy:
+            profile = arg.split("=", 1)[1].strip()
+            index += 1
+        elif arg in {"--re-token-limit", "--re-time-limit-minutes"} and allow_policy:
+            if index + 1 >= len(args):
+                raise ValueError(f"{arg} requires a positive integer")
+            try:
+                value = int(args[index + 1])
+            except ValueError as exc:
+                raise ValueError(f"{arg} requires a positive integer") from exc
+            if arg == "--re-token-limit":
+                token_limit = value
+            else:
+                time_limit_minutes = value
+            index += 2
+        elif arg.startswith("--re-token-limit=") and allow_policy:
+            token_limit = int(arg.split("=", 1)[1])
+            index += 1
+        elif arg.startswith("--re-time-limit-minutes=") and allow_policy:
+            time_limit_minutes = int(arg.split("=", 1)[1])
             index += 1
         elif arg == "--re-max-inner":
             if index + 1 >= len(args):
@@ -7708,6 +7897,9 @@ def _parse_re_lifecycle_options(
         elif arg == "--reset" and allow_reset:
             reset = True
             index += 1
+        elif arg == "--no-reuse" and allow_policy:
+            no_reuse = True
+            index += 1
         elif arg.startswith("-"):
             raise ValueError(f"unknown option {arg!r}")
         else:
@@ -7715,7 +7907,20 @@ def _parse_re_lifecycle_options(
             index += 1
     if re_max_inner is not None and re_max_inner < 1:
         raise ValueError("--re-max-inner requires a positive integer")
-    return policy, re_max_inner, reset, positional
+    if token_limit is not None and token_limit < 1:
+        raise ValueError("--re-token-limit requires a positive integer")
+    if time_limit_minutes is not None and time_limit_minutes < 1:
+        raise ValueError("--re-time-limit-minutes requires a positive integer")
+    return (
+        policy,
+        re_max_inner,
+        reset,
+        no_reuse,
+        profile,
+        token_limit,
+        time_limit_minutes,
+        positional,
+    )
 
 
 def _re_lifecycle_controller(project_root: Path):
@@ -7741,7 +7946,10 @@ def _print_re_lifecycle_result(result: object) -> None:
         if no_work:
             print(f"RE publication is current (generation {generation}); no agent work required.")
         else:
-            print(f"RE run {run_id} complete; published generation {generation}.")
+            print(
+                f"RE run {run_id} complete; publication is pending. "
+                f"Publish explicitly with: echelon re publish {run_id}"
+            )
         return
     reason = str(getattr(result, "blocked_reason", "RE lifecycle failed"))
     print(f"RE run {run_id or '(not created)'} blocked: {reason}", file=sys.stderr)
@@ -7755,7 +7963,16 @@ def _cmd_re_run(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError
 
     try:
-        policy, re_max_inner, reset, positional = _parse_re_lifecycle_options(
+        (
+            policy,
+            re_max_inner,
+            reset,
+            no_reuse,
+            profile,
+            token_limit,
+            time_limit_minutes,
+            positional,
+        ) = _parse_re_lifecycle_options(
             args,
             allow_policy=True,
             allow_reset=True,
@@ -7766,6 +7983,10 @@ def _cmd_re_run(args: list[str]) -> None:
             policy=policy,
             re_max_inner=re_max_inner,
             reset=reset,
+            reuse_published=not no_reuse,
+            profile_name=profile,
+            hard_token_limit=token_limit,
+            hard_active_minutes=time_limit_minutes,
         )
     except (ReLifecycleError, ValueError) as exc:
         print(f"echelon re run: {exc}", file=sys.stderr)
@@ -7777,14 +7998,16 @@ def _cmd_re_continue(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError
 
     try:
-        _policy, re_max_inner, _reset, positional = _parse_re_lifecycle_options(
+        _policy, re_max_inner, _reset, _no_reuse, _profile, _tokens, _time, positional = _parse_re_lifecycle_options(
             args,
             allow_policy=False,
             allow_reset=False,
         )
         if positional:
             raise ValueError("echelon re continue does not accept positional arguments")
-        result = _re_lifecycle_controller(Path.cwd()).continue_run(re_max_inner)
+        project_root = Path.cwd()
+        _print_re_continue_summary(project_root, re_max_inner=re_max_inner)
+        result = _re_lifecycle_controller(project_root).continue_run(re_max_inner)
     except (ReLifecycleError, ValueError) as exc:
         print(f"echelon re continue: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
@@ -7795,7 +8018,7 @@ def _cmd_re_resume(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError
 
     try:
-        _policy, re_max_inner, _reset, positional = _parse_re_lifecycle_options(
+        _policy, re_max_inner, _reset, _no_reuse, _profile, _tokens, _time, positional = _parse_re_lifecycle_options(
             args,
             allow_policy=False,
             allow_reset=False,
@@ -7813,6 +8036,7 @@ def _cmd_re_resume(args: list[str]) -> None:
 
 def _cmd_re_publish(args: list[str]) -> None:
     """Publish one validated run into the canonical workspace RE registry."""
+    import json
     import re
 
     from echelon.git_helpers import GitHelperError, run_git
@@ -7861,10 +8085,12 @@ def _cmd_re_publish(args: list[str]) -> None:
 
     try:
         imported = import_legacy_re_cache(project_root)
+        lifecycle_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
         result = publish_re_run(
             project_root,
             run_dir,
             allow_partial=allow_partial,
+            expected_generation=int(lifecycle_state.get("expected_generation") or 0),
         )
         if commit:
             _commit_re_publication(project_root, result.generation, run_git)

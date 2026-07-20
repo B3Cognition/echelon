@@ -110,6 +110,11 @@ wiki_app = typer.Typer(
     help="Build and inspect local human navigation for Echelon artifacts.",
     no_args_is_help=True,
 )
+admin_app = typer.Typer(
+    add_completion=False,
+    help="Explicit catalog of diagnostic commands.",
+    no_args_is_help=True,
+)
 
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(spec_app, name="spec")
@@ -121,18 +126,32 @@ app.add_typer(harness_app, name="harness", hidden=True)
 app.add_typer(re_app, name="re")
 app.add_typer(kb_app, name="kb")
 app.add_typer(wiki_app, name="wiki")
+app.add_typer(admin_app, name="admin", hidden=True)
 workspace_app.add_typer(workspace_sources_app, name="sources")
 spec_app.add_typer(spec_checkpoint_app, name="checkpoint")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
 
 
+@admin_app.command("commands")
+def admin_commands() -> None:
+    """List intentionally hidden diagnostic commands."""
+    typer.echo("Diagnostic commands:")
+    typer.echo("  echelon re analyze [PATH] [--run-id ID] [--format text|json]")
+
+
 @wiki_app.command("build")
-def wiki_build() -> None:
-    """Build the local read-only Markdown wiki."""
+def wiki_build(
+    include_runs: Optional[bool] = typer.Option(
+        None,
+        "--include-runs/--no-include-runs",
+        help="Include local, ephemeral run analysis in the generated vault.",
+    ),
+) -> None:
+    """Build from the configured local default branch without switching branches."""
     from echelon.wiki.service import WikiBuildError, build_wiki
 
     try:
-        result = build_wiki(Path.cwd())
+        result = build_wiki(Path.cwd(), include_runs=include_runs)
     except WikiBuildError as exc:
         typer.echo(f"Wiki build failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -142,6 +161,10 @@ def wiki_build() -> None:
         f"Inputs: {result.input_count}; outputs: {result.output_count}; "
         f"warnings: {result.warning_count}"
     )
+    if result.catalog_branch and result.catalog_revision:
+        typer.echo(
+            f"Catalog: {result.catalog_branch}@{result.catalog_revision[:12]}"
+        )
     typer.echo(
         "Optional viewer: open the generated directory as an Obsidian vault "
         "(https://obsidian.md/download)."
@@ -168,6 +191,8 @@ def wiki_status_command() -> None:
             typer.echo(f"{label}:")
             for path in paths:
                 typer.echo(f"  - {path}")
+    if status.operational_stale:
+        typer.echo("Operational run analysis: stale")
     typer.echo(status.message)
     if status.state == "invalid":
         raise typer.Exit(code=1)
@@ -302,13 +327,40 @@ def re_run(
         min=1,
         help="Raise source-local RE repair budgets.",
     ),
+    profile: Optional[str] = typer.Option(
+        None,
+        "--profile",
+        help="Execution goal: fast, balanced, or high.",
+    ),
+    re_token_limit: Optional[int] = typer.Option(
+        None,
+        "--re-token-limit",
+        min=1,
+        help="Override the profile token ceiling for this run.",
+    ),
+    re_time_limit_minutes: Optional[int] = typer.Option(
+        None,
+        "--re-time-limit-minutes",
+        min=1,
+        help="Override the profile active-time ceiling for this run.",
+    ),
     reset: bool = typer.Option(False, "--reset", help="Abandon unfinished RE state and replan."),
+    no_reuse: bool = typer.Option(
+        False,
+        "--no-reuse",
+        help="Ignore published RE artifacts and reconstruct from source.",
+    ),
 ) -> None:
-    """Run or resume workspace reverse engineering and publish complete output."""
+    """Run or resume workspace reverse engineering; publish explicitly afterward."""
     args = ["--re-policy", re_policy]
+    _extend_option(args, "--profile", profile)
     _extend_option(args, "--re-max-inner", re_max_inner)
+    _extend_option(args, "--re-token-limit", re_token_limit)
+    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
     if reset:
         args.append("--reset")
+    if no_reuse:
+        args.append("--no-reuse")
     _legacy_cli()._cmd_re_run(args)
 
 
@@ -364,6 +416,118 @@ def re_publish(
     if commit:
         args.append("--commit")
     _legacy_cli()._cmd_re_publish(args)
+
+
+@re_app.command("analyze", hidden=True)
+def re_analyze(
+    runs_dir: Path = typer.Argument(
+        Path("runs"),
+        exists=False,
+        file_okay=False,
+        help="An RE run directory or a directory containing RE runs.",
+    ),
+    run_id: Optional[str] = typer.Option(None, "--run-id", help="Analyze one RE run."),
+    output_format: str = typer.Option(
+        "text", "--format", help="Output format: text or json."
+    ),
+) -> None:
+    """Analyze RE cost, convergence, quality debt, and telemetry coverage."""
+    import json
+    import re
+
+    from echelon.telemetry.re_adapter import analyze_re_run, analyze_re_runs
+    from echelon.telemetry.render import analysis_to_json, render_analysis_text
+
+    if output_format not in {"text", "json"}:
+        raise typer.BadParameter("format must be text or json", param_hint="--format")
+    if run_id is not None:
+        if not re.fullmatch(r"re-[A-Za-z0-9._-]+", run_id):
+            raise typer.BadParameter("unsafe run id", param_hint="--run-id")
+        candidate = runs_dir.resolve() / run_id
+        if not candidate.is_dir() or not candidate.resolve().is_relative_to(
+            runs_dir.resolve()
+        ):
+            raise typer.BadParameter(f"RE run not found: {run_id}", param_hint="--run-id")
+        reports = (analyze_re_run(candidate),)
+    elif (runs_dir / "state.json").is_file() and (runs_dir / "re/state.json").is_file():
+        reports = (analyze_re_run(runs_dir),)
+    else:
+        reports = analyze_re_runs(runs_dir)
+    if output_format == "json":
+        if len(reports) == 1:
+            typer.echo(analysis_to_json(reports[0]), nl=False)
+        else:
+            typer.echo(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "workflow": "re",
+                        "runs": [report.to_json_dict() for report in reports],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        return
+    if not reports:
+        typer.echo(f"No RE runs found under {runs_dir}.")
+        return
+    for index, report in enumerate(reports):
+        if index:
+            typer.echo()
+        typer.echo(render_analysis_text(report), nl=False)
+
+
+@spec_app.command("analyze", hidden=True)
+def spec_analyze(
+    path: Path = typer.Argument(
+        Path("runs"),
+        exists=False,
+        file_okay=False,
+        help="A Spec run directory or a directory containing Spec runs.",
+    ),
+    output_format: str = typer.Option(
+        "text", "--format", help="Output format: text or json."
+    ),
+) -> None:
+    """Analyze Spec execution cost, repair loops, blockers, and telemetry."""
+    import json
+
+    from echelon.telemetry.render import analysis_to_json, render_analysis_text
+    from echelon.telemetry.spec_adapter import analyze_spec_run, analyze_spec_runs
+
+    if output_format not in {"text", "json"}:
+        raise typer.BadParameter("format must be text or json", param_hint="--format")
+    resolved = path.resolve()
+    if (resolved / "state.json").is_file():
+        if (resolved / "re/state.json").is_file():
+            raise typer.BadParameter("not a Spec run", param_hint="path")
+        reports = (analyze_spec_run(resolved),)
+    else:
+        reports = analyze_spec_runs(resolved)
+    if not reports:
+        typer.echo(f"No Spec runs found under {path}.")
+        return
+    if output_format == "json":
+        if len(reports) == 1:
+            typer.echo(analysis_to_json(reports[0]), nl=False)
+        else:
+            typer.echo(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "workflow": "spec",
+                        "runs": [report.to_json_dict() for report in reports],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        return
+    for index, report in enumerate(reports):
+        if index:
+            typer.echo()
+        typer.echo(render_analysis_text(report), nl=False)
 
 
 @re_app.command("execute-run", hidden=True)
@@ -1317,16 +1481,7 @@ def spec_publish(
         typer.echo(f"Warning: {warning}", err=True)
     quoted_branch = shlex.quote(result.default_branch)
     typer.echo(f"To share: git push origin {quoted_branch}")
-    if result.caller_on_default:
-        typer.echo("Refresh navigation: echelon wiki build")
-    elif result.destination_worktree.exists():
-        typer.echo(
-            f"Refresh navigation: cd {shlex.quote(str(result.destination_worktree))} && "
-            "echelon wiki build"
-        )
-    else:
-        typer.echo(f"Next: git switch {quoted_branch}")
-        typer.echo("Refresh navigation: echelon wiki build")
+    typer.echo("Refresh navigation: echelon wiki build")
 
 
 @spec_app.command("drop-target")

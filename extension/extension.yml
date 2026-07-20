@@ -3,7 +3,7 @@ schema_version: "1.0"
 extension:
   id: "echelon"
   name: "Echelon"
-  version: "3.7.1"
+  version: "3.7.6"
   description: "Multi-agent cognitive system with adversarial critic, kill gate, role-separation enforcement, cross-run calibration learning per-agent injection, SOAR-powered build pipeline (codegen), full 34-metric requirements quality analysis, expert persona prompts, and native brownfield extraction (re-* commands). Designed for high-stakes, complex projects where quality, alignment, and risk management are paramount."
   author: "B3Cognition"
   repository: "https://github.com/B3Cognition/echelon"
@@ -13,11 +13,7 @@ extension:
 requires:
   speckit_version: ">=0.4.2"
   skills:
-    # Core spec-kit skills — validated at install time via `specify extension add echelon`
-    - name: "speckit.specify"
-      required: true
-      required_for: "CARTOGRAPHER — spec creation and branch setup"
-      hard_stop: true
+    # Core spec-kit content skills — Echelon owns Phase A GitOps itself.
     - name: "speckit.constitution"
       required: true
       required_for: "constitution creation and amendment (ARCHITECT, COMMANDER)"
@@ -841,6 +837,29 @@ config:
         screenshot_dir: "playwright-report"
         max_iterations: 3
     re:
+      default_profile: balanced
+      profiles:
+        fast:
+          performance_target_minutes: 30
+          hard_active_minutes: 60
+          hard_token_limit: 1000000
+          max_domain_repairs: 1
+          max_source_cycles: 1
+          max_source_reanalysis: 1
+        balanced:
+          performance_target_minutes: 60
+          hard_active_minutes: 180
+          hard_token_limit: 5000000
+          max_domain_repairs: 3
+          max_source_cycles: 2
+          max_source_reanalysis: 2
+        high:
+          performance_target_minutes: 180
+          hard_active_minutes: 720
+          hard_token_limit: 15000000
+          max_domain_repairs: 5
+          max_source_cycles: 5
+          max_source_reanalysis: 5
       profile: full
       analysis:
         include_patterns: [ "**/*" ]

@@ -50,10 +50,11 @@ violations=$(bash "$SCRIPT" check --max 500 2>&1 || true)
 echo "$violations" | grep -q "cartographer" && assert "check flags cartographer" "OK" || assert "check flags cartographer" "missing"
 
 # Test 7: report shows TOTAL line
-bash "$SCRIPT" report | grep -q "TOTAL" && assert "report has TOTAL" "OK" || assert "report has TOTAL" "missing"
+budget_report=$(bash "$SCRIPT" report)
+grep -q "TOTAL" <<< "$budget_report" && assert "report has TOTAL" "OK" || assert "report has TOTAL" "missing"
 
 # Test 8: report shows AVERAGE line
-bash "$SCRIPT" report | grep -q "AVERAGE" && assert "report has AVERAGE" "OK" || assert "report has AVERAGE" "missing"
+grep -q "AVERAGE" <<< "$budget_report" && assert "report has AVERAGE" "OK" || assert "report has AVERAGE" "missing"
 
 echo ""
 echo "=========================================="

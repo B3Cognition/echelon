@@ -67,7 +67,10 @@ Before WHAT, staging owns discovery artifacts. After WHAT, `{spec_dir}` owns
 canonical product artifacts while staging remains a control-plane inbox for
 files such as `user-clarifications.md` and `governance-trail.json`.
 
-**Important:** Always let the WHAT phase create `specs/{NNN}-{feature}/` via `speckit.specify`. Do NOT create it yet.
+**Important:** Echelon's Phase A bootstrap creates the feature branch and
+reserves the full run-local `spec_dir` before squad dispatch. WHAT authors
+content only in that controller-provided directory; it does not create a branch
+or choose a spec directory.
 
 ### 1.3 Initialize State
 
@@ -99,7 +102,12 @@ Create `${SQUAD_DIR}/state.json`:
 }
 ```
 
-Note: `project_root` is set immediately from `${PROJECT_ROOT}` (absolute path). `spec_id` and `spec_dir` are set later when `speckit.specify` creates the branch — `spec_dir` is always stored as an absolute path (`${PROJECT_ROOT}/specs/{NNN}-{feature}`). `constitution_status` is set to `"exists"` in section 1.7 if constitution already exists, or updated in section 3.5 after constitution creation.
+Note: `project_root` is set immediately from `${PROJECT_ROOT}` (absolute path).
+Phase A bootstrap sets the immutable full `spec_id`, `spec_dir`,
+`published_spec_dir`, and `feature_branch` before dispatch; `spec_dir` is the
+run-local path (`${SQUAD_DIR}/specs/{NNN}-{feature}`). `constitution_status` is
+set to `"exists"` in section 1.7 if constitution already exists, or updated in
+section 3.5 after constitution creation.
 
 ### Run History Check — MANDATORY STEP
 

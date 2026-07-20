@@ -58,11 +58,12 @@ def spec_depends_findings(spec_text: str) -> list[Finding]:
         rid = str(req.children[0])
         line = getattr(req.children[0], "line", 0) or 0
         deps: list[str] = []
-        for c in req.children:
-            if getattr(c, "data", None) == "depends":
-                val = str(c.children[0]).strip()
-                if val.lower() != "none":
-                    deps = [t for t in _DEP_SPLIT.split(val) if t]
+        # ``DEPENDS`` is nested under ``req_metadata`` in the current grammar,
+        # so immediate-child inspection silently skipped every dependency.
+        for dependency in req.find_data("depends"):
+            val = str(dependency.children[0]).strip()
+            if val.lower() != "none":
+                deps = [t for t in _DEP_SPLIT.split(val) if t]
         defined.add(rid)
         reqs.append((rid, deps, line))
 

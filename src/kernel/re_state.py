@@ -48,10 +48,22 @@ def init_re_state(
     resolution_threshold: int = 99,
     max_validate_iterations: int = 5,
     max_verify_expand_iterations: int = 5,
+    execution_profile: dict[str, object] | None = None,
 ) -> dict:
     """Return a fresh re/state.json dict."""
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return {
+    profile = copy.deepcopy(execution_profile) if execution_profile else None
+    budgets = {
+        "max_source_cycles": 5,
+        "max_domain_repairs": 5,
+        "max_source_reanalysis": 5,
+    }
+    if profile is not None:
+        for key in budgets:
+            value = profile.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+                budgets[key] = value
+    state = {
         "run_id": f"re-{ts}",
         "status": "in_progress",
         "phase": "re-extract-0-preflight",
@@ -71,11 +83,7 @@ def init_re_state(
         # Source-local convergence is controller-owned.  Agent result blocks
         # must never update these counters or lifecycle records.
         "re_convergence_schema_version": 1,
-        "re_source_budgets": {
-            "max_source_cycles": 5,
-            "max_domain_repairs": 5,
-            "max_source_reanalysis": 5,
-        },
+        "re_source_budgets": budgets,
         "re_source_states": {},
         "resolution_pct": 0,
         "resolution_threshold": resolution_threshold,
@@ -92,6 +100,9 @@ def init_re_state(
         },
         "issues_log": [],
     }
+    if profile is not None:
+        state["re_execution_profile"] = profile
+    return state
 
 
 def write_last_dispatch(state: dict, phase_id: str, agent: str) -> dict:

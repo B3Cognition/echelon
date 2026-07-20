@@ -50,3 +50,7 @@ docs/echelon-*run-*.md
 /.echelon/
 /sources/*
 !/sources/README.md
+
+# Local AI engineering learning experiments. Keep these out of repo history;
+# tracked experiments already live under /experiments.
+experiments/

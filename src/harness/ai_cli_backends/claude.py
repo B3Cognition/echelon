@@ -28,6 +28,9 @@ class ClaudeCliBackend:
             stream_json=True,
             disallow_claude_task_tools=True,
         )
+        model = _prompt_metadata_str(request, "model")
+        if model:
+            cmd.extend(["--model", model])
         return self._run_stream_json(cmd, request)
 
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
@@ -46,6 +49,7 @@ class ClaudeCliBackend:
         timed_out = False
         token_usage = 0
         cost_usd = 0.0
+        response_model = ""
         printer = StreamEventPrinter()
 
         def kill() -> None:
@@ -80,7 +84,12 @@ class ClaudeCliBackend:
                     printer(event)
                     etype = event.get("type")
                     if etype == "assistant":
-                        for block in event.get("message", {}).get("content", []):
+                        raw_message = event.get("message")
+                        message = raw_message if isinstance(raw_message, Mapping) else {}
+                        raw_model = message.get("model")
+                        if isinstance(raw_model, str) and raw_model.strip():
+                            response_model = raw_model.strip()
+                        for block in message.get("content", []):
                             if block.get("type") == "text":
                                 text = block.get("text", "")
                                 text_chunks.append(text)
@@ -114,6 +123,9 @@ class ClaudeCliBackend:
             token_usage=token_usage,
             cost_usd=cost_usd,
             timed_out=timed_out,
+            metadata=(
+                {"response_model": response_model} if response_model else {}
+            ),
         )
 
 
@@ -146,3 +158,11 @@ def _extract_token_usage(event: Mapping[str, object]) -> int:
         except (TypeError, ValueError):
             continue
     return total
+
+
+def _prompt_metadata_str(request: CliRunRequest, key: str) -> str:
+    metadata = request.metadata.get("prompt_metadata")
+    if not isinstance(metadata, Mapping):
+        return ""
+    value = metadata.get(key)
+    return value.strip() if isinstance(value, str) else ""

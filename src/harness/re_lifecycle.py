@@ -6,6 +6,7 @@ import json
 import os
 import re
 import tempfile
+from dataclasses import replace
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,12 +22,7 @@ from harness.re_controller import ReExtractionController
 from harness.re_fingerprint import ReFingerprintProfile
 from harness.re_materializer import materialize_re_run_context
 from harness.re_planner import build_re_execution_plan
-from harness.re_publication import RePublicationError, publish_re_run
-from harness.re_lock import (
-    RePublicationActiveRun,
-    RePublishLocked,
-    RePublishRecoveryRequired,
-)
+from harness.re_profiles import migrate_legacy_re_profile, resolve_re_execution_profile
 from harness.re_registry import load_published_index
 from kernel.re_state import init_re_state
 
@@ -122,6 +118,10 @@ class ReLifecycleController:
         policy: str = "",
         re_max_inner: int | None = None,
         reset: bool = False,
+        profile_name: str | None = None,
+        hard_token_limit: int | None = None,
+        hard_active_minutes: int | None = None,
+        reuse_published: bool = True,
     ) -> ReLifecycleResult:
         if re_max_inner is not None and re_max_inner < 1:
             raise ReLifecycleError("--re-max-inner requires a positive integer")
@@ -136,6 +136,15 @@ class ReLifecycleController:
                     return self._execute_run(current, state, re_max_inner=re_max_inner)
 
         manifest = discover_workspace(self._project_root)
+        try:
+            execution_profile = resolve_re_execution_profile(
+                self._project_root,
+                name=profile_name,
+                hard_token_limit=hard_token_limit,
+                hard_active_minutes=hard_active_minutes,
+            )
+        except ValueError as exc:
+            raise ReLifecycleError(str(exc)) from exc
         profile = resolve_re_fingerprint_profile(self._project_root)
         published = load_published_index(self._project_root)
         plan = build_re_execution_plan(
@@ -146,6 +155,21 @@ class ReLifecycleController:
             profile=profile,
             published_index=published,
         )
+        if published is not None and plan.policy not in {"none", "cached-only"}:
+            # A fresh RE run is an improvement pass over the one durable
+            # baseline.  It never inherits budgets or counters from its run.
+            plan = replace(
+                plan,
+                sources=tuple(
+                    replace(source, action="refresh", classification="refresh")
+                    if source.action == "reuse" or not reuse_published
+                    else source
+                    for source in plan.sources
+                ),
+                analysis_required=True,
+                workspace_synthesis_required=True,
+                publication_required=True,
+            )
         missing = sorted(source.id for source in plan.sources if source.action == "missing")
         if plan.policy == "cached-only" and missing:
             return ReLifecycleResult(
@@ -166,6 +190,7 @@ class ReLifecycleController:
             workspace_manifest=manifest,
             plan=plan,
             published_index=published,
+            reuse_published=reuse_published,
         )
         state: dict[str, object] = {
             "run_id": run_dir.name,
@@ -178,11 +203,18 @@ class ReLifecycleController:
             "extraction_complete": False,
             "publication_complete": False,
             "publication_pending": False,
+            "re_execution_profile": execution_profile.to_json_dict(),
+            "re_baseline": {
+                "status": "attached" if published is not None and reuse_published else "not-used",
+                "generation": expected_generation if published is not None and reuse_published else 0,
+            },
         }
         if re_max_inner is not None:
             state["re_max_inner"] = re_max_inner
         self._save_state(run_dir, state)
-        self._initialize_controller_state(run_dir, re_max_inner)
+        self._initialize_controller_state(
+            run_dir, re_max_inner, execution_profile.to_json_dict()
+        )
         return self._execute_run(run_dir, state, re_max_inner=re_max_inner)
 
     def continue_run(self, re_max_inner: int | None = None) -> ReLifecycleResult:
@@ -265,10 +297,12 @@ class ReLifecycleController:
         self,
         run_dir: Path,
         re_max_inner: int | None,
+        execution_profile: dict[str, object],
     ) -> None:
         state = init_re_state(
             output_dir=f"runs/{run_dir.name}/re",
             mode="workspace",
+            execution_profile=execution_profile,
         )
         state["run_id"] = run_dir.name
         if re_max_inner is not None:
@@ -282,6 +316,13 @@ class ReLifecycleController:
         *,
         re_max_inner: int | None,
     ) -> ReLifecycleResult:
+        if not isinstance(state.get("re_execution_profile"), dict):
+            re_state = self._load_json(run_dir / "re" / "state.json")
+            execution_profile = migrate_legacy_re_profile(re_state).to_json_dict()
+            state["re_execution_profile"] = execution_profile
+            re_state["re_execution_profile"] = execution_profile
+            self._save_json(run_dir / "re" / "state.json", re_state)
+            self._save_state(run_dir, state)
         if re_max_inner is not None:
             state["re_max_inner"] = re_max_inner
             re_state = self._load_json(run_dir / "re" / "state.json")
@@ -296,6 +337,7 @@ class ReLifecycleController:
                 run_dir=run_dir,
                 extension_root=self._extension_root,
             ).run()
+            self._sync_controller_usage(run_dir, state)
             if not outcome.completed:
                 state["status"] = "blocked"
                 state["blocked_reason"] = outcome.blocked_reason or "re_controller_failed"
@@ -329,33 +371,10 @@ class ReLifecycleController:
                 blocked_reason=str(state["blocked_reason"]),
             )
 
-        try:
-            publication = publish_re_run(
-                self._project_root,
-                run_dir,
-                expected_generation=int(state.get("expected_generation") or 0),
-            )
-        except (
-            RePublicationError,
-            RePublicationActiveRun,
-            RePublishLocked,
-            RePublishRecoveryRequired,
-        ) as exc:
-            state["status"] = "blocked"
-            state["publication_pending"] = True
-            state["blocked_reason"] = f"re_publication_failed: {exc}"
-            self._save_state(run_dir, state)
-            return ReLifecycleResult(
-                status="blocked",
-                run_id=run_dir.name,
-                phase=str(state.get("phase") or ""),
-                blocked_reason=str(state["blocked_reason"]),
-            )
-
         state["status"] = "done"
-        state["publication_pending"] = False
-        state["publication_complete"] = True
-        state["generation"] = publication.generation
+        state["publication_pending"] = True
+        state["publication_complete"] = False
+        state["generation"] = int(state.get("expected_generation") or 0)
         state.pop("blocked_reason", None)
         state.pop("blocked_detail", None)
         self._save_state(run_dir, state)
@@ -363,7 +382,7 @@ class ReLifecycleController:
             status="done",
             run_id=run_dir.name,
             phase=str(state.get("phase") or ""),
-            generation=publication.generation,
+            generation=int(state["generation"]),
         )
 
     def _load_state(self, run_dir: Path) -> dict:
@@ -374,6 +393,19 @@ class ReLifecycleController:
 
     def _save_state(self, run_dir: Path, state: dict) -> None:
         self._save_json(run_dir / "state.json", state)
+
+    def _sync_controller_usage(self, run_dir: Path, state: dict) -> None:
+        inner = self._load_json(run_dir / "re" / "state.json")
+        for source_key, target_key in (
+            ("re_token_usage", "token_usage"),
+            ("re_unknown_token_dispatches", "unknown_token_dispatches"),
+            ("re_active_duration_ms", "active_duration_ms"),
+            ("re_execution_intervals", "execution_intervals"),
+            ("re_trace_id", "trace_id"),
+        ):
+            if source_key in inner:
+                state[target_key] = inner[source_key]
+        self._save_state(run_dir, state)
 
     @staticmethod
     def _load_json(path: Path) -> dict:

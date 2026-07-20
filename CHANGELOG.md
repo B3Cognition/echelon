@@ -4,8 +4,61 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Standard learning-artifact contracts** — Confidence, experiment, evolution,
+  calibration, feedback, drift, and constitution-candidate outputs now have
+  dedicated templates and producer wiring. `experiment-results.md` is now
+  referenced consistently as Markdown, and constitution candidates remain
+  proposal-only until human review through `speckit.constitution`.
+
+- **Complete delivery estimates** — `estimates.md` now has one standard
+  contract for Phase A specification authoring and Phase B implementation,
+  showing human-only and AI-assisted ranges. AI-assisted estimates must include
+  Phase A, Phase B, and total token and USD budgets with explicit pricing and
+  contingency assumptions; ASSESS2 reconciles the same scenarios against the
+  concrete architecture.
+
 ### Fixed
 
+- **Phase A bootstrap directory** — fresh spec starts now create the exact
+  controller-owned run-local `spec_dir` recorded in state before CARTOGRAPHER
+  runs, so first WHAT dispatches cannot fail with a missing spec directory.
+
+- **Phase A full spec identity** — CARTOGRAPHER can no longer replace the
+  controller-bootstrapped full `NNN-slug` identity with a short number. Echelon
+  now owns all Phase A branch and directory lifecycle instructions, preserves
+  the full run-local and published paths at the state boundary, and ignores
+  Claude runtime work directories during workspace Git migration.
+
+- **EGR-153 Lexicon gate lifecycle** — an absent or unevaluated derived
+  Lexicon artifact is now recorded as `pending`, rather than as a failed
+  validation result. Only controller-run deterministic validation can write
+  the Boolean `lexicon_pass` verdict, so stale agent state cannot consume the
+  repair budget or route a spec through a false failure loop.
+
+- **Dispatch-scoped result contracts** — Phase A agents now receive typed,
+  per-agent verdict and `state_updates` contracts. Undeclared reporting fields
+  are quarantined and journaled instead of blocking completed work, while
+  reserved writes, invalid authoritative values, and missing routing data stay
+  fail-closed with one result-only repair attempt. Consensus ownership is now
+  explicit for WHY3, ASSESS2, and PLAN2, preventing planning metrics from
+  expanding persistent squad state.
+
+- **Lexicon requirement dependencies** — the SPEC dependency gate now follows
+  `DEPENDS` entries nested under `req_metadata`, restoring missing-target,
+  self-dependency, and cycle findings.
+
+- **RE continuation orientation** — `echelon re continue` now prints a branded
+  controller-owned summary before provider dispatch, including the active run,
+  authoritative phase, source/domain progress, workspace-synthesis status,
+  quality thresholds, effective repair budget, and artifact directory.
+
+- **Default-branch wiki catalog** — `echelon wiki build`, `status`, and
+  command-triggered refresh now read the configured local default-branch commit
+  through a temporary detached worktree when another branch is active. This
+  prevents published specs from disappearing from the wiki while preserving
+  the caller's branch and honoring `.echelon/local.yml` overrides.
 - **Delivery finalization recovery** — a documentation-only delivery slice no
   longer fails merely because every canonical task is already terminal. Ralph
   still requires exact task IDs for implementation progress, while the build
@@ -19,6 +72,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   minor version.
 
 ### Added
+
+- **Execution telemetry and bounded RE profiles** — New RE runs default to a
+  `balanced` 5,000,000-token/180-active-minute hard budget with a 60-minute
+  performance target; `fast` and `high` goals provide smaller and larger bounded
+  envelopes. Provider dispatches now emit content-free, OpenTelemetry-aligned
+  local spans, continuation preserves consumed budgets, and hard ceilings stop
+  new dispatches without interrupting an in-flight checkpoint. The hidden
+  `echelon re analyze` command reports cost, convergence, repeated findings, and
+  quality debt, while `echelon wiki build --include-runs` projects those reports
+  into optional local Obsidian-friendly operations pages.
 
 - **#166 local spec catalog publication** — `echelon spec publish <id>` and
   `echelon spec publish --all` copy committed spec-only snapshots from canonical

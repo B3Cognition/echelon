@@ -1,10 +1,113 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
+
+
+@pytest.mark.unit
+def test_re_run_help_exposes_clean_reconstruction_switch() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["re", "run", "--help"])
+
+    assert result.exit_code == 0
+    assert "--no-reuse" in result.output
+
+
+@pytest.mark.unit
+def test_re_continue_prints_controller_summary_before_provider_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_re_continue
+
+    run_dir = tmp_path / "runs" / "re-20260718-063615-364321"
+    re_dir = run_dir / "re"
+    (re_dir / "workspace").mkdir(parents=True)
+    (tmp_path / "runs" / ".current-re").write_text(
+        run_dir.name + "\n",
+        encoding="utf-8",
+    )
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "run_kind": "re",
+                "status": "blocked",
+                "phase": "re-extract-2-specify",
+                "re_policy": "changed",
+                "expected_generation": 4,
+                "extraction_complete": False,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (re_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "re-extract-5-validate",
+                "coverage_threshold": 99,
+                "resolution_threshold": 99,
+                "re_workspace_synthesis_complete": True,
+                "re_source_budgets": {"max_source_cycles": 10},
+                "re_source_order": ["api", "cli", "registry", "starter"],
+                "re_source_states": {
+                    source_id: {"status": "passed"}
+                    for source_id in ("api", "cli", "registry", "starter")
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (re_dir / "workspace" / "architecture-map.json").write_text(
+        json.dumps(
+            {
+                "domains": [
+                    {"domain_id": f"domain-{index}"}
+                    for index in range(1, 20)
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeController:
+        def continue_run(self, re_max_inner: int | None = None) -> SimpleNamespace:
+            assert re_max_inner == 8
+            print("PROVIDER STARTED")
+            return SimpleNamespace(
+                status="done",
+                run_id=run_dir.name,
+                generation=5,
+                no_work=False,
+            )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.cli._re_lifecycle_controller",
+        lambda _root: FakeController(),
+    )
+
+    _cmd_re_continue(["--re-max-inner", "8"])
+
+    output = capsys.readouterr().out
+    assert "RE CONTINUE" in output
+    assert run_dir.name in output
+    assert "blocked → continuing" in output
+    assert "re-extract-5-validate — semantic validation" in output
+    assert "4/4 passed" in output
+    assert "19" in output
+    assert "complete" in output
+    assert "coverage 99% · resolution 99%" in output
+    assert "10 source-local attempts" in output
+    assert str(re_dir) in output
+    assert output.index("RE CONTINUE") < output.index("PROVIDER STARTED")
 
 
 @pytest.mark.unit
@@ -60,6 +163,42 @@ def test_re_lifecycle_typed_commands_route_options(monkeypatch: pytest.MonkeyPat
         ("continue", ["--re-max-inner", "10"]),
         ("resume", ["Use v2", "--re-max-inner", "11"]),
     ]
+
+
+@pytest.mark.unit
+def test_re_run_routes_profile_and_hard_limit_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli_app import app
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_re_run", lambda args: calls.append(args))
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "re",
+            "run",
+            "--profile",
+            "fast",
+            "--re-token-limit",
+            "2000000",
+            "--re-time-limit-minutes",
+            "90",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [[
+        "--re-policy",
+        "changed",
+        "--profile",
+        "fast",
+        "--re-token-limit",
+        "2000000",
+        "--re-time-limit-minutes",
+        "90",
+    ]]
 
 
 @pytest.mark.unit

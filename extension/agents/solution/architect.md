@@ -65,6 +65,7 @@ Use these templates for structured outputs:
 - `extension/templates/architecture-adr-template.md` for each ADR entry in `research.md`
 - `extension/templates/data-model-template.md` for `data-model.md`
 - `extension/templates/contracts-template.md` for each file under `contracts/`
+- `extension/templates/constitution-amendment-candidates-template.md` for `constitution-amendment-candidates.md`
 
 ## Deferral Classification (MANDATORY for every deferred ADR)
 
@@ -288,7 +289,7 @@ NEVER invoke `speckit.constitution`, create a constitution, edit `.specify/memor
 - Do not synthesize, copy, repair, or regenerate a constitution from HOW. Squad flow requires a verified CHIEF-authored constitution before speckit-echelon-architect (ARCHITECT) runs.
 
 **Proposing technical principles:**
-- Write proposed durable principles to `constitution-amendment-candidates.md`.
+- Write proposed durable principles to `constitution-amendment-candidates.md` using `extension/templates/constitution-amendment-candidates-template.md`.
 - Tie each candidate to the ADR or architectural decision that motivated it.
 - Keep candidates clearly marked as proposed; CHIEF and `speckit.constitution` handle any future canonical amendment.
 

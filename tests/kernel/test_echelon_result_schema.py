@@ -12,8 +12,10 @@ if str(EXT_ROOT) not in sys.path:
 
 from harness.echelon_result_schema import (  # noqa: E402
     ALLOWED_VERDICTS,
+    EchelonResultContract,
     EchelonResultValidationError,
     validate_echelon_result,
+    validate_echelon_result_contract,
 )
 
 
@@ -219,4 +221,98 @@ def test_quality_scores_pass_must_be_boolean():
                 },
             },
             allowed_state_update_keys={"quality_scores"},
+        )
+
+
+def test_result_contract_quarantines_reporting_fields_but_keeps_routing_state():
+    contract = EchelonResultContract(
+        allowed_state_update_keys=frozenset({"tasks_lexicon_pass"}),
+        required_state_update_keys=frozenset({"tasks_lexicon_pass"}),
+        state_update_types={"tasks_lexicon_pass": "boolean"},
+        allowed_verdicts=frozenset({"COMPLETE", "BLOCKED"}),
+        unexpected_state_updates="quarantine",
+    )
+    payload = {
+        "verdict": "COMPLETE",
+        "state_updates": {
+            "tasks_lexicon_pass": True,
+            "phase3_plan_verdict": "COMPLETE",
+            "critical_path_length_days": 118,
+            "total_tasks": 61,
+            "parallelizable_tasks": 40,
+            "high_risk_tasks": 9,
+            "blocking_gates": [],
+            "test_automation_coverage": 0.92,
+        },
+    }
+
+    outcome = validate_echelon_result_contract(payload, contract)
+
+    assert outcome.result["state_updates"] == {"tasks_lexicon_pass": True}
+    assert set(outcome.quarantined_state_updates) == {
+        "phase3_plan_verdict",
+        "critical_path_length_days",
+        "total_tasks",
+        "parallelizable_tasks",
+        "high_risk_tasks",
+        "blocking_gates",
+        "test_automation_coverage",
+    }
+
+
+def test_result_contract_rejects_missing_required_routing_state():
+    contract = EchelonResultContract(
+        allowed_state_update_keys=frozenset({"tasks_lexicon_pass"}),
+        required_state_update_keys=frozenset({"tasks_lexicon_pass"}),
+        state_update_types={"tasks_lexicon_pass": "boolean"},
+    )
+
+    with pytest.raises(EchelonResultValidationError, match="required state_updates"):
+        validate_echelon_result_contract(
+            {"verdict": "COMPLETE", "state_updates": {"tasks_lexicon_pas": True}},
+            contract,
+        )
+
+
+def test_result_contract_rejects_invalid_routing_state_type():
+    contract = EchelonResultContract(
+        allowed_state_update_keys=frozenset({"tasks_lexicon_attempts"}),
+        required_state_update_keys=frozenset({"tasks_lexicon_attempts"}),
+        state_update_types={"tasks_lexicon_attempts": "integer"},
+    )
+
+    with pytest.raises(EchelonResultValidationError, match="must be an integer"):
+        validate_echelon_result_contract(
+            {
+                "verdict": "COMPLETE",
+                "state_updates": {"tasks_lexicon_attempts": "two"},
+            },
+            contract,
+        )
+
+
+def test_result_contract_rejects_phase_invalid_verdict():
+    contract = EchelonResultContract(
+        allowed_state_update_keys=frozenset(),
+        allowed_verdicts=frozenset({"PASS", "FAIL", "BLOCKED"}),
+    )
+
+    with pytest.raises(EchelonResultValidationError, match="not allowed for this dispatch"):
+        validate_echelon_result_contract(
+            {"verdict": "COMPLETE", "state_updates": {}},
+            contract,
+        )
+
+
+def test_result_contract_rejects_invented_state_status_value():
+    contract = EchelonResultContract(
+        allowed_state_update_keys=frozenset({"status"}),
+        state_update_types={"status": "string"},
+        state_update_enums={"status": frozenset({"running", "blocked", "done"})},
+    )
+
+    with pytest.raises(EchelonResultValidationError, match="must be one of"):
+        validate_echelon_result_contract(
+            {"verdict": "DONE", "state_updates": {"status": "almost_finished"}},
+            contract,
         )

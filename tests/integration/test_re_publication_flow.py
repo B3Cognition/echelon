@@ -10,6 +10,7 @@ from harness.re_controller import ReControllerResult
 from harness.re_fingerprint import ReFingerprintProfile
 from harness.re_lifecycle import ReLifecycleController
 from harness.re_planner import ReExecutionPlan
+from harness.re_publication import publish_re_run
 from harness.re_registry import load_published_index
 from tests.unit.test_re_publication import write_valid_re_run
 
@@ -37,7 +38,7 @@ def _work_plan(profile: ReFingerprintProfile) -> ReExecutionPlan:
 
 
 @pytest.mark.integration
-def test_re_lifecycle_automatically_publishes_complete_output(
+def test_re_lifecycle_leaves_complete_output_pending_explicit_publication(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -75,7 +76,11 @@ def test_re_lifecycle_automatically_publishes_complete_output(
     result = controller.run(policy="refresh-all")
 
     assert result.status == "done"
-    assert result.generation == 1
+    assert result.generation == 0
+    assert load_published_index(tmp_path) is None
+    run_dir = tmp_path / "runs" / result.run_id
+    publication = publish_re_run(tmp_path, run_dir, expected_generation=0)
+    assert publication.generation == 1
     published = load_published_index(tmp_path)
     assert published is not None
     assert published.generation == 1
@@ -84,11 +89,12 @@ def test_re_lifecycle_automatically_publishes_complete_output(
         (tmp_path / "runs" / result.run_id / "state.json").read_text(encoding="utf-8")
     )
     assert run_state["extraction_complete"] is True
-    assert run_state["publication_complete"] is True
+    assert run_state["publication_complete"] is False
+    assert run_state["publication_pending"] is True
 
 
 @pytest.mark.integration
-def test_active_spec_run_does_not_block_re_lifecycle_publication(
+def test_active_spec_run_does_not_block_explicit_re_publication(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -131,4 +137,10 @@ def test_active_spec_run_does_not_block_re_lifecycle_publication(
     ).run(policy="refresh-all")
 
     assert result.status == "done"
+    assert load_published_index(tmp_path) is None
+    publish_re_run(
+        tmp_path,
+        tmp_path / "runs" / result.run_id,
+        expected_generation=0,
+    )
     assert load_published_index(tmp_path).generation == 1

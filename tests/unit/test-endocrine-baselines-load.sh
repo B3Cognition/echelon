@@ -51,24 +51,22 @@ report() {
   fi
 }
 
-# Check 7 representative agents from different archetypes
-declare -A AGENT_ARCH=(
-  [SAGE]=validation
-  [SCOUT]=exploration
-  [IMPLEMENTER]=build
-  [MAVERICK]=innovation
-  [VETERAN]=learning
-  [GATEKEEPER]=feasibility
-  [ARCHITECT]=solution
-)
-
+# Check 7 representative agents from different archetypes. Keep the fixture
+# compatible with macOS's system Bash 3.2, which has no associative arrays.
 echo "Hormone baselines per archetype (post-init):"
-for agent in "${!AGENT_ARCH[@]}"; do
-  arch="${AGENT_ARCH[$agent]}"
+while IFS='|' read -r agent arch; do
   expected=$(echo "$EXPECTED" | grep "^${arch}:" | sed "s/^${arch}://")
   actual=$(echo "$ACTUAL" | grep "^${agent}|" | cut -d'|' -f3)
   report "$agent ($arch)" "$expected" "$actual"
-done
+done <<'EOF'
+SAGE|validation
+SCOUT|exploration
+IMPLEMENTER|build
+MAVERICK|innovation
+VETERAN|learning
+GATEKEEPER|feasibility
+ARCHITECT|solution
+EOF
 
 echo
 echo "Pass: $pass  Fail: $fail"

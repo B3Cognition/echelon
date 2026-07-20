@@ -3,14 +3,58 @@
 from __future__ import annotations
 
 import json
+import io
 from pathlib import Path
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
 
 from echelon.cli import USAGE, _cmd_spec, _next_continue_phase, _select_squad_dir
 from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
+
+
+def test_active_run_prompt_can_continue_current_spec_before_creating_sibling(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active_run = tmp_path / "runs" / "spec-active"
+    active_run.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text("spec-active\n", encoding="utf-8")
+    (active_run / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "running",
+                "user_message": "Build audit logging",
+                "feature_branch": "001-build-audit-logging",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class TtyInput(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    class TtyOutput(io.StringIO):
+        def isatty(self) -> bool:
+            return True
+
+    stdin = TtyInput("c\n")
+    stdout = TtyOutput()
+    monkeypatch.setattr(sys, "stdin", stdin)
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(
+        "echelon.phase_a_start.start_phase_a_spec",
+        lambda *_args, **_kwargs: pytest.fail("should not create a sibling spec"),
+    )
+
+    run_dir, is_fresh = _select_squad_dir(tmp_path, "Add report export")
+
+    assert run_dir == active_run
+    assert is_fresh is False
+    assert "Continue current" in stdout.getvalue()
 
 
 def test_ready_spec_can_be_preserved_while_a_different_spec_run_starts(

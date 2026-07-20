@@ -71,12 +71,13 @@ def test_publish_success_reports_commit_retained_branches_and_no_push(
     assert "Source branches retained" in result.output
     assert "Nothing was pushed" in result.output
     assert "git push origin main" in result.output
-    assert "git switch main" in result.output
-    assert "echelon wiki build" in result.output
+    assert "Refresh navigation: echelon wiki build" in result.output
+    assert "git switch" not in result.output
+    assert "cd " not in result.output
 
 
 @pytest.mark.unit
-def test_publish_points_wiki_build_at_persistent_default_worktree(
+def test_publish_build_guidance_is_independent_of_default_worktree(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -97,8 +98,8 @@ def test_publish_points_wiki_build_at_persistent_default_worktree(
     result = CliRunner().invoke(app, ["spec", "publish", "003"])
 
     assert result.exit_code == 0
-    assert f"cd '{default_worktree}'" in result.output
-    assert "echelon wiki build" in result.output
+    assert "Refresh navigation: echelon wiki build" in result.output
+    assert f"cd '{default_worktree}'" not in result.output
 
 
 @pytest.mark.unit
@@ -121,7 +122,7 @@ def test_publish_quotes_generated_branch_commands(
 
     assert result.exit_code == 0
     assert "git push origin 'release;echo unsafe'" in result.output
-    assert "git switch 'release;echo unsafe'" in result.output
+    assert "git switch" not in result.output
 
 
 @pytest.mark.unit

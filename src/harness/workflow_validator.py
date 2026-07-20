@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from harness.echelon_result_schema import ALLOWED_VERDICTS, SUPPORTED_STATE_UPDATE_TYPES
 from harness.phase_graph import PhaseGraph
 
 
@@ -172,6 +173,45 @@ def validate_workflow_definition(
         seen.add(phase_id)
         known_condition_fields.update(_phase_condition_fields(phase))
 
+        issues.extend(
+            _validate_result_contract_definition(
+                phase,
+                phase_id=phase_id,
+                path=path,
+            )
+        )
+        for agent_index, agent_entry in enumerate(phase.get("agents") or []):
+            if not isinstance(agent_entry, dict):
+                continue
+            effective = {
+                "allowed_state_updates": agent_entry.get(
+                    "allowed_state_updates", phase.get("allowed_state_updates")
+                ),
+                "required_state_updates": agent_entry.get(
+                    "required_state_updates", phase.get("required_state_updates", [])
+                ),
+                "state_update_types": agent_entry.get(
+                    "state_update_types", phase.get("state_update_types", {})
+                ),
+                "state_update_enums": agent_entry.get(
+                    "state_update_enums", phase.get("state_update_enums", {})
+                ),
+                "allowed_verdicts": agent_entry.get(
+                    "allowed_verdicts", phase.get("allowed_verdicts")
+                ),
+                "unexpected_state_updates": agent_entry.get(
+                    "unexpected_state_updates",
+                    phase.get("unexpected_state_updates", "quarantine"),
+                ),
+            }
+            issues.extend(
+                _validate_result_contract_definition(
+                    effective,
+                    phase_id=phase_id,
+                    path=f"{path} agents[{agent_index}]",
+                )
+            )
+
         phase_condition = phase.get("condition")
         if phase_condition is not None:
             condition_issue = validate_condition_expression(phase_condition)
@@ -239,6 +279,146 @@ def validate_workflow_definition(
             )
 
     return WorkflowValidationReport(issues)
+
+
+def _validate_result_contract_definition(
+    contract: dict,
+    *,
+    phase_id: str,
+    path: str,
+) -> list[WorkflowValidationIssue]:
+    issues: list[WorkflowValidationIssue] = []
+    allowed = contract.get("allowed_state_updates")
+    controller_owned = contract.get("controller_state_updates", [])
+    required = contract.get("required_state_updates", [])
+    value_types = contract.get("state_update_types", {})
+    value_enums = contract.get("state_update_enums", {})
+    verdicts = contract.get("allowed_verdicts")
+    unexpected = contract.get("unexpected_state_updates", "quarantine")
+
+    if allowed is not None and (
+        not isinstance(allowed, list)
+        or not all(isinstance(key, str) and key for key in allowed)
+    ):
+        issues.append(WorkflowValidationIssue(
+            "allowed_state_updates must be a list of non-empty strings",
+            phase_id=phase_id,
+            path=path,
+        ))
+        allowed_set: set[str] | None = set()
+    else:
+        allowed_set = set(allowed) if allowed is not None else None
+
+    if not isinstance(controller_owned, list) or not all(
+        isinstance(key, str) and key for key in controller_owned
+    ):
+        issues.append(WorkflowValidationIssue(
+            "controller_state_updates must be a list of non-empty strings",
+            phase_id=phase_id,
+            path=path,
+        ))
+        controller_owned_set: set[str] = set()
+    else:
+        controller_owned_set = set(controller_owned)
+    if allowed_set is not None and controller_owned_set & allowed_set:
+        issues.append(WorkflowValidationIssue(
+            "controller_state_updates must not overlap allowed_state_updates",
+            phase_id=phase_id,
+            path=path,
+        ))
+
+    if not isinstance(required, list) or not all(
+        isinstance(key, str) and key for key in required
+    ):
+        issues.append(WorkflowValidationIssue(
+            "required_state_updates must be a list of non-empty strings",
+            phase_id=phase_id,
+            path=path,
+        ))
+        required_set: set[str] = set()
+    else:
+        required_set = set(required)
+    if allowed_set is None and required_set:
+        issues.append(WorkflowValidationIssue(
+            "required_state_updates requires an explicit allowed_state_updates list",
+            phase_id=phase_id,
+            path=path,
+        ))
+    elif allowed_set is not None and not required_set.issubset(allowed_set):
+        issues.append(WorkflowValidationIssue(
+            "required_state_updates must be a subset of allowed_state_updates",
+            phase_id=phase_id,
+            path=path,
+        ))
+
+    if not isinstance(value_types, dict):
+        issues.append(WorkflowValidationIssue(
+            "state_update_types must be an object",
+            phase_id=phase_id,
+            path=path,
+        ))
+    else:
+        if allowed_set is not None and not set(value_types).issubset(allowed_set):
+            issues.append(WorkflowValidationIssue(
+                "state_update_types keys must be a subset of allowed_state_updates",
+                phase_id=phase_id,
+                path=path,
+            ))
+        for key, value_type in value_types.items():
+            if value_type not in SUPPORTED_STATE_UPDATE_TYPES:
+                issues.append(WorkflowValidationIssue(
+                    f"unsupported state update type {value_type!r} for {key!r}",
+                    phase_id=phase_id,
+                    path=path,
+                ))
+
+    if not isinstance(value_enums, dict):
+        issues.append(WorkflowValidationIssue(
+            "state_update_enums must be an object",
+            phase_id=phase_id,
+            path=path,
+        ))
+    else:
+        if allowed_set is not None and not set(value_enums).issubset(allowed_set):
+            issues.append(WorkflowValidationIssue(
+                "state_update_enums keys must be a subset of allowed_state_updates",
+                phase_id=phase_id,
+                path=path,
+            ))
+        for key, values in value_enums.items():
+            if not isinstance(values, list) or not values:
+                issues.append(WorkflowValidationIssue(
+                    f"state_update_enums.{key} must be a non-empty list",
+                    phase_id=phase_id,
+                    path=path,
+                ))
+
+    if verdicts is not None:
+        if not isinstance(verdicts, list) or not all(
+            isinstance(verdict, str) and verdict for verdict in verdicts
+        ):
+            issues.append(WorkflowValidationIssue(
+                "allowed_verdicts must be a list of non-empty strings",
+                phase_id=phase_id,
+                path=path,
+            ))
+        else:
+            unsupported = set(verdicts) - ALLOWED_VERDICTS
+            if unsupported:
+                issues.append(WorkflowValidationIssue(
+                    "allowed_verdicts contains unsupported verdict(s): "
+                    + ", ".join(sorted(unsupported)),
+                    phase_id=phase_id,
+                    path=path,
+                ))
+
+    if unexpected not in {"reject", "quarantine"}:
+        issues.append(WorkflowValidationIssue(
+            "unexpected_state_updates must be 'reject' or 'quarantine'",
+            phase_id=phase_id,
+            path=path,
+        ))
+    return issues
 
 
 def validate_condition_expression(condition: Any) -> str | None:
@@ -349,6 +529,7 @@ def _validate_transition(
 
 def _phase_condition_fields(phase: dict[str, Any]) -> set[str]:
     fields = set(str(key) for key in phase.get("allowed_state_updates") or [])
+    fields.update(str(key) for key in phase.get("controller_state_updates") or [])
     fields.update(_output_fields(phase.get("outputs") or []))
     fields.update(_nested_agent_output_fields(phase))
     transitions = phase.get("transitions") or []

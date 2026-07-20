@@ -294,3 +294,107 @@ def test_workflow_validator_rejects_later_phase_state_update_condition_field(
         "unresolvable condition field 'alignment'" in issue.message
         for issue in report.issues
     )
+
+
+def test_workflow_validator_rejects_required_state_update_outside_allowlist(
+    tmp_path: Path,
+) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "start",
+                "type": "agent",
+                "allowed_state_updates": ["alignment"],
+                "required_state_updates": ["invented"],
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    assert any("required_state_updates must be a subset" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_controller_state_in_agent_allowlist(
+    tmp_path: Path,
+) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "start",
+                "type": "agent",
+                "allowed_state_updates": ["verdict"],
+                "controller_state_updates": ["verdict"],
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    assert any("controller_state_updates must not overlap" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_unsupported_state_update_type(
+    tmp_path: Path,
+) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "start",
+                "type": "agent",
+                "allowed_state_updates": ["alignment"],
+                "state_update_types": {"alignment": "made_up_type"},
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    assert any("unsupported state update type" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_enum_for_undeclared_state_key(
+    tmp_path: Path,
+) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "start",
+                "type": "agent",
+                "allowed_state_updates": ["status"],
+                "state_update_enums": {"invented": ["one", "two"]},
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    assert any("state_update_enums keys must be a subset" in issue.message for issue in report.issues)

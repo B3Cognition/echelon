@@ -22,7 +22,49 @@ class PhaseNode:
     condition: Optional[str] = None
     on_greenfield: dict = field(default_factory=dict)
     allowed_state_updates: Optional[list] = None
+    controller_state_updates: list = field(default_factory=list)
+    required_state_updates: list = field(default_factory=list)
+    state_update_types: dict = field(default_factory=dict)
+    state_update_enums: dict = field(default_factory=dict)
+    allowed_verdicts: Optional[list] = None
+    unexpected_state_updates: str = "quarantine"
     transitions: list = field(default_factory=list)
+
+    def result_contract(self, agent_entry: dict | None = None):
+        """Build the immutable result contract for one concrete dispatch."""
+        from harness.echelon_result_schema import EchelonResultContract
+
+        entry = agent_entry or {}
+        allowed = entry.get("allowed_state_updates", self.allowed_state_updates)
+        required = entry.get("required_state_updates", self.required_state_updates)
+        value_types = entry.get("state_update_types", self.state_update_types)
+        value_enums = entry.get("state_update_enums", self.state_update_enums)
+        verdicts = entry.get("allowed_verdicts", self.allowed_verdicts)
+        unexpected = entry.get(
+            "unexpected_state_updates", self.unexpected_state_updates
+        )
+        return EchelonResultContract(
+            allowed_state_update_keys=(
+                frozenset(str(key) for key in allowed)
+                if allowed is not None
+                else None
+            ),
+            required_state_update_keys=frozenset(str(key) for key in (required or [])),
+            state_update_types={
+                str(key): str(value_type)
+                for key, value_type in (value_types or {}).items()
+            },
+            state_update_enums={
+                str(key): frozenset(values)
+                for key, values in (value_enums or {}).items()
+            },
+            allowed_verdicts=(
+                frozenset(str(verdict) for verdict in verdicts)
+                if verdicts is not None
+                else None
+            ),
+            unexpected_state_updates=str(unexpected),
+        )
 
 
 class PhaseGraph:
@@ -51,6 +93,18 @@ class PhaseGraph:
                     p.get("allowed_state_updates")
                     if "allowed_state_updates" in p
                     else None
+                ),
+                controller_state_updates=p.get("controller_state_updates", []),
+                required_state_updates=p.get("required_state_updates", []),
+                state_update_types=p.get("state_update_types", {}),
+                state_update_enums=p.get("state_update_enums", {}),
+                allowed_verdicts=(
+                    p.get("allowed_verdicts")
+                    if "allowed_verdicts" in p
+                    else None
+                ),
+                unexpected_state_updates=p.get(
+                    "unexpected_state_updates", "quarantine"
                 ),
                 transitions=p.get("transitions", []),
             )

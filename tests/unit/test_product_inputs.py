@@ -71,6 +71,9 @@ def test_requirement_catalog_keeps_markdown_scaffolding_as_context_only(tmp_path
     assert len(catalog) == 5
     assert [unit["traceability_required"] for unit in catalog] == [False, False, False, False, True]
     assert [entry["input_unit_id"] for entry in ledger["requirements"]] == [catalog[-1]["id"]]
+    requirement_context = resolution.requirement_context_path.read_text(encoding="utf-8")
+    assert all(unit["id"] not in requirement_context for unit in catalog[:-1])
+    assert catalog[-1]["id"] in requirement_context
 
 
 def test_structural_input_repair_updates_legacy_traceability_ledger(tmp_path: Path) -> None:
@@ -94,6 +97,39 @@ def test_structural_input_repair_updates_legacy_traceability_ledger(tmp_path: Pa
 
     assert repaired == ("IN-REQ-1", "IN-REQ-2", "IN-REQ-3")
     assert [entry["disposition"] for entry in ledger["requirements"]] == ["excluded", "excluded", "excluded", "open_question"]
+
+
+def test_context_only_catalog_unit_cannot_carry_a_requirement_mapping(tmp_path: Path) -> None:
+    from echelon.product_inputs import (
+        ProductInputError,
+        normalize_context_only_product_input_updates,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+
+    project = tmp_path / "workspace"
+    source = project / "requirements.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("# Context only\n\nA normative requirement.\n", encoding="utf-8")
+    resolution = resolve_product_inputs(
+        project,
+        project / "runs" / "run-1",
+        [parse_input_declaration("requirement:requirements.md")],
+    )
+    context_only_id = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))["units"][0]["id"]
+
+    with pytest.raises(ProductInputError, match="context-only catalog unit is not traceable"):
+        normalize_context_only_product_input_updates(
+            [{
+                "input_unit_id": context_only_id,
+                "disposition": "included",
+                "rationale": "Incorrectly treated as a requirement.",
+                "spec_ids": ["FR-001"],
+                "task_ids": [],
+                "targets": [],
+            }],
+            resolution.catalog_path,
+        )
 
 
 def test_secret_and_hidden_files_are_recorded_but_never_snapshotted(tmp_path: Path) -> None:
@@ -339,6 +375,78 @@ def test_controller_applies_structured_traceability_updates(tmp_path: Path) -> N
     assert ledger["requirements"][0]["task_ids"] == ["T-001"]
 
 
+def test_controller_ignores_empty_exclusions_for_context_only_catalog_units(tmp_path: Path) -> None:
+    """A legacy prompt can name scaffolding, but it must not block the real mapping."""
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from harness.squad import SquadController
+    from harness.squad_provider import SquadAgentResult
+    from harness.squad_state import SquadStateStore
+
+    project = tmp_path / "workspace"
+    source = project / "requirements.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("# Context only\n\nA normative requirement.\n", encoding="utf-8")
+    run_dir = project / "runs" / "run-1"
+    resolution = resolve_product_inputs(
+        project,
+        run_dir,
+        [parse_input_declaration("requirement:requirements.md")],
+    )
+    catalog = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))["units"]
+    context_only_id = catalog[0]["id"]
+    requirement_id = catalog[1]["id"]
+    store = SquadStateStore(run_dir)
+    store.initialize(
+        "run-1",
+        "greenfield",
+        "demo",
+        0,
+        "phase1-what",
+        product_inputs=resolution.state_payload(project),
+    )
+    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    result = SquadAgentResult(
+        exit_code=0,
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+        echelon_result={
+            "product_input_updates": [
+                {
+                    "input_unit_id": context_only_id,
+                    "disposition": "excluded",
+                    "rationale": "Markdown heading only.",
+                    "spec_ids": [],
+                    "task_ids": [],
+                    "targets": [],
+                },
+                {
+                    "input_unit_id": requirement_id,
+                    "disposition": "included",
+                    "rationale": "Captured by the feature specification.",
+                    "spec_ids": ["FR-001"],
+                    "task_ids": [],
+                    "targets": [],
+                },
+            ]
+        },
+    )
+
+    assert controller._apply_product_input_updates(result, "phase1-what") is None
+    refreshed_context = resolution.requirement_context_path.read_text(encoding="utf-8")
+    assert context_only_id not in refreshed_context
+    assert requirement_id in refreshed_context
+    ledger = json.loads(resolution.traceability_path.read_text(encoding="utf-8"))
+    assert ledger["requirements"] == [{
+        "input_unit_id": requirement_id,
+        "disposition": "included",
+        "rationale": "Captured by the feature specification.",
+        "spec_ids": ["FR-001"],
+        "task_ids": [],
+        "targets": [],
+    }]
+
+
 def test_plan_updates_reject_contextual_task_ids_without_mutating_ledger(tmp_path: Path) -> None:
     from echelon.product_inputs import (
         ProductInputError,
@@ -517,7 +625,8 @@ def test_prompt_contract_uses_snapshot_paths_and_structured_updates() -> None:
     assert "Requirement inputs are normative" in prompt
     assert "immutable snapshot paths" in prompt
     assert "product_input_updates" in prompt
-    assert "input_unit_id: <IN-REQ-* ID from PRODUCT_INPUT_CATALOG>" in prompt
+    assert "input_unit_id: <traceable IN-REQ-* ID from PRODUCT_INPUT_TRACEABILITY>" in prompt
+    assert "Catalog units absent from PRODUCT_INPUT_TRACEABILITY are context-only" in prompt
     assert "disposition: <included|excluded|duplicate|open_question|conflict>" in prompt
     assert "spec_ids: [FR-001, AC-001]" in prompt
     assert "task_ids: []" in prompt

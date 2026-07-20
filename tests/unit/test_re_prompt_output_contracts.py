@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RE_SPECIFIER = ROOT / "extension" / "agents" / "re" / "specifier.md"
+RE_VALIDATOR = ROOT / "extension" / "agents" / "re" / "validator.md"
 RE_EXTRACT_2_SPECIFY = (
     ROOT / "extension" / "workflow" / "phases" / "re-extract-2-specify.md"
 )
@@ -33,6 +34,19 @@ RE_RETARGET_PHASES = [
 
 
 class TestRePromptOutputContracts:
+    def test_re_specifier_and_validator_share_behavior_coverage_contract(self) -> None:
+        for path in (RE_SPECIFIER, RE_VALIDATOR):
+            text = path.read_text(encoding="utf-8")
+            assert "Behavior Coverage" in text
+            assert "public operations" in text
+            assert "configuration keys" in text
+            assert "errors and recovery" in text
+            assert "Evidence Scope: exhaustive" in text
+
+    def test_re_specifier_forbids_generalizing_one_case(self) -> None:
+        text = RE_SPECIFIER.read_text(encoding="utf-8")
+        assert "Never generalize one observed or tested case" in text
+
     def test_re_analyzer_uses_refresh_manifest_and_source_scoped_outputs(self) -> None:
         for path in [RE_ANALYZER, RE_EXTRACT_1_ANALYZE]:
             text = path.read_text(encoding="utf-8")

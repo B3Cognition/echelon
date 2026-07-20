@@ -97,6 +97,13 @@ def _mark_constitution_complete(tmp_path: Path, store: SquadStateStore) -> None:
     store.save(state)
 
 
+def _disable_lexicon_gate(tmp_path: Path) -> None:
+    """Keep non-Lexicon controller tests focused on their declared behavior."""
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("lexicon_gate:\n  enabled: false\n", encoding="utf-8")
+
+
 def _write_re_index_generation(
     root: Path,
     generation: int,
@@ -303,7 +310,7 @@ class TestAgentResultIntegrity:
             echelon_result=None,
             raw_output=(
                 "speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — "
-                "speckit.specify execution incomplete"
+                "specification authoring incomplete"
             ),
             duration_ms=100,
             timed_out=False,
@@ -567,15 +574,17 @@ class TestCartographerResumeGuard:
         )
 
         assert "## CARTOGRAPHER Resume Guard" in prompt
-        assert "Do NOT call speckit.specify" in prompt
+        assert "Do NOT create, switch, rename, or discover a branch or spec directory" in prompt
         assert "Existing spec_dir: specs/072-pr-pipeline-fix" in prompt
         assert "Existing feature_branch: 072-pr-pipeline-fix" in prompt
 
 
 class TestSquadControllerBasics:
-    def test_generation_change_does_not_mutate_attached_spec_context(self, tmp_path):
+    def test_generation_change_does_not_mutate_attached_spec_context(self, tmp_path, monkeypatch):
+        _disable_lexicon_gate(tmp_path)
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
+        monkeypatch.setattr(ctrl, "_lexicon_gate_config", lambda: {"lexicon_gate": {"enabled": False}})
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
@@ -609,9 +618,11 @@ class TestSquadControllerBasics:
         assert state["re_generation"] == 1
         assert provider.exec_agent.called
 
-    def test_legacy_generation_state_is_not_synchronized_during_spec_run(self, tmp_path):
+    def test_legacy_generation_state_is_not_synchronized_during_spec_run(self, tmp_path, monkeypatch):
+        _disable_lexicon_gate(tmp_path)
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
+        monkeypatch.setattr(ctrl, "_lexicon_gate_config", lambda: {"lexicon_gate": {"enabled": False}})
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
@@ -823,6 +834,20 @@ class TestSquadControllerBasics:
     ):
         """phase3-consensus can legitimately repeat up to max_iterations."""
         provider = _mock_provider("PASS")
+        default_result = provider.exec_agent.return_value
+
+        def consensus_result(project_root: str, prompt: str, *args, **kwargs):
+            if "Operate in **PLAN2** mode" in prompt:
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={"verdict": "COMPLETE", "state_updates": {}},
+                    raw_output="",
+                    duration_ms=100,
+                    timed_out=False,
+                )
+            return default_result
+
+        provider.exec_agent.side_effect = consensus_result
         ctrl, store = _controller(tmp_path, provider, mode="semi")
         store.initialize("r", "semi", "msg", 0, "phase3-consensus", max_iterations=10)
         state = store.load()
@@ -988,14 +1013,8 @@ class TestSquadControllerBasics:
     def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path, monkeypatch):
         """Banzai: WHY1 returns escalation_question in state_updates → inline COMMANDER, not routing judge."""
         from harness.squad_provider import SquadAgentResult
+        _disable_lexicon_gate(tmp_path)
         call_count = {"n": 0}
-        checkpoint_calls = []
-
-        def fake_checkpoint(**kwargs):
-            checkpoint_calls.append(kwargs)
-            return None
-
-        monkeypatch.setattr("harness.squad.create_phase_checkpoint", fake_checkpoint)
 
         def side_effect(*args, **kwargs):
             call_count["n"] += 1
@@ -1057,7 +1076,7 @@ class TestSquadControllerBasics:
                         "state_updates": {
                             "spec_id": "001-test",
                             "spec_dir": "specs/001-test",
-                            "spec_status": "drafted",
+                            "spec_status": "planned",
                             "lexicon_pass": True,
                         },
                     },
@@ -1087,24 +1106,38 @@ class TestSquadControllerBasics:
         provider = _mock_provider()
         provider.exec_agent.side_effect = side_effect
         ctrl, store = _controller(tmp_path, provider=provider)
+        monkeypatch.setattr(ctrl, "_lexicon_gate_config", lambda: {"lexicon_gate": {"enabled": False}})
+        # This fixture deliberately stops before producing Phase A build inputs.
+        # Keep its assertion scoped to banzai escalation recovery rather than
+        # finalization readiness, which is covered by dedicated readiness tests.
+        from harness.phase_a_readiness import PhaseAReadinessResult
+        monkeypatch.setattr(
+            ctrl,
+            "_publish_phase_a_artifacts_for_build",
+            lambda: PhaseAReadinessResult(
+                ready=True,
+                blockers=[],
+                missing={},
+                ready_spec_dir=None,
+            ),
+        )
         store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
         _mark_constitution_complete(tmp_path, store)
-        staging = tmp_path / "squad" / "run-test" / "staging"
         state = store.load()
         state["spec_id"] = "001-test"
-        state["spec_dir"] = str(staging.relative_to(tmp_path))
+        # This routing-focused test intentionally produces no Phase A artifact
+        # tree; use the declared future location instead of the existing
+        # staging directory so terminal publication is not falsely activated.
+        state["spec_dir"] = "specs/001-test"
         store.save(state)
         result = ctrl.run("msg", "banzai")
         # Provider called at least twice: once for WHY1, once for COMMANDER escalation
         assert provider.exec_agent.call_count >= 2
         # Run did not end blocked
         assert result.status != "blocked"
-        assert any(
-            call["phase"] == "phase1-why1"
-            and call["next_phase"] == "phase1-why1"
-            and call["spec_id"] == "001-test"
-            for call in checkpoint_calls
-        )
+        final_state = store.load()
+        assert final_state["escalation_resolved"] is True
+        assert final_state["escalation_resolver"] == "COMMANDER-banzai"
 
     def test_semi_escalation_inline_when_agent_sets_escalation_question(self, tmp_path):
         """Semi: WHY1 returns escalation_question in state_updates → run stops blocked."""
@@ -1354,7 +1387,13 @@ class TestConsensusAcceptWithRiskRouting:
             if "Operate in **ASSESS2** mode" in prompt:
                 return SquadAgentResult(
                     exit_code=0,
-                    echelon_result={"verdict": "PASS", "state_updates": {}},
+                    echelon_result={
+                        "verdict": "PASS",
+                        "state_updates": {
+                            "gate_decision": "accept_with_risk",
+                            "phase_recommendation": "advance_past_consensus_to_delivery",
+                        },
+                    },
                     raw_output="",
                     duration_ms=0,
                     timed_out=False,
@@ -1364,11 +1403,7 @@ class TestConsensusAcceptWithRiskRouting:
                     exit_code=0,
                     echelon_result={
                         "verdict": "COMPLETE",
-                        "state_updates": {
-                            "gate_decision": "accept_with_risk",
-                            "convergence_forced": True,
-                            "phase_recommendation": "advance_past_consensus_to_delivery",
-                        },
+                        "state_updates": {},
                     },
                     raw_output="",
                     duration_ms=0,
@@ -1906,7 +1941,7 @@ class TestCommanderJudgmentStateUpdates:
             timed_out=False,
         )
 
-    def test_invalid_judgment_state_update_blocks_before_mutation(self, tmp_path):
+    def test_unknown_judgment_reporting_state_is_quarantined_before_mutation(self, tmp_path):
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(
             exit_code=0,
@@ -1929,12 +1964,13 @@ class TestCommanderJudgmentStateUpdates:
         )
         state = store.load()
 
-        assert next_phase == "terminal-blocked"
-        assert state["status"] == "blocked"
-        assert state["phase"] == "terminal-blocked"
+        assert next_phase == "phase1-why1"
+        assert state.get("status") != "blocked"
         assert "unauthorized_key" not in state
-        assert "unauthorized_key" in state["blocked_reason"]
-        assert "judgment state_updates validation failed" in state["blocked_reason"]
+        journal = tmp_path / "squad" / "run-test" / "reasoning-journal.jsonl"
+        entries = [json.loads(line) for line in journal.read_text().splitlines()]
+        assert entries[0]["type"] == "state_contract_warning"
+        assert entries[0]["data"]["dropped_keys"] == ["unauthorized_key"]
 
     def test_valid_judgment_iteration_update_still_persists(self, tmp_path):
         provider = _mock_provider()
@@ -2345,8 +2381,8 @@ class TestLexiconGateGuardDeterminism:
 
         assert nxt == "phase1-what"
 
-    def test_spec_gate_rejects_claimed_pass_without_derived_artifact(self, tmp_path):
-        """A declared pass is invalid until the derived requirements exist."""
+    def test_spec_gate_marks_missing_derived_artifact_pending_without_false_result(self, tmp_path):
+        """No derived artifact means validation has not happened, not failed."""
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase1-what")
         st = store.load()
@@ -2367,7 +2403,19 @@ class TestLexiconGateGuardDeterminism:
             nxt = ctrl._evaluate_transitions(node, result)
 
         assert nxt == "phase1-what"
-        assert result.state_updates["lexicon_pass"] is False
+        assert "lexicon_pass" not in result.state_updates
+        assert "lexicon_findings" not in result.state_updates
+        assert result.state_updates["lexicon_evaluation"] == "pending"
+
+        store.advance(
+            node.id,
+            nxt,
+            result,
+            allowed_state_update_keys=ctrl._advance_state_update_keys(node),
+        )
+        persisted = store.load()
+        assert persisted["lexicon_evaluation"] == "pending"
+        assert "lexicon_pass" not in persisted
 
     def test_spec_gate_uses_controller_validation_not_agent_stale_failure(self, tmp_path):
         """A valid artifact advances even if the agent reports stale failed state."""
@@ -2412,9 +2460,32 @@ THEN: The dashboard is visible
         nxt = ctrl._evaluate_transitions(node, result)
 
         assert nxt == "phase1-why2"
+        assert result.state_updates["lexicon_evaluation"] == "passed"
         assert result.state_updates["lexicon_pass"] is True
         assert result.state_updates["lexicon_attempts"] == 0
         assert result.state_updates["lexicon_findings"] == 0
+
+    def test_spec_gate_records_false_only_after_controller_validation(self, tmp_path):
+        """An invalid derived artifact receives a real, controller-certified failure."""
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+        (spec_dir / "requirements.lexicon.md").write_text("not Lexicon grammar\n", encoding="utf-8")
+        state = store.load()
+        state.update({
+            "iteration": 0,
+            "max_iterations": 3,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+        })
+        store.save(state)
+        result = self._result({"lexicon_pass": True, "lexicon_attempts": 1})
+
+        assert ctrl._evaluate_transitions(node, result) == "phase1-what"
+        assert result.state_updates["lexicon_evaluation"] == "failed"
+        assert result.state_updates["lexicon_pass"] is False
+        assert result.state_updates["lexicon_findings"] > 0
 
     def test_spec_gate_blocks_on_exhaustion_when_configured_hard(self, tmp_path):
         """A hard Lexicon gate cannot fall through after its final repair pass."""
@@ -2447,8 +2518,46 @@ THEN: The dashboard is visible
         assert state["status"] == "blocked"
         assert state["blocked_reason"] == "lexicon_gate_exhausted"
 
-    def test_spec_gate_blocks_when_agent_exhausts_its_repair_budget(self, tmp_path):
-        """The agent's repair cap must win over the broader squad iteration cap."""
+    def test_pending_spec_gate_warns_without_commander_punt_at_iteration_cap(self, tmp_path):
+        """A configured warning may advance at the cap without inventing a failure."""
+        (tmp_path / ".echelon").mkdir()
+        (tmp_path / ".echelon" / "config.yml").write_text(
+            "lexicon_gate:\n"
+            "  enabled: true\n"
+            "  on_exhausted: warn\n"
+            "  artifacts:\n"
+            "    spec:\n"
+            "      enabled: true\n"
+            "      path: requirements.lexicon.md\n",
+            encoding="utf-8",
+        )
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        state = store.load()
+        state.update({
+            "iteration": 3,
+            "max_iterations": 3,
+            "spec_dir": "runs/run-test/specs/001-demo",
+        })
+        store.save(state)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+        result = self._result({})
+
+        with patch.object(
+            ctrl,
+            "_judgment_dispatch",
+            side_effect=AssertionError("pending Lexicon state punted to COMMANDER"),
+        ):
+            nxt = ctrl._evaluate_transitions(node, result)
+
+        assert nxt == "phase1-why2"
+        assert result.state_updates["lexicon_evaluation"] == "pending"
+        assert "lexicon_pass" not in result.state_updates
+
+    def test_spec_gate_does_not_trust_claimed_failure_without_validation(self, tmp_path):
+        """An agent cannot exhaust a gate whose artifact was never validated."""
         (tmp_path / ".echelon").mkdir()
         (tmp_path / ".echelon" / "config.yml").write_text(
             "lexicon_gate:\n"
@@ -2472,10 +2581,10 @@ THEN: The dashboard is visible
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
 
-        nxt = ctrl._evaluate_transitions(
-            node,
-            self._result({"lexicon_pass": False, "lexicon_attempts": 3}),
-        )
+        result = self._result({"lexicon_pass": False, "lexicon_attempts": 3})
+        nxt = ctrl._evaluate_transitions(node, result)
 
-        assert nxt == "terminal-blocked"
-        assert store.load()["blocked_reason"] == "lexicon_gate_exhausted"
+        assert nxt == "phase1-what"
+        assert result.state_updates["lexicon_evaluation"] == "pending"
+        assert "lexicon_pass" not in result.state_updates
+        assert result.state_updates["lexicon_attempts"] == 0

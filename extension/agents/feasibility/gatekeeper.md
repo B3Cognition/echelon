@@ -34,7 +34,15 @@ NEVER override user intent.
 
 ### Rule 4 - Calibrated Estimates
 ALWAYS check `calibration-profile.yaml` first and apply correction factors when they exist.
-NEVER estimate without calibration data.
+NEVER invent a calibration factor when calibration data is absent; mark the run
+as a cold start and widen the interval instead.
+
+### Rule 4a - Complete Delivery Estimates
+ALWAYS estimate Phase A specification authoring and Phase B implementation for
+both human-only and AI-assisted scenarios, and provide token and USD budgets
+for the AI-assisted scenario.
+NEVER report only implementation effort, only one delivery approach, or an
+AI-assisted estimate without an explicit token and USD budget.
 
 ### Rule 5 - Evidence-Based Kill Decisions
 ALWAYS cite specific feasibility failures for KILL decisions.
@@ -121,6 +129,26 @@ Apply calibration adjustment:
 - Read `calibration-profile.yaml` for `correction_factor` (if available)
 - Read `estimates-log.yaml` for reference class forecasting — find similar projects by domain and tech stack, compare their estimated vs actual effort
 - Produce effort range: optimistic / most likely / pessimistic (reflecting Cone of Uncertainty at this stage)
+
+Then complete **every required scenario in `estimates-template.md`**:
+
+- **Phase A — specification authoring:** estimate the human-only alternative
+  and the AI-assisted Echelon alternative for discovery, specification,
+  validation, architecture/planning, and expected correction loops. This is
+  work Echelon performs in Phase A and must not be omitted merely because it is
+  already in progress.
+- **Phase B — implementation:** estimate the human-only alternative and the
+  AI-assisted agentic-coding alternative, including testing, integration,
+  review, documentation, release, and human-bound coordination.
+- **AI budget:** derive distinct Phase A and Phase B input/output token budgets,
+  then calculate a USD budget from a documented provider/model price, approved
+  internal effective rate, or a clearly labelled conservative provisional rate.
+  Include retry/repair contingency. A subscription still needs an effective-cost
+  allocation; do not write `$0` solely because the billing plan is flat-rate.
+
+Explain which work is accelerated by AI and which remains human- or
+dependency-bound. Reconcile the Phase A and Phase B totals with the summary
+table and state the assumed team before deriving calendar duration.
 
 #### 3. Feature Prioritization
 
@@ -230,6 +258,14 @@ Compare original FPA estimates against architectural reality:
 - Were any "simple" features made complex by architectural choices (e.g., distributed transactions, event sourcing overhead)?
 - Were any "complex" features simplified by framework/library selection?
 - Update the effort range with architectural complexity adjustments.
+- Reconcile, rather than replace, the four required scenarios: Phase A and
+  Phase B, each for human-only and AI-assisted delivery. Preserve the Phase A
+  estimate as the specification-work baseline and record any actual-to-date
+  information separately.
+- Recalculate the AI-assisted Phase B token and USD budget from the task and
+  architecture evidence. Keep the Phase A token and USD budget, revise it only
+  when new evidence changes the expected Phase A correction/rework loop, and
+  update the total delivery budget.
 
 #### 3. Run the 6-Point Implementability Check
 
@@ -265,6 +301,9 @@ ASSESS2 can flag issues but has restricted blocking power:
 ### Outputs (Consensus)
 
 - `implementability-report.md` — use `extension/templates/implementability-report-template.md`.
+- `estimates.md` — update in place using `extension/templates/estimates-template.md`;
+  it must retain Phase A, Phase B, human-only, AI-assisted, token, and USD
+  budget sections.
 
 When operating as ASSESS2 in `phase3-consensus`, report implementability counts
 and effort estimates under `echelon_result.state_updates.implementability_metrics`.

@@ -162,7 +162,7 @@ def test_cached_only_missing_sources_blocks_without_provider(
 
 
 @pytest.mark.unit
-def test_work_bearing_run_executes_and_publishes_complete_generation(
+def test_work_bearing_run_completes_with_explicit_publication_pending(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -200,17 +200,6 @@ def test_work_bearing_run_executes_and_publishes_complete_generation(
     monkeypatch.setattr(
         "harness.re_lifecycle.ReExtractionController", FakeExtractionController
     )
-    monkeypatch.setattr(
-        "harness.re_lifecycle.publish_re_run",
-        lambda *args, **kwargs: RePublicationResult(
-            generation=1,
-            status="complete",
-            index_path=tmp_path / "re/index.json",
-            changed_sources=(),
-            removed_sources=(),
-            warnings=(),
-        ),
-    )
     provider = object()
     controller = ReLifecycleController(
         project_root=tmp_path,
@@ -221,18 +210,19 @@ def test_work_bearing_run_executes_and_publishes_complete_generation(
     result = controller.run(policy="refresh-all", re_max_inner=7, reset=False)
 
     assert result.status == "done"
-    assert result.generation == 1
+    assert result.generation == 0
     assert len(extraction_calls) == 1
     assert (tmp_path / "runs/.current-re").read_text().strip() == result.run_id
     state = json.loads((tmp_path / "runs" / result.run_id / "state.json").read_text())
     assert state["run_kind"] == "re"
     assert state["extraction_complete"] is True
-    assert state["publication_complete"] is True
+    assert state["publication_complete"] is False
+    assert state["publication_pending"] is True
     assert state["re_max_inner"] == 7
 
 
 @pytest.mark.unit
-def test_continue_retries_publication_without_repeating_extraction(
+def test_continue_completed_run_does_not_publish_or_repeat_extraction(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -265,24 +255,6 @@ def test_continue_retries_publication_without_repeating_extraction(
     monkeypatch.setattr(
         "harness.re_lifecycle.ReExtractionController", FakeExtractionController
     )
-    publication_calls: list[bool] = []
-
-    def publish(*args: object, **kwargs: object) -> RePublicationResult:
-        publication_calls.append(True)
-        if len(publication_calls) == 1:
-            from harness.re_lock import RePublishLocked
-
-            raise RePublishLocked("re-other")
-        return RePublicationResult(
-            generation=1,
-            status="complete",
-            index_path=tmp_path / "re/index.json",
-            changed_sources=(),
-            removed_sources=(),
-            warnings=(),
-        )
-
-    monkeypatch.setattr("harness.re_lifecycle.publish_re_run", publish)
     controller = ReLifecycleController(
         project_root=tmp_path,
         extension_root=tmp_path / "extension",
@@ -292,13 +264,9 @@ def test_continue_retries_publication_without_repeating_extraction(
     first = controller.run(policy="refresh-all", re_max_inner=None, reset=False)
     second = controller.continue_run()
 
-    assert first.status == "blocked"
-    assert first.blocked_reason == (
-        "re_publication_failed: RE publication lock is owned by re-other"
-    )
+    assert first.status == "done"
     assert second.status == "done"
     assert extraction_calls == [True]
-    assert publication_calls == [True, True]
 
 
 @pytest.mark.unit

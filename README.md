@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 3.7.1** — 55 registered agent roles across the Echelon architecture, with 45 active-routed manifest roles in the executable workflow, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Copilot, Opencode)
+**Version 3.7.6** — 55 registered agent roles across the Echelon architecture, with 45 active-routed manifest roles in the executable workflow, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -130,6 +130,21 @@ latest published generation under `re/`; active RE work is isolated under
 `runs/re-*/re/` and selected by `runs/.current-re`. Spec runs never execute or
 freshness-check RE. By default they take one immutable run-local snapshot of the
 latest publication; use `echelon spec run ... --ignore-re` to omit it.
+
+New RE runs use the bounded `balanced` execution goal by default. It targets
+completion within 60 active minutes and has hard ceilings of 180 active minutes
+and 5,000,000 provider-reported tokens. `fast` uses 30/60 minutes and 1,000,000
+tokens; `high` uses 180/720 minutes and 15,000,000 tokens. Select one with
+`echelon re run --profile fast|balanced|high`. Active time excludes periods when
+the command is stopped. `continue` preserves the original profile and consumed
+budget instead of resetting either. Providers that do not report usage remain
+explicitly unknown rather than being estimated.
+
+Every new RE provider dispatch writes content-free, OpenTelemetry-aligned local
+telemetry below `runs/<run-id>/telemetry/`. Raw prompts, responses, source code,
+and secrets are excluded. Diagnostic commands are intentionally hidden from
+ordinary help; run `echelon admin commands` to discover them, including the
+read-only `echelon re analyze` baseline and cost report.
 
 ```text
 re/
@@ -488,23 +503,43 @@ prints the path to `Home.md`.
 
 ```bash
 echelon wiki build    # complete rebuild
+echelon wiki build --include-runs  # add local Spec and RE execution analysis
 echelon wiki status   # absent, fresh, stale, or invalid; includes changed inputs
 echelon wiki clean    # remove only a manifest-owned generated vault
 ```
 
 The Markdown works in an ordinary viewer. Obsidian is optional but recommended
 for backlinks and graph navigation; Echelon does not install or launch it.
+Run analysis is excluded by default because `runs/` is local and volatile. Set
+`wiki.include_run_analysis: true` to include it persistently, or use
+`--include-runs`/`--no-include-runs` per build. Operational pages are labelled
+local and ephemeral, and raw span ledgers are never copied into the vault.
 
-The wiki reads `specs/` from the currently checked-out workspace. Phase A specs
-usually live on separate canonical branches, so publish committed spec-only
-snapshots to the local default-branch catalog before building a complete wiki:
+Spec and RE runs use the same local, content-free telemetry format under each
+run's `telemetry/` directory. Prompts, model responses, source content, and
+artifact bodies are not recorded. Advanced local analysis is available through
+the intentionally hidden commands:
+
+```bash
+echelon spec analyze runs/spec-or-squad-run
+echelon spec analyze runs --format json
+echelon re analyze runs/re-run
+```
+
+Spec analysis reports phase, agent, model, dispatch-kind, token, duration,
+repair-loop, and repeated-blocker measures. Runs created before telemetry was
+enabled remain readable, with unavailable fields identified explicitly.
+
+The wiki reads `specs/` and `re/` from the configured local default branch,
+without switching the active checkout. Phase A specs usually live on separate
+canonical branches, so publish committed spec-only snapshots to that catalog
+before building a complete wiki:
 
 ```bash
 echelon spec publish 003  # spec-only snapshot commit on local main
 echelon spec publish --all
+echelon wiki build        # reads the local default-branch catalog
 git push origin main      # explicit; publish never pushes
-git switch main
-echelon wiki build
 ```
 
 `publish` discovers canonical local spec branches only, copies each matching
@@ -514,11 +549,17 @@ implementation history, fetch, push, or delete branches. Use the full canonical
 branch name instead of its numeric ID when desired, for example
 `echelon spec publish 003-add-feature-opta-search`.
 
+Build, status, and command-triggered refresh all resolve the same configured
+local default branch. When another branch is active, Echelon reads the exact
+default-branch commit through a temporary detached worktree and removes it when
+the operation finishes; it never fetches, switches, or modifies the caller's
+checkout.
+
 After the first explicit build, successful Echelon commands automatically rebuild
-the wiki only when they changed canonical inputs under `specs/` or `re/`. There is
-no background watcher: manual edits, pulls, and checkouts make `wiki status` stale
-until the next `echelon wiki build`. Disable command-triggered refresh locally with
-an override in `.echelon/local.yml` (which takes precedence over
+the wiki only when they changed catalog inputs under `specs/` or `re/`. There is
+no background watcher: manual edits and pulls make `wiki status` stale until the
+next `echelon wiki build`. Disable command-triggered refresh locally with an
+override in `.echelon/local.yml` (which takes precedence over
 `.echelon/config.yml`):
 
 ```yaml

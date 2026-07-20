@@ -17,6 +17,15 @@ from harness.re_domain_manifest import (
 )
 from harness.re_planner import ReExecutionPlan, RePlanSource
 from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
+from harness.re_semantic_contract import (
+    ReSemanticFindingRecord,
+    classify_semantic_finding,
+    stable_finding_id,
+)
+from harness.re_semantic_preflight import (
+    SemanticPreflightFinding,
+    check_semantic_preflight,
+)
 
 
 SOURCE_REFERENCE = re.compile(
@@ -67,6 +76,8 @@ class ReSpecQualityFailure:
     non_functional_requirement_count: int = 0
     non_functional_requirements_without_evidence: tuple[str, ...] = ()
     semantic_findings: tuple[str, ...] = ()
+    semantic_finding_records: tuple[ReSemanticFindingRecord, ...] = ()
+    semantic_preflight_findings: tuple[SemanticPreflightFinding, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -136,6 +147,7 @@ def validate_semantic_quality_review(
     run_re_dir: Path,
     plan: ReExecutionPlan,
     payload: object,
+    expected_domains: set[tuple[str, str]] | None = None,
 ) -> tuple[ReQualityReport | None, str | None]:
     """Validate the validator's complete, source-evidenced domain audit.
 
@@ -161,6 +173,10 @@ def validate_semantic_quality_review(
                 expected[(source.id, domain.domain_id)] = (source, domain)
     except ValueError as exc:
         return None, f"semantic quality review manifest invalid: {exc}"
+    if expected_domains is not None:
+        if not expected_domains or not expected_domains.issubset(expected):
+            return None, "semantic quality review requested domain inventory is invalid"
+        expected = {key: expected[key] for key in expected_domains}
 
     seen: set[tuple[str, str]] = set()
     failures: list[ReSpecQualityFailure] = []
@@ -225,6 +241,19 @@ def validate_semantic_quality_review(
             )
         seen.add(key)
         if verdict == "REPAIR":
+            records = tuple(
+                ReSemanticFindingRecord(
+                    finding_id=stable_finding_id(
+                        classify_semantic_finding(finding),
+                        finding,
+                        (evidence[index],),
+                    ),
+                    category=classify_semantic_finding(finding),
+                    text=finding,
+                    source_evidence=(evidence[index],),
+                )
+                for index, finding in enumerate(findings)
+            )
             failures.append(
                 ReSpecQualityFailure(
                     source_id=source_id,
@@ -241,6 +270,7 @@ def validate_semantic_quality_review(
                     domain_id=domain_id,
                     reason="semantic_quality_incomplete",
                     semantic_findings=tuple(findings),
+                    semantic_finding_records=records,
                 )
             )
     if seen != set(expected):
@@ -542,6 +572,10 @@ def _domain_quality_failure(
         source_root=Path(source.absolute_path),
         domain_root=domain.root,
     )
+    semantic_preflight_findings = check_semantic_preflight(
+        spec_path,
+        run_re_dir / "sources" / source.id / "analysis.json",
+    )
     if not (
         missing_sections
         or len(evidence) < MINIMUM_SOURCE_EVIDENCE
@@ -556,6 +590,7 @@ def _domain_quality_failure(
             < target.minimum_non_functional_requirements
         )
         or non_functional_requirements_without_evidence
+        or semantic_preflight_findings
     ):
         return None
     return ReSpecQualityFailure(
@@ -579,6 +614,7 @@ def _domain_quality_failure(
         non_functional_requirements_without_evidence=(
             non_functional_requirements_without_evidence
         ),
+        semantic_preflight_findings=semantic_preflight_findings,
     )
 
 

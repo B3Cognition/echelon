@@ -59,6 +59,19 @@ NEVER create or edit their JSON files.
 ALWAYS extend staged artifacts when rerun for the same source and domain.
 NEVER discard verified source evidence already present in a staged spec.
 
+### Rule 8 - Behavior Coverage and Evidence Strength
+ALWAYS include a `## Behavior Coverage` table for a source-domain spec with the
+columns `Category`, `Status`, `Observed Scope`, and `Source Evidence`. Cover
+public operations, configuration keys and rejected values, errors and recovery,
+boundaries and edge cases, operator-visible warnings and exit behavior, tests
+that demonstrate special cases, and evidence scope. Use only `observed`,
+`not-observed`, or `not-applicable` as status values; an observed row requires
+owned source evidence.
+NEVER invent behavior to fill the table. Never generalize one observed or tested case
+into a system-wide guarantee. Use `all`, `always`, `every`, or `never` in a
+requirement only when that requirement includes `Evidence Scope: exhaustive`
+and cites every relevant branch or a test that establishes the invariant.
+
 ## Configuration
 
 Read the resolved profile from `re-execution-plan.json`. Built-in deep defaults are:
@@ -110,6 +123,7 @@ Each domain spec must include:
 - Requirements (Non-Functional): use `### NFR-NNN:` headings. Meet the controller-provided minimum using only constraints observed in the owned code or tests (security, reliability, performance, accessibility, compatibility, or operability). Give every NFR concrete valid Source Evidence; never invent an SLA or a constraint that the source does not support.
 - Key Entities: attributes, constraints, relationships, and behaviors
 - Edge Cases: observed handling with source references
+- Behavior Coverage: the seven-category table required by Rule 8
 - Success Criteria: measurable outcomes
 
 For a controller-owned `source-support` target, write only

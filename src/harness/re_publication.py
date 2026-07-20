@@ -98,10 +98,6 @@ def validate_re_run(
     if not observed and re_state.get("status") == "done":
         observed = "complete"
     status = status_override or observed
-    if status == "partial" and not allow_partial:
-        raise RePublicationValidationError("partial RE output requires --allow-partial")
-    if status not in {"complete", "partial"}:
-        raise RePublicationValidationError(f"RE publication status is not publishable: {status!r}")
 
     plan_raw = _read_json(run_re / "re-execution-plan.json")
     try:
@@ -112,9 +108,16 @@ def validate_re_run(
         raise RePublicationValidationError("RE execution plan does not require publication")
     partial_sources = _partial_quality_debt_sources(run_re, re_state, plan)
     if status == "complete" and partial_sources:
-        raise RePublicationValidationError(
-            "complete RE publication cannot contain source quality debt"
-        )
+        if allow_partial and status_override is None:
+            status = "partial"
+        else:
+            raise RePublicationValidationError(
+                "complete RE publication cannot contain source quality debt"
+            )
+    if status == "partial" and not allow_partial:
+        raise RePublicationValidationError("partial RE output requires --allow-partial")
+    if status not in {"complete", "partial"}:
+        raise RePublicationValidationError(f"RE publication status is not publishable: {status!r}")
 
     _validate_source_index(run_re / "re-source-index.json", plan)
     _validate_workspace_inputs(run_re / "re-workspace-inputs.json", plan)
@@ -145,7 +148,14 @@ def validate_re_run(
     ]
     if quality_failures:
         _raise_quality_failure(quality_failures[0])
-    _validate_semantic_quality_report(run_re, partial_sources=partial_sources)
+    execution_profile = re_state.get("re_execution_profile")
+    semantic_audit_mode = (
+        execution_profile.get("semantic_audit_mode", "all")
+        if isinstance(execution_profile, dict)
+        else "all"
+    )
+    if semantic_audit_mode != "none":
+        _validate_semantic_quality_report(run_re, partial_sources=partial_sources)
     try:
         validate_re_architecture_catalog(run_re, plan)
     except ValueError as exc:
@@ -444,12 +454,32 @@ def _prepare_transaction(
     _write_json_atomic(workspace_stage / "manifest.json", workspace_manifest)
     operations.append(_operation(stage_root, "workspace", staged="new/workspace"))
 
+    controller_state = _read_json(candidate.run_dir / "re" / "state.json")
+    execution_profile = controller_state.get("re_execution_profile")
+    semantic_audits = controller_state.get("re_semantic_domain_audits")
     index_payload = {
         "schema_version": 1,
         "generation": generation,
         "publication_status": candidate.status,
         "published_at": datetime.now(timezone.utc).isoformat(),
         "published_from_run": candidate.run_id,
+        "quality": {
+            "semantic_completeness_version": 1,
+            "execution_profile": (
+                execution_profile.get("name", "legacy")
+                if isinstance(execution_profile, dict)
+                else "legacy"
+            ),
+            "semantic_audit_status": (
+                "evaluated"
+                if isinstance(semantic_audits, dict) and semantic_audits
+                else "not-evaluated"
+            ),
+            "audited_domain_count": (
+                len(semantic_audits) if isinstance(semantic_audits, dict) else 0
+            ),
+            "blocking_findings": 0,
+        },
         "sources": dict(sorted(source_records.items())),
         "workspace": {
             "manifest": "re/workspace/manifest.json",
