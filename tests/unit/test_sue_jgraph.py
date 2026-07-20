@@ -57,6 +57,54 @@ class TestValidate:
         assert isinstance(result, v1.ParseFailure)
 
 
+def _reader(*claim_dicts):
+    return jg.validate_graph({"claims": list(claim_dicts)}, 100)
+
+
+class TestConvergence:
+    def test_conflict_on_same_lines_converges_across_readers(self):
+        # Two readers both flag a conflict between line-1 and line-2 claims.
+        r1 = _reader(_claim("C1", lines=(1,), conflicts=("C2",)),
+                     _claim("C2", lines=(2,)))
+        r2 = _reader(_claim("C1", lines=(1,), conflicts=("C2",)),
+                     _claim("C2", lines=(2,)))
+        clusters = jg.consensus_conflicts({1: r1, 2: r2})
+        assert len(clusters) == 1
+        assert clusters[0]["readers"] == {1, 2}
+        conv = jg.convergence_metrics({1: r1, 2: r2}, clusters)
+        assert conv["consensus_conflicts"] == 1
+        assert conv["unanimous_conflicts"] == 1
+        assert conv["conflict_convergence"] == 1.0
+
+    def test_conflict_orientation_agnostic(self):
+        # reader 2 lists the same pair in the opposite direction/order.
+        r1 = _reader(_claim("C1", lines=(1,), conflicts=("C2",)),
+                     _claim("C2", lines=(2,)))
+        r2 = _reader(_claim("C1", lines=(2,), conflicts=("C2",)),
+                     _claim("C2", lines=(1,)))
+        clusters = jg.consensus_conflicts({1: r1, 2: r2})
+        assert len(clusters) == 1 and clusters[0]["readers"] == {1, 2}
+
+    def test_disjoint_conflicts_do_not_converge(self):
+        r1 = _reader(_claim("C1", lines=(1,), conflicts=("C2",)),
+                     _claim("C2", lines=(2,)))
+        r2 = _reader(_claim("C1", lines=(5,), conflicts=("C2",)),
+                     _claim("C2", lines=(6,)))
+        clusters = jg.consensus_conflicts({1: r1, 2: r2})
+        conv = jg.convergence_metrics({1: r1, 2: r2}, clusters)
+        assert conv["distinct_conflicts"] == 2
+        assert conv["consensus_conflicts"] == 0
+        assert conv["conflict_convergence"] == 0.0
+
+    def test_single_reader_conflict_is_not_consensus(self):
+        r1 = _reader(_claim("C1", lines=(1,), conflicts=("C2",)),
+                     _claim("C2", lines=(2,)))
+        r2 = _reader(_claim("C1", lines=(1,)))  # no conflict
+        clusters = jg.consensus_conflicts({1: r1, 2: r2})
+        conv = jg.convergence_metrics({1: r1, 2: r2}, clusters)
+        assert conv["consensus_conflicts"] == 0
+
+
 class TestMetrics:
     def test_completeness_and_pairs_dedupe(self):
         claims = jg.validate_graph({"claims": [
@@ -102,8 +150,14 @@ class TestScenario:
         assert sidecar["metrics"]["1"]["conflict_pairs"] == [["C1", "C2"]]
         report = (tmp_path / "justification-graph.md").read_text()
         assert "⚡ conflicts: C1" in report
+        # All 3 readers report the same conflict → converged & unanimous.
+        assert sidecar["convergence"]["consensus_conflicts"] == 1
+        assert sidecar["convergence"]["unanimous_conflicts"] == 1
+        assert sidecar["consensus_conflicts"][0]["support"] == 3
+        assert "Consensus conflicts" in report
         out = capsys.readouterr().out
         assert "conflict pairs total: 3" in out
+        assert "Convergence: 1/1" in out
 
     def test_all_readers_failing_exit_3(self, tmp_path, capsys):
         spec = tmp_path / "spec.md"

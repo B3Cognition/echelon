@@ -129,6 +129,90 @@ def validate_graph(payload: dict, max_line: int):
     return claims
 
 
+def _overlap(a: frozenset, b: frozenset) -> bool:
+    """Anchor rule (same discipline as v3): share ≥1 evidence line, or both
+    empty."""
+    if not a and not b:
+        return True
+    return bool(a & b)
+
+
+def consensus_conflicts(readers: dict) -> list:
+    """Cross-reader Justification-Graph convergence on contradictions.
+
+    Each reader's conflict pair is anchored by the evidence-line sets of its
+    two claims. Two readers report the SAME conflict when both connect the same
+    two line regions (each side shares a line with a corresponding side, either
+    orientation). Returns clusters sorted by reader support (desc) — a conflict
+    found by ≥2 independent readers is a converged, trustworthy contradiction.
+    This is graph-only contradiction detection: no dialogue, no text re-reading.
+    """
+    edges: list[dict] = []
+    for reader_no, claims in readers.items():
+        by_id = {c.id: c for c in claims}
+        seen: set = set()
+        for claim in claims:
+            for ref in claim.conflicts_with:
+                other = by_id.get(ref)
+                if other is None:
+                    continue
+                key = tuple(sorted((claim.id, ref)))
+                if key in seen:
+                    continue
+                seen.add(key)
+                edges.append({
+                    "reader": reader_no,
+                    "a": frozenset(claim.evidence_lines),
+                    "b": frozenset(other.evidence_lines),
+                    "text_a": claim.claim,
+                    "text_b": other.claim,
+                    "lines_a": sorted(claim.evidence_lines),
+                    "lines_b": sorted(other.evidence_lines),
+                })
+    clusters: list[dict] = []
+    for edge in edges:
+        home = None
+        for cluster in clusters:
+            for member in cluster["edges"]:
+                if ((_overlap(edge["a"], member["a"]) and _overlap(edge["b"], member["b"]))
+                        or (_overlap(edge["a"], member["b"]) and _overlap(edge["b"], member["a"]))):
+                    home = cluster
+                    break
+            if home:
+                break
+        if home is None:
+            home = {"readers": set(), "edges": []}
+            clusters.append(home)
+        home["readers"].add(edge["reader"])
+        home["edges"].append(edge)
+    clusters.sort(key=lambda c: (-len(c["readers"]), min(c["readers"])))
+    return clusters
+
+
+def convergence_metrics(readers: dict, clusters: list) -> dict:
+    """H-D2 numbers: does the one-shot graph converge across readers?"""
+    import statistics as _st
+
+    n_readers = len(readers)
+    consensus = [c for c in clusters if len(c["readers"]) >= 2]
+    unanimous = [c for c in clusters if len(c["readers"]) == n_readers]
+    completeness = [
+        sum(1 for cl in claims if cl.evidence_lines) / len(claims)
+        if claims else 0.0
+        for claims in readers.values()
+    ]
+    return {
+        "readers": n_readers,
+        "distinct_conflicts": len(clusters),
+        "consensus_conflicts": len(consensus),
+        "unanimous_conflicts": len(unanimous),
+        "conflict_convergence": (
+            len(consensus) / len(clusters) if clusters else 0.0
+        ),
+        "mean_evidence_completeness": _st.mean(completeness) if completeness else 0.0,
+    }
+
+
 def graph_metrics(readers: dict) -> dict:
     """Per-reader completeness + conflict pairs (deterministic)."""
     metrics: dict = {}
@@ -148,15 +232,46 @@ def graph_metrics(readers: dict) -> dict:
 
 
 def render_report(spec, spec_path: Path, readers: dict, metrics: dict,
-                  run_date: str, focus_hint: str) -> str:
+                  run_date: str, focus_hint: str,
+                  clusters: list | None = None,
+                  convergence: dict | None = None) -> str:
     lines: list[str] = []
-    lines.append("# Justification Graph Report (one-shot, arm D)")
+    lines.append("# Justification Graph Report (one-shot)")
     lines.append("")
     lines.append(f"- **Specification:** {spec_path}")
     lines.append(f"- **Run date:** {run_date}")
     if focus_hint:
         lines.append(f"- **Focus:** {focus_hint}")
     lines.append(f"- **Readers:** {len(readers)}")
+    if convergence is not None:
+        lines.append(
+            f"- **Conflict convergence:** {convergence['consensus_conflicts']}"
+            f"/{convergence['distinct_conflicts']} distinct conflicts found by "
+            f"≥2 readers ({convergence['conflict_convergence']:.0%}); "
+            f"{convergence['unanimous_conflicts']} unanimous")
+        lines.append(
+            f"- **Mean evidence completeness:** "
+            f"{convergence['mean_evidence_completeness']:.2f}")
+    if clusters is not None:
+        consensus = [c for c in clusters if len(c["readers"]) >= 2]
+        lines.append("")
+        lines.append("## Consensus conflicts (found by ≥2 independent readers)")
+        lines.append("")
+        if not consensus:
+            lines.append("None — no contradiction was independently reproduced.")
+        for idx, cluster in enumerate(consensus, start=1):
+            rep = cluster["edges"][0]
+            support = len(cluster["readers"])
+            lines.append(
+                f"### CC{idx}. (support {support}/{convergence['readers']}) "
+                f"conflict")
+            lines.append(f"- **Claim A:** {rep['text_a']}")
+            lines.extend(v1._quoted_evidence(spec, rep["lines_a"]))
+            lines.append(f"- **Claim B:** {rep['text_b']}")
+            lines.extend(v1._quoted_evidence(spec, rep["lines_b"]))
+            lines.append("")
+    lines.append("")
+    lines.append("## Per-reader graphs")
     lines.append("")
     for reader_no in sorted(readers):
         m = metrics[reader_no]
@@ -178,8 +293,8 @@ def render_report(spec, spec_path: Path, readers: dict, metrics: dict,
                 lines.append(f"  - assumes: {assumption}")
         lines.append("")
     lines.append(
-        "_One-shot introspective extraction (arm D control); no dialogue "
-        "trace behind these graphs._"
+        "_One-shot Justification Graph (the chosen automated reasoning-layer "
+        "source); consensus conflicts converge across independent readers._"
     )
     lines.append("")
     return "\n".join(lines)
@@ -263,15 +378,30 @@ def main(argv: list | None = None) -> int:
         )
 
     metrics = graph_metrics(readers)
+    clusters = consensus_conflicts(readers)
+    convergence = convergence_metrics(readers, clusters)
     run_date = datetime.now().strftime("%Y-%m-%d")
     report = render_report(spec, config.spec_path, readers, metrics, run_date,
-                           options.focus)
+                           options.focus, clusters=clusters,
+                           convergence=convergence)
     sidecar = {
         "specification": str(config.spec_path),
         "run_date": run_date,
         "focus": options.focus or None,
         "dropped_readers": dropped,
         "metrics": metrics,
+        "convergence": convergence,
+        "consensus_conflicts": [
+            {
+                "support": len(c["readers"]),
+                "readers": sorted(c["readers"]),
+                "text_a": c["edges"][0]["text_a"],
+                "lines_a": c["edges"][0]["lines_a"],
+                "text_b": c["edges"][0]["text_b"],
+                "lines_b": c["edges"][0]["lines_b"],
+            }
+            for c in clusters if len(c["readers"]) >= 2
+        ],
         "readers": {
             str(reader_no): [
                 {"id": c.id, "claim": c.claim,
@@ -296,6 +426,13 @@ def main(argv: list | None = None) -> int:
         f"J-Graph — readers: {len(readers)}"
         + (f" ({len(dropped)} dropped)" if dropped else "")
         + f"; conflict pairs total: {total_pairs}"
+    )
+    print(
+        f"Convergence: {convergence['consensus_conflicts']}"
+        f"/{convergence['distinct_conflicts']} conflicts found by ≥2 readers "
+        f"({convergence['conflict_convergence']:.0%}); "
+        f"{convergence['unanimous_conflicts']} unanimous; "
+        f"evidence completeness {convergence['mean_evidence_completeness']:.2f}"
     )
     for reader_no in sorted(metrics):
         m = metrics[reader_no]
