@@ -354,6 +354,8 @@ def test_controller_records_dispatch_tokens_and_content_free_spans(tmp_path: Pat
     assert persisted["re_token_usage"] > 0
     ledger = (run_dir / "telemetry/spans.jsonl").read_text(encoding="utf-8")
     assert '"gen_ai.provider.name":"codex"' in ledger
+    assert '"gen_ai.usage.input_tokens":10' in ledger
+    assert '"gen_ai.usage.output_tokens":2' in ledger
     assert "RE phase:" not in ledger
 
 

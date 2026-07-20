@@ -2466,6 +2466,19 @@ class ReExtractionController:
             attributes["gen_ai.provider.name"] = str(provider)
         if model:
             attributes["gen_ai.response.model"] = str(model)
+        for field, attribute in (
+            ("input_tokens", "gen_ai.usage.input_tokens"),
+            ("output_tokens", "gen_ai.usage.output_tokens"),
+            ("reasoning_output_tokens", "gen_ai.usage.reasoning.output_tokens"),
+            ("cache_read_input_tokens", "gen_ai.usage.cache_read.input_tokens"),
+            (
+                "cache_creation_input_tokens",
+                "gen_ai.usage.cache_creation.input_tokens",
+            ),
+        ):
+            value = getattr(usage, field)
+            if value is not None:
+                attributes[attribute] = value
         selected = semantic_target or target or {}
         for source_key, attribute in (
             ("source_id", "echelon.source.id"),
