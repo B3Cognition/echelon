@@ -47,7 +47,6 @@ extension/scripts/node/re/node_modules/
 docs/echelon-*run-*.md
 /runs/
 /.claude/
-!/.echelon/
-!/.echelon/config.yml
+/.echelon/
 /sources/*
 !/sources/README.md
