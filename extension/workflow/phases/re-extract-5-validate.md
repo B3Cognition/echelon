@@ -15,6 +15,11 @@
 
 Instruct RE-VALIDATOR to audit only the source-domain requested by the controller against its owned code and tests. It must apply the ambiguity, underspecification, consistency, source-evidence, error/recovery, FR, NFR, and acceptance-scenario taxonomy. It must return exactly one complete `semantic_quality_review` record for that domain: `PASS` with no findings, or `REPAIR` with at least one valid owned-domain backticked `path:line` or `path:start-end` citation per finding. It must not edit any spec or audit sibling domains; the controller persists completed audits and routes repair domains to RE-SPECIFIER. Path-only prose, unverifiable locations, generated spec paths, quality reports, run artifacts, and evidence from another domain are invalid as `source_evidence`.
 
+Audit the shared `Behavior Coverage` table for public operations, configuration
+keys, errors and recovery, boundaries, operator-visible behavior, tests, and
+evidence scope. The table is an index, not proof. Verify any `Evidence Scope:
+exhaustive` claim against the cited branches or invariant test.
+
 ## Expected Outputs
 
 - An `echelon_result.semantic_quality_review` object covering the requested domain exactly once.

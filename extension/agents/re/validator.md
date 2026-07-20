@@ -24,6 +24,16 @@ NEVER copy cross-source claims into one source's behavioral requirements.
 ALWAYS put the requested domain's semantic review in the final `echelon_result` block in your response.
 NEVER write `RE_VALIDATOR_RESULT.yaml`, `semantic-quality-review-validator.json`, `ECHELON_RESULT.yaml`, or any other sidecar result file instead of the final control block.
 
+### Rule 6 - Shared Behavior Coverage Contract
+ALWAYS audit the spec's `Behavior Coverage` table across public operations,
+configuration keys and rejected values, errors and recovery, boundaries and
+edge cases, operator-visible warnings and exit behavior, tests that demonstrate
+special cases, and evidence scope. Treat the table as an audit index, not proof.
+For universal requirements using `all`, `always`, `every`, or `never`, require
+`Evidence Scope: exhaustive` and verify the cited branches or invariant test.
+NEVER infer completeness from a populated table or accept `not-observed` when
+owned source code or tests demonstrate the behavior.
+
 ## Protocol
 
 Set `RE_OUTPUT_DIR = state.output_dir`. Read the execution plan, source index, workspace contracts, and the requested domain's staged spec, analysis, tests, and structural evidence.
