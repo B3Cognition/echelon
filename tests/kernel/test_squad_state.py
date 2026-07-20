@@ -91,6 +91,34 @@ class TestSquadStateStore:
                       _result("DONE", {"coverage_pct": 72}))
         assert store.load()["coverage_pct"] == 72
 
+    def test_advance_preserves_bootstrapped_full_spec_identity(self, tmp_path):
+        """An agent may report a short spec number but cannot fork Phase A paths."""
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase1-what")
+        state = store.load()
+        state.update(
+            {
+                "spec_id": "005-opta-search-shows-stats",
+                "spec_dir": "runs/r/specs/005-opta-search-shows-stats",
+                "published_spec_dir": "specs/005-opta-search-shows-stats",
+                "feature_branch": "005-opta-search-shows-stats",
+                "specify_feature_directory": "runs/r/specs/005-opta-search-shows-stats",
+            }
+        )
+        store.save(state)
+
+        store.advance(
+            "phase1-what",
+            "phase1-why2",
+            _result("DONE", {"spec_id": "005", "spec_dir": "specs/005-opta-search-shows-stats"}),
+            allowed_state_update_keys={"spec_id", "spec_dir"},
+        )
+
+        state = store.load()
+        assert state["spec_id"] == "005-opta-search-shows-stats"
+        assert state["spec_dir"] == "runs/r/specs/005-opta-search-shows-stats"
+        assert state["published_spec_dir"] == "specs/005-opta-search-shows-stats"
+
     def test_advance_blocks_invalid_result_without_mutating_state(self, tmp_path):
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "init")

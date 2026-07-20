@@ -479,8 +479,9 @@ def _routing_contract(node: "PhaseNode") -> str:
     if re.search(r"\balignment\s*=", condition_text):
         fields.append(("alignment", "ALIGNED | DRIFT | STOP_AND_ASK"))
 
-    if re.search(r"\blexicon_pass\b", condition_text):
-        fields.append(("lexicon_pass", "true | false  # required when the spec Lexicon gate is enabled"))
+    if re.search(r"\blexicon_(?:pass|evaluation)\b", condition_text):
+        if node.id != "phase1-what":
+            fields.append(("lexicon_pass", "true | false  # required when the spec Lexicon gate is enabled"))
         fields.append(("lexicon_attempts", "<integer>"))
         fields.append(("lexicon_findings", "<integer>"))
 
@@ -870,13 +871,12 @@ class PhaseExecutor(ABC):
             feature_branch = state.get("feature_branch", "")
             context_preamble += (
                 "## CARTOGRAPHER Resume Guard\n"
-                "This is a resumed/amendment pass for an existing spec-kit spec.\n"
+                "This is a resumed/amendment pass for the controller-owned Phase A spec.\n"
                 f"Existing spec_dir: {spec_dir}\n"
                 f"Existing feature_branch: {feature_branch}\n"
-                "Do NOT call speckit.specify. Do NOT run create-new-feature.sh. "
-                "Do NOT create or switch to a new numbered branch. Reuse the "
-                "existing spec_dir and proceed directly to Step 2 enhancement/"
-                "amendment of spec.md and 00-overview.md.\n\n"
+                "Do NOT create, switch, rename, or discover a branch or spec directory. "
+                "Reuse the existing spec_dir and amend spec.md and 00-overview.md "
+                "in place.\n\n"
             )
 
         prompt = "\n\n".join(static_parts + [context_preamble] + dynamic_parts)

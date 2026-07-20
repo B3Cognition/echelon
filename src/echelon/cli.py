@@ -56,7 +56,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.7.3"
+CLI_VERSION = "3.7.5"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -3610,9 +3610,10 @@ def _reset_rewind_state(
     except ValueError:
         phase_index = len(_ROADMAP_PHASES)
     if phase_index <= _ROADMAP_PHASES.index("phase1-what"):
-        rewound["lexicon_pass"] = None
+        rewound.pop("lexicon_pass", None)
         rewound["lexicon_attempts"] = 0
-        rewound["lexicon_findings"] = 0
+        rewound.pop("lexicon_findings", None)
+        rewound["lexicon_evaluation"] = "pending"
         rewound.pop("lexicon_gate_exhausted", None)
     if phase_index <= _ROADMAP_PHASES.index("phase3-plan"):
         rewound["tasks_lexicon_pass"] = None
@@ -6357,6 +6358,7 @@ def _cmd_continue(
     verified_recovery = _verified_lexicon_gate_recovery_phase(project_root, state)
     if verified_recovery is not None:
         next_phase, findings = verified_recovery
+        state["lexicon_evaluation"] = "passed"
         state["lexicon_pass"] = True
         state["lexicon_findings"] = findings
         state["lexicon_attempts"] = 0
@@ -7402,18 +7404,15 @@ def _resolve_escalation_option(answer: str, options: object) -> dict | None:
 def _preserve_active_spec_context(project_root: Path, state: dict) -> None:
     """Record the current spec branch/dir before resume re-dispatch.
 
-    CARTOGRAPHER may be re-dispatched after a human escalation. If the first
-    pass already created the spec-kit branch and spec directory, resume must
-    continue enhancing that spec, not call speckit.specify again and allocate a
-    new branch number.
+    CARTOGRAPHER may be re-dispatched after a human escalation. Resume must
+    continue using the same Echelon-owned branch and full spec directory.
     """
     if state.get("phase") != "phase1-what":
         return
 
     # Phase A bootstrap reserves a run-local target path before CARTOGRAPHER
-    # has called spec-kit.  A directory alone is therefore not evidence of an
-    # existing spec; carrying this flag into the first WHAT pass suppresses
-    # the required `speckit.specify` invocation.
+    # authors the first spec. A directory alone is therefore not evidence of
+    # an existing spec; the resume flag is set only once spec.md exists.
     state.pop("cartographer_resume_existing_spec", None)
 
     spec_dir = state.get("spec_dir")

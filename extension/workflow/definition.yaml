@@ -446,22 +446,20 @@ phases:
       - spec.md
       - 00-overview.md
       - requirements.lexicon.md       # only when lexicon_gate.enabled; derived from spec.md
-      - lexicon_pass → state.json        # only when lexicon_gate.enabled; drives the re-dispatch below
+      - lexicon_evaluation → state.json  # controller-owned: pending, passed, or failed
+      - lexicon_pass → state.json        # controller-owned Boolean verdict after validation
     allowed_state_updates:
-      - spec_id
-      - spec_dir
       - spec_status
-      - lexicon_pass
       - lexicon_attempts
       - lexicon_findings
       - status
       - blocked_reason
       - shadow_output_recovered
+    controller_state_updates:
+      - lexicon_evaluation
+      - lexicon_pass
     state_update_types:
-      spec_id: string
-      spec_dir: string
       spec_status: string
-      lexicon_pass: boolean
       lexicon_attempts: integer
       status: string
     state_update_enums:
@@ -475,7 +473,10 @@ phases:
       # convergence iteration cap remains a secondary safety net. When the gate
       # is disabled this condition is false and flow falls through unchanged.
       - to: phase1-what
-        condition: "lexicon_gate.enabled AND NOT lexicon_pass AND lexicon_attempts < lexicon_gate.max_repair_attempts AND iteration < max_iterations"
+        condition: "lexicon_gate.enabled AND lexicon_evaluation = pending AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase1-what
+        condition: "lexicon_gate.enabled AND lexicon_evaluation = failed AND lexicon_attempts < lexicon_gate.max_repair_attempts AND iteration < max_iterations"
         action: increment_iteration
       - to: phase1-why2
         condition: always
@@ -745,7 +746,7 @@ phases:
           - .specify/squad/reasoning-journal.jsonl [type=belief_gate_triggered]   # if any
         outputs:
           - research.md
-          - experiment-results.json  # if prototype spike run
+          - experiment-results.md  # if prototype spike run
 
       - id: speckit-echelon-oracle
         tier: specialists
@@ -955,6 +956,7 @@ phases:
           - coverage-map.md
           - estimates.md
           - mvp-scope.md
+          - extension/templates/estimates-template.md
         outputs:
           - assess2-verdict: PASS | REJECTED
           - implementability-report.md     # required by PLAN2

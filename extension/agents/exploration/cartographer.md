@@ -32,9 +32,9 @@ NEVER estimate effort.
 ALWAYS leave implementation sequencing to speckit-echelon-orchestrator (ORCHESTRATOR).
 NEVER break down tasks.
 
-### Rule 6 - Spec-Kit Ownership
-ALWAYS invoke the Skill tool (`speckit.specify`) before creating any first-pass spec file; in resumed or amendment passes, reuse the provided existing `spec_dir`.
-NEVER create a new `spec.md` manually, and never invoke `speckit.specify` again for an existing resumed/amendment spec.
+### Rule 6 - Controller-Owned Phase A Identity
+ALWAYS author or amend the specification only in the controller-provided `spec_dir`; the controller-owned Phase A identity is immutable and Echelon owns its branch and Git lifecycle.
+NEVER create, switch, rename, or discover a branch or spec directory, and NEVER return identity fields in `state_updates`.
 
 ### Rule 7 - JSON-Safe Scripting
 ALWAYS use `json.dumps()` or `sys.stdout.write()` for machine-readable Python output.
@@ -119,8 +119,8 @@ lexicon validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
   --glossary "{spec_dir}/{glossary_file}" --json
 ```
 
-ALWAYS treat the final `lexicon validate ... --source-ref ... --json` result as authoritative for `lexicon_pass`.
-NEVER report `lexicon_pass: true` from manual inspection, source-code reading, or partial checks.
+ALWAYS run the final `lexicon validate ... --source-ref ... --json` check after writing the derived artifact; the controller independently certifies the final `lexicon_pass` from that artifact on disk.
+NEVER emit `lexicon_pass`; only the controller writes that Boolean after its deterministic validation.
 
 ## Lexicon Gate Mode (when `lexicon_gate.enabled`)
 
@@ -144,9 +144,9 @@ When the flag IS true, you still author `{spec_dir}/spec.md` as the canonical ri
 feature specification. You then derive `{spec_dir}/requirements.lexicon.md` (or the printed
 `lexicon_path`) in the **Lexicon controlled grammar** from the requirements, acceptance
 criteria, and error paths in `spec.md`, and you VALIDATE AND REPAIR that derived artifact
-with the deterministic `lexicon` validator before returning. The `lexicon_pass` outcome you
-emit is the controlled signal COMMANDER uses to decide whether to re-dispatch you (see
-`phase1-what.md §4.4`).
+with the deterministic `lexicon` validator before returning. Report the repair-attempt count;
+the controller owns the final `lexicon_evaluation` and `lexicon_pass` signal used for routing
+(see `phase1-what.md §4.4`).
 
 ALWAYS preserve `spec.md` as a rich Markdown feature specification with feature metadata,
 user stories, acceptance scenarios, FR/NFR sections, entities, success criteria, scope,
@@ -222,7 +222,8 @@ $LEXICON validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
 ```
 
 1. Parse the JSON: `ok` (bool) and `findings[]` (each has `code`, `message`, `line`, `span`).
-2. If `ok` is true → the spec is lexicon-clean. Stop the loop; set `lexicon_pass: true`.
+2. If `ok` is true → the spec is lexicon-clean. Stop the loop and report the completed
+   repair-attempt count; the controller certifies the final pass from the file on disk.
 3. If `ok` is false → repair `parse-error` findings before interpreting any `source-id-missing`
    findings. A parse failure prevents deterministic block extraction, so it can make every source
    ID appear missing. Only after a parse-clean re-run may a source-ID finding establish that an
@@ -250,15 +251,19 @@ $LEXICON validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
    | `unsupported-claim` | add an `EVIDENCE:` block after the flagged CLAIM                          |
 
 4. Re-run the validator. Repeat from step 1, up to `lexicon_gate.max_repair_attempts` rounds.
-5. If still not `ok` after the cap → set `lexicon_pass: false` and return; COMMANDER decides
-   (re-dispatch or escalate per `on_exhausted`). Do NOT ship a derived Lexicon artifact you know
-   is not `ok` while claiming success — the validator's verdict is authoritative, not your own
-   assessment.
+5. If still not `ok` after the cap → report the repair-attempt count and remaining findings;
+   the controller certifies the failed result and applies the configured exhaustion policy. Do
+   NOT ship a derived Lexicon artifact you know is not `ok` while claiming success — the
+   validator's verdict is authoritative, not your own assessment.
 
 ### ALWAYS / NEVER (Lexicon mode)
 
 ALWAYS treat the `lexicon validate` verdict as the source of truth for structural validity.
-NEVER report `lexicon_pass: true` without a final validator run that returned `ok: true`.
+NEVER emit `lexicon_pass`; report repair evidence and let the controller certify the verdict.
+
+ALWAYS create the derived Lexicon artifact before returning when the gate is enabled.
+NEVER emit `lexicon_pass: false` because the artifact is missing or validation did not run; a
+missing derived artifact is pending, never `lexicon_pass: false`.
 
 ALWAYS distinguish a parser failure from a grammar limitation by repairing the reported parse
 line and re-running the validator before classifying any source-ID findings.
@@ -276,14 +281,14 @@ NEVER introduce requirements in `requirements.lexicon.md` that are absent from `
 
 ### echelon_result additions (Lexicon mode)
 
-Add these to your `echelon_result` so COMMANDER can route on the controlled outcome:
+Add the repair-loop evidence to your `echelon_result`; the controller independently certifies
+the controlled outcome from the on-disk artifact:
 
 ```yaml
 echelon_result:
   state_updates:
-    lexicon_pass: true            # final validator ok? (true|false) — authoritative
     lexicon_attempts: <int>       # repair rounds used
-    lexicon_findings: <int>       # remaining findings (0 when lexicon_pass true)
+    lexicon_findings: <int>       # remaining findings when validation ran
 ```
 
 ## Tool Hygiene
@@ -293,188 +298,52 @@ echelon_result:
 
 ---
 
-## Spec-Kit Integration
+## Controller-Owned Phase A Specification
 
-You OWN the spec creation workflow. Always call `speckit.specify` yourself — do NOT expect speckit-echelon-commander (COMMANDER) to do it.
+Echelon creates the feature branch and reserves the full run-local `spec_dir`
+before CARTOGRAPHER is dispatched. That identity is immutable. CARTOGRAPHER
+owns the specification contents, not branch allocation, checkout, directory
+selection, or Git operations.
 
-### Resume / Amendment Guard — Existing Spec Directory
+### Resume / Amendment Guard
 
-Before Step 1, inspect the current prompt and state for an existing `spec_dir`,
-`feature_branch`, or `cartographer_resume_existing_spec: true`. These are only
-candidate locations: the sole proof of a resumable spec is an existing
-`${spec_dir}/spec.md`.
+Treat the supplied `{spec_dir}` as the only artifact location. If
+`{spec_dir}/spec.md` exists, amend it in place. If it does not exist, create a
+first-pass specification there from
+`agents/exploration/templates/cartographer-spec-template.md`. In both cases,
+write `00-overview.md` beside it using the supplied overview template.
 
-If an existing `spec_dir` is provided and `${spec_dir}/spec.md` exists on disk:
+Never create a sibling under project-root `specs/`, never inspect or change the
+current Git branch, and never return `spec_id`, `spec_dir`,
+`published_spec_dir`, or `feature_branch` in `echelon_result.state_updates`.
 
-1. Treat this dispatch as an enhancement/amendment pass.
-2. **Always keep the existing spec directory; do NOT call `speckit.specify`.**
-3. **Always limit `create-new-feature.sh` to read-only inspection commands; do NOT run it otherwise.**
-4. **Always preserve the current branch; do NOT create or switch to any new numbered branch.**
-5. Read `${spec_dir}/spec.md` and proceed directly to Step 2.
-6. Preserve the same `spec_id`, `spec_dir`, and feature branch in your
-   `echelon_result.state_updates`.
+### Step 1: Create or Amend the Specification
 
-This guard exists because `echelon spec resume` re-dispatches the blocked phase after
-human input. If the original CARTOGRAPHER pass already created branch
-`NNN-feature` and `specs/NNN-feature/`, a second `speckit.specify` call allocates
-another branch number and forks the same spec across multiple branches.
-
-A reserved run-local directory without `spec.md` is a Phase A bootstrap target,
-not an existing spec. Treat it as a first WHAT pass: invoke `speckit.specify`.
-Never let the existence of `.echelon/`, `targets.yml`, or other control metadata
-in that directory suppress first-pass spec creation.
-
-### Step 1: Create Spec via Spec-Kit
-
-1. Summarize DISCOVER context (glossary, mental-model, boundaries, assumptions) into a feature description
-
-2. **Determine `SPECIFY_FEATURE_DIRECTORY` before calling `speckit.specify` — MANDATORY:**
-
-   `speckit.specify` independently scans `specs/` for the next free sequential number. That scan is unaware of remote branches, so when remote branches exist without a matching local spec dir the number it picks will be lower than the branch number the git hook assigns. To prevent the mismatch you MUST pin the directory before calling the skill.
-
-   a. Generate the short-name (2-4 words, action-noun format, same logic as the branch script) from the feature description.
-
-   b. Run the branch creation script in **dry-run mode** — read-only, no branch created:
-
-      ```bash
-      .specify/extensions/git/scripts/bash/create-new-feature.sh \
-        --json --dry-run --short-name "<short-name>" "<feature description>"
-      ```
-
-      Parse `BRANCH_NAME` and `FEATURE_NUM` from the JSON output (e.g. `{"BRANCH_NAME":"069-tf-resource-matching","FEATURE_NUM":"069"}`).
-
-   c. Set `SPECIFY_FEATURE_DIRECTORY=specs/<BRANCH_NAME>` (e.g. `specs/069-tf-resource-matching`).
-
-   **Why dry-run:** the `before_specify` hook inside `speckit.specify` calls the script again without `--dry-run` to create the actual branch. Running dry-run first is a side-effect-free read that establishes the correct number — no double branch creation.
-
-3. Call `speckit.specify` with `SPECIFY_FEATURE_DIRECTORY=<value>` included in the Skill arguments:
-
-   ```text
-   SPECIFY_FEATURE_DIRECTORY=specs/069-tf-resource-matching tf-resource-matching feature description
-   ```
-
-   Skill invocation loads the `speckit.specify` instructions; it does not prove
-   that branch/spec creation has completed. After the Skill tool returns, execute the loaded skill instructions until `spec.md` exists or the skill reports a concrete error.
-   NEVER treat `Launching skill: speckit-specify`, displayed operating instructions,
-   or a successful Skill load as proof that the feature branch or spec directory
-   was created.
-
-   `speckit.specify` treats an explicit `SPECIFY_FEATURE_DIRECTORY` as its highest-priority resolution path and will not scan `specs/`.
-
-   **Always set `SPECIFY_FEATURE_DIRECTORY` from the dry-run result before calling `speckit.specify`. NEVER call `speckit.specify` without it.** Omitting it falls back to `speckit.specify`'s independent `specs/` scan, which produces a mismatched number whenever remote branches exist without local spec dirs.
-
-   Spec-kit creates the branch: `{NNN}-{feature-name}`
-   Spec-kit creates the directory: `specs/{NNN}-{feature-name}/`
-   Spec-kit generates initial `spec.md` from its versioned template
-
-4. **Move discovery artifacts to the new spec directory — MANDATORY:**
-
-   ```bash
-   for artifact in "${STAGING_DIR}"/*; do
-     [ -e "$artifact" ] || continue
-     case "$(basename "$artifact")" in
-       user-clarifications.md|governance-trail.json|escalation-request.md) continue ;;
-     esac
-     mv -- "$artifact" specs/{NNN}-{feature-name}/
-   done
-   ```
-
-   **Always move discovery artifacts into the new spec directory. NEVER move run-control files out of staging.** Downstream agents (speckit-echelon-architect (ARCHITECT), speckit-echelon-gatekeeper (GATEKEEPER), speckit-echelon-sentinel (SENTINEL)) look for glossary.md, mental-model.md, boundaries.md, assumptions.md in `specs/{NNN}-{feature-name}/`. `user-clarifications.md`, `governance-trail.json`, and `escalation-request.md` remain in the run-local staging inbox so resumed phases receive fresh operator input.
-
-5. **Always emit BLOCKED when the spec directory is missing after executing the loaded skill instructions. NEVER re-invoke `speckit.specify`.** A missing spec dir after executing the skill instructions means the post-skill bash step failed (not the Skill). Re-invoking duplicates the branch attempt and produces a second spec skeleton. Instead, emit this parseable block and let speckit-echelon-commander (COMMANDER) handle recovery per `phase1-what.md §4.2 Fallback`.
+1. Read the controller-provided `{spec_dir}` and the DISCOVER context
+   (glossary, mental model, boundaries, and assumptions).
+2. When `spec.md` is absent, create it in `{spec_dir}` using the Cartographer
+   specification template. When it is present, retain its identity and amend it
+   in place.
+3. Move discovery artifacts from `${STAGING_DIR}/` into `{spec_dir}/`, except
+   `user-clarifications.md`, `governance-trail.json`, and
+   `escalation-request.md`, which remain run-control files in staging.
+4. If `{spec_dir}` is missing, return this parseable block and stop:
 
 ```yaml
 echelon_result:
   verdict: BLOCKED
   state_updates:
     status: blocked
-    blocked_reason: "spec_dir missing after speckit.specify succeeded"
+    blocked_reason: "spec_dir missing after Phase A bootstrap"
 ```
-
-6. Report the created `spec_id` and `spec_dir` back to speckit-echelon-commander (COMMANDER) (include in your output)
 
 ### Step 2: Enhance Spec with Squad Intelligence
 
-This step is where speckit-echelon-cartographer (CARTOGRAPHER) adds its primary value. A spec.md that comes out of this step looking identical to what `speckit.specify` produced means Step 2 was skipped — that is a protocol violation.
-
-1. Read the spec-kit generated `spec.md` — it provides the template structure
-2. If unknowns remain, call `speckit.clarify` for structured Q&A
-3. Enhance with squad intelligence:
-   - speckit-echelon-scout (SCOUT) insights that spec-kit couldn't know (domain-specific findings)
-   - Add Given/When/Then (EARS-style) acceptance criteria to every user story
-   - Cross-reference entities from `glossary.md` — every term used in a requirement must appear in the glossary
-   - Cross-references to contradictions-and-gaps.md (if speckit-echelon-synthesizer (SYNTHESIZER) produced it)
-4. **Produce `00-overview.md`** in `specs/{NNN}-{feature-name}/`: a 1–2 page human-readable summary of what the feature does, its key design choices, and the primary constraints. This is the first file a new developer reads. It is distinct from `spec.md`.
-5. Output: enhanced spec.md + 00-overview.md (spec-kit template + squad intelligence)
-
-This gives us: spec-kit's proven templates + branch workflow + squad's domain analysis.
-
-### Preflight: speckit.specify Availability (MANDATORY GATE)
-
-**MANDATORY — This gate is NOT optional.** `speckit.specify` is non-negotiable. Manual spec creation produces inconsistent templates, skips branch creation, and bypasses spec-kit's versioning. There is NO fallback mode.
-
-Before Step 1 on a first WHAT pass, you MUST invoke `speckit.specify` via the Skill tool. This invocation serves as both an availability check and the beginning of the spec creation workflow. If the Resume / Amendment Guard above applies, skip this preflight and proceed directly to Step 2 using the existing `spec_dir`.
-
-Skill invocation loads the `speckit.specify` instructions; it does not prove that branch/spec creation has completed. You must execute the loaded skill instructions and verify the resulting branch and spec files before declaring success.
-
-**ONLY after the Skill tool returns (success OR error) do you proceed:**
-
-- **On success:** verify the branch was actually created and that its number aligns with the spec directory before proceeding:
-
-  ```bash
-  CURRENT_BRANCH=$(git branch --show-current)
-  echo "CURRENT_BRANCH=${CURRENT_BRANCH}"
-  ```
-
-  **Check 1 — branch exists:** `CURRENT_BRANCH` must be non-empty and follow the `NNN-feature-name` pattern. If it does not — the Skill returned success but the branch script failed silently — treat this as a branch creation failure and output:
-
-  ```
-  speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — branch not created
-  Phase: WHAT (requirements definition)
-  Error: speckit.specify returned success but git branch --show-current does not match expected branch <NNN>-<feature-name>. The create-new-feature.sh script likely failed silently.
-  Action required: speckit-echelon-commander (COMMANDER) must create the branch manually (git checkout -b <NNN>-<feature-name>) and re-dispatch speckit-echelon-cartographer (CARTOGRAPHER) with spec_dir set.
-  ```
-
-  Always stop on failed branch checks. Do NOT proceed to Steps 1-2 if the branch check fails.
-
-  **Check 2 — spec dir number matches branch number:** The `before_specify` hook (which creates the git branch) and `speckit.specify` (which creates the spec directory) number their outputs independently. The hook scans both `specs/` and `git branch -a`, so it may choose a higher number than `speckit.specify` chose by scanning `specs/` alone. Self-heal any mismatch immediately after the branch check passes:
-
-  ```bash
-  BRANCH_NUM=$(echo "$CURRENT_BRANCH" | grep -Eo '^[0-9]+')
-  # SPECIFY_FEATURE_DIRECTORY was set before calling speckit.specify (or is taken from its output)
-  SPEC_DIR_NUM=$(basename "$SPECIFY_FEATURE_DIRECTORY" | grep -Eo '^[0-9]+')
-
-  if [ -n "$BRANCH_NUM" ] && [ "$BRANCH_NUM" != "$SPEC_DIR_NUM" ]; then
-    CORRECT_SPEC_DIR="specs/${CURRENT_BRANCH}"
-    mv "$SPECIFY_FEATURE_DIRECTORY" "$CORRECT_SPEC_DIR"
-    SPECIFY_FEATURE_DIRECTORY="$CORRECT_SPEC_DIR"
-    echo "Aligned spec dir: renamed $(basename $SPECIFY_FEATURE_DIRECTORY) → $(basename $CORRECT_SPEC_DIR) to match branch prefix ${BRANCH_NUM}"
-  fi
-  ```
-
-  After this block `SPECIFY_FEATURE_DIRECTORY` is always consistent with `CURRENT_BRANCH`. Report the (possibly corrected) value as `spec_dir` in your output to speckit-echelon-commander (COMMANDER).
-
-- **On error (skill not found, error, timeout):**
-  1. **STOP immediately.** Always emit the BLOCKED signal below. Do not proceed to Steps 1-2. Do not create spec.md manually.
-  2. Output the following signal for speckit-echelon-commander (COMMANDER):
-
-```
-speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — speckit.specify unavailable
-Phase: WHAT (requirements definition)
-Error: <exact error from Skill tool invocation — verbatim, not summarized>
-Action required: Install spec-kit or ensure speckit.specify skill is registered.
-Manual fallback is NOT permitted — produces unversioned, unvalidated specs.
-
-echelon_result:
-  verdict: BLOCKED
-  state_updates:
-    status: blocked
-    blocked_reason: "speckit.specify unavailable"
-```
-
-  3. speckit-echelon-commander (COMMANDER) will set state.json status to "blocked" and escalate to human.
-
-Always create first-pass specs through the Skill tool and enhance resumed/amendment specs in place. Under NO circumstances should a new spec.md be created manually. If this is a first WHAT pass and you have a spec.md but did not invoke the Skill tool, you have violated this gate — STOP and discard the manually created spec. If this is a resumed/amendment pass with an existing `spec_dir`, the existing spec.md is valid input; enhance it in place and do not call `speckit.specify` again.
+Read `{spec_dir}/spec.md`, then incorporate SCOUT's domain insights, add
+Given/When/Then acceptance criteria, cross-reference the glossary and relevant
+contradictions, and write `{spec_dir}/00-overview.md`. The output is the rich
+specification plus its overview; no Git or identity mutation is part of this
+phase.
 
 ## Marketplace Search (Pre-Spec Check)
 

@@ -804,7 +804,7 @@ class SquadController:
                 phase,
                 next_phase,
                 result,
-                allowed_state_update_keys=node.allowed_state_updates,
+                allowed_state_update_keys=self._advance_state_update_keys(node),
             )
             if not self._checkpoint_successful_phase(phase, next_phase):
                 return SquadResult.from_state(self._state_store.load())
@@ -1010,7 +1010,7 @@ class SquadController:
             phase,
             next_phase,
             result,
-            allowed_state_update_keys=node.allowed_state_updates,
+            allowed_state_update_keys=self._advance_state_update_keys(node),
             manual_phase_run=True,
         )
         if not self._checkpoint_successful_phase(phase, next_phase):
@@ -1067,7 +1067,7 @@ class SquadController:
                 node.id,
                 next_phase,
                 result,
-                allowed_state_update_keys=node.allowed_state_updates,
+                allowed_state_update_keys=self._advance_state_update_keys(node),
                 manual_phase_run=manual_phase_run,
             )
             if not self._checkpoint_successful_phase(node.id, next_phase):
@@ -1995,12 +1995,14 @@ class SquadController:
         state: dict,
         result: SquadAgentResult,
     ) -> None:
-        """Keep an enabled derived-spec gate from falling through on omission.
+        """Certify an enabled derived-spec Lexicon gate at the controller boundary.
 
-        CARTOGRAPHER owns generation and repair, but its result is still a
-        controller contract.  A missing certificate or derived artifact is a
-        failed attempt, never an invitation for a judgment agent to bypass the
-        deterministic self-loop.
+        CARTOGRAPHER owns generation and repair.  The controller owns the
+        validation verdict: an absent artifact or a validator execution error
+        means validation is *pending*, never that it failed.  This keeps a
+        missing file from being persisted as ``lexicon_pass: false`` while
+        retaining the bounded re-dispatch path that prevents a WHY phase from
+        bypassing the hard gate.
         """
 
         if node.id != "phase1-what":
@@ -2015,11 +2017,12 @@ class SquadController:
 
         updates = result.state_updates
         spec_dir_ref = str(updates.get("spec_dir") or state.get("spec_dir") or "").strip()
+        if not spec_dir_ref:
+            self._mark_spec_lexicon_pending(updates)
+            return
         spec_dir = Path(spec_dir_ref)
         if not spec_dir.is_absolute():
             spec_dir = self._project_root / spec_dir
-        if not (spec_dir / "spec.md").is_file():
-            return
         derived_name = str(spec_gate.get("path") or "requirements.lexicon.md").strip()
         derived_path = spec_dir / derived_name
         source_name = str(spec_gate.get("source_ref") or "spec.md").strip()
@@ -2056,6 +2059,7 @@ class SquadController:
                 findings = [*report.findings, *source_contract_findings(
                     derived_path.read_text(encoding="utf-8"), source_path
                 )]
+                updates["lexicon_evaluation"] = "passed" if not findings else "failed"
                 updates["lexicon_pass"] = not findings
                 updates["lexicon_findings"] = len(findings)
                 # A controller-certified pass ends the repair loop regardless
@@ -2064,16 +2068,50 @@ class SquadController:
                     updates["lexicon_attempts"] = 0
                 return
             except Exception:
-                # A validator failure is never evidence of a pass.  Preserve
-                # the normal failure path below so the configured gate policy
-                # remains authoritative.
-                pass
+                # An execution error is operationally distinct from an invalid
+                # artifact.  Do not manufacture a failed validation result.
+                self._mark_spec_lexicon_pending(updates)
+                return
 
-        updates["lexicon_pass"] = False
-        attempts = updates.get("lexicon_attempts", state.get("lexicon_attempts"))
-        updates["lexicon_attempts"] = attempts if isinstance(attempts, int) else 0
-        findings = updates.get("lexicon_findings", state.get("lexicon_findings"))
-        updates["lexicon_findings"] = findings if isinstance(findings, int) else 1
+        self._mark_spec_lexicon_pending(updates)
+
+    def _mark_spec_lexicon_pending(self, updates: dict) -> None:
+        """Record an unevaluated spec Lexicon gate without a Boolean verdict."""
+        updates.pop("lexicon_pass", None)
+        updates.pop("lexicon_findings", None)
+        # A declared repair count without a produced artifact is unverified;
+        # it must not consume the hard gate's repair budget.
+        updates["lexicon_attempts"] = 0
+        updates["lexicon_evaluation"] = "pending"
+
+        # ``advance()`` only merges state updates, so explicitly remove a
+        # previous Boolean verdict before the pending transition is persisted.
+        # Otherwise an old false value remains in state.json despite the new
+        # evaluation having never run.
+        persisted = self._state_store.load()
+        changed = False
+        for key in ("lexicon_pass", "lexicon_findings"):
+            if key in persisted:
+                persisted.pop(key)
+                changed = True
+        if changed:
+            self._state_store.save(persisted)
+
+    @staticmethod
+    def _advance_state_update_keys(node: PhaseNode) -> list[str] | None:
+        """Allow controller-owned state only after agent-result validation.
+
+        AgentExecutor validates the original agent result against
+        ``node.allowed_state_updates``.  Phase 1 WHAT then adds the two
+        Lexicon verdict fields after deterministic controller validation.  The
+        state-store boundary must accept those controller-owned additions
+        without granting agents permission to report them.
+        """
+        if node.allowed_state_updates is None:
+            return None
+        allowed = list(node.allowed_state_updates)
+        allowed.extend(node.controller_state_updates)
+        return allowed
 
     def _lexicon_gate_must_block_on_exhaustion(
         self,
@@ -2149,11 +2187,11 @@ class SquadController:
         (b) The alternative — absent flag → COMMANDER judgment dispatch — would
             make phase2-decide and phase2-tracker-alignment non-deterministic.
             The lexicon gate (phase1-what, phase3-plan) lives with that
-            indeterminacy because CARTOGRAPHER/ORCHESTRATOR always emit
-            lexicon_pass; for the structural gates the flag is conditional on
-            the repair loop running, so a missing flag is the common case (gate
-            disabled or agent pre-empted).  Defaulting to True avoids that
-            COMMANDER punt entirely.
+        indeterminacy because their controller-certified verdicts drive
+        explicit deterministic transitions; for the structural gates the flag
+        is conditional on the repair loop running, so a missing flag is the
+        common case (gate disabled or agent pre-empted). Defaulting to True
+        avoids that COMMANDER punt entirely.
 
         (c) A real gate failure (agent emits flag=False) is still honoured: the
             re-dispatch condition `governance.enabled AND NOT <flag>` evaluates

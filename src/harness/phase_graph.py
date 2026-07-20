@@ -22,6 +22,7 @@ class PhaseNode:
     condition: Optional[str] = None
     on_greenfield: dict = field(default_factory=dict)
     allowed_state_updates: Optional[list] = None
+    controller_state_updates: list = field(default_factory=list)
     required_state_updates: list = field(default_factory=list)
     state_update_types: dict = field(default_factory=dict)
     state_update_enums: dict = field(default_factory=dict)
@@ -93,6 +94,7 @@ class PhaseGraph:
                     if "allowed_state_updates" in p
                     else None
                 ),
+                controller_state_updates=p.get("controller_state_updates", []),
                 required_state_updates=p.get("required_state_updates", []),
                 state_update_types=p.get("state_update_types", {}),
                 state_update_enums=p.get("state_update_enums", {}),

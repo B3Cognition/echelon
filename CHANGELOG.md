@@ -4,7 +4,34 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Standard learning-artifact contracts** — Confidence, experiment, evolution,
+  calibration, feedback, drift, and constitution-candidate outputs now have
+  dedicated templates and producer wiring. `experiment-results.md` is now
+  referenced consistently as Markdown, and constitution candidates remain
+  proposal-only until human review through `speckit.constitution`.
+
+- **Complete delivery estimates** — `estimates.md` now has one standard
+  contract for Phase A specification authoring and Phase B implementation,
+  showing human-only and AI-assisted ranges. AI-assisted estimates must include
+  Phase A, Phase B, and total token and USD budgets with explicit pricing and
+  contingency assumptions; ASSESS2 reconciles the same scenarios against the
+  concrete architecture.
+
 ### Fixed
+
+- **Phase A full spec identity** — CARTOGRAPHER can no longer replace the
+  controller-bootstrapped full `NNN-slug` identity with a short number. Echelon
+  now owns all Phase A branch and directory lifecycle instructions, preserves
+  the full run-local and published paths at the state boundary, and ignores
+  Claude runtime work directories during workspace Git migration.
+
+- **EGR-153 Lexicon gate lifecycle** — an absent or unevaluated derived
+  Lexicon artifact is now recorded as `pending`, rather than as a failed
+  validation result. Only controller-run deterministic validation can write
+  the Boolean `lexicon_pass` verdict, so stale agent state cannot consume the
+  repair budget or route a spec through a false failure loop.
 
 - **Dispatch-scoped result contracts** — Phase A agents now receive typed,
   per-agent verdict and `state_updates` contracts. Undeclared reporting fields

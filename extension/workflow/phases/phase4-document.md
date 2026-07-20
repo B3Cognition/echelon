@@ -73,6 +73,11 @@ Context pack:
 - Prior run artifacts (for diffing)
 - `reasoning-journal.jsonl`
 - `knowledge-base/` files
+- `extension/templates/evolution-report-template.md`
+- `extension/templates/improvement-metrics-template.md`
+- `extension/templates/stagnation-flags-template.md`
+- `extension/templates/regression-alerts-template.md`
+- `extension/templates/bias-check-template.md`
 - `extension/templates/prompt-recommendation-template.md`
 
 Use the Agent tool:
@@ -81,18 +86,18 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all current artifacts, prior run artifacts for diffing, reasoning-journal.jsonl, knowledge-base/ files, extension/templates/prompt-recommendation-template.md]
+  [include all current artifacts, prior run artifacts for diffing, reasoning-journal.jsonl, knowledge-base/ files, ADAPTIVE output templates]
   </context>
 
   <instructions>
   You are ADAPTIVE. Read agents/learning/adaptive.md for your complete protocol.
-  Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Produce outputs in `{spec_dir}/`; when prompt recommendations are produced, use the provided template. Return journal entries in `echelon_result.journal_entries`.
+  Diff artifacts between this run and prior runs. Measure quality trajectory. Detect regressions. Flag stagnation (if no improvement, recommend triggering INNOVATE on next run). Check for confirmation bias in knowledge base entries. Produce outputs in `{spec_dir}/` using the supplied templates; omit conditional signal artifacts when their condition is not met. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
 - **description:** "speckit-echelon-adaptive (ADAPTIVE): cross-run diffing and improvement measurement"
 
-Expected outputs: `evolution-report.md`, `improvement-metrics.md`, `regression-alerts.md`
+Expected outputs: `evolution-report.md`, `improvement-metrics.md`; conditionally `stagnation-flags.md`, `regression-alerts.md`, `bias-check.md`, and `prompt-recommendations.md`
 
 ### 12.4 CALIBRATE Agent — MANDATORY
 
@@ -118,6 +123,11 @@ Context pack:
 - `agents/learning/appendices/internalizer-tier-definitions.md`
 - `agents/learning/appendices/auditor-dashboard-template.md`
 - `agents/learning/appendices/auditor-output-formats.md`
+- `extension/templates/confidence-flags-template.md`
+- `extension/templates/evolution-signals-review-template.md`
+- `extension/templates/prompt-version-observations-template.md`
+- `extension/templates/calibration-analytics-template.md`
+- `extension/templates/feedback-report-template.md`
 
 Use the Agent tool:
 
@@ -125,12 +135,12 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all artifacts in {spec_dir}/, knowledge-base/calibration-profile.yaml, knowledge-base/estimates-log.yaml, reasoning-journal.jsonl, quality scores from all WHY passes in state.json, speckit-echelon-internalizer (INTERNALIZER) per-agent scores, auditor appendices]
+  [include all artifacts in {spec_dir}/, knowledge-base/calibration-profile.yaml, knowledge-base/estimates-log.yaml, reasoning-journal.jsonl, quality scores from all WHY passes in state.json, speckit-echelon-internalizer (INTERNALIZER) per-agent scores, auditor appendices, and AUDITOR run-local artifact templates]
   </context>
 
   <instructions>
   You are AUDITOR. Read agents/learning/auditor.md for your complete protocol.
-  Track AI accuracy per domain. Build the confidence profile and adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Write any durable calibration observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `extension/templates/kb-proposals/calibration-observation-proposal-template.yaml`; do not edit canonical KB files directly. Produce `confidence-flags.md` and `calibration-dashboard.md` in `{spec_dir}/` using the provided appendices. Return journal entries in `echelon_result.journal_entries`.
+  Track AI accuracy per domain. Build the confidence profile and adjust ASSESS estimate multipliers based on historical data. Flag low-confidence domains for human input or speckit-echelon-investigator (INVESTIGATOR) investigation. Write any durable calibration observations as proposals under `${SQUAD_DIR}/kb-proposals/` using `extension/templates/kb-proposals/calibration-observation-proposal-template.yaml`; do not edit canonical KB files directly. Produce `confidence-flags.md` and `calibration-dashboard.md` in `{spec_dir}/` using the provided appendices and their supplied template contracts: use the confidence-flags template and the dashboard appendix respectively. When triggered, use the supplied standalone templates for evolution signals, prompt-version observations, and calibration analytics. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 
@@ -199,6 +209,14 @@ Additional artifacts (conditional):
 - `user-flow.md` (if UX/A11Y ran)
 - `alternatives.md` (if INNOVATE ran)
 - `evolution-report.md` (if EVOLVE ran)
+- `improvement-metrics.md` (if EVOLVE ran)
+- `stagnation-flags.md` (if EVOLVE detected stagnation)
+- `regression-alerts.md` (if EVOLVE detected regression)
+- `bias-check.md` (if EVOLVE detected bias)
+- `evolution-signals-review.md` (if AUDITOR detected qualified signals)
+- `prompt-version-observations.md` (if AUDITOR recorded observations)
+- `calibration-analytics.md` (if AUDITOR produced analytics)
+- `constitution-amendment-candidates.md` (if ARCHITECT or consolidation proposed amendments)
 - `risk-acceptance-log.md` (if speckit-echelon-guardian (GUARDIAN) produced Risk Acceptance Records)
 
 ### 12.6b Run speckit-echelon-consolidator (CONSOLIDATOR) — MANDATORY

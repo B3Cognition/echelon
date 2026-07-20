@@ -303,7 +303,7 @@ class TestAgentResultIntegrity:
             echelon_result=None,
             raw_output=(
                 "speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — "
-                "speckit.specify execution incomplete"
+                "specification authoring incomplete"
             ),
             duration_ms=100,
             timed_out=False,
@@ -567,7 +567,7 @@ class TestCartographerResumeGuard:
         )
 
         assert "## CARTOGRAPHER Resume Guard" in prompt
-        assert "Do NOT call speckit.specify" in prompt
+        assert "Do NOT create, switch, rename, or discover a branch or spec directory" in prompt
         assert "Existing spec_dir: specs/072-pr-pipeline-fix" in prompt
         assert "Existing feature_branch: 072-pr-pipeline-fix" in prompt
 
@@ -2362,8 +2362,8 @@ class TestLexiconGateGuardDeterminism:
 
         assert nxt == "phase1-what"
 
-    def test_spec_gate_rejects_claimed_pass_without_derived_artifact(self, tmp_path):
-        """A declared pass is invalid until the derived requirements exist."""
+    def test_spec_gate_marks_missing_derived_artifact_pending_without_false_result(self, tmp_path):
+        """No derived artifact means validation has not happened, not failed."""
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase1-what")
         st = store.load()
@@ -2384,7 +2384,19 @@ class TestLexiconGateGuardDeterminism:
             nxt = ctrl._evaluate_transitions(node, result)
 
         assert nxt == "phase1-what"
-        assert result.state_updates["lexicon_pass"] is False
+        assert "lexicon_pass" not in result.state_updates
+        assert "lexicon_findings" not in result.state_updates
+        assert result.state_updates["lexicon_evaluation"] == "pending"
+
+        store.advance(
+            node.id,
+            nxt,
+            result,
+            allowed_state_update_keys=ctrl._advance_state_update_keys(node),
+        )
+        persisted = store.load()
+        assert persisted["lexicon_evaluation"] == "pending"
+        assert "lexicon_pass" not in persisted
 
     def test_spec_gate_uses_controller_validation_not_agent_stale_failure(self, tmp_path):
         """A valid artifact advances even if the agent reports stale failed state."""
@@ -2429,9 +2441,32 @@ THEN: The dashboard is visible
         nxt = ctrl._evaluate_transitions(node, result)
 
         assert nxt == "phase1-why2"
+        assert result.state_updates["lexicon_evaluation"] == "passed"
         assert result.state_updates["lexicon_pass"] is True
         assert result.state_updates["lexicon_attempts"] == 0
         assert result.state_updates["lexicon_findings"] == 0
+
+    def test_spec_gate_records_false_only_after_controller_validation(self, tmp_path):
+        """An invalid derived artifact receives a real, controller-certified failure."""
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+        (spec_dir / "requirements.lexicon.md").write_text("not Lexicon grammar\n", encoding="utf-8")
+        state = store.load()
+        state.update({
+            "iteration": 0,
+            "max_iterations": 3,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+        })
+        store.save(state)
+        result = self._result({"lexicon_pass": True, "lexicon_attempts": 1})
+
+        assert ctrl._evaluate_transitions(node, result) == "phase1-what"
+        assert result.state_updates["lexicon_evaluation"] == "failed"
+        assert result.state_updates["lexicon_pass"] is False
+        assert result.state_updates["lexicon_findings"] > 0
 
     def test_spec_gate_blocks_on_exhaustion_when_configured_hard(self, tmp_path):
         """A hard Lexicon gate cannot fall through after its final repair pass."""
@@ -2464,8 +2499,46 @@ THEN: The dashboard is visible
         assert state["status"] == "blocked"
         assert state["blocked_reason"] == "lexicon_gate_exhausted"
 
-    def test_spec_gate_blocks_when_agent_exhausts_its_repair_budget(self, tmp_path):
-        """The agent's repair cap must win over the broader squad iteration cap."""
+    def test_pending_spec_gate_warns_without_commander_punt_at_iteration_cap(self, tmp_path):
+        """A configured warning may advance at the cap without inventing a failure."""
+        (tmp_path / ".echelon").mkdir()
+        (tmp_path / ".echelon" / "config.yml").write_text(
+            "lexicon_gate:\n"
+            "  enabled: true\n"
+            "  on_exhausted: warn\n"
+            "  artifacts:\n"
+            "    spec:\n"
+            "      enabled: true\n"
+            "      path: requirements.lexicon.md\n",
+            encoding="utf-8",
+        )
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        state = store.load()
+        state.update({
+            "iteration": 3,
+            "max_iterations": 3,
+            "spec_dir": "runs/run-test/specs/001-demo",
+        })
+        store.save(state)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+        result = self._result({})
+
+        with patch.object(
+            ctrl,
+            "_judgment_dispatch",
+            side_effect=AssertionError("pending Lexicon state punted to COMMANDER"),
+        ):
+            nxt = ctrl._evaluate_transitions(node, result)
+
+        assert nxt == "phase1-why2"
+        assert result.state_updates["lexicon_evaluation"] == "pending"
+        assert "lexicon_pass" not in result.state_updates
+
+    def test_spec_gate_does_not_trust_claimed_failure_without_validation(self, tmp_path):
+        """An agent cannot exhaust a gate whose artifact was never validated."""
         (tmp_path / ".echelon").mkdir()
         (tmp_path / ".echelon" / "config.yml").write_text(
             "lexicon_gate:\n"
@@ -2489,10 +2562,10 @@ THEN: The dashboard is visible
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
 
-        nxt = ctrl._evaluate_transitions(
-            node,
-            self._result({"lexicon_pass": False, "lexicon_attempts": 3}),
-        )
+        result = self._result({"lexicon_pass": False, "lexicon_attempts": 3})
+        nxt = ctrl._evaluate_transitions(node, result)
 
-        assert nxt == "terminal-blocked"
-        assert store.load()["blocked_reason"] == "lexicon_gate_exhausted"
+        assert nxt == "phase1-what"
+        assert result.state_updates["lexicon_evaluation"] == "pending"
+        assert "lexicon_pass" not in result.state_updates
+        assert result.state_updates["lexicon_attempts"] == 0

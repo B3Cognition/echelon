@@ -2,10 +2,10 @@ agent: CARTOGRAPHER
 last_updated: "2026-04-02"
 beliefs:
   - id: CAR-001
-    claim: "speckit.specify must be invoked for every spec — manual spec creation produces inconsistent templates and skips branch creation"
-    verified: "2026-03-28"
-    expires: "2026-09-28"
-    anchor: "Architectural decision; spec-kit contract"
+    claim: "Echelon's controller-owned Phase A identity must be used for every spec; CARTOGRAPHER authors only within the supplied run-local spec directory"
+    verified: "2026-07-20"
+    expires: "2027-01-20"
+    anchor: "EGR-151 Phase A GitOps architecture"
     confidence: 0.85
     severity: critical
 
