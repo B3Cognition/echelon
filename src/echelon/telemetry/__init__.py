@@ -1,6 +1,17 @@
 """Shared local execution telemetry for Echelon workflows."""
 
-from echelon.telemetry.model import ExecutionSpan, TelemetryDiagnostic, TokenUsage
+from echelon.telemetry.model import (
+    ExecutionSpan,
+    PhaseTimingEvent,
+    TelemetryDiagnostic,
+    TokenUsage,
+)
 from echelon.telemetry.store import TelemetryStore
 
-__all__ = ["ExecutionSpan", "TelemetryDiagnostic", "TelemetryStore", "TokenUsage"]
+__all__ = [
+    "ExecutionSpan",
+    "PhaseTimingEvent",
+    "TelemetryDiagnostic",
+    "TelemetryStore",
+    "TokenUsage",
+]

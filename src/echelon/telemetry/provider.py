@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextvars
 import inspect
+import logging
 import time
 import uuid
 from contextlib import contextmanager
@@ -13,6 +14,9 @@ from typing import Callable, Iterator
 
 from echelon.telemetry.model import ExecutionSpan, TokenUsage
 from echelon.telemetry.store import TelemetryStore
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -92,20 +96,28 @@ class InstrumentedProvider:
         finally:
             ended = datetime.now(timezone.utc)
             duration_ms = max(0, int((time.monotonic() - monotonic_started) * 1000))
-            self._store.append_span(
-                ExecutionSpan(
-                    trace_id=self._store.trace_id,
-                    span_id=uuid.uuid4().hex[:16],
-                    parent_span_id=None,
-                    name=context.phase,
-                    start_time=_timestamp(started),
-                    end_time=_timestamp(ended),
-                    duration_ms=duration_ms,
-                    status=status,
-                    attributes=_attributes(self._store, context, result),
-                    token_usage=_token_usage(result),
+            try:
+                self._store.append_span(
+                    ExecutionSpan(
+                        trace_id=self._store.trace_id,
+                        span_id=uuid.uuid4().hex[:16],
+                        parent_span_id=None,
+                        name=context.phase,
+                        start_time=_timestamp(started),
+                        end_time=_timestamp(ended),
+                        duration_ms=duration_ms,
+                        status=status,
+                        attributes=_attributes(self._store, context, result),
+                        token_usage=_token_usage(result),
+                    )
                 )
-            )
+            except Exception:
+                logger.warning(
+                    "Could not persist telemetry span for workflow=%s phase=%s",
+                    self._store.workflow,
+                    context.phase,
+                    exc_info=True,
+                )
 
 
 def _token_usage(result: object | None) -> TokenUsage:

@@ -17,7 +17,7 @@ def analyze_spec_run(run_dir: Path) -> RunAnalysis:
     run = run_dir.resolve()
     state = _read_object(run / "state.json")
     manifest = _read_object(run / "telemetry/manifest.json")
-    trace_id = manifest.get("trace_id") or state.get("telemetry_trace_id")
+    trace_id = manifest.get("trace_id")
     spans: tuple[ExecutionSpan, ...] = ()
     diagnostics: list[str] = []
     if isinstance(trace_id, str) and trace_id:

@@ -74,6 +74,37 @@ def test_provider_exception_emits_error_span_and_propagates(tmp_path: Path) -> N
     assert spans[0].token_usage.known is False
 
 
+def test_telemetry_append_failure_does_not_mask_provider_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider, store = _instrumented(tmp_path, _Provider(fail=True))
+
+    def fail_append(*_args: object, **_kwargs: object) -> None:
+        raise OSError("telemetry storage failed")
+
+    monkeypatch.setattr(store, "append_span", fail_append)
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        provider.exec_agent(str(tmp_path), "secret prompt")
+
+
+def test_telemetry_append_failure_does_not_fail_successful_provider_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider, store = _instrumented(tmp_path, _Provider())
+
+    def fail_append(*_args: object, **_kwargs: object) -> None:
+        raise OSError("telemetry storage failed")
+
+    monkeypatch.setattr(store, "append_span", fail_append)
+
+    result = provider.exec_agent(str(tmp_path), "secret prompt")
+
+    assert result.exit_code == 0
+
+
 def test_successful_dispatch_reports_usage_once(tmp_path: Path) -> None:
     recorded: list[int] = []
     store = TelemetryStore(

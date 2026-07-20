@@ -141,6 +141,7 @@ phase4-build stays open through FINALIZE. Close it in phase4-document §12 befor
 bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" end_phase phase4-build
 ```
 
-Then return one `timing_summary` journal entry per phase in `echelon_result.journal_entries`. The anomaly reason enum value for Tier 1 is exactly `EXCEEDED_BUDGET_20_PERCENT`.
+Phase timing is recorded independently in `telemetry/events.jsonl`; do not
+duplicate it in `echelon_result.journal_entries`.
 
 **Transition:** `phases[phase4-document]` — see `workflow/definition.yaml`

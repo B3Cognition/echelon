@@ -230,6 +230,8 @@ bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" end_phase phase2-decide
 bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase3-solution 2400
 ```
 
-If `end_phase` detects over-budget (>120%), it appends a `timing_anomaly` journal entry automatically. Persist state updates before routing to phase3-how.
+If `end_phase` detects over-budget (>120%), it records that outcome in the
+append-only telemetry event stream. Do not write timing data to `state.json`
+before routing to phase3-how.
 
 **Transition:** `phases[phase3-how]` — see `workflow/definition.yaml`

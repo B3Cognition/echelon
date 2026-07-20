@@ -91,7 +91,9 @@ bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" end_phase phase3-solution
 bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase4-build 7200
 ```
 
-Confirm `state.json.phase_timings` is updated before dispatching consensus agents.
+Confirm the append-only `telemetry/events.jsonl` stream contains the phase
+timing event before dispatching consensus agents. Do not modify `state.json`
+for telemetry.
 
 **Transition:** `phases[phase3-consensus]` — see `workflow/definition.yaml`
 

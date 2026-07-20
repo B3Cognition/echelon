@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from echelon.telemetry.model import ExecutionSpan, TokenUsage
+from echelon.telemetry.model import ExecutionSpan, PhaseTimingEvent, TokenUsage
+from echelon.telemetry.phase_timing import (
+    main as phase_timing_main,
+    record_phase_finish,
+    record_phase_start,
+)
 from echelon.telemetry.store import TelemetryStore
 
 
@@ -83,3 +88,110 @@ def test_store_ignores_only_truncated_final_line(tmp_path: Path) -> None:
     assert spans == ()
     assert len(diagnostics) == 2
     assert diagnostics[-1].code == "truncated-final-line"
+
+
+def test_phase_timing_events_survive_a_later_state_replacement(tmp_path: Path) -> None:
+    store = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="spec-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+
+    store.append_phase_timing(
+        PhaseTimingEvent.started(
+            trace_id="a" * 32,
+            phase="phase2-decide",
+            budget_seconds=1800,
+            event_time="2026-07-20T18:00:00Z",
+        )
+    )
+    (tmp_path / "state.json").write_text('{"phase":"phase2-decide"}\n', encoding="utf-8")
+    (tmp_path / "state.json").write_text('{"phase":"phase3-plan"}\n', encoding="utf-8")
+    store.append_phase_timing(
+        PhaseTimingEvent.finished(
+            trace_id="a" * 32,
+            phase="phase2-decide",
+            budget_seconds=1800,
+            elapsed_seconds=1810,
+            event_time="2026-07-20T18:30:10Z",
+        )
+    )
+
+    events, diagnostics = store.read_phase_timings()
+
+    assert diagnostics == ()
+    assert [event.event for event in events] == ["started", "finished"]
+    assert events[1].over_budget is False
+    assert json.loads((tmp_path / "state.json").read_text()) == {"phase": "phase3-plan"}
+
+
+def test_phase_timing_finish_uses_its_last_start_event(tmp_path: Path) -> None:
+    store = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="spec-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+
+    record_phase_start(
+        store,
+        phase="phase2-decide",
+        budget_seconds=60,
+        event_time="2026-07-20T18:00:00Z",
+    )
+    finished = record_phase_finish(
+        store,
+        phase="phase2-decide",
+        event_time="2026-07-20T18:01:13Z",
+    )
+
+    assert finished.elapsed_seconds == 73
+    assert finished.over_budget is True
+
+
+def test_phase_timing_start_is_idempotent_until_the_phase_finishes(tmp_path: Path) -> None:
+    store = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="spec-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    initial = record_phase_start(
+        store,
+        phase="phase4-build",
+        budget_seconds=7200,
+        event_time="2026-07-20T18:00:00Z",
+    )
+    repeated = record_phase_start(
+        store,
+        phase="phase4-build",
+        budget_seconds=7200,
+        event_time="2026-07-20T18:10:00Z",
+    )
+    finished = record_phase_finish(
+        store,
+        phase="phase4-build",
+        event_time="2026-07-20T18:20:00Z",
+    )
+    events, diagnostics = store.read_phase_timings()
+
+    assert diagnostics == ()
+    assert repeated == initial
+    assert [event.event for event in events] == ["started", "finished"]
+    assert finished.elapsed_seconds == 1200
+
+
+def test_phase_timing_cli_treats_missing_telemetry_as_a_non_blocking_diagnostic(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = phase_timing_main(
+        ["start_phase", "phase2-decide", "300", "--run-dir", str(tmp_path)]
+    )
+
+    assert result == 0
+    assert "phase timing diagnostic" in capsys.readouterr().err

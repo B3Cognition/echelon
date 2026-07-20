@@ -27,7 +27,6 @@ def _spec_run(root: Path, name: str = "spec-1") -> Path:
             "what_repair_count": 1,
             "plan_repair_count": 3,
             "blocked_reason_history": ["traceability", "traceability", "coverage"],
-            "telemetry_trace_id": "a" * 32,
         },
     )
     return run

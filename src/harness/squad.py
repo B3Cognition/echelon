@@ -304,13 +304,19 @@ class SquadController:
         product_inputs: object | None = None,
     ) -> None:
         existing_state = state_store.load()
-        trace_id = existing_state.get("telemetry_trace_id")
-        if not isinstance(trace_id, str) or len(trace_id) != 32:
-            trace_id = uuid.uuid4().hex
-            if existing_state:
-                existing_state["telemetry_trace_id"] = trace_id
-                state_store.save(existing_state)
         resolved_squad_dir = squad_dir or state_store.squad_dir
+        manifest = resolved_squad_dir / "telemetry" / "manifest.json"
+        try:
+            manifest_trace_id = json.loads(manifest.read_text(encoding="utf-8")).get(
+                "trace_id"
+            )
+        except (OSError, json.JSONDecodeError):
+            manifest_trace_id = None
+        trace_id = (
+            manifest_trace_id
+            if isinstance(manifest_trace_id, str) and len(manifest_trace_id) == 32
+            else uuid.uuid4().hex
+        )
         telemetry_store = TelemetryStore(
             resolved_squad_dir,
             workflow="spec",
@@ -318,7 +324,7 @@ class SquadController:
             profile={"name": str(existing_state.get("autonomy_mode") or "default")},
             trace_id=trace_id,
         )
-        self._telemetry_trace_id = trace_id
+        self._telemetry_store = telemetry_store
         self._telemetry_usage_lock = threading.Lock()
         self._provider = provider
         self._telemetry_provider = InstrumentedProvider(
@@ -350,6 +356,25 @@ class SquadController:
         self._phase_a_published_this_run = False
         signal.signal(signal.SIGINT, self._handle_sigint)
 
+    def _ensure_telemetry_manifest(self) -> None:
+        """Make a run's telemetry identity available before agents invoke shims."""
+        state = self._state_store.load()
+        if not self._telemetry_store.manifest_path.exists():
+            self._telemetry_store.run_id = str(
+                state.get("run_id") or self._squad_dir.name
+            )
+            self._telemetry_store.profile = {
+                "name": str(state.get("autonomy_mode") or "default")
+            }
+        try:
+            self._telemetry_store.ensure_manifest()
+        except Exception:
+            logger.warning(
+                "Could not initialize telemetry manifest for run_id=%s",
+                state.get("run_id") or self._squad_dir.name,
+                exc_info=True,
+            )
+
     def _record_provider_usage(self, result: object) -> None:
         raw = getattr(result, "token_usage", 0)
         details = getattr(result, "token_usage_details", None)
@@ -358,16 +383,13 @@ class SquadController:
             and not isinstance(raw, bool)
             and int(raw) > 0
         ) or (isinstance(details, dict) and bool(details))
+        if not known:
+            return
         with self._telemetry_usage_lock:
             state = self._state_store.load()
-            if known:
-                state["token_usage"] = int(state.get("token_usage") or 0) + max(
-                    0, int(raw or 0)
-                )
-            else:
-                state["unknown_token_dispatches"] = int(
-                    state.get("unknown_token_dispatches") or 0
-                ) + 1
+            state["token_usage"] = int(state.get("token_usage") or 0) + max(
+                0, int(raw or 0)
+            )
             self._state_store.save(state)
 
     def _project_config_path(self) -> Path:
@@ -711,13 +733,11 @@ class SquadController:
                     else None
                 ),
             )
-            initialized = self._state_store.load()
-            initialized["telemetry_trace_id"] = self._telemetry_trace_id
-            self._state_store.save(initialized)
             if prepared_identity:
                 initialized = self._state_store.load()
                 initialized.update(prepared_identity)
                 self._state_store.save(initialized)
+            self._ensure_telemetry_manifest()
             self._attach_published_re_context()
             if self._state_store.load().get("status") == "blocked":
                 return SquadResult.from_state(self._state_store.load())
@@ -728,6 +748,7 @@ class SquadController:
             if state.get("cancel_requested"):
                 state["cancel_requested"] = False
                 self._state_store.save(state)
+            self._ensure_telemetry_manifest()
 
         while True:
             phase = self._state_store.current_phase()
@@ -995,13 +1016,11 @@ class SquadController:
                 max_iterations=self._max_iterations,
                 autonomy_mode=mode,
             )
-            initialized = self._state_store.load()
-            initialized["telemetry_trace_id"] = self._telemetry_trace_id
-            self._state_store.save(initialized)
             if initial_state_updates:
                 state = self._state_store.load()
                 state.update(initial_state_updates)
                 self._state_store.save(state)
+            self._ensure_telemetry_manifest()
             self._refresh_run_context("manual phase initialization")
         else:
             state = self._state_store.load()
@@ -1015,6 +1034,7 @@ class SquadController:
             if initial_state_updates:
                 state.update(initial_state_updates)
             self._state_store.save(state)
+            self._ensure_telemetry_manifest()
             self._refresh_run_context(f"manual phase replay {phase_id}")
 
         phase = phase_id
