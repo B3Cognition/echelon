@@ -41,6 +41,19 @@ def test_re_analyze_is_callable_but_hidden_from_re_help(tmp_path: Path) -> None:
     assert json.loads(result.output)["schema_version"] == 1
 
 
+def test_re_analyze_accepts_concrete_run_directory(tmp_path: Path) -> None:
+    run = _run(tmp_path)
+
+    result = CliRunner().invoke(
+        app,
+        ["re", "analyze", str(run), "--format", "json"],
+    )
+
+    assert result.exit_code == 0
+    report = json.loads(result.output)
+    assert report["run_id"] == "re-1"
+
+
 def test_admin_catalog_is_hidden_but_lists_diagnostics() -> None:
     runner = CliRunner()
 

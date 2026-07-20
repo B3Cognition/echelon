@@ -136,7 +136,7 @@ delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
 def admin_commands() -> None:
     """List intentionally hidden diagnostic commands."""
     typer.echo("Diagnostic commands:")
-    typer.echo("  echelon re analyze [RUNS_DIR] [--run-id ID] [--format text|json]")
+    typer.echo("  echelon re analyze [PATH] [--run-id ID] [--format text|json]")
 
 
 @wiki_app.command("build")
@@ -417,7 +417,7 @@ def re_analyze(
         Path("runs"),
         exists=False,
         file_okay=False,
-        help="Directory containing RE run directories.",
+        help="An RE run directory or a directory containing RE runs.",
     ),
     run_id: Optional[str] = typer.Option(None, "--run-id", help="Analyze one RE run."),
     output_format: str = typer.Option(
@@ -442,6 +442,8 @@ def re_analyze(
         ):
             raise typer.BadParameter(f"RE run not found: {run_id}", param_hint="--run-id")
         reports = (analyze_re_run(candidate),)
+    elif (runs_dir / "state.json").is_file() and (runs_dir / "re/state.json").is_file():
+        reports = (analyze_re_run(runs_dir),)
     else:
         reports = analyze_re_runs(runs_dir)
     if output_format == "json":
