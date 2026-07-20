@@ -299,6 +299,28 @@ class TestScenario:
         out = capsys.readouterr().out
         assert "Stable findings" in out
 
+    def test_one_reader_two_findings_same_cluster_renders(self, tmp_path):
+        """Live regression (spec 018/025): a reader contributing 2+ findings
+        to one cluster must not crash the variants sort (Finding < Finding)."""
+        responses = [
+            _round1([("Q1", "REQ-001"), ("Q2", "REQ-001")]),
+            _round2({"Q1": "UNANSWERABLE", "Q2": "UNANSWERABLE"},
+                    {"Q1": [1], "Q2": [1]}),
+            _round1([("Q1", "REQ-001")]),
+            _round2({"Q1": "UNANSWERABLE"}, {"Q1": [1]}),
+            _round1([("Q1", "REQ-001")]),
+            _round2({"Q1": "UNANSWERABLE"}, {"Q1": [1]}),
+            json.dumps({"followups": [{"id": "F1", "parent": "C1",
+                                       "question": "q?", "premise_lines": [1]}]}),
+            _round2({"Q1": "UNANSWERABLE"}, {"Q1": [1]}),
+        ]
+        stub = _replay_stub(tmp_path, responses)
+        spec = _write_spec(tmp_path)
+        rc = v2.main([str(spec), "--claude-cmd", shlex.quote(stub)])
+        assert rc == 0
+        report = (tmp_path / "socratic-consensus.md").read_text()
+        assert "support 3" in report
+
     def test_no_stable_findings_skips_elenchus(self, tmp_path):
         # Readers disagree on targets: three singleton clusters, no elenchus
         # calls consumed (stub would fail if a 7th call happened).

@@ -321,7 +321,9 @@ def render_report(
         lines.append(f"- **Category:** {cluster.category}")
         variants = [
             f"R{reader_no}: {finding.question.question}"
-            for reader_no, finding in sorted(cluster.members)
+            for reader_no, finding in sorted(
+                cluster.members, key=lambda pair: pair[0]
+            )
             if finding is not rep
         ]
         if variants:
