@@ -525,7 +525,58 @@ def _replay_stub(tmp_path: Path, responses: list[str]) -> str:
     return str(stub)
 
 
+class TestAggregatePasses:
+    def test_stable_low_needs_low_in_every_pass(self):
+        p1 = {"FR-001": {"score": 0.2}, "FR-002": {"score": 0.9}}
+        p2 = {"FR-001": {"score": 0.3}, "FR-002": {"score": 0.4}}
+        agg = v3.aggregate_passes([p1, p2], threshold=0.5)
+        # FR-001 low in both → stable-low; FR-002 low in one pass only → not.
+        assert agg["stable_low"] == ["FR-001"]
+        assert agg["per_requirement"]["FR-002"]["stable_low"] is False
+        assert agg["per_requirement"]["FR-001"]["mean"] == pytest.approx(0.25)
+
+    def test_noise_floor_is_mean_per_req_stdev(self):
+        p1 = {"FR-001": {"score": 0.4}}
+        p2 = {"FR-001": {"score": 0.6}}
+        agg = v3.aggregate_passes([p1, p2])
+        # single requirement, scores 0.4/0.6 → pstdev 0.1
+        assert agg["extraction_noise_floor"] == pytest.approx(0.1)
+        assert agg["sr_stdev"] == pytest.approx(0.1)
+
+    def test_only_common_requirements_aggregated(self):
+        p1 = {"FR-001": {"score": 0.3}, "FR-009": {"score": 0.1}}
+        p2 = {"FR-001": {"score": 0.3}}
+        agg = v3.aggregate_passes([p1, p2])
+        assert set(agg["per_requirement"]) == {"FR-001"}
+
+
 class TestScenario:
+    def test_multipass_reports_stability_and_noise_floor(self, tmp_path, capsys):
+        spec = tmp_path / "spec.md"
+        spec.write_text(_SPEC + "\n")
+        # 2 passes × 3 readers = 6 identical graphs → SR stable, noise floor 0.
+        stub = _replay_stub(tmp_path, [_graph_json()] * 6)
+        rc = v3.main([str(spec), "--claude-cmd", shlex.quote(stub), "--passes", "2"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "Stability (2 passes)" in out
+        assert "noise floor 0.000" in out
+        sidecar = json.loads((tmp_path / "semantic-reproducibility.json").read_text())
+        assert sidecar["stability"]["passes"] == 2
+        assert sidecar["stability"]["extraction_noise_floor"] == 0.0
+        report = (tmp_path / "semantic-reproducibility.md").read_text()
+        assert "Cross-pass stability" in report
+
+    def test_single_pass_has_no_stability_block(self, tmp_path):
+        spec = tmp_path / "spec.md"
+        spec.write_text(_SPEC + "\n")
+        stub = _replay_stub(tmp_path, [_graph_json()] * 3)
+        v3.main([str(spec), "--claude-cmd", shlex.quote(stub)])
+        sidecar = json.loads((tmp_path / "semantic-reproducibility.json").read_text())
+        assert sidecar["stability"] is None
+        assert "Cross-pass stability" not in (
+            tmp_path / "semantic-reproducibility.md").read_text()
+
     def test_identical_readers_sr_1_no_witnesses(self, tmp_path, capsys):
         spec = tmp_path / "spec.md"
         spec.write_text(_SPEC + "\n")

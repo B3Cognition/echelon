@@ -487,6 +487,49 @@ def _near_misses(a: set, b: set) -> int:
     return count
 
 
+def aggregate_passes(pass_scores: list, threshold: float = 0.5) -> dict:
+    """Cross-pass stability of per-requirement scores (native ≥2-run intersection).
+
+    ``pass_scores`` is a list (one per measurement pass) of ``score_requirements``
+    outputs. Returns, per requirement present in every pass, the mean/stdev/
+    min/max of its score, and a ``stable_low`` flag set only when the score is
+    below ``threshold`` in EVERY pass — the trustworthy fracture set. Also
+    returns the global SR mean/stdev across passes and the extraction-noise
+    floor = mean over requirements of the per-requirement cross-pass stdev
+    (how much a per-requirement score wobbles between identical runs)."""
+    import statistics as _st
+
+    common = set(pass_scores[0])
+    for scores in pass_scores[1:]:
+        common &= set(scores)
+    per_req: dict = {}
+    for req_id in sorted(common):
+        series = [scores[req_id]["score"] for scores in pass_scores]
+        stdev = _st.pstdev(series) if len(series) > 1 else 0.0
+        per_req[req_id] = {
+            "mean": _st.mean(series),
+            "stdev": stdev,
+            "min": min(series),
+            "max": max(series),
+            "passes": len(series),
+            # Real fracture: low in every pass (the intersection), and even the
+            # optimistic bound (mean+stdev) stays under threshold.
+            "stable_low": all(s < threshold for s in series),
+            "noise_bounded_low": (_st.mean(series) + stdev) < threshold,
+        }
+    sr_series = [overall_score(scores) for scores in pass_scores]
+    stdevs = [v["stdev"] for v in per_req.values()]
+    return {
+        "passes": len(pass_scores),
+        "sr_mean": _st.mean(sr_series),
+        "sr_stdev": _st.pstdev(sr_series) if len(sr_series) > 1 else 0.0,
+        "sr_series": [round(x, 4) for x in sr_series],
+        "extraction_noise_floor": _st.mean(stdevs) if stdevs else 0.0,
+        "per_requirement": per_req,
+        "stable_low": sorted(r for r, v in per_req.items() if v["stable_low"]),
+    }
+
+
 def score_requirements(readers: list) -> dict:
     """Per-requirement pairwise agreement over all surviving readers.
 
@@ -687,7 +730,8 @@ def render_report(spec, spec_path: Path, readers: list, per_req: dict,
                   sr: float, witnesses: list, fractures: dict,
                   run_date: str, dropped: list,
                   phrasing_variants: int = 0,
-                  evidence: dict | None = None) -> str:
+                  evidence: dict | None = None,
+                  stability: dict | None = None) -> str:
     lines: list[str] = []
     lines.append("# Semantic Reproducibility Report")
     lines.append("")
@@ -772,15 +816,46 @@ def render_report(spec, spec_path: Path, readers: list, per_req: dict,
             quoted = v1._quoted_evidence(spec, [line_no])[0].strip()
             lines.append(f"  - ({citations}×) {quoted}")
     lines.append("")
+    if stability is not None:
+        lines.append("")
+        lines.append("## Cross-pass stability "
+                     f"({stability['passes']} passes — trustworthy scores)")
+        lines.append("")
+        lines.append(
+            f"- **SR mean:** {stability['sr_mean']:.3f} "
+            f"± {stability['sr_stdev']:.3f} (across passes: "
+            f"{stability['sr_series']})")
+        lines.append(
+            f"- **Extraction-noise floor:** {stability['extraction_noise_floor']:.3f} "
+            "(mean per-requirement score wobble between identical runs — "
+            "differences below this are noise, not signal)")
+        stable_low = stability["stable_low"]
+        lines.append(
+            f"- **Stable-low requirements ({len(stable_low)}):** "
+            + (", ".join(stable_low) if stable_low else "none")
+            + " — low in EVERY pass; the real fracture set")
+        lines.append("")
+        lines.append("| Requirement | mean | ±stdev | min–max | stable-low |")
+        lines.append("|---|---|---|---|---|")
+        for req_id, v in sorted(stability["per_requirement"].items(),
+                                key=lambda kv: kv[1]["mean"]):
+            flag = "✓" if v["stable_low"] else ""
+            lines.append(
+                f"| {req_id} | {v['mean']:.2f} | {v['stdev']:.2f} "
+                f"| {v['min']:.2f}–{v['max']:.2f} | {flag} |")
+        lines.append("")
     return "\n".join(lines)
 
 
 def build_sidecar(spec_path: Path, readers: list, per_req: dict, sr: float,
                   witnesses: list, fractures: dict, run_date: str,
-                  evidence: dict | None = None) -> dict:
+                  evidence: dict | None = None,
+                  stability: dict | None = None) -> dict:
+    sidecar_stability = stability
     return {
         "specification": str(spec_path),
         "run_date": run_date,
+        "stability": sidecar_stability,
         "readers": [
             {
                 "reader": r.reader_no,
@@ -865,6 +940,12 @@ def parse_args(argv: list) -> tuple:
     )
     parser.add_argument("--families", default=",".join(DEFAULT_FAMILIES))
     parser.add_argument(
+        "--passes", type=v1._positive_int, default=1,
+        help="repeat the whole measurement N times; report per-requirement "
+             "mean/stdev + the extraction-noise floor, and the stable-low set "
+             "(low in EVERY pass) — makes per-requirement scores trustworthy",
+    )
+    parser.add_argument(
         "--model-cmd",
         "--claude-cmd",
         dest="model_commands",
@@ -945,60 +1026,68 @@ def main(argv: list | None = None) -> int:
     situations = parse_controlled_situations(spec)
     chunks = chunk_ids(known_ids)
     jobs = build_reader_jobs(model_commands, options.readers, FRAMINGS)
-    readers: list[ReaderGraph] = []
-    dropped: list[str] = []
-    for job in jobs:
-        reader_config = configs[job.model_command]
-        merged: dict = {}
-        ungrounded_total = 0
-        failed_chunks = 0
-        for chunk_no, chunk in enumerate(chunks, start=1):
-            outcome = v1.execute_round(
-                reader_config,
-                build_extraction_prompt(spec, job.framing_suffix, chunk,
-                                        situations=situations),
-                lambda payload, _chunk=chunk: validate_graph(
-                    payload, _chunk, len(spec.lines), spec_lines=spec.lines,
-                    situations=situations,
-                ),
-                round_no=job.reader_no * 100 + chunk_no,
-                spec_dir=spec_dir,
-            )
-            if isinstance(outcome, v1.RoundExit):
-                failed_chunks += 1
+
+    def _run_pass(pass_offset: int):
+        """One full K-reader measurement. Returns (readers, dropped)."""
+        readers: list[ReaderGraph] = []
+        dropped: list[str] = []
+        for job in jobs:
+            reader_config = configs[job.model_command]
+            merged: dict = {}
+            ungrounded_total = 0
+            failed_chunks = 0
+            for chunk_no, chunk in enumerate(chunks, start=1):
+                outcome = v1.execute_round(
+                    reader_config,
+                    build_extraction_prompt(spec, job.framing_suffix, chunk,
+                                            situations=situations),
+                    lambda payload, _chunk=chunk: validate_graph(
+                        payload, _chunk, len(spec.lines), spec_lines=spec.lines,
+                        situations=situations,
+                    ),
+                    round_no=pass_offset * 10000 + job.reader_no * 100 + chunk_no,
+                    spec_dir=spec_dir,
+                )
+                if isinstance(outcome, v1.RoundExit):
+                    failed_chunks += 1
+                    continue
+                requirements, ungrounded = outcome
+                merged.update(requirements)
+                ungrounded_total += ungrounded
+            if failed_chunks * 2 > len(chunks):
+                dropped_label = job.framing_name
+                if len(model_commands) > 1:
+                    dropped_label += f"/{job.model_command.model_tag}"
+                dropped.append(f"R{job.reader_no}({dropped_label})")
                 continue
-            requirements, ungrounded = outcome
-            merged.update(requirements)
-            ungrounded_total += ungrounded
-        if failed_chunks * 2 > len(chunks):
-            dropped_label = job.framing_name
-            if len(model_commands) > 1:
-                dropped_label += f"/{job.model_command.model_tag}"
-            dropped.append(
-                f"R{job.reader_no}({dropped_label})"
-            )
-            continue
-        readers.append(
-            ReaderGraph(
-                reader_no=job.reader_no,
-                framing=job.framing_name,
+            readers.append(ReaderGraph(
+                reader_no=job.reader_no, framing=job.framing_name,
                 provider=job.model_command.provider,
                 model_tag=job.model_command.model_tag,
-                requirements=merged,
-                ungrounded_edges=ungrounded_total,
+                requirements=merged, ungrounded_edges=ungrounded_total,
                 failed_chunks=failed_chunks,
-            )
-        )
-    if len(readers) < 2:
-        return v1.fail(
-            v1.EXIT_UNUSABLE_OUTPUT,
-            "unusable model output: fewer than 2 readers completed "
-            f"({len(readers)} of {len(jobs)}; dropped: "
-            f"{', '.join(dropped) or 'none'})",
-        )
+            ))
+        return readers, dropped
 
-    per_req = score_requirements(readers)
+    pass_scores: list[dict] = []
+    readers: list[ReaderGraph] = []
+    dropped: list[str] = []
+    for pass_no in range(1, options.passes + 1):
+        readers, dropped = _run_pass(pass_no)
+        if len(readers) < 2:
+            return v1.fail(
+                v1.EXIT_UNUSABLE_OUTPUT,
+                f"unusable model output: pass {pass_no} completed fewer than 2 "
+                f"readers ({len(readers)} of {len(jobs)}; dropped: "
+                f"{', '.join(dropped) or 'none'})",
+            )
+        pass_scores.append(score_requirements(readers))
+
+    # The full rich report (witnesses, fractures, evidence) uses the last pass;
+    # stability (per-requirement mean/stdev + noise floor) aggregates all passes.
+    per_req = pass_scores[-1]
     sr = overall_score(per_req)
+    stability = aggregate_passes(pass_scores) if options.passes > 1 else None
     witnesses, phrasing_variants = find_witnesses(readers)
     fractures = fracture_lines(readers, per_req, witnesses)
     evidence = evidence_metrics(readers)
@@ -1007,10 +1096,10 @@ def main(argv: list | None = None) -> int:
     report = render_report(spec, config.spec_path, readers, per_req, sr,
                            witnesses, fractures, run_date, dropped,
                            phrasing_variants=phrasing_variants,
-                           evidence=evidence)
+                           evidence=evidence, stability=stability)
     sidecar = build_sidecar(config.spec_path, readers, per_req, sr, witnesses,
                             fractures, run_date,
-                            evidence=evidence)
+                            evidence=evidence, stability=stability)
     try:
         (spec_dir / REPORT_FILENAME).write_text(report, encoding="utf-8")
         (spec_dir / JSON_FILENAME).write_text(
@@ -1024,6 +1113,13 @@ def main(argv: list | None = None) -> int:
         f"{len(per_req)} requirement(s); witnesses: {len(witnesses)}; "
         f"fracture sites: {len(fractures)}"
     )
+    if stability is not None:
+        print(
+            f"Stability ({stability['passes']} passes): "
+            f"SR {stability['sr_mean']:.3f} ±{stability['sr_stdev']:.3f}; "
+            f"noise floor {stability['extraction_noise_floor']:.3f}; "
+            f"stable-low: {', '.join(stability['stable_low']) or 'none'}"
+        )
     worst = sorted(per_req.items(), key=lambda kv: kv[1]["score"])[:3]
     for req_id, values in worst:
         print(f"  lowest: {req_id} = {values['score']:.2f}")
