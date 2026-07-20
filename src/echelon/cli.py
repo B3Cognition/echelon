@@ -56,7 +56,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.7.5"
+CLI_VERSION = "3.7.6"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -4827,6 +4827,20 @@ def _select_squad_dir(
             raise SystemExit(1) from exc
         return outcome.run_dir, True
 
+    def choose_active_run() -> bool:
+        """Return whether an interactive user chose to continue the active run."""
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return False
+
+        active_message = str(state.get("user_message") or "").strip()
+        branch = str(state.get("feature_branch") or "current branch").strip()
+        answer = input(
+            f"Active spec {existing_dir.name} on {branch}.\n"
+            f"  Current task: {active_message or '(not recorded)'}\n"
+            "Continue current spec/branch or start a new spec? [c/N] "
+        ).strip().lower()
+        return answer in {"c", "continue"}
+
     if reset:
         return start_fresh()
 
@@ -4848,6 +4862,12 @@ def _select_squad_dir(
 
     # Different task → new run dir (preserves old one, doesn't overwrite)
     if user_message and user_message != state.get("user_message", ""):
+        if choose_active_run():
+            print(
+                f"[squad] continuing {existing_dir.name}; keeping its current task",
+                flush=True,
+            )
+            return existing_dir, False
         return start_fresh()
 
     # Same task, resumable status → resume in existing dir
@@ -5281,6 +5301,11 @@ def _cmd_run(
     state_store = SquadStateStore(squad_dir)
     product_inputs = None
     existing_state = state_store.load()
+    run_message = message
+    if not is_fresh:
+        existing_message = str(existing_state.get("user_message") or "").strip()
+        if existing_message:
+            run_message = existing_message
     existing_inputs = existing_state.get("product_inputs") if existing_state else None
     if existing_inputs and not reset:
         declared_before = existing_inputs.get("declarations") if isinstance(existing_inputs, dict) else None
@@ -5358,20 +5383,20 @@ def _cmd_run(
     _banner("SQUAD RUN", [
         ("Run ID", run_id),
         ("Mode", mode),
-        ("Task", (message[:80] + "…") if len(message) > 80 else message),
+        ("Task", (run_message[:80] + "…") if len(run_message) > 80 else run_message),
         ("Dir", str(squad_dir.name)),
         ("Implementation targets", ", ".join(implementation_targets)),
         ("Published RE", "ignored" if ignore_re else "latest"),
     ])
 
-    result = controller.run(user_message=message, mode=mode, next_phase_override=next_phase)
+    result = controller.run(user_message=run_message, mode=mode, next_phase_override=next_phase)
 
     _print_squad_summary(
         project_root,
         squad_dir,
         result,
         mode=mode,
-        message=message,
+        message=run_message,
         implementation_targets=implementation_targets,
     )
     _print_next_steps(project_root, result.status)
