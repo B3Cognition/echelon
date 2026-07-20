@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import time
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -318,7 +319,9 @@ class SquadController:
             trace_id=trace_id,
         )
         self._telemetry_trace_id = trace_id
-        self._provider = InstrumentedProvider(
+        self._telemetry_usage_lock = threading.Lock()
+        self._provider = provider
+        self._telemetry_provider = InstrumentedProvider(
             provider,
             telemetry_store,
             usage_recorder=self._record_provider_usage,
@@ -337,11 +340,11 @@ class SquadController:
         self._gate_config_cache: Optional[dict] = None
         self._gov_config_cache: Optional[dict] = None
         self._executors: dict[str, PhaseExecutor] = {
-            "agent": AgentExecutor(self._provider, phase_graph, ext_dir, project_root, self._squad_dir),
-            "commander_internal": CommanderInternalExecutor(self._provider, phase_graph, ext_dir, project_root, self._squad_dir),
-            "staged_parallel": StagedParallelExecutor(self._provider, phase_graph, ext_dir, project_root, self._squad_dir),
-            "conditional_sequential": ConditionalSequentialExecutor(self._provider, phase_graph, ext_dir, project_root, self._squad_dir),
-            "human_gate": HumanGateExecutor(self._provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "agent": AgentExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "commander_internal": CommanderInternalExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "staged_parallel": StagedParallelExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "conditional_sequential": ConditionalSequentialExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "human_gate": HumanGateExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
         }
         self._cancelled = False
         self._phase_a_published_this_run = False
@@ -355,16 +358,17 @@ class SquadController:
             and not isinstance(raw, bool)
             and int(raw) > 0
         ) or (isinstance(details, dict) and bool(details))
-        state = self._state_store.load()
-        if known:
-            state["token_usage"] = int(state.get("token_usage") or 0) + max(
-                0, int(raw or 0)
-            )
-        else:
-            state["unknown_token_dispatches"] = int(
-                state.get("unknown_token_dispatches") or 0
-            ) + 1
-        self._state_store.save(state)
+        with self._telemetry_usage_lock:
+            state = self._state_store.load()
+            if known:
+                state["token_usage"] = int(state.get("token_usage") or 0) + max(
+                    0, int(raw or 0)
+                )
+            else:
+                state["unknown_token_dispatches"] = int(
+                    state.get("unknown_token_dispatches") or 0
+                ) + 1
+            self._state_store.save(state)
 
     def _project_config_path(self) -> Path:
         canonical = self._project_root / ".echelon" / "config.yml"
@@ -825,7 +829,7 @@ class SquadController:
                     node,
                 )
             else:
-                with self._provider.dispatch(
+                with self._telemetry_provider.dispatch(
                     DispatchContext(
                         phase=phase,
                         agent=str(node.agent or node.type),
@@ -1047,7 +1051,7 @@ class SquadController:
                 if isinstance(attempts, dict)
                 else 1
             )
-            with self._provider.dispatch(
+            with self._telemetry_provider.dispatch(
                 DispatchContext(
                     phase=phase,
                     agent=str(node.agent or node.type),
@@ -2439,10 +2443,10 @@ class SquadController:
         )
         if commander_path.exists():
             context = commander_path.read_text() + "\n\n" + context
-        with self._provider.dispatch(
+        with self._telemetry_provider.dispatch(
             DispatchContext(node.id, "COMMANDER", "judgment", 1)
         ):
-            judgment = self._provider.exec_agent(str(self._project_root), context)
+            judgment = self._telemetry_provider.exec_agent(str(self._project_root), context)
         self._ensure_judgment_state_updates_allowed(judgment, node.id)
         # COMMANDER writes most journal entries directly via journal-append.sh
         # during LLM execution.  This catches any entries it returns in
@@ -2507,10 +2511,10 @@ class SquadController:
                 flush=True,
             )
 
-        with self._provider.dispatch(
+        with self._telemetry_provider.dispatch(
             DispatchContext(blocked_phase, "COMMANDER", "escalation", 1)
         ):
-            result = self._provider.exec_agent(str(self._project_root), context)
+            result = self._telemetry_provider.exec_agent(str(self._project_root), context)
         if not self._ensure_judgment_state_updates_allowed(result, blocked_phase):
             return result
         requested_phase = str(

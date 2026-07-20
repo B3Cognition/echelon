@@ -35,9 +35,16 @@ class InstrumentedProvider:
         self._provider = provider
         self._store = store
         self._usage_recorder = usage_recorder
+        self.supports_result_contract = bool(
+            getattr(type(provider), "supports_result_contract", False)
+        )
+        self.supports_prompt_metadata = bool(
+            getattr(type(provider), "supports_prompt_metadata", False)
+        )
         self._context: contextvars.ContextVar[DispatchContext | None] = (
             contextvars.ContextVar("echelon_spec_dispatch_context", default=None)
         )
+        self._default_context: DispatchContext | None = None
 
     def __getattr__(self, name: str) -> object:
         return getattr(self._provider, name)
@@ -45,13 +52,16 @@ class InstrumentedProvider:
     @contextmanager
     def dispatch(self, context: DispatchContext) -> Iterator[None]:
         token = self._context.set(context)
+        previous_default = self._default_context
+        self._default_context = context
         try:
             yield
         finally:
+            self._default_context = previous_default
             self._context.reset(token)
 
     def exec_agent(self, project_root: str, prompt: str, **kwargs: object) -> object:
-        context = self._context.get() or DispatchContext(
+        context = self._context.get() or self._default_context or DispatchContext(
             phase="unknown", agent="unknown", kind="phase", attempt=1
         )
         started = datetime.now(timezone.utc)

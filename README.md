@@ -2,7 +2,7 @@
 
 A multi-agent system for AI-assisted software development. Instead of one AI doing everything, specialized agents handle specific cognitive tasks — understanding, critiquing, planning, building, and learning.
 
-**Version 3.7.5** — 55 registered agent roles across the Echelon architecture, with 45 active-routed manifest roles in the executable workflow, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Copilot, Opencode)
+**Version 3.7.6** — 55 registered agent roles across the Echelon architecture, with 45 active-routed manifest roles in the executable workflow, a first-class independently resumable RE lifecycle, immutable published-RE snapshots for spec authoring, MemPalace requirements memory, endocrine context, journal contracts, Understanding quality gates, BUILD/QA workflow, and multi-LLM provider support (Claude, Copilot, Opencode)
 
 For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalog.md).
 
@@ -503,7 +503,7 @@ prints the path to `Home.md`.
 
 ```bash
 echelon wiki build    # complete rebuild
-echelon wiki build --include-runs  # add local RE cost/quality analysis
+echelon wiki build --include-runs  # add local Spec and RE execution analysis
 echelon wiki status   # absent, fresh, stale, or invalid; includes changed inputs
 echelon wiki clean    # remove only a manifest-owned generated vault
 ```
@@ -514,6 +514,21 @@ Run analysis is excluded by default because `runs/` is local and volatile. Set
 `wiki.include_run_analysis: true` to include it persistently, or use
 `--include-runs`/`--no-include-runs` per build. Operational pages are labelled
 local and ephemeral, and raw span ledgers are never copied into the vault.
+
+Spec and RE runs use the same local, content-free telemetry format under each
+run's `telemetry/` directory. Prompts, model responses, source content, and
+artifact bodies are not recorded. Advanced local analysis is available through
+the intentionally hidden commands:
+
+```bash
+echelon spec analyze runs/spec-or-squad-run
+echelon spec analyze runs --format json
+echelon re analyze runs/re-run
+```
+
+Spec analysis reports phase, agent, model, dispatch-kind, token, duration,
+repair-loop, and repeated-blocker measures. Runs created before telemetry was
+enabled remain readable, with unavailable fields identified explicitly.
 
 The wiki reads `specs/` and `re/` from the configured local default branch,
 without switching the active checkout. Phase A specs usually live on separate

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
@@ -38,6 +39,7 @@ class TelemetryStore:
         self.run_id = run_id
         self.profile = dict(profile)
         self.trace_id = trace_id
+        self._write_lock = threading.Lock()
 
     def ensure_manifest(self) -> None:
         if self.manifest_path.is_file():
@@ -77,12 +79,13 @@ class TelemetryStore:
     def append_span(self, span: ExecutionSpan) -> None:
         if span.trace_id != self.trace_id:
             raise ValueError("span trace id does not match telemetry manifest")
-        self.ensure_manifest()
-        record = json.dumps(span.to_json_dict(), separators=(",", ":"), sort_keys=True)
-        with self.spans_path.open("a", encoding="utf-8") as handle:
-            handle.write(record + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        with self._write_lock:
+            self.ensure_manifest()
+            record = json.dumps(span.to_json_dict(), separators=(",", ":"), sort_keys=True)
+            with self.spans_path.open("a", encoding="utf-8") as handle:
+                handle.write(record + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
 
     def read_spans(self) -> tuple[tuple[ExecutionSpan, ...], tuple[TelemetryDiagnostic, ...]]:
         if not self.spans_path.is_file():
