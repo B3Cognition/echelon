@@ -26,6 +26,8 @@ and delivery tuning for the same reason.
   inventing unavailable measurements.
 - Add an analyzer that attributes time, tokens, retries, repairs, findings, and
   outcomes to workflow phases and dispatches.
+- Project analyzer output into the existing human wiki for optional local
+  viewing in Obsidian or any Markdown reader.
 - Make `fast`, `balanced`, and `high` explicit execution goals.
 - Make `balanced` the default RE profile with hard ceilings of 5,000,000 tokens
   and 180 minutes.
@@ -42,6 +44,8 @@ and delivery tuning for the same reason.
 - Do not retroactively estimate token usage for legacy runs.
 - Do not implement spec or delivery analyzers in this slice; this design makes
   the shared substrate reusable by those analyzers.
+- Do not build or bundle a separate telemetry web interface.
+- Do not require an external OpenTelemetry collector or trace viewer.
 - Do not make quality scores from different workflow types directly
   interchangeable.
 - Do not interrupt an in-flight provider dispatch solely because a budget is
@@ -224,6 +228,73 @@ Analyzer output includes:
 Text output is concise and actionable. JSON output is versioned and contains the
 same facts for benchmark automation. Analysis never mutates the target runs.
 
+## Human Viewing Through the Wiki
+
+The existing human wiki is the primary Echelon-native viewer for analysis. Its
+canonical catalog and local runtime analysis remain distinct inputs:
+
+- published `specs/` and `re/` continue to come from the configured local
+  default branch;
+- run telemetry and analysis come from the caller workspace's ignored `runs/`
+  directory;
+- operational pages are labelled local and ephemeral and never presented as
+  canonical artifacts.
+
+Runtime analysis is selectable per build:
+
+```text
+echelon wiki build [--include-runs | --no-include-runs]
+```
+
+It can be enabled persistently in local or committed configuration:
+
+```yaml
+wiki:
+  include_run_analysis: true
+```
+
+The wiki service calls the same analyzer API as the hidden lifecycle analyze
+commands. It does not parse telemetry independently. Raw `spans.jsonl` files are
+not copied into the vault; the renderer receives versioned aggregate analysis
+objects and emits Markdown summaries with provenance and source-run paths.
+
+The generated vault gains this optional structure:
+
+```text
+Operations/
+  Index.md
+  RE Runs/
+    <run-id>.md
+  Spec Runs/
+  Delivery Runs/
+Views/
+  Performance.md
+  Token Usage.md
+  Repeated Findings.md
+  Quality Debt.md
+```
+
+The first slice populates the operations index, RE run pages, and applicable
+aggregate views. Empty future lifecycle sections are omitted rather than emitted
+as placeholders. Each RE page shows profile targets and ceilings, compliance,
+active and wall-clock duration, token usage, unknown telemetry, cost by phase and
+domain, repair effectiveness, repeated findings, blocking findings, and quality
+debt. Aggregate pages compare compatible run metrics and retain links to related
+published RE and spec artifacts when deterministic identities establish them.
+
+Wiki freshness tracks canonical catalog inputs and local operational inputs as
+separate manifest sections. New telemetry makes the operational projection stale
+without claiming the canonical catalog changed. Ordinary command-triggered wiki
+refresh continues to respond to canonical changes; it does not rebuild on every
+telemetry append. Users explicitly rebuild operational projections after or
+during a run.
+
+The generated Markdown remains viewer-independent and includes the existing
+minimal Obsidian configuration. Because the underlying records follow
+OpenTelemetry conventions, a future optional OTLP exporter may feed Jaeger,
+Grafana Tempo, SigNoz, or another compatible backend without changing controller
+or analyzer schemas. Export and collector configuration are outside this slice.
+
 ## Legacy Baseline
 
 Existing runs without telemetry are analyzed from their state, journals,
@@ -254,6 +325,11 @@ the frozen run values. Existing pre-profile active runs are migrated lazily to a
 named `legacy` resolved profile using their stored convergence values; missing
 time and token ceilings remain unknown unless the operator explicitly adopts a
 new profile.
+
+Wiki configuration adds `wiki.include_run_analysis`, defaulting to `false`.
+`echelon wiki build --include-runs` enables it for one build and
+`--no-include-runs` disables it for one build; either explicit flag overrides
+the configured default.
 
 ## Error Handling
 
@@ -290,6 +366,14 @@ Tests must prove:
     marks token usage and active duration unknown.
 12. Existing RE continuation, granular validation, publication, and explicit
     budget-increase tests continue to pass.
+13. Ordinary wiki builds exclude local runs and retain existing canonical input
+    behavior.
+14. `wiki build --include-runs` renders RE analysis without copying raw span
+    records or treating runtime files as canonical artifacts.
+15. Wiki manifests and status distinguish canonical staleness from operational
+    staleness.
+16. Wiki run pages and aggregate views render complete, partial, legacy, and
+    unknown-usage analysis without broken links.
 
 ## Rollout
 
@@ -297,5 +381,6 @@ Implement the shared telemetry schema and analyzer core first, then instrument
 RE provider dispatches and add profile enforcement. Generate the legacy
 `md_distribution` baseline as a checked, reproducible report or fixture. Spec
 and delivery integration remain follow-up slices using the same schema and
-adapter boundary.
-
+adapter boundary. Finally, connect the RE analyzer adapter to the optional wiki
+operational projection; it must consume the analyzer API rather than telemetry
+files directly.
