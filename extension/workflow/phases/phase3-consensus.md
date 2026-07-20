@@ -32,6 +32,7 @@ Read these artifacts in `{spec_dir}/`:
 - `tasks.md` + `test-strategy.md` + `coverage-map.md`
 - `estimates.md` + `mvp-scope.md`
 - `constitution.md` (team constraints)
+- `extension/templates/estimates-template.md`
 - `extension/templates/implementability-report-template.md`
 - `reasoning-journal.jsonl`
 
@@ -77,12 +78,12 @@ This phase uses `type: staged_parallel`. **Always dispatch in the two stages bel
 
   ```xml
   <context>
-  [include spec.md, plan.md, research.md, data-model.md, contracts/, tasks.md, test-strategy.md, coverage-map.md, estimates.md, mvp-scope.md, constitution.md, extension/templates/implementability-report-template.md, reasoning-journal.jsonl]
+  [include spec.md, plan.md, research.md, data-model.md, contracts/, tasks.md, test-strategy.md, coverage-map.md, estimates.md, mvp-scope.md, constitution.md, extension/templates/estimates-template.md, extension/templates/implementability-report-template.md, reasoning-journal.jsonl]
   </context>
 
   <instructions>
   You are GATEKEEPER. Read agents/feasibility/gatekeeper.md for your complete protocol. Operate as ASSESS2 — consensus-phase re-evaluation.
-  Re-evaluate feasibility against the concrete architecture. Update effort estimates with architectural complexity. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` using the provided template (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Put ASSESS2 task-readiness and effort metrics in `echelon_result.state_updates.implementability_metrics`; `quality_scores` is reserved for list-shaped WHY/SAGE quality gate scores. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries`.
+  Re-evaluate feasibility against the concrete architecture. Update `estimates.md` using the provided template, reconciling Phase A, Phase B, human-only, and AI-assisted scenarios; retain or revise the AI-assisted token and USD budgets with an explicit pricing basis. Perform the **6-point IMPLEMENTABILITY CHECK**: (1) Can a developer pick up each task without unstated knowledge? (2) Do tasks reference APIs/libraries/services that actually exist? (3) Are "parallel" tasks truly independent? (4) Does the tech stack match available team skills? (5) Are task descriptions self-contained? (6) Can each task be tested independently? Produce `implementability-report.md` using the provided template (scored per task: READY / NEEDS_CLARIFICATION / BLOCKED). You can flag but NOT kill at this stage — only CRITICAL feasibility issues route back to HOW. Put ASSESS2 task-readiness and effort metrics in `echelon_result.state_updates.implementability_metrics`; `quality_scores` is reserved for list-shaped WHY/SAGE quality gate scores. Produce outputs in `{spec_dir}/`. Return journal entries in `echelon_result.journal_entries`.
   </instructions>
   ```
 

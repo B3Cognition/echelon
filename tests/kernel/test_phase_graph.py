@@ -69,6 +69,7 @@ class TestPhaseGraph:
             "estimates.md",
             "mvp-scope.md",
             "constitution.md",
+            "extension/templates/estimates-template.md",
         }.issubset(assess2_pack)
 
         assert {

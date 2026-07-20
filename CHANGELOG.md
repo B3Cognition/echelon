@@ -4,6 +4,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Complete delivery estimates** — `estimates.md` now has one standard
+  contract for Phase A specification authoring and Phase B implementation,
+  showing human-only and AI-assisted ranges. AI-assisted estimates must include
+  Phase A, Phase B, and total token and USD budgets with explicit pricing and
+  contingency assumptions; ASSESS2 reconciles the same scenarios against the
+  concrete architecture.
+
 ### Fixed
 
 - **Phase A full spec identity** — CARTOGRAPHER can no longer replace the

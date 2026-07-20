@@ -956,6 +956,7 @@ phases:
           - coverage-map.md
           - estimates.md
           - mvp-scope.md
+          - extension/templates/estimates-template.md
         outputs:
           - assess2-verdict: PASS | REJECTED
           - implementability-report.md     # required by PLAN2

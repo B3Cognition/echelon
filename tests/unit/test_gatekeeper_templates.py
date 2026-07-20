@@ -37,6 +37,11 @@ class TestGatekeeperTemplates:
                     "| Type | Count | Complexity | Weight | UFP |",
                     "## Calibration Adjustment",
                     "## Effort Range",
+                    "## Delivery Estimate Summary",
+                    "## Phase A — Specification Estimate",
+                    "## Phase B — Implementation Estimate",
+                    "## AI-Assisted Token and USD Budget",
+                    "| Workstream | Input Tokens | Output Tokens | Total Tokens | USD Budget | Pricing Basis |",
                 ],
             ),
             (
@@ -104,6 +109,19 @@ class TestGatekeeperTemplates:
         text = PHASE3.read_text(encoding="utf-8")
 
         assert "extension/templates/implementability-report-template.md" in text
+
+    def test_gatekeeper_requires_phase_a_human_and_ai_estimates(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "Phase A — specification authoring" in text
+        assert "human-only and AI-assisted scenarios" in text
+        assert "token and USD budgets" in text
+
+    def test_assess2_reconciles_all_estimation_scenarios(self) -> None:
+        text = PHASE3.read_text(encoding="utf-8")
+
+        assert "Phase A, Phase B, human-only, and AI-assisted" in text
+        assert "token and USD budgets" in text
 
     def test_assess2_uses_dedicated_implementability_metrics_state_update(self) -> None:
         agent_text = AGENT.read_text(encoding="utf-8")
