@@ -17,6 +17,11 @@ from harness.re_domain_manifest import (
 )
 from harness.re_planner import ReExecutionPlan, RePlanSource
 from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
+from harness.re_semantic_contract import (
+    ReSemanticFindingRecord,
+    classify_semantic_finding,
+    stable_finding_id,
+)
 
 
 SOURCE_REFERENCE = re.compile(
@@ -67,6 +72,7 @@ class ReSpecQualityFailure:
     non_functional_requirement_count: int = 0
     non_functional_requirements_without_evidence: tuple[str, ...] = ()
     semantic_findings: tuple[str, ...] = ()
+    semantic_finding_records: tuple[ReSemanticFindingRecord, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -230,6 +236,19 @@ def validate_semantic_quality_review(
             )
         seen.add(key)
         if verdict == "REPAIR":
+            records = tuple(
+                ReSemanticFindingRecord(
+                    finding_id=stable_finding_id(
+                        classify_semantic_finding(finding),
+                        finding,
+                        (evidence[index],),
+                    ),
+                    category=classify_semantic_finding(finding),
+                    text=finding,
+                    source_evidence=(evidence[index],),
+                )
+                for index, finding in enumerate(findings)
+            )
             failures.append(
                 ReSpecQualityFailure(
                     source_id=source_id,
@@ -246,6 +265,7 @@ def validate_semantic_quality_review(
                     domain_id=domain_id,
                     reason="semantic_quality_incomplete",
                     semantic_findings=tuple(findings),
+                    semantic_finding_records=records,
                 )
             )
     if seen != set(expected):
