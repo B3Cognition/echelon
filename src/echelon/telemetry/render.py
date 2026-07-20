@@ -21,30 +21,46 @@ def render_analysis_text(analysis: RunAnalysis) -> str:
         else "unknown"
     )
     lines = [
-        f"RE run: {analysis.run_id}",
+        f"{analysis.workflow.upper()} run: {analysis.run_id}",
         f"Status: {analysis.status} · phase {analysis.phase}",
         f"Profile: {analysis.profile.get('name', 'legacy')}",
         f"Token usage: {token_text}",
         f"Active duration: {active_text}",
-        f"Sources/domains: {analysis.source_count}/{analysis.domain_count}",
-        f"Partial quality-debt sources: {analysis.partial_debt_source_count}",
-        f"Semantic audit: {analysis.semantic_audit_status}",
-        "First-pass repair rate: "
-        + (
-            f"{analysis.first_pass_repair_rate:.1%}"
-            if analysis.first_pass_repair_rate is not None
-            else "not evaluated"
-        ),
-        "Validator dispatches/domain: "
-        + (
-            f"{analysis.validator_dispatches_per_domain:.2f}"
-            if analysis.validator_dispatches_per_domain is not None
-            else "not evaluated"
-        ),
-        f"Repeated finding records: {analysis.repeated_finding_count}",
-        "Compliance: "
-        + ", ".join(f"{key}={value}" for key, value in analysis.compliance.items()),
     ]
+    if analysis.workflow == "re":
+        lines.extend(
+            [
+                f"Sources/domains: {analysis.source_count}/{analysis.domain_count}",
+                f"Partial quality-debt sources: {analysis.partial_debt_source_count}",
+                f"Semantic audit: {analysis.semantic_audit_status}",
+                "First-pass repair rate: "
+                + (
+                    f"{analysis.first_pass_repair_rate:.1%}"
+                    if analysis.first_pass_repair_rate is not None
+                    else "not evaluated"
+                ),
+                "Validator dispatches/domain: "
+                + (
+                    f"{analysis.validator_dispatches_per_domain:.2f}"
+                    if analysis.validator_dispatches_per_domain is not None
+                    else "not evaluated"
+                ),
+                f"Repeated finding records: {analysis.repeated_finding_count}",
+            ]
+        )
+    else:
+        loops = analysis.workflow_metrics.get("repair_loops", {})
+        lines.append(f"Spec: {analysis.workflow_metrics.get('spec_id', 'unknown')}")
+        if isinstance(loops, dict):
+            lines.append(
+                "Repair loops: "
+                + ", ".join(f"{key}={value}" for key, value in loops.items())
+            )
+    if analysis.compliance:
+        lines.append(
+            "Compliance: "
+            + ", ".join(f"{key}={value}" for key, value in analysis.compliance.items())
+        )
     if analysis.domain_repairs_by_source:
         lines.append("Domain repairs:")
         lines.extend(

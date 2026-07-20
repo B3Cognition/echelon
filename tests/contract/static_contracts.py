@@ -275,6 +275,24 @@ def validate_cartographer_tool_usage_contract(root: Path) -> list[str]:
                 r"lexicon validate .*--source-ref",
             ),
             PatternCheck(
+                "CARTOGRAPHER invokes prerequisite validation CLIs without discovery",
+                cartographer,
+                r"(?:which|command\s+-v)\s+(?:understanding|lexicon)|"
+                r"(?:understanding|lexicon)\s+--help|python3\s+-m\s+lexicon\.cli",
+                flags,
+                should_match=False,
+            ),
+            PatternCheck(
+                "CARTOGRAPHER forbids requirement-ID metadata sub-bullets",
+                cartographer,
+                r"NEVER add subordinate metadata bullets containing FR/NFR IDs",
+            ),
+            PatternCheck(
+                "CARTOGRAPHER keeps genuine dependencies in canonical requirement sentences",
+                cartographer,
+                r"ALWAYS express a genuine inter-requirement dependency inside the canonical top-level requirement sentence",
+            ),
+            PatternCheck(
                 "phase1 what passes validation tool contract",
                 phase1_what,
                 r"Validation Tool Contract",

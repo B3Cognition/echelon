@@ -585,7 +585,7 @@ class PhaseExecutor(ABC):
     ):
         """Use provider-side result-only repair when the provider supports it."""
         kwargs: dict[str, object] = {}
-        if getattr(type(self._provider), "supports_result_contract", False):
+        if getattr(self._provider, "supports_result_contract", False):
             kwargs["result_contract"] = result_contract
         try:
             parameters = inspect.signature(self._provider.exec_agent).parameters.values()
@@ -596,7 +596,7 @@ class PhaseExecutor(ABC):
             )
         except (TypeError, ValueError):
             accepts_prompt_metadata = False
-        if getattr(type(self._provider), "supports_prompt_metadata", False) or (
+        if getattr(self._provider, "supports_prompt_metadata", False) or (
             prompt_metadata and accepts_prompt_metadata
         ):
             kwargs["prompt_metadata"] = prompt_metadata or {}

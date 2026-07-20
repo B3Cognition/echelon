@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -53,6 +54,8 @@ from harness.squad_executors import (
     StagedParallelExecutor,
 )
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
+from echelon.telemetry.provider import DispatchContext, InstrumentedProvider
+from echelon.telemetry.store import TelemetryStore
 from harness.squad_state import SquadStateStore
 from harness.prompt_markdown import read_prompt_markdown
 from harness.terminal import color_text
@@ -299,7 +302,27 @@ class SquadController:
         implementation_targets: list[str] | None = None,
         product_inputs: object | None = None,
     ) -> None:
-        self._provider = provider
+        existing_state = state_store.load()
+        trace_id = existing_state.get("telemetry_trace_id")
+        if not isinstance(trace_id, str) or len(trace_id) != 32:
+            trace_id = uuid.uuid4().hex
+            if existing_state:
+                existing_state["telemetry_trace_id"] = trace_id
+                state_store.save(existing_state)
+        resolved_squad_dir = squad_dir or state_store.squad_dir
+        telemetry_store = TelemetryStore(
+            resolved_squad_dir,
+            workflow="spec",
+            run_id=str(existing_state.get("run_id") or resolved_squad_dir.name),
+            profile={"name": str(existing_state.get("autonomy_mode") or "default")},
+            trace_id=trace_id,
+        )
+        self._telemetry_trace_id = trace_id
+        self._provider = InstrumentedProvider(
+            provider,
+            telemetry_store,
+            usage_recorder=self._record_provider_usage,
+        )
         self._state_store = state_store
         self._graph = phase_graph
         self._ext_dir = ext_dir
@@ -314,15 +337,34 @@ class SquadController:
         self._gate_config_cache: Optional[dict] = None
         self._gov_config_cache: Optional[dict] = None
         self._executors: dict[str, PhaseExecutor] = {
-            "agent": AgentExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
-            "commander_internal": CommanderInternalExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
-            "staged_parallel": StagedParallelExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
-            "conditional_sequential": ConditionalSequentialExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
-            "human_gate": HumanGateExecutor(provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "agent": AgentExecutor(self._provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "commander_internal": CommanderInternalExecutor(self._provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "staged_parallel": StagedParallelExecutor(self._provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "conditional_sequential": ConditionalSequentialExecutor(self._provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "human_gate": HumanGateExecutor(self._provider, phase_graph, ext_dir, project_root, self._squad_dir),
         }
         self._cancelled = False
         self._phase_a_published_this_run = False
         signal.signal(signal.SIGINT, self._handle_sigint)
+
+    def _record_provider_usage(self, result: object) -> None:
+        raw = getattr(result, "token_usage", 0)
+        details = getattr(result, "token_usage_details", None)
+        known = (
+            isinstance(raw, (int, float))
+            and not isinstance(raw, bool)
+            and int(raw) > 0
+        ) or (isinstance(details, dict) and bool(details))
+        state = self._state_store.load()
+        if known:
+            state["token_usage"] = int(state.get("token_usage") or 0) + max(
+                0, int(raw or 0)
+            )
+        else:
+            state["unknown_token_dispatches"] = int(
+                state.get("unknown_token_dispatches") or 0
+            ) + 1
+        self._state_store.save(state)
 
     def _project_config_path(self) -> Path:
         canonical = self._project_root / ".echelon" / "config.yml"
@@ -665,6 +707,9 @@ class SquadController:
                     else None
                 ),
             )
+            initialized = self._state_store.load()
+            initialized["telemetry_trace_id"] = self._telemetry_trace_id
+            self._state_store.save(initialized)
             if prepared_identity:
                 initialized = self._state_store.load()
                 initialized.update(prepared_identity)
@@ -780,7 +825,15 @@ class SquadController:
                     node,
                 )
             else:
-                result = executor.execute(node, self._state_store)
+                with self._provider.dispatch(
+                    DispatchContext(
+                        phase=phase,
+                        agent=str(node.agent or node.type),
+                        kind="repair" if dispatch_count > 1 else "phase",
+                        attempt=dispatch_count,
+                    )
+                ):
+                    result = executor.execute(node, self._state_store)
 
             blocked_result = self._blocked_executor_reason(result)
             if blocked_result:
@@ -938,6 +991,9 @@ class SquadController:
                 max_iterations=self._max_iterations,
                 autonomy_mode=mode,
             )
+            initialized = self._state_store.load()
+            initialized["telemetry_trace_id"] = self._telemetry_trace_id
+            self._state_store.save(initialized)
             if initial_state_updates:
                 state = self._state_store.load()
                 state.update(initial_state_updates)
@@ -984,7 +1040,22 @@ class SquadController:
                 node,
             )
         else:
-            result = executor.execute(node, self._state_store)
+            state = self._state_store.load()
+            attempts = state.get("phase_dispatch_counts")
+            attempt = (
+                int(attempts.get(phase, 0)) + 1
+                if isinstance(attempts, dict)
+                else 1
+            )
+            with self._provider.dispatch(
+                DispatchContext(
+                    phase=phase,
+                    agent=str(node.agent or node.type),
+                    kind="repair" if attempt > 1 else "phase",
+                    attempt=attempt,
+                )
+            ):
+                result = executor.execute(node, self._state_store)
 
         blocked_result = self._blocked_executor_reason(result)
         if blocked_result:
@@ -2368,7 +2439,10 @@ class SquadController:
         )
         if commander_path.exists():
             context = commander_path.read_text() + "\n\n" + context
-        judgment = self._provider.exec_agent(str(self._project_root), context)
+        with self._provider.dispatch(
+            DispatchContext(node.id, "COMMANDER", "judgment", 1)
+        ):
+            judgment = self._provider.exec_agent(str(self._project_root), context)
         self._ensure_judgment_state_updates_allowed(judgment, node.id)
         # COMMANDER writes most journal entries directly via journal-append.sh
         # during LLM execution.  This catches any entries it returns in
@@ -2433,7 +2507,10 @@ class SquadController:
                 flush=True,
             )
 
-        result = self._provider.exec_agent(str(self._project_root), context)
+        with self._provider.dispatch(
+            DispatchContext(blocked_phase, "COMMANDER", "escalation", 1)
+        ):
+            result = self._provider.exec_agent(str(self._project_root), context)
         if not self._ensure_judgment_state_updates_allowed(result, blocked_phase):
             return result
         requested_phase = str(

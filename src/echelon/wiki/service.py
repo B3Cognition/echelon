@@ -15,7 +15,8 @@ from echelon.wiki.catalog_source import WikiCatalogSource, wiki_catalog_source
 from echelon.wiki.discovery import SCHEMA_VERSION, canonical_input_hashes, discover_wiki_model
 from echelon.wiki.render import RenderResult, WikiRenderError, render_wiki
 from echelon.wiki.operations import render_operations
-from echelon.telemetry.re_adapter import operational_input_hashes
+from echelon.telemetry.re_adapter import operational_input_hashes as re_operational_input_hashes
+from echelon.telemetry.spec_adapter import operational_input_hashes as spec_operational_input_hashes
 from harness.config import get_full_resolved_config
 
 
@@ -187,7 +188,10 @@ def build_wiki(
                         sorted(set(render_result.output_pages) | set(operation_pages))
                     ),
                 )
-                operational_inputs = operational_input_hashes(root / "runs")
+            operational_inputs = {
+                **re_operational_input_hashes(root / "runs"),
+                **spec_operational_input_hashes(root / "runs"),
+            } if resolved_include_runs else {}
             broken_required = [
                 warning
                 for warning in render_result.warnings
@@ -269,7 +273,10 @@ def wiki_status(project_root: Path) -> WikiStatusResult:
             else {}
         )
         current_operational = (
-            operational_input_hashes(root / "runs")
+            {
+                **re_operational_input_hashes(root / "runs"),
+                **spec_operational_input_hashes(root / "runs"),
+            }
             if manifest.get("operational_included") is True
             else {}
         )

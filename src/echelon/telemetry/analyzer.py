@@ -34,6 +34,8 @@ class RunAnalysis:
     repeated_finding_count: int = 0
     semantic_audit_status: str = "unknown"
     baseline: dict[str, object] = field(default_factory=dict)
+    dimensions: dict[str, dict[str, dict[str, int]]] = field(default_factory=dict)
+    workflow_metrics: dict[str, object] = field(default_factory=dict)
     compliance: dict[str, str] = field(default_factory=dict)
     provenance: dict[str, str] = field(default_factory=dict)
     diagnostics: tuple[str, ...] = ()

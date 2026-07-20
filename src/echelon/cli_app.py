@@ -478,6 +478,58 @@ def re_analyze(
         typer.echo(render_analysis_text(report), nl=False)
 
 
+@spec_app.command("analyze", hidden=True)
+def spec_analyze(
+    path: Path = typer.Argument(
+        Path("runs"),
+        exists=False,
+        file_okay=False,
+        help="A Spec run directory or a directory containing Spec runs.",
+    ),
+    output_format: str = typer.Option(
+        "text", "--format", help="Output format: text or json."
+    ),
+) -> None:
+    """Analyze Spec execution cost, repair loops, blockers, and telemetry."""
+    import json
+
+    from echelon.telemetry.render import analysis_to_json, render_analysis_text
+    from echelon.telemetry.spec_adapter import analyze_spec_run, analyze_spec_runs
+
+    if output_format not in {"text", "json"}:
+        raise typer.BadParameter("format must be text or json", param_hint="--format")
+    resolved = path.resolve()
+    if (resolved / "state.json").is_file():
+        if (resolved / "re/state.json").is_file():
+            raise typer.BadParameter("not a Spec run", param_hint="path")
+        reports = (analyze_spec_run(resolved),)
+    else:
+        reports = analyze_spec_runs(resolved)
+    if not reports:
+        typer.echo(f"No Spec runs found under {path}.")
+        return
+    if output_format == "json":
+        if len(reports) == 1:
+            typer.echo(analysis_to_json(reports[0]), nl=False)
+        else:
+            typer.echo(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "workflow": "spec",
+                        "runs": [report.to_json_dict() for report in reports],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        return
+    for index, report in enumerate(reports):
+        if index:
+            typer.echo()
+        typer.echo(render_analysis_text(report), nl=False)
+
+
 @re_app.command("execute-run", hidden=True)
 def re_execute_run(
     run_id: str = typer.Argument(..., help="Active workspace run id."),

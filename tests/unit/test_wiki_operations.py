@@ -37,6 +37,21 @@ def _workspace(root: Path, *, configured: bool = False) -> Path:
         ),
         encoding="utf-8",
     )
+    spec_run = root / "runs/spec-1"
+    spec_run.mkdir(parents=True)
+    (spec_run / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": "spec-1",
+                "spec_id": "001-demo",
+                "status": "done",
+                "phase": "DONE",
+                "token_usage": 9,
+                "why_fail_count": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
     return root
 
 
@@ -53,8 +68,12 @@ def test_include_runs_renders_analysis_without_raw_spans(tmp_path: Path) -> None
 
     page = result.output_dir / "Operations/RE Runs/re-1.md"
     assert page.is_file()
+    spec_page = result.output_dir / "Operations/Spec Runs/spec-1.md"
+    assert spec_page.is_file()
+    assert "Repair loops" in spec_page.read_text(encoding="utf-8")
     assert "local and ephemeral" in page.read_text(encoding="utf-8").lower()
     assert (result.output_dir / "Views/Performance.md").is_file()
+    assert (result.output_dir / "Views/Spec Repair Loops.md").is_file()
     assert not any(result.output_dir.rglob("spans.jsonl"))
 
 
