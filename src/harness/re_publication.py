@@ -98,10 +98,6 @@ def validate_re_run(
     if not observed and re_state.get("status") == "done":
         observed = "complete"
     status = status_override or observed
-    if status == "partial" and not allow_partial:
-        raise RePublicationValidationError("partial RE output requires --allow-partial")
-    if status not in {"complete", "partial"}:
-        raise RePublicationValidationError(f"RE publication status is not publishable: {status!r}")
 
     plan_raw = _read_json(run_re / "re-execution-plan.json")
     try:
@@ -112,9 +108,16 @@ def validate_re_run(
         raise RePublicationValidationError("RE execution plan does not require publication")
     partial_sources = _partial_quality_debt_sources(run_re, re_state, plan)
     if status == "complete" and partial_sources:
-        raise RePublicationValidationError(
-            "complete RE publication cannot contain source quality debt"
-        )
+        if allow_partial and status_override is None:
+            status = "partial"
+        else:
+            raise RePublicationValidationError(
+                "complete RE publication cannot contain source quality debt"
+            )
+    if status == "partial" and not allow_partial:
+        raise RePublicationValidationError("partial RE output requires --allow-partial")
+    if status not in {"complete", "partial"}:
+        raise RePublicationValidationError(f"RE publication status is not publishable: {status!r}")
 
     _validate_source_index(run_re / "re-source-index.json", plan)
     _validate_workspace_inputs(run_re / "re-workspace-inputs.json", plan)

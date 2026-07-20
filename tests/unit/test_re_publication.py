@@ -320,6 +320,41 @@ def test_partial_publication_accepts_only_controller_recorded_quality_debt(
 
 
 @pytest.mark.unit
+def test_allow_partial_infers_partial_from_controller_quality_debt(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",), status="complete")
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    spec.write_text("# Architecture summary\n", encoding="utf-8")
+    plan = ReExecutionPlan.from_json_dict(
+        json.loads((run_dir / "re" / "re-execution-plan.json").read_text(encoding="utf-8"))
+    )
+    report = measure_source_quality(run_dir / "re", plan, "api")
+    report_path = write_re_source_quality_report(run_dir / "re", report)
+    _write_json(
+        run_dir / "re" / "state.json",
+        {
+            "status": "done",
+            "re_source_states": {
+                "api": {
+                    "status": "partial_quality_debt",
+                    "quality_debt_report": str(report_path),
+                }
+            },
+        },
+    )
+
+    with pytest.raises(RePublicationValidationError, match="quality debt"):
+        publish_re_run(tmp_path, run_dir)
+
+    result = publish_re_run(tmp_path, run_dir, allow_partial=True)
+
+    assert result.status == "partial"
+    index = json.loads((tmp_path / "re" / "index.json").read_text(encoding="utf-8"))
+    assert index["publication_status"] == "partial"
+
+
+@pytest.mark.unit
 def test_complete_publication_accepts_line_range_source_evidence(tmp_path: Path) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",))
     spec = run_dir / "re/sources/api/specs/001-re-domain/spec.md"
