@@ -98,7 +98,7 @@ echelon_result:
   state_updates: {}
   # Omit this section when there is no Product Input Contract or no ledger change.
   product_input_updates:
-    - input_unit_id: <IN-REQ-* ID from PRODUCT_INPUT_CATALOG>
+    - input_unit_id: <traceable IN-REQ-* ID from PRODUCT_INPUT_TRACEABILITY>
       disposition: <included|excluded|duplicate|open_question|conflict>
       rationale: "<evidence-backed reason for this disposition>"
       spec_ids: [FR-001, AC-001]
@@ -277,14 +277,15 @@ def _render_product_input_context(state: dict) -> str:
         f"REFERENCE_INPUTS={inputs['reference_context']}",
         "- Requirement inputs are normative; reference inputs are informative and cannot override them.",
         "- Read only immutable snapshot paths named by the manifest and catalog. Do not add undeclared inputs.",
-        "- Cite stable input unit IDs when adopting or challenging product evidence.",
+        "- Cite only traceable requirement IDs listed in REQUIREMENT_INPUTS / PRODUCT_INPUT_TRACEABILITY when proposing ledger updates.",
+        "- Catalog units absent from PRODUCT_INPUT_TRACEABILITY are context-only; never return them in product_input_updates.",
         "- Propose ledger changes only in echelon_result.product_input_updates; the controller validates and writes the canonical ledger.",
         "- Each product_input_updates item must contain exactly: input_unit_id, disposition, rationale, spec_ids, task_ids, targets.",
         "- disposition is exactly one of: included, excluded, duplicate, open_question, conflict. Never use aliases such as unit, adopted, or mapped.",
         "- YAML safety: double-quote every free-text scalar, especially rationale values containing ':', '#', or quotes.",
         "- In Phase 1, use spec_ids for FR/AC mappings and return task_ids: [] and targets: []. Later planning phases fill task_ids and targets.",
         "- Required item shape:",
-        "  input_unit_id: <IN-REQ-* ID from PRODUCT_INPUT_CATALOG>",
+        "  input_unit_id: <traceable IN-REQ-* ID from PRODUCT_INPUT_TRACEABILITY>",
         "  disposition: <included|excluded|duplicate|open_question|conflict>",
         '  rationale: "<evidence-backed reason for this disposition>"',
         "  spec_ids: [FR-001, AC-001]",

@@ -427,6 +427,74 @@ def apply_product_input_updates(
     _write_traceability_markdown(traceability_path.with_suffix(".md"), candidate)
 
 
+def normalize_context_only_product_input_updates(
+    updates: Sequence[object],
+    catalog_path: Path,
+) -> tuple[list[object], tuple[str, ...]]:
+    """Drop harmless exclusions for catalog units that are not traceable.
+
+    Product-input contexts created before the traceability filter exposed
+    Markdown headings and table scaffolding with ``IN-REQ`` IDs.  Those units
+    are deliberately absent from the controller-owned ledger, so an agent's
+    empty ``excluded`` proposal is a harmless acknowledgement rather than a
+    ledger update.  Preserve every substantive proposal for normal validation.
+    """
+    try:
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProductInputError(f"cannot read product input catalog: {exc}") from exc
+    units = catalog.get("units") if isinstance(catalog, dict) else None
+    if not isinstance(units, list):
+        raise ProductInputError("product input catalog has no units list")
+    context_only_ids = {
+        str(unit.get("id"))
+        for unit in units
+        if isinstance(unit, dict)
+        and unit.get("role") == "requirement"
+        and not unit.get("traceability_required", True)
+        and unit.get("id")
+    }
+
+    normalized: list[object] = []
+    ignored: list[str] = []
+    for update in updates:
+        if not isinstance(update, dict):
+            normalized.append(update)
+            continue
+        unit_id = str(update.get("input_unit_id") or "")
+        if unit_id not in context_only_ids:
+            normalized.append(update)
+            continue
+        is_empty_exclusion = (
+            str(update.get("disposition") or "") == "excluded"
+            and not _string_list(update.get("spec_ids"))
+            and not _string_list(update.get("task_ids"))
+            and not _string_list(update.get("targets"))
+        )
+        if is_empty_exclusion:
+            ignored.append(unit_id)
+            continue
+        raise ProductInputError(
+            f"{unit_id}: context-only catalog unit is not traceable; omit it from product_input_updates"
+        )
+    return normalized, tuple(ignored)
+
+
+def refresh_requirement_context_from_catalog(
+    catalog_path: Path,
+    requirement_context_path: Path,
+) -> None:
+    """Regenerate a derived requirement prompt from its immutable catalog."""
+    try:
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProductInputError(f"cannot read product input catalog: {exc}") from exc
+    units = catalog.get("units") if isinstance(catalog, dict) else None
+    if not isinstance(units, list):
+        raise ProductInputError("product input catalog has no units list")
+    _write_context(requirement_context_path, units, "requirement")
+
+
 def build_product_input_mapping_repair_hints(
     updates: Sequence[object],
     tasks_path: Path,
@@ -673,7 +741,11 @@ def _structural_catalog_unit_ids(units: Sequence[object]) -> set[str]:
 
 
 def _write_context(path: Path, units: Iterable[dict[str, object]], role: str) -> None:
-    selected = [unit for unit in units if unit["role"] == role]
+    selected = [
+        unit for unit in units
+        if unit["role"] == role
+        and (role != "requirement" or unit.get("traceability_required", True))
+    ]
     lines = [f"# {role.title()} Product Inputs", ""]
     if not selected:
         lines.append("No accepted inputs.")
