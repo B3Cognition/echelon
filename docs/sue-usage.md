@@ -98,13 +98,23 @@ python3 scripts/sue_dialectic.py spec.md --lens euthyphro \
   --seed "which operators may enter row-edit mode" --target FR-001
 ```
 
-Options: `--lens euthyphro|meno|parmenides|cratylus` · `--seed TEXT`
+Options: `--lens` (nine choices, below) · `--seed TEXT`
 (**required** — the claim/term under examination; take it from a v2 stable
 finding) · `--target ID` · `--max-turns N` (default 7) · `--model-cmd` ·
 `--timeout`.
-Lens choice: euthyphro = definitions/essence · meno = criterion of
-recognition/verifiability · parmenides = consequences of claim and negation ·
-cratylus = naming/synonym stability.
+Lens choice — pick by the defect type the seed finding suggests:
+
+| Lens | Socratic move | Drills |
+|---|---|---|
+| `euthyphro` | definitions/essence, examples-vs-definition | undefined or circular terms |
+| `meno` | criterion of recognition/verifiability | unverifiable requirements |
+| `parmenides` | consequences of claim and negation | contradictions, tolerated opposites |
+| `cratylus` | naming/synonym stability | lexical drift, unstable vocabulary |
+| `theaetetus` | knowledge as justified account | claims without derivable evidence |
+| `sophist` | division, look-alikes, non-being | missing boundaries/exceptions (M3-shaped) |
+| `gorgias` | rhetoric vs substance | persuasive-but-thin text (`thin_consensus`) |
+| `republic` | role separation, who-does-what | permission/actor defects (FR-001 class) |
+| `philebus` | measure and mixture | unquantified constraints ("fast", no bound) |
 Outputs: `socratic-dialogue.md` + `.json` (auditable trace). Terminal states:
 `RESOLVED` (claim survived, sharpened) · `APORIA_UNDEFINED` (no definition
 constructible) · `APORIA_CONTRADICTED` (text supports incompatible answers) ·

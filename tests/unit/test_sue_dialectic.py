@@ -81,6 +81,77 @@ class TestPolicies:
         assert dial.next_step("cratylus", "DISTINGUISH", "SILENT",
                               "none", 0) == "APORIA_UNDERDETERMINED"
 
+    def test_lens_roster_is_nine(self):
+        assert sorted(dial.LENSES) == [
+            "cratylus", "euthyphro", "gorgias", "meno", "parmenides",
+            "philebus", "republic", "sophist", "theaetetus"]
+
+    def test_lens_state_machines_are_closed_under_refinement(self):
+        """DEFINE/SUPPORTED/example rewrites to DISTINGUISH in every lens, so
+        any lens that can reach DEFINE must resolve DISTINGUISH for every
+        verdict — a missing entry would KeyError mid-dialogue."""
+        for lens, spec in dial.LENSES.items():
+            merged = {**dial._SHARED_POLICY, **spec["policy"]}
+            reachable = {spec["start"]} | {
+                n for n in merged.values() if n in dial.OPERATORS}
+            if "DEFINE" in reachable:
+                for verdict in dial.TURN_VERDICTS:
+                    step = dial.next_step(lens, "DISTINGUISH", verdict, "none", 0)
+                    assert step in dial.OPERATORS or step in dial.TERMINALS
+
+    # ── The five 2026-07-20 lenses: one signature transition each ──
+
+    def test_theaetetus_unjustified_claim_is_undefined(self):
+        # Knowledge without an account: a claim whose justification the text
+        # cannot supply is APORIA_UNDEFINED, not merely unanswered.
+        assert dial.next_step("theaetetus", "CAUSE_OR_CRITERION", "SILENT",
+                              "none", 0) == "APORIA_UNDEFINED"
+
+    def test_theaetetus_justification_is_tested_by_consequence(self):
+        # Distinct from meno (criterion -> COUNTEREXAMPLE): theaetetus tests
+        # whether the justification itself entails what is claimed.
+        assert dial.next_step("theaetetus", "CAUSE_OR_CRITERION", "SUPPORTED",
+                              "criterion", 0) == "FOLLOW_CONSEQUENCE"
+
+    def test_sophist_division_leads_to_lookalike_distinction(self):
+        # Distinct from the shared DIVIDE -> COUNTEREXAMPLE: sophist separates
+        # the look-alike cases before hunting violations.
+        assert dial.next_step("sophist", "DIVIDE", "SUPPORTED",
+                              "case-split", 0) == "DISTINGUISH"
+
+    def test_sophist_tolerated_excluded_case_is_underdetermined(self):
+        # The M3 drill: if the text tolerates the supposedly-excluded case,
+        # the boundary is missing.
+        assert dial.next_step("sophist", "TEST_OPPOSITE", "SILENT",
+                              "none", 0) == "APORIA_UNDERDETERMINED"
+
+    def test_gorgias_silent_consequences_are_rhetoric_not_resolution(self):
+        # Overrides the shared FOLLOW_CONSEQUENCE/SILENT -> RESOLVED: in
+        # gorgias, a claim with no textual commitments is rhetoric.
+        assert dial.next_step("gorgias", "FOLLOW_CONSEQUENCE", "SILENT",
+                              "none", 0) == "APORIA_UNDEFINED"
+
+    def test_republic_unseparated_actors_are_undefined(self):
+        assert dial.next_step("republic", "DISTINGUISH", "SILENT",
+                              "none", 0) == "APORIA_UNDEFINED"
+
+    def test_republic_permission_criterion_hunts_counterexample(self):
+        # The FR-001xAC-5 move: permission criterion stated -> seek the actor
+        # case that violates it.
+        assert dial.next_step("republic", "CAUSE_OR_CRITERION", "SUPPORTED",
+                              "criterion", 0) == "COUNTEREXAMPLE"
+
+    def test_philebus_no_measure_is_undefined(self):
+        # The unlimited: a constraint with no stated bound.
+        assert dial.next_step("philebus", "DEFINE", "SILENT",
+                              "none", 0) == "APORIA_UNDEFINED"
+
+    def test_philebus_stated_bound_is_tested_by_opposite(self):
+        # Distinct from euthyphro (DEFINE -> COUNTEREXAMPLE): philebus asks
+        # what would violate the measure.
+        assert dial.next_step("philebus", "DEFINE", "SUPPORTED",
+                              "definition", 0) == "TEST_OPPOSITE"
+
 
 class TestValidateTurn:
     def test_supported_requires_evidence(self):
@@ -216,6 +287,31 @@ class TestScenario:
         assert revise_turns[0]["retention_violation"] is True
         report = (base / "socratic-dialogue.md").read_text()
         assert "RETENTION" in report
+
+    def test_gorgias_thin_text_reaches_undefined_aporia(self, tmp_path):
+        # FOLLOW_CONSEQUENCE(SILENT) -> APORIA_UNDEFINED in one turn:
+        # persuasive text with no commitments is rhetoric, never RESOLVED.
+        responses = [_turn_json("SILENT", "none", ())]
+        rc, base = self._run(tmp_path, responses, lens="gorgias")
+        assert rc == 0
+        trace = json.loads((base / "socratic-dialogue.json").read_text())
+        assert trace["terminal_state"] == "APORIA_UNDEFINED"
+        assert [t["operator"] for t in trace["turns"]] == ["FOLLOW_CONSEQUENCE"]
+
+    def test_sophist_missing_boundary_path(self, tmp_path):
+        # DIVIDE(SUPPORTED) -> DISTINGUISH(SUPPORTED) -> TEST_OPPOSITE(SILENT)
+        # -> APORIA_UNDERDETERMINED: the text tolerates the excluded case.
+        responses = [
+            _turn_json("SUPPORTED", "case-split", (1,)),
+            _turn_json("SUPPORTED", "distinction", (2,)),
+            _turn_json("SILENT", "none", ()),
+        ]
+        rc, base = self._run(tmp_path, responses, lens="sophist")
+        assert rc == 0
+        trace = json.loads((base / "socratic-dialogue.json").read_text())
+        assert trace["terminal_state"] == "APORIA_UNDERDETERMINED"
+        assert [t["operator"] for t in trace["turns"]] == [
+            "DIVIDE", "DISTINGUISH", "TEST_OPPOSITE"]
 
     def test_turn_failure_after_retry_exits_3(self, tmp_path, capsys):
         rc, _ = self._run(tmp_path, ["garbage", "garbage"])

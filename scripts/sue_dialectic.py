@@ -198,6 +198,108 @@ LENSES = {
             ("TEST_OPPOSITE", "CONTRADICTED"): "APORIA_CONTRADICTED",
         },
     },
+    # Theaetetus — knowledge as justified account; drills claims whose
+    # justification the text cannot supply (evidence-link gaps). Unlike meno
+    # (criterion -> hunt counterexample), a supported justification is tested
+    # by whether it actually entails what is claimed.
+    "theaetetus": {
+        "start": "CAUSE_OR_CRITERION",
+        "policy": {
+            ("CAUSE_OR_CRITERION", "SUPPORTED"): "FOLLOW_CONSEQUENCE",
+            ("CAUSE_OR_CRITERION", "PARTIAL"): "DEFINE",
+            ("CAUSE_OR_CRITERION", "SILENT"): "APORIA_UNDEFINED",
+            ("CAUSE_OR_CRITERION", "CONTRADICTED"): "APORIA_CONTRADICTED",
+            ("DEFINE", "SUPPORTED"): "FOLLOW_CONSEQUENCE",
+            ("DEFINE", "PARTIAL"): "DIVIDE",
+            ("DEFINE", "SILENT"): "APORIA_UNDEFINED",
+            ("DEFINE", "CONTRADICTED"): "APORIA_CONTRADICTED",
+            # DEFINE is reachable, so the examples-are-not-a-definition
+            # refinement can route here; the machine must stay closed.
+            ("DISTINGUISH", "SUPPORTED"): "FOLLOW_CONSEQUENCE",
+            ("DISTINGUISH", "PARTIAL"): "CAUSE_OR_CRITERION",
+            ("DISTINGUISH", "SILENT"): "APORIA_UNDEFINED",
+            ("DISTINGUISH", "CONTRADICTED"): "APORIA_CONTRADICTED",
+        },
+    },
+    # Sophist — method of division, look-alikes, non-being; drills missing
+    # boundaries and exceptions (M3-shaped). Division separates the cases,
+    # distinction separates the look-alikes, and the excluded case is tested:
+    # a tolerated "excluded" case means the boundary is missing.
+    "sophist": {
+        "start": "DIVIDE",
+        "policy": {
+            ("DIVIDE", "SUPPORTED"): "DISTINGUISH",
+            ("DIVIDE", "PARTIAL"): "TEST_OPPOSITE",
+            ("DIVIDE", "SILENT"): "APORIA_UNDERDETERMINED",
+            ("DIVIDE", "CONTRADICTED"): "APORIA_CONTRADICTED",
+            ("DISTINGUISH", "SUPPORTED"): "TEST_OPPOSITE",
+            ("DISTINGUISH", "PARTIAL"): "TEST_OPPOSITE",
+            ("DISTINGUISH", "SILENT"): "APORIA_UNDERDETERMINED",
+            ("DISTINGUISH", "CONTRADICTED"): "APORIA_CONTRADICTED",
+            ("TEST_OPPOSITE", "SUPPORTED"): "RESOLVED",
+            ("TEST_OPPOSITE", "PARTIAL"): "DIVIDE",
+            ("TEST_OPPOSITE", "SILENT"): "APORIA_UNDERDETERMINED",
+            ("TEST_OPPOSITE", "CONTRADICTED"): "APORIA_CONTRADICTED",
+        },
+    },
+    # Gorgias — rhetoric vs substance; drills persuasive-but-thin text (the
+    # thin_consensus failure mode). A claim whose consequences the text is
+    # SILENT on is rhetoric without commitments — never RESOLVED (overrides
+    # the shared FOLLOW_CONSEQUENCE/SILENT -> RESOLVED).
+    "gorgias": {
+        "start": "FOLLOW_CONSEQUENCE",
+        "policy": {
+            ("FOLLOW_CONSEQUENCE", "SUPPORTED"): "CAUSE_OR_CRITERION",
+            ("FOLLOW_CONSEQUENCE", "PARTIAL"): "DIVIDE",
+            ("FOLLOW_CONSEQUENCE", "SILENT"): "APORIA_UNDEFINED",
+            ("FOLLOW_CONSEQUENCE", "CONTRADICTED"): "REVISE",
+            ("CAUSE_OR_CRITERION", "SUPPORTED"): "COUNTEREXAMPLE",
+            ("CAUSE_OR_CRITERION", "PARTIAL"): "COUNTEREXAMPLE",
+            ("CAUSE_OR_CRITERION", "SILENT"): "APORIA_UNDEFINED",
+            ("CAUSE_OR_CRITERION", "CONTRADICTED"): "APORIA_CONTRADICTED",
+        },
+    },
+    # Republic — each actor doing its own role; drills permission/actor
+    # defects (the FR-001 class). Roles are distinguished, the permission
+    # criterion is extracted, then a cross-role counterexample is hunted.
+    "republic": {
+        "start": "DISTINGUISH",
+        "policy": {
+            ("DISTINGUISH", "SUPPORTED"): "DIVIDE",
+            ("DISTINGUISH", "PARTIAL"): "CAUSE_OR_CRITERION",
+            ("DISTINGUISH", "SILENT"): "APORIA_UNDEFINED",
+            ("DISTINGUISH", "CONTRADICTED"): "APORIA_CONTRADICTED",
+            ("CAUSE_OR_CRITERION", "SUPPORTED"): "COUNTEREXAMPLE",
+            ("CAUSE_OR_CRITERION", "PARTIAL"): "COUNTEREXAMPLE",
+            ("CAUSE_OR_CRITERION", "SILENT"): "APORIA_UNDEFINED",
+            ("CAUSE_OR_CRITERION", "CONTRADICTED"): "APORIA_CONTRADICTED",
+        },
+    },
+    # Philebus — measure and mixture; drills unquantified constraints
+    # ("fast", "large", no bound). No stated measure is the unlimited:
+    # APORIA_UNDEFINED. A stated bound is tested by what would violate it.
+    "philebus": {
+        "start": "DEFINE",
+        "policy": {
+            ("DEFINE", "SUPPORTED"): "TEST_OPPOSITE",
+            ("DEFINE", "PARTIAL"): "CAUSE_OR_CRITERION",
+            ("DEFINE", "SILENT"): "APORIA_UNDEFINED",
+            ("DEFINE", "CONTRADICTED"): "APORIA_CONTRADICTED",
+            ("CAUSE_OR_CRITERION", "SUPPORTED"): "TEST_OPPOSITE",
+            ("CAUSE_OR_CRITERION", "PARTIAL"): "COUNTEREXAMPLE",
+            ("CAUSE_OR_CRITERION", "SILENT"): "APORIA_UNDEFINED",
+            ("CAUSE_OR_CRITERION", "CONTRADICTED"): "APORIA_CONTRADICTED",
+            # DEFINE is the start, so the refinement can route here.
+            ("DISTINGUISH", "SUPPORTED"): "TEST_OPPOSITE",
+            ("DISTINGUISH", "PARTIAL"): "DIVIDE",
+            ("DISTINGUISH", "SILENT"): "APORIA_UNDEFINED",
+            ("DISTINGUISH", "CONTRADICTED"): "APORIA_CONTRADICTED",
+            ("TEST_OPPOSITE", "SUPPORTED"): "RESOLVED",
+            ("TEST_OPPOSITE", "PARTIAL"): "DIVIDE",
+            ("TEST_OPPOSITE", "SILENT"): "APORIA_UNDERDETERMINED",
+            ("TEST_OPPOSITE", "CONTRADICTED"): "APORIA_CONTRADICTED",
+        },
+    },
 }
 
 
