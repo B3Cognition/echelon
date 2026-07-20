@@ -42,6 +42,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
+- **Execution telemetry and bounded RE profiles** — New RE runs default to a
+  `balanced` 5,000,000-token/180-active-minute hard budget with a 60-minute
+  performance target; `fast` and `high` goals provide smaller and larger bounded
+  envelopes. Provider dispatches now emit content-free, OpenTelemetry-aligned
+  local spans, continuation preserves consumed budgets, and hard ceilings stop
+  new dispatches without interrupting an in-flight checkpoint. The hidden
+  `echelon re analyze` command reports cost, convergence, repeated findings, and
+  quality debt, while `echelon wiki build --include-runs` projects those reports
+  into optional local Obsidian-friendly operations pages.
+
 - **#166 local spec catalog publication** — `echelon spec publish <id>` and
   `echelon spec publish --all` copy committed spec-only snapshots from canonical
   local Phase A branches into one local default-branch catalog commit. This

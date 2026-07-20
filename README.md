@@ -131,6 +131,21 @@ latest published generation under `re/`; active RE work is isolated under
 freshness-check RE. By default they take one immutable run-local snapshot of the
 latest publication; use `echelon spec run ... --ignore-re` to omit it.
 
+New RE runs use the bounded `balanced` execution goal by default. It targets
+completion within 60 active minutes and has hard ceilings of 180 active minutes
+and 5,000,000 provider-reported tokens. `fast` uses 30/60 minutes and 1,000,000
+tokens; `high` uses 180/720 minutes and 15,000,000 tokens. Select one with
+`echelon re run --profile fast|balanced|high`. Active time excludes periods when
+the command is stopped. `continue` preserves the original profile and consumed
+budget instead of resetting either. Providers that do not report usage remain
+explicitly unknown rather than being estimated.
+
+Every new RE provider dispatch writes content-free, OpenTelemetry-aligned local
+telemetry below `runs/<run-id>/telemetry/`. Raw prompts, responses, source code,
+and secrets are excluded. Diagnostic commands are intentionally hidden from
+ordinary help; run `echelon admin commands` to discover them, including the
+read-only `echelon re analyze` baseline and cost report.
+
 ```text
 re/
   .gitignore                    # ignores .cache/, .staging/, and .locks/
@@ -488,12 +503,17 @@ prints the path to `Home.md`.
 
 ```bash
 echelon wiki build    # complete rebuild
+echelon wiki build --include-runs  # add local RE cost/quality analysis
 echelon wiki status   # absent, fresh, stale, or invalid; includes changed inputs
 echelon wiki clean    # remove only a manifest-owned generated vault
 ```
 
 The Markdown works in an ordinary viewer. Obsidian is optional but recommended
 for backlinks and graph navigation; Echelon does not install or launch it.
+Run analysis is excluded by default because `runs/` is local and volatile. Set
+`wiki.include_run_analysis: true` to include it persistently, or use
+`--include-runs`/`--no-include-runs` per build. Operational pages are labelled
+local and ephemeral, and raw span ledgers are never copied into the vault.
 
 The wiki reads `specs/` and `re/` from the configured local default branch,
 without switching the active checkout. Phase A specs usually live on separate

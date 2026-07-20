@@ -19,6 +19,7 @@ This directory contains all Tier 1 test assets for the cognitive squad.
 ## Running Tests
 
 - Run all pytest tests: `pytest`
+- In a checkout with the repository-managed environment, run `.venv/bin/pytest`.
 - Run unit pytest tests: `pytest tests/unit tests/kernel`
 - Run remaining shell unit tests: `for t in tests/unit/*.sh; do bash "$t"; done`
 - Run one legacy shell test: `bash tests/unit/test-preflight-speckit.sh`
@@ -39,5 +40,7 @@ Fixtures are versioned by directory naming and immutable snapshots:
 - `tests/fixtures/kb/valid-seeds/` contains canonical seed fixtures.
 - `tests/fixtures/kb/corrupted/` contains intentionally invalid fixtures.
 - `tests/fixtures/kb/size-variants/` contains generated large fixtures.
+- `tests/unit/test_run_analyzer.py` builds a minimized legacy RE run without
+  source content and verifies the recoverable `md_distribution` baseline facts.
 
 When fixtures change, create a new file or folder variant instead of mutating old snapshots.
