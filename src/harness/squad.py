@@ -1573,7 +1573,9 @@ class SquadController:
             from echelon.product_inputs import (
                 ProductInputError,
                 apply_product_input_updates,
+                normalize_context_only_product_input_updates,
                 repair_product_input_structural_units,
+                refresh_requirement_context_from_catalog,
                 validate_product_input_traceability_paths,
             )
             if catalog_path is not None:
@@ -1582,10 +1584,22 @@ class SquadController:
                     catalog_path,
                     apply=True,
                 )
-            if updates:
+                requirement_context_ref = str(metadata.get("requirement_context") or "").strip()
+                if requirement_context_ref:
+                    requirement_context_path = Path(requirement_context_ref)
+                    if not requirement_context_path.is_absolute():
+                        requirement_context_path = self._project_root / requirement_context_path
+                    refresh_requirement_context_from_catalog(catalog_path, requirement_context_path)
+            normalized_updates = updates
+            if updates and catalog_path is not None:
+                normalized_updates, _ = normalize_context_only_product_input_updates(
+                    updates,
+                    catalog_path,
+                )
+            if normalized_updates:
                 apply_product_input_updates(
                     traceability_path,
-                    updates,
+                    normalized_updates,
                     tasks_path=tasks_path,
                     declared_targets=targets,
                 )

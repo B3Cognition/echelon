@@ -580,10 +580,11 @@ class TestCartographerResumeGuard:
 
 
 class TestSquadControllerBasics:
-    def test_generation_change_does_not_mutate_attached_spec_context(self, tmp_path):
+    def test_generation_change_does_not_mutate_attached_spec_context(self, tmp_path, monkeypatch):
         _disable_lexicon_gate(tmp_path)
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
+        monkeypatch.setattr(ctrl, "_lexicon_gate_config", lambda: {"lexicon_gate": {"enabled": False}})
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
@@ -617,10 +618,11 @@ class TestSquadControllerBasics:
         assert state["re_generation"] == 1
         assert provider.exec_agent.called
 
-    def test_legacy_generation_state_is_not_synchronized_during_spec_run(self, tmp_path):
+    def test_legacy_generation_state_is_not_synchronized_during_spec_run(self, tmp_path, monkeypatch):
         _disable_lexicon_gate(tmp_path)
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
+        monkeypatch.setattr(ctrl, "_lexicon_gate_config", lambda: {"lexicon_gate": {"enabled": False}})
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
@@ -1008,7 +1010,7 @@ class TestSquadControllerBasics:
         assert next_phase == "phase1-what"
         assert store.load().get("escalation_question") is None
 
-    def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path):
+    def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path, monkeypatch):
         """Banzai: WHY1 returns escalation_question in state_updates → inline COMMANDER, not routing judge."""
         from harness.squad_provider import SquadAgentResult
         _disable_lexicon_gate(tmp_path)
@@ -1104,6 +1106,21 @@ class TestSquadControllerBasics:
         provider = _mock_provider()
         provider.exec_agent.side_effect = side_effect
         ctrl, store = _controller(tmp_path, provider=provider)
+        monkeypatch.setattr(ctrl, "_lexicon_gate_config", lambda: {"lexicon_gate": {"enabled": False}})
+        # This fixture deliberately stops before producing Phase A build inputs.
+        # Keep its assertion scoped to banzai escalation recovery rather than
+        # finalization readiness, which is covered by dedicated readiness tests.
+        from harness.phase_a_readiness import PhaseAReadinessResult
+        monkeypatch.setattr(
+            ctrl,
+            "_publish_phase_a_artifacts_for_build",
+            lambda: PhaseAReadinessResult(
+                ready=True,
+                blockers=[],
+                missing={},
+                ready_spec_dir=None,
+            ),
+        )
         store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
