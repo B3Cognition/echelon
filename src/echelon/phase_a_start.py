@@ -62,6 +62,7 @@ def _write_prepared_state(
 ) -> None:
     run_dir.mkdir(parents=True)
     (run_dir / "staging").mkdir()
+    (run_dir / "specs" / bootstrap.spec_id).mkdir(parents=True)
     payload: dict[str, object] = {
         "run_id": run_id,
         "status": "preparing",

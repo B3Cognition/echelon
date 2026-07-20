@@ -21,6 +21,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Phase A bootstrap directory** — fresh spec starts now create the exact
+  controller-owned run-local `spec_dir` recorded in state before CARTOGRAPHER
+  runs, so first WHAT dispatches cannot fail with a missing spec directory.
+
 - **Phase A full spec identity** — CARTOGRAPHER can no longer replace the
   controller-bootstrapped full `NNN-slug` identity with a short number. Echelon
   now owns all Phase A branch and directory lifecycle instructions, preserves

@@ -100,6 +100,7 @@ def test_first_spec_starts_on_sibling_branch_and_selects_discoverable_run(
     assert state["status"] == "preparing"
     assert state["run_id"] == "run-b"
     assert state["feature_branch"] == outcome.bootstrap.feature_branch
+    assert (repo / state["spec_dir"]).is_dir()
 
 
 def test_first_spec_refuses_unmanaged_nondefault_checkout(tmp_path: Path) -> None:
@@ -241,7 +242,7 @@ def test_controller_preserves_prepared_git_identity_without_provider(tmp_path: P
     result = controller.run(user_message="Build audit logging")
 
     state = store.load()
-    assert result.status == "done"
+    assert result.status == "blocked"
     assert state["run_id"] == "run-b"
     assert state["spec_id"] == outcome.bootstrap.spec_id
     assert state["feature_branch"] == outcome.bootstrap.feature_branch
