@@ -1,5 +1,31 @@
 # SUE — Socratic Understanding Engine: Usage Guide
 
+## 0. `sue_auto.py` — the one-command robotic pipeline
+
+*When:* you don't want to assemble tiers, seeds, lenses, and model flags by
+hand. *Diagnose only* — it never edits specs or dispatches echelon.
+
+```
+python3 scripts/sue_auto.py specs/NNN/spec.md                      # deep (default)
+python3 scripts/sue_auto.py spec.md --profile lite                 # v1 only, ~2 calls
+python3 scripts/sue_auto.py spec.md --profile forensic             # + j-graph, 8 drills
+```
+
+Profiles: `lite` = v1 (~2 calls) · `deep` = v2 → v3 `--passes 2` → ≤3
+auto-drills (~35–60 calls) · `forensic` = deep + j-graph + ≤8 drills.
+Models are pre-split per the 2026-07-20 measurement: dialogue tiers on
+Sonnet 5, the v3 measurement on your CLI default (override with
+`--model-cmd` / `--measure-model-cmd`). Drill seeds and lenses are chosen
+deterministically from v2 stable findings and v3 stable-low units — zero
+model calls spent on selection.
+Output: `sue-dossier.md` + `.json` beside the spec — tier outcomes, a
+severity-ranked **fix-ready summary** (drill aporias → stable CONTRADICTED →
+stable UNANSWERABLE → stable-low), then per-tier detail. Individual tool
+reports are still written as usual. A failed tier (e.g. a quota trip) is
+recorded and the pipeline continues; exit 0 iff ≥1 tier succeeded.
+
+---
+
 Five standalone tools in `scripts/`, stdlib-only, no echelon imports. Each
 challenges or measures a markdown/lexicon specification via isolated model
 calls and writes its report(s) **beside the spec**. Nothing ever modifies the
