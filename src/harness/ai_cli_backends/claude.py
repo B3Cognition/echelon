@@ -49,6 +49,7 @@ class ClaudeCliBackend:
         timed_out = False
         token_usage = 0
         cost_usd = 0.0
+        response_model = ""
         printer = StreamEventPrinter()
 
         def kill() -> None:
@@ -83,7 +84,12 @@ class ClaudeCliBackend:
                     printer(event)
                     etype = event.get("type")
                     if etype == "assistant":
-                        for block in event.get("message", {}).get("content", []):
+                        raw_message = event.get("message")
+                        message = raw_message if isinstance(raw_message, Mapping) else {}
+                        raw_model = message.get("model")
+                        if isinstance(raw_model, str) and raw_model.strip():
+                            response_model = raw_model.strip()
+                        for block in message.get("content", []):
                             if block.get("type") == "text":
                                 text = block.get("text", "")
                                 text_chunks.append(text)
@@ -117,6 +123,9 @@ class ClaudeCliBackend:
             token_usage=token_usage,
             cost_usd=cost_usd,
             timed_out=timed_out,
+            metadata=(
+                {"response_model": response_model} if response_model else {}
+            ),
         )
 
 

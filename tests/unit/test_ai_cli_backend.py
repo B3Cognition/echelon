@@ -1456,6 +1456,50 @@ def test_claude_backend_uses_prompt_metadata_model(tmp_path) -> None:
     assert captured["cmd"][model_index + 1] == "claude-opus-4-1"
 
 
+def test_claude_backend_preserves_response_model_from_stream(tmp_path) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+
+    class FakeProcess:
+        stdout = io.BytesIO(
+            (
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "model": "claude-sonnet-5",
+                            "content": [{"type": "text", "text": "ok"}],
+                        },
+                    }
+                )
+                + "\n"
+                + json.dumps({"type": "result", "usage": {"input_tokens": 1}})
+                + "\n"
+            ).encode()
+        )
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Build this.",
+        env={},
+        timeout_s=10,
+    )
+
+    with patch(
+        "harness.ai_cli_backends.claude.subprocess.Popen",
+        return_value=FakeProcess(),
+    ):
+        result = backend.run_prompt(request)
+
+    assert result.metadata["response_model"] == "claude-sonnet-5"
+
+
 def test_plain_backend_captures_stdout_and_stderr(tmp_path) -> None:
     backend = PlainCliBackend(_config("copilot"))
     request = CliRunRequest(
