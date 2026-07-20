@@ -140,12 +140,18 @@ def admin_commands() -> None:
 
 
 @wiki_app.command("build")
-def wiki_build() -> None:
+def wiki_build(
+    include_runs: Optional[bool] = typer.Option(
+        None,
+        "--include-runs/--no-include-runs",
+        help="Include local, ephemeral run analysis in the generated vault.",
+    ),
+) -> None:
     """Build from the configured local default branch without switching branches."""
     from echelon.wiki.service import WikiBuildError, build_wiki
 
     try:
-        result = build_wiki(Path.cwd())
+        result = build_wiki(Path.cwd(), include_runs=include_runs)
     except WikiBuildError as exc:
         typer.echo(f"Wiki build failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -185,6 +191,8 @@ def wiki_status_command() -> None:
             typer.echo(f"{label}:")
             for path in paths:
                 typer.echo(f"  - {path}")
+    if status.operational_stale:
+        typer.echo("Operational run analysis: stale")
     typer.echo(status.message)
     if status.state == "invalid":
         raise typer.Exit(code=1)
