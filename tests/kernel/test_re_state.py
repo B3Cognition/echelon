@@ -79,6 +79,26 @@ class TestInitReState:
         }
         assert state["re_source_states"] == {}
 
+    def test_freezes_resolved_execution_profile(self):
+        profile = {
+            "name": "balanced",
+            "performance_target_minutes": 60,
+            "hard_active_minutes": 180,
+            "hard_token_limit": 5_000_000,
+            "max_domain_repairs": 3,
+            "max_source_cycles": 2,
+            "max_source_reanalysis": 2,
+        }
+
+        state = init_re_state(execution_profile=profile)
+
+        assert state["re_execution_profile"] == profile
+        assert state["re_source_budgets"] == {
+            "max_source_cycles": 2,
+            "max_domain_repairs": 3,
+            "max_source_reanalysis": 2,
+        }
+
 
 class TestWriteLastDispatch:
     def test_sets_phase_id_and_agent(self):

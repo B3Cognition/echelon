@@ -306,11 +306,30 @@ def re_run(
         min=1,
         help="Raise source-local RE repair budgets.",
     ),
+    profile: str = typer.Option(
+        "balanced",
+        "--profile",
+        help="Execution goal: fast, balanced, or high.",
+    ),
+    re_token_limit: Optional[int] = typer.Option(
+        None,
+        "--re-token-limit",
+        min=1,
+        help="Override the profile token ceiling for this run.",
+    ),
+    re_time_limit_minutes: Optional[int] = typer.Option(
+        None,
+        "--re-time-limit-minutes",
+        min=1,
+        help="Override the profile active-time ceiling for this run.",
+    ),
     reset: bool = typer.Option(False, "--reset", help="Abandon unfinished RE state and replan."),
 ) -> None:
     """Run or resume workspace reverse engineering and publish complete output."""
-    args = ["--re-policy", re_policy]
+    args = ["--re-policy", re_policy, "--profile", profile]
     _extend_option(args, "--re-max-inner", re_max_inner)
+    _extend_option(args, "--re-token-limit", re_token_limit)
+    _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
     if reset:
         args.append("--reset")
     _legacy_cli()._cmd_re_run(args)

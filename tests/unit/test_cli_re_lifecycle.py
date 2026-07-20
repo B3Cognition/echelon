@@ -149,10 +149,57 @@ def test_re_lifecycle_typed_commands_route_options(monkeypatch: pytest.MonkeyPat
     ).exit_code == 0
 
     assert calls == [
-        ("run", ["--re-policy", "refresh-all", "--re-max-inner", "9", "--reset"]),
+        (
+            "run",
+            [
+                "--re-policy",
+                "refresh-all",
+                "--profile",
+                "balanced",
+                "--re-max-inner",
+                "9",
+                "--reset",
+            ],
+        ),
         ("continue", ["--re-max-inner", "10"]),
         ("resume", ["Use v2", "--re-max-inner", "11"]),
     ]
+
+
+@pytest.mark.unit
+def test_re_run_routes_profile_and_hard_limit_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli_app import app
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_re_run", lambda args: calls.append(args))
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "re",
+            "run",
+            "--profile",
+            "fast",
+            "--re-token-limit",
+            "2000000",
+            "--re-time-limit-minutes",
+            "90",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls == [[
+        "--re-policy",
+        "changed",
+        "--profile",
+        "fast",
+        "--re-token-limit",
+        "2000000",
+        "--re-time-limit-minutes",
+        "90",
+    ]]
 
 
 @pytest.mark.unit
