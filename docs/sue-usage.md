@@ -72,17 +72,20 @@ python3 scripts/sue_reproducibility.py spec.md --model-cmd claude --model-cmd co
 ```
 
 Options: `--readers K` **per model** (total = models × K) · `--families`
-(default REQ,FR,AC,NFR,ERR) · `--model-cmd` (repeatable) · `--json` ·
-`--timeout`.
+(default REQ,FR,AC,NFR,ERR) · `--passes N` (repeat the whole measurement N
+times for trustworthy per-requirement scores) · `--model-cmd` (repeatable) ·
+`--json` · `--timeout`.
 Outputs: `semantic-reproducibility.md` + `.json` (machine-readable; separates
 `understanding` vs `proto_justification` per requirement).
-Reading the measurement vector: **SR score is comparative, not absolute**
-(extraction variance persists); global SR is stable (±0.002 A/B) but
-per-requirement scores need the **intersection of ≥2 runs**; `thin_consensus`
-flags agreement over thin content (vagueness is NOT rewarded); witness
-candidates are heuristic — trust only cross-run intersections. Lexicon-format
-specs get canonical GIVEN/WHEN situations (witness channel by construction);
-markdown specs fall back to lottery mode (noted in report).
+Reading the measurement vector: global SR is stable (±0.002 A/B), per-run SR is
+comparative. **Use `--passes 2+` to make per-requirement scores trustworthy** —
+the report then gives each requirement's mean±stdev, the measured
+**extraction-noise floor** (differences below it are noise, not signal), and the
+**stable-low set** (low in *every* pass = the real fracture set; the ≥2-run
+intersection is now native, no manual work). `thin_consensus` flags agreement
+over thin content (vagueness is NOT rewarded); witness candidates are heuristic.
+Lexicon-format specs get canonical GIVEN/WHEN situations (witness channel by
+construction); markdown specs fall back to lottery mode (noted in report).
 
 ## 4. `sue_dialectic.py` — Socratic drill (Forensic, manual)
 
@@ -122,8 +125,11 @@ python3 scripts/sue_jgraph.py spec.md --readers 3 --focus "edit permissions"
 Options: `--readers K` (default 3) · `--focus TEXT` · `--model-cmd` ·
 `--timeout`.
 Outputs: `justification-graph.md` + `.json` — per-reader claims (`stated`
-require evidence lines; `derived` list assumptions) with `⚡ conflicts`
-pairs and completeness metrics. Trust conflict pairs reported by ≥2 readers.
+require evidence lines; `derived` list assumptions) plus **consensus conflicts**
+(contradictions independently found by ≥2 readers, anchored by evidence lines),
+a **conflict-convergence rate**, unanimous count, and mean evidence
+completeness. The consensus conflicts are the trustworthy contradictions;
+convergence + completeness are the H-D2 reasoning-layer quality numbers.
 
 ## Recommended workflows
 

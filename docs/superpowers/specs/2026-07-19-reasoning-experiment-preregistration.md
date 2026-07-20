@@ -86,3 +86,17 @@ D provenance in one blinded template; matched calls AND tokens; semantic
 dedup before yield analysis; pre-registered cross-family judges + human
 primary; direct scoring of precision, evidence-link completeness, blind
 auditability, graph-only contradiction detection.
+
+### H-D2 pilot delivered (2026-07-20)
+
+The reasoning layer is built: `sue_jgraph.py` now computes cross-reader
+**Justification-Graph convergence** — consensus conflicts (anchored by evidence
+lines, orientation-agnostic), conflict-convergence rate, unanimous count, and
+mean evidence completeness. This is the direct graph-only contradiction-detection
+measurement the pilot owed. First real-data evidence (spec 064, 3 readers,
+offline over the saved raw graphs): the FR-001×AC-5 contradiction is
+**unanimous (3/3)**, overall conflict convergence 40%, evidence completeness
+1.00. The one-shot graph converges on the known contradiction — supporting
+outcome 2 (build the layer via one-shot) rather than the outcome-3 fallback.
+Remaining for a full H-D2 verdict: the ≥80%-of-C-trace-completeness comparison
+against dialectic traces on a matched corpus (the follow-up experiment above).
