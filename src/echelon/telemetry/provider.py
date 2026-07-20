@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextvars
+import inspect
 import time
 import uuid
 from contextlib import contextmanager
@@ -41,6 +42,15 @@ class InstrumentedProvider:
         self.supports_prompt_metadata = bool(
             getattr(type(provider), "supports_prompt_metadata", False)
         )
+        try:
+            parameters = inspect.signature(provider.exec_agent).parameters.values()
+            self.accepts_prompt_metadata = any(
+                parameter.name == "prompt_metadata"
+                or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters
+            )
+        except (AttributeError, TypeError, ValueError):
+            self.accepts_prompt_metadata = False
         self._context: contextvars.ContextVar[DispatchContext | None] = (
             contextvars.ContextVar("echelon_spec_dispatch_context", default=None)
         )

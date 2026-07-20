@@ -596,6 +596,13 @@ class PhaseExecutor(ABC):
             )
         except (TypeError, ValueError):
             accepts_prompt_metadata = False
+        accepts_prompt_metadata = bool(
+            getattr(
+                self._provider,
+                "accepts_prompt_metadata",
+                accepts_prompt_metadata,
+            )
+        )
         if getattr(self._provider, "supports_prompt_metadata", False) or (
             prompt_metadata and accepts_prompt_metadata
         ):
