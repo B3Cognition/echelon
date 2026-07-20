@@ -322,6 +322,32 @@ def test_workflow_validator_rejects_required_state_update_outside_allowlist(
     assert any("required_state_updates must be a subset" in issue.message for issue in report.issues)
 
 
+def test_workflow_validator_rejects_controller_state_in_agent_allowlist(
+    tmp_path: Path,
+) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "start",
+                "type": "agent",
+                "allowed_state_updates": ["verdict"],
+                "controller_state_updates": ["verdict"],
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    assert any("controller_state_updates must not overlap" in issue.message for issue in report.issues)
+
+
 def test_workflow_validator_rejects_unsupported_state_update_type(
     tmp_path: Path,
 ) -> None:

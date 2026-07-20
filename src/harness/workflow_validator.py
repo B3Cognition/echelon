@@ -289,6 +289,7 @@ def _validate_result_contract_definition(
 ) -> list[WorkflowValidationIssue]:
     issues: list[WorkflowValidationIssue] = []
     allowed = contract.get("allowed_state_updates")
+    controller_owned = contract.get("controller_state_updates", [])
     required = contract.get("required_state_updates", [])
     value_types = contract.get("state_update_types", {})
     value_enums = contract.get("state_update_enums", {})
@@ -307,6 +308,24 @@ def _validate_result_contract_definition(
         allowed_set: set[str] | None = set()
     else:
         allowed_set = set(allowed) if allowed is not None else None
+
+    if not isinstance(controller_owned, list) or not all(
+        isinstance(key, str) and key for key in controller_owned
+    ):
+        issues.append(WorkflowValidationIssue(
+            "controller_state_updates must be a list of non-empty strings",
+            phase_id=phase_id,
+            path=path,
+        ))
+        controller_owned_set: set[str] = set()
+    else:
+        controller_owned_set = set(controller_owned)
+    if allowed_set is not None and controller_owned_set & allowed_set:
+        issues.append(WorkflowValidationIssue(
+            "controller_state_updates must not overlap allowed_state_updates",
+            phase_id=phase_id,
+            path=path,
+        ))
 
     if not isinstance(required, list) or not all(
         isinstance(key, str) and key for key in required
@@ -510,6 +529,7 @@ def _validate_transition(
 
 def _phase_condition_fields(phase: dict[str, Any]) -> set[str]:
     fields = set(str(key) for key in phase.get("allowed_state_updates") or [])
+    fields.update(str(key) for key in phase.get("controller_state_updates") or [])
     fields.update(_output_fields(phase.get("outputs") or []))
     fields.update(_nested_agent_output_fields(phase))
     transitions = phase.get("transitions") or []

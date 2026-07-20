@@ -3610,9 +3610,10 @@ def _reset_rewind_state(
     except ValueError:
         phase_index = len(_ROADMAP_PHASES)
     if phase_index <= _ROADMAP_PHASES.index("phase1-what"):
-        rewound["lexicon_pass"] = None
+        rewound.pop("lexicon_pass", None)
         rewound["lexicon_attempts"] = 0
-        rewound["lexicon_findings"] = 0
+        rewound.pop("lexicon_findings", None)
+        rewound["lexicon_evaluation"] = "pending"
         rewound.pop("lexicon_gate_exhausted", None)
     if phase_index <= _ROADMAP_PHASES.index("phase3-plan"):
         rewound["tasks_lexicon_pass"] = None
@@ -6357,6 +6358,7 @@ def _cmd_continue(
     verified_recovery = _verified_lexicon_gate_recovery_phase(project_root, state)
     if verified_recovery is not None:
         next_phase, findings = verified_recovery
+        state["lexicon_evaluation"] = "passed"
         state["lexicon_pass"] = True
         state["lexicon_findings"] = findings
         state["lexicon_attempts"] = 0

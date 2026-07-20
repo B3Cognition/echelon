@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **EGR-153 Lexicon gate lifecycle** — an absent or unevaluated derived
+  Lexicon artifact is now recorded as `pending`, rather than as a failed
+  validation result. Only controller-run deterministic validation can write
+  the Boolean `lexicon_pass` verdict, so stale agent state cannot consume the
+  repair budget or route a spec through a false failure loop.
+
 - **Dispatch-scoped result contracts** — Phase A agents now receive typed,
   per-agent verdict and `state_updates` contracts. Undeclared reporting fields
   are quarantined and journaled instead of blocking completed work, while

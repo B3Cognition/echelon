@@ -119,8 +119,8 @@ lexicon validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
   --glossary "{spec_dir}/{glossary_file}" --json
 ```
 
-ALWAYS treat the final `lexicon validate ... --source-ref ... --json` result as authoritative for `lexicon_pass`.
-NEVER report `lexicon_pass: true` from manual inspection, source-code reading, or partial checks.
+ALWAYS run the final `lexicon validate ... --source-ref ... --json` check after writing the derived artifact; the controller independently certifies the final `lexicon_pass` from that artifact on disk.
+NEVER emit `lexicon_pass`; only the controller writes that Boolean after its deterministic validation.
 
 ## Lexicon Gate Mode (when `lexicon_gate.enabled`)
 
@@ -144,9 +144,9 @@ When the flag IS true, you still author `{spec_dir}/spec.md` as the canonical ri
 feature specification. You then derive `{spec_dir}/requirements.lexicon.md` (or the printed
 `lexicon_path`) in the **Lexicon controlled grammar** from the requirements, acceptance
 criteria, and error paths in `spec.md`, and you VALIDATE AND REPAIR that derived artifact
-with the deterministic `lexicon` validator before returning. The `lexicon_pass` outcome you
-emit is the controlled signal COMMANDER uses to decide whether to re-dispatch you (see
-`phase1-what.md §4.4`).
+with the deterministic `lexicon` validator before returning. Report the repair-attempt count;
+the controller owns the final `lexicon_evaluation` and `lexicon_pass` signal used for routing
+(see `phase1-what.md §4.4`).
 
 ALWAYS preserve `spec.md` as a rich Markdown feature specification with feature metadata,
 user stories, acceptance scenarios, FR/NFR sections, entities, success criteria, scope,
@@ -222,7 +222,8 @@ $LEXICON validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
 ```
 
 1. Parse the JSON: `ok` (bool) and `findings[]` (each has `code`, `message`, `line`, `span`).
-2. If `ok` is true → the spec is lexicon-clean. Stop the loop; set `lexicon_pass: true`.
+2. If `ok` is true → the spec is lexicon-clean. Stop the loop and report the completed
+   repair-attempt count; the controller certifies the final pass from the file on disk.
 3. If `ok` is false → repair `parse-error` findings before interpreting any `source-id-missing`
    findings. A parse failure prevents deterministic block extraction, so it can make every source
    ID appear missing. Only after a parse-clean re-run may a source-ID finding establish that an
@@ -250,15 +251,19 @@ $LEXICON validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
    | `unsupported-claim` | add an `EVIDENCE:` block after the flagged CLAIM                          |
 
 4. Re-run the validator. Repeat from step 1, up to `lexicon_gate.max_repair_attempts` rounds.
-5. If still not `ok` after the cap → set `lexicon_pass: false` and return; COMMANDER decides
-   (re-dispatch or escalate per `on_exhausted`). Do NOT ship a derived Lexicon artifact you know
-   is not `ok` while claiming success — the validator's verdict is authoritative, not your own
-   assessment.
+5. If still not `ok` after the cap → report the repair-attempt count and remaining findings;
+   the controller certifies the failed result and applies the configured exhaustion policy. Do
+   NOT ship a derived Lexicon artifact you know is not `ok` while claiming success — the
+   validator's verdict is authoritative, not your own assessment.
 
 ### ALWAYS / NEVER (Lexicon mode)
 
 ALWAYS treat the `lexicon validate` verdict as the source of truth for structural validity.
-NEVER report `lexicon_pass: true` without a final validator run that returned `ok: true`.
+NEVER emit `lexicon_pass`; report repair evidence and let the controller certify the verdict.
+
+ALWAYS create the derived Lexicon artifact before returning when the gate is enabled.
+NEVER emit `lexicon_pass: false` because the artifact is missing or validation did not run; a
+missing derived artifact is pending, never `lexicon_pass: false`.
 
 ALWAYS distinguish a parser failure from a grammar limitation by repairing the reported parse
 line and re-running the validator before classifying any source-ID findings.
@@ -276,14 +281,14 @@ NEVER introduce requirements in `requirements.lexicon.md` that are absent from `
 
 ### echelon_result additions (Lexicon mode)
 
-Add these to your `echelon_result` so COMMANDER can route on the controlled outcome:
+Add the repair-loop evidence to your `echelon_result`; the controller independently certifies
+the controlled outcome from the on-disk artifact:
 
 ```yaml
 echelon_result:
   state_updates:
-    lexicon_pass: true            # final validator ok? (true|false) — authoritative
     lexicon_attempts: <int>       # repair rounds used
-    lexicon_findings: <int>       # remaining findings (0 when lexicon_pass true)
+    lexicon_findings: <int>       # remaining findings when validation ran
 ```
 
 ## Tool Hygiene

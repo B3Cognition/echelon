@@ -303,6 +303,17 @@ def test_phase3_consensus_declares_per_agent_result_contracts():
     assert "total_tasks" not in contracts["PLAN2"]["allowed_state_updates"]
 
 
+def test_phase1_what_reserves_lexicon_verdict_fields_for_the_controller():
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+    node = graph.get("phase1-what")
+
+    assert "lexicon_attempts" in node.allowed_state_updates
+    assert "lexicon_findings" in node.allowed_state_updates
+    assert "lexicon_pass" not in node.allowed_state_updates
+    assert "lexicon_evaluation" not in node.allowed_state_updates
+    assert node.controller_state_updates == ["lexicon_evaluation", "lexicon_pass"]
+
+
 def test_experimental_artifact_quality_phases_are_registered():
     graph = PhaseGraph(DEFINITION, EXT_YML)
 

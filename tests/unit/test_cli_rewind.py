@@ -416,6 +416,7 @@ def test_rewind_reconstructs_primary_predecessors_for_the_roadmap() -> None:
 def test_rewind_to_what_resets_spec_lexicon_repair_state() -> None:
     rewound = _reset_rewind_state(
         {
+            "lexicon_evaluation": "failed",
             "lexicon_pass": False,
             "lexicon_attempts": 3,
             "lexicon_findings": 55,
@@ -425,9 +426,10 @@ def test_rewind_to_what_resets_spec_lexicon_repair_state() -> None:
         "runs/spec-1/specs/001-demo",
     )
 
-    assert rewound["lexicon_pass"] is None
+    assert "lexicon_pass" not in rewound
     assert rewound["lexicon_attempts"] == 0
-    assert rewound["lexicon_findings"] == 0
+    assert "lexicon_findings" not in rewound
+    assert rewound["lexicon_evaluation"] == "pending"
     assert "lexicon_gate_exhausted" not in rewound
 
 
