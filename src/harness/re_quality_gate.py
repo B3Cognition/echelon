@@ -22,6 +22,10 @@ from harness.re_semantic_contract import (
     classify_semantic_finding,
     stable_finding_id,
 )
+from harness.re_semantic_preflight import (
+    SemanticPreflightFinding,
+    check_semantic_preflight,
+)
 
 
 SOURCE_REFERENCE = re.compile(
@@ -73,6 +77,7 @@ class ReSpecQualityFailure:
     non_functional_requirements_without_evidence: tuple[str, ...] = ()
     semantic_findings: tuple[str, ...] = ()
     semantic_finding_records: tuple[ReSemanticFindingRecord, ...] = ()
+    semantic_preflight_findings: tuple[SemanticPreflightFinding, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -567,6 +572,10 @@ def _domain_quality_failure(
         source_root=Path(source.absolute_path),
         domain_root=domain.root,
     )
+    semantic_preflight_findings = check_semantic_preflight(
+        spec_path,
+        run_re_dir / "sources" / source.id / "analysis.json",
+    )
     if not (
         missing_sections
         or len(evidence) < MINIMUM_SOURCE_EVIDENCE
@@ -581,6 +590,7 @@ def _domain_quality_failure(
             < target.minimum_non_functional_requirements
         )
         or non_functional_requirements_without_evidence
+        or semantic_preflight_findings
     ):
         return None
     return ReSpecQualityFailure(
@@ -604,6 +614,7 @@ def _domain_quality_failure(
         non_functional_requirements_without_evidence=(
             non_functional_requirements_without_evidence
         ),
+        semantic_preflight_findings=semantic_preflight_findings,
     )
 
 
