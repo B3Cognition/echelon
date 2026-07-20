@@ -110,6 +110,11 @@ wiki_app = typer.Typer(
     help="Build and inspect local human navigation for Echelon artifacts.",
     no_args_is_help=True,
 )
+admin_app = typer.Typer(
+    add_completion=False,
+    help="Explicit catalog of diagnostic commands.",
+    no_args_is_help=True,
+)
 
 app.add_typer(workspace_app, name="workspace")
 app.add_typer(spec_app, name="spec")
@@ -121,9 +126,17 @@ app.add_typer(harness_app, name="harness", hidden=True)
 app.add_typer(re_app, name="re")
 app.add_typer(kb_app, name="kb")
 app.add_typer(wiki_app, name="wiki")
+app.add_typer(admin_app, name="admin", hidden=True)
 workspace_app.add_typer(workspace_sources_app, name="sources")
 spec_app.add_typer(spec_checkpoint_app, name="checkpoint")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
+
+
+@admin_app.command("commands")
+def admin_commands() -> None:
+    """List intentionally hidden diagnostic commands."""
+    typer.echo("Diagnostic commands:")
+    typer.echo("  echelon re analyze [RUNS_DIR] [--run-id ID] [--format text|json]")
 
 
 @wiki_app.command("build")
@@ -387,6 +400,64 @@ def re_publish(
     if commit:
         args.append("--commit")
     _legacy_cli()._cmd_re_publish(args)
+
+
+@re_app.command("analyze", hidden=True)
+def re_analyze(
+    runs_dir: Path = typer.Argument(
+        Path("runs"),
+        exists=False,
+        file_okay=False,
+        help="Directory containing RE run directories.",
+    ),
+    run_id: Optional[str] = typer.Option(None, "--run-id", help="Analyze one RE run."),
+    output_format: str = typer.Option(
+        "text", "--format", help="Output format: text or json."
+    ),
+) -> None:
+    """Analyze RE cost, convergence, quality debt, and telemetry coverage."""
+    import json
+    import re
+
+    from echelon.telemetry.re_adapter import analyze_re_run, analyze_re_runs
+    from echelon.telemetry.render import analysis_to_json, render_analysis_text
+
+    if output_format not in {"text", "json"}:
+        raise typer.BadParameter("format must be text or json", param_hint="--format")
+    if run_id is not None:
+        if not re.fullmatch(r"re-[A-Za-z0-9._-]+", run_id):
+            raise typer.BadParameter("unsafe run id", param_hint="--run-id")
+        candidate = runs_dir.resolve() / run_id
+        if not candidate.is_dir() or not candidate.resolve().is_relative_to(
+            runs_dir.resolve()
+        ):
+            raise typer.BadParameter(f"RE run not found: {run_id}", param_hint="--run-id")
+        reports = (analyze_re_run(candidate),)
+    else:
+        reports = analyze_re_runs(runs_dir)
+    if output_format == "json":
+        if len(reports) == 1:
+            typer.echo(analysis_to_json(reports[0]), nl=False)
+        else:
+            typer.echo(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "workflow": "re",
+                        "runs": [report.to_json_dict() for report in reports],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        return
+    if not reports:
+        typer.echo(f"No RE runs found under {runs_dir}.")
+        return
+    for index, report in enumerate(reports):
+        if index:
+            typer.echo()
+        typer.echo(render_analysis_text(report), nl=False)
 
 
 @re_app.command("execute-run", hidden=True)
