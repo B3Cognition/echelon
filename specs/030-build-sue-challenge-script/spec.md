@@ -22,8 +22,15 @@ A script operator runs the challenge script against a markdown specification fil
 
 **Acceptance Scenarios**:
 
-- **AC-001**: Given a readable specification with an available model command, when the operator runs the challenge script, then exactly 2 model calls occur (FR-008), the challenge report is written into the specification's directory (FR-034), with exit code 0.
-- **AC-002**: Given a completed challenge run, when the operator opens the challenge report, then the report header states exactly 4 facts: the specification path, the run date, the question count, plus the finding count (FR-036, AC-001).
+- **AC-001**: Given a readable specification with an available model command, when the operator runs the challenge script, then:
+  - (a) exactly 2 model calls occur (FR-008),
+  - (b) the challenge report is written into the specification's directory (FR-034),
+  - (c) the exit code is 0.
+- **AC-002**: Given a completed challenge run, when the operator opens the challenge report, then the report header states exactly 4 facts (FR-036, AC-001):
+  - (a) the specification path,
+  - (b) the run date,
+  - (c) the question count,
+  - (d) the finding count.
 - **AC-003**: Given a challenge report exists from a previous run, when the operator reruns the challenge script, then exactly 1 report file remains (FR-034, AC-002), holding only the new run's content.
 - **AC-004**: Given round 2 returned mixed verdicts, when the report is assembled, then the findings section holds exactly 2 verdict classes — CONTRADICTED plus UNANSWERABLE (FR-032) — ordered per the ranking rule FR-033.
 - **AC-005**: Given a run completes with at least 1 finding, when the run finishes, then the terminal summary states the finding count per verdict class, listing the top 3 findings in rank order (FR-040, AC-001).
@@ -64,7 +71,10 @@ A script operator hits a failure: a bad path, a missing model command, unusable 
 - **AC-014**: Given the model command's executable cannot be found, when the operator runs the challenge script, then the exit code is 2, the message includes exactly 1 installation pointer (FR-012, ERR-003), with 0 reports written.
 - **AC-015**: Given a round's output fails validation on both the initial call plus the corrective retry, when the second failure occurs, then the exit code is 3, the raw output is saved into the debug dump directory (FR-030, ERR-004), with 0 reports written.
 - **AC-016**: Given a round's first output is invalid while its retry output is valid, when the run continues, then exactly 2 subprocess invocations occurred for that round (FR-028, FR-013), with the run completing at exit code 0.
-- **AC-017**: Given a model call exceeds its timeout budget of at most 300 seconds by default, when the timeout expires, then the call is classified as a parse failure (FR-011): exactly 1 retry is issued, with a second failure ending the run at exit code 3 (FR-030).
+- **AC-017**: Given a model call exceeds its timeout budget of at most 300 seconds by default, when the timeout expires, then:
+  - (a) the call is classified as a parse failure (FR-011),
+  - (b) exactly 1 retry is issued,
+  - (c) a second failure ends the run at exit code 3 (FR-030).
 - **AC-018**: Given round-2 answers with a missing, duplicate, or unknown question identifier, when validation runs, then the output is classified as a parse failure (FR-025) consuming exactly 1 corrective retry per FR-028.
 - **AC-019**: Given the specification's directory is not writable, when the operator runs the challenge script, then the exit code is 1 with exactly 0 model calls launched (FR-006, ERR-002).
 - **AC-020**: Given valid round-1 output holding more than N questions, when validation runs, then exactly N questions remain — the first N in returned order (FR-019) — with the report header carrying 1 truncation note (FR-036).
@@ -81,9 +91,11 @@ A developer maintaining the challenge script runs its automated unit tests. The 
 
 **Acceptance Scenarios**:
 
-- **AC-021**: Given a stub executable configured as the model command, when a full challenge run executes, then the run completes end-to-end (FR-043, FR-003) using exactly 0 live model calls.
+- **AC-021**: Given a stub executable configured as the model command, when a full challenge run executes, then:
+  - (a) the run completes end-to-end (FR-043, FR-003),
+  - (b) exactly 0 live model calls are used.
 - **AC-022**: Given the repository's automated test suite, when the challenge script's unit tests run, then all tests pass with exactly 0 network calls plus exactly 0 live model commands installed (FR-044, SC-002).
-- **AC-023**: Given exactly 1 manual live acceptance run against the designated acceptance target (`specs/029-builder-spec-workbench/spec.md`), when the run completes, then a report exists whose findings overlap at least 1 of the 3 named known issues — (1) the REQ-009 "time order" vs AC-010 "most recent first" ordering conflict, (2) the REQ-017/REQ-019/REQ-028 quality-score recording loop, (3) the undefined active-run pointer of REQ-002 — within at most 3 total attempts (SC-001, FR-034).
+- **AC-023**: Given exactly 1 manual live acceptance run against the designated acceptance target (`specs/029-builder-spec-workbench/spec.md`), when the run completes, then a report exists whose findings overlap at least 1 of the 3 named known issues — (1) the REQ-009 "time order" vs AC-010 "most recent first" ordering conflict, (2) the REQ-017/REQ-019/REQ-028 quality-score recording loop, (3) the undefined active-run pointer of REQ-002 — within at most 3 total attempts (SC-001, FR-034). A finding *overlaps* a named known issue exactly when the finding's cited evidence lines (FR-039) include at least 1 line of the definition of a requirement or acceptance criterion explicitly named in that issue, as those lines stand in the acceptance target's text.
 
 ---
 
@@ -265,7 +277,7 @@ The model-command option doubles as the test seam, and the script stays free of 
 
 ### Measurable Outcomes
 
-- **SC-001**: When the manual live acceptance run executes against the designated acceptance target, a report is generated whose findings overlap at least 1 of the 3 named known issues, within at most 3 total attempts (AC-023, FR-034).
+- **SC-001**: When the manual live acceptance run executes against the designated acceptance target, a report is generated whose findings overlap at least 1 of the 3 named known issues, within at most 3 total attempts (AC-023, FR-034). Overlap is judged by the AC-023 rule: a finding overlaps a named known issue exactly when its cited evidence lines include at least 1 line of the definition of a requirement or acceptance criterion explicitly named in that issue.
 - **SC-002**: When the challenge script's unit tests run in the repository's test runner, all tests pass with exactly 0 network calls plus exactly 0 live model invocations (FR-044, AC-022).
 - **SC-003**: When each failure class is deliberately triggered, it reproduces its assigned exit code — 1, 2, or 3 — plus exactly 1 diagnostic line (NFR-005, ERR-001).
 - **SC-004**: When any challenge run terminates, its wall-clock time is at most 4 timeout budgets plus 60 seconds (NFR-001, FR-011).
