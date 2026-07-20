@@ -327,8 +327,8 @@ def re_run(
         min=1,
         help="Raise source-local RE repair budgets.",
     ),
-    profile: str = typer.Option(
-        "balanced",
+    profile: Optional[str] = typer.Option(
+        None,
         "--profile",
         help="Execution goal: fast, balanced, or high.",
     ),
@@ -347,7 +347,8 @@ def re_run(
     reset: bool = typer.Option(False, "--reset", help="Abandon unfinished RE state and replan."),
 ) -> None:
     """Run or resume workspace reverse engineering and publish complete output."""
-    args = ["--re-policy", re_policy, "--profile", profile]
+    args = ["--re-policy", re_policy]
+    _extend_option(args, "--profile", profile)
     _extend_option(args, "--re-max-inner", re_max_inner)
     _extend_option(args, "--re-token-limit", re_token_limit)
     _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)

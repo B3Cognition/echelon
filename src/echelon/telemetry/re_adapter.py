@@ -110,6 +110,8 @@ def operational_input_hashes(runs_dir: Path) -> dict[str, str]:
         for relative in (
             "state.json",
             "re/state.json",
+            "re/workspace/architecture-map.json",
+            "re/quality/semantic-quality-review.json",
             "telemetry/manifest.json",
             "telemetry/spans.jsonl",
         ):
@@ -117,6 +119,13 @@ def operational_input_hashes(runs_dir: Path) -> dict[str, str]:
             if path.is_file():
                 key = f"runs/{report.run_id}/{relative}"
                 result[key] = hashlib.sha256(path.read_bytes()).hexdigest()
+        quality_root = run / "re/quality/sources"
+        if quality_root.is_dir():
+            for path in sorted(quality_root.glob("*.json")):
+                relative = path.relative_to(run).as_posix()
+                result[f"runs/{report.run_id}/{relative}"] = hashlib.sha256(
+                    path.read_bytes()
+                ).hexdigest()
     return dict(sorted(result.items()))
 
 
@@ -239,6 +248,21 @@ def _finding_summary(
                 blocking += 1
             else:
                 non_blocking += 1
+    aggregate = _read_object(run / "re/quality/semantic-quality-review.json")
+    failures = aggregate.get("failures")
+    if (not isinstance(audits, Mapping) or not audits) and isinstance(failures, list):
+        for failure in failures:
+            if not isinstance(failure, Mapping):
+                continue
+            raw_findings = failure.get("semantic_findings")
+            if not isinstance(raw_findings, list):
+                continue
+            for raw_finding in raw_findings:
+                message = " ".join(str(raw_finding).casefold().split())
+                if not message:
+                    continue
+                messages[message] = messages.get(message, 0) + 1
+                blocking += 1
     repeated = {key: count for key, count in messages.items() if count > 1}
     return dict(sorted(repeated.items())), blocking, non_blocking
 

@@ -149,18 +149,7 @@ def test_re_lifecycle_typed_commands_route_options(monkeypatch: pytest.MonkeyPat
     ).exit_code == 0
 
     assert calls == [
-        (
-            "run",
-            [
-                "--re-policy",
-                "refresh-all",
-                "--profile",
-                "balanced",
-                "--re-max-inner",
-                "9",
-                "--reset",
-            ],
-        ),
+        ("run", ["--re-policy", "refresh-all", "--re-max-inner", "9", "--reset"]),
         ("continue", ["--re-max-inner", "10"]),
         ("resume", ["Use v2", "--re-max-inner", "11"]),
     ]
