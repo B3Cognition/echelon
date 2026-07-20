@@ -9,6 +9,16 @@ from typer.testing import CliRunner
 
 
 @pytest.mark.unit
+def test_re_run_help_exposes_clean_reconstruction_switch() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["re", "run", "--help"])
+
+    assert result.exit_code == 0
+    assert "--no-reuse" in result.output
+
+
+@pytest.mark.unit
 def test_re_continue_prints_controller_summary_before_provider_dispatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

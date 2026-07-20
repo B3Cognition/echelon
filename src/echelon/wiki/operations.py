@@ -59,6 +59,12 @@ def _run_page(report: RunAnalysis) -> str:
         f"- Active duration: {active}",
         f"- Sources/domains: {report.source_count}/{report.domain_count}",
         f"- Partial quality-debt sources: {report.partial_debt_source_count}",
+        f"- Semantic audit: `{report.semantic_audit_status}`",
+        "- First-pass repair rate: "
+        + (f"{report.first_pass_repair_rate:.1%}" if report.first_pass_repair_rate is not None else "not evaluated"),
+        "- Validator dispatches/domain: "
+        + (f"{report.validator_dispatches_per_domain:.2f}" if report.validator_dispatches_per_domain is not None else "not evaluated"),
+        f"- Published baseline: `{report.baseline.get('status', 'unknown')}` generation {report.baseline.get('generation', 0)}",
         "",
         "## Profile compliance",
         "",

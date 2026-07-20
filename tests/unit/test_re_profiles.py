@@ -9,11 +9,11 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize(
-    ("name", "target", "tokens", "minutes", "repairs", "cycles"),
+    ("name", "target", "tokens", "minutes", "repairs", "cycles", "audit", "semantic_rounds"),
     [
-        ("fast", 30, 1_000_000, 60, 1, 1),
-        ("balanced", 60, 5_000_000, 180, 3, 2),
-        ("high", 180, 15_000_000, 720, 5, 5),
+        ("fast", 30, 1_000_000, 60, 1, 1, "none", 0),
+        ("balanced", 60, 5_000_000, 180, 3, 2, "all", 1),
+        ("high", 180, 15_000_000, 720, 5, 5, "all", 5),
     ],
 )
 def test_builtin_profiles_have_exact_limits(
@@ -23,6 +23,8 @@ def test_builtin_profiles_have_exact_limits(
     minutes: int,
     repairs: int,
     cycles: int,
+    audit: str,
+    semantic_rounds: int,
 ) -> None:
     profile = builtin_re_profile(name)
 
@@ -32,6 +34,8 @@ def test_builtin_profiles_have_exact_limits(
     assert profile.max_domain_repairs == repairs
     assert profile.max_source_cycles == cycles
     assert profile.max_source_reanalysis == cycles
+    assert profile.semantic_audit_mode == audit
+    assert profile.max_semantic_repair_rounds == semantic_rounds
 
 
 def test_unknown_profile_is_rejected() -> None:

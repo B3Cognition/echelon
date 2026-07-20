@@ -298,6 +298,26 @@ def test_complete_two_source_publish_creates_one_generation(tmp_path: Path) -> N
 
 
 @pytest.mark.unit
+def test_fast_profile_publication_records_semantics_as_not_evaluated(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    state_path = run_dir / "re/state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["re_execution_profile"] = {
+        "name": "fast",
+        "semantic_audit_mode": "none",
+        "max_semantic_repair_rounds": 0,
+    }
+    _write_json(state_path, state)
+    (run_dir / "re/quality/semantic-quality-review.json").unlink()
+
+    publish_re_run(tmp_path, run_dir)
+
+    index = json.loads((tmp_path / "re/index.json").read_text(encoding="utf-8"))
+    assert index["quality"]["semantic_audit_status"] == "not-evaluated"
+    assert index["quality"]["execution_profile"] == "fast"
+
+
+@pytest.mark.unit
 def test_partial_publication_accepts_only_controller_recorded_quality_debt(
     tmp_path: Path,
 ) -> None:

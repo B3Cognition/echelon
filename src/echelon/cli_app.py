@@ -345,8 +345,13 @@ def re_run(
         help="Override the profile active-time ceiling for this run.",
     ),
     reset: bool = typer.Option(False, "--reset", help="Abandon unfinished RE state and replan."),
+    no_reuse: bool = typer.Option(
+        False,
+        "--no-reuse",
+        help="Ignore published RE artifacts and reconstruct from source.",
+    ),
 ) -> None:
-    """Run or resume workspace reverse engineering and publish complete output."""
+    """Run or resume workspace reverse engineering; publish explicitly afterward."""
     args = ["--re-policy", re_policy]
     _extend_option(args, "--profile", profile)
     _extend_option(args, "--re-max-inner", re_max_inner)
@@ -354,6 +359,8 @@ def re_run(
     _extend_option(args, "--re-time-limit-minutes", re_time_limit_minutes)
     if reset:
         args.append("--reset")
+    if no_reuse:
+        args.append("--no-reuse")
     _legacy_cli()._cmd_re_run(args)
 
 

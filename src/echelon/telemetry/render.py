@@ -28,6 +28,20 @@ def render_analysis_text(analysis: RunAnalysis) -> str:
         f"Active duration: {active_text}",
         f"Sources/domains: {analysis.source_count}/{analysis.domain_count}",
         f"Partial quality-debt sources: {analysis.partial_debt_source_count}",
+        f"Semantic audit: {analysis.semantic_audit_status}",
+        "First-pass repair rate: "
+        + (
+            f"{analysis.first_pass_repair_rate:.1%}"
+            if analysis.first_pass_repair_rate is not None
+            else "not evaluated"
+        ),
+        "Validator dispatches/domain: "
+        + (
+            f"{analysis.validator_dispatches_per_domain:.2f}"
+            if analysis.validator_dispatches_per_domain is not None
+            else "not evaluated"
+        ),
+        f"Repeated finding records: {analysis.repeated_finding_count}",
         "Compliance: "
         + ", ".join(f"{key}={value}" for key, value in analysis.compliance.items()),
     ]

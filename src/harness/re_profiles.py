@@ -18,15 +18,17 @@ class ReExecutionProfile:
     max_domain_repairs: int
     max_source_cycles: int
     max_source_reanalysis: int
+    semantic_audit_mode: str
+    max_semantic_repair_rounds: int
 
     def to_json_dict(self) -> dict[str, object]:
         return asdict(self)
 
 
 BUILTIN_RE_PROFILES: dict[str, ReExecutionProfile] = {
-    "fast": ReExecutionProfile("fast", 30, 60, 1_000_000, 1, 1, 1),
-    "balanced": ReExecutionProfile("balanced", 60, 180, 5_000_000, 3, 2, 2),
-    "high": ReExecutionProfile("high", 180, 720, 15_000_000, 5, 5, 5),
+    "fast": ReExecutionProfile("fast", 30, 60, 1_000_000, 1, 1, 1, "none", 0),
+    "balanced": ReExecutionProfile("balanced", 60, 180, 5_000_000, 3, 2, 2, "all", 1),
+    "high": ReExecutionProfile("high", 180, 720, 15_000_000, 5, 5, 5, "all", 5),
 }
 
 
@@ -79,13 +81,17 @@ def migrate_legacy_re_profile(state: Mapping[str, object]) -> ReExecutionProfile
         max_source_reanalysis=_positive_or_default(
             budgets.get("max_source_reanalysis"), 5
         ),
+        semantic_audit_mode="all",
+        max_semantic_repair_rounds=_positive_or_default(
+            budgets.get("max_domain_repairs"), 5
+        ),
     )
 
 
 def _apply_mapping(
     profile: ReExecutionProfile, value: Mapping[str, object]
 ) -> ReExecutionProfile:
-    replacements: dict[str, int] = {}
+    replacements: dict[str, object] = {}
     for key in (
         "performance_target_minutes",
         "hard_active_minutes",
@@ -93,9 +99,15 @@ def _apply_mapping(
         "max_domain_repairs",
         "max_source_cycles",
         "max_source_reanalysis",
+        "max_semantic_repair_rounds",
     ):
         if key in value:
             replacements[key] = _positive(value[key], key.replace("_", " "))
+    if "semantic_audit_mode" in value:
+        mode = str(value["semantic_audit_mode"])
+        if mode not in {"none", "all"}:
+            raise ValueError("RE semantic audit mode must be none or all")
+        replacements["semantic_audit_mode"] = mode
     return replace(profile, **replacements)
 
 

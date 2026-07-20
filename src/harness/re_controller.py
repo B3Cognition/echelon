@@ -492,7 +492,16 @@ class ReExtractionController:
                 state["verify_expand_iterations"] = iterations + 1
                 state["phase"] = "re-extract-4-expand"
             else:
-                state["phase"] = "re-extract-5-validate"
+                state["phase"] = (
+                    "re-extract-5-validate"
+                    if self._semantic_audit_enabled(state)
+                    else "re-extract-6-checklist"
+                )
+                if not self._semantic_audit_enabled(state):
+                    state["re_semantic_audit"] = {
+                        "status": "not-evaluated",
+                        "reason": "execution-profile",
+                    }
         elif phase == "re-extract-4-expand":
             state["phase"] = "re-extract-3-verify"
         elif phase == "re-extract-5-validate":
@@ -512,6 +521,23 @@ class ReExtractionController:
             state.get("re_convergence_schema_version") == 1
             and isinstance(state.get("re_source_states"), dict)
         )
+
+    @staticmethod
+    def _semantic_audit_enabled(state: dict) -> bool:
+        profile = state.get("re_execution_profile")
+        if not isinstance(profile, dict):
+            return True
+        return profile.get("semantic_audit_mode", "all") != "none"
+
+    def _semantic_repair_limit(self, state: dict) -> int:
+        profile = state.get("re_execution_profile")
+        if isinstance(profile, dict):
+            value = profile.get("max_semantic_repair_rounds")
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                return value
+        if self._source_convergence_enabled(state):
+            return self._source_budget(state, "max_domain_repairs")
+        return self._metric(state, "max_verify_expand_iterations")
 
     @staticmethod
     def _migrate_workspace_source_convergence(state: dict) -> bool:
@@ -780,7 +806,16 @@ class ReExtractionController:
             return None
 
         if state.get("re_workspace_synthesis_complete"):
-            state["phase"] = "re-extract-5-validate"
+            state["phase"] = (
+                "re-extract-5-validate"
+                if self._semantic_audit_enabled(state)
+                else "re-extract-6-checklist"
+            )
+            if not self._semantic_audit_enabled(state):
+                state["re_semantic_audit"] = {
+                    "status": "not-evaluated",
+                    "reason": "execution-profile",
+                }
             self._save_state(state)
             return None
         self._activate_next_source(state, plan)
@@ -1211,9 +1246,7 @@ class ReExtractionController:
                 )
                 target["repair_packet"] = packet.to_json_dict()
                 self._record_repeated_findings(state, packet)
-                exhausted = exhausted or repair_count > self._source_budget(
-                    state, "max_domain_repairs"
-                )
+                exhausted = exhausted or repair_count > self._semantic_repair_limit(state)
             if exhausted:
                 source_report = measure_source_quality(
                     self._run_re_dir,
@@ -1324,7 +1357,15 @@ class ReExtractionController:
         report: ReQualityReport,
     ) -> ReControllerResult | None:
         attempts = self._metric(state, "re_quality_repair_attempts")
-        maximum = self._metric(state, "max_verify_expand_iterations")
+        semantic = bool(report.failures) and all(
+            failure.reason == "semantic_quality_incomplete"
+            for failure in report.failures
+        )
+        maximum = (
+            self._semantic_repair_limit(state)
+            if semantic
+            else self._metric(state, "max_verify_expand_iterations")
+        )
         if attempts >= maximum:
             return self._block(state, "re_deep_spec_gate_failed")
         if not state.get("re_quality_repair_pending"):

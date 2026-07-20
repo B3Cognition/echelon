@@ -47,6 +47,23 @@ def analyze_re_run(run_dir: Path) -> RunAnalysis:
     )
     domain_count = _domain_count(run, inner)
     repeated, blocking, non_blocking = _finding_summary(run, inner)
+    audits = inner.get("re_semantic_domain_audits")
+    audited_domains = len(audits) if isinstance(audits, Mapping) else 0
+    repaired_domains = sum(
+        1
+        for source_state in sources.values()
+        if isinstance(source_state, Mapping)
+        and isinstance(source_state.get("domain_repairs"), Mapping)
+        for count in source_state["domain_repairs"].values()
+        if _nonnegative(count) > 0
+    )
+    validator_dispatches = by_phase.get("re-extract-5-validate", {}).get("dispatches", 0)
+    audit_marker = inner.get("re_semantic_audit")
+    semantic_status = (
+        str(audit_marker.get("status"))
+        if isinstance(audit_marker, Mapping)
+        else ("evaluated" if audited_domains else "unknown")
+    )
     compliance = _compliance(profile, tokens, active_duration)
     diagnostics = [item.message for item in span_diagnostics]
     if not tokens.known:
@@ -73,6 +90,21 @@ def analyze_re_run(run_dir: Path) -> RunAnalysis:
         repeated_findings=repeated,
         blocking_finding_count=blocking,
         non_blocking_finding_count=non_blocking,
+        audited_domain_count=audited_domains,
+        repaired_domain_count=repaired_domains,
+        first_pass_repair_rate=(
+            repaired_domains / audited_domains if audited_domains else None
+        ),
+        validator_dispatches_per_domain=(
+            validator_dispatches / audited_domains if audited_domains else None
+        ),
+        repeated_finding_count=sum(repeated.values()),
+        semantic_audit_status=semantic_status,
+        baseline=(
+            dict(outer["re_baseline"])
+            if isinstance(outer.get("re_baseline"), Mapping)
+            else {}
+        ),
         compliance=compliance,
         provenance={
             "profile": "telemetry/manifest.json" if manifest else "run state",

@@ -6,6 +6,7 @@ import json
 import os
 import re
 import tempfile
+from dataclasses import replace
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,13 +22,7 @@ from harness.re_controller import ReExtractionController
 from harness.re_fingerprint import ReFingerprintProfile
 from harness.re_materializer import materialize_re_run_context
 from harness.re_planner import build_re_execution_plan
-from harness.re_publication import RePublicationError, publish_re_run
 from harness.re_profiles import migrate_legacy_re_profile, resolve_re_execution_profile
-from harness.re_lock import (
-    RePublicationActiveRun,
-    RePublishLocked,
-    RePublishRecoveryRequired,
-)
 from harness.re_registry import load_published_index
 from kernel.re_state import init_re_state
 
@@ -126,6 +121,7 @@ class ReLifecycleController:
         profile_name: str | None = None,
         hard_token_limit: int | None = None,
         hard_active_minutes: int | None = None,
+        reuse_published: bool = True,
     ) -> ReLifecycleResult:
         if re_max_inner is not None and re_max_inner < 1:
             raise ReLifecycleError("--re-max-inner requires a positive integer")
@@ -159,6 +155,21 @@ class ReLifecycleController:
             profile=profile,
             published_index=published,
         )
+        if published is not None and plan.policy not in {"none", "cached-only"}:
+            # A fresh RE run is an improvement pass over the one durable
+            # baseline.  It never inherits budgets or counters from its run.
+            plan = replace(
+                plan,
+                sources=tuple(
+                    replace(source, action="refresh", classification="refresh")
+                    if source.action == "reuse" or not reuse_published
+                    else source
+                    for source in plan.sources
+                ),
+                analysis_required=True,
+                workspace_synthesis_required=True,
+                publication_required=True,
+            )
         missing = sorted(source.id for source in plan.sources if source.action == "missing")
         if plan.policy == "cached-only" and missing:
             return ReLifecycleResult(
@@ -179,6 +190,7 @@ class ReLifecycleController:
             workspace_manifest=manifest,
             plan=plan,
             published_index=published,
+            reuse_published=reuse_published,
         )
         state: dict[str, object] = {
             "run_id": run_dir.name,
@@ -192,6 +204,10 @@ class ReLifecycleController:
             "publication_complete": False,
             "publication_pending": False,
             "re_execution_profile": execution_profile.to_json_dict(),
+            "re_baseline": {
+                "status": "attached" if published is not None and reuse_published else "not-used",
+                "generation": expected_generation if published is not None and reuse_published else 0,
+            },
         }
         if re_max_inner is not None:
             state["re_max_inner"] = re_max_inner
@@ -355,33 +371,10 @@ class ReLifecycleController:
                 blocked_reason=str(state["blocked_reason"]),
             )
 
-        try:
-            publication = publish_re_run(
-                self._project_root,
-                run_dir,
-                expected_generation=int(state.get("expected_generation") or 0),
-            )
-        except (
-            RePublicationError,
-            RePublicationActiveRun,
-            RePublishLocked,
-            RePublishRecoveryRequired,
-        ) as exc:
-            state["status"] = "blocked"
-            state["publication_pending"] = True
-            state["blocked_reason"] = f"re_publication_failed: {exc}"
-            self._save_state(run_dir, state)
-            return ReLifecycleResult(
-                status="blocked",
-                run_id=run_dir.name,
-                phase=str(state.get("phase") or ""),
-                blocked_reason=str(state["blocked_reason"]),
-            )
-
         state["status"] = "done"
-        state["publication_pending"] = False
-        state["publication_complete"] = True
-        state["generation"] = publication.generation
+        state["publication_pending"] = True
+        state["publication_complete"] = False
+        state["generation"] = int(state.get("expected_generation") or 0)
         state.pop("blocked_reason", None)
         state.pop("blocked_detail", None)
         self._save_state(run_dir, state)
@@ -389,7 +382,7 @@ class ReLifecycleController:
             status="done",
             run_id=run_dir.name,
             phase=str(state.get("phase") or ""),
-            generation=publication.generation,
+            generation=int(state["generation"]),
         )
 
     def _load_state(self, run_dir: Path) -> dict:

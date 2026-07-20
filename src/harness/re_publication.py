@@ -148,7 +148,14 @@ def validate_re_run(
     ]
     if quality_failures:
         _raise_quality_failure(quality_failures[0])
-    _validate_semantic_quality_report(run_re, partial_sources=partial_sources)
+    execution_profile = re_state.get("re_execution_profile")
+    semantic_audit_mode = (
+        execution_profile.get("semantic_audit_mode", "all")
+        if isinstance(execution_profile, dict)
+        else "all"
+    )
+    if semantic_audit_mode != "none":
+        _validate_semantic_quality_report(run_re, partial_sources=partial_sources)
     try:
         validate_re_architecture_catalog(run_re, plan)
     except ValueError as exc:
@@ -447,12 +454,32 @@ def _prepare_transaction(
     _write_json_atomic(workspace_stage / "manifest.json", workspace_manifest)
     operations.append(_operation(stage_root, "workspace", staged="new/workspace"))
 
+    controller_state = _read_json(candidate.run_dir / "re" / "state.json")
+    execution_profile = controller_state.get("re_execution_profile")
+    semantic_audits = controller_state.get("re_semantic_domain_audits")
     index_payload = {
         "schema_version": 1,
         "generation": generation,
         "publication_status": candidate.status,
         "published_at": datetime.now(timezone.utc).isoformat(),
         "published_from_run": candidate.run_id,
+        "quality": {
+            "semantic_completeness_version": 1,
+            "execution_profile": (
+                execution_profile.get("name", "legacy")
+                if isinstance(execution_profile, dict)
+                else "legacy"
+            ),
+            "semantic_audit_status": (
+                "evaluated"
+                if isinstance(semantic_audits, dict) and semantic_audits
+                else "not-evaluated"
+            ),
+            "audited_domain_count": (
+                len(semantic_audits) if isinstance(semantic_audits, dict) else 0
+            ),
+            "blocking_findings": 0,
+        },
         "sources": dict(sorted(source_records.items())),
         "workspace": {
             "manifest": "re/workspace/manifest.json",

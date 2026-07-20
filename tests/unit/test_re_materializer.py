@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from echelon.workspace_model import SourceRoot, WorkspaceInfo, WorkspaceManifest
@@ -150,6 +151,42 @@ def test_materialize_re_run_context_uses_canonical_current_source(tmp_path: Path
     assert analysis_manifest["sources"] == []
     workspace_inputs = json.loads((run_re / "re-workspace-inputs.json").read_text())
     assert workspace_inputs["sources"][0]["input_path"] == "re/sources/api/manifest.json"
+
+
+def test_improvement_run_copies_published_source_into_mutable_staging(tmp_path: Path) -> None:
+    root = tmp_path / "workspace"
+    _write_source(root, "api")
+    profile = ReFingerprintProfile()
+    _publish_sources(root, ("api",), profile)
+    index = load_published_index(root)
+    assert index is not None
+    original = build_re_execution_plan(
+        project_root=root,
+        manifest=_manifest(root, {"api": 1}),
+        target_source="",
+        requested_policy="changed",
+        profile=profile,
+        published_index=index,
+    )
+    plan = replace(
+        original,
+        sources=(replace(original.sources[0], action="refresh", classification="refresh"),),
+        analysis_required=True,
+        workspace_synthesis_required=True,
+        publication_required=True,
+    )
+    run_re = root / "runs/run-improve/re"
+
+    materialize_re_run_context(
+        project_root=root,
+        run_re_dir=run_re,
+        workspace_manifest=_manifest(root, {"api": 1}),
+        plan=plan,
+        published_index=index,
+    )
+
+    assert (run_re / "sources/api/specs/domain/spec.md").read_text() == "# Domain\n"
+    assert (root / "re/sources/api/specs/domain/spec.md").read_text() == "# Domain\n"
 
 
 def test_materialize_re_run_context_selects_only_refresh_sources_for_analysis(

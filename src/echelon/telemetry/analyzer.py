@@ -27,6 +27,13 @@ class RunAnalysis:
     repeated_findings: dict[str, int] = field(default_factory=dict)
     blocking_finding_count: int = 0
     non_blocking_finding_count: int = 0
+    audited_domain_count: int = 0
+    repaired_domain_count: int = 0
+    first_pass_repair_rate: float | None = None
+    validator_dispatches_per_domain: float | None = None
+    repeated_finding_count: int = 0
+    semantic_audit_status: str = "unknown"
+    baseline: dict[str, object] = field(default_factory=dict)
     compliance: dict[str, str] = field(default_factory=dict)
     provenance: dict[str, str] = field(default_factory=dict)
     diagnostics: tuple[str, ...] = ()

@@ -7810,10 +7810,11 @@ def _parse_re_lifecycle_options(
     *,
     allow_policy: bool,
     allow_reset: bool,
-) -> tuple[str, int | None, bool, str | None, int | None, int | None, list[str]]:
+) -> tuple[str, int | None, bool, bool, str | None, int | None, int | None, list[str]]:
     policy = "changed"
     re_max_inner: int | None = None
     reset = False
+    no_reuse = False
     profile: str | None = None
     token_limit: int | None = None
     time_limit_minutes: int | None = None
@@ -7872,6 +7873,9 @@ def _parse_re_lifecycle_options(
         elif arg == "--reset" and allow_reset:
             reset = True
             index += 1
+        elif arg == "--no-reuse" and allow_policy:
+            no_reuse = True
+            index += 1
         elif arg.startswith("-"):
             raise ValueError(f"unknown option {arg!r}")
         else:
@@ -7887,6 +7891,7 @@ def _parse_re_lifecycle_options(
         policy,
         re_max_inner,
         reset,
+        no_reuse,
         profile,
         token_limit,
         time_limit_minutes,
@@ -7917,7 +7922,10 @@ def _print_re_lifecycle_result(result: object) -> None:
         if no_work:
             print(f"RE publication is current (generation {generation}); no agent work required.")
         else:
-            print(f"RE run {run_id} complete; published generation {generation}.")
+            print(
+                f"RE run {run_id} complete; publication is pending. "
+                f"Publish explicitly with: echelon re publish {run_id}"
+            )
         return
     reason = str(getattr(result, "blocked_reason", "RE lifecycle failed"))
     print(f"RE run {run_id or '(not created)'} blocked: {reason}", file=sys.stderr)
@@ -7935,6 +7943,7 @@ def _cmd_re_run(args: list[str]) -> None:
             policy,
             re_max_inner,
             reset,
+            no_reuse,
             profile,
             token_limit,
             time_limit_minutes,
@@ -7950,6 +7959,7 @@ def _cmd_re_run(args: list[str]) -> None:
             policy=policy,
             re_max_inner=re_max_inner,
             reset=reset,
+            reuse_published=not no_reuse,
             profile_name=profile,
             hard_token_limit=token_limit,
             hard_active_minutes=time_limit_minutes,
@@ -7964,7 +7974,7 @@ def _cmd_re_continue(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError
 
     try:
-        _policy, re_max_inner, _reset, _profile, _tokens, _time, positional = _parse_re_lifecycle_options(
+        _policy, re_max_inner, _reset, _no_reuse, _profile, _tokens, _time, positional = _parse_re_lifecycle_options(
             args,
             allow_policy=False,
             allow_reset=False,
@@ -7984,7 +7994,7 @@ def _cmd_re_resume(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError
 
     try:
-        _policy, re_max_inner, _reset, _profile, _tokens, _time, positional = _parse_re_lifecycle_options(
+        _policy, re_max_inner, _reset, _no_reuse, _profile, _tokens, _time, positional = _parse_re_lifecycle_options(
             args,
             allow_policy=False,
             allow_reset=False,
@@ -8002,6 +8012,7 @@ def _cmd_re_resume(args: list[str]) -> None:
 
 def _cmd_re_publish(args: list[str]) -> None:
     """Publish one validated run into the canonical workspace RE registry."""
+    import json
     import re
 
     from echelon.git_helpers import GitHelperError, run_git
@@ -8050,10 +8061,12 @@ def _cmd_re_publish(args: list[str]) -> None:
 
     try:
         imported = import_legacy_re_cache(project_root)
+        lifecycle_state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
         result = publish_re_run(
             project_root,
             run_dir,
             allow_partial=allow_partial,
+            expected_generation=int(lifecycle_state.get("expected_generation") or 0),
         )
         if commit:
             _commit_re_publication(project_root, result.generation, run_git)

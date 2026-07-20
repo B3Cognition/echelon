@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ def materialize_re_run_context(
     workspace_manifest: WorkspaceManifest,
     plan: ReExecutionPlan,
     published_index: PublishedReIndex | None,
+    reuse_published: bool = True,
 ) -> dict[str, Any]:
     """Write run provenance while referencing published RE documents directly."""
     root = project_root.resolve()
@@ -33,6 +35,9 @@ def materialize_re_run_context(
         raise ValueError(f"run RE directory must be inside workspace: {run_re}")
     run_relative = run_re.relative_to(root).as_posix()
     run_re.mkdir(parents=True, exist_ok=True)
+
+    if published_index is not None and reuse_published:
+        _copy_published_sources(root, run_re, plan, published_index)
 
     workspace_manifest_path = run_re / "workspace-manifest.json"
     plan_path = run_re / "re-execution-plan.json"
@@ -120,6 +125,25 @@ def materialize_re_run_view(
         plan=plan,
         published_index=load_published_index(project_root),
     )
+
+
+def _copy_published_sources(
+    root: Path,
+    run_re: Path,
+    plan: ReExecutionPlan,
+    published_index: PublishedReIndex,
+) -> None:
+    """Seed mutable staging from the registered immutable publication."""
+    for source in plan.sources:
+        if source.action != "refresh" or not published_source_is_usable(
+            root, published_index, source.id
+        ):
+            continue
+        source_root = root / "re" / "sources" / source.id
+        destination = run_re / "sources" / source.id
+        if destination.exists():
+            shutil.rmtree(destination)
+        shutil.copytree(source_root, destination)
 
 
 def _source_index(plan: ReExecutionPlan, sources: list[dict[str, Any]]) -> dict[str, Any]:

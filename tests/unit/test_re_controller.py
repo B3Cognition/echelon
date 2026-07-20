@@ -321,6 +321,21 @@ def test_controller_does_not_start_dispatch_at_token_ceiling(tmp_path: Path) -> 
 
 
 @pytest.mark.unit
+def test_fast_profile_disables_semantic_dispatch_and_repairs() -> None:
+    state = {
+        "re_execution_profile": {
+            "name": "fast",
+            "semantic_audit_mode": "none",
+            "max_semantic_repair_rounds": 0,
+        }
+    }
+    controller = object.__new__(ReExtractionController)
+
+    assert controller._semantic_audit_enabled(state) is False
+    assert controller._semantic_repair_limit(state) == 0
+
+
+@pytest.mark.unit
 def test_controller_records_dispatch_tokens_and_content_free_spans(tmp_path: Path) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",))
     _initialize_re_state(run_dir, max_repairs=3)
