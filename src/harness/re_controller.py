@@ -9,7 +9,10 @@ import shutil
 import tempfile
 import hashlib
 import subprocess
+import time
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 
@@ -42,6 +45,9 @@ from harness.re_quality_gate import (
     measure_source_quality,
 )
 from kernel.re_state import complete_dispatch, init_re_state, write_last_dispatch
+from echelon.telemetry.model import ExecutionSpan, TokenUsage
+from echelon.telemetry.store import TelemetryStore
+from harness.re_budget import evaluate_re_budget
 
 
 class ReAgentProvider(Protocol):
@@ -108,15 +114,20 @@ class ReExtractionController:
         self._run_re_dir = self._run_dir / "re"
         self._extension_root = extension_root.resolve()
         self._reported_source_id: str | None = None
+        self._invocation_started_monotonic = 0.0
 
     def run(self) -> ReControllerResult:
+        self._invocation_started_monotonic = time.monotonic()
         try:
             with ReExtractionLock.acquire(
                 self._project_root,
                 self._run_dir.name,
                 self._run_dir,
             ):
-                return self._run_locked()
+                try:
+                    return self._run_locked()
+                finally:
+                    self._finish_active_interval()
         except ReExtractLocked:
             return ReControllerResult(
                 completed=False,
@@ -240,6 +251,18 @@ class ReExtractionController:
                     self._save_state(state)
                     continue
 
+            budget = evaluate_re_budget(
+                state,
+                current_invocation_ms=self._current_invocation_ms(),
+            )
+            if not budget.allowed:
+                state["re_budget_limit"] = {
+                    "reason": budget.reason,
+                    "limit": budget.limit,
+                    "consumed": budget.consumed,
+                }
+                return self._block(state, budget.reason)
+
             state = write_last_dispatch(state, phase, _PHASES[phase])
             self._save_state(state)
             if phase == "re-extract-1-analyze":
@@ -249,6 +272,7 @@ class ReExtractionController:
                     return self._block(state, "re_analysis_script_failed")
                 payload = self._analysis_result()
             else:
+                dispatch_started = datetime.now(timezone.utc)
                 result = self._provider.exec_agent(
                     str(self._project_root),
                     self._prompt_for(
@@ -259,6 +283,22 @@ class ReExtractionController:
                         semantic_target=semantic_target,
                     ),
                 )
+                dispatch_ended = datetime.now(timezone.utc)
+                self._account_provider_usage(state, result)
+                try:
+                    self._record_dispatch_span(
+                        state,
+                        phase=phase,
+                        target=target,
+                        semantic_target=semantic_target,
+                        result=result,
+                        started=dispatch_started,
+                        ended=dispatch_ended,
+                    )
+                except (OSError, ValueError, json.JSONDecodeError) as exc:
+                    state["re_agent_result_detail"] = f"telemetry write failed: {exc}"
+                    return self._block(state, "re_telemetry_write_failed")
+                self._save_state(state)
                 if phase == "re-extract-2-specify" and target is not None:
                     cleanup_error = self._clean_noncanonical_target_artifacts(
                         state, target, stage="post-dispatch"
@@ -2331,6 +2371,136 @@ class ReExtractionController:
             except OSError:
                 pass
             raise
+
+    def _current_invocation_ms(self) -> int:
+        if self._invocation_started_monotonic <= 0:
+            return 0
+        return max(
+            0,
+            int((time.monotonic() - self._invocation_started_monotonic) * 1000),
+        )
+
+    def _finish_active_interval(self) -> None:
+        elapsed = self._current_invocation_ms()
+        if elapsed <= 0 or not (self._run_re_dir / "state.json").is_file():
+            return
+        state = self._load_state()
+        state["re_active_duration_ms"] = self._metric(
+            state, "re_active_duration_ms"
+        ) + elapsed
+        intervals = state.get("re_execution_intervals")
+        if not isinstance(intervals, list):
+            intervals = []
+            state["re_execution_intervals"] = intervals
+        ended = datetime.now(timezone.utc)
+        started = ended.timestamp() - (elapsed / 1000)
+        intervals.append(
+            {
+                "started_at": datetime.fromtimestamp(
+                    started, timezone.utc
+                ).isoformat().replace("+00:00", "Z"),
+                "ended_at": ended.isoformat().replace("+00:00", "Z"),
+                "duration_ms": elapsed,
+            }
+        )
+        self._save_state(state)
+
+    def _account_provider_usage(self, state: dict, result: object) -> None:
+        raw_total = getattr(result, "token_usage", 0)
+        total = (
+            int(raw_total)
+            if isinstance(raw_total, (int, float)) and not isinstance(raw_total, bool)
+            else 0
+        )
+        details = getattr(result, "token_usage_details", None)
+        known = total > 0 or (isinstance(details, dict) and bool(details))
+        if known:
+            state["re_token_usage"] = self._metric(state, "re_token_usage") + max(
+                0, total
+            )
+        else:
+            state["re_unknown_token_dispatches"] = self._metric(
+                state, "re_unknown_token_dispatches"
+            ) + 1
+
+    def _record_dispatch_span(
+        self,
+        state: dict,
+        *,
+        phase: str,
+        target: dict[str, object] | None,
+        semantic_target: dict[str, str] | None,
+        result: object,
+        started: datetime,
+        ended: datetime,
+    ) -> None:
+        profile = state.get("re_execution_profile")
+        profile_dict = profile if isinstance(profile, dict) else {"name": "legacy"}
+        trace_id = state.get("re_trace_id")
+        if not isinstance(trace_id, str) or len(trace_id) != 32:
+            trace_id = uuid.uuid4().hex
+            state["re_trace_id"] = trace_id
+        details = getattr(result, "token_usage_details", None)
+        usage_mapping = dict(details) if isinstance(details, dict) else {}
+        raw_total = getattr(result, "token_usage", 0)
+        if (
+            "total_tokens" not in usage_mapping
+            and isinstance(raw_total, (int, float))
+            and not isinstance(raw_total, bool)
+            and int(raw_total) > 0
+        ):
+            usage_mapping["total_tokens"] = int(raw_total)
+        usage = TokenUsage.from_mapping(usage_mapping)
+        attributes: dict[str, object] = {
+            "echelon.run.id": self._run_dir.name,
+            "echelon.workflow.name": "re",
+            "echelon.workflow.phase": phase,
+            "echelon.agent.name": _PHASES[phase],
+            "echelon.execution.profile": str(profile_dict.get("name") or "legacy"),
+            "echelon.result.verdict": str(getattr(result, "verdict", None) or "UNKNOWN"),
+            "gen_ai.operation.name": "agent",
+        }
+        provider = getattr(result, "provider_name", "")
+        model = getattr(result, "model_name", "")
+        if provider:
+            attributes["gen_ai.provider.name"] = str(provider)
+        if model:
+            attributes["gen_ai.response.model"] = str(model)
+        selected = semantic_target or target or {}
+        for source_key, attribute in (
+            ("source_id", "echelon.source.id"),
+            ("domain_id", "echelon.domain.id"),
+        ):
+            value = selected.get(source_key)
+            if isinstance(value, str) and value:
+                attributes[attribute] = value
+        store = TelemetryStore(
+            self._run_dir,
+            workflow="re",
+            run_id=self._run_dir.name,
+            profile=profile_dict,
+            trace_id=trace_id,
+        )
+        duration_ms = max(0, int((ended - started).total_seconds() * 1000))
+        store.append_span(
+            ExecutionSpan(
+                trace_id=trace_id,
+                span_id=uuid.uuid4().hex[:16],
+                parent_span_id=None,
+                name=phase,
+                start_time=started.isoformat().replace("+00:00", "Z"),
+                end_time=ended.isoformat().replace("+00:00", "Z"),
+                duration_ms=duration_ms,
+                status=(
+                    "ERROR"
+                    if getattr(result, "timed_out", False)
+                    or int(getattr(result, "exit_code", 0) or 0) != 0
+                    else "OK"
+                ),
+                attributes=attributes,
+                token_usage=usage,
+            )
+        )
 
     def _block(self, state: dict, reason: str) -> ReControllerResult:
         state["status"] = "blocked"

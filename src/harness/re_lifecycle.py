@@ -321,6 +321,7 @@ class ReLifecycleController:
                 run_dir=run_dir,
                 extension_root=self._extension_root,
             ).run()
+            self._sync_controller_usage(run_dir, state)
             if not outcome.completed:
                 state["status"] = "blocked"
                 state["blocked_reason"] = outcome.blocked_reason or "re_controller_failed"
@@ -399,6 +400,19 @@ class ReLifecycleController:
 
     def _save_state(self, run_dir: Path, state: dict) -> None:
         self._save_json(run_dir / "state.json", state)
+
+    def _sync_controller_usage(self, run_dir: Path, state: dict) -> None:
+        inner = self._load_json(run_dir / "re" / "state.json")
+        for source_key, target_key in (
+            ("re_token_usage", "token_usage"),
+            ("re_unknown_token_dispatches", "unknown_token_dispatches"),
+            ("re_active_duration_ms", "active_duration_ms"),
+            ("re_execution_intervals", "execution_intervals"),
+            ("re_trace_id", "trace_id"),
+        ):
+            if source_key in inner:
+                state[target_key] = inner[source_key]
+        self._save_state(run_dir, state)
 
     @staticmethod
     def _load_json(path: Path) -> dict:

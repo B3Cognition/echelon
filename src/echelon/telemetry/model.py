@@ -22,6 +22,7 @@ class TokenUsage:
     reasoning_output_tokens: int | None = None
     cache_read_input_tokens: int | None = None
     cache_creation_input_tokens: int | None = None
+    reported_total_tokens: int | None = None
 
     @classmethod
     def unknown(cls) -> "TokenUsage":
@@ -39,16 +40,30 @@ class TokenUsage:
             parsed = int(raw)
             return parsed if parsed >= 0 else None
 
-        return cls(**{name: component(name) for name in _TOKEN_KEYS})
+        components = {name: component(name) for name in _TOKEN_KEYS}
+        components["input_tokens"] = components["input_tokens"] or component(
+            "prompt_tokens"
+        )
+        components["output_tokens"] = components["output_tokens"] or component(
+            "completion_tokens"
+        )
+        return cls(
+            **components,
+            reported_total_tokens=component("total_tokens"),
+        )
 
     @property
     def known(self) -> bool:
-        return any(getattr(self, name) is not None for name in _TOKEN_KEYS)
+        return self.reported_total_tokens is not None or any(
+            getattr(self, name) is not None for name in _TOKEN_KEYS
+        )
 
     @property
     def total(self) -> int | None:
         if not self.known:
             return None
+        if self.reported_total_tokens is not None:
+            return self.reported_total_tokens
         return sum(int(getattr(self, name) or 0) for name in _TOKEN_KEYS)
 
     def to_json_dict(self) -> dict[str, int | None]:

@@ -294,6 +294,69 @@ def _extension_root(root: Path) -> Path:
     return extension_root
 
 
+@pytest.mark.unit
+def test_controller_does_not_start_dispatch_at_token_ceiling(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=3)
+    state_path = run_dir / "re/state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["re_execution_profile"] = {
+        "name": "balanced",
+        "hard_token_limit": 5_000_000,
+        "hard_active_minutes": 180,
+    }
+    state["re_token_usage"] = 5_000_000
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    provider = _ShallowSpecifierProvider()
+
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.blocked_reason == "re_token_budget_exhausted"
+    assert provider.phases == []
+
+
+@pytest.mark.unit
+def test_controller_records_dispatch_tokens_and_content_free_spans(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=3)
+    state_path = run_dir / "re/state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["re_execution_profile"] = {
+        "name": "balanced",
+        "hard_token_limit": 5_000_000,
+        "hard_active_minutes": 180,
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    class MeteredProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            result.token_usage = 12
+            result.token_usage_details = {"input_tokens": 10, "output_tokens": 2}
+            result.provider_name = "codex"
+            result.model_name = "gpt-test"
+            return result
+
+    result = ReExtractionController(
+        provider=MeteredProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.blocked_reason == "re_coverage_threshold_not_met"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["re_token_usage"] > 0
+    ledger = (run_dir / "telemetry/spans.jsonl").read_text(encoding="utf-8")
+    assert '"gen_ai.provider.name":"codex"' in ledger
+    assert "RE phase:" not in ledger
+
+
 def _strand_completed_workspace_synthesis(run_dir: Path) -> None:
     state_path = run_dir / "re" / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
