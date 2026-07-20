@@ -97,6 +97,13 @@ def _mark_constitution_complete(tmp_path: Path, store: SquadStateStore) -> None:
     store.save(state)
 
 
+def _disable_lexicon_gate(tmp_path: Path) -> None:
+    """Keep non-Lexicon controller tests focused on their declared behavior."""
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("lexicon_gate:\n  enabled: false\n", encoding="utf-8")
+
+
 def _write_re_index_generation(
     root: Path,
     generation: int,
@@ -574,6 +581,7 @@ class TestCartographerResumeGuard:
 
 class TestSquadControllerBasics:
     def test_generation_change_does_not_mutate_attached_spec_context(self, tmp_path):
+        _disable_lexicon_gate(tmp_path)
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
@@ -610,6 +618,7 @@ class TestSquadControllerBasics:
         assert provider.exec_agent.called
 
     def test_legacy_generation_state_is_not_synchronized_during_spec_run(self, tmp_path):
+        _disable_lexicon_gate(tmp_path)
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
@@ -999,17 +1008,11 @@ class TestSquadControllerBasics:
         assert next_phase == "phase1-what"
         assert store.load().get("escalation_question") is None
 
-    def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path, monkeypatch):
+    def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path):
         """Banzai: WHY1 returns escalation_question in state_updates → inline COMMANDER, not routing judge."""
         from harness.squad_provider import SquadAgentResult
+        _disable_lexicon_gate(tmp_path)
         call_count = {"n": 0}
-        checkpoint_calls = []
-
-        def fake_checkpoint(**kwargs):
-            checkpoint_calls.append(kwargs)
-            return None
-
-        monkeypatch.setattr("harness.squad.create_phase_checkpoint", fake_checkpoint)
 
         def side_effect(*args, **kwargs):
             call_count["n"] += 1
@@ -1103,22 +1106,21 @@ class TestSquadControllerBasics:
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-why1", max_iterations=5)
         _mark_constitution_complete(tmp_path, store)
-        staging = tmp_path / "squad" / "run-test" / "staging"
         state = store.load()
         state["spec_id"] = "001-test"
-        state["spec_dir"] = str(staging.relative_to(tmp_path))
+        # This routing-focused test intentionally produces no Phase A artifact
+        # tree; use the declared future location instead of the existing
+        # staging directory so terminal publication is not falsely activated.
+        state["spec_dir"] = "specs/001-test"
         store.save(state)
         result = ctrl.run("msg", "banzai")
         # Provider called at least twice: once for WHY1, once for COMMANDER escalation
         assert provider.exec_agent.call_count >= 2
         # Run did not end blocked
         assert result.status != "blocked"
-        assert any(
-            call["phase"] == "phase1-why1"
-            and call["next_phase"] == "phase1-why1"
-            and call["spec_id"] == "001-test"
-            for call in checkpoint_calls
-        )
+        final_state = store.load()
+        assert final_state["escalation_resolved"] is True
+        assert final_state["escalation_resolver"] == "COMMANDER-banzai"
 
     def test_semi_escalation_inline_when_agent_sets_escalation_question(self, tmp_path):
         """Semi: WHY1 returns escalation_question in state_updates → run stops blocked."""

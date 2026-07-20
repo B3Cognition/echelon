@@ -1490,6 +1490,36 @@ def test_controller_keeps_transport_failure_separate_from_agent_block(
 
 
 @pytest.mark.unit
+def test_agent_dispatch_failure_records_provider_error_detail(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+
+    class BlockingProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            return SquadAgentResult(
+                exit_code=1,
+                echelon_result=None,
+                raw_output="",
+                stderr="OpenAI-compatible API key file is not readable: ~/.omlx_token",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    result = ReExtractionController(
+        provider=BlockingProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.blocked_reason == "re_agent_dispatch_failed"
+    state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
+    assert state["re_agent_result_detail"] == (
+        "agent exited with code 1; OpenAI-compatible API key file is not "
+        "readable: ~/.omlx_token"
+    )
+
+
+@pytest.mark.unit
 def test_agent_blocked_deep_spec_gate_failure_enters_bounded_repair_loop(
     tmp_path: Path,
 ) -> None:

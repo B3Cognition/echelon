@@ -80,6 +80,7 @@ class SquadAgentResult:
     echelon_result_repair_succeeded: bool = False
     provider_limit_message: str = ""
     quarantined_state_updates: dict = field(default_factory=dict)
+    stderr: str = ""
 
     @property
     def verdict(self) -> Optional[str]:
@@ -438,6 +439,7 @@ class SquadCliProvider(AICodingCliProvider):
             echelon_result_repair_succeeded=repair_succeeded,
             provider_limit_message=provider_limit_message,
             quarantined_state_updates=quarantined_state_updates,
+            stderr=backend_result.stderr,
         )
 
 

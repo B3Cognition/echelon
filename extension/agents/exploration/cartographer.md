@@ -40,6 +40,14 @@ NEVER create, switch, rename, or discover a branch or spec directory, and NEVER 
 ALWAYS use `json.dumps()` or `sys.stdout.write()` for machine-readable Python output.
 NEVER use `print()` in python3 scripts that read or write JSON files, because stray stdout corrupts captured `state.json` data.
 
+### Rule 8 - Requirement Dependency Shape
+ALWAYS express a genuine inter-requirement dependency inside the canonical top-level requirement sentence as a short behavioral clause.
+NEVER add subordinate metadata bullets containing FR/NFR IDs, including `Related FRs`, `Depends on`, or `See also` bullets.
+
+### Rule 9 - Evidence-Based Cross-References
+ALWAYS add a requirement cross-reference only when the referenced requirement materially constrains the owning requirement's behavior.
+NEVER add a cross-reference solely to raise the depth score.
+
 ## Spec Format Invariants
 
 These formatting rules are **inviolable**. `understanding --per-req` parses requirements using a regex that requires exact bullet form. Violating these rules silently drops requirements from per-requirement analysis and zeroes out quality scores.
@@ -76,8 +84,9 @@ own draft before returning. These tool runs are **diagnostic calibration only**.
 
 ### Understanding diagnostic scan
 
-Use the hidden `scan` subcommand. The Typer help only lists public commands, so do not infer command
-shape from `understanding --help`.
+Use the hidden `scan` subcommand. `understanding` is a runtime prerequisite and is already on
+`PATH`; invoke the canonical command directly without locating the executable or inspecting CLI
+help.
 
 Canonical command shape:
 
@@ -109,7 +118,8 @@ NEVER read `src/understanding/*.py` to discover CLI command names during a live 
 
 ### Lexicon validation
 
-Use the installed CLI when present and fall back to the module only if the binary is absent.
+`lexicon` is a runtime prerequisite and is already on `PATH`; invoke the canonical command
+directly without locating the executable or inspecting CLI help.
 
 Canonical command shape:
 
@@ -214,9 +224,7 @@ NEVER leave a requirement's relationships implicit by omitting `DEPENDS:` when i
 After writing `requirements.lexicon.md`, run the validator and repair until clean or capped:
 
 ```bash
-# Prefer the installed CLI; fall back to the module if not on PATH.
-LEXICON="lexicon"; command -v lexicon >/dev/null 2>&1 || LEXICON="python3 -m lexicon.cli"
-$LEXICON validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
+lexicon validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
   --source-ref "{spec_dir}/{source_ref}" \
   --glossary "{spec_dir}/{glossary_file}" --json
 ```
@@ -408,7 +416,18 @@ For each failing requirement, apply the category-specific fix:
 | cognitive | Simplify sentence structure, reduce nesting depth, shorten sentences |
 | readability | Use shorter sentences, simpler vocabulary, active voice |
 | behavioral | Add guard-action-outcome transitions, state change descriptions, error branches |
-| depth | Add cross-references to related requirements, dependency chains |
+| depth | Add genuine dependency references inside canonical top-level requirement sentences |
+
+### Requirement Cross-Reference Shape
+
+The Understanding enhanced parser treats every Markdown line containing an `FR-NNN` or `NFR-NNN`
+token as a requirement candidate. A subordinate metadata line such as
+`- **Related FRs:** FR-002, FR-003` therefore creates a fake low-quality requirement and can lower
+semantic and behavioral scores.
+
+Apply Rules 8 and 9: put a material dependency in the canonical requirement sentence as a short
+behavioral clause, for example `using the translation behavior required by FR-003`, and keep the
+requirement atomic.
 
 ### Preservation Rule
 

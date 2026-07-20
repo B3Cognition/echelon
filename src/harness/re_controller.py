@@ -308,7 +308,9 @@ class ReExtractionController:
                         return self._block(state, cleanup_error)
                 if result.timed_out or result.exit_code != 0:
                     state["re_agent_result_detail"] = self._dispatch_failure_detail(
-                        result.timed_out, result.exit_code
+                        result.timed_out,
+                        result.exit_code,
+                        getattr(result, "stderr", ""),
                     )
                     return self._block(state, "re_agent_dispatch_failed")
                 payload = result.echelon_result
@@ -1834,12 +1836,17 @@ class ReExtractionController:
         return None
 
     @staticmethod
-    def _dispatch_failure_detail(timed_out: bool, exit_code: int) -> str:
+    def _dispatch_failure_detail(
+        timed_out: bool, exit_code: int, provider_detail: str = ""
+    ) -> str:
         details: list[str] = []
         if timed_out:
             details.append("agent timed out")
         if exit_code != 0:
             details.append(f"agent exited with code {exit_code}")
+        detail = " ".join(provider_detail.split())
+        if detail:
+            details.append(detail[:500])
         return "; ".join(details) or "agent dispatch failed"
 
     @staticmethod

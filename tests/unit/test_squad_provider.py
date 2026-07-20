@@ -49,6 +49,30 @@ def test_squad_provider_preserves_normalized_token_usage(monkeypatch, tmp_path) 
     assert result.model_name == "gpt-test"
 
 
+def test_squad_provider_preserves_backend_stderr(monkeypatch, tmp_path) -> None:
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="openai-compatible"),
+    )
+    provider = SquadCliProvider(config)
+
+    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+        return CliRunResult(
+            exit_code=1,
+            stdout="",
+            stderr="OpenAI-compatible API key file is not readable",
+        )
+
+    monkeypatch.setattr(provider, "run_agent_result", fake_run_agent_result)
+
+    result = provider.exec_agent(str(tmp_path), "prompt")
+
+    assert result.exit_code == 1
+    assert result.stderr == "OpenAI-compatible API key file is not readable"
+
+
 def test_squad_provider_parses_codex_backend_echelon_result(monkeypatch, tmp_path) -> None:
     config = HarnessConfig(
         target_repo=".",
