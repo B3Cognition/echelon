@@ -1918,6 +1918,10 @@ def test_semantic_quality_repair_returns_only_the_failed_domain_to_specifier(
     spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
 
     class SemanticRepairProvider(_ShallowSpecifierProvider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.repair_prompt = ""
+
         def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
             result = super().exec_agent(project_root, prompt)
             phase = self.phases[-1]
@@ -1942,8 +1946,9 @@ def test_semantic_quality_repair_returns_only_the_failed_domain_to_specifier(
                 payload["semantic_quality_review"] = review
             if (
                 phase == "re-extract-2-specify"
-                and self.phases.count(phase) == 3
+                and "Controller-Owned Semantic Repair Packet" in prompt
             ):
+                self.repair_prompt = prompt
                 spec.write_text(
                     spec.read_text(encoding="utf-8")
                     + "\nRetry exhaustion is documented from `src/file-1.ts:1`.\n",
@@ -1970,6 +1975,9 @@ def test_semantic_quality_repair_returns_only_the_failed_domain_to_specifier(
     assert provider.phases.count("re-extract-2-specify") == 3
     assert provider.phases.count("re-extract-5-validate") == 2
     assert "Retry exhaustion is documented" in spec.read_text(encoding="utf-8")
+    assert "Controller-Owned Semantic Repair Packet" in provider.repair_prompt
+    assert "FR-001 omits the observed retry exhaustion behavior." in provider.repair_prompt
+    assert "`src/file-1.ts:1`" in provider.repair_prompt
     state = json.loads((run_dir / "re" / "state.json").read_text(encoding="utf-8"))
     assert state["re_quality_repair_attempts"] == 1
     assert state["re_semantic_quality_report"].endswith("quality/semantic-quality-review.json")

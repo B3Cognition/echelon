@@ -48,6 +48,7 @@ from kernel.re_state import complete_dispatch, init_re_state, write_last_dispatc
 from echelon.telemetry.model import ExecutionSpan, TokenUsage
 from echelon.telemetry.store import TelemetryStore
 from harness.re_budget import evaluate_re_budget
+from harness.re_repair_packet import ReRepairFinding, ReRepairPacket
 
 
 class ReAgentProvider(Protocol):
@@ -1189,6 +1190,27 @@ class ReExtractionController:
                 domain_id = str(target["domain_id"])
                 repair_count = self._metric(repairs, domain_id) + 1
                 repairs[domain_id] = repair_count
+                failure = next(
+                    item for item in failures if item.domain_id == domain_id
+                )
+                spec_path = Path(failure.spec_path)
+                packet = ReRepairPacket(
+                    source_id=source_id,
+                    domain_id=domain_id,
+                    spec_fingerprint=hashlib.sha256(spec_path.read_bytes()).hexdigest(),
+                    attempt=repair_count,
+                    findings=tuple(
+                        ReRepairFinding(
+                            finding_id=item.finding_id,
+                            category=item.category,
+                            text=item.text,
+                            source_evidence=item.source_evidence,
+                        )
+                        for item in failure.semantic_finding_records
+                    ),
+                )
+                target["repair_packet"] = packet.to_json_dict()
+                self._record_repeated_findings(state, packet)
                 exhausted = exhausted or repair_count > self._source_budget(
                     state, "max_domain_repairs"
                 )
@@ -1225,6 +1247,35 @@ class ReExtractionController:
         state["phase"] = "re-extract-6-checklist"
         self._save_state(state)
         return None
+
+    @staticmethod
+    def _record_repeated_findings(state: dict, packet: ReRepairPacket) -> None:
+        key = f"{packet.source_id}/{packet.domain_id}"
+        history = state.setdefault("re_repair_finding_history", {})
+        if not isinstance(history, dict):
+            history = {}
+            state["re_repair_finding_history"] = history
+        raw_previous = history.get(key)
+        previous = (
+            {item for item in raw_previous if isinstance(item, str)}
+            if isinstance(raw_previous, list)
+            else set()
+        )
+        current = {item.finding_id for item in packet.findings}
+        repeated = previous & current
+        if repeated:
+            repeated_by_domain = state.setdefault("re_repeated_finding_ids", {})
+            if not isinstance(repeated_by_domain, dict):
+                repeated_by_domain = {}
+                state["re_repeated_finding_ids"] = repeated_by_domain
+            raw_existing = repeated_by_domain.get(key)
+            existing = (
+                {item for item in raw_existing if isinstance(item, str)}
+                if isinstance(raw_existing, list)
+                else set()
+            )
+            repeated_by_domain[key] = sorted(existing | repeated)
+        history[key] = sorted(previous | current)
 
     def _ensure_target_quality_protocol(
         self,
@@ -1281,6 +1332,35 @@ class ReExtractionController:
             if repair_targets is None:
                 return self._block(state, "re_domain_manifest_invalid")
             attempts += 1
+            for target in repair_targets:
+                domain_id = str(target["domain_id"])
+                source_id = str(target["source_id"])
+                failure = next(
+                    item
+                    for item in report.failures
+                    if item.source_id == source_id and item.domain_id == domain_id
+                )
+                if failure.semantic_finding_records:
+                    spec_path = Path(failure.spec_path)
+                    packet = ReRepairPacket(
+                        source_id=source_id,
+                        domain_id=domain_id,
+                        spec_fingerprint=hashlib.sha256(
+                            spec_path.read_bytes()
+                        ).hexdigest(),
+                        attempt=attempts,
+                        findings=tuple(
+                            ReRepairFinding(
+                                finding_id=item.finding_id,
+                                category=item.category,
+                                text=item.text,
+                                source_evidence=item.source_evidence,
+                            )
+                            for item in failure.semantic_finding_records
+                        ),
+                    )
+                    target["repair_packet"] = packet.to_json_dict()
+                    self._record_repeated_findings(state, packet)
             state["re_quality_repair_attempts"] = attempts
             state["re_quality_repair_pending"] = True
             state["re_quality_repair_snapshot"] = self._repair_snapshot(report)
@@ -1882,6 +1962,25 @@ class ReExtractionController:
                 "file and integrate the observed behavior into its scenarios, requirements, "
                 "edge cases, or source-evidence explanation. Do not merely append a path list.\n"
             )
+        semantic_repair = ""
+        packet_raw = target.get("repair_packet")
+        if isinstance(packet_raw, dict):
+            packet = ReRepairPacket.from_json_dict(packet_raw)
+            lines = []
+            for finding in packet.findings:
+                lines.append(
+                    f"- `{finding.finding_id}` [{finding.category}]: {finding.text}\n"
+                    f"  Evidence: {', '.join(finding.source_evidence)}"
+                )
+            semantic_repair = (
+                "\n## Controller-Owned Semantic Repair Packet\n"
+                f"Attempt: {packet.attempt}\n"
+                f"Spec fingerprint: `{packet.spec_fingerprint}`\n"
+                + "\n".join(lines)
+                + "\nModify only the scenarios, requirements, entities, edge cases, or "
+                "coverage rows needed by these findings. Preserve unrelated content "
+                "and every still-valid citation.\n"
+            )
         quality_contract = ""
         architecture_contract = self._architecture_target_context(source_id, domain_id)
         try:
@@ -1920,6 +2019,7 @@ class ReExtractionController:
             "source overview, or workspace synthesis. Write only this target's `spec.md`; "
             "never create backup, temporary, alternate, or scratch files beside it.\n"
             + coverage_repair
+            + semantic_repair
             + "Before returning DONE, run this exact deterministic check from the "
             "workspace root; it exits non-zero and prints the authoritative failures "
             "when the spec is not acceptable:\n"
