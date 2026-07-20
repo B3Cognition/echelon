@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Phase A full spec identity** — CARTOGRAPHER can no longer replace the
+  controller-bootstrapped full `NNN-slug` identity with a short number. Echelon
+  now owns all Phase A branch and directory lifecycle instructions, preserves
+  the full run-local and published paths at the state boundary, and ignores
+  Claude runtime work directories during workspace Git migration.
+
 - **EGR-153 Lexicon gate lifecycle** — an absent or unevaluated derived
   Lexicon artifact is now recorded as `pending`, rather than as a failed
   validation result. Only controller-run deterministic validation can write

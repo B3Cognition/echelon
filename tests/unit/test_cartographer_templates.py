@@ -53,21 +53,22 @@ class TestCartographerTemplates:
         assert "agent: speckit-echelon-cartographer (CARTOGRAPHER)" in text
         assert "agent: WHAT" not in text
 
-    def test_cartographer_specify_skill_contract_requires_instruction_execution(self) -> None:
-        text = AGENT.read_text(encoding="utf-8")
+    def test_cartographer_uses_only_the_controller_owned_spec_directory(self) -> None:
+        agent_text = AGENT.read_text(encoding="utf-8")
+        phase_text = PHASE.read_text(encoding="utf-8")
 
-        assert "Skill invocation loads the `speckit.specify` instructions" in text
-        assert "does not prove that branch/spec creation has completed" in text
-        assert "execute the loaded skill instructions until `spec.md` exists" in text
-        assert "NEVER treat `Launching skill: speckit-specify`" in text
+        for text in (agent_text, phase_text):
+            assert "speckit.specify" not in text
+            assert "controller-owned Phase A identity" in text
+        assert "{spec_dir}/spec.md" in agent_text
+        assert "{spec_dir}/00-overview.md" in agent_text
 
     def test_cartographer_blocked_outputs_include_echelon_result(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
 
         assert "echelon_result:" in text
         assert "verdict: BLOCKED" in text
-        assert "blocked_reason: \"speckit.specify unavailable\"" in text
-        assert "blocked_reason: \"spec_dir missing after speckit.specify succeeded\"" in text
+        assert "blocked_reason: \"spec_dir missing after Phase A bootstrap\"" in text
 
     def test_phase1_what_dispatch_includes_cartographer_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")

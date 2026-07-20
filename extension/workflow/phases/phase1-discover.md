@@ -5,7 +5,10 @@
 
 ## 2. DISCOVER Phase (UNDERSTAND)
 
-> **Note:** This is the UNDERSTAND phase. We don't yet know WHAT to build, so outputs go to the staging area. The spec directory is created later when `speckit.specify` runs.
+> **Note:** This is the UNDERSTAND phase. We don't yet know WHAT to build, so
+> outputs go to the staging area. Echelon's Phase A bootstrap has already
+> reserved the full run-local spec directory; CARTOGRAPHER moves product
+> artifacts there during WHAT.
 
 ### Context Pack Assembly
 

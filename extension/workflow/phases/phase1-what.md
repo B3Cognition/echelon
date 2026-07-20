@@ -5,7 +5,7 @@
 
 ## 4. WHAT Phase (Requirements Definition)
 
-> **Transition from UNDERSTAND to DECIDE:** This phase bridges understanding to decision-making. Constitution is now established. speckit-echelon-cartographer (CARTOGRAPHER) owns spec creation — it calls `speckit.specify` itself.
+> **Transition from UNDERSTAND to DECIDE:** This phase bridges understanding to decision-making. Constitution is now established. Echelon owns the Phase A branch and full spec identity; speckit-echelon-cartographer (CARTOGRAPHER) authors the specification only in the controller-provided run-local directory.
 
 ### 4.1 Context Pack Assembly
 
@@ -23,14 +23,14 @@ Read and include in the subagent prompt:
 
 ### 4.2 Dispatch speckit-echelon-cartographer (CARTOGRAPHER)
 
-speckit-echelon-cartographer (CARTOGRAPHER) calls `speckit.specify` itself (via Skill tool) on the first WHAT pass, just as speckit-echelon-sage (SAGE) calls Understanding via Skill tool. speckit-echelon-commander (COMMANDER) does NOT call `speckit.specify`.
+Echelon has already created and selected the feature branch and reserved the
+full run-local `{spec_dir}`. CARTOGRAPHER MUST author a first-pass `spec.md`
+there from the supplied templates. It must never create, switch, rename, or
+discover a branch or another spec directory.
 
-On resumed/amendment passes, reuse the existing spec directory only when
-`{spec_dir}/spec.md` exists. `cartographer_resume_existing_spec: true` is
-advisory and never overrides this file check. A Phase A bootstrap may reserve a
-run-local `spec_dir` before WHAT, so a directory without `spec.md` is a **first
-WHAT pass**: CARTOGRAPHER MUST invoke `speckit.specify` rather than treating it
-as an amendment.
+On resumed/amendment passes, reuse `{spec_dir}` when `{spec_dir}/spec.md`
+exists. A reserved run-local directory without `spec.md` is a first WHAT pass:
+write the specification in that exact directory.
 
 Use the Agent tool to dispatch a subagent with:
 
@@ -43,8 +43,7 @@ Use the Agent tool to dispatch a subagent with:
 
   <instructions>
   You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
-  If this is a first WHAT pass with no existing `{spec_dir}/spec.md`, call `speckit.specify` to create the feature branch and spec directory, then move discovery artifacts, then enhance the spec with speckit-echelon-scout (SCOUT)'s domain insights. A reserved directory by itself is not an existing spec.
-  If this is a resumed/amendment pass and `{spec_dir}/spec.md` exists, skip `speckit.specify` and enhance that existing spec in place. Always keep the existing branch and spec directory; do not create or switch to a new numbered branch.
+  Phase A identity is controller-owned. If this is a first WHAT pass with no existing `{spec_dir}/spec.md`, create it from the supplied template in `{spec_dir}`, move discovery artifacts there, then enhance it with speckit-echelon-scout (SCOUT)'s domain insights. If this is a resumed/amendment pass, enhance the existing file in place. Never create, switch, rename, or discover a branch or another spec directory.
   Treat `.specify/memory/constitution.md` as read-only governance context. Apply its principles while authoring `spec.md`; do not edit, patch, append to, or regenerate the constitution from this phase.
   When the Product Input Contract is present, read its requirement snapshot and cite every adopted or challenged `IN-REQ-*` unit. Return one `echelon_result.product_input_updates` entry per normative unit. This is a strict API contract: copy the catalog ID into `input_unit_id`; use exactly one of `included`, `excluded`, `duplicate`, `open_question`, or `conflict` for `disposition`; give an evidence-backed `rationale`; place mapped FR/AC IDs in `spec_ids`; and set `task_ids: []` and `targets: []` in this phase. Never use aliases such as `unit`, `adopted`, or `mapped`. Do not write the ledger file directly; COMMANDER validates and persists the structured updates. Example:
   ```yaml
@@ -75,52 +74,38 @@ Use the Agent tool to dispatch a subagent with:
   1. `{spec_dir}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.
   2. `{spec_dir}/00-overview.md` exists (your 1-2 page human-readable summary).
   3. All discovery artifacts have been moved from `${STAGING_DIR}/` to `{spec_dir}/`; run-control files (`user-clarifications.md`, `governance-trail.json`, `escalation-request.md`) remain in staging.
-  Calling `speckit.specify` alone is NOT sufficient — Step 2 (spec enhancement) is mandatory before returning.
+  Creating an initial draft alone is NOT sufficient — enhancement with squad context is mandatory before returning.
   </instructions>
   ```
 
 - **description:** "speckit-echelon-cartographer (CARTOGRAPHER): spec creation and requirements definition"
 
-#### speckit-echelon-cartographer (CARTOGRAPHER) Fallback (if speckit-echelon-cartographer (CARTOGRAPHER) signals BLOCKED on speckit.specify)
+#### CARTOGRAPHER fallback
 
-If speckit-echelon-cartographer (CARTOGRAPHER) returns `speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — speckit.specify unavailable`:
-
-1. speckit-echelon-commander (COMMANDER) calls `speckit.specify` directly (via Skill tool) with the same feature description speckit-echelon-cartographer (CARTOGRAPHER) would have used (derive from DISCOVER staging artifacts)
-2. After the Skill returns (success or error):
-   - **Success:** Return the returned `spec_id` and `spec_dir` in `echelon_result.state_updates`, then re-dispatch speckit-echelon-cartographer (CARTOGRAPHER) with the spec directory already created (add `spec_dir` to the context pack prompt). Always continue to 4.3 immediately — **do not stop**.
-   - **Error:** Return `status: blocked` and `blocked_reason: "speckit.specify unavailable"` in `echelon_result.state_updates`, return a blocking journal entry, and stop.
-
-This is the only case where speckit-echelon-commander (COMMANDER) calls `speckit.specify` directly. Always reserve this path for the explicit BLOCKED fallback. Do NOT use it pre-emptively.
+If `{spec_dir}` is missing after Phase A bootstrap, return `status: blocked` and
+`blocked_reason: "spec_dir missing after Phase A bootstrap"`. COMMANDER must
+not create or select a branch; the deterministic Phase A bootstrap owns that
+recovery.
 
 ### 4.3 Post-speckit-echelon-cartographer (CARTOGRAPHER)
 
-After speckit-echelon-cartographer (CARTOGRAPHER) completes, read its output to get the created `spec_id` and `spec_dir`.
+After speckit-echelon-cartographer (CARTOGRAPHER) completes, read its output to verify
+the already-reserved `spec_dir`. Phase A identity is controller-owned: CARTOGRAPHER
+must not return or change `spec_id`, `spec_dir`, `published_spec_dir`, or the feature
+branch. Use the supplied `spec_dir` exactly as provided for file checks and prompts.
 
-Treat `spec_dir` as authoritative. It may be an absolute path or a repository-relative path returned by the Skill/harness. Use it exactly as returned for file checks and prompts; NEVER prefix it with `${SQUAD_DIR}`, `${STAGING_DIR}`, or another `specs/` segment.
+#### Directory Verification (MANDATORY)
 
-#### Branch + Directory Verification (MANDATORY)
+Before returning state updates, verify the supplied spec directory exists:
 
-Before returning state updates, verify both invariants:
-
-1. **Branch exists:**
-   ```bash
-   git branch --show-current
-   ```
-   The output must equal `{NNN}-{feature-name}` from speckit-echelon-cartographer (CARTOGRAPHER)'s output.
-
-2. **Spec directory exists:**
+1. **Spec directory exists:**
    ```bash
    ls "{spec_dir}/spec.md"
    ```
 
-**If either check fails** (branch missing, directory missing, or spec.md missing):
-
-1. If the branch is missing, create it now:
-   ```bash
-   git checkout -b {NNN}-{feature-name}
-   ```
-2. If `{spec_dir}/` is missing, create it and re-dispatch speckit-echelon-cartographer (CARTOGRAPHER) with `spec_dir` pre-set in the context pack — speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and proceed directly to Step 2 (spec enhancement).
-3. Return a `branch_recovery` entry in `echelon_result.journal_entries`; the harness writes it to `reasoning-journal.jsonl`.
+**If the check fails** (directory missing or `spec.md` missing), return a
+blocking result. Do not run Git commands and do not create a substitute
+directory.
 
 **If both checks pass**, verify speckit-echelon-cartographer (CARTOGRAPHER) ran the enhancement pass (Step 2 in `cartographer.md`) before updating state:
 
@@ -144,7 +129,7 @@ grep -E '\[CONSTITUTION_VERSION\]|\[RATIFICATION_DATE\]|\[LAST_AMENDED_DATE\]' \
 
 If `CONSTITUTION_PLACEHOLDERS_FOUND`: the constitution is not usable governance output yet. Do not advance to Phase 2. Do not edit, patch, or shell-substitute `.specify/memory/constitution.md` here. Return to `phase1-constitution` so speckit-echelon-chief (CHIEF) can invoke `speckit.constitution` with concrete context.
 
-Always resolve constitution placeholders through CHIEF before Phase 2. Do NOT proceed to Phase 2 with unfilled placeholders in constitution.md. A constitution with `[CONSTITUTION_VERSION]` in it is not a constitution — it is a template. speckit-echelon-cartographer (CARTOGRAPHER) will skip `speckit.specify` and go directly to Step 2. A spec.md with zero acceptance criteria is not complete output.
+Always resolve constitution placeholders through CHIEF before Phase 2. Do NOT proceed to Phase 2 with unfilled placeholders in constitution.md. A constitution with `[CONSTITUTION_VERSION]` in it is not a constitution — it is a template. A spec.md with zero acceptance criteria is not complete output.
 
 **Enhancement-only re-dispatch prompt:**
 
@@ -155,7 +140,7 @@ spec_dir: {spec_dir}
 </context>
 
 <instructions>
-You are CARTOGRAPHER in enhancement-only mode. The spec directory already exists at `{spec_dir}`. Always go directly to Step 2: enhance spec.md with Given/When/Then acceptance criteria and cross-references, then produce 00-overview.md. Skip Step 1 (do NOT call speckit.specify again). Read cartographer.md §"Step 2: Enhance Spec with Squad Intelligence" for the full protocol.
+You are CARTOGRAPHER in enhancement-only mode. The spec directory already exists at `{spec_dir}`. Enhance spec.md with Given/When/Then acceptance criteria and cross-references, then produce 00-overview.md. Do not create or switch branches or directories. Read cartographer.md §"Step 2: Enhance Spec with Squad Intelligence" for the full protocol.
 Treat `.specify/memory/constitution.md` as read-only governance context. Do not edit, patch, append to, or regenerate it.
 
 Always complete these outputs before returning. Do NOT return until:
@@ -164,22 +149,20 @@ Always complete these outputs before returning. Do NOT return until:
 </instructions>
 ```
 
-Return these state updates in `echelon_result`; the harness applies them to `state.json`:
+Return only this state update in `echelon_result`; the harness preserves the
+controller-owned Phase A identity in `state.json`:
 
 ```yaml
 echelon_result:
   state_updates:
-    spec_id: "{NNN}"
-    spec_dir: "specs/{NNN}-{feature-name}"
     spec_status: planned
-    updated_at: "{ISO-8601}"
 ```
 
 ### Spec Status Transition — MANDATORY
 
 This step is part of the `echelon_result.state_updates` block above. Skipping it leaves downstream phases reading a stale `Status: Draft` flag.
 
-1. Return `spec_status: planned` in the same `echelon_result.state_updates` block as `spec_id` and `spec_dir`.
+1. Return `spec_status: planned` in `echelon_result.state_updates`.
 2. Update `{spec_dir}/spec.md`: replace the line `**Status**: Draft` with `**Status**: Planned`.
 3. **Verification (run after the harness applies state updates, before transitioning to phase1-why2):**
 
@@ -192,7 +175,7 @@ This step is part of the `echelon_result.state_updates` block above. Skipping it
 
 ### Expected Outputs — BOTH REQUIRED
 
-- `spec.md` (created by `speckit.specify`, enhanced by speckit-echelon-cartographer (CARTOGRAPHER) with GWT acceptance criteria and glossary cross-references)
+- `spec.md` (created and enhanced by speckit-echelon-cartographer (CARTOGRAPHER) in the controller-provided directory with GWT acceptance criteria and glossary cross-references)
 - `00-overview.md` (speckit-echelon-cartographer (CARTOGRAPHER)-authored 1–2 page human summary: what the feature does, key design choices, primary constraints)
 
 **Post-dispatch verification (run before Spec Status Transition):**

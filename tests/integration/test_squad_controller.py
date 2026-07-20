@@ -303,7 +303,7 @@ class TestAgentResultIntegrity:
             echelon_result=None,
             raw_output=(
                 "speckit-echelon-cartographer (CARTOGRAPHER) BLOCKED — "
-                "speckit.specify execution incomplete"
+                "specification authoring incomplete"
             ),
             duration_ms=100,
             timed_out=False,
@@ -567,7 +567,7 @@ class TestCartographerResumeGuard:
         )
 
         assert "## CARTOGRAPHER Resume Guard" in prompt
-        assert "Do NOT call speckit.specify" in prompt
+        assert "Do NOT create, switch, rename, or discover a branch or spec directory" in prompt
         assert "Existing spec_dir: specs/072-pr-pipeline-fix" in prompt
         assert "Existing feature_branch: 072-pr-pipeline-fix" in prompt
 

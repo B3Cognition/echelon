@@ -449,8 +449,6 @@ phases:
       - lexicon_evaluation → state.json  # controller-owned: pending, passed, or failed
       - lexicon_pass → state.json        # controller-owned Boolean verdict after validation
     allowed_state_updates:
-      - spec_id
-      - spec_dir
       - spec_status
       - lexicon_attempts
       - lexicon_findings
@@ -461,8 +459,6 @@ phases:
       - lexicon_evaluation
       - lexicon_pass
     state_update_types:
-      spec_id: string
-      spec_dir: string
       spec_status: string
       lexicon_attempts: integer
       status: string
