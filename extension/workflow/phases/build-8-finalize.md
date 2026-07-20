@@ -117,14 +117,14 @@ BUILD_DONE is forbidden while `verification-summary.md` is FAIL or `gap-report.m
 ### 8.1c.1 Intent Drift Gate
 
 Before BUILD_DONE, run the post-build TRACKER intent alignment check from
-`workflow/phases/appendices/build-8-feedback-reference.md` and read
+`workflow/phases/appendices/build-8-feedback-reference.md`, including its template contract, and read
 `drift_severity` from `intent-alignment-final.md`.
 
 - `ALIGNED` / `MINOR_DRIFT`: record the result in `feedback-report.md`.
 - `MAJOR_DRIFT`: dispatch speckit-echelon-change-controller (CHANGE CONTROLLER)
   for one bounded rework pass unless `autonomy_mode == "banzai"`.
 - `MAJOR_DRIFT` in `banzai`: return `requires_human_review: true` and write
-  `drift-escalation.md`.
+  `drift-escalation.md` using the supplied template.
 
 **Specification Complete (mandatory on speckit-echelon-verification (VERIFICATION) PASS):**
 

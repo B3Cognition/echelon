@@ -2,6 +2,14 @@
 
 Long-form reference for `workflow/phases/build-8-finalize.md` post-build feedback, validation, and consolidation steps.
 
+## Template Contract
+
+Use these templates for run-local feedback and escalation artifacts:
+
+- `extension/templates/feedback-report-template.md` for `feedback-report.md`
+- `extension/templates/drift-escalation-template.md` for `drift-escalation.md`
+- `extension/templates/constitution-amendment-candidates-template.md` for `constitution-amendment-candidates.md`
+
 ## Auto-Feedback Pipeline
 
 After speckit-echelon-scorekeeper (SCOREKEEPER) and before final summary, speckit-echelon-commander (COMMANDER) runs the autonomous feedback pipeline. This closes the learning loop without human input.
@@ -17,13 +25,13 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include all build artifacts, spec artifacts, state.json, reasoning-journal.jsonl, knowledge-base/]
+  [include all build artifacts, spec artifacts, state.json, reasoning-journal.jsonl, knowledge-base/, extension/templates/feedback-report-template.md]
   </context>
 
   <instructions>
   You are AUDITOR. Read agents/learning/auditor.md for your complete protocol. Operate in **Mode 4: Post-Build Self-Assessment**.
   Compare squad predictions against build outcomes using build artifacts as ground truth. Read: estimates.md (predicted), state.json + progress-report.md (actual), plan.md + research.md (architecture decisions), spec.md + verification-summary.md + gap-report.md (requirements), risk-matrix.md + reasoning-journal.jsonl (risks), test-strategy.md + test-quality-report.md (tests).
-  Produce `auto-feedback.yaml` and `feedback-report.md`. Flag any CRITICAL findings for speckit-echelon-commander (COMMANDER) triage.
+  Produce `auto-feedback.yaml` and `feedback-report.md` using the provided feedback report template. Flag any CRITICAL findings for speckit-echelon-commander (COMMANDER) triage.
   </instructions>
   ```
 
@@ -113,15 +121,7 @@ Read `drift_severity` from `intent-alignment-final.md`.
   4. After rework: re-dispatch speckit-echelon-tracker (TRACKER) for a second alignment check. If still MAJOR_DRIFT after one rework pass, log as CRITICAL in `feedback-report.md` and continue. Do not enter an infinite loop.
 - **`MAJOR_DRIFT` AND `autonomy_mode == "banzai"`:**
   1. Return `requires_human_review: true` in `echelon_result.state_updates`.
-  2. Write `{spec_dir}/drift-escalation.md`:
-
-     ```markdown
-     # Intent Drift Escalation
-     **Run:** {state.json.run_id}
-     **Severity:** MAJOR_DRIFT
-     **Unmet intent points:** {list from intent-alignment-final.md}
-     **Action required:** Human review needed before this spec can be marked complete.
-     ```
+  2. Write `{spec_dir}/drift-escalation.md` using `extension/templates/drift-escalation-template.md`, populated from `intent-alignment-final.md` and `state.json`.
 
   3. Log CRITICAL in `feedback-report.md`: `[speckit-echelon-commander (COMMANDER)] MAJOR_DRIFT detected in banzai mode - requires_human_review returned. See drift-escalation.md.`
   4. Continue to BUILD_DONE.
@@ -139,7 +139,7 @@ All writes go through `kb-write.sh append_entry` with locking.
 
 ## Final Feedback Summary
 
-Append to `feedback-report.md`:
+Append the following data to the `## Auto-Feedback Summary` section of `feedback-report.md` from `extension/templates/feedback-report-template.md`:
 
 ```markdown
 ## Auto-Feedback Summary
@@ -174,23 +174,9 @@ Dispatch speckit-echelon-mirror (MIRROR) and speckit-echelon-veteran (VETERAN) i
 1. Merge both candidate lists. Deduplicate by principle text, exact or near-exact match.
 2. Filter: keep only `confidence: high` or `confidence: medium` candidates.
 3. If merged list is empty: skip the remaining steps. Return `constitution_amendments_pending: 0` in `echelon_result.state_updates`.
-4. Write `{spec_dir}/constitution-amendment-candidates.md`:
+4. Write `{spec_dir}/constitution-amendment-candidates.md` using `extension/templates/constitution-amendment-candidates-template.md`. Preserve each `[PROPOSED: ...]` block in its candidate detail, source, confidence, category, and human decision request.
 
-   ```markdown
-   # Constitution Amendment Candidates
-   **Run:** {state.json.run_id}  **Spec:** {spec_id}  **Date:** {timestamp}
-
-   Review each proposal and run `speckit.constitution` to apply approved ones.
-   Reject by deleting the [PROPOSED] block.
-
-   ---
-   [PROPOSED: {principle text}]
-   **Source:** {source from speckit-echelon-mirror (MIRROR)/speckit-echelon-veteran (VETERAN)}
-   **Confidence:** {high|medium}
-   **Category:** {category}
-   ```
-
-5. Append each candidate as a `[PROPOSED: ...]` block to `.specify/memory/constitution.md` after the last existing section. Never edit existing content.
+5. Do not append candidates to `.specify/memory/constitution.md` or otherwise modify the canonical constitution. Leave every proposal in `constitution-amendment-candidates.md` for CHIEF and human review through `speckit.constitution`.
 6. Return `constitution_amendments_pending: <count>` in `echelon_result.state_updates`.
 7. If `constitution_amendments_pending > 0`: add to the final run summary: `{N} constitution amendment candidate(s) pending human review - see {spec_dir}/constitution-amendment-candidates.md. Run speckit.constitution to approve or reject.`
 

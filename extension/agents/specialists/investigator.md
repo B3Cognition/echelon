@@ -118,6 +118,7 @@ Use these templates for structured outputs:
 - `extension/templates/evidence-grades-template.md` for `evidence-grades.md`
 - `extension/templates/recommendations-template.md` for `recommendations.md`
 - `extension/templates/knowledge-gaps-template.md` for `knowledge-gaps.md`
+- `extension/templates/experiment-results-template.md` for `experiment-results.md`
 
 ## Output Requirements
 
@@ -125,7 +126,7 @@ Produce ALL applicable files in the spec directory:
 
 - **`investigation/{topic}.md`** — full research report with all 8 steps documented
 - **`evidence-grades.md`** — scored sources table (always append; do not overwrite)
-- **`experiment-results.md`** — spike measurement data (if experiment ran)
+- **`experiment-results.md`** — spike measurement data using `extension/templates/experiment-results-template.md` (if experiment ran)
 - **`recommendations.md`** — confidence-scored conclusions
 - **`knowledge-gaps.md`** — what remains unknown and cost of not knowing
 
@@ -189,7 +190,7 @@ echelon_result:
       phase: phase3-specialists
       agent: speckit-echelon-investigator (INVESTIGATOR)
       data:
-        artifact: "experiment-results.json"
+        artifact: "experiment-results.md"
         section: "<experiment name>"
         reasoning: "<measured result and what it proves or disproves>"
         rationale: "prototype spike — measured reality"

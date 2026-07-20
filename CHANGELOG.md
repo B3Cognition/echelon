@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Standard learning-artifact contracts** — Confidence, experiment, evolution,
+  calibration, feedback, drift, and constitution-candidate outputs now have
+  dedicated templates and producer wiring. `experiment-results.md` is now
+  referenced consistently as Markdown, and constitution candidates remain
+  proposal-only until human review through `speckit.constitution`.
+
 - **Complete delivery estimates** — `estimates.md` now has one standard
   contract for Phase A specification authoring and Phase B implementation,
   showing human-only and AI-assisted ranges. AI-assisted estimates must include

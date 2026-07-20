@@ -47,6 +47,7 @@ Context pack:
 - `extension/templates/evidence-grades-template.md`
 - `extension/templates/recommendations-template.md`
 - `extension/templates/knowledge-gaps-template.md`
+- `extension/templates/experiment-results-template.md`
 - `reasoning-journal.jsonl`
 
 Use the Agent tool:
@@ -55,7 +56,7 @@ Use the Agent tool:
 
   ```xml
   <context>
-  [include specific unknowns from unknowns.md, relevant artifacts based on the question, investigator output templates, reasoning-journal.jsonl]
+  [include specific unknowns from unknowns.md, relevant artifacts based on the question, investigator output templates including experiment-results-template.md, reasoning-journal.jsonl]
   </context>
 
   <instructions>

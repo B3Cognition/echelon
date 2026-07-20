@@ -34,6 +34,18 @@ NEVER write to `internalization-log.yaml`.
 ALWAYS leave `agent-scores.yaml` internalization sub-object writes to speckit-echelon-internalizer (INTERNALIZER).
 NEVER write to `agent-scores.yaml` internalization sub-objects.
 
+## Template Contract
+
+Use these templates exactly for run-local structured outputs:
+
+- `extension/templates/confidence-flags-template.md` for `confidence-flags.md`
+- `extension/templates/evolution-signals-review-template.md` for `evolution-signals-review.md`
+- `extension/templates/prompt-version-observations-template.md` for `prompt-version-observations.md`
+- `extension/templates/calibration-analytics-template.md` for `calibration-analytics.md`
+- `extension/templates/feedback-report-template.md` for `feedback-report.md`
+
+Continue to use `agents/learning/appendices/auditor-dashboard-template.md` for `calibration-dashboard.md` and the calibration-observation proposal template for KB proposals.
+
 ---
 
 ## Inputs
@@ -185,7 +197,7 @@ For each domain in `calibration-profile.yaml`, check against `evolution.signals.
 Only fire signals if `sample_size >= evolution.signals.min_sample_size`.
 
 For each triggered condition, record an evolution-signal review item in
-`{spec_dir}/evolution-signals-review.md` with:
+`{spec_dir}/evolution-signals-review.md` using `extension/templates/evolution-signals-review-template.md`, with:
 - `id`: next sequential `evo-sig-NNN`
 - `trigger`: one of `regression_detected`, `declining_trend`, `recurring_pitfall`, `recurring_rejection`
 - `severity`: CRITICAL if regression_delta > 0.2, HIGH if > 0.1, MEDIUM if > 0.05, LOW otherwise
@@ -195,7 +207,7 @@ For each triggered condition, record an evolution-signal review item in
 
 #### Step 2: Correlate Accuracy to Prompt Version
 
-When writing calibration proposals for accuracy observations (Mode 1, Step 3), include in the reasoning journal and `{spec_dir}/prompt-version-observations.md` which prompt version was active for each agent in that domain. This enables future analysis of whether accuracy changes correlate with prompt version changes.
+When writing calibration proposals for accuracy observations (Mode 1, Step 3), include in the reasoning journal and `{spec_dir}/prompt-version-observations.md` using `extension/templates/prompt-version-observations-template.md` which prompt version was active for each agent in that domain. This enables future analysis of whether accuracy changes correlate with prompt version changes.
 
 #### Step 3: Evolution Signal Lifecycle Updates
 
@@ -253,7 +265,7 @@ Save as `{spec_dir}/calibration-dashboard.md`.
 
 - **`${SQUAD_DIR}/kb-proposals/`** — calibration-observation proposals for accuracy per domain, correction factors, and trends
 
-- **`{spec_dir}/confidence-flags.md`** — per-artifact confidence scores for the current run
+- **`{spec_dir}/confidence-flags.md`** — per-artifact confidence scores for the current run, using `extension/templates/confidence-flags-template.md`
 - **`{spec_dir}/evolution-signals-review.md`** — evolution-signal observations when regression thresholds are met (Mode 3)
 - **`{spec_dir}/prompt-version-observations.md`** — prompt-version observations per agent (Mode 3)
 - **`{spec_dir}/calibration-dashboard.md`** — calibration health overview
@@ -288,7 +300,7 @@ speckit-echelon-commander (COMMANDER) writes to the reasoning journal. Return jo
 
 When calibration data grows (5+ data points per domain), CALIBRATE should produce or update an analytics summary:
 
-Use the Calibration Analytics section in `agents/learning/appendices/auditor-dashboard-template.md`.
+Use the complete standalone `extension/templates/calibration-analytics-template.md`; do not reuse only the Calibration Analytics section of the dashboard template.
 
 Save as `{spec_dir}/calibration-analytics.md`.
 This makes learning VISIBLE, not just stored in YAML.
@@ -361,7 +373,7 @@ Scan all sections. For any finding with severity CRITICAL:
 ### Step 8: Produce feedback-report.md
 
 Write a human-readable summary to `{spec_dir}/feedback-report.md` with:
-Use the feedback report sections in `agents/learning/appendices/auditor-output-formats.md`.
+Use `extension/templates/feedback-report-template.md`.
 
 ### Output
 

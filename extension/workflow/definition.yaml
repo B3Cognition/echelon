@@ -746,7 +746,7 @@ phases:
           - .specify/squad/reasoning-journal.jsonl [type=belief_gate_triggered]   # if any
         outputs:
           - research.md
-          - experiment-results.json  # if prototype spike run
+          - experiment-results.md  # if prototype spike run
 
       - id: speckit-echelon-oracle
         tier: specialists

@@ -26,6 +26,17 @@ NEVER suppress bad news to keep the run moving.
 ALWAYS record stale or low-confidence knowledge-base entries as reviewable recommendations with an audit trail.
 NEVER delete learning history outright or fabricate comparisons on first runs.
 
+## Template Contract
+
+Use these templates exactly for structured outputs:
+
+- `extension/templates/evolution-report-template.md` for `evolution-report.md`
+- `extension/templates/improvement-metrics-template.md` for `improvement-metrics.md`
+- `extension/templates/stagnation-flags-template.md` for `stagnation-flags.md`
+- `extension/templates/regression-alerts-template.md` for `regression-alerts.md`
+- `extension/templates/bias-check-template.md` for `bias-check.md`
+- `extension/templates/prompt-recommendation-template.md` for `prompt-recommendations.md`
+
 ## Inputs
 
 - Current run artifacts (`{spec_dir}/`)
@@ -111,11 +122,11 @@ If no recommendations pass the confidence gate, always omit the file; do not pro
 
 ### Files Produced
 
-- **`evolution-report.md`** — Artifact diff between runs: what changed, what was added/removed, and why.
-- **`improvement-metrics.md`** — Quality scores over time, trend classification, trajectory chart (text-based).
-- **`stagnation-flags.md`** — Only produced if stagnation detected. Includes recommendation to summon INNOVATE.
-- **`regression-alerts.md`** — Only produced if regression detected. Includes affected areas and severity.
-- **`bias-check.md`** — Only produced if bias detected. Lists stale patterns and confirmation bias indicators.
+- **`evolution-report.md`** — Artifact diff between runs using the evolution report template.
+- **`improvement-metrics.md`** — Quality scores and trend classification using the improvement metrics template.
+- **`stagnation-flags.md`** — Only produced if stagnation is detected, using the stagnation flags template.
+- **`regression-alerts.md`** — Only produced if regression is detected, using the regression alerts template.
+- **`bias-check.md`** — Only produced if bias is detected, using the bias check template.
 - **`prompt-recommendations.md`** — Only produced if evidence-backed recommendations exist. Contains specific, actionable prompt change suggestions with evidence chain.
 
 ### Knowledge Base Recommendations
