@@ -1346,6 +1346,32 @@ harness:
 # ─────────────────────────────────────────────────────────────────────────────
 
 re:
+  # End-to-end execution goal. Resolved values are frozen into each run so
+  # continue/resume cannot reset accounting or silently change policy.
+  default_profile: balanced
+  profiles:
+    fast:
+      performance_target_minutes: 30
+      hard_active_minutes: 60
+      hard_token_limit: 1000000
+      max_domain_repairs: 1
+      max_source_cycles: 1
+      max_source_reanalysis: 1
+    balanced:
+      performance_target_minutes: 60
+      hard_active_minutes: 180
+      hard_token_limit: 5000000
+      max_domain_repairs: 3
+      max_source_cycles: 2
+      max_source_reanalysis: 2
+    high:
+      performance_target_minutes: 180
+      hard_active_minutes: 720
+      hard_token_limit: 15000000
+      max_domain_repairs: 5
+      max_source_cycles: 5
+      max_source_reanalysis: 5
+
   # Extraction profile passed to run-analysis.sh. Default is intentionally deep;
   # use "survey" only when you explicitly want a cheaper first pass.
   profile: full

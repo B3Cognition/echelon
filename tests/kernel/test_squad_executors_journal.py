@@ -722,6 +722,114 @@ def test_assemble_prompt_injects_shared_endocrine_contract(tmp_path):
     assert "NEVER emit `<echelon_result>` XML" in prompt
 
 
+def test_assemble_prompt_strips_agent_frontmatter_before_model_prompt(tmp_path):
+    """Agent YAML frontmatter is runtime metadata, not prompt text."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "chief.md").write_text(
+        "---\n"
+        "model: local-qwen\n"
+        "tools: [Read, Write]\n"
+        "color: blue\n"
+        "---\n"
+        "# Chief\n"
+        "Coordinate Phase A artifacts.\n",
+        encoding="utf-8",
+    )
+
+    from harness.phase_graph import PhaseNode
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/chief.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    node = PhaseNode(id="phase1-test", type="agent", agent="CHIEF")
+    state = {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")}
+    prompt = ex._assemble_prompt(node, state)
+
+    assert "# Chief" in prompt
+    assert "Coordinate Phase A artifacts." in prompt
+    assert "model: local-qwen" not in prompt
+    assert "tools: [Read, Write]" not in prompt
+    assert "color: blue" not in prompt
+
+
+def test_pre_dispatch_prompt_strips_agent_frontmatter(tmp_path):
+    """Pre-dispatch agents use the same frontmatter/body split."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    agent_path = agent_dir / "sentinel.md"
+    agent_path.write_text(
+        "---\n"
+        "model: local-sentinel\n"
+        "reasoning_effort: high\n"
+        "---\n"
+        "# Sentinel\n"
+        "Check the dispatch boundary.\n",
+        encoding="utf-8",
+    )
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    prompt = ex._assemble_pre_dispatch_prompt(
+        agent_path,
+        {},
+        {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")},
+    )
+
+    assert "# Sentinel" in prompt
+    assert "Check the dispatch boundary." in prompt
+    assert "model: local-sentinel" not in prompt
+    assert "reasoning_effort: high" not in prompt
+
+
+def test_execute_passes_agent_frontmatter_metadata_to_provider(tmp_path):
+    """Parsed frontmatter travels out-of-band to the provider."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "chief.md").write_text(
+        "---\n"
+        "model: frontmatter-model\n"
+        "effort: high\n"
+        "---\n"
+        "# Chief\n"
+        "Coordinate Phase A artifacts.\n",
+        encoding="utf-8",
+    )
+
+    from harness.phase_graph import PhaseNode
+    provider = MagicMock()
+    provider.exec_agent.return_value = _result()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/chief.md"
+    graph.all_phase_ids.return_value = []
+    ex = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    store = SquadStateStore(squad_dir)
+    store.save({"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")})
+
+    result = ex.execute(PhaseNode(id="phase1-test", type="agent", agent="CHIEF"), store)
+
+    assert result.exit_code == 0
+    provider.exec_agent.assert_called_once()
+    assert provider.exec_agent.call_args.kwargs["prompt_metadata"] == {
+        "model": "frontmatter-model",
+        "effort": "high",
+    }
+
+
 def test_assemble_prompt_uses_echelon_result_template(tmp_path):
     """The canonical final result block is owned by extension/templates."""
     squad_dir = tmp_path / "squad" / "run-test"

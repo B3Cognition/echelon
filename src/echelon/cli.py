@@ -7809,10 +7809,13 @@ def _parse_re_lifecycle_options(
     *,
     allow_policy: bool,
     allow_reset: bool,
-) -> tuple[str, int | None, bool, list[str]]:
+) -> tuple[str, int | None, bool, str | None, int | None, int | None, list[str]]:
     policy = "changed"
     re_max_inner: int | None = None
     reset = False
+    profile: str | None = None
+    token_limit: int | None = None
+    time_limit_minutes: int | None = None
     positional: list[str] = []
     index = 0
     while index < len(args):
@@ -7824,6 +7827,32 @@ def _parse_re_lifecycle_options(
             index += 2
         elif arg.startswith("--re-policy=") and allow_policy:
             policy = arg.split("=", 1)[1].strip()
+            index += 1
+        elif arg == "--profile" and allow_policy:
+            if index + 1 >= len(args):
+                raise ValueError("--profile requires fast, balanced, or high")
+            profile = args[index + 1].strip()
+            index += 2
+        elif arg.startswith("--profile=") and allow_policy:
+            profile = arg.split("=", 1)[1].strip()
+            index += 1
+        elif arg in {"--re-token-limit", "--re-time-limit-minutes"} and allow_policy:
+            if index + 1 >= len(args):
+                raise ValueError(f"{arg} requires a positive integer")
+            try:
+                value = int(args[index + 1])
+            except ValueError as exc:
+                raise ValueError(f"{arg} requires a positive integer") from exc
+            if arg == "--re-token-limit":
+                token_limit = value
+            else:
+                time_limit_minutes = value
+            index += 2
+        elif arg.startswith("--re-token-limit=") and allow_policy:
+            token_limit = int(arg.split("=", 1)[1])
+            index += 1
+        elif arg.startswith("--re-time-limit-minutes=") and allow_policy:
+            time_limit_minutes = int(arg.split("=", 1)[1])
             index += 1
         elif arg == "--re-max-inner":
             if index + 1 >= len(args):
@@ -7849,7 +7878,19 @@ def _parse_re_lifecycle_options(
             index += 1
     if re_max_inner is not None and re_max_inner < 1:
         raise ValueError("--re-max-inner requires a positive integer")
-    return policy, re_max_inner, reset, positional
+    if token_limit is not None and token_limit < 1:
+        raise ValueError("--re-token-limit requires a positive integer")
+    if time_limit_minutes is not None and time_limit_minutes < 1:
+        raise ValueError("--re-time-limit-minutes requires a positive integer")
+    return (
+        policy,
+        re_max_inner,
+        reset,
+        profile,
+        token_limit,
+        time_limit_minutes,
+        positional,
+    )
 
 
 def _re_lifecycle_controller(project_root: Path):
@@ -7889,7 +7930,15 @@ def _cmd_re_run(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError
 
     try:
-        policy, re_max_inner, reset, positional = _parse_re_lifecycle_options(
+        (
+            policy,
+            re_max_inner,
+            reset,
+            profile,
+            token_limit,
+            time_limit_minutes,
+            positional,
+        ) = _parse_re_lifecycle_options(
             args,
             allow_policy=True,
             allow_reset=True,
@@ -7900,6 +7949,9 @@ def _cmd_re_run(args: list[str]) -> None:
             policy=policy,
             re_max_inner=re_max_inner,
             reset=reset,
+            profile_name=profile,
+            hard_token_limit=token_limit,
+            hard_active_minutes=time_limit_minutes,
         )
     except (ReLifecycleError, ValueError) as exc:
         print(f"echelon re run: {exc}", file=sys.stderr)
@@ -7911,7 +7963,7 @@ def _cmd_re_continue(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError
 
     try:
-        _policy, re_max_inner, _reset, positional = _parse_re_lifecycle_options(
+        _policy, re_max_inner, _reset, _profile, _tokens, _time, positional = _parse_re_lifecycle_options(
             args,
             allow_policy=False,
             allow_reset=False,
@@ -7931,7 +7983,7 @@ def _cmd_re_resume(args: list[str]) -> None:
     from harness.re_lifecycle import ReLifecycleError
 
     try:
-        _policy, re_max_inner, _reset, positional = _parse_re_lifecycle_options(
+        _policy, re_max_inner, _reset, _profile, _tokens, _time, positional = _parse_re_lifecycle_options(
             args,
             allow_policy=False,
             allow_reset=False,

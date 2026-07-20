@@ -72,6 +72,10 @@ class SquadAgentResult:
     duration_ms: int
     timed_out: bool
     cost_usd: float = 0.0
+    token_usage: int = 0
+    token_usage_details: dict[str, int] = field(default_factory=dict)
+    provider_name: str = ""
+    model_name: str = ""
     echelon_result_repair_attempted: bool = False
     echelon_result_repair_succeeded: bool = False
     provider_limit_message: str = ""
@@ -326,6 +330,7 @@ class SquadCliProvider(AICodingCliProvider):
     """
 
     supports_result_contract = True
+    supports_prompt_metadata = True
 
     def exec_agent(
         self,
@@ -333,20 +338,23 @@ class SquadCliProvider(AICodingCliProvider):
         prompt: str,
         timeout_ms: Optional[int] = None,
         result_contract: EchelonResultContract | None = None,
+        prompt_metadata: Optional[dict[str, object]] = None,
     ) -> SquadAgentResult:
         start = time.monotonic()
         git_before = _git_boundary_snapshot(project_root)
-        backend_result = self.run_agent_result(
-            project_root,
-            prompt,
-            timeout_ms=timeout_ms,
-        )
+        run_kwargs: dict[str, object] = {"timeout_ms": timeout_ms}
+        if prompt_metadata:
+            run_kwargs["request_metadata"] = {"prompt_metadata": prompt_metadata}
+        backend_result = self.run_agent_result(project_root, prompt, **run_kwargs)
         _verify_git_boundary(project_root, git_before)
         duration_ms = int((time.monotonic() - start) * 1000)
         exit_code = backend_result.exit_code
         raw = backend_result.stdout
         timed_out = backend_result.timed_out
         cost_usd = backend_result.cost_usd
+        token_usage = int(backend_result.token_usage or 0)
+        token_usage_details = _normalized_token_usage_details(backend_result.metadata)
+        model_name = _provider_model_name(backend_result.metadata)
         provider_limit_message = ""
         if exit_code != 0 or timed_out:
             provider_limit_message = _provider_session_limit_message(
@@ -379,12 +387,16 @@ class SquadCliProvider(AICodingCliProvider):
             )
             repair_git_before = _git_boundary_snapshot(project_root)
             repair_result = self.run_agent_result(
-                project_root,
-                repair_prompt,
-                timeout_ms=timeout_ms,
+                project_root, repair_prompt, **run_kwargs
             )
             _verify_git_boundary(project_root, repair_git_before)
             cost_usd += repair_result.cost_usd
+            token_usage += int(repair_result.token_usage or 0)
+            token_usage_details = _add_token_usage_details(
+                token_usage_details,
+                _normalized_token_usage_details(repair_result.metadata),
+            )
+            model_name = model_name or _provider_model_name(repair_result.metadata)
             if repair_result.exit_code == 0 and not repair_result.timed_out:
                 repair_parsed = _extract_echelon_result(repair_result.stdout)
                 (
@@ -418,8 +430,47 @@ class SquadCliProvider(AICodingCliProvider):
             duration_ms=duration_ms,
             timed_out=timed_out,
             cost_usd=cost_usd,
+            token_usage=token_usage,
+            token_usage_details=token_usage_details,
+            provider_name=self.cli,
+            model_name=model_name,
             echelon_result_repair_attempted=repair_attempted,
             echelon_result_repair_succeeded=repair_succeeded,
             provider_limit_message=provider_limit_message,
             quarantined_state_updates=quarantined_state_updates,
         )
+
+
+def _normalized_token_usage_details(metadata: object) -> dict[str, int]:
+    if not isinstance(metadata, dict):
+        return {}
+    raw = metadata.get("token_usage_details")
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, int] = {}
+    for key, value in raw.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        parsed = int(value)
+        if parsed >= 0:
+            result[str(key)] = parsed
+    return result
+
+
+def _add_token_usage_details(
+    first: dict[str, int], second: dict[str, int]
+) -> dict[str, int]:
+    combined = dict(first)
+    for key, value in second.items():
+        combined[key] = combined.get(key, 0) + value
+    return combined
+
+
+def _provider_model_name(metadata: object) -> str:
+    if not isinstance(metadata, dict):
+        return ""
+    for key in ("response_model", "request_model", "model"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""

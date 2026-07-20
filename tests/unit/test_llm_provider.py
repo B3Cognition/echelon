@@ -122,6 +122,25 @@ class TestAICodingCliProvider:
         assert "-p" in cmd_passed
         assert result == 0
 
+    def test_run_agent_result_passes_prompt_metadata_to_backend(self, tmp_path):
+        with _patch_claude_popen() as popen:
+            provider = AICodingCliProvider(_config())
+            result = provider.run_agent_result(
+                str(tmp_path),
+                "build this",
+                request_metadata={
+                    "prompt_metadata": {
+                        "model": "claude-opus-4-1",
+                    }
+                },
+            )
+
+        assert result.exit_code == 0
+        cmd_passed = popen.call_args.args[0]
+        assert "--model" in cmd_passed
+        model_index = cmd_passed.index("--model")
+        assert cmd_passed[model_index + 1] == "claude-opus-4-1"
+
     def test_exec_prompt_uses_stream_json_for_claude(self, tmp_path):
         with _patch_claude_popen() as popen:
             AICodingCliProvider(_config()).exec_prompt(str(tmp_path), "build this")

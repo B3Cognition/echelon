@@ -12,6 +12,26 @@ import os
 import sys
 from typing import Any, Optional
 
+_ANSI_COLORS = {
+    "black": "30",
+    "red": "31",
+    "green": "32",
+    "yellow": "33",
+    "blue": "34",
+    "magenta": "35",
+    "cyan": "36",
+    "white": "37",
+    "gray": "90",
+    "grey": "90",
+    "primary": "36",
+    "secondary": "90",
+    "accent": "35",
+    "success": "32",
+    "warning": "33",
+    "error": "31",
+    "info": "36",
+}
+
 
 def get_terminal_width(default: int = 80) -> int:
     """Get terminal width, falling back to default."""
@@ -19,6 +39,23 @@ def get_terminal_width(default: int = 80) -> int:
         return os.get_terminal_size().columns
     except (OSError, ValueError):
         return default
+
+
+def color_text(text: str, color: object, *, file: Any = None) -> str:
+    """Return text styled with ANSI color when terminal output supports it."""
+    if file is None:
+        file = sys.stdout
+    if os.environ.get("NO_COLOR") is not None:
+        return text
+    is_tty = getattr(file, "isatty", lambda: False)
+    if not is_tty():
+        return text
+    if not isinstance(color, str):
+        return text
+    code = _ANSI_COLORS.get(color.strip().lower())
+    if not code:
+        return text
+    return f"\033[{code}m{text}\033[0m"
 
 
 def print_banner(

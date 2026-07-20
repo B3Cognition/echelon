@@ -14,6 +14,8 @@ from typing import Callable, Literal
 from echelon.wiki.catalog_source import WikiCatalogSource, wiki_catalog_source
 from echelon.wiki.discovery import SCHEMA_VERSION, canonical_input_hashes, discover_wiki_model
 from echelon.wiki.render import RenderResult, WikiRenderError, render_wiki
+from echelon.wiki.operations import render_operations
+from echelon.telemetry.re_adapter import operational_input_hashes
 from harness.config import get_full_resolved_config
 
 
@@ -51,6 +53,10 @@ class WikiStatusResult:
     changed_inputs: tuple[str, ...]
     removed_inputs: tuple[str, ...]
     message: str
+    operational_stale: bool = False
+    operational_added_inputs: tuple[str, ...] = ()
+    operational_changed_inputs: tuple[str, ...] = ()
+    operational_removed_inputs: tuple[str, ...] = ()
 
 
 def wiki_output_dir(project_root: Path) -> Path:
@@ -93,6 +99,8 @@ def _manifest_payload(
     inputs: dict[str, str],
     render_result: RenderResult,
     model,
+    operational_inputs: dict[str, str],
+    include_runs: bool,
 ) -> dict[str, object]:
     return {
         MANIFEST_MARKER: True,
@@ -103,6 +111,9 @@ def _manifest_payload(
         "workspace_revision": source.revision,
         "workspace_dirty": source.dirty,
         "inputs": dict(sorted(inputs.items())),
+        "canonical_inputs": dict(sorted(inputs.items())),
+        "operational_inputs": dict(sorted(operational_inputs.items())),
+        "operational_included": include_runs,
         "outputs": list(render_result.output_pages),
         "relationships": [asdict(edge) for edge in model.relationships],
         "warnings": [asdict(warning) for warning in render_result.warnings],
@@ -139,6 +150,7 @@ def build_wiki(
     project_root: Path,
     *,
     now: Callable[[], datetime] | None = None,
+    include_runs: bool | None = None,
 ) -> WikiBuildResult:
     """Build and atomically publish a complete local human wiki vault."""
     root = project_root.resolve()
@@ -148,6 +160,14 @@ def build_wiki(
     runtime = output.parent
     runtime.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".wiki-staging-", dir=runtime))
+    resolved = get_full_resolved_config(root)
+    wiki_config = resolved.get("wiki") if isinstance(resolved.get("wiki"), dict) else {}
+    resolved_include_runs = (
+        bool(wiki_config.get("include_run_analysis", False))
+        if include_runs is None
+        else include_runs
+    )
+    operational_inputs: dict[str, str] = {}
     try:
         with wiki_catalog_source(root) as source:
             model = replace(
@@ -159,6 +179,15 @@ def build_wiki(
                 source.source_root, artifacts=model.artifacts
             )
             render_result = render_wiki(model, source.source_root, staging)
+            if resolved_include_runs:
+                operation_pages = render_operations(root, staging)
+                render_result = replace(
+                    render_result,
+                    output_pages=tuple(
+                        sorted(set(render_result.output_pages) | set(operation_pages))
+                    ),
+                )
+                operational_inputs = operational_input_hashes(root / "runs")
             broken_required = [
                 warning
                 for warning in render_result.warnings
@@ -168,7 +197,13 @@ def build_wiki(
             if broken_required:
                 raise WikiRenderError(broken_required[0].message)
             payload = _manifest_payload(
-                source, generated_at, inputs, render_result, model
+                source,
+                generated_at,
+                inputs,
+                render_result,
+                model,
+                operational_inputs,
+                resolved_include_runs,
             )
             _write_manifest(_manifest_path(staging), payload)
             catalog_branch = source.branch
@@ -214,7 +249,7 @@ def wiki_status(project_root: Path) -> WikiStatusResult:
                 (),
                 "The output directory is not a valid Echelon wiki; inspect it before removal.",
             )
-        previous_raw = manifest["inputs"]
+        previous_raw = manifest.get("canonical_inputs", manifest["inputs"])
         assert isinstance(previous_raw, dict)
         previous = {str(key): str(value) for key, value in previous_raw.items()}
         current = canonical_input_hashes(source.source_root)
@@ -227,7 +262,34 @@ def wiki_status(project_root: Path) -> WikiStatusResult:
                 if current[path] != previous[path]
             )
         )
-        stale = bool(added or removed or changed)
+        previous_operational_raw = manifest.get("operational_inputs", {})
+        previous_operational = (
+            {str(key): str(value) for key, value in previous_operational_raw.items()}
+            if isinstance(previous_operational_raw, dict)
+            else {}
+        )
+        current_operational = (
+            operational_input_hashes(root / "runs")
+            if manifest.get("operational_included") is True
+            else {}
+        )
+        operational_added = tuple(
+            sorted(set(current_operational) - set(previous_operational))
+        )
+        operational_removed = tuple(
+            sorted(set(previous_operational) - set(current_operational))
+        )
+        operational_changed = tuple(
+            sorted(
+                path
+                for path in set(current_operational) & set(previous_operational)
+                if current_operational[path] != previous_operational[path]
+            )
+        )
+        operational_stale = bool(
+            operational_added or operational_removed or operational_changed
+        )
+        stale = bool(added or removed or changed or operational_stale)
         return WikiStatusResult(
             "stale" if stale else "fresh",
             output,
@@ -237,6 +299,10 @@ def wiki_status(project_root: Path) -> WikiStatusResult:
             changed,
             removed,
             "Run `echelon wiki build`." if stale else "Wiki inputs match the manifest.",
+            operational_stale,
+            operational_added,
+            operational_changed,
+            operational_removed,
         )
 
 

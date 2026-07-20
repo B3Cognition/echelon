@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -77,7 +78,178 @@ def _passing_semantic_quality_review(prompt: str) -> dict[str, object]:
                     "source_evidence": [],
                 }
             )
+    marker = "Requested semantic domain: `"
+    if marker in prompt:
+        requested = prompt.split(marker, 1)[1].split("`", 1)[0]
+        domains = [
+            domain
+            for domain in domains
+            if f"{domain['source_id']}/{domain['domain_id']}" == requested
+        ]
     return {"schema_version": 1, "domains": domains}
+
+
+@pytest.mark.unit
+def test_semantic_validation_continue_reuses_completed_domain(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api", "web"))
+    _initialize_re_state(run_dir, max_repairs=2)
+    state_path = run_dir / "re" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "status": "in_progress",
+            "phase": "re-extract-5-validate",
+            "re_workspace_synthesis_complete": True,
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    class InterruptingValidator(_ShallowSpecifierProvider):
+        def __init__(self, *, fail_web: bool) -> None:
+            super().__init__()
+            self.fail_web = fail_web
+            self.validated: list[str] = []
+
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            phase = prompt.split("RE phase: ", 1)[1].split("\n", 1)[0]
+            if phase != "re-extract-5-validate":
+                return super().exec_agent(project_root, prompt)
+            requested = prompt.split("Requested semantic domain: `", 1)[1].split("`", 1)[0]
+            self.phases.append(phase)
+            self.validated.append(requested)
+            if requested == "web/001-re-domain" and self.fail_web:
+                return SquadAgentResult(
+                    exit_code=1,
+                    echelon_result=None,
+                    raw_output="context limit",
+                    duration_ms=1,
+                    timed_out=False,
+                )
+            source_id, domain_id = requested.split("/", 1)
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {},
+                    "journal_entries": [],
+                    "semantic_quality_review": {
+                        "schema_version": 1,
+                        "domains": [
+                            {
+                                "source_id": source_id,
+                                "domain_id": domain_id,
+                                "verdict": "PASS",
+                                "findings": [],
+                                "source_evidence": [],
+                            }
+                        ],
+                    },
+                },
+                raw_output="",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    first = InterruptingValidator(fail_web=True)
+    blocked = ReExtractionController(
+        provider=first,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert blocked.blocked_reason == "re_agent_dispatch_failed"
+    assert first.validated == ["api/001-re-domain", "web/001-re-domain"]
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert list(persisted["re_semantic_domain_audits"]) == ["api/001-re-domain"]
+
+    continued = InterruptingValidator(fail_web=False)
+    result = ReExtractionController(
+        provider=continued,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.completed
+    assert continued.validated == ["web/001-re-domain"]
+
+
+@pytest.mark.unit
+def test_semantic_audit_spec_fingerprint_invalidates_only_changed_domain(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api", "web"))
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = ReExecutionPlan.from_json_dict(
+        json.loads((run_dir / "re" / "re-execution-plan.json").read_text())
+    )
+    state: dict[str, object] = {}
+    for target in controller._semantic_validation_targets(plan):
+        controller._store_semantic_domain_audit(
+            state,
+            plan,
+            target,
+            {
+                "source_id": target["source_id"],
+                "domain_id": target["domain_id"],
+                "verdict": "PASS",
+                "findings": [],
+                "source_evidence": [],
+            },
+        )
+    api_spec = run_dir / "re/sources/api/specs/001-re-domain/spec.md"
+    api_spec.write_text(api_spec.read_text() + "\nChanged requirement.\n")
+
+    assert controller._next_semantic_validation_target(state, plan) == {
+        "source_id": "api",
+        "domain_id": "001-re-domain",
+    }
+
+
+@pytest.mark.unit
+def test_semantic_audit_source_fingerprint_invalidates_affected_source(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api", "web"))
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = ReExecutionPlan.from_json_dict(
+        json.loads((run_dir / "re" / "re-execution-plan.json").read_text())
+    )
+    state: dict[str, object] = {}
+    for target in controller._semantic_validation_targets(plan):
+        controller._store_semantic_domain_audit(
+            state,
+            plan,
+            target,
+            {
+                "source_id": target["source_id"],
+                "domain_id": target["domain_id"],
+                "verdict": "PASS",
+                "findings": [],
+                "source_evidence": [],
+            },
+        )
+    api, web = plan.sources
+    changed_api = replace(
+        api, fingerprint=replace(api.fingerprint, value="changed-source")
+    )
+    changed_plan = replace(plan, sources=(changed_api, web))
+
+    assert controller._next_semantic_validation_target(state, changed_plan) == {
+        "source_id": "api",
+        "domain_id": "001-re-domain",
+    }
 
 
 def _initialize_re_state(run_dir: Path, *, max_repairs: int) -> None:
@@ -120,6 +292,71 @@ def _extension_root(root: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"# {name}\n", encoding="utf-8")
     return extension_root
+
+
+@pytest.mark.unit
+def test_controller_does_not_start_dispatch_at_token_ceiling(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=3)
+    state_path = run_dir / "re/state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["re_execution_profile"] = {
+        "name": "balanced",
+        "hard_token_limit": 5_000_000,
+        "hard_active_minutes": 180,
+    }
+    state["re_token_usage"] = 5_000_000
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    provider = _ShallowSpecifierProvider()
+
+    result = ReExtractionController(
+        provider=provider,
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.blocked_reason == "re_token_budget_exhausted"
+    assert provider.phases == []
+
+
+@pytest.mark.unit
+def test_controller_records_dispatch_tokens_and_content_free_spans(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    _initialize_re_state(run_dir, max_repairs=3)
+    state_path = run_dir / "re/state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["re_execution_profile"] = {
+        "name": "balanced",
+        "hard_token_limit": 5_000_000,
+        "hard_active_minutes": 180,
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    class MeteredProvider(_ShallowSpecifierProvider):
+        def exec_agent(self, project_root: str, prompt: str) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt)
+            result.token_usage = 12
+            result.token_usage_details = {"input_tokens": 10, "output_tokens": 2}
+            result.provider_name = "codex"
+            result.model_name = "gpt-test"
+            return result
+
+    result = ReExtractionController(
+        provider=MeteredProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    ).run()
+
+    assert result.blocked_reason == "re_coverage_threshold_not_met"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["re_token_usage"] > 0
+    ledger = (run_dir / "telemetry/spans.jsonl").read_text(encoding="utf-8")
+    assert '"gen_ai.provider.name":"codex"' in ledger
+    assert '"gen_ai.usage.input_tokens":10' in ledger
+    assert '"gen_ai.usage.output_tokens":2' in ledger
+    assert "RE phase:" not in ledger
 
 
 def _strand_completed_workspace_synthesis(run_dir: Path) -> None:
@@ -1143,13 +1380,6 @@ def test_source_local_semantic_repair_requeues_only_the_failing_source(
                             "findings": ["The observed retry behavior is not documented."],
                             "source_evidence": ["`src/file-1.ts:1`"],
                         },
-                        {
-                            "source_id": "web",
-                            "domain_id": "001-re-domain",
-                            "verdict": "PASS",
-                            "findings": [],
-                            "source_evidence": [],
-                        },
                     ],
                 }
             return result
@@ -1822,8 +2052,8 @@ def test_semantic_validator_prompt_lists_required_domain_inventory(
     ).run()
 
     assert result.completed
-    assert "## Required Semantic Domain Inventory" in provider.semantic_prompt
-    assert "- api/001-re-domain" in provider.semantic_prompt
+    assert "## Requested Semantic Domain" in provider.semantic_prompt
+    assert "Requested semantic domain: `api/001-re-domain`" in provider.semantic_prompt
     assert "Do not write RE_VALIDATOR_RESULT.yaml" in provider.semantic_prompt
 
 

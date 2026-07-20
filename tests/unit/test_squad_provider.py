@@ -10,6 +10,45 @@ from harness.squad_provider import PhaseAGitBoundaryError, SquadCliProvider
 from harness.echelon_result_schema import EchelonResultContract
 
 
+def test_squad_provider_preserves_normalized_token_usage(monkeypatch, tmp_path) -> None:
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="codex"),
+    )
+    provider = SquadCliProvider(config)
+
+    def fake_run_agent_result(project_root, prompt, timeout_ms=None):
+        return CliRunResult(
+            exit_code=0,
+            stdout="echelon_result:\n  verdict: PASS\n  state_updates: {}\n",
+            stderr="",
+            token_usage=17,
+            metadata={
+                "token_usage_details": {
+                    "input_tokens": 10,
+                    "output_tokens": 4,
+                    "cache_read_input_tokens": 3,
+                },
+                "response_model": "gpt-test",
+            },
+        )
+
+    monkeypatch.setattr(provider, "run_agent_result", fake_run_agent_result)
+
+    result = provider.exec_agent(str(tmp_path), "prompt")
+
+    assert result.token_usage == 17
+    assert result.token_usage_details == {
+        "input_tokens": 10,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 3,
+    }
+    assert result.provider_name == "codex"
+    assert result.model_name == "gpt-test"
+
+
 def test_squad_provider_parses_codex_backend_echelon_result(monkeypatch, tmp_path) -> None:
     config = HarnessConfig(
         target_repo=".",

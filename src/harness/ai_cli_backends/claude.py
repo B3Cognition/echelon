@@ -28,6 +28,9 @@ class ClaudeCliBackend:
             stream_json=True,
             disallow_claude_task_tools=True,
         )
+        model = _prompt_metadata_str(request, "model")
+        if model:
+            cmd.extend(["--model", model])
         return self._run_stream_json(cmd, request)
 
     def run_agent(self, request: CliRunRequest) -> CliRunResult:
@@ -146,3 +149,11 @@ def _extract_token_usage(event: Mapping[str, object]) -> int:
         except (TypeError, ValueError):
             continue
     return total
+
+
+def _prompt_metadata_str(request: CliRunRequest, key: str) -> str:
+    metadata = request.metadata.get("prompt_metadata")
+    if not isinstance(metadata, Mapping):
+        return ""
+    value = metadata.get(key)
+    return value.strip() if isinstance(value, str) else ""

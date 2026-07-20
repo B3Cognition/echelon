@@ -255,6 +255,60 @@ def test_openai_compatible_backend_can_request_reasoning_effort(
     assert captured["payload"]["reasoning_effort"] == "high"
 
 
+def test_openai_compatible_backend_uses_prompt_metadata_overrides(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "choices": [{"message": {"content": "ok"}}],
+            }).encode()
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode())
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    result = OpenAICompatibleBackend(
+        _openai_config(features={"streaming": False, "reasoning_effort": "low"})
+    ).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return a result.",
+            env={},
+            timeout_s=12.5,
+            metadata={
+                "prompt_metadata": {
+                    "model": "frontmatter-model",
+                    "effort": "high",
+                    "temperature": 0.4,
+                    "max_tokens": 1024,
+                }
+            },
+        )
+    )
+
+    assert result.exit_code == 0
+    assert captured["payload"]["model"] == "frontmatter-model"
+    assert captured["payload"]["reasoning_effort"] == "high"
+    assert captured["payload"]["temperature"] == 0.4
+    assert captured["payload"]["max_tokens"] == 1024
+
+
 def test_openai_compatible_backend_records_http_error_response_headers(
     tmp_path, monkeypatch
 ) -> None:
@@ -1351,6 +1405,55 @@ def test_claude_backend_streams_json_and_captures_result_error(tmp_path) -> None
     assert result.exit_code == 1
     assert "session limit reached" in result.stdout
     assert result.token_usage == 12
+
+
+def test_claude_backend_uses_prompt_metadata_model(tmp_path) -> None:
+    backend = ClaudeCliBackend(_config("claude"))
+    captured = {}
+
+    class FakeProcess:
+        stdout = io.BytesIO(
+            (
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "content": [{"type": "text", "text": "ok"}],
+                        },
+                    }
+                )
+                + "\n"
+                + json.dumps({"type": "result", "usage": {"input_tokens": 1}})
+                + "\n"
+            ).encode()
+        )
+        returncode = 0
+
+        def kill(self) -> None:
+            return None
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return FakeProcess()
+
+    request = CliRunRequest(
+        cwd=str(tmp_path),
+        prompt="Build this.",
+        env={},
+        timeout_s=10,
+        metadata={"prompt_metadata": {"model": "claude-opus-4-1"}},
+    )
+
+    with patch("harness.ai_cli_backends.claude.subprocess.Popen", fake_popen):
+        result = backend.run_prompt(request)
+
+    assert result.exit_code == 0
+    assert "--model" in captured["cmd"]
+    model_index = captured["cmd"].index("--model")
+    assert captured["cmd"][model_index + 1] == "claude-opus-4-1"
 
 
 def test_plain_backend_captures_stdout_and_stderr(tmp_path) -> None:

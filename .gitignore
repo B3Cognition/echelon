@@ -44,3 +44,7 @@ extension/scripts/node/re/node_modules/
 .claude/skills/
 .worktrees/
 docs/echelon-*run-*.md
+
+# Local AI engineering learning experiments. Keep these out of repo history;
+# tracked experiments already live under /experiments.
+experiments/
