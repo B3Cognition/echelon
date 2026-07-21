@@ -1535,6 +1535,101 @@ def test_openai_compatible_registry_executes_bulk_context_tools(tmp_path) -> Non
     assert "perlgraph-summary.json" in perlgraph["files"]
 
 
+def test_openai_compatible_registry_filters_noisy_default_paths(tmp_path) -> None:
+    from harness.ai_cli_backends.openai_compatible import _OpenAIToolRegistry
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.py").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "src" / "__pycache__").mkdir()
+    (tmp_path / "src" / "__pycache__" / "main.cpython-314.pyc").write_bytes(
+        b"\x00\x01compiled needle"
+    )
+    (tmp_path / "node_modules" / "pkg").mkdir(parents=True)
+    (tmp_path / "node_modules" / "pkg" / "index.js").write_text(
+        "needle\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "archive.zip").write_bytes(b"PK\x03\x04needle")
+
+    registry = _OpenAIToolRegistry(tmp_path, {})
+
+    listed = _registry_tool_payload(
+        registry,
+        "list_files",
+        {"pattern": "**/*", "limit": 50},
+    )
+    assert listed["status"] == "ok"
+    assert listed["matches"] == ["src/main.py"]
+
+    tree = _registry_tool_payload(
+        registry,
+        "list_tree_with_sizes",
+        {"path": ".", "max_entries": 50},
+    )
+    tree_paths = [entry["path"] for entry in tree["entries"]]
+    assert "src/main.py" in tree_paths
+    assert "archive.zip" not in tree_paths
+    assert "src/__pycache__/main.cpython-314.pyc" not in tree_paths
+    assert "node_modules/pkg/index.js" not in tree_paths
+
+    grep = _registry_tool_payload(
+        registry,
+        "grep_context",
+        {"pattern": "needle", "path": ".", "max_matches": 10},
+    )
+    assert [match["path"] for match in grep["matches"]] == ["src/main.py"]
+
+    many = _registry_tool_payload(
+        registry,
+        "read_many_files",
+        {"paths": ["src/main.py", "archive.zip", "src/__pycache__/main.cpython-314.pyc"]},
+    )
+    assert [item["status"] for item in many["files"]] == ["ok", "skipped", "skipped"]
+    assert "ignored by provider filter" in many["files"][1]["error"]
+
+    read_zip = _registry_tool_payload(
+        registry,
+        "read_file",
+        {"path": "archive.zip"},
+    )
+    assert read_zip["status"] == "error"
+    assert "ignored by provider filter" in read_zip["error"]
+
+
+def test_openai_compatible_registry_applies_custom_ignore_config(tmp_path) -> None:
+    from harness.ai_cli_backends.openai_compatible import _OpenAIToolRegistry
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "keep.py").write_text("needle\n", encoding="utf-8")
+    (tmp_path / "src" / "generated").mkdir()
+    (tmp_path / "src" / "generated" / "noise.py").write_text(
+        "needle\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "snapshot.lock").write_text("needle\n", encoding="utf-8")
+    registry = _OpenAIToolRegistry(
+        tmp_path,
+        {
+            "ignore_globs": ["**/generated/**"],
+            "ignore_extensions": [".lock"],
+        },
+    )
+
+    listed = _registry_tool_payload(
+        registry,
+        "list_files",
+        {"pattern": "**/*", "limit": 50},
+    )
+    assert listed["matches"] == ["src/keep.py"]
+
+    grep = _registry_tool_payload(
+        registry,
+        "grep_files",
+        {"pattern": "needle", "file_pattern": "**/*", "max_matches": 10},
+    )
+    assert [match["path"] for match in grep["matches"]] == ["src/keep.py"]
+
+
 def test_openai_compatible_tool_call_summary_includes_bulk_args() -> None:
     from harness.ai_cli_backends.openai_compatible import _tool_call_summary
 
@@ -1739,6 +1834,222 @@ def test_openai_compatible_backend_executes_nonstreaming_write_file_tool_call(
     assert "[openai-compatible] final: finish_reason=stop" in captured.err
     assert "elapsed=" in captured.err
     assert "[openai-compatible]" not in result.stdout
+
+
+def test_openai_compatible_backend_writes_compact_transcript_for_run_dir(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    run_dir = tmp_path / "runs" / "re-1" / "re"
+    run_dir.mkdir(parents=True)
+    (run_dir / "re-execution-plan.json").write_text("{}", encoding="utf-8")
+    captured_payloads = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(self._payload).encode()
+
+    responses = iter([
+        {
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_read",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({
+                                        "path": "re-execution-plan.json",
+                                    }),
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"total_tokens": 5},
+        },
+        {
+            "choices": [
+                {
+                    "message": {"content": "echelon_result:\n  verdict: DONE\n"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 6},
+        },
+    ])
+
+    def fake_urlopen(request, timeout):
+        captured_payloads.append(json.loads(request.data.decode()))
+        return FakeResponse(next(responses))
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    result = OpenAICompatibleBackend(
+        _openai_config(features={"streaming": False, "tool_calls": True})
+    ).run_prompt(
+        CliRunRequest(
+            cwd=str(run_dir),
+            prompt="Read the plan and finish.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    transcript_path = Path(str(result.metadata["provider_transcript_path"]))
+    assert result.exit_code == 0
+    assert transcript_path.is_file()
+    assert transcript_path.parent == run_dir / "provider-transcripts"
+    events = [
+        json.loads(line)
+        for line in transcript_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [event["event"] for event in events] == [
+        "turn_response",
+        "tool_call",
+        "tool_result",
+        "turn_summary",
+        "turn_response",
+        "turn_summary",
+        "final",
+    ]
+    assert events[1]["tool_name"] == "read_file"
+    assert events[2]["tool_result"].startswith("ok ")
+    assert events[-1]["finish_reason"] == "stop"
+    assert "messages" not in events[0]
+    assert captured_payloads[0]["messages"][0]["role"] == "system"
+
+
+def test_openai_compatible_backend_compacts_old_large_tool_results(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    for index in range(4):
+        (tmp_path / f"big-{index}.txt").write_text(
+            f"header {index}\n" + ("x" * 600) + "\n",
+            encoding="utf-8",
+        )
+    captured_payloads = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(self._payload).encode()
+
+    tool_responses = []
+    for index in range(4):
+        tool_responses.append({
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": f"call_read_{index}",
+                                "type": "function",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": json.dumps({
+                                        "path": f"big-{index}.txt",
+                                    }),
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"total_tokens": 3},
+        })
+    responses = iter([
+        *tool_responses,
+        {
+            "choices": [
+                {
+                    "message": {"content": "echelon_result:\n  verdict: DONE\n"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"total_tokens": 4},
+        },
+    ])
+
+    def fake_urlopen(request, timeout):
+        captured_payloads.append(json.loads(request.data.decode()))
+        return FakeResponse(next(responses))
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    result = OpenAICompatibleBackend(
+        _openai_config(features={
+            "streaming": False,
+            "tool_calls": True,
+            "tool_result_compaction": True,
+            "compact_after_tool_results": 3,
+            "keep_recent_tool_results": 1,
+            "compact_tool_result_after_chars": 200,
+            "compacted_result_chars": 80,
+        })
+    ).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Read the large files and finish.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    final_messages = captured_payloads[-1]["messages"]
+    tool_messages = [
+        message
+        for message in final_messages
+        if message.get("role") == "tool"
+    ]
+    compacted = json.loads(tool_messages[0]["content"])
+    newest = json.loads(tool_messages[-1]["content"])
+    assert result.exit_code == 0
+    assert compacted["status"] == "compacted"
+    assert compacted["tool_name"] == "read_file"
+    assert compacted["original_status"] == "ok"
+    assert compacted["original_chars"] > 200
+    assert "big-0.txt" in compacted["summary"]
+    assert "content" not in compacted
+    assert newest["status"] == "ok"
+    assert "x" * 120 in newest["content"]
+    captured = capsys.readouterr()
+    assert "[openai-compatible] compaction:" in captured.err
+    assert "compacted=3" in captured.err
+    assert result.metadata["tool_result_compactions"] >= 3
 
 
 def test_openai_compatible_tool_round_limit_reports_last_context(

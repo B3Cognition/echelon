@@ -95,6 +95,11 @@ harness_app = typer.Typer(
     help="Compatibility alias for delivery init/run/resume.",
     no_args_is_help=True,
 )
+llm_app = typer.Typer(
+    add_completion=False,
+    help="LLM provider diagnostics.",
+    no_args_is_help=True,
+)
 re_app = typer.Typer(
     add_completion=False,
     help="Publish and inspect workspace reverse engineering.",
@@ -123,6 +128,7 @@ app.add_typer(benchmark_app, name="benchmark")
 app.add_typer(stack_app, name="stack")
 app.add_typer(delivery_app, name="delivery")
 app.add_typer(harness_app, name="harness", hidden=True)
+app.add_typer(llm_app, name="llm")
 app.add_typer(re_app, name="re")
 app.add_typer(kb_app, name="kb")
 app.add_typer(wiki_app, name="wiki")
@@ -304,6 +310,90 @@ def kb_apply(
     typer.echo(f"report: {report.report_path}")
     typer.echo(f"accepted: {report.accepted_count}")
     typer.echo(f"rejected: {report.rejected_count}")
+
+
+@llm_app.command("smoke-openai-compatible")
+def llm_smoke_openai_compatible(
+    base_url: Optional[str] = typer.Option(
+        None,
+        "--base-url",
+        help="OpenAI-compatible /v1 endpoint base URL.",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Model name to send in chat/completions requests.",
+    ),
+    api_key_env: Optional[str] = typer.Option(
+        None,
+        "--api-key-env",
+        help="Environment variable containing the API key.",
+    ),
+    api_key_file: Optional[str] = typer.Option(
+        None,
+        "--api-key-file",
+        help="File containing the API key.",
+    ),
+    timeout_s: float = typer.Option(
+        120.0,
+        "--timeout-s",
+        min=1.0,
+        help="Smoke request timeout in seconds.",
+    ),
+    streaming: bool = typer.Option(
+        True,
+        "--streaming/--no-streaming",
+        help="Use SSE streaming for the smoke run.",
+    ),
+) -> None:
+    """Exercise an OpenAI-compatible endpoint with a tiny tool-call loop."""
+    from harness.ai_cli_backends.openai_compatible_smoke import (
+        run_openai_compatible_smoke,
+    )
+    from harness.config import load_config
+
+    project_root = Path.cwd()
+    config = None
+    if base_url is None or model is None or (api_key_env is None and api_key_file is None):
+        try:
+            config = load_config(project_root, squad_only=True)
+        except Exception:
+            config = None
+    llm = config.llm if config is not None else None
+    resolved_base_url = base_url or (llm.base_url if llm is not None else None)
+    resolved_model = model or (llm.model if llm is not None else None)
+    resolved_api_key_env = api_key_env or (llm.api_key_env if llm is not None else None)
+    resolved_api_key_file = api_key_file or (
+        llm.api_key_file if llm is not None else None
+    )
+    if not resolved_base_url:
+        typer.echo("Missing --base-url and no llm.base_url in config.", err=True)
+        raise typer.Exit(code=2)
+    if not resolved_model:
+        typer.echo("Missing --model and no llm.model in config.", err=True)
+        raise typer.Exit(code=2)
+    result = run_openai_compatible_smoke(
+        project_root=project_root,
+        base_url=resolved_base_url,
+        model=resolved_model,
+        api_key_env=resolved_api_key_env,
+        api_key_file=resolved_api_key_file,
+        timeout_s=timeout_s,
+        streaming=streaming,
+    )
+    if result.ok:
+        typer.echo("OpenAI-compatible smoke: ok")
+    else:
+        typer.echo("OpenAI-compatible smoke: failed", err=True)
+    typer.echo(f"work_dir: {result.work_dir}")
+    if result.transcript_path:
+        typer.echo(f"transcript: {result.transcript_path}")
+    typer.echo(f"tool_calls={result.tool_call_count}")
+    typer.echo(f"tokens={result.token_usage}")
+    if not result.ok:
+        if result.stderr:
+            typer.echo(result.stderr, err=True)
+        raise typer.Exit(code=1)
 
 
 @app.command("version")

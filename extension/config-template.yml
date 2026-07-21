@@ -1234,6 +1234,18 @@ harness:
   #   #   web_tools: false
   #   #   web_timeout_s: 10
   #   #   web_search_url: https://duckduckgo.com/html/
+  #   #   transcript: true
+  #   #   provider_transcript_dir: ""  # optional override; run dirs auto-detected
+  #   #   tool_result_compaction: true
+  #   #   compact_after_tool_results: 8
+  #   #   keep_recent_tool_results: 4
+  #   #   compact_tool_result_after_chars: 96000
+  #   #   compacted_result_chars: 2000
+  #   #   default_ignore_filters: true
+  #   #   ignore_globs:
+  #   #     - "**/generated/**"
+  #   #   ignore_extensions:
+  #   #     - ".lock"
   #   #   reasoning_content: auto
   #   #   reasoning_effort: false  # false | low | medium | high
   #   tool_policy:

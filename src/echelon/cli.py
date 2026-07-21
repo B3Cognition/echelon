@@ -56,7 +56,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.7.7"
+CLI_VERSION = "3.7.8"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -119,6 +119,10 @@ Commands:
                                             Print saved benchmark scores.
   benchmark run <fixture> --variant <id> [--baseline-ref <ref>] [--artifact-only] [--dry-run]
                                             Run or print an artifact-quality benchmark variant.
+
+  llm smoke-openai-compatible [--base-url <url>] [--model <model>]
+                    [--api-key-file <path>|--api-key-env <env>] [--no-streaming]
+                                            Exercise an OpenAI-compatible endpoint with a tiny tool-call loop.
 
   stack list [--json]                       List available Echelon stacks.
   stack detect [--target <path>] [--artifacts <path>] [--write] [--format text|yaml] [--json]
