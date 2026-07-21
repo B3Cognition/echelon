@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import time
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -81,6 +82,8 @@ class SquadAgentResult:
     echelon_result_repair_duration_ms: int | None = None
     echelon_result_repair_model_name: str = ""
     echelon_result_repair_outcome: str = ""
+    echelon_result_repair_started_at: str = ""
+    echelon_result_repair_ended_at: str = ""
     provider_limit_message: str = ""
     quarantined_state_updates: dict = field(default_factory=dict)
     stderr: str = ""
@@ -379,6 +382,8 @@ class SquadCliProvider(AICodingCliProvider):
         repair_duration_ms: int | None = None
         repair_model_name = ""
         repair_outcome = ""
+        repair_started_at = ""
+        repair_ended_at = ""
 
         if (
             echelon_result is None
@@ -393,11 +398,13 @@ class SquadCliProvider(AICodingCliProvider):
                 validation_reason,
             )
             repair_git_before = _git_boundary_snapshot(project_root)
+            repair_started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             repair_started = time.monotonic()
             repair_result = self.run_agent_result(
                 project_root, repair_prompt, **run_kwargs
             )
             repair_duration_ms = int((time.monotonic() - repair_started) * 1000)
+            repair_ended_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             repair_model_name = _provider_model_name(repair_result.metadata)
             repair_outcome = "OK" if repair_result.exit_code == 0 and not repair_result.timed_out else "ERROR"
             _verify_git_boundary(project_root, repair_git_before)
@@ -450,6 +457,8 @@ class SquadCliProvider(AICodingCliProvider):
             echelon_result_repair_duration_ms=repair_duration_ms,
             echelon_result_repair_model_name=repair_model_name,
             echelon_result_repair_outcome=repair_outcome,
+            echelon_result_repair_started_at=repair_started_at,
+            echelon_result_repair_ended_at=repair_ended_at,
             provider_limit_message=provider_limit_message,
             quarantined_state_updates=quarantined_state_updates,
             stderr=backend_result.stderr,

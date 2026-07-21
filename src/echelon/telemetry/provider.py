@@ -131,7 +131,9 @@ class InstrumentedProvider:
                         "schema_version": 1, "type": "dispatch", "trace_id": self._store.trace_id,
                         "phase": context.phase, "agent": context.agent, "attempt": context.attempt + 1,
                         "reason": "provider_retry", "outcome": str(getattr(result, "echelon_result_repair_outcome", "ERROR") or "ERROR"),
-                        "event_time": _timestamp(ended), "started_at": _timestamp(ended), "ended_at": _timestamp(ended),
+                        "event_time": str(getattr(result, "echelon_result_repair_ended_at", "") or _timestamp(ended)),
+                        "started_at": str(getattr(result, "echelon_result_repair_started_at", "") or _timestamp(ended)),
+                        "ended_at": str(getattr(result, "echelon_result_repair_ended_at", "") or _timestamp(ended)),
                         "duration_ms": int(getattr(result, "echelon_result_repair_duration_ms", 0) or 0),
                         "model": str(getattr(result, "echelon_result_repair_model_name", "") or ""), "blocker": "",
                     })

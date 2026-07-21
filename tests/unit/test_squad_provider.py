@@ -136,6 +136,8 @@ def test_squad_provider_repairs_missing_echelon_result_after_clean_exit(monkeypa
     assert result.echelon_result_repair_succeeded is True
     assert result.echelon_result_repair_duration_ms is not None
     assert result.echelon_result_repair_outcome == "OK"
+    assert result.echelon_result_repair_started_at.endswith("Z")
+    assert result.echelon_result_repair_ended_at.endswith("Z")
 
 
 def test_squad_provider_does_not_repair_timeout_or_nonzero_exit(monkeypatch, tmp_path) -> None:

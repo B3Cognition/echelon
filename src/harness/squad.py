@@ -1800,6 +1800,7 @@ class SquadController:
         state["blocked_reason"] = "phase_a_readiness_failed"
         state["phase_a_readiness_blockers"] = readiness.blockers
         self._state_store.save(state)
+        self._record_blocker_event("phase4-document", "phase_a_readiness_failed")
         print(
             "[squad] ✗ phase4-document blocked: Phase A readiness failed "
             "(build-input artifacts incomplete)",
@@ -2413,6 +2414,7 @@ class SquadController:
                         s["blocked_reason"] = "consecutive_why_fails"
                         s["status"] = "blocked"
                         self._state_store.save(s)
+                        self._record_blocker_event(node.id, "consecutive_why_fails")
                         return PHASE_TERMINAL_BLOCKED
             else:
                 self._state_store.reset_why_fail_count()
