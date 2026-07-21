@@ -1,0 +1,884 @@
+{
+ "spec_path": "specs/030-build-sue-challenge-script/spec.md",
+ "run_date": "2026-07-21",
+ "profile": "deep",
+ "models": {
+  "dialogue": "claude --model claude-sonnet-5",
+  "measure": "(cli default)"
+ },
+ "tiers": [
+  {
+   "tier": "v2",
+   "status": "ok"
+  },
+  {
+   "tier": "v3",
+   "status": "ok"
+  },
+  {
+   "tier": "drills",
+   "status": "ok"
+  }
+ ],
+ "stable_findings": [
+  {
+   "verdict": "CONTRADICTED",
+   "support": 3,
+   "question": "FR-036 requires the report header to state 'exactly 5 base facts' including a resolved model provider, but AC-002 requires the header to state 'exactly 4 facts' (spec path, run date, question count, finding count) with no provider fact at all. Which count governs the header's contents \u2014 4 or 5?",
+   "target": "FR-036"
+  },
+  {
+   "verdict": "UNANSWERABLE",
+   "support": 3,
+   "question": "FR-036 introduces 'resolved model provider' as a header fact, but no requirement defines what a 'provider' is, how it is derived from an arbitrary FR-003 command line, or what value it takes when the command is a test stub rather than a real vendor CLI.",
+   "target": "FR-036"
+  },
+  {
+   "verdict": "UNANSWERABLE",
+   "support": 2,
+   "question": "A-001 states as an unvalidated assumption that 'the model command can be driven non-interactively with prompt in, extractable JSON out,' yet FR-008 and FR-026 are written as if this always holds. If the designated acceptance run's real model command turns out not to satisfy A-001, which requirement governs the resulting behavior rather than leaving it as an open spike outcome?",
+   "target": "FR-008"
+  },
+  {
+   "verdict": "UNANSWERABLE",
+   "support": 2,
+   "question": "FR-013 classifies empty stdout as an automatic failed call. Does stdout consisting only of whitespace or newlines count as 'empty' and skip extraction, or does it proceed to FR-026/FR-027 extraction and fail there instead?",
+   "target": "FR-013"
+  }
+ ],
+ "measurement": {
+  "passes": 2,
+  "sr_mean": 0.4225108300098873,
+  "sr_stdev": 0.026914036015657422,
+  "sr_series": [
+   0.3956,
+   0.4494
+  ],
+  "extraction_noise_floor": 0.09430858493358493,
+  "per_requirement": {
+   "AC-001": {
+    "mean": 0.1066137566137566,
+    "stdev": 0.07328042328042328,
+    "min": 0.03333333333333333,
+    "max": 0.17989417989417988,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-002": {
+    "mean": 0.31666666666666665,
+    "stdev": 0.14999999999999997,
+    "min": 0.16666666666666666,
+    "max": 0.4666666666666666,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-003": {
+    "mean": 0.09999999999999999,
+    "stdev": 0.09999999999999999,
+    "min": 0.0,
+    "max": 0.19999999999999998,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-004": {
+    "mean": 0.1238095238095238,
+    "stdev": 0.07619047619047618,
+    "min": 0.047619047619047616,
+    "max": 0.19999999999999998,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-005": {
+    "mean": 0.2333333333333333,
+    "stdev": 0.2333333333333333,
+    "min": 0.0,
+    "max": 0.4666666666666666,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-006": {
+    "mean": 0.26666666666666666,
+    "stdev": 0.15555555555555556,
+    "min": 0.1111111111111111,
+    "max": 0.4222222222222222,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-007": {
+    "mean": 0.19047619047619047,
+    "stdev": 0.07936507936507936,
+    "min": 0.1111111111111111,
+    "max": 0.2698412698412698,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-008": {
+    "mean": 0.06666666666666667,
+    "stdev": 0.06666666666666667,
+    "min": 0.0,
+    "max": 0.13333333333333333,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-009": {
+    "mean": 0.23333333333333334,
+    "stdev": 0.06666666666666667,
+    "min": 0.16666666666666666,
+    "max": 0.3,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-010": {
+    "mean": 0.13888888888888887,
+    "stdev": 0.13888888888888887,
+    "min": 0.0,
+    "max": 0.27777777777777773,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-011": {
+    "mean": 0.20238095238095238,
+    "stdev": 0.10714285714285715,
+    "min": 0.09523809523809523,
+    "max": 0.30952380952380953,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-012": {
+    "mean": 0.2222222222222222,
+    "stdev": 0.05555555555555554,
+    "min": 0.16666666666666666,
+    "max": 0.27777777777777773,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-013": {
+    "mean": 0.051587301587301584,
+    "stdev": 0.003968253968253968,
+    "min": 0.047619047619047616,
+    "max": 0.05555555555555555,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-014": {
+    "mean": 0.1111111111111111,
+    "stdev": 0.0,
+    "min": 0.1111111111111111,
+    "max": 0.1111111111111111,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-015": {
+    "mean": 0.13194444444444442,
+    "stdev": 0.02083333333333333,
+    "min": 0.1111111111111111,
+    "max": 0.15277777777777776,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-016": {
+    "mean": 0.41666666666666663,
+    "stdev": 0.25,
+    "min": 0.16666666666666666,
+    "max": 0.6666666666666666,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "AC-017": {
+    "mean": 0.11342592592592593,
+    "stdev": 0.07175925925925927,
+    "min": 0.041666666666666664,
+    "max": 0.1851851851851852,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-018": {
+    "mean": 0.1388888888888889,
+    "stdev": 0.08333333333333333,
+    "min": 0.05555555555555555,
+    "max": 0.2222222222222222,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-019": {
+    "mean": 0.05555555555555555,
+    "stdev": 0.0,
+    "min": 0.05555555555555555,
+    "max": 0.05555555555555555,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-020": {
+    "mean": 0.2517857142857143,
+    "stdev": 0.08511904761904761,
+    "min": 0.16666666666666666,
+    "max": 0.3369047619047619,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-021": {
+    "mean": 0.19166666666666668,
+    "stdev": 0.013888888888888895,
+    "min": 0.17777777777777778,
+    "max": 0.20555555555555557,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "AC-022": {
+    "mean": 0.44047619047619047,
+    "stdev": 0.3928571428571429,
+    "min": 0.047619047619047616,
+    "max": 0.8333333333333334,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "AC-023": {
+    "mean": 0.22037037037037038,
+    "stdev": 0.02962962962962963,
+    "min": 0.19074074074074074,
+    "max": 0.25,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "ERR-001": {
+    "mean": 0.3611111111111111,
+    "stdev": 0.10555555555555551,
+    "min": 0.2555555555555556,
+    "max": 0.4666666666666666,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "ERR-002": {
+    "mean": 0.3611111111111111,
+    "stdev": 0.10555555555555551,
+    "min": 0.2555555555555556,
+    "max": 0.4666666666666666,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "ERR-003": {
+    "mean": 0.3611111111111111,
+    "stdev": 0.10555555555555551,
+    "min": 0.2555555555555556,
+    "max": 0.4666666666666666,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "ERR-004": {
+    "mean": 0.3111111111111111,
+    "stdev": 0.08888888888888888,
+    "min": 0.2222222222222222,
+    "max": 0.39999999999999997,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "ERR-005": {
+    "mean": 0.326984126984127,
+    "stdev": 0.031746031746031744,
+    "min": 0.29523809523809524,
+    "max": 0.35873015873015873,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-001": {
+    "mean": 0.5,
+    "stdev": 0.0,
+    "min": 0.5,
+    "max": 0.5,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-002": {
+    "mean": 0.3134920634920635,
+    "stdev": 0.04497354497354494,
+    "min": 0.26851851851851855,
+    "max": 0.35846560846560843,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-003": {
+    "mean": 0.36666666666666664,
+    "stdev": 0.033333333333333326,
+    "min": 0.3333333333333333,
+    "max": 0.39999999999999997,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-004": {
+    "mean": 0.3161375661375661,
+    "stdev": 0.01719576719576721,
+    "min": 0.2989417989417989,
+    "max": 0.3333333333333333,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-005": {
+    "mean": 0.8333333333333333,
+    "stdev": 0.16666666666666669,
+    "min": 0.6666666666666666,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-006": {
+    "mean": 0.6666666666666666,
+    "stdev": 0.0,
+    "min": 0.6666666666666666,
+    "max": 0.6666666666666666,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-007": {
+    "mean": 0.22499999999999998,
+    "stdev": 0.02500000000000001,
+    "min": 0.19999999999999998,
+    "max": 0.25,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-008": {
+    "mean": 0.43518518518518523,
+    "stdev": 0.0648148148148148,
+    "min": 0.3703703703703704,
+    "max": 0.5,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-009": {
+    "mean": 0.3333333333333333,
+    "stdev": 0.0,
+    "min": 0.3333333333333333,
+    "max": 0.3333333333333333,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-010": {
+    "mean": 0.25376984126984126,
+    "stdev": 0.01567460317460316,
+    "min": 0.2380952380952381,
+    "max": 0.26944444444444443,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-011": {
+    "mean": 0.4722222222222222,
+    "stdev": 0.03888888888888886,
+    "min": 0.43333333333333335,
+    "max": 0.5111111111111111,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-012": {
+    "mean": 0.3541666666666667,
+    "stdev": 0.0625,
+    "min": 0.2916666666666667,
+    "max": 0.4166666666666667,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-013": {
+    "mean": 0.18362193362193363,
+    "stdev": 0.07647907647907648,
+    "min": 0.10714285714285714,
+    "max": 0.2601010101010101,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-014": {
+    "mean": 1.0,
+    "stdev": 0.0,
+    "min": 1.0,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-015": {
+    "mean": 0.32936507936507936,
+    "stdev": 0.029365079365079372,
+    "min": 0.3,
+    "max": 0.35873015873015873,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-016": {
+    "mean": 0.44670231729055265,
+    "stdev": 0.04016636957813427,
+    "min": 0.40653594771241836,
+    "max": 0.4868686868686869,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-017": {
+    "mean": 0.8666666666666667,
+    "stdev": 0.1333333333333333,
+    "min": 0.7333333333333334,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-018": {
+    "mean": 0.7111111111111111,
+    "stdev": 0.28888888888888886,
+    "min": 0.4222222222222222,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-019": {
+    "mean": 0.5476190476190477,
+    "stdev": 0.07142857142857142,
+    "min": 0.4761904761904762,
+    "max": 0.6190476190476191,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-020": {
+    "mean": 0.6444444444444444,
+    "stdev": 0.08888888888888896,
+    "min": 0.5555555555555555,
+    "max": 0.7333333333333334,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-021": {
+    "mean": 1.0,
+    "stdev": 0.0,
+    "min": 1.0,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-022": {
+    "mean": 0.027777777777777776,
+    "stdev": 0.027777777777777776,
+    "min": 0.0,
+    "max": 0.05555555555555555,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-023": {
+    "mean": 0.3555555555555555,
+    "stdev": 0.044444444444444425,
+    "min": 0.3111111111111111,
+    "max": 0.39999999999999997,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-024": {
+    "mean": 0.5998677248677249,
+    "stdev": 0.13227513227513227,
+    "min": 0.46759259259259256,
+    "max": 0.7321428571428571,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-025": {
+    "mean": 0.23809523809523808,
+    "stdev": 0.09523809523809523,
+    "min": 0.14285714285714285,
+    "max": 0.3333333333333333,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-026": {
+    "mean": 0.4016770266770267,
+    "stdev": 0.03771691271691269,
+    "min": 0.363960113960114,
+    "max": 0.4393939393939394,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-027": {
+    "mean": 0.16666666666666666,
+    "stdev": 0.0,
+    "min": 0.16666666666666666,
+    "max": 0.16666666666666666,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-028": {
+    "mean": 0.6428571428571428,
+    "stdev": 0.13492063492063489,
+    "min": 0.5079365079365079,
+    "max": 0.7777777777777777,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-029": {
+    "mean": 0.5666666666666667,
+    "stdev": 0.43333333333333335,
+    "min": 0.13333333333333333,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-030": {
+    "mean": 0.4190087145969499,
+    "stdev": 2.7233115468427993e-05,
+    "min": 0.41898148148148145,
+    "max": 0.4190359477124183,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-031": {
+    "mean": 0.38888888888888884,
+    "stdev": 0.16666666666666663,
+    "min": 0.2222222222222222,
+    "max": 0.5555555555555555,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-032": {
+    "mean": 0.7777777777777777,
+    "stdev": 0.22222222222222227,
+    "min": 0.5555555555555555,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-033": {
+    "mean": 0.9166666666666667,
+    "stdev": 0.08333333333333331,
+    "min": 0.8333333333333334,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-034": {
+    "mean": 0.23125,
+    "stdev": 0.02906746031746034,
+    "min": 0.20218253968253966,
+    "max": 0.26031746031746034,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-035": {
+    "mean": 0.8888888888888888,
+    "stdev": 0.11111111111111116,
+    "min": 0.7777777777777777,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-036": {
+    "mean": 0.41036324786324785,
+    "stdev": 0.10096153846153844,
+    "min": 0.3094017094017094,
+    "max": 0.5113247863247863,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-037": {
+    "mean": 0.3888888888888889,
+    "stdev": 0.19841269841269843,
+    "min": 0.19047619047619047,
+    "max": 0.5873015873015873,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-038": {
+    "mean": 0.75,
+    "stdev": 0.25,
+    "min": 0.5,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-039": {
+    "mean": 0.39616402116402116,
+    "stdev": 0.048280423280423285,
+    "min": 0.34788359788359785,
+    "max": 0.4444444444444444,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "FR-040": {
+    "mean": 0.6283068783068783,
+    "stdev": 0.16534391534391532,
+    "min": 0.46296296296296297,
+    "max": 0.7936507936507936,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-041": {
+    "mean": 0.7555555555555555,
+    "stdev": 0.24444444444444446,
+    "min": 0.5111111111111111,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-042": {
+    "mean": 0.6666666666666666,
+    "stdev": 0.0,
+    "min": 0.6666666666666666,
+    "max": 0.6666666666666666,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-043": {
+    "mean": 1.0,
+    "stdev": 0.0,
+    "min": 1.0,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-044": {
+    "mean": 0.5681818181818182,
+    "stdev": 0.31060606060606066,
+    "min": 0.25757575757575757,
+    "max": 0.8787878787878789,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "FR-045": {
+    "mean": 0.6428571428571428,
+    "stdev": 0.02380952380952378,
+    "min": 0.6190476190476191,
+    "max": 0.6666666666666666,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "NFR-001": {
+    "mean": 0.3333333333333333,
+    "stdev": 0.0,
+    "min": 0.3333333333333333,
+    "max": 0.3333333333333333,
+    "passes": 2,
+    "stable_low": true,
+    "noise_bounded_low": true
+   },
+   "NFR-002": {
+    "mean": 0.5317460317460316,
+    "stdev": 0.02380952380952378,
+    "min": 0.5079365079365079,
+    "max": 0.5555555555555555,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "NFR-003": {
+    "mean": 0.7777777777777777,
+    "stdev": 0.22222222222222227,
+    "min": 0.5555555555555555,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "NFR-004": {
+    "mean": 0.8055555555555556,
+    "stdev": 0.19444444444444448,
+    "min": 0.611111111111111,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   },
+   "NFR-005": {
+    "mean": 0.8333333333333333,
+    "stdev": 0.16666666666666669,
+    "min": 0.6666666666666666,
+    "max": 1.0,
+    "passes": 2,
+    "stable_low": false,
+    "noise_bounded_low": false
+   }
+  },
+  "stable_low": [
+   "AC-001",
+   "AC-002",
+   "AC-003",
+   "AC-004",
+   "AC-005",
+   "AC-006",
+   "AC-007",
+   "AC-008",
+   "AC-009",
+   "AC-010",
+   "AC-011",
+   "AC-012",
+   "AC-013",
+   "AC-014",
+   "AC-015",
+   "AC-017",
+   "AC-018",
+   "AC-019",
+   "AC-020",
+   "AC-021",
+   "AC-023",
+   "ERR-001",
+   "ERR-002",
+   "ERR-003",
+   "ERR-004",
+   "ERR-005",
+   "FR-002",
+   "FR-003",
+   "FR-004",
+   "FR-007",
+   "FR-009",
+   "FR-010",
+   "FR-012",
+   "FR-013",
+   "FR-015",
+   "FR-016",
+   "FR-022",
+   "FR-023",
+   "FR-025",
+   "FR-026",
+   "FR-027",
+   "FR-030",
+   "FR-034",
+   "FR-039",
+   "NFR-001"
+  ]
+ },
+ "stable_low": [
+  "AC-001",
+  "AC-002",
+  "AC-003",
+  "AC-004",
+  "AC-005",
+  "AC-006",
+  "AC-007",
+  "AC-008",
+  "AC-009",
+  "AC-010",
+  "AC-011",
+  "AC-012",
+  "AC-013",
+  "AC-014",
+  "AC-015",
+  "AC-017",
+  "AC-018",
+  "AC-019",
+  "AC-020",
+  "AC-021",
+  "AC-023",
+  "ERR-001",
+  "ERR-002",
+  "ERR-003",
+  "ERR-004",
+  "ERR-005",
+  "FR-002",
+  "FR-003",
+  "FR-004",
+  "FR-007",
+  "FR-009",
+  "FR-010",
+  "FR-012",
+  "FR-013",
+  "FR-015",
+  "FR-016",
+  "FR-022",
+  "FR-023",
+  "FR-025",
+  "FR-026",
+  "FR-027",
+  "FR-030",
+  "FR-034",
+  "FR-039",
+  "NFR-001"
+ ],
+ "drills": [
+  {
+   "lens": "parmenides",
+   "seed": "FR-036 requires the report header to state 'exactly 5 base facts' including a resolved model provider, but AC-002 requires the header to state 'exactly 4 facts' (spec path, run date, question count, finding count) with no provider fact at all. Which count governs the header's contents \u2014 4 or 5?",
+   "target": "FR-036",
+   "source": "v2-stable",
+   "terminal_state": "APORIA_CONTRADICTED",
+   "turns": 2
+  },
+  {
+   "lens": "theaetetus",
+   "seed": "A-001 states as an unvalidated assumption that 'the model command can be driven non-interactively with prompt in, extractable JSON out,' yet FR-008 and FR-026 are written as if this always holds. If the designated acceptance run's real model command turns out not to satisfy A-001, which requirement governs the resulting behavior rather than leaving it as an open spike outcome?",
+   "target": "FR-008",
+   "source": "v2-stable",
+   "terminal_state": "APORIA_CONTRADICTED",
+   "turns": 4
+  },
+  {
+   "lens": "theaetetus",
+   "seed": "FR-013 classifies empty stdout as an automatic failed call. Does stdout consisting only of whitespace or newlines count as 'empty' and skip extraction, or does it proceed to FR-026/FR-027 extraction and fail there instead?",
+   "target": "FR-013",
+   "source": "v2-stable",
+   "terminal_state": "APORIA_UNDEFINED",
+   "turns": 1
+  }
+ ],
+ "jgraph": null
+}

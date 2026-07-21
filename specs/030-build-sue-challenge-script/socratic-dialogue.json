@@ -1,16 +1,16 @@
 {
  "specification": "specs/030-build-sue-challenge-script/spec.md",
- "run_date": "2026-07-20",
+ "run_date": "2026-07-21",
  "lens": "theaetetus",
- "seed": "the criterion by which a challenge finding counts as overlapping one of the three named known issues",
- "target": "AC-023",
+ "seed": "FR-013 classifies empty stdout as an automatic failed call. Does stdout consisting only of whitespace or newlines count as 'empty' and skip extraction, or does it proceed to FR-026/FR-027 extraction and fail there instead?",
+ "target": "FR-013",
  "terminal_state": "APORIA_UNDEFINED",
  "turns": [
   {
    "turn": 1,
    "operator": "CAUSE_OR_CRITERION",
-   "question": "By what criterion in the text would one recognize or verify \"the criterion by which a challenge finding counts as overlapping one of the three named known issues\"? Cite the lines that establish the criterion.",
-   "answer": "The specification requires that a finding \"overlap\" one of the three named known issues (AC-023, SC-001), but it never states an operational criterion for how one would recognize or verify that overlap \u2014 e.g., whether it means the finding's target requirement identifier matches one of the cited requirement IDs (REQ-009/AC-010, REQ-017/REQ-019/REQ-028, REQ-002), whether it means textual/topical similarity to the described issue, or some other test. The text only names the three issues and asserts the outcome condition; it supplies no rule for judging overlap itself.",
+   "question": "By what criterion in the text would one recognize or verify \"FR-013 classifies empty stdout as an automatic failed call. Does stdout consisting only of whitespace or newlines count as 'empty' and skip extraction, or does it proceed to FR-026/FR-027 extraction and fail there instead?\"? Cite the lines that establish the criterion.",
+   "answer": "The text does not establish this criterion. FR-013 (line 152) states only that a model call producing 'empty stdout' is classified as a failed call on the parse-failure path before any extraction, but it never defines what counts as 'empty' for stdout. Elsewhere the spec does define 'empty' explicitly and narrowly for a different object \u2014 FR-005 (line 131) defines an empty specification as one containing '0 non-whitespace characters' \u2014 but no analogous definition is given for stdout in FR-013, FR-026, or FR-027. Whether whitespace/newline-only stdout is treated as 'empty' (short-circuiting to the failed-call path) or as non-empty content that proceeds to FR-026/FR-027 extraction (and fails there for yielding 0 JSON objects) is left unstated.",
    "verdict": "SILENT",
    "answer_type": "none",
    "evidence_lines": [],
