@@ -2,7 +2,7 @@
 
 ## Summary
 - **CRITICAL:** 1
-- **HIGH:** 3
+- **HIGH:** 3 (1 closed — ISS-303, by CR-002 on 2026-07-21; 2 open)
 - **MEDIUM:** 1
 - **LOW:** 5
 - **Verdict:** FAIL
@@ -34,6 +34,7 @@ All 8 Understanding document-level quality gates pass (see quality-gates.md); th
 - **Responsible agent:** WHAT (CARTOGRAPHER)
 
 ### ISS-303: AC-002 "exactly 4 facts" still conflicts with the truncation-note header — spec unamended since WHY2
+- **Status:** CLOSED 2026-07-21 by CR-002. Resolved against delivered behaviour rather than by wording preference: `render_report()` (scripts/sue_challenge.py:1065-1090) emits 5 base header bullets — specification, run date, provider, questions, findings — so FR-036's count governed and AC-002 was the stale unit. AC-002 now reads "exactly 5 base facts" with the provider sub-bullet added and the truncation note stated as the only conditional addition; contracts/report-format.md's template and normative-rules row were aligned in the same touch. No code or test change — the delivered tests already assert 5.
 - **Severity:** HIGH — Previously raised in WHY2 as ISS-203 (MEDIUM), not addressed
 - **Type:** inconsistency
 - **Description:** AC-002's Given clause covers any completed challenge run and asserts a header of "exactly 4 facts"; FR-036/AC-020 require a 5th header element (the truncation note) on truncated runs — an acceptance_criteria_conflict. Since WHY2 the spec was not touched; contracts/report-format.md pins "4 base facts; the truncation note is the only conditional addition", which resolves it for the renderer and tests, but the two ACs still assert conflicting header contents in the authoritative artifact.
@@ -128,7 +129,7 @@ Artifacts scanned: 19 (spec.md, glossary.md, mental-model.md, mental-model-code.
 | # | contradiction_type | artifact_a | artifact_b | description | severity | suggested_resolution |
 |---|--------------------|------------|------------|-------------|----------|----------------------|
 | 1 | acceptance_criteria_conflict | spec.md AC-011 / FR-021 | spec.md FR-023 / FR-014; contracts/model-command-contract.md counting convention | "Exactly 2 content blocks" vs the mandated answering instruction; spec contradicts its own convention and the frozen contract | BLOCKING (ISS-302) | One-line FR-021/AC-011 reword or glossary definition of "content block" |
-| 2 | acceptance_criteria_conflict | spec.md AC-002 | spec.md AC-020 / FR-036 | 4-fact header vs 5th truncation-note element on truncated runs | BLOCKING (ISS-303) | Reword AC-002 to "4 base facts" or scope to non-truncated runs |
+| 2 | acceptance_criteria_conflict | spec.md AC-002 | spec.md AC-020 / FR-036 | 4-fact header vs 5th truncation-note element on truncated runs | RESOLVED (ISS-303, closed by CR-002) | AC-002 aligned to FR-036's "exactly 5 base facts" per delivered render_report(); truncation note declared the only conditional addition |
 | 3 | requirement_conflict (artifact-level) | mental-model.md Challenge Report lifecycle | spec.md U-010 / FR-034; data-model.md | "Written atomically" vs the recorded plain-overwrite decision | BLOCKING (ISS-304) | Delete "atomically" from mental-model.md |
 | 4 | requirement_conflict (artifact-level) | data-model.md RunConfig `timeout_seconds: int` | test-strategy.md / tasks.md sub-second `--timeout` (0.2–0.5 s) | Integer type cannot express the sub-second budgets the timeout tests require | WARNING (ISS-305, MEDIUM) | Type the option float in data-model.md + cli-contract.md |
 | 5 | requirement_conflict (artifact-level) | contracts/cli-contract.md exit-1 guarantee "0 model calls" | research.md ADR-006 post-flight write-failure → exit 1 | Practically-unreachable residual path breaks the stated exit-1 invariant | WARNING (ISS-306, LOW) | Scope the guarantee wording to pre-flight failures |

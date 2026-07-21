@@ -216,3 +216,312 @@ No findings require mapped rework tasks because no DONE task is invalidated. The
 **NONE** -- no BUILD_RESTART, no QA_RESTART.
 
 Justification: All 15 tasks (14 build + T-S01 acceptance gate) are DONE. The change modifies zero behavioural requirements. The clause splits are structural decompositions that preserve obligation content. The overlap definition adds precision to an existing criterion that was already satisfied (T-S01 acceptance evidence confirms overlap with finding #13 / known issue 3). No test assertion, acceptance criterion, or delivered artifact becomes stale. The operator constraint "do NOT chase delivery convergence" is honoured: this is Phase A spec-text work only.
+
+---
+
+## Change Request: CR-002
+
+**Status:** PENDING APPROVAL
+**Date:** 2026-07-21
+**Source:** Operator, informed by three drill-confirmed defects in sue-dossier.md (parmenides drill on FR-036, theaetetus drills on FR-008 and FR-013) plus triage of finding 4 (A-001 non-interactivity assumption).
+**Type:** MODIFICATION
+**Priority:** NORMAL (all build tasks DONE; no in-progress work; Phase A only)
+
+### Changed Requirements
+
+| Req ID | Change Type | Description |
+|--------|-------------|-------------|
+| AC-002 | MODIFIED | Align header fact count from "exactly 4 facts" to "exactly 5 base facts" and add the resolved model provider sub-bullet (c), matching FR-036 and the delivered script. Closes ISS-303. |
+| FR-036 | MODIFIED | Add an operational definition of "resolved model provider": the reverse lookup from the runtime protocol to the 3-key PROVIDERS registry; unknown basenames (including test stubs) default to `claude`. |
+| FR-013 | MODIFIED | Define "empty stdout" as 0 characters (length zero) in FR-005's definitional style; explicitly state that whitespace-only stdout is not empty and proceeds to FR-026/FR-027 extraction, where the absence of a JSON object routes it to the FR-028 corrective retry as a parse failure. |
+| A-001 | MODIFIED | Update status from "unvalidated (OQ-001 spike before HOW)" to "validated at HOW (claude CLI 2.1.214; research.md OQ-001 spike)" per ISS-307 recommendation. One-line governance fix. |
+
+### Guardrail Verification
+
+| Guardrail | Status | Evidence |
+|-----------|--------|----------|
+| Stable-low units untouched | PASS | None of the 45 stable-low units listed in sue-dossier.md are touched. CR-001 tested the restructuring hypothesis; it did not improve SR. |
+| Accepted backlog findings 4,5,7-13 untouched | PASS | None of the accepted backlog finding IDs overlap with AC-002, FR-036, FR-013, or A-001. |
+| Limitations frontier untouched | PASS | No Limitations section text is touched. |
+| No behavioural changes to scripts/sue_challenge.py | PASS | Zero code changes. The spec moves to match the delivered code, never the reverse. |
+| Constitution compliance | PASS | No principle violated. Spec-text precision only. |
+
+### Impact Assessment
+
+#### Finding 1 -- ISS-303: AC-002 header fact count (4 vs 5)
+
+**Ground truth verification:** `render_report()` (sue_challenge.py:1081-1089) emits 5 header bullets before the conditional truncation note: `**Specification:**`, `**Run date:**`, `**Provider:**`, `**Questions:**`, `**Findings:**`. Test code (test_sue_challenge.py:1325-1326) already asserts: `# Exactly the 5 base facts` with `assert len([l for l in head.splitlines() if l.startswith("- **")]) == 5`. The delivered script implements 5. FR-036 (spec.md:218) correctly says 5. AC-002 (spec.md:29) is stale at 4.
+
+**Direct impact -- 3 locations:**
+
+| Artifact | Location | Current Text | Required Change |
+|----------|----------|-------------|-----------------|
+| spec.md | AC-002, line 29 | "exactly 4 facts (FR-036, AC-001):" with sub-bullets (a)-(d) missing provider | "exactly 5 base facts (FR-036, AC-001):" with sub-bullets (a)-(e) adding provider at (c) |
+| contracts/report-format.md | Template, lines 32-35 | 4 header bullets (Specification, Run date, Questions, Findings) | Add `- **Provider:** <provider name>` after Run date |
+| contracts/report-format.md | Normative rules table, line 70 | "Header states exactly 4 base facts ... spec path, run date, question count, finding count" | "Header states exactly 5 base facts ... spec path, run date, resolved model provider, question count, finding count" |
+
+**Task impact:**
+
+| Task ID | Current Status | Stale Text | Action |
+|---------|---------------|------------|--------|
+| T-011 | DONE | Description (line 301): "exactly 4 base facts (spec path, run date, question count, finding count)". Test line (line 303): "the 4 header facts". Acceptance criteria (line 306): "AC-002: header states exactly the 4 facts (FR-036)". | NO REWORK. Tests already verify 5 facts (test line 1326: `== 5`). Task description is a historical record written before the provider fact was added to FR-036. The "4 facts" text in T-011 is stale against the code it produced, not against the tests that verify it. |
+
+**Re-validation risk -- does changing AC-002 from 4 to 5 invalidate existing tests or assertions?**
+- Test code: Already asserts 5 facts. No test change needed.
+- contracts/report-format.md: Being updated in the same change batch. No residual inconsistency.
+- Other AC references to AC-002: AC-003 (line 34) says "(FR-034, AC-002)" -- ID-level, stable.
+- No existing test will break. No existing assertion becomes stale.
+
+**ISS-303 closure path:** After AC-002 says "5 base facts" and report-format.md says "5 base facts", the two-year-old WHY2/WHY3 escalation chain ISS-203 -> ISS-303 is fully resolved. Mark ISS-303 RESOLVED in issues.md.
+
+**Recommended verbatim edit for AC-002 (spec.md line 29-33):**
+
+Replace:
+```
+- **AC-002**: Given a completed challenge run, when the operator opens the challenge report, then the report header states exactly 4 facts (FR-036, AC-001):
+  - (a) the specification path,
+  - (b) the run date,
+  - (c) the question count,
+  - (d) the finding count.
+```
+With:
+```
+- **AC-002**: Given a completed challenge run, when the operator opens the challenge report, then the report header states exactly 5 base facts (FR-036, AC-001):
+  - (a) the specification path,
+  - (b) the run date,
+  - (c) the resolved model provider,
+  - (d) the question count,
+  - (e) the finding count.
+```
+
+**Recommended verbatim edit for report-format.md template (line 32-35):**
+
+Replace:
+```
+- **Specification:** <spec path as invoked>
+- **Run date:** <YYYY-MM-DD>
+- **Questions:** <post-truncation count>
+- **Findings:** <finding count>
+```
+With:
+```
+- **Specification:** <spec path as invoked>
+- **Run date:** <YYYY-MM-DD>
+- **Provider:** <provider name>
+- **Questions:** <post-truncation count>
+- **Findings:** <finding count>
+```
+
+**Recommended verbatim edit for report-format.md normative rules (line 70):**
+
+Replace:
+```
+| Header states exactly 4 base facts | FR-036, AC-002 | spec path, run date, question count, finding count; truncation note is the only conditional addition |
+```
+With:
+```
+| Header states exactly 5 base facts | FR-036, AC-002 | spec path, run date, resolved model provider, question count, finding count; truncation note is the only conditional addition |
+```
+
+---
+
+#### Finding 2 -- FR-036 provider fact definition
+
+**Ground truth verification:** `PROVIDERS` (sue_challenge.py:87-91) is a fixed 3-key registry: `claude`, `codex`, `copilot`. The header value is `provider_of_protocol(config.model_protocol)` (sue_challenge.py:150-154, 1221) -- the reverse lookup from the runtime-resolved protocol to its provider name. For a bare command whose basename is not in PROVIDERS (a test stub), sue_challenge.py:131 assigns `provider = "claude"` -- unknown basenames keep the Claude-compatible stdin protocol for backward compatibility. The rendered provider value is therefore always exactly one of the three literals `claude`, `codex`, `copilot`.
+
+**Direct impact -- 1 location:**
+
+| Artifact | Location | Current Text | Required Change |
+|----------|----------|-------------|-----------------|
+| spec.md | FR-036, line 218 | "The provider fact keeps environment-resolved runs auditable (runtime provider selection, 2026-07-19); it is stable across reruns and participates in NFR-004's comparison." | Insert a definition sentence before this sentence, grounded in the delivered PROVIDERS behavior. |
+
+**Task impact:** None. No task description or test references the provider definition.
+
+**Architecture impact:** None. No ADR is invalidated. The PROVIDERS registry was a development-time design decision not covered by an ADR.
+
+**Recommended verbatim edit for FR-036 (spec.md line 218):**
+
+Replace:
+```
+- **FR-036**: The report header MUST state exactly 5 base facts — specification path, run date, resolved model provider, question count, finding count — plus the FR-019 truncation note when truncation occurred (AC-002). The run date is the ISO calendar date `YYYY-MM-DD` in the operator's local timezone, rendered as the single `**Run date:**` header bullet; NFR-004's byte-identical comparison excludes exactly that line. The provider fact keeps environment-resolved runs auditable (runtime provider selection, 2026-07-19); it is stable across reruns and participates in NFR-004's comparison.
+```
+With:
+```
+- **FR-036**: The report header MUST state exactly 5 base facts — specification path, run date, resolved model provider, question count, finding count — plus the FR-019 truncation note when truncation occurred (AC-002). The run date is the ISO calendar date `YYYY-MM-DD` in the operator's local timezone, rendered as the single `**Run date:**` header bullet; NFR-004's byte-identical comparison excludes exactly that line. The resolved model provider is the reverse lookup from the runtime-resolved protocol to the `PROVIDERS` registry; the rendered value is always exactly one of three literals — `claude`, `codex`, or `copilot`. When the model command's executable basename is not a registered provider (including test stubs), the value defaults to `claude`. The provider fact keeps environment-resolved runs auditable (runtime provider selection, 2026-07-19); it is stable across reruns and participates in NFR-004's comparison.
+```
+
+---
+
+#### Finding 3 -- FR-013 "empty stdout" definition
+
+**Ground truth verification:** sue_challenge.py:631: `kind = "ok" if process.returncode == 0 and stdout else "failed"` -- plain Python string truthiness. A zero-length string is falsy (empty); a whitespace-only string is truthy (non-empty). Therefore:
+- Empty stdout = 0 characters (length zero) -> classified `"failed"` -> parse-failure path, output never consumed.
+- Whitespace-only stdout = non-empty, truthy -> classified `"ok"` -> proceeds to `extract_json_object` (FR-026) -> no JSON object extractable -> parse failure (FR-027) -> corrective retry (FR-028).
+
+These are two distinct paths with different semantics. The current FR-013 text says "empty stdout" without defining it, which is the gap the theaetetus drill exposed.
+
+**Direct impact -- 1 location:**
+
+| Artifact | Location | Current Text | Required Change |
+|----------|----------|-------------|-----------------|
+| spec.md | FR-013, line 152 | "or produces empty stdout, is classified as a failed call" | Define "empty stdout" as 0 characters; add explicit whitespace-only routing clause. |
+
+**Task impact:** None. T-005 and T-009 are DONE. The tests exercise the actual code behavior (string truthiness). No test change needed.
+
+**Recommended verbatim edit for FR-013 (spec.md line 152):**
+
+Replace:
+```
+- **FR-013**: When a corrective retry launches under FR-028, the challenge script MUST grant that retry exactly 1 fresh timeout budget equal to the FR-004 value (NFR-001). A model call that exits with non-zero status, or produces empty stdout, is classified as a failed call on the parse-failure path before any extraction — its output is never consumed even when it would parse (U-007).
+```
+With:
+```
+- **FR-013**: When a corrective retry launches under FR-028, the challenge script MUST grant that retry exactly 1 fresh timeout budget equal to the FR-004 value (NFR-001). A model call that exits with non-zero status, or produces empty stdout (0 characters), is classified as a failed call on the parse-failure path before any extraction — its output is never consumed even when it would parse (U-007). Stdout consisting only of whitespace characters is not empty: it proceeds to FR-026/FR-027 extraction, where the absence of a JSON object routes it to the FR-028 corrective retry as a parse failure.
+```
+
+---
+
+#### Finding 4 -- A-001 non-interactivity assumption: FIX verdict
+
+**Triage verdict: FIX (one-line governance sentence suffices).**
+
+**Justification:** ISS-307 (issues.md) already recommends this exact status change. research.md records the OQ-001 spike (claude CLI 2.1.214, 2026-07-18) as Grade-A direct evidence validating A-001. The successful T-S01 acceptance run (2026-07-19) further confirms non-interactive operation works end-to-end. FR-008 and FR-026 are correct as written -- they rely on A-001, and A-001 is now validated. No restructuring of FR-008 or FR-026 is needed.
+
+The dossier's concern -- "If the designated acceptance run's real model command turns out not to satisfy A-001, which requirement governs?" -- is moot because A-001 has been validated through both the spike and the acceptance run. Updating the status field records this closure.
+
+**Direct impact -- 1 location:**
+
+| Artifact | Location | Current Text | Required Change |
+|----------|----------|-------------|-----------------|
+| spec.md | A-001, line 338 | "unvalidated (OQ-001 spike before HOW)" | "validated at HOW (claude CLI 2.1.214; research.md OQ-001 spike)" |
+
+**Task impact:** None.
+
+**Recommended verbatim edit for A-001 (spec.md line 338):**
+
+Replace:
+```
+| A-001 | The model command can be driven non-interactively with prompt in, extractable JSON out | unvalidated (OQ-001 spike before HOW) | FR-008, FR-026 |
+```
+With:
+```
+| A-001 | The model command can be driven non-interactively with prompt in, extractable JSON out | validated at HOW (claude CLI 2.1.214; research.md OQ-001 spike) | FR-008, FR-026 |
+```
+
+---
+
+### Full Task Impact Assessment
+
+| Task ID | Current Status | Impact | Delta Effort | Action |
+|---------|---------------|--------|-------------|--------|
+| T-001 | DONE | None | 0h | NO ACTION |
+| T-002 | DONE | None | 0h | NO ACTION |
+| T-003 | DONE | None | 0h | NO ACTION |
+| T-004 | DONE | None | 0h | NO ACTION |
+| T-005 | DONE | None | 0h | NO ACTION |
+| T-006 | DONE | None | 0h | NO ACTION |
+| T-007 | DONE | None | 0h | NO ACTION |
+| T-008 | DONE | None | 0h | NO ACTION |
+| T-009 | DONE | None | 0h | NO ACTION |
+| T-010 | DONE | None | 0h | NO ACTION |
+| T-011 | DONE | Stale "4 facts" text in description (historical) | 0h | NO ACTION -- tests verify 5 facts |
+| T-012 | DONE | None | 0h | NO ACTION |
+| T-013 | DONE | None | 0h | NO ACTION |
+| T-014 | DONE | None | 0h | NO ACTION |
+| T-S01 | DONE | None | 0h | NO ACTION |
+
+**Zero DONE tasks require rework.** All changes are spec-text precision edits that align the spec to the delivered code's actual behavior. The tests already verify the correct behavior (5 header facts, string truthiness for empty-stdout classification). No test assertion becomes stale.
+
+### Architecture Impact
+
+- ADR-001 through ADR-008 (in research.md): NONE affected. No ADR references the header fact count, provider definition, empty-stdout semantics, or A-001 status.
+- Constitution v1.0.0: NONE violated. No principle is implicated by spec-text precision edits that change zero behavior.
+- No constraint violation introduced.
+
+### Estimates Impact
+
+No change to estimates.md. The effort range and function point breakdown are historical artifacts of the original estimation. The CR-002 delta effort (~1.0h of spec-text editing) does not alter the delivered work or its estimates.
+
+### Total Change Cost
+
+- **Rework effort:** 0h (zero DONE tasks affected)
+- **Redirection effort:** 0h (zero IN_PROGRESS tasks)
+- **New effort:** ~1.0h (4 spec.md edits + 2 report-format.md edits, Phase A spec-text work)
+- **Total delta:** ~1.0h
+- **Schedule impact:** 0 days added to critical path (all build tasks DONE; Phase A only; no delivery)
+
+### Propagation Plan
+
+1. **HALT:** None (no IN_PROGRESS tasks)
+2. **REWORK:** None (no DONE tasks affected)
+3. **UPDATE:** None (no TODO tasks to re-specify)
+4. **REMOVE:** None (no tasks cancelled)
+5. **NEW:** None (no new build tasks)
+
+**Ordered file-edit list (Phase A spec-text work only):**
+
+| Order | File | Edit | Finding |
+|-------|------|------|---------|
+| 1 | spec.md | AC-002 (line 29): "4 facts" -> "5 base facts" + add provider sub-bullet (c) | Finding 1 |
+| 2 | spec.md | FR-036 (line 218): Insert provider definition sentence | Finding 2 |
+| 3 | spec.md | FR-013 (line 152): Define "empty stdout" as 0 characters + whitespace-only routing clause | Finding 3 |
+| 4 | spec.md | A-001 (line 338): Status "unvalidated" -> "validated at HOW" | Finding 4 |
+| 5 | contracts/report-format.md | Template (line 33): Add `**Provider:**` line after `**Run date:**` | Finding 1 |
+| 6 | contracts/report-format.md | Normative rules (line 70): "4 base facts" -> "5 base facts" + add provider | Finding 1 |
+
+No other files require editing. All cross-references are ID-level and remain stable.
+
+### Dependency Chain Trace
+
+| From | References | Direction | Stable? |
+|------|-----------|-----------|---------|
+| AC-003 | AC-002 | AC-003 says "(FR-034, AC-002)" | Yes -- AC-002 ID preserved |
+| AC-006 | FR-036 | AC-006 says "(FR-036)" | Yes -- FR-036 ID preserved |
+| AC-016 | FR-013 | AC-016 says "(FR-028, FR-013)" | Yes -- FR-013 ID preserved |
+| FR-028 | FR-013 | FR-028 says "(FR-013, FR-030)" | Yes -- FR-013 ID preserved |
+| NFR-001 | FR-013 | FR-013 says "(NFR-001)" | Yes -- reference direction only |
+| ISS-303 | AC-002, FR-036 | ISS-303 cites the AC-002/FR-036 conflict | Resolves -- ISS-303 becomes RESOLVED |
+| ISS-307 | A-001 | ISS-307 recommends A-001 status refresh | Resolves -- ISS-307 recommendation fulfilled |
+
+All dependency chains are stable. Zero breakage.
+
+### Finding-to-Rework Traceability (Step 5b)
+
+| Finding ID | Source | Impacted Req IDs | Rework Task ID | Notes |
+|------------|--------|------------------|----------------|-------|
+| Dossier finding 1 (ISS-303 fact count) | sue-dossier.md parmenides drill + v2-stable CONTRADICTED on FR-036 | AC-002, FR-036 (report-format.md) | N/A -- no rework task needed | Resolved by spec-text edits (AC-002 + report-format.md aligned to "5 base facts"). No DONE task invalidated; tests already verify 5 facts. |
+| Dossier finding 2 (provider definition) | sue-dossier.md v2-stable UNANSWERABLE on FR-036 | FR-036 | N/A -- no rework task needed | Resolved by spec-text edit (provider definition sentence in FR-036). No DONE task references the definition. |
+| Dossier finding 3 (empty stdout) | sue-dossier.md theaetetus drill APORIA_UNDEFINED on FR-013 | FR-013 | N/A -- no rework task needed | Resolved by spec-text edit (0-characters definition + whitespace-only routing). Tests exercise the actual code behavior. |
+| Dossier finding 4 (A-001 status) | sue-dossier.md theaetetus drill APORIA_CONTRADICTED on FR-008 | A-001 | N/A -- no rework task needed | Resolved by one-line status update. ISS-307 already recommends this. |
+
+No findings require mapped rework tasks because no DONE task is invalidated. All changes are Phase A spec-text precision edits that align the spec to the delivered code's actual behavior without altering any obligation's content or any delivered behavior.
+
+### Re-validation Results
+
+| Req ID | Gate | Result | Notes |
+|--------|------|--------|-------|
+| AC-002 | Testability | PASS | Sub-bullets (a)-(e) are independently testable; already tested by T-RPT-01 (test line 1326). |
+| AC-002 | Consistency | PASS | Now consistent with FR-036 "exactly 5 base facts". ISS-303 resolved. |
+| AC-002 | Unambiguity | PASS | "5 base facts" mirrors FR-036's wording exactly. Provider sub-bullet (c) matches delivered code. |
+| FR-036 | Testability | PASS | Provider definition is operationally testable: value is always one of 3 literals; unknown basenames default to `claude`. |
+| FR-036 | Consistency | PASS | Definition matches delivered PROVIDERS registry (sue_challenge.py:87-91) and reverse-lookup logic (sue_challenge.py:150-154). |
+| FR-036 | Unambiguity | PASS | Three explicit literals; explicit default for unknown basenames; no wiggle room. |
+| FR-013 | Testability | PASS | "0 characters" is measurable. Whitespace-only routing is deterministic and separately testable. |
+| FR-013 | Consistency | PASS | Consistent with FR-005's definitional style ("0 non-whitespace characters" for empty spec; here "0 characters" for empty stdout). Whitespace-only routing consistent with FR-026/FR-027/FR-028 as written. |
+| FR-013 | Unambiguity | PASS | "0 characters" eliminates the whitespace ambiguity the theaetetus drill exposed. |
+| A-001 | Testability | PASS | Status is a governance field, not a testable assertion. |
+| A-001 | Consistency | PASS | Status now reflects the Grade-A evidence from research.md OQ-001 spike and the successful T-S01 acceptance run. |
+
+### Risk Items
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| T-011 stale "4 facts" text in task description could confuse a future reader | Low | Low -- task is DONE, tests verify 5 facts, description is historical | Note staleness in this report; do not rewrite historical task descriptions |
+| ISS-303 marked RESOLVED but issues.md not yet updated | Low | Low -- the spec edits are the authoritative closure | Batch ISS-303 resolution into the issues.md update when the spec edits are applied |
+| contracts/report-format.md template and normative rules updated but no downstream contract consumer exists beyond the test suite | None | None | The contract file is an internal specification artifact, not an external API |
+
+### Re-entry Target
+
+**NONE** -- no BUILD_RESTART, no QA_RESTART.
+
+Justification: All 15 tasks (14 build + T-S01 acceptance gate) are DONE. The change modifies zero behavioral requirements. The spec moves to match the delivered code's actual behavior in every case: 5 header facts (not 4), provider derived from PROVIDERS registry, empty stdout means 0 characters, A-001 validated (not unvalidated). No test assertion, acceptance criterion, or delivered artifact becomes stale. The operator constraint "Phase A only -- do not proceed to delivery" is honored.

@@ -31,6 +31,7 @@
 
 - **Specification:** <spec path as invoked>
 - **Run date:** <YYYY-MM-DD>
+- **Provider:** <claude | codex | copilot>
 - **Questions:** <post-truncation count>
 - **Findings:** <finding count>
 - **Note:** round 1 returned M questions; truncated to the first N.   ← ONLY when truncated (FR-019)
@@ -67,7 +68,7 @@
 
 | Rule | FR | Detail |
 |------|----|--------|
-| Header states exactly 4 base facts | FR-036, AC-002 | spec path, run date, question count, finding count; truncation note is the only conditional addition |
+| Header states exactly 5 base facts | FR-036, AC-002 | spec path, run date, resolved model provider, question count, finding count; truncation note is the only conditional addition |
 | Findings ranked | FR-033, AC-004 | all CONTRADICTED before all UNANSWERABLE; round-1 question order within each class; dense 1-based rank numbers |
 | Finding entry states exactly 4 elements | FR-037 | verdict, question, target, evidence |
 | Evidence quoting | FR-039, FR-018, AC-009 | for each cited line number, exactly 1 quoted line read from the specification file (1-based); UNANSWERABLE findings state the named gap from the answer text |

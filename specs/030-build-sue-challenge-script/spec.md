@@ -26,11 +26,14 @@ A script operator runs the challenge script against a markdown specification fil
   - (a) exactly 2 model calls occur (FR-008),
   - (b) the challenge report is written into the specification's directory (FR-034),
   - (c) the exit code is 0.
-- **AC-002**: Given a completed challenge run, when the operator opens the challenge report, then the report header states exactly 4 facts (FR-036, AC-001):
+- **AC-002**: Given a completed challenge run, when the operator opens the challenge report, then the report header states exactly 5 base facts (FR-036, AC-001):
   - (a) the specification path,
   - (b) the run date,
-  - (c) the question count,
-  - (d) the finding count.
+  - (c) the resolved model provider,
+  - (d) the question count,
+  - (e) the finding count.
+
+  The FR-019 truncation note is the only conditional addition to this set; it is not a base fact.
 - **AC-003**: Given a challenge report exists from a previous run, when the operator reruns the challenge script, then exactly 1 report file remains (FR-034, AC-002), holding only the new run's content.
 - **AC-004**: Given round 2 returned mixed verdicts, when the report is assembled, then the findings section holds exactly 2 verdict classes — CONTRADICTED plus UNANSWERABLE (FR-032) — ordered per the ranking rule FR-033.
 - **AC-005**: Given a run completes with at least 1 finding, when the run finishes, then the terminal summary states the finding count per verdict class, listing the top 3 findings in rank order (FR-040, AC-001).
@@ -149,7 +152,7 @@ Two isolated model calls are the entire analytical mechanism. Isolation keeps th
   - **User Story:** Scenario 3 | **Priority:** MVP
 - **FR-012**: If the model-command executable named by FR-007 cannot be found, the challenge script MUST exit with code 2, printing exactly 1 message that contains an installation pointer — defined testably as exactly 1 URL occurrence in the message (ERR-003, AC-014).
   - **User Story:** Scenario 3 | **Priority:** MVP
-- **FR-013**: When a corrective retry launches under FR-028, the challenge script MUST grant that retry exactly 1 fresh timeout budget equal to the FR-004 value (NFR-001). A model call that exits with non-zero status, or produces empty stdout, is classified as a failed call on the parse-failure path before any extraction — its output is never consumed even when it would parse (U-007).
+- **FR-013**: When a corrective retry launches under FR-028, the challenge script MUST grant that retry exactly 1 fresh timeout budget equal to the FR-004 value (NFR-001). A model call that exits with non-zero status, or produces empty stdout — stdout of exactly 0 characters — is classified as a failed call on the parse-failure path before any extraction, and its output is never consumed even when it would parse (U-007). Stdout holding 1 or more characters is not empty even when it holds 0 non-whitespace characters: whitespace-only output is not short-circuited here, it proceeds to FR-026 extraction and fails there under FR-027, routed to the same FR-028 corrective retry.
   - **User Story:** Scenario 3 | **Priority:** MVP
 
 #### Round 1 — Question Generation
@@ -215,7 +218,7 @@ Everything after round 2 is pure local computation, repeatable and fully unit-te
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-035**: The challenge report MUST contain exactly 3 sections in order: header (FR-036), findings (FR-037), audit appendix (FR-038).
   - **User Story:** Scenario 2 | **Priority:** MVP
-- **FR-036**: The report header MUST state exactly 5 base facts — specification path, run date, resolved model provider, question count, finding count — plus the FR-019 truncation note when truncation occurred (AC-002). The run date is the ISO calendar date `YYYY-MM-DD` in the operator's local timezone, rendered as the single `**Run date:**` header bullet; NFR-004's byte-identical comparison excludes exactly that line. The provider fact keeps environment-resolved runs auditable (runtime provider selection, 2026-07-19); it is stable across reruns and participates in NFR-004's comparison.
+- **FR-036**: The report header MUST state exactly 5 base facts — specification path, run date, resolved model provider, question count, finding count — plus the FR-019 truncation note when truncation occurred (AC-002). The run date is the ISO calendar date `YYYY-MM-DD` in the operator's local timezone, rendered as the single `**Run date:**` header bullet; NFR-004's byte-identical comparison excludes exactly that line. The resolved model provider is exactly 1 of the 3 registry names — `claude`, `codex`, `copilot` — derived from the resolved call protocol, never the operator's raw command string; when the model command's executable basename is not a registry name (for example a test stub), the provider fact is `claude`, because unrecognised basenames retain the Claude-compatible stdin protocol. The provider fact keeps environment-resolved runs auditable (runtime provider selection, 2026-07-19); it is stable across reruns and participates in NFR-004's comparison.
   - **User Story:** Scenario 1 | **Priority:** MVP
 - **FR-037**: Each findings entry MUST state exactly 4 elements: the verdict, the question, the target requirement identifier, plus the evidence rendered per FR-039 (FR-033).
   - **User Story:** Scenario 2 | **Priority:** MVP
@@ -335,7 +338,7 @@ The model-command option doubles as the test seam, and the script stays free of 
 
 | ID | Assumption | Status | Requirements Affected |
 |----|-----------|--------|----------------------|
-| A-001 | The model command can be driven non-interactively with prompt in, extractable JSON out | unvalidated (OQ-001 spike before HOW) | FR-008, FR-026 |
+| A-001 | The model command can be driven non-interactively with prompt in, extractable JSON out | validated at HOW (claude CLI 2.1.214; research.md OQ-001 spike). A model command that does not satisfy A-001 yields no extractable JSON object, so FR-027 governs — it is a parse failure routed to the FR-028 retry and then FR-030, never an open spike outcome. | FR-008, FR-026 |
 | A-002 | Neutral temporary working directory suffices for the isolation intent | unvalidated (OQ-002 spike before HOW); residual limitation documented | FR-010, Limitations |
 | A-003 | Standalone means standalone: no orchestration imports or configuration reads | unvalidated (review gate) | FR-045 |
 | A-004 | The acceptance target retains its three named known issues | validated at base commit ef2643c9; re-verify or freeze before the run | SC-001, AC-023 |
