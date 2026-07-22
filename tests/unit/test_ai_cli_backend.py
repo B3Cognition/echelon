@@ -1535,6 +1535,75 @@ def test_openai_compatible_registry_executes_bulk_context_tools(tmp_path) -> Non
     assert "perlgraph-summary.json" in perlgraph["files"]
 
 
+def test_openai_compatible_registry_enforces_dispatch_read_scope(tmp_path) -> None:
+    from harness.ai_cli_backends.openai_compatible import _OpenAIToolRegistry
+
+    run_root = tmp_path / "runs" / "re-1" / "re"
+    domain_root = tmp_path / "sources" / "source-a" / "src" / "domain"
+    sibling_root = tmp_path / "sources" / "source-a" / "src" / "sibling"
+    run_root.mkdir(parents=True)
+    domain_root.mkdir(parents=True)
+    sibling_root.mkdir(parents=True)
+    (run_root / "analysis.json").write_text("{}\n", encoding="utf-8")
+    (domain_root / "owned.py").write_text("owned = True\n", encoding="utf-8")
+    (sibling_root / "outside.py").write_text("outside = True\n", encoding="utf-8")
+
+    registry = _OpenAIToolRegistry(
+        tmp_path,
+        {},
+        {
+            "tool_read_roots": [str(run_root), str(domain_root)],
+            "tool_write_paths": [str(run_root / "target.md")],
+        },
+    )
+
+    assert _registry_tool_payload(
+        registry, "read_file", {"path": str(run_root / "analysis.json")}
+    )["status"] == "ok"
+    assert _registry_tool_payload(
+        registry, "read_file", {"path": str(domain_root / "owned.py")}
+    )["status"] == "ok"
+    outside = _registry_tool_payload(
+        registry, "read_file", {"path": str(sibling_root / "outside.py")}
+    )
+    assert outside["status"] == "error"
+    assert "outside dispatch read scope" in outside["error"]
+
+    listed = _registry_tool_payload(
+        registry, "list_tree_with_sizes", {"path": str(tmp_path / "sources")}
+    )
+    assert listed["status"] == "error"
+    assert "outside dispatch read scope" in listed["error"]
+
+    denied_write = _registry_tool_payload(
+        registry,
+        "write_file",
+        {"path": str(run_root / "other.md"), "content": "no\n"},
+    )
+    assert denied_write["status"] == "error"
+    assert "outside dispatch write scope" in denied_write["error"]
+    assert _registry_tool_payload(
+        registry,
+        "write_file",
+        {"path": str(run_root / "target.md"), "content": "ok\n"},
+    )["status"] == "ok"
+
+
+def test_openai_compatible_registry_corrects_echelon_result_tool_call(tmp_path) -> None:
+    from harness.ai_cli_backends.openai_compatible import _OpenAIToolRegistry
+
+    result = _registry_tool_payload(
+        _OpenAIToolRegistry(tmp_path, {}),
+        "echelon_result",
+        {},
+    )
+
+    assert result["status"] == "retry"
+    assert result["code"] == "result_contract_not_tool"
+    assert "final YAML" in result["instruction"]
+    assert "Do not call more tools" in result["instruction"]
+
+
 def test_openai_compatible_registry_filters_noisy_default_paths(tmp_path) -> None:
     from harness.ai_cli_backends.openai_compatible import _OpenAIToolRegistry
 

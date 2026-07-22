@@ -325,6 +325,10 @@ class ReExtractionController:
                     dispatch_kwargs["result_contract"] = self._result_contract_for_phase(
                         phase
                     )
+                if getattr(self._provider, "supports_prompt_metadata", False):
+                    prompt_metadata = self._prompt_metadata_for_target(plan, target)
+                    if prompt_metadata:
+                        dispatch_kwargs["prompt_metadata"] = prompt_metadata
                 result = self._provider.exec_agent(
                     str(self._project_root),
                     self._prompt_for(
@@ -1915,6 +1919,60 @@ class ReExtractionController:
         if target.get("kind") == "workspace-synthesis":
             state["re_workspace_synthesis_complete"] = True
 
+    def _prompt_metadata_for_target(
+        self,
+        plan: ReExecutionPlan,
+        target: dict[str, object] | None,
+    ) -> dict[str, object]:
+        """Restrict API-provider tools to controller-owned target boundaries."""
+        if not isinstance(target, dict):
+            return {}
+        kind = target.get("kind")
+        source_id = target.get("source_id")
+        if kind not in {"source-domain", "source-support"} or not isinstance(
+            source_id, str
+        ):
+            return {}
+        source = next((item for item in plan.sources if item.id == source_id), None)
+        if source is None:
+            raise ValueError(f"unknown controller specification source: {source_id}")
+        source_root = Path(source.absolute_path).resolve()
+        read_roots = [str(self._run_re_dir.resolve())]
+        if kind == "source-domain":
+            root = target.get("root")
+            domain_id = target.get("domain_id")
+            if not isinstance(root, str) or not root or not isinstance(domain_id, str):
+                raise ValueError("invalid controller source-domain tool scope")
+            read_roots.append(str((source_root / root).resolve()))
+            write_paths = [
+                str(
+                    (
+                        self._run_re_dir
+                        / "sources"
+                        / source_id
+                        / "specs"
+                        / domain_id
+                        / "spec.md"
+                    ).resolve()
+                )
+            ]
+        else:
+            read_roots.append(str(source_root))
+            write_paths = [
+                str(
+                    (
+                        self._run_re_dir
+                        / "sources"
+                        / source_id
+                        / "supporting-artifacts.md"
+                    ).resolve()
+                )
+            ]
+        return {
+            "tool_read_roots": read_roots,
+            "tool_write_paths": write_paths,
+        }
+
     def _evaluate_specification_target(
         self,
         state: dict,
@@ -1952,7 +2010,11 @@ class ReExtractionController:
                 source_id,
                 domain_id,
                 attempts,
-                self._metric(state, "max_verify_expand_iterations"),
+                (
+                    self._source_budget(state, "max_domain_repairs")
+                    if self._source_convergence_enabled(state)
+                    else self._metric(state, "max_verify_expand_iterations")
+                ),
                 agent_block_detail,
             )
             if self._source_convergence_enabled(state):
@@ -2039,9 +2101,14 @@ class ReExtractionController:
         budget: int,
         agent_block_detail: str | None,
     ) -> None:
+        repair_status = (
+            f"repair attempt {attempts}/{budget}"
+            if attempts <= budget
+            else f"repair budget exhausted ({budget}/{budget})"
+        )
         message = (
             "[re] target quality failed: "
-            f"{source_id}/{domain_id}; repair attempt {attempts}/{budget}"
+            f"{source_id}/{domain_id}; {repair_status}"
         )
         if agent_block_detail is not None:
             message += "; agent result routed into deterministic repair"
@@ -2106,6 +2173,84 @@ class ReExtractionController:
             except OSError:
                 pass
 
+    @staticmethod
+    def _target_quality_failure_guidance(report_path: Path) -> str:
+        """Render the exact deterministic findings into a compact repair checklist."""
+        if not report_path.is_file():
+            return ""
+        try:
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return ""
+        failures = payload.get("failures") if isinstance(payload, dict) else None
+        if not isinstance(failures, list):
+            return ""
+        findings: list[str] = []
+        list_fields = (
+            ("missing_sections", "Missing sections"),
+            ("invalid_source_evidence", "Invalid source evidence"),
+            ("scenarios_without_acceptance", "Scenarios without acceptance cases"),
+            ("scenarios_without_evidence", "Scenarios without evidence"),
+            (
+                "functional_requirements_without_evidence",
+                "Functional requirements without evidence",
+            ),
+            (
+                "non_functional_requirements_without_evidence",
+                "Non-functional requirements without evidence",
+            ),
+            ("semantic_findings", "Semantic findings"),
+        )
+        count_fields = (
+            ("scenario_count", "expected_scenario_count", "Scenario count"),
+            (
+                "functional_requirement_count",
+                "expected_functional_requirement_count",
+                "Functional requirement count",
+            ),
+            (
+                "non_functional_requirement_count",
+                "expected_non_functional_requirement_count",
+                "Non-functional requirement count",
+            ),
+        )
+        for failure in failures:
+            if not isinstance(failure, dict):
+                continue
+            for key, label in list_fields:
+                values = failure.get(key)
+                if isinstance(values, list) and values:
+                    rendered = ", ".join(str(value) for value in values)
+                    findings.append(f"- {label}: {rendered}")
+            for actual_key, expected_key, label in count_fields:
+                actual = failure.get(actual_key)
+                expected = failure.get(expected_key)
+                if (
+                    isinstance(actual, int)
+                    and isinstance(expected, int)
+                    and actual < expected
+                ):
+                    findings.append(f"- {label}: {actual}; required: {expected}")
+            semantic = failure.get("semantic_preflight_findings")
+            if isinstance(semantic, list):
+                for item in semantic:
+                    if isinstance(item, dict):
+                        message = item.get("message")
+                        code = item.get("code")
+                        if isinstance(message, str) and message:
+                            prefix = f" [{code}]" if isinstance(code, str) and code else ""
+                            findings.append(f"- Semantic preflight{prefix}: {message}")
+                    elif isinstance(item, str) and item:
+                        findings.append(f"- Semantic preflight: {item}")
+        if not findings:
+            return ""
+        return (
+            "\n## Authoritative Deterministic Repair Findings\n"
+            + "\n".join(findings)
+            + "\nFix every listed finding. Do not substitute evidence from outside the "
+            "absolute owned domain root. The controller report remains authoritative.\n"
+        )
+
     def _specification_target_prompt(self, target: dict[str, object]) -> str:
         kind = target.get("kind")
         if kind == "workspace-synthesis":
@@ -2158,6 +2303,13 @@ class ReExtractionController:
             self._run_re_dir / "quality" / "targets" / source_id / f"{domain_id}.json"
         )
         source_report = self._run_re_dir / "quality" / "sources" / f"{source_id}.json"
+        plan = self._load_plan()
+        source = next((item for item in plan.sources if item.id == source_id), None)
+        if source is None:
+            raise ValueError(f"unknown controller specification source: {source_id}")
+        source_root = Path(source.absolute_path).resolve()
+        absolute_domain_root = (source_root / root).resolve()
+        quality_failure_guidance = self._target_quality_failure_guidance(target_report)
         orphan_paths = target.get("orphan_paths")
         coverage_repair = ""
         if isinstance(orphan_paths, list) and orphan_paths:
@@ -2221,8 +2373,16 @@ class ReExtractionController:
             f"Source ID: `{source_id}`\n"
             f"Domain ID: `{domain_id}`\n"
             f"Owned source root: `{root}`\n"
+            f"Source repository root: `{source_root}`\n"
+            f"Absolute owned domain root: `{absolute_domain_root}`\n"
+            f"RE output directory: `{self._run_re_dir.resolve()}`\n"
             f"Domain manifest: `{manifest}`\n"
-            "Read only this source's owned root and its staged extraction artifacts. "
+            "Do not look for source code below the RE output directory; it contains "
+            "artifacts and analysis, not a staged repository copy. When the provider "
+            "offers `read_domain_pack`, use it first with the RE output directory, source "
+            "ID, and domain ID above. Read source code only from the absolute owned domain "
+            "root. You may read staged extraction artifacts from the RE output directory, "
+            "but they are context rather than source citations. "
             "Every source citation must be a backticked `path/to/file:line` reference "
             "using either the source-root path or a path relative to the owned domain "
             "root; it must resolve within that domain. Never use Markdown-link citations. "
@@ -2231,6 +2391,7 @@ class ReExtractionController:
             "never create backup, temporary, alternate, or scratch files beside it.\n"
             + coverage_repair
             + semantic_repair
+            + quality_failure_guidance
             + "Before returning DONE, make the spec satisfy the deterministic "
             "source-domain quality gate. The controller runs that gate after "
             "dispatch and records the authoritative target-quality report when "
@@ -2244,6 +2405,9 @@ class ReExtractionController:
                 if target_report.is_file()
                 else ""
             )
+            + "`echelon_result` is a final YAML response block, not a callable tool. "
+            "Do not invoke a function named `echelon_result` and do not call more tools "
+            "after the target artifact is complete.\n"
         )
 
     def _ensure_architecture_overlay(

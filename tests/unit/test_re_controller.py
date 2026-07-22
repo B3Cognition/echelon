@@ -1019,6 +1019,101 @@ def test_re_prompt_appends_phase_and_canonical_result_contract(tmp_path: Path) -
 
 
 @pytest.mark.unit
+def test_source_domain_prompt_injects_canonical_paths_and_exact_gate_findings(
+    tmp_path: Path,
+) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    controller = ReExtractionController(
+        provider=_ShallowSpecifierProvider(),
+        project_root=tmp_path,
+        run_dir=run_dir,
+        extension_root=_extension_root(tmp_path),
+    )
+    plan = controller._load_plan()
+    source_root = Path(plan.refresh_sources[0].absolute_path)
+    target = {
+        "kind": "source-domain",
+        "source_id": "api",
+        "domain_id": "001-re-domain",
+        "root": "src",
+    }
+    report_path = (
+        run_dir
+        / "re"
+        / "quality"
+        / "targets"
+        / "api"
+        / "001-re-domain.json"
+    )
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(
+            {
+                "passed": False,
+                "failures": [
+                    {
+                        "invalid_source_evidence": ["`pyproject.toml:1`"],
+                        "functional_requirements_without_evidence": ["FR-007"],
+                        "semantic_preflight_findings": [
+                            {"message": "Universal claim lacks exhaustive evidence"}
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    prompt = controller._specification_target_prompt(target)
+    metadata = controller._prompt_metadata_for_target(plan, target)
+
+    assert f"Source repository root: `{source_root}`" in prompt
+    assert f"Absolute owned domain root: `{source_root / 'src'}`" in prompt
+    assert "Do not look for source code below the RE output directory" in prompt
+    assert "Invalid source evidence: `pyproject.toml:1`" in prompt
+    assert "Functional requirements without evidence: FR-007" in prompt
+    assert "Universal claim lacks exhaustive evidence" in prompt
+    assert metadata["tool_read_roots"] == [
+        str((run_dir / "re").resolve()),
+        str((source_root / "src").resolve()),
+    ]
+    assert metadata["tool_write_paths"] == [
+        str(
+            (
+                run_dir
+                / "re"
+                / "sources"
+                / "api"
+                / "specs"
+                / "001-re-domain"
+                / "spec.md"
+            ).resolve()
+        )
+    ]
+
+
+@pytest.mark.unit
+def test_target_quality_failure_reports_active_repair_budget(capsys) -> None:
+    ReExtractionController._report_target_quality_failure(
+        "api",
+        "001-re-domain",
+        attempts=1,
+        budget=1,
+        agent_block_detail=None,
+    )
+    assert "repair attempt 1/1" in capsys.readouterr().out
+
+    ReExtractionController._report_target_quality_failure(
+        "api",
+        "001-re-domain",
+        attempts=2,
+        budget=1,
+        agent_block_detail=None,
+    )
+    assert "repair budget exhausted (1/1)" in capsys.readouterr().out
+
+
+@pytest.mark.unit
 def test_re_controller_passes_result_contract_to_capable_provider(
     tmp_path: Path,
 ) -> None:
@@ -1027,15 +1122,18 @@ def test_re_controller_passes_result_contract_to_capable_provider(
 
     class ContractCapturingProvider(_ShallowSpecifierProvider):
         supports_result_contract = True
+        supports_prompt_metadata = True
 
         def __init__(self) -> None:
             super().__init__()
             self.contracts: list[object] = []
+            self.prompt_metadata: list[object] = []
 
         def exec_agent(
             self, project_root: str, prompt: str, **kwargs: object
         ) -> SquadAgentResult:
             self.contracts.append(kwargs.get("result_contract"))
+            self.prompt_metadata.append(kwargs.get("prompt_metadata"))
             result = super().exec_agent(project_root, prompt)
             phase = self.phases[-1]
             if phase == "re-extract-3-verify":
@@ -1058,6 +1156,13 @@ def test_re_controller_passes_result_contract_to_capable_provider(
     assert first_contract is not None
     assert first_contract.allowed_verdicts == frozenset({"DONE", "BLOCKED"})
     assert first_contract.allowed_state_update_keys == frozenset()
+    source_metadata = next(
+        item
+        for item in provider.prompt_metadata
+        if isinstance(item, dict) and item.get("tool_write_paths")
+    )
+    assert len(source_metadata["tool_read_roots"]) == 2
+    assert source_metadata["tool_write_paths"][0].endswith("/spec.md")
 
 
 @pytest.mark.unit
