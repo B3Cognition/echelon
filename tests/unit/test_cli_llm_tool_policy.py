@@ -48,6 +48,71 @@ def test_run_claude_streaming_uses_default_tool_policy_without_dangerous_bypass(
 
 
 @pytest.mark.unit
+def test_run_claude_streaming_uses_configured_claude_config_dir(tmp_path: Path) -> None:
+    captured_env: dict[str, str] = {}
+
+    class FakeProcess:
+        stdin = io.BytesIO()
+        stdout = io.BytesIO(b'{"type":"result","is_error":false,"num_turns":0,"duration_ms":0}\n')
+        returncode = 0
+
+        def wait(self) -> int:
+            return self.returncode
+
+    def fake_popen(cmd, **kwargs):
+        captured_env.update(kwargs["env"])
+        return FakeProcess()
+
+    with patch("echelon.cli.subprocess.Popen", side_effect=fake_popen), pytest.raises(SystemExit) as exc:
+        cli._run_claude_streaming(
+            "claude",
+            "Do the work.",
+            tmp_path,
+            config_dir="~/.claude-work",
+        )
+
+    assert exc.value.code == 0
+    assert captured_env["CLAUDE_CONFIG_DIR"] == str(Path.home() / ".claude-work")
+
+
+@pytest.mark.unit
+def test_dispatch_skill_command_passes_configured_claude_config_dir(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    skill_dir = tmp_path / ".claude" / "skills" / "speckit-echelon-reopen"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "skill.md").write_text(
+        "---\nname: echelon.reopen\n---\nreopen $ARGUMENTS\n",
+        encoding="utf-8",
+    )
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="claude", config_dir="~/.claude-work"),
+    )
+    captured: dict[str, object] = {}
+
+    class FakeProvider:
+        def __init__(self, loaded_config):
+            assert loaded_config is config
+            self.capabilities = CLI_PROVIDER_CAPABILITIES
+
+    def fake_run_claude_streaming(*args, **kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("echelon.cli.load_config", lambda project_dir, squad_only=True: config)
+    monkeypatch.setattr("echelon.cli.AICodingCliProvider", FakeProvider)
+    monkeypatch.setattr("echelon.cli._run_claude_streaming", fake_run_claude_streaming)
+
+    cli._dispatch_skill_command("reopen", ["004-transform-selector-above-stat"])
+
+    assert captured["config_dir"] == "~/.claude-work"
+
+
+@pytest.mark.unit
 def test_dispatch_skill_command_routes_codex_through_ai_cli_provider(
     monkeypatch,
     tmp_path: Path,
