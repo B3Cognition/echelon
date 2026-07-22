@@ -61,12 +61,16 @@ NEVER discard verified source evidence already present in a staged spec.
 
 ### Rule 8 - Behavior Coverage and Evidence Strength
 ALWAYS include a `## Behavior Coverage` table for a source-domain spec with the
-columns `Category`, `Status`, `Observed Scope`, and `Source Evidence`. Cover
-public operations, configuration keys and rejected values, errors and recovery,
-boundaries and edge cases, operator-visible warnings and exit behavior, tests
-that demonstrate special cases, and evidence scope. Use only `observed`,
+columns `Category`, `Status`, `Observed Scope`, and `Source Evidence`. Include
+exactly these canonical category rows: `public operations`, `configuration keys`,
+`errors and recovery`, `boundaries and edge cases`, `operator-visible behavior`,
+`tests`, and `evidence scope`. Record rejected configuration values under
+`configuration keys`, and warnings and exit behavior under
+`operator-visible behavior`. Use only `observed`,
 `not-observed`, or `not-applicable` as status values; an observed row requires
-owned source evidence.
+owned source evidence. If no tests exist inside the owned domain root, set the `tests` row
+to `not-observed`. NEVER search outside the owned domain root for tests.
+A rejected out-of-scope read is final; do not retry it or broaden the path.
 NEVER invent behavior to fill the table. Never generalize one observed or tested case
 into a system-wide guarantee. Use `all`, `always`, `every`, or `never` in a
 requirement only when that requirement includes `Evidence Scope: exhaustive`

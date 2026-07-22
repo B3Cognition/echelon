@@ -2191,6 +2191,89 @@ def test_openai_compatible_tool_round_limit_reports_last_context(
     assert "last_model_preview=Need one more file before finalizing." in captured.err
 
 
+def test_openai_compatible_repeated_tool_calls_force_a_no_tools_final_turn(
+    tmp_path, monkeypatch
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    captured_payloads = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return json.dumps(self._payload).encode()
+
+    repeated = [
+        {
+            "choices": [{
+                "message": {
+                    "content": "",
+                    "tool_calls": [{
+                        "id": f"call_list_{index}",
+                        "type": "function",
+                        "function": {
+                            "name": "list_files",
+                            "arguments": json.dumps({"pattern": "**/tests/**/*.py"}),
+                        },
+                    }],
+                },
+                "finish_reason": "tool_calls",
+            }],
+            "usage": {"total_tokens": 3},
+        }
+        for index in range(2)
+    ]
+    responses = iter([
+        *repeated,
+        {
+            "choices": [{
+                "message": {"content": "echelon_result:\n  verdict: DONE\n"},
+                "finish_reason": "stop",
+            }],
+            "usage": {"total_tokens": 4},
+        },
+    ])
+
+    def fake_urlopen(request, timeout):
+        captured_payloads.append(json.loads(request.data.decode()))
+        return FakeResponse(next(responses))
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    result = OpenAICompatibleBackend(
+        _openai_config(features={
+            "streaming": False,
+            "tool_calls": True,
+            "max_identical_tool_rounds": 2,
+        })
+    ).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Inspect owned tests and finish.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 0
+    assert result.metadata["tool_no_progress_forced"] is True
+    assert "tools" in captured_payloads[1]
+    assert "tools" not in captured_payloads[2]
+    assert captured_payloads[2]["messages"][-1]["role"] == "system"
+    assert "Do not call more tools" in captured_payloads[2]["messages"][-1]["content"]
+
+
 def test_openai_compatible_backend_executes_fetch_url_tool_call(
     tmp_path, monkeypatch, capsys
 ) -> None:

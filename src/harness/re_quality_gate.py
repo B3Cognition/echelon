@@ -26,11 +26,13 @@ from harness.re_semantic_preflight import (
     SemanticPreflightFinding,
     check_semantic_preflight,
 )
-
-
-SOURCE_REFERENCE = re.compile(
-    r"`(?P<path>[^`\n:]+):(?P<start>\d+)(?:-(?P<end>\d+))?`"
+from harness.re_source_evidence import (
+    SOURCE_REFERENCE,
+    contains_source_reference,
+    source_reference_matches,
 )
+
+
 DEEP_SPEC_SECTIONS = (
     "User Scenarios & Testing",
     "Requirements (Functional)",
@@ -218,7 +220,7 @@ def validate_semantic_quality_review(
             domain_root=domain.root,
         )
         unmatched_evidence = tuple(
-            reference for reference in evidence if not SOURCE_REFERENCE.search(reference)
+            reference for reference in evidence if not contains_source_reference(reference)
         )
         invalid_source_evidence = tuple(sorted(invalid_evidence)) + unmatched_evidence
         if verdict == "REPAIR" and (
@@ -708,7 +710,7 @@ def _validated_source_evidence(
     valid: set[str] = set()
     invalid: set[str] = set()
     root = source_root.resolve()
-    for match in SOURCE_REFERENCE.finditer(text):
+    for match in source_reference_matches(text):
         raw_path = match.group("path").strip()
         start = int(match.group("start"))
         end = int(match.group("end") or start)
@@ -737,7 +739,7 @@ def _covered_source_paths(
 ) -> set[Path]:
     """Resolve only valid, in-domain evidence references to source files."""
     covered: set[Path] = set()
-    for match in SOURCE_REFERENCE.finditer(text):
+    for match in source_reference_matches(text):
         raw_path = match.group("path").strip()
         start = int(match.group("start"))
         end = int(match.group("end") or start)
@@ -760,7 +762,7 @@ def _covered_source_paths(
 def _covered_source_paths_in_source(text: str, *, source_root: Path) -> set[Path]:
     """Resolve valid source-root evidence for supporting artifacts only."""
     covered: set[Path] = set()
-    for match in SOURCE_REFERENCE.finditer(text):
+    for match in source_reference_matches(text):
         raw_path = match.group("path").strip()
         start = int(match.group("start"))
         end = int(match.group("end") or start)

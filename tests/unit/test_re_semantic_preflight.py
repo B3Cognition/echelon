@@ -55,6 +55,21 @@ def test_preflight_accepts_exhaustively_scoped_claim(tmp_path: Path) -> None:
     assert check_semantic_preflight(spec, None) == ()
 
 
+def test_host_port_literal_does_not_satisfy_source_evidence(tmp_path: Path) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "## Requirements (Non-Functional)\n\n"
+        "### NFR-001: Availability\nEvery request uses `localhost:2746`. "
+        "Evidence Scope: exhaustive.\n\n"
+        + _coverage(),
+        encoding="utf-8",
+    )
+
+    findings = check_semantic_preflight(spec, None)
+
+    assert [item.code for item in findings] == ["unscoped_universal_claim"]
+
+
 def test_preflight_reports_unmentioned_known_public_symbol(tmp_path: Path) -> None:
     spec = tmp_path / "spec.md"
     spec.write_text(_coverage(), encoding="utf-8")

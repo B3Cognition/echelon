@@ -43,6 +43,25 @@ class TestRePromptOutputContracts:
             assert "errors and recovery" in text
             assert "Evidence Scope: exhaustive" in text
 
+    def test_re_specifier_uses_exact_behavior_coverage_rows_and_owned_test_scope(self) -> None:
+        text = RE_SPECIFIER.read_text(encoding="utf-8")
+        categories = (
+            "public operations",
+            "configuration keys",
+            "errors and recovery",
+            "boundaries and edge cases",
+            "operator-visible behavior",
+            "tests",
+            "evidence scope",
+        )
+
+        for category in categories:
+            assert f"`{category}`" in text
+        assert "If no tests exist inside the owned domain root, set the `tests` row" in text
+        assert "to `not-observed`" in text
+        assert "NEVER search outside the owned domain root for tests" in text
+        assert "A rejected out-of-scope read is final" in text
+
     def test_re_specifier_forbids_generalizing_one_case(self) -> None:
         text = RE_SPECIFIER.read_text(encoding="utf-8")
         assert "Never generalize one observed or tested case" in text
