@@ -46,10 +46,12 @@ from harness.quality_scores import (
 from harness.published_re_context import attach_published_re_context
 from harness.run_history import append_phase_a_run
 from harness.spec_frontmatter import find_spec_dir, write_targets
+from harness.spec_lexicon_gate import has_current_spec_lexicon_evidence
 from harness.squad_executors import (
     AgentExecutor,
     CommanderInternalExecutor,
     ConditionalSequentialExecutor,
+    DeterministicLexiconExecutor,
     DeterministicUnderstandingExecutor,
     HumanGateExecutor,
     PhaseExecutor,
@@ -71,6 +73,7 @@ WHY_PHASES = frozenset({"phase1-why1", "phase1-why2"})
 ITERATIVE_PHASES = WHY_PHASES | frozenset(
     {
         "phase1-what",
+        "phase1-lexicon",
         "phase3-how",
         "phase3-sentinel",
         "phase3-plan",
@@ -351,6 +354,7 @@ class SquadController:
         self._executors: dict[str, PhaseExecutor] = {
             "agent": AgentExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "commander_internal": CommanderInternalExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "deterministic_lexicon": DeterministicLexiconExecutor(phase_graph, ext_dir, project_root, self._squad_dir),
             "deterministic_understanding": DeterministicUnderstandingExecutor(phase_graph, ext_dir, project_root, self._squad_dir),
             "staged_parallel": StagedParallelExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "conditional_sequential": ConditionalSequentialExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
@@ -883,6 +887,7 @@ class SquadController:
 
         while True:
             phase = self._state_store.current_phase()
+            phase = self._guard_spec_lexicon_evidence(phase)
             phase = self._guard_understanding_evidence(phase)
             guarded_phase = self._apply_phase_recommendation_guard(phase)
             if guarded_phase != phase:
@@ -1114,6 +1119,52 @@ class SquadController:
         )
         return gate
 
+    def _guard_spec_lexicon_evidence(self, phase: str) -> str:
+        """Route legacy downstream resumes through visible spec certification."""
+        phase_ids = list(self._graph.all_phase_ids())
+        try:
+            gate_index = phase_ids.index("phase1-lexicon")
+            done_index = phase_ids.index("done")
+        except ValueError:
+            return phase
+        downstream = set(phase_ids[gate_index + 1 : done_index + 1])
+        if phase not in downstream:
+            return phase
+        state = self._state_store.load()
+        if has_current_spec_lexicon_evidence(
+            state,
+            project_root=self._project_root,
+            config=self._lexicon_gate_config(),
+        ):
+            return phase
+        invalidated = downstream | {"phase1-lexicon"}
+        completed = state.get("completed_phases")
+        if isinstance(completed, list):
+            state["completed_phases"] = [
+                item for item in completed if item not in invalidated
+            ]
+        counts = state.get("phase_dispatch_counts")
+        if isinstance(counts, dict):
+            state["phase_dispatch_counts"] = {
+                item: count
+                for item, count in counts.items()
+                if item not in invalidated
+            }
+        state["iteration"] = 0
+        state["why_fail_count"] = 0
+        state["convergence_forced"] = False
+        state["convergence_detected"] = False
+        state["convergence_guard_fire_count"] = 0
+        state.pop("phase_recommendation", None)
+        state["phase"] = "phase1-lexicon"
+        self._state_store.save(state)
+        print(
+            f"[squad] {phase}: spec Lexicon evidence missing or stale; "
+            "routing through phase1-lexicon",
+            flush=True,
+        )
+        return "phase1-lexicon"
+
     def _is_deterministic_understanding_phase(self, phase: str) -> bool:
         if not phase:
             return False
@@ -1214,6 +1265,8 @@ class SquadController:
         if guarded_phase in TERMINAL_PHASES:
             return SquadResult.from_state(self._state_store.load())
         phase = guarded_phase
+        phase = self._guard_spec_lexicon_evidence(phase)
+        phase = self._guard_understanding_evidence(phase)
 
         node = self._graph.get(phase)
         label = node.label or node.id
@@ -2307,105 +2360,6 @@ class SquadController:
         self._gate_config_cache = cfg
         return cfg
 
-    def _enforce_spec_lexicon_gate_result(
-        self,
-        node: PhaseNode,
-        state: dict,
-        result: SquadAgentResult,
-    ) -> None:
-        """Certify an enabled derived-spec Lexicon gate at the controller boundary.
-
-        CARTOGRAPHER owns generation and repair.  The controller owns the
-        validation verdict: an absent artifact or a validator execution error
-        means validation is *pending*, never that it failed.  This keeps a
-        missing file from being persisted as ``lexicon_pass: false`` while
-        retaining the bounded re-dispatch path that prevents a WHY phase from
-        bypassing the hard gate.
-        """
-
-        if node.id != "phase1-what":
-            return
-        gate = self._lexicon_gate_config().get("lexicon_gate", {})
-        if not isinstance(gate, dict) or not gate.get("enabled", False):
-            return
-        artifacts = gate.get("artifacts", {})
-        spec_gate = artifacts.get("spec", {}) if isinstance(artifacts, dict) else {}
-        if not isinstance(spec_gate, dict) or not spec_gate.get("enabled", False):
-            result.state_updates["lexicon_pass"] = True
-            result.state_updates["lexicon_attempts"] = 0
-            return
-
-        updates = result.state_updates
-        spec_dir_ref = str(updates.get("spec_dir") or state.get("spec_dir") or "").strip()
-        if not spec_dir_ref:
-            self._mark_spec_lexicon_pending(updates)
-            return
-        spec_dir = Path(spec_dir_ref)
-        if not spec_dir.is_absolute():
-            spec_dir = self._project_root / spec_dir
-        derived_name = str(spec_gate.get("path") or "requirements.lexicon.md").strip()
-        derived_path = spec_dir / derived_name
-        source_name = str(spec_gate.get("source_ref") or "spec.md").strip()
-        glossary_name = str(spec_gate.get("glossary_file") or "glossary.md").strip()
-        source_path = spec_dir / source_name
-        glossary_path = spec_dir / glossary_name
-
-        # The result block is an agent-produced API response, not validation
-        # evidence.  Verify the exact on-disk artifact at the controller
-        # boundary so a stale narrative (or an omitted validator invocation)
-        # cannot turn a valid artifact into a terminal block, or an invalid one
-        # into a pass.
-        if derived_path.is_file() and source_path.is_file():
-            try:
-                from lexicon.source_contract import source_contract_findings
-                from lexicon.validity import validate as validate_lexicon
-
-                report = validate_lexicon(
-                    derived_path.read_text(encoding="utf-8"),
-                    glossary=self._load_lexicon_glossary_terms(glossary_path),
-                    artifact_type="SPEC",
-                )
-                findings = [*report.findings, *source_contract_findings(
-                    derived_path.read_text(encoding="utf-8"), source_path
-                )]
-                updates["lexicon_evaluation"] = "passed" if not findings else "failed"
-                updates["lexicon_pass"] = not findings
-                updates["lexicon_findings"] = len(findings)
-                # A controller-certified pass ends the repair loop regardless
-                # of an agent's stale attempt counter.
-                if not findings:
-                    updates["lexicon_attempts"] = 0
-                return
-            except Exception:
-                # An execution error is operationally distinct from an invalid
-                # artifact.  Do not manufacture a failed validation result.
-                self._mark_spec_lexicon_pending(updates)
-                return
-
-        self._mark_spec_lexicon_pending(updates)
-
-    def _mark_spec_lexicon_pending(self, updates: dict) -> None:
-        """Record an unevaluated spec Lexicon gate without a Boolean verdict."""
-        updates.pop("lexicon_pass", None)
-        updates.pop("lexicon_findings", None)
-        # A declared repair count without a produced artifact is unverified;
-        # it must not consume the hard gate's repair budget.
-        updates["lexicon_attempts"] = 0
-        updates["lexicon_evaluation"] = "pending"
-
-        # ``advance()`` only merges state updates, so explicitly remove a
-        # previous Boolean verdict before the pending transition is persisted.
-        # Otherwise an old false value remains in state.json despite the new
-        # evaluation having never run.
-        persisted = self._state_store.load()
-        changed = False
-        for key in ("lexicon_pass", "lexicon_findings"):
-            if key in persisted:
-                persisted.pop(key)
-                changed = True
-        if changed:
-            self._state_store.save(persisted)
-
     def _enforce_tasks_lexicon_gate_result(
         self,
         node: PhaseNode,
@@ -2582,10 +2536,9 @@ class SquadController:
         """Allow controller-owned state only after agent-result validation.
 
         AgentExecutor validates the original agent result against
-        ``node.allowed_state_updates``.  Phase 1 WHAT then adds the two
-        Lexicon verdict fields after deterministic controller validation.  The
-        state-store boundary must accept those controller-owned additions
-        without granting agents permission to report them.
+        ``node.allowed_state_updates``. Provider-free deterministic nodes return
+        controller-owned evidence fields. The state-store boundary must accept
+        those additions without granting agents permission to report them.
         """
         if node.allowed_state_updates is None:
             return None
@@ -2606,7 +2559,7 @@ class SquadController:
         repair attempt there is no valid transition to a later authoring phase.
         """
         gate_artifacts = {
-            "phase1-what": ("spec", "lexicon_pass", "lexicon_attempts"),
+            "phase1-lexicon": ("spec", "lexicon_pass", "lexicon_attempts"),
             "phase3-plan": ("tasks", "tasks_lexicon_pass", "tasks_lexicon_attempts"),
             "phase3-consensus": ("tasks", "tasks_lexicon_pass", "tasks_lexicon_attempts"),
         }
@@ -2615,11 +2568,7 @@ class SquadController:
             return False
         artifact_name, pass_key, attempts_key = gate_fields
         gate = self._lexicon_gate_config().get("lexicon_gate", {})
-        if (
-            not isinstance(gate, dict)
-            or not gate.get("enabled", False)
-            or str(gate.get("on_exhausted", "block")).lower() != "block"
-        ):
+        if not isinstance(gate, dict) or not gate.get("enabled", False):
             return False
         artifacts = gate.get("artifacts", {})
         artifact_gate = artifacts.get(artifact_name, {}) if isinstance(artifacts, dict) else {}
@@ -2641,6 +2590,11 @@ class SquadController:
         if not repair_attempts_exhausted and not squad_iterations_exhausted:
             return False
         if result.state_updates.get(pass_key) is True:
+            return False
+
+        if str(gate.get("on_exhausted", "block")).lower() == "warn":
+            if node.id == "phase1-lexicon":
+                result.state_updates["lexicon_warning_waiver"] = True
             return False
 
         exhausted = self._state_store.load()
@@ -2908,7 +2862,6 @@ class SquadController:
         state = self._state_store.load()
         if node.id in WHY_PHASES:
             self._normalize_why_result_quality_scores(result)
-        self._enforce_spec_lexicon_gate_result(node, state, result)
         self._enforce_tasks_lexicon_gate_result(node, state, result)
         self._enforce_governance_structural_gate_result(node, state, result)
         if self._lexicon_gate_must_block_on_exhaustion(node, state, result):

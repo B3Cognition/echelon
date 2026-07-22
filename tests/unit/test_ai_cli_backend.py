@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import socket
@@ -1381,6 +1382,7 @@ def test_openai_compatible_backend_sends_tool_registry_when_enabled(
     assert result.exit_code == 0
     assert captured["payload"]["messages"][0]["role"] == "system"
     assert "Prefer bulk context tools first" in captured["payload"]["messages"][0]["content"]
+    assert "Use sha256_file" in captured["payload"]["messages"][0]["content"]
     assert captured["payload"]["messages"][1] == {
         "role": "user",
         "content": "Write an artifact.",
@@ -1390,6 +1392,7 @@ def test_openai_compatible_backend_sends_tool_registry_when_enabled(
         for tool in captured["payload"]["tools"]
     ]
     assert "read_file" in tool_names
+    assert "sha256_file" in tool_names
     assert "write_file" in tool_names
     assert "grep_files" in tool_names
     assert "list_files" in tool_names
@@ -1401,6 +1404,27 @@ def test_openai_compatible_backend_sends_tool_registry_when_enabled(
     assert "codegraph_context" in tool_names
     assert "perlgraph_context" in tool_names
     assert captured["payload"]["tool_choice"] == "auto"
+
+
+def test_openai_compatible_registry_hashes_file_inside_read_scope(tmp_path) -> None:
+    from harness.ai_cli_backends.openai_compatible import _OpenAIToolRegistry
+
+    source = tmp_path / "spec.md"
+    source.write_text("# Spec\n", encoding="utf-8")
+    registry = _OpenAIToolRegistry(
+        tmp_path,
+        {},
+        {"tool_read_roots": [str(source)]},
+    )
+
+    result = _registry_tool_payload(registry, "sha256_file", {"path": "spec.md"})
+
+    assert result == {
+        "status": "ok",
+        "path": "spec.md",
+        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "bytes": len(source.read_bytes()),
+    }
 
 
 def test_openai_compatible_registry_executes_bulk_context_tools(tmp_path) -> None:

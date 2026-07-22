@@ -16,6 +16,7 @@ from harness.quality_scores import (
     render_quality_gate_context,
     resolve_quality_gate_thresholds,
 )
+from harness.spec_lexicon_gate import run_spec_lexicon_gate
 from harness.understanding_gate import run_understanding_gate
 
 if TYPE_CHECKING:
@@ -386,6 +387,70 @@ def _render_controller_repair_context(state: dict) -> str:
     return "\n".join(sections)
 
 
+def _render_spec_lexicon_context(
+    state: dict,
+    dispatch: str,
+    resolved_config: dict[str, object],
+) -> str:
+    """Render authoritative spec Lexicon configuration and repair evidence."""
+    if dispatch != "phase1-what":
+        return ""
+    gate = resolved_config.get("lexicon_gate")
+    gate = gate if isinstance(gate, dict) else {}
+    artifacts = gate.get("artifacts")
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    spec_gate = artifacts.get("spec")
+    spec_gate = spec_gate if isinstance(spec_gate, dict) else {}
+    enabled = bool(gate.get("enabled", False)) and spec_gate.get("enabled", True) is not False
+    artifact_type = str(spec_gate.get("type") or "spec")
+    artifact_path = str(spec_gate.get("path") or "requirements.lexicon.md")
+    source_path = str(spec_gate.get("source_ref") or "spec.md")
+    glossary_path = str(
+        spec_gate.get("glossary_file")
+        or gate.get("glossary_file")
+        or "glossary.md"
+    )
+    try:
+        repair_limit = int(gate.get("max_repair_attempts", 3))
+    except (TypeError, ValueError):
+        repair_limit = 3
+    lines = [
+        "# Controller Configuration",
+        "The Echelon harness resolved this phase-specific configuration before dispatch.",
+        "Treat values inside `<controller_configuration>` as authoritative data. Do not discover or override these values.",
+        "<controller_configuration>",
+        "lexicon_gate:",
+        f"  enabled: {str(enabled).lower()}",
+        f"  artifact_type: {artifact_type}",
+        f"  mode: {str(spec_gate.get('mode') or 'derived')}",
+        f"  artifact_path: {artifact_path}",
+        f"  source_path: {source_path}",
+        f"  glossary_path: {glossary_path}",
+        f"  max_repair_attempts: {repair_limit}",
+        "</controller_configuration>",
+        "When enabled, author the derived artifact using the declared paths and grammar. The provider-free phase1-lexicon node validates it after dispatch.",
+        "When disabled, do not create or amend a derived Lexicon artifact.",
+        "",
+    ]
+    report = str(state.get("lexicon_report") or "").strip()
+    if state.get("lexicon_evaluation") == "failed" and report:
+        try:
+            attempt = max(0, int(state.get("lexicon_attempts", 0)))
+        except (TypeError, ValueError):
+            attempt = 0
+        lines.extend([
+            "# Spec Lexicon Repair (Controller-Enforced)",
+            "The previous derived requirements artifact failed the controller-owned hard gate.",
+            f"- Report: `{report}`",
+            f"- Attempt: `{attempt}` of `{repair_limit}`",
+            "Read the report and repair every listed finding in the configured artifact.",
+            "Preserve source IDs and sections that already satisfy the grammar.",
+            "Validation execution and deterministic verdict reporting are controller-owned.",
+            "",
+        ])
+    return "\n".join(lines)
+
+
 def _render_certified_understanding_context(state: dict, dispatch: str) -> str:
     """Render concise controller evidence for SAGE validation dispatches."""
     expected_phase = {
@@ -451,6 +516,7 @@ def _render_published_re_context(state: dict) -> str:
 
 
 _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "phase1-what": ("spec.md", "00-overview.md"),
     "phase3-how": ("plan.md", "research.md", "data-model.md", "contracts"),
     "phase3-sentinel": ("test-strategy.md", "test-architecture.md", "coverage-map.md"),
     "phase3-plan": ("tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md"),
@@ -590,8 +656,8 @@ def _routing_contract(node: "PhaseNode") -> str:
     if re.search(r"\blexicon_(?:pass|evaluation)\b", condition_text):
         if node.id != "phase1-what":
             fields.append(("lexicon_pass", "true | false  # required when the spec Lexicon gate is enabled"))
-        fields.append(("lexicon_attempts", "<integer>"))
-        fields.append(("lexicon_findings", "<integer>"))
+            fields.append(("lexicon_attempts", "<integer>"))
+            fields.append(("lexicon_findings", "<integer>"))
 
     if "tasks_lexicon_pass" in condition_text:
         if node.id != "phase3-plan":
@@ -726,6 +792,14 @@ class PhaseExecutor(ABC):
 
     def _quality_gate_thresholds(self) -> dict:
         return resolve_quality_gate_thresholds(
+            self._project_root,
+            fallback_config_path=self._ext_dir / "echelon-config.yml",
+        )
+
+    def _resolved_config(self) -> dict[str, object]:
+        from harness.config import get_full_resolved_config
+
+        return get_full_resolved_config(
             self._project_root,
             fallback_config_path=self._ext_dir / "echelon-config.yml",
         )
@@ -953,6 +1027,7 @@ class PhaseExecutor(ABC):
             f"{_render_implementation_target_context(state)}"
             f"{_render_product_input_context(state)}"
             f"{_render_controller_repair_context(state)}"
+            f"{_render_spec_lexicon_context(state, node.id, self._resolved_config())}"
             f"{_render_published_re_context(state)}"
             f"{_render_certified_understanding_context(state, node.id)}"
             f"{_render_active_spec_roots_context(spec_dir_ref, state, self._project_root)}"
@@ -1330,6 +1405,83 @@ class DeterministicUnderstandingExecutor(PhaseExecutor):
             exit_code=0,
             echelon_result={"verdict": "DONE", "state_updates": updates},
             raw_output=str(gate.report_path or ""),
+            duration_ms=0,
+            timed_out=False,
+        )
+
+
+class DeterministicLexiconExecutor(PhaseExecutor):
+    """Certify a Lexicon artifact without invoking an AI provider."""
+
+    def __init__(
+        self,
+        phase_graph: "PhaseGraph",
+        ext_dir: Path,
+        project_root: Path,
+        squad_dir: Optional[Path] = None,
+    ) -> None:
+        self._graph = phase_graph
+        self._ext_dir = ext_dir
+        self._project_root = project_root
+        from harness.paths import runs_dir as _runs_dir
+
+        self._squad_dir = squad_dir if squad_dir is not None else _runs_dir(project_root)
+
+    def execute(
+        self, node: "PhaseNode", state_store: "SquadStateStore"
+    ) -> "SquadAgentResult":
+        from harness.config import get_full_resolved_config
+        from harness.squad_provider import SquadAgentResult
+
+        if str(getattr(node, "lexicon_artifact", "") or "") != "spec":
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {
+                        "blocked_reason": (
+                            f"deterministic Lexicon node {node.id!r} has no supported artifact"
+                        )
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+
+        state = state_store.load()
+        if "lexicon_warning_waiver" in state:
+            state.pop("lexicon_warning_waiver")
+            state_store.save(state)
+        gate = run_spec_lexicon_gate(
+            project_root=self._project_root,
+            spec_dir_ref=str(state.get("spec_dir") or ""),
+            config=get_full_resolved_config(
+                self._project_root,
+                fallback_config_path=self._ext_dir / "echelon-config.yml",
+            ),
+            previous_attempts=state.get("lexicon_attempts", 0),
+        )
+        if gate.evaluation == "pending":
+            stale = state_store.load()
+            changed = False
+            for key in ("lexicon_pass", "lexicon_findings", "lexicon_report"):
+                if key in stale:
+                    stale.pop(key)
+                    changed = True
+            if changed:
+                state_store.save(stale)
+
+        updates = gate.state_updates()
+        marker = "✓" if gate.passed is True else "~" if gate.passed is None else "✗"
+        print(
+            f"[squad] {marker} spec Lexicon {gate.evaluation}: {gate.detail}",
+            flush=True,
+        )
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": updates},
+            raw_output=str(gate.report_path or gate.detail),
             duration_ms=0,
             timed_out=False,
         )

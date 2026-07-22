@@ -45,10 +45,47 @@ class TestPhaseGraph:
         assert why2_gate.understanding_target == "phase1-why2"
         assert why3_gate.type == "deterministic_understanding"
         assert why3_gate.understanding_target == "phase3-consensus"
-        assert self.graph.get("phase1-what").transitions[-1]["to"] == why2_gate.id
+        assert self.graph.get("phase1-lexicon").transitions[-1]["to"] == why2_gate.id
         assert why2_gate.transitions == [{"to": "phase1-why2", "condition": "always"}]
         assert self.graph.get("phase3-plan").transitions[-1]["to"] == why3_gate.id
         assert why3_gate.transitions == [{"to": "phase3-consensus", "condition": "always"}]
+
+    def test_spec_lexicon_runs_in_visible_provider_free_node(self):
+        what = self.graph.get("phase1-what")
+        lexicon = self.graph.get("phase1-lexicon")
+
+        assert what.transitions == [{"to": "phase1-lexicon", "condition": "always"}]
+        assert lexicon.type == "deterministic_lexicon"
+        assert lexicon.lexicon_artifact == "spec"
+        assert lexicon.allowed_state_updates == []
+        assert set(lexicon.controller_state_updates) == {
+            "lexicon_evaluation",
+            "lexicon_pass",
+            "lexicon_attempts",
+            "lexicon_findings",
+            "lexicon_report",
+            "lexicon_warning_waiver",
+        }
+        assert lexicon.transitions == [
+            {
+                "to": "phase1-what",
+                "condition": (
+                    "lexicon_gate.enabled AND lexicon_evaluation = pending "
+                    "AND iteration < max_iterations"
+                ),
+                "action": "increment_iteration",
+            },
+            {
+                "to": "phase1-what",
+                "condition": (
+                    "lexicon_gate.enabled AND lexicon_evaluation = failed "
+                    "AND lexicon_attempts < lexicon_gate.max_repair_attempts "
+                    "AND iteration < max_iterations"
+                ),
+                "action": "increment_iteration",
+            },
+            {"to": "phase1-understanding", "condition": "always"},
+        ]
 
     def test_phase_timing_windows_are_controller_metadata(self):
         decide = self.graph.get("phase2-decide")
@@ -367,15 +404,20 @@ def test_phase2_governance_verdicts_are_controller_owned():
         assert "governance_gate_exhausted" in node.controller_state_updates
 
 
-def test_phase1_what_reserves_lexicon_verdict_fields_for_the_controller():
+def test_phase1_lexicon_reserves_verdict_fields_for_the_controller():
     graph = PhaseGraph(DEFINITION, EXT_YML)
-    node = graph.get("phase1-what")
+    node = graph.get("phase1-lexicon")
 
-    assert "lexicon_attempts" in node.allowed_state_updates
-    assert "lexicon_findings" in node.allowed_state_updates
-    assert "lexicon_pass" not in node.allowed_state_updates
-    assert "lexicon_evaluation" not in node.allowed_state_updates
-    assert node.controller_state_updates == ["lexicon_evaluation", "lexicon_pass"]
+    controller_fields = {
+        "lexicon_evaluation",
+        "lexicon_pass",
+        "lexicon_attempts",
+        "lexicon_findings",
+        "lexicon_report",
+        "lexicon_warning_waiver",
+    }
+    assert controller_fields.isdisjoint(node.allowed_state_updates or [])
+    assert set(node.controller_state_updates) == controller_fields
 
 
 def test_phase3_plan_reserves_tasks_lexicon_verdict_for_the_controller():

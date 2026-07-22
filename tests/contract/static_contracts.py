@@ -201,9 +201,16 @@ def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
             r"requirements\.lexicon\.md",
         ),
         PatternCheck(
-            "CARTOGRAPHER validates derived Lexicon artifact against source_ref",
+            "CARTOGRAPHER derives Lexicon artifact from controller-configured source",
             cartographer,
-            r"--source-ref\s+\"\{spec_dir\}/\{source_ref\}\"",
+            r"Derive the configured `artifact_path`[\s\S]{0,240}configured `source_path`",
+            flags,
+        ),
+        PatternCheck(
+            "CARTOGRAPHER delegates derived Lexicon validation to visible node",
+            cartographer,
+            r"Validation execution and verdict reporting belong to\s+`phase1-lexicon`",
+            flags,
         ),
         PatternCheck(
             "CARTOGRAPHER requires source hash metadata",
@@ -255,7 +262,7 @@ def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
 
 
 def validate_cartographer_tool_usage_contract(root: Path) -> list[str]:
-    """CARTOGRAPHER must know the deterministic validation command surfaces."""
+    """CARTOGRAPHER must consume controller evidence without invoking CLIs."""
 
     cartographer = root / "extension/agents/exploration/cartographer.md"
     phase1_what = root / "extension/workflow/phases/phase1-what.md"
@@ -264,24 +271,30 @@ def validate_cartographer_tool_usage_contract(root: Path) -> list[str]:
     return _run_checks(
         [
             PatternCheck(
-                "CARTOGRAPHER documents Understanding scan command",
+                "CARTOGRAPHER does not execute Understanding",
                 cartographer,
-                r"understanding scan .*--enhanced .*--per-req .*--json .*--output",
+                r"understanding\s+scan|/tmp/cartographer-understanding",
+                flags,
+                should_match=False,
             ),
             PatternCheck(
-                "CARTOGRAPHER forbids understanding validate subcommand guesses",
+                "CARTOGRAPHER does not execute Lexicon",
                 cartographer,
-                r"NEVER run `understanding validate`",
+                r"lexicon\s+validate",
+                flags,
+                should_match=False,
             ),
             PatternCheck(
-                "CARTOGRAPHER documents JSON output discipline",
+                "CARTOGRAPHER does not probe configuration",
                 cartographer,
-                r"--output /tmp/.*\.json",
+                r"python3\s+-c|\.echelon/config\.yml.*safe_load",
+                flags,
+                should_match=False,
             ),
             PatternCheck(
-                "CARTOGRAPHER documents Lexicon source-ref command",
+                "CARTOGRAPHER consumes controller configuration",
                 cartographer,
-                r"lexicon validate .*--source-ref",
+                r"Controller Configuration",
             ),
             PatternCheck(
                 "CARTOGRAPHER invokes prerequisite validation CLIs without discovery",
@@ -302,15 +315,16 @@ def validate_cartographer_tool_usage_contract(root: Path) -> list[str]:
                 r"ALWAYS express a genuine inter-requirement dependency inside the canonical top-level requirement sentence",
             ),
             PatternCheck(
-                "phase1 what passes validation tool contract",
+                "phase1 what does not pass validation commands",
                 phase1_what,
-                r"Validation Tool Contract",
+                r"understanding\s+scan|lexicon\s+validate|python3\s+-c|```bash",
                 flags,
+                should_match=False,
             ),
             PatternCheck(
-                "phase1 what names understanding scan",
+                "phase1 what names controller repair evidence",
                 phase1_what,
-                r"understanding scan",
+                r"Spec Lexicon Repair",
             ),
         ]
     )
@@ -825,15 +839,16 @@ def validate_constitution_source_of_truth_contract(root: Path) -> list[str]:
             should_match=False,
         ),
         PatternCheck(
-            "phase1 what routes placeholder constitution back to CHIEF",
+            "phase1 what delegates constitution integrity to controller guard",
             phase1_what,
-            r"Return to `phase1-constitution`.*speckit-echelon-chief",
+            r"controller's constitution provenance guard independently rejects a missing or\s+template constitution",
             flags,
         ),
         PatternCheck(
-            "phase1 what forbids direct constitution edits",
+            "phase1 what treats constitution as read-only",
             phase1_what,
-            r"Do not edit, patch, or shell-substitute `\.specify/memory/constitution\.md`",
+            r"Treat `\.specify/memory/constitution\.md` as read-only.*do not edit, patch, append to, or regenerate",
+            flags,
         ),
         PatternCheck(
             "phase1 what no longer records placeholder fix event",

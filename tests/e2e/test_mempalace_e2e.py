@@ -92,6 +92,11 @@ def project_dir(tmp_path, isolated_palace):
 
 class TestCLISubprocess:
 
+    @pytest.fixture(autouse=True)
+    def require_optional_codegen_cli(self):
+        if not VENV_CODEGEN.exists():
+            pytest.skip(f"optional codegen CLI not installed at {VENV_CODEGEN}")
+
     def test_requirements_mine_cli_exits_zero(self, project_dir, isolated_palace):
         """codegen requirements mine exits 0 and reports written drawers."""
         env = _isolated_env(isolated_palace)

@@ -47,7 +47,7 @@ if [ "$TYPES" = "ERROR" ]; then
     echo "FAIL: could not parse definition.yaml phase types"
     FAIL=$((FAIL+1))
 else
-    EXECUTORS="agent commander_internal conditional_sequential deterministic_understanding human_gate staged_parallel terminal"
+    EXECUTORS="agent commander_internal conditional_sequential deterministic_lexicon deterministic_understanding human_gate staged_parallel terminal"
     for t in $TYPES; do
         if echo "$EXECUTORS" | grep -qw "$t"; then
             echo "PASS: executor registered for type '$t'"

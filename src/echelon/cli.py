@@ -56,7 +56,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.7.10"
+CLI_VERSION = "3.7.11"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -3144,85 +3144,12 @@ def _phase_a_readiness_traceability_blockers(run_state: dict) -> list[str]:
     ]
 
 
-def _verified_lexicon_gate_recovery_phase(
-    project_root: Path,
-    state: dict,
-) -> tuple[str, int] | None:
-    """Return the post-gate phase only for an independently valid artifact.
-
-    A hard Lexicon block can occur after the agent reports a stale failure even
-    though the derived artifact on disk was repaired.  Recovery must validate
-    the actual artifact, not trust either the old report or the presence of a
-    file.  This function deliberately has no repair behavior: an invalid
-    contract remains blocked and cannot be bypassed by ``spec continue``.
-    """
+def _lexicon_gate_recovery_phase(state: dict) -> str | None:
+    """Route exhausted spec-gate recovery through the visible deterministic node."""
     if str(state.get("blocked_reason") or "") != "lexicon_gate_exhausted":
         return None
     phase = str((state.get("last_dispatch") or {}).get("phase_id") or "")
-    next_phase = {
-        "phase1-what": "phase1-why2",
-        "phase3-plan": "phase3-consensus",
-    }.get(phase)
-    if next_phase is None:
-        return None
-
-    spec_ref = str(state.get("spec_dir") or "").strip()
-    if not spec_ref:
-        return None
-    spec_dir = Path(spec_ref)
-    if not spec_dir.is_absolute():
-        spec_dir = project_root / spec_dir
-
-    config: dict = {}
-    config_path = project_root / ".echelon" / "config.yml"
-    if config_path.is_file():
-        try:
-            import yaml
-
-            config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        except Exception:
-            return None
-    gate = config.get("lexicon_gate", {}) if isinstance(config, dict) else {}
-    artifacts = gate.get("artifacts", {}) if isinstance(gate, dict) else {}
-    artifact_key = "spec" if phase == "phase1-what" else "tasks"
-    artifact = artifacts.get(artifact_key, {}) if isinstance(artifacts, dict) else {}
-    if isinstance(gate, dict) and gate.get("enabled") is False:
-        return None
-    if isinstance(artifact, dict) and artifact.get("enabled") is False:
-        return None
-
-    if phase != "phase1-what":
-        # Task-gate recovery has a distinct validator and is intentionally not
-        # conflated with the source-contract validator implemented here.
-        return None
-
-    derived_name = str(artifact.get("path") or "requirements.lexicon.md") if isinstance(artifact, dict) else "requirements.lexicon.md"
-    source_name = str(artifact.get("source_ref") or "spec.md") if isinstance(artifact, dict) else "spec.md"
-    glossary_name = str(gate.get("glossary_file") or "glossary.md") if isinstance(gate, dict) else "glossary.md"
-    derived_path = spec_dir / derived_name
-    source_path = spec_dir / source_name
-    glossary_path = spec_dir / glossary_name
-    if not derived_path.is_file() or not source_path.is_file():
-        return None
-
-    try:
-        from lexicon.source_contract import source_contract_findings
-        from lexicon.validity import validate as validate_lexicon
-
-        glossary: set[str] = set()
-        if glossary_path.is_file():
-            for raw in glossary_path.read_text(encoding="utf-8").splitlines():
-                line = raw.strip()
-                if not line or line.startswith("#"):
-                    continue
-                terms = re.findall(r"\*\*([^*]+)\*\*", line)
-                glossary.update(term.strip() for term in terms or [line])
-        text = derived_path.read_text(encoding="utf-8")
-        report = validate_lexicon(text, glossary=glossary, artifact_type="SPEC")
-        findings = [*report.findings, *source_contract_findings(text, source_path)]
-    except Exception:
-        return None
-    return (next_phase, 0) if not findings else None
+    return "phase1-lexicon" if phase in {"phase1-what", "phase1-lexicon"} else None
 
 
 def _interrupted_retry_phase(run_state: dict) -> str | None:
@@ -3613,10 +3540,12 @@ def _reset_rewind_state(
         phase_index = _ROADMAP_PHASES.index(phase)
     except ValueError:
         phase_index = len(_ROADMAP_PHASES)
-    if phase_index <= _ROADMAP_PHASES.index("phase1-what"):
+    if phase_index <= _ROADMAP_PHASES.index("phase1-lexicon"):
         rewound.pop("lexicon_pass", None)
         rewound["lexicon_attempts"] = 0
         rewound.pop("lexicon_findings", None)
+        rewound.pop("lexicon_report", None)
+        rewound.pop("lexicon_warning_waiver", None)
         rewound["lexicon_evaluation"] = "pending"
         rewound.pop("lexicon_gate_exhausted", None)
     if phase_index <= _ROADMAP_PHASES.index("phase3-plan"):
@@ -6001,7 +5930,8 @@ def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:
 _FALLBACK_ROADMAP_PHASES = [
     "init", "phase1-discover", "phase1-synthesizer", "phase1-modeler",
     "phase1-tracker", "phase1-why1", "phase1-constitution", "phase1-what",
-    "phase1-why2", "checkpoint-assess", "phase2-decide",
+    "phase1-lexicon", "phase1-understanding", "phase1-why2",
+    "checkpoint-assess", "phase2-decide",
     "phase2-strategic-overview", "phase2-tracker-alignment",
     "phase3-specialists", "phase3-how", "phase3-sentinel", "phase3-plan",
     "phase3-consensus", "checkpoint-plan", "phase4-document", "done",
@@ -6346,7 +6276,9 @@ def _cmd_continue(
     phase_labels = {
         "phase1-discover":     "SCOUT (retry failed discovery dispatch)",
         "phase1-constitution": "CHIEF → speckit.constitution (creates constitution.md)",
-        "phase1-what":         "CARTOGRAPHER (spec amendment + WHY2 re-validation)",
+        "phase1-what":         "CARTOGRAPHER (spec authoring or amendment)",
+        "phase1-lexicon":      "Deterministic spec Lexicon gate",
+        "phase1-understanding": "Deterministic Understanding gate",
         "phase3-how":          "ARCHITECT (architecture, data-model, contracts)",
         "phase3-plan":         "ORCHESTRATOR (task breakdown)",
         "phase3-consensus":    "Consensus gate (WHY3 + ASSESS2 + PLAN2)",
@@ -6389,20 +6321,23 @@ def _cmd_continue(
         )
         _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
 
-    verified_recovery = _verified_lexicon_gate_recovery_phase(project_root, state)
-    if verified_recovery is not None:
-        next_phase, findings = verified_recovery
-        state["lexicon_evaluation"] = "passed"
-        state["lexicon_pass"] = True
-        state["lexicon_findings"] = findings
-        state["lexicon_attempts"] = 0
+    lexicon_recovery = _lexicon_gate_recovery_phase(state)
+    if lexicon_recovery is not None:
+        state["lexicon_evaluation"] = "pending"
+        state.pop("lexicon_pass", None)
+        state.pop("lexicon_findings", None)
+        state.pop("lexicon_report", None)
+        state.pop("lexicon_warning_waiver", None)
         state.pop("lexicon_gate_exhausted", None)
         state["blocked_reason"] = None
+        dispatch_counts = state.get("phase_dispatch_counts")
+        if isinstance(dispatch_counts, dict):
+            dispatch_counts["phase1-lexicon"] = 0
         print(
-            "[squad] Lexicon recovery verified on disk; resuming after the hard gate.",
+            "[squad] Lexicon recovery requested; resuming at the visible deterministic gate.",
             flush=True,
         )
-        start_phase(next_phase, verb="Continuing from verified Lexicon recovery")
+        start_phase(lexicon_recovery, verb="Continuing with Lexicon certification")
         return
 
     # Echelon versions before the banzai-routing fix persisted a COMMANDER

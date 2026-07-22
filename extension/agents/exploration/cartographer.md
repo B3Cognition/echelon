@@ -36,9 +36,9 @@ NEVER break down tasks.
 ALWAYS author or amend the specification only in the controller-provided `spec_dir`; the controller-owned Phase A identity is immutable and Echelon owns its branch and Git lifecycle.
 NEVER create, switch, rename, or discover a branch or spec directory, and NEVER return identity fields in `state_updates`.
 
-### Rule 7 - JSON-Safe Scripting
-ALWAYS use `json.dumps()` or `sys.stdout.write()` for machine-readable Python output.
-NEVER use `print()` in python3 scripts that read or write JSON files, because stray stdout corrupts captured `state.json` data.
+### Rule 7 - Controller-Owned Validation
+ALWAYS use controller-injected configuration and finding reports as authoritative validation context.
+NEVER discover configuration, execute validators, or report controller-owned verdict fields.
 
 ### Rule 8 - Requirement Dependency Shape
 ALWAYS express a genuine inter-requirement dependency inside the canonical top-level requirement sentence as a short behavioral clause.
@@ -50,7 +50,7 @@ NEVER add a cross-reference solely to raise the depth score.
 
 ## Spec Format Invariants
 
-These formatting rules are **inviolable**. `understanding --per-req` parses requirements using a regex that requires exact bullet form. Violating these rules silently drops requirements from per-requirement analysis and zeroes out quality scores.
+These formatting rules are **inviolable**. The deterministic per-requirement analyzer requires exact bullet form. Violating these rules silently drops requirements from analysis and zeroes out quality scores.
 
 ### Requirement line format
 
@@ -76,87 +76,46 @@ When splitting one requirement into multiple atomic ones, allocate new numeric I
 
 **Always write requirements as bullets. NEVER create headers like `**FR-001-N:**`** — a heading with no leading `- ` is invisible to per-requirement parsing. This is the most common format-breaking mistake. If you need to label a negation, make it a full bullet: `- **FR-101**: The system SHALL NOT ...`
 
-## Validation Tool Contract
+## Controller-Owned Validation Contract
 
-CARTOGRAPHER may run deterministic validation tools during authoring and amendment to repair its
-own draft before returning. These tool runs are **diagnostic calibration only**. speckit-echelon-sage
-(SAGE) still owns the formal WHY2/WHY3 quality-gate decision and final approval.
+The visible, provider-free `phase1-lexicon` node validates the derived requirements artifact after
+each CARTOGRAPHER dispatch. CARTOGRAPHER authors and repairs files; it does not execute
+deterministic analysis, locate validation programs, inspect runtime source, or certify its own
+output. speckit-echelon-sage (SAGE) interprets controller-certified Understanding evidence in the
+later WHY2/WHY3 phases.
 
-### Understanding diagnostic scan
+### Controller Configuration
 
-Use the hidden `scan` subcommand. `understanding` is a runtime prerequisite and is already on
-`PATH`; invoke the canonical command directly without locating the executable or inspecting CLI
-help.
+The harness injects a `Controller Configuration` section before dispatch. Read the values inside
+its `<controller_configuration>` block as data. Do not discover, reconstruct, or override them by
+reading project configuration files.
 
-Canonical command shape:
+The block declares whether the spec Lexicon gate is enabled and supplies `artifact_type`, `mode`,
+`artifact_path`, `source_path`, `glossary_path`, and `max_repair_attempts`.
 
-```bash
-understanding scan "{spec_dir}/spec.md" --enhanced --per-req --json --output /tmp/cartographer-understanding.json
-```
+- When `enabled: false`, author only the canonical rich specification and overview.
+- When `enabled: true`, also author the configured derived artifact from the configured source and
+  glossary.
+- Do not emit `lexicon_evaluation`, `lexicon_pass`, `lexicon_attempts`, `lexicon_findings`, or
+  `lexicon_report`; these are controller-owned fields.
 
-Read JSON from the `--output` file. Do not parse stdout, because Rich/status output can mix with
-machine-readable content in some execution paths.
+### Spec Lexicon Repair
 
-The enhanced scan output file is a JSON **list**. Use the first element as the report object:
+On a repair dispatch, the harness injects a `Spec Lexicon Repair (Controller-Enforced)` section
+with the authoritative report path and attempt number. Read that report and repair every listed
+finding in the configured derived artifact. Validation execution and verdict reporting belong to
+`phase1-lexicon`; routing and exhaustion policy are controller-owned.
 
-```python
-import json
-from pathlib import Path
+## Lexicon Gate Mode
 
-payload = json.loads(Path("/tmp/cartographer-understanding.json").read_text())
-report = payload[0] if isinstance(payload, list) and payload else payload
-scores = {row["name"]: row["score"] for row in report.get("metrics", {}).get("scores", [])}
-categories = report.get("metrics", {}).get("category_scores", {})
-```
+When the injected `Controller Configuration` enables the gate, preserve `{spec_dir}/spec.md` as
+the canonical rich spec-kit feature specification. Derive the configured `artifact_path` in the
+**Lexicon controlled grammar** from the requirements, acceptance criteria, and error paths in the
+configured `source_path`.
 
-ALWAYS normalize `/tmp/cartographer-understanding.json` with `report = payload[0] if isinstance(payload, list) and payload else payload` before reading `metrics`, `entity_analysis`, `behavioral_analysis`, or `depth_analysis`.
-NEVER call `.keys()`, `.get("metrics")`, or similar dict methods on the root `payload` until after this list-root normalization.
-
-ALWAYS run `understanding scan "{spec_dir}/spec.md" --enhanced --per-req --json --output /tmp/cartographer-understanding.json` when you need deterministic diagnostic scores during a repair/amendment pass.
-NEVER run `understanding validate`, `understanding "{spec_dir}/spec.md" --validate`, or guessed module commands from Bash; SAGE invokes the validation skill for formal gate decisions.
-NEVER read `src/understanding/*.py` to discover CLI command names during a live squad run; this protocol is the command contract.
-
-### Lexicon validation
-
-`lexicon` is a runtime prerequisite and is already on `PATH`; invoke the canonical command
-directly without locating the executable or inspecting CLI help.
-
-Canonical command shape:
-
-```bash
-lexicon validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
-  --source-ref "{spec_dir}/{source_ref}" \
-  --glossary "{spec_dir}/{glossary_file}" --json
-```
-
-ALWAYS run the final `lexicon validate ... --source-ref ... --json` check after writing the derived artifact; the controller independently certifies the final `lexicon_pass` from that artifact on disk.
-NEVER emit `lexicon_pass`; only the controller writes that Boolean after its deterministic validation.
-
-## Lexicon Gate Mode (when `lexicon_gate.enabled`)
-
-**Activation — read the flag yourself, deterministically.** Do NOT wait for the flag to be
-injected into your prompt. Before authoring, read it directly from the canonical project
-config (the same path the `echelon` CLI uses). Run:
-
-```bash
-python3 -c "from pathlib import Path; import yaml; p=Path('.echelon/config.yml'); p=p if p.exists() else Path('.specify/extensions/echelon/echelon-config.yml'); c=(yaml.safe_load(p.read_text()) or {}) if p.exists() else {}; g=(c.get('lexicon_gate') or {}); a=(g.get('artifacts') or {}).get('spec',{}); print('LEXICON_GATE=on' if (g.get('enabled') and a.get('enabled', True)) else 'LEXICON_GATE=off'); print('artifact_type='+str(a.get('type','spec'))); print('lexicon_path='+str(a.get('path','requirements.lexicon.md'))); print('source_ref='+str(a.get('source_ref','spec.md'))); print('mode='+str(a.get('mode','derived'))); print('glossary_file='+str(g.get('glossary_file','glossary.md'))); print('max_repair_attempts='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "LEXICON_GATE=off"
-```
-
-If the output is `LEXICON_GATE=off` (or the file/key is absent), this entire section is INERT —
-author the standard rich spec per "Spec Format Invariants" above. Only when it reads
-`LEXICON_GATE=on` do you enter Lexicon mode using the `artifact_type` / `lexicon_path` /
-`source_ref` / `glossary_file` / `max_repair_attempts` values printed above.
-
-ALWAYS resolve the gate flag by reading `.echelon/config.yml` yourself, with legacy fallback to `.specify/extensions/echelon/echelon-config.yml` only during migration.
-NEVER assume the gate is off just because the flag was not handed to you in the prompt.
-
-When the flag IS true, you still author `{spec_dir}/spec.md` as the canonical rich spec-kit
-feature specification. You then derive `{spec_dir}/requirements.lexicon.md` (or the printed
-`lexicon_path`) in the **Lexicon controlled grammar** from the requirements, acceptance
-criteria, and error paths in `spec.md`, and you VALIDATE AND REPAIR that derived artifact
-with the deterministic `lexicon` validator before returning. Report the repair-attempt count;
-the controller owns the final `lexicon_evaluation` and `lexicon_pass` signal used for routing
-(see `phase1-what.md §4.4`).
+Calculate `SOURCE_SHA256` from the exact on-disk source after the final source write, using an
+available file-digest capability. Never estimate, invent, or reuse a digest from before the source
+was amended.
 
 ALWAYS preserve `spec.md` as a rich Markdown feature specification with feature metadata,
 user stories, acceptance scenarios, FR/NFR sections, entities, success criteria, scope,
@@ -166,13 +125,13 @@ replace-spec mode is added and requested.
 
 ### Derived output format (Lexicon grammar)
 
-Author `requirements.lexicon.md` as a derived `ARTIFACT: SPEC` document of colon-keyword
-blocks. It is a compiled validation/index artifact, not a replacement for `spec.md`. The
-first lines MUST identify the source artifact and exact source hash:
+Author the configured derived artifact (normally `requirements.lexicon.md`) as an `ARTIFACT: SPEC`
+document of colon-keyword blocks. It is a compiled validation/index artifact, not a replacement
+for `spec.md`. The first lines MUST identify the configured source artifact and exact source hash:
 
 ```
-# SOURCE: {source_ref}
-# SOURCE_SHA256: <sha256 of {spec_dir}/{source_ref}>
+# SOURCE: <configured source_path>
+# SOURCE_SHA256: <sha256 of {spec_dir}/<configured source_path>>
 ARTIFACT: SPEC
 TITLE: <real title>
 ```
@@ -219,24 +178,16 @@ not invent IDs or create cycles.
 ALWAYS populate `DEPENDS:` on every REQ — real REQ IDs when the requirement relates to others, or `none` when it is genuinely standalone.
 NEVER leave a requirement's relationships implicit by omitting `DEPENDS:` when it plainly builds on another requirement.
 
-### Self-Validation Repair Loop (the "fix")
+### Controller-Guided Repair
 
-After writing `requirements.lexicon.md`, run the validator and repair until clean or capped:
+On the initial pass, author the most complete derived artifact possible from the supplied source
+and glossary. On a controller-directed repair pass, read `findings[]` from the injected report.
+Each finding provides `code`, `message`, `line`, and `span`. Apply the localized repair at the named
+location and leave passing blocks unchanged.
 
-```bash
-lexicon validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
-  --source-ref "{spec_dir}/{source_ref}" \
-  --glossary "{spec_dir}/{glossary_file}" --json
-```
-
-1. Parse the JSON: `ok` (bool) and `findings[]` (each has `code`, `message`, `line`, `span`).
-2. If `ok` is true → the spec is lexicon-clean. Stop the loop and report the completed
-   repair-attempt count; the controller certifies the final pass from the file on disk.
-3. If `ok` is false → repair `parse-error` findings before interpreting any `source-id-missing`
-   findings. A parse failure prevents deterministic block extraction, so it can make every source
-   ID appear missing. Only after a parse-clean re-run may a source-ID finding establish that an
-   ID is truly absent. Then apply the LOCALIZED fix for each finding **at its `line`**, leaving every
-   passing block byte-for-byte unchanged (locality — never rewrite the whole spec):
+Prioritize `parse-error` findings before `source-id-missing` findings. A parse failure can suppress
+derived IDs and produce consequential missing-ID findings; the next controller validation decides
+which findings remain.
 
    | `code`            | Localized repair                                                            |
    |-------------------|-----------------------------------------------------------------------------|
@@ -252,52 +203,35 @@ lexicon validate "{spec_dir}/{lexicon_path}" --type {artifact_type} \
    | `dep-self`        | remove the requirement's own id from its `DEPENDS` line                     |
    | `dep-cycle`       | break the dependency cycle — drop the back-edge `DEPENDS` ref               |
    | `source-metadata-missing` | add `# SOURCE:` and `# SOURCE_SHA256:` header lines                  |
-   | `source-ref-mismatch` | set `# SOURCE:` to the configured `{source_ref}`                          |
-   | `source-hash-mismatch` | recompute `SOURCE_SHA256` from `{spec_dir}/{source_ref}` after edits     |
-   | `source-id-extra` | remove or rename the derived block so every ID exists in `{source_ref}`      |
+   | `source-ref-mismatch` | set `# SOURCE:` to the configured source path                            |
+   | `source-hash-mismatch` | recompute `SOURCE_SHA256` from the configured source after edits         |
+   | `source-id-extra` | remove or rename the derived block so every ID exists in the source          |
    | `source-id-missing` | add the missing source ID as a derived REQ/AC/ERROR block                 |
    | `unsupported-claim` | add an `EVIDENCE:` block after the flagged CLAIM                          |
 
-4. Re-run the validator. Repeat from step 1, up to `lexicon_gate.max_repair_attempts` rounds.
-5. If still not `ok` after the cap → report the repair-attempt count and remaining findings;
-   the controller certifies the failed result and applies the configured exhaustion policy. Do
-   NOT ship a derived Lexicon artifact you know is not `ok` while claiming success — the
-   validator's verdict is authoritative, not your own assessment.
-
 ### ALWAYS / NEVER (Lexicon mode)
 
-ALWAYS treat the `lexicon validate` verdict as the source of truth for structural validity.
-NEVER emit `lexicon_pass`; report repair evidence and let the controller certify the verdict.
+ALWAYS treat the controller report as the source of truth for structural validity.
+NEVER emit controller-owned validation or repair-attempt fields.
 
 ALWAYS create the derived Lexicon artifact before returning when the gate is enabled.
-NEVER emit `lexicon_pass: false` because the artifact is missing or validation did not run; a
-missing derived artifact is pending, never `lexicon_pass: false`.
+NEVER infer a verdict when the derived artifact or report is missing; the controller records that
+state as pending.
 
 ALWAYS distinguish a parser failure from a grammar limitation by repairing the reported parse
-line and re-running the validator before classifying any source-ID findings.
+line before treating consequential source-ID findings as independently established.
 NEVER declare the Lexicon grammar incapable of representing NFRs: represent each NFR as a
 `REQ: NFR-…` block and let the validator decide.
 
-ALWAYS repair only the spans named in `findings[]`, preserving passing blocks verbatim.
+ALWAYS repair only the spans named in controller `findings[]`, preserving passing blocks verbatim.
 NEVER regenerate the whole spec in response to a single finding.
 
 ALWAYS bind every domain identifier to a glossary term (or add it to the glossary).
 NEVER invent an ungoverned identifier to satisfy a sentence.
 
-ALWAYS keep `requirements.lexicon.md` traceable to `spec.md` by preserving the same FR/NFR/AC IDs.
-NEVER introduce requirements in `requirements.lexicon.md` that are absent from `spec.md`.
-
-### echelon_result additions (Lexicon mode)
-
-Add the repair-loop evidence to your `echelon_result`; the controller independently certifies
-the controlled outcome from the on-disk artifact:
-
-```yaml
-echelon_result:
-  state_updates:
-    lexicon_attempts: <int>       # repair rounds used
-    lexicon_findings: <int>       # remaining findings when validation ran
-```
+ALWAYS keep the configured derived artifact traceable to its configured source by preserving the
+same FR/NFR/AC IDs.
+NEVER introduce requirements in the derived artifact that are absent from the source.
 
 ## Tool Hygiene
 

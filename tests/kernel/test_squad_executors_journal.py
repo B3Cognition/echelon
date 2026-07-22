@@ -535,7 +535,7 @@ def test_why2_routing_contract_uses_full_quality_score_shape():
 
 
 def test_spec_lexicon_routing_contract_requires_certificate_fields():
-    """WHAT agents report repair evidence; the controller certifies a verdict."""
+    """WHAT agents do not report fields owned by controller validation."""
     from harness.phase_graph import PhaseNode
     from harness.squad_executors import _routing_contract
 
@@ -551,11 +551,152 @@ def test_spec_lexicon_routing_contract_requires_certificate_fields():
     contract = _routing_contract(node)
 
     assert "lexicon_pass:" not in contract
-    assert "lexicon_attempts:" in contract
-    assert "lexicon_findings:" in contract
+    assert "lexicon_attempts:" not in contract
+    assert "lexicon_findings:" not in contract
 
     phase_text = (Path(__file__).resolve().parents[2] / "extension/workflow/phases/phase1-what.md").read_text()
-    assert "a missing artifact is pending, never `lexicon_pass: false`" in phase_text
+    assert "a missing artifact is pending, never `lexicon_pass: false`" in phase_text.lower()
+
+
+def test_phase1_what_prompt_injects_resolved_spec_lexicon_configuration(tmp_path):
+    config_dir = tmp_path / ".echelon"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.yml").write_text(
+        "lexicon_gate:\n"
+        "  enabled: true\n"
+        "  artifacts:\n"
+        "    spec:\n"
+        "      enabled: true\n"
+        "      type: spec\n"
+        "      mode: derived\n",
+        encoding="utf-8",
+    )
+    (config_dir / "local.yml").write_text(
+        "lexicon_gate:\n"
+        "  glossary_file: domain-glossary.md\n"
+        "  max_repair_attempts: 7\n"
+        "  artifacts:\n"
+        "    spec:\n"
+        "      path: controlled-requirements.md\n"
+        "      source_ref: product-spec.md\n",
+        encoding="utf-8",
+    )
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-what", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "spec_dir": "runs/run-test/specs/001-demo",
+        },
+    )
+
+    assert prompt.count("# Controller Configuration") == 1
+    assert "<controller_configuration>" in prompt
+    assert "enabled: true" in prompt
+    assert "artifact_type: spec" in prompt
+    assert "mode: derived" in prompt
+    assert "artifact_path: controlled-requirements.md" in prompt
+    assert "source_path: product-spec.md" in prompt
+    assert "glossary_path: domain-glossary.md" in prompt
+    assert "max_repair_attempts: 7" in prompt
+    assert "Do not discover or override these values" in prompt
+
+
+def test_phase1_what_prompt_marks_disabled_spec_lexicon_subgate(tmp_path):
+    config_dir = tmp_path / ".echelon"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.yml").write_text(
+        "lexicon_gate:\n"
+        "  enabled: true\n"
+        "  artifacts:\n"
+        "    spec:\n"
+        "      enabled: false\n",
+        encoding="utf-8",
+    )
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-what", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "spec_dir": "runs/run-test/specs/001-demo",
+        },
+    )
+
+    assert "enabled: false" in prompt
+    assert "When disabled, do not create or amend a derived Lexicon artifact." in prompt
+
+
+def test_phase1_what_prompt_injects_controller_spec_lexicon_repair_report(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    report = tmp_path / "runs/run-test/specs/001-demo/spec-lexicon-report.json"
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-what", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "spec_dir": "runs/run-test/specs/001-demo",
+            "lexicon_evaluation": "failed",
+            "lexicon_pass": False,
+            "lexicon_attempts": 2,
+            "lexicon_report": str(report),
+        },
+    )
+
+    assert prompt.count("# Spec Lexicon Repair (Controller-Enforced)") == 1
+    assert prompt.count(str(report)) == 1
+    assert "Attempt: `2`" in prompt
+    assert "Validation execution and deterministic verdict reporting are controller-owned." in prompt
+
+
+def test_unrelated_phase_does_not_receive_spec_lexicon_configuration(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase2-how", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "lexicon_evaluation": "failed",
+            "lexicon_pass": False,
+            "lexicon_report": "/evidence/spec-lexicon-report.json",
+        },
+    )
+
+    assert "# Controller Configuration" not in prompt
+    assert "# Spec Lexicon Repair (Controller-Enforced)" not in prompt
+
+
+def test_phase1_what_outputs_are_checked_by_the_executor(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    state = {"spec_dir": str(spec_dir.relative_to(tmp_path))}
+    node = PhaseNode(id="phase1-what", type="agent")
+
+    assert ex._required_phase_outputs_missing(node, state) == [
+        "spec.md",
+        "00-overview.md",
+    ]
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (spec_dir / "00-overview.md").write_text("# Overview\n", encoding="utf-8")
+    assert ex._required_phase_outputs_missing(node, state) == []
 
 
 def test_allowed_state_updates_contract_renders_empty_allowlist():

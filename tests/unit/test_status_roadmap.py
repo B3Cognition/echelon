@@ -9,7 +9,7 @@ import pytest
 import yaml
 from pathlib import Path
 
-from echelon.cli import _print_roadmap, _ROADMAP_PHASES
+from echelon.cli import _derive_roadmap_phases, _print_roadmap, _ROADMAP_PHASES
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -88,6 +88,19 @@ def test_redispatch_count_surfaces_loop_signal(capsys):
 @pytest.mark.unit
 def test_roadmap_is_derived_from_workflow_primary_path():
     assert _ROADMAP_PHASES == _workflow_primary_path()
+
+
+@pytest.mark.unit
+def test_fallback_roadmap_keeps_visible_deterministic_spec_gates(tmp_path):
+    phases = _derive_roadmap_phases(tmp_path / "missing-workflow.yaml")
+
+    what_index = phases.index("phase1-what")
+    assert phases[what_index : what_index + 4] == [
+        "phase1-what",
+        "phase1-lexicon",
+        "phase1-understanding",
+        "phase1-why2",
+    ]
 
 
 @pytest.mark.unit

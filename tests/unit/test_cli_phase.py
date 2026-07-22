@@ -214,6 +214,9 @@ def test_phase_run_experimental_artifact_quality_phases(
     report_name: str,
 ) -> None:
     _initialize_active_run(tmp_path)
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text("lexicon_gate:\n  enabled: false\n", encoding="utf-8")
     spec_dir = tmp_path / "specs" / "001-demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")

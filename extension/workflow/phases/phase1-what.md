@@ -60,18 +60,14 @@ Use the Agent tool to dispatch a subagent with:
   ```
   Add user stories with acceptance criteria (Given/When/Then) using the provided templates. Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `${STAGING_DIR}/`. Return journal entries in `echelon_result.journal_entries`.
 
-  Validation Tool Contract:
-  - For diagnostic scoring during authoring/amendment, use `understanding scan "{spec_dir}/spec.md" --enhanced --per-req --json --output /tmp/cartographer-understanding.json`; read JSON from the output file, not stdout.
-  - The enhanced scan output file is a JSON list; normalize it before reading metrics: `payload=json.load(open("/tmp/cartographer-understanding.json")); report=payload[0] if isinstance(payload, list) and payload else payload`. Do not call `.keys()` or `.get("metrics")` on the root payload before this normalization.
-  - Do not run formal Understanding validation or guess validation commands; the harness owns formal analysis in `phase1-understanding` and `phase3-understanding`.
-  - For Lexicon Gate validation, use `lexicon validate "{spec_dir}/{lexicon_path}" --type {artifact_type} --source-ref "{spec_dir}/{source_ref}" --glossary "{spec_dir}/{glossary_file}" --json`; the controller independently certifies the final `lexicon_pass` from the derived artifact on disk.
-
-  Lexicon Repair Invariant:
-  - When the Lexicon gate is enabled, an amendment pass MUST run that validator before writing any completion summary. An artifact inventory, a prior journal entry, or a prior `lexicon_attempts` value is not validation evidence.
-  - If the validator returns findings, repair the current derived artifact and re-run it up to the configured repair budget. Fix `parse-error` before interpreting `source-id-missing`, because failed parsing can suppress all derived IDs.
+  Controller-Owned Validation Contract:
+  - Read the injected `Controller Configuration` section and treat its `<controller_configuration>` values as authoritative. Do not discover or override configuration from project files.
+  - When the spec Lexicon gate is enabled, author the configured derived artifact from the configured source and glossary. The provider-free `phase1-lexicon` node validates it after this dispatch.
+  - On a repair pass, read the injected `Spec Lexicon Repair (Controller-Enforced)` report and repair each listed finding locally. Validation execution and verdict reporting are controller-owned.
+  - The harness owns formal Understanding analysis in `phase1-understanding` and `phase3-understanding`; do not calculate or report deterministic scores.
+  - Fix `parse-error` before treating `source-id-missing` as independently established, because failed parsing can suppress derived IDs.
   - `NFR-…` IDs are valid `REQ: NFR-…` blocks in the controlled grammar. Do not describe NFRs as an unsupported grammar feature.
-  - If the current run state has `lexicon_attempts: 0`, its repair budget was reset by rewind; do not repeat an earlier exhaustion conclusion.
-  - NEVER emit `lexicon_pass` yourself. The controller writes that Boolean only after it validates the derived artifact; a missing artifact is pending, never `lexicon_pass: false`.
+  - Never emit `lexicon_evaluation`, `lexicon_pass`, `lexicon_attempts`, `lexicon_findings`, or `lexicon_report`; the controller owns them.
 
   Always complete ALL of the following before returning. Do NOT return until they are true:
   1. `{spec_dir}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.
@@ -90,67 +86,22 @@ If `{spec_dir}` is missing after Phase A bootstrap, return `status: blocked` and
 not create or select a branch; the deterministic Phase A bootstrap owns that
 recovery.
 
-### 4.3 Post-speckit-echelon-cartographer (CARTOGRAPHER)
+### 4.3 Controller-Owned Post-Dispatch Boundary
 
-After speckit-echelon-cartographer (CARTOGRAPHER) completes, read its output to verify
-the already-reserved `spec_dir`. Phase A identity is controller-owned: CARTOGRAPHER
-must not return or change `spec_id`, `spec_dir`, `published_spec_dir`, or the feature
-branch. Use the supplied `spec_dir` exactly as provided for file checks and prompts.
+After CARTOGRAPHER completes, the harness checks the already-reserved `spec_dir`. The result
+contract cannot change `spec_id`, `spec_dir`, `published_spec_dir`, or the feature branch.
 
-#### Directory Verification (MANDATORY)
+The executor requires both `{spec_dir}/spec.md` and `{spec_dir}/00-overview.md`. A missing required
+artifact blocks the phase with `missing_phase_outputs`; the model must not create a substitute
+directory. The controller's constitution provenance guard independently rejects a missing or
+template constitution before this phase or any later governed phase can run.
 
-Before returning state updates, verify the supplied spec directory exists:
+Specification quality is evaluated after the hard Lexicon boundary by the deterministic
+`phase1-understanding` node and SAGE. A draft with missing or weak acceptance criteria therefore
+returns through the ordinary WHY2 repair route rather than relying on model-executed probes.
 
-1. **Spec directory exists:**
-   ```bash
-   ls "{spec_dir}/spec.md"
-   ```
-
-**If the check fails** (directory missing or `spec.md` missing), return a
-blocking result. Do not run Git commands and do not create a substitute
-directory.
-
-**If both checks pass**, verify speckit-echelon-cartographer (CARTOGRAPHER) ran the enhancement pass (Step 2 in `cartographer.md`) before updating state:
-
-```bash
-# spec.md must contain at least one WHEN/THEN acceptance criterion — proof of enhancement
-grep -q "WHEN\|THEN\|Given\|When\|Then" "${spec_dir}/spec.md" \
-  || { echo "WARN: spec.md has no WHEN/THEN criteria — speckit-echelon-cartographer (CARTOGRAPHER) may not have run Step 2 (enhancement pass)"; }
-# 00-overview.md must exist
-[ -f "${spec_dir}/00-overview.md" ] \
-  || { echo "WARN: 00-overview.md missing — speckit-echelon-cartographer (CARTOGRAPHER) Step 2 may be incomplete"; }
-```
-
-If either warning fires: **re-dispatch speckit-echelon-cartographer (CARTOGRAPHER)** in enhancement-only mode using the prompt below. Additionally, run the constitution check below regardless of whether CARTOGRAPHER warnings fired.
-
-**Constitution placeholder check** (run after every CARTOGRAPHER dispatch, regardless of outcome):
-
-```bash
-grep -E '\[CONSTITUTION_VERSION\]|\[RATIFICATION_DATE\]|\[LAST_AMENDED_DATE\]' \
-  .specify/memory/constitution.md && echo "CONSTITUTION_PLACEHOLDERS_FOUND" || echo "CONSTITUTION_CLEAN"
-```
-
-If `CONSTITUTION_PLACEHOLDERS_FOUND`: the constitution is not usable governance output yet. Do not advance to Phase 2. Do not edit, patch, or shell-substitute `.specify/memory/constitution.md` here. Return to `phase1-constitution` so speckit-echelon-chief (CHIEF) can invoke `speckit.constitution` with concrete context.
-
-Always resolve constitution placeholders through CHIEF before Phase 2. Do NOT proceed to Phase 2 with unfilled placeholders in constitution.md. A constitution with `[CONSTITUTION_VERSION]` in it is not a constitution — it is a template. A spec.md with zero acceptance criteria is not complete output.
-
-**Enhancement-only re-dispatch prompt:**
-
-```xml
-<context>
-[include same context pack as first dispatch, including read-only .specify/memory/constitution.md, plus current contents of {spec_dir}/spec.md]
-spec_dir: {spec_dir}
-</context>
-
-<instructions>
-You are CARTOGRAPHER in enhancement-only mode. The spec directory already exists at `{spec_dir}`. Enhance spec.md with Given/When/Then acceptance criteria and cross-references, then produce 00-overview.md. Do not create or switch branches or directories. Read cartographer.md §"Step 2: Enhance Spec with Squad Intelligence" for the full protocol.
-Treat `.specify/memory/constitution.md` as read-only governance context. Do not edit, patch, append to, or regenerate it.
-
-Always complete these outputs before returning. Do NOT return until:
-1. `{spec_dir}/spec.md` contains Given/When/Then acceptance criteria for every user story.
-2. `{spec_dir}/00-overview.md` exists.
-</instructions>
-```
+After the required WHAT artifacts exist, the controller always advances to the visible,
+provider-free `phase1-lexicon` node. CARTOGRAPHER does not certify or route around that node.
 
 Return only this state update in `echelon_result`; the harness preserves the
 controller-owned Phase A identity in `state.json`:
@@ -167,28 +118,13 @@ This step is part of the `echelon_result.state_updates` block above. Skipping it
 
 1. Return `spec_status: planned` in `echelon_result.state_updates`.
 2. Update `{spec_dir}/spec.md`: replace the line `**Status**: Draft` with `**Status**: Planned`.
-3. **Verification (run after the harness applies state updates, before transitioning to phase1-understanding):**
-
-   ```bash
-   grep -q '^\*\*Status\*\*: Planned' "${spec_dir}/spec.md" || { echo "ERROR: spec.md still shows Draft" >&2; exit 1; }
-   python3 -c "import json; assert json.load(open('${SQUAD_DIR}/state.json'))['spec_status']=='planned'" || { echo "ERROR: state.json.spec_status not 'planned'" >&2; exit 1; }
-   ```
-
-   If either check fails, halt the phase and resolve before proceeding.
+3. Return the strict result block. The harness validates and persists `spec_status`; do not read or
+   modify `state.json` directly.
 
 ### Expected Outputs — BOTH REQUIRED
 
 - `spec.md` (created and enhanced by speckit-echelon-cartographer (CARTOGRAPHER) in the controller-provided directory with GWT acceptance criteria and glossary cross-references)
 - `00-overview.md` (speckit-echelon-cartographer (CARTOGRAPHER)-authored 1–2 page human summary: what the feature does, key design choices, primary constraints)
-
-**Post-dispatch verification (run before Spec Status Transition):**
-
-```bash
-[ -f "${spec_dir}/spec.md" ]        || { echo "ERROR: spec.md missing" >&2; exit 1; }
-[ -f "${spec_dir}/00-overview.md" ] || { echo "ERROR: 00-overview.md missing" >&2; exit 1; }
-# Confirm staging was moved (at least glossary.md must be in spec_dir)
-[ -f "${spec_dir}/glossary.md" ]    || echo "WARN: staging artifacts may not have been moved to spec_dir"
-```
 
 ### 4.4 Lexicon Gate (when `lexicon_gate.enabled` in echelon-config.yml)
 
@@ -197,26 +133,23 @@ unchanged. When it is true, the deterministic controlled-grammar gate applies to
 artifact. The canonical `{spec_dir}/spec.md` remains the rich spec-kit Markdown feature
 specification.
 
-**Dispatch additions.** Include in the CARTOGRAPHER prompt:
-- `lexicon_gate.enabled: true`, plus `artifact_type`, `lexicon_path`, `source_ref`,
-  `glossary_file`, and `max_repair_attempts` from `echelon-config.yml`.
-- The controlled glossary (`{glossary_file}`, already in the context pack as `glossary.md`).
-- Instruction: "Author in Lexicon Gate Mode — see `cartographer.md §Lexicon Gate Mode`. Keep
-  `{spec_dir}/spec.md` as the rich Markdown feature specification, derive
-  `{spec_dir}/requirements.lexicon.md` from it in the Lexicon grammar with `SOURCE` and
-  `SOURCE_SHA256` metadata, self-validate and repair that derived artifact with
-  `lexicon validate --source-ref`, and report its attempt count. The controller certifies
-  the final Lexicon verdict from the on-disk artifact."
+**Controller Configuration.** The harness injects one authoritative
+`<controller_configuration>` block containing effective activation, paths, artifact type, mode,
+and repair limit. CARTOGRAPHER must not discover these values from files.
 
-CARTOGRAPHER owns the in-dispatch repair loop (the "fix"). The controller independently
-validates the derived artifact and owns `lexicon_evaluation` plus the Boolean verdict.
-COMMANDER owns the re-dispatch decision on that controlled outcome (the "re-dispatch").
+CARTOGRAPHER authors the configured derived artifact. The `phase1-lexicon` node independently
+validates it, writes `spec-lexicon-report.json`, owns all validation fields and attempt accounting,
+and applies the configured re-dispatch or exhaustion policy without invoking a provider.
 
-**Controlled-outcome routing.** After the dispatch, read the controller-certified
+**Spec Lexicon Repair.** When validation fails, the next WHAT prompt includes a
+`Spec Lexicon Repair (Controller-Enforced)` section naming the report and attempt. CARTOGRAPHER
+repairs the listed spans without executing validation; the controller revalidates after dispatch.
+
+**Controlled-outcome routing.** After `phase1-lexicon` executes, read the controller-certified
 `state.json.lexicon_evaluation` and `state.json.lexicon_pass`:
 - `lexicon_evaluation == pending` → re-dispatch `phase1-what` (`increment_iteration`).
-  This means the derived artifact was absent or the controller validator could not execute;
-  it is not a validation failure and never produces `lexicon_pass: false`.
+  This means the derived artifact was absent or the controller validator could not execute.
+  A missing artifact is pending, never `lexicon_pass: false`.
 - `lexicon_pass == true` → proceed to `phase1-understanding` (controller-certified Understanding analysis runs there,
   once, on rich `spec.md`, after the derived requirements artifact is structurally clean).
 - `lexicon_evaluation == failed AND lexicon_attempts < max_repair_attempts AND iteration < max_iterations`
@@ -228,17 +161,9 @@ COMMANDER owns the re-dispatch decision on that controlled outcome (the "re-disp
   `warn` → proceed to `phase1-understanding` with a `lexicon_gate_exhausted` warning journal entry;
   `block` → set `spec_status: blocked`, `blocked_reason: "lexicon gate not satisfied"`, and stop.
 
-**Agent state updates (added to the §4.3 block when the gate is enabled):**
-
-```yaml
-echelon_result:
-  state_updates:
-    lexicon_attempts: <int>   # repair rounds used
-    lexicon_findings: <int>   # remaining findings when validation ran
-```
-
-The controller then writes `lexicon_evaluation: pending|passed|failed` and, only after its
-deterministic validation runs, `lexicon_pass: true|false`.
+The controller writes `lexicon_evaluation`, `lexicon_pass`, `lexicon_attempts`,
+`lexicon_findings`, and `lexicon_report`. These fields must never appear in the agent's
+`echelon_result.state_updates`.
 
 > Ordering invariant: Lexicon is the FIRST, hard, deterministic gate; `understanding`/SAGE
 > (`phase1-understanding`) runs only AFTER `lexicon_pass`. The hard gate validates
@@ -246,4 +171,4 @@ deterministic validation runs, `lexicon_pass: true|false`.
 > the soft score gate structure — that is the "score-quality-later" anti-pattern this gate
 > replaces.
 
-**Transition:** `phases[phase1-understanding]` — see `workflow/definition.yaml`
+**Transition:** `phases[phase1-lexicon]` — see `workflow/definition.yaml`
