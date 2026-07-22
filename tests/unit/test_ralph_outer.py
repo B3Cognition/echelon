@@ -1808,6 +1808,41 @@ class TestOuterLoopConvergence:
         assert seen["spec_dir"] == spec_dir
         assert seen["changed_files"] == ["README.md", "CHANGELOG.md"]
 
+    def test_documentation_gate_includes_docs_committed_after_task_progress(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        controller, *_ = _make_controller(tmp_path)
+        worktree = tmp_path / "worktree"
+        _init_git_repo(worktree)
+        (worktree / "README.md").write_text("# Before\n", encoding="utf-8")
+        (worktree / "CHANGELOG.md").write_text("# Before\n", encoding="utf-8")
+        _commit_all(worktree)
+        subprocess.run(["git", "checkout", "-b", "feature"], cwd=worktree, check=True)
+        (worktree / "src").mkdir()
+        (worktree / "src" / "feature.py").write_text("VALUE = 1\n", encoding="utf-8")
+        _commit_all(worktree, "implement feature")
+        (worktree / "README.md").write_text("# Feature\n", encoding="utf-8")
+        (worktree / "CHANGELOG.md").write_text("# Changelog\n", encoding="utf-8")
+        _commit_all(worktree, "document feature")
+        spec_dir = worktree / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        seen: dict[str, object] = {}
+
+        def fake_gate(worktree_path: Path, resolved_spec_dir: Path, *, changed_files=None):
+            seen["changed_files"] = changed_files
+            return DocumentationGateResult(passed=True)
+
+        monkeypatch.setattr("harness.ralph.evaluate_documentation_gate", fake_gate)
+
+        result = controller._apply_documentation_gate(
+            VerifyResult(passed=True, failures=[]),
+            str(worktree),
+            changed_files=[],
+        )
+
+        assert result.passed
+        assert {"README.md", "CHANGELOG.md"} <= set(seen["changed_files"])
+
     def test_missing_documentation_report_is_repairable_by_tech_writer(
         self, tmp_path: Path
     ) -> None:

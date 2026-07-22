@@ -1595,10 +1595,16 @@ class RalphController:
         if spec_dir is None:
             return verify_result
 
+        documentation_changes = self._documentation_delivery_changes(
+            Path(worktree_path)
+        )
+        if documentation_changes is None:
+            documentation_changes = changed_files
+
         gate = evaluate_documentation_gate(
             Path(worktree_path),
             spec_dir,
-            changed_files=changed_files,
+            changed_files=documentation_changes,
         )
         if self._can_write_noop_documentation_report(
             gate,
@@ -1617,7 +1623,7 @@ class RalphController:
             gate = evaluate_documentation_gate(
                 Path(worktree_path),
                 spec_dir,
-                changed_files=changed_files,
+                changed_files=documentation_changes,
             )
         if gate.passed:
             return verify_result
@@ -1629,6 +1635,17 @@ class RalphController:
             duration_s=verify_result.duration_s,
             token_usage=verify_result.token_usage,
         )
+
+    def _documentation_delivery_changes(
+        self,
+        worktree_path: Path,
+    ) -> Optional[List[str]]:
+        """Return committed and dirty paths in the cumulative delivery slice."""
+        committed = self._cumulative_target_delivery_changes(worktree_path)
+        if committed is None:
+            return None
+        dirty = self._changed_files_since_head(str(worktree_path))
+        return sorted(set(committed) | set(dirty))
 
     def _can_write_noop_documentation_report(
         self,
