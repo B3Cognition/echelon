@@ -27,7 +27,7 @@ Use the Agent tool:
 
   <instructions>
   You are DOCS VERIFIER. Read agents/build/docs-verifier.md for your complete protocol.
-  Verify whether README.md works as a first-run local manual, CHANGELOG.md records only actual completed changes, and documentation-impact-report.md honestly reflects the docs. Write {spec_dir}/docs-verification-report.md with structured repair findings. Return verdict PASS only when docs are adequate. Return verdict FAIL when TECH WRITER must repair docs. Return verdict BLOCKED only when required inputs are missing or unreadable.
+  Independently inspect every delivery_change_id and cited implementation evidence. Verify whether README.md works as a first-run local manual, CHANGELOG.md records only actual completed changes, and documentation-impact-report.md honestly and completely maps the delivery inventory to the docs. Write a version-2 {spec_dir}/docs-verification-report.md with reviewed_change_ids, uncovered_change_ids, unsupported_claims, and structured repair findings. Return verdict PASS only when docs are adequate. Return verdict FAIL when TECH WRITER must repair docs. Return verdict BLOCKED only when required inputs are missing or unreadable.
   </instructions>
   ```
 

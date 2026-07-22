@@ -90,6 +90,11 @@ def test_tech_writer_agent_declares_required_result_contract() -> None:
     assert "CHANGELOG.md" in text
     assert "Keep a Changelog" in text
     assert "documentation-impact-report.md" in text
+    assert "schema_version: 2" in text
+    assert "delivery_change_ids" in text
+    assert "documented_changes" in text
+    assert "evidence_paths" in text
+    assert "disposition" in text
     assert "echelon_result:" in text
     assert "  verdict:" in text
     assert "  output_files:" in text
@@ -130,6 +135,10 @@ def test_docs_verifier_agent_declares_convergence_contract() -> None:
     assert "project_evidence_checked" in text
     assert "evidence_items_checked" in text
     assert "blocking_findings" in text
+    assert "schema_version: 2" in text
+    assert "reviewed_change_ids" in text
+    assert "uncovered_change_ids" in text
+    assert "unsupported_claims" in text
     assert "python -m harness verify-docs" in text
     assert "first-run" in lowered
     assert "safe harness smoke" in lowered

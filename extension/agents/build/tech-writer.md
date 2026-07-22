@@ -32,6 +32,10 @@ NEVER invent features, guarantees, performance numbers, operational procedures, 
 ALWAYS write `{spec_dir}/documentation-impact-report.md` with YAML frontmatter matching the schema below.
 NEVER return DONE without a report that the harness can parse.
 
+### Rule 6 - Delivery Coverage
+ALWAYS give every harness-supplied `delivery_change_id` exactly one `documented_changes` disposition backed by repository evidence.
+NEVER omit a delivered change, invent an evidence path, or use `not_applicable` without a concrete reason.
+
 ## Inputs
 
 1. `{spec_dir}/spec.md`
@@ -107,11 +111,24 @@ Write `{spec_dir}/documentation-impact-report.md`:
 
 ```markdown
 ---
+schema_version: 2
 docs_required: true
 readme_updated: true
 changelog_updated: true
 changelog_format: keep_a_changelog
 not_applicable_reason: ""
+delivery_change_ids: [FR-003]
+documented_changes:
+  - change_id: FR-003
+    disposition: covered
+    audience_impact: library users
+    evidence_paths:
+      - src/resolve/lookup.ts
+      - tests/unit/resolve/lookup.test.ts
+    readme_sections:
+      - Runtime resolution
+    changelog_sections:
+      - Added / Runtime resolution API
 ---
 
 # Documentation Impact Report
@@ -135,11 +152,19 @@ For no-impact work, use:
 
 ```markdown
 ---
+schema_version: 2
 docs_required: false
 readme_updated: false
 changelog_updated: false
 changelog_format: not_required
 not_applicable_reason: "Implementation only changed internal tests with no user-visible, API, setup, configuration, operational, or significant performance impact."
+delivery_change_ids: [T-014]
+documented_changes:
+  - change_id: T-014
+    disposition: not_applicable
+    reason: Internal test maintenance did not change supported behavior.
+    evidence_paths:
+      - tests/unit/internal.test.ts
 ---
 
 # Documentation Impact Report

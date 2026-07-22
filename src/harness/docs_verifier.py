@@ -47,6 +47,9 @@ class DocsVerificationResult:
     evidence_items: tuple[str, ...]
     blocking_findings: int
     findings: tuple[DocsFinding, ...]
+    reviewed_change_ids: tuple[str, ...]
+    uncovered_change_ids: tuple[str, ...]
+    unsupported_claims: tuple[str, ...]
 
 
 def write_docs_verification_report(
@@ -107,6 +110,49 @@ def verify_docs(worktree_path: Path | str, spec_dir: Path | str) -> DocsVerifica
             )
 
     docs_required = metadata.get("docs_required") is True
+    reviewed_change_ids: list[str] = []
+    uncovered_change_ids: list[str] = []
+    unsupported_claims: list[str] = []
+    if metadata.get("schema_version") == 2:
+        reviewed_change_ids = _string_list(metadata.get("delivery_change_ids"))
+        raw_entries = metadata.get("documented_changes")
+        entries = raw_entries if isinstance(raw_entries, list) else []
+        entry_ids = {
+            str(entry.get("change_id") or "").strip()
+            for entry in entries
+            if isinstance(entry, dict)
+        }
+        uncovered_change_ids = sorted(set(reviewed_change_ids) - entry_ids)
+        for change_id in uncovered_change_ids:
+            findings.append(
+                _finding(
+                    _next_id(findings),
+                    "documentation-impact-report.md",
+                    "Coverage Map",
+                    f"{change_id} has no documentation coverage disposition",
+                    "delivery_change_ids and documented_changes differ",
+                    f"Add a source-backed documented_changes entry for {change_id}.",
+                )
+            )
+        for entry in entries:
+            if not isinstance(entry, dict) or entry.get("disposition") != "covered":
+                continue
+            change_id = str(entry.get("change_id") or "").strip()
+            for raw_path in _string_list(entry.get("evidence_paths")):
+                candidate = (worktree.resolve() / raw_path).resolve()
+                if not candidate.is_relative_to(worktree.resolve()) or not candidate.exists():
+                    claim = f"{change_id} cites invalid evidence path {raw_path}"
+                    unsupported_claims.append(claim)
+                    findings.append(
+                        _finding(
+                            _next_id(findings),
+                            "documentation-impact-report.md",
+                            "Evidence",
+                            claim,
+                            raw_path,
+                            "Cite an existing in-repository source, test, or runtime evidence path.",
+                        )
+                    )
     if not docs_required:
         reason = str(metadata.get("not_applicable_reason") or "").strip()
         if metadata.get("docs_required") is False and reason:
@@ -117,6 +163,9 @@ def verify_docs(worktree_path: Path | str, spec_dir: Path | str) -> DocsVerifica
                 impact_report_valid=impact_report_valid,
                 evidence_items_checked=evidence,
                 findings=findings,
+                reviewed_change_ids=reviewed_change_ids,
+                uncovered_change_ids=uncovered_change_ids,
+                unsupported_claims=unsupported_claims,
             )
 
     if len(evidence) < 4:
@@ -222,6 +271,9 @@ def verify_docs(worktree_path: Path | str, spec_dir: Path | str) -> DocsVerifica
         impact_report_valid=impact_report_valid,
         evidence_items_checked=evidence,
         findings=findings,
+        reviewed_change_ids=reviewed_change_ids,
+        uncovered_change_ids=uncovered_change_ids,
+        unsupported_claims=unsupported_claims,
     )
 
 
@@ -419,6 +471,9 @@ def _result(
     impact_report_valid: bool,
     evidence_items_checked: list[str],
     findings: list[DocsFinding],
+    reviewed_change_ids: list[str],
+    uncovered_change_ids: list[str],
+    unsupported_claims: list[str],
 ) -> DocsVerificationResult:
     blocking = sum(1 for finding in findings if finding.severity == "blocking")
     verdict = "PASS" if blocking == 0 else "FAIL"
@@ -433,6 +488,9 @@ def _result(
         evidence_items=tuple(evidence_items_checked),
         blocking_findings=blocking,
         findings=tuple(findings),
+        reviewed_change_ids=tuple(reviewed_change_ids),
+        uncovered_change_ids=tuple(uncovered_change_ids),
+        unsupported_claims=tuple(unsupported_claims),
     )
 
 
@@ -461,6 +519,10 @@ def _next_id(findings: list[DocsFinding]) -> str:
 
 def _report_markdown(result: DocsVerificationResult) -> str:
     metadata = {
+        "schema_version": 2,
+        "reviewed_change_ids": list(result.reviewed_change_ids),
+        "uncovered_change_ids": list(result.uncovered_change_ids),
+        "unsupported_claims": list(result.unsupported_claims),
         "verdict": result.verdict,
         "readme_first_run_manual": result.readme_first_run_manual,
         "changelog_valid": result.changelog_valid,
@@ -511,3 +573,9 @@ def _escape_table(value: str) -> str:
 
 def _has_terms(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text for term in terms)
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
