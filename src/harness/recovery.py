@@ -12,7 +12,7 @@ from harness.gitops import _clean_branch_listing, _run_git
 from harness.build_result import BUILD_STATUS_FILENAME
 
 
-RECOVERABLE_REASONS = {"build_incomplete", "publish_failed"}
+RECOVERABLE_REASONS = {"build_incomplete", "publish_failed", "blocker_escalation"}
 
 
 class HarnessRecoveryError(RuntimeError):
@@ -85,6 +85,7 @@ def recover_blocked_run(
         build_id=build_id,
         checkpoint_commits=state.get("checkpoint_commits"),
         salvage_commit=str(state.get("salvage_commit") or ""),
+        preferred_commit=_documentation_evidence_head(state),
     )
     if source is not None:
         source_path, commit = source
@@ -144,6 +145,7 @@ def _find_preserved_worktree_source(
     build_id: str,
     checkpoint_commits: Any = None,
     salvage_commit: str = "",
+    preferred_commit: str = "",
 ) -> Optional[tuple[Path, str]]:
     try:
         worktree = gitops.get_latest_worktree(spec_id, strategy_id, build_id=build_id)
@@ -163,6 +165,15 @@ def _find_preserved_worktree_source(
     )
     if inside.returncode != 0 or inside.stdout.strip() != "true":
         return None
+
+    if preferred_commit:
+        exists = _run_git(
+            ["cat-file", "-e", f"{preferred_commit}^{{commit}}"],
+            cwd=str(worktree_path),
+            check=False,
+        )
+        if exists.returncode == 0:
+            return worktree_path, preferred_commit
 
     checkpoint_commit = _latest_existing_checkpoint_commit(
         worktree_path,
@@ -207,6 +218,13 @@ def _find_preserved_worktree_source(
     if head.returncode == 0 and head.stdout.strip():
         return worktree_path, head.stdout.strip()
     return None
+
+
+def _documentation_evidence_head(state: dict[str, Any]) -> str:
+    evidence = state.get("documentation_evidence")
+    if not isinstance(evidence, dict):
+        return ""
+    return str(evidence.get("head") or "").strip()
 
 
 def _latest_existing_checkpoint_commit(repo: Path, checkpoint_commits: Any) -> Optional[str]:

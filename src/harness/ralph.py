@@ -921,6 +921,9 @@ class RalphController:
                         )
 
                     if inner_result.get("blocked"):
+                        # Preserve committed post-checkpoint evidence (notably
+                        # documentation-only commits) for delivery resume.
+                        preserve_worktree = True
                         return self._finalize(
                             status="blocked",
                             reason=str(
@@ -1600,6 +1603,10 @@ class RalphController:
         )
         if documentation_changes is None:
             documentation_changes = changed_files
+        self._record_documentation_evidence(
+            Path(worktree_path),
+            documentation_changes,
+        )
 
         gate = evaluate_documentation_gate(
             Path(worktree_path),
@@ -1646,6 +1653,38 @@ class RalphController:
             return None
         dirty = self._changed_files_since_head(str(worktree_path))
         return sorted(set(committed) | set(dirty))
+
+    def _record_documentation_evidence(
+        self,
+        worktree_path: Path,
+        changed_files: Optional[List[str]],
+    ) -> None:
+        """Persist the reachable head used for documentation verification."""
+        head = _current_git_commit(worktree_path)
+        if head is None:
+            return
+        default_branch = str(
+            getattr(self._config, "target_default_branch", "") or "main"
+        )
+        baseline: Optional[str] = None
+        for ref in (
+            f"upstream/{default_branch}",
+            f"origin/{default_branch}",
+            default_branch,
+        ):
+            baseline = _git_merge_base(worktree_path, "HEAD", ref)
+            if baseline is not None:
+                break
+        if baseline is None:
+            baseline = _git_first_commit(worktree_path)
+        state = self._state_store.read()
+        state["documentation_evidence"] = {
+            "baseline": baseline,
+            "head": head,
+            "changed_files": sorted(set(changed_files or [])),
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._state_store.write(state)
 
     def _can_write_noop_documentation_report(
         self,

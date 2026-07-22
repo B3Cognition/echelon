@@ -1678,7 +1678,7 @@ class TestOuterLoopConvergence:
     def test_documentation_gate_blocks_convergence_when_required_docs_missing(
         self, tmp_path: Path
     ) -> None:
-        controller, *_ = _make_controller(tmp_path)
+        controller, *_rest, state_store = _make_controller(tmp_path)
         worktree = tmp_path / "worktree"
         _init_git_repo(worktree)
         spec_dir = worktree / "specs" / "spec-001-demo"
@@ -1707,7 +1707,7 @@ class TestOuterLoopConvergence:
     def test_documentation_gate_accepts_not_applicable_report_in_ralph(
         self, tmp_path: Path
     ) -> None:
-        controller, *_ = _make_controller(tmp_path)
+        controller, *_rest, state_store = _make_controller(tmp_path)
         worktree = tmp_path / "worktree"
         spec_dir = worktree / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
@@ -1811,7 +1811,7 @@ class TestOuterLoopConvergence:
     def test_documentation_gate_includes_docs_committed_after_task_progress(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        controller, *_ = _make_controller(tmp_path)
+        controller, *_rest, state_store = _make_controller(tmp_path)
         worktree = tmp_path / "worktree"
         _init_git_repo(worktree)
         (worktree / "README.md").write_text("# Before\n", encoding="utf-8")
@@ -1842,6 +1842,15 @@ class TestOuterLoopConvergence:
 
         assert result.passed
         assert {"README.md", "CHANGELOG.md"} <= set(seen["changed_files"])
+        evidence = state_store.read()["documentation_evidence"]
+        assert evidence["head"] == subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=worktree,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert {"README.md", "CHANGELOG.md"} <= set(evidence["changed_files"])
 
     def test_missing_documentation_report_is_repairable_by_tech_writer(
         self, tmp_path: Path
