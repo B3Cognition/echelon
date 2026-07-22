@@ -1,7 +1,10 @@
 from pathlib import Path
 import subprocess
 
-from harness.documentation_gate import evaluate_documentation_gate
+from harness.documentation_gate import (
+    evaluate_documentation_gate,
+    validate_documentation_coverage,
+)
 
 
 FIRST_RUN_README = """# Demo
@@ -123,6 +126,80 @@ def _write_docs_verification_pass(spec_dir: Path) -> None:
         DOCS_VERIFICATION_PASS,
         encoding="utf-8",
     )
+
+
+def test_version_two_coverage_rejects_uncovered_delivery_change(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "feature.py").write_text("VALUE = 1\n", encoding="utf-8")
+    impact = {
+        "schema_version": 2,
+        "delivery_change_ids": ["FR-003", "FR-004"],
+        "documented_changes": [
+            {
+                "change_id": "FR-003",
+                "disposition": "covered",
+                "evidence_paths": ["src/feature.py"],
+                "readme_sections": ["Runtime resolution"],
+                "changelog_sections": ["Added / Runtime resolution"],
+            }
+        ],
+    }
+
+    failure = validate_documentation_coverage(tmp_path, impact, {})
+
+    assert failure is not None
+    assert failure[0] == "documentation-coverage-incomplete"
+    assert "FR-004" in failure[1]
+
+
+def test_version_two_coverage_rejects_missing_evidence_path(tmp_path: Path) -> None:
+    impact = {
+        "schema_version": 2,
+        "delivery_change_ids": ["FR-003"],
+        "documented_changes": [
+            {
+                "change_id": "FR-003",
+                "disposition": "covered",
+                "evidence_paths": ["src/missing.py"],
+                "readme_sections": ["Runtime resolution"],
+                "changelog_sections": ["Added / Runtime resolution"],
+            }
+        ],
+    }
+
+    failure = validate_documentation_coverage(tmp_path, impact, {})
+
+    assert failure is not None
+    assert failure[0] == "documentation-evidence-invalid"
+    assert "src/missing.py" in failure[1]
+
+
+def test_version_two_coverage_rejects_unsupported_claims(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "feature.py").write_text("VALUE = 1\n", encoding="utf-8")
+    impact = {
+        "schema_version": 2,
+        "delivery_change_ids": ["FR-003"],
+        "documented_changes": [
+            {
+                "change_id": "FR-003",
+                "disposition": "covered",
+                "evidence_paths": ["src/feature.py"],
+                "readme_sections": ["Runtime resolution"],
+                "changelog_sections": ["Added / Runtime resolution"],
+            }
+        ],
+    }
+    verification = {
+        "reviewed_change_ids": ["FR-003"],
+        "uncovered_change_ids": [],
+        "unsupported_claims": ["README promises network-free execution"],
+    }
+
+    failure = validate_documentation_coverage(tmp_path, impact, verification)
+
+    assert failure is not None
+    assert failure[0] == "documentation-claim-unsupported"
 
 
 def test_gate_blocks_missing_report(tmp_path: Path) -> None:

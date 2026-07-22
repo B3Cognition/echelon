@@ -123,7 +123,134 @@ def evaluate_documentation_gate(
         identifier, error = docs_verification_failure
         return _fail(identifier, error)
 
+    if metadata.get("schema_version") == 2:
+        verification_metadata = _frontmatter(spec / DOCS_VERIFICATION_REPORT_NAME)
+        coverage_failure = validate_documentation_coverage(
+            worktree,
+            metadata,
+            verification_metadata,
+        )
+        if coverage_failure:
+            identifier, error = coverage_failure
+            return _fail(identifier, error)
+
     return DocumentationGateResult(passed=True)
+
+
+def validate_documentation_coverage(
+    worktree: Path | str,
+    impact_metadata: dict,
+    verification_metadata: dict,
+) -> tuple[str, str] | None:
+    """Validate the version-2 change-to-documentation evidence contract."""
+    if impact_metadata.get("schema_version") != 2:
+        return None
+
+    delivery_ids = _nonempty_string_list(impact_metadata.get("delivery_change_ids"))
+    if not delivery_ids:
+        return (
+            "documentation-coverage-incomplete",
+            "schema version 2 requires non-empty delivery_change_ids",
+        )
+    if len(delivery_ids) != len(set(delivery_ids)):
+        return (
+            "documentation-coverage-incomplete",
+            "delivery_change_ids must be unique",
+        )
+
+    raw_entries = impact_metadata.get("documented_changes")
+    entries = raw_entries if isinstance(raw_entries, list) else []
+    by_id: dict[str, dict] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return (
+                "documentation-coverage-incomplete",
+                "every documented_changes entry must be a mapping",
+            )
+        change_id = str(entry.get("change_id") or "").strip()
+        if not change_id or change_id in by_id:
+            return (
+                "documentation-coverage-incomplete",
+                "documented change IDs must be non-empty and unique",
+            )
+        by_id[change_id] = entry
+
+    missing = sorted(set(delivery_ids) - set(by_id))
+    extra = sorted(set(by_id) - set(delivery_ids))
+    if missing or extra:
+        details: list[str] = []
+        if missing:
+            details.append("missing dispositions: " + ", ".join(missing))
+        if extra:
+            details.append("unknown change IDs: " + ", ".join(extra))
+        return ("documentation-coverage-incomplete", "; ".join(details))
+
+    root = Path(worktree).resolve()
+    for change_id in delivery_ids:
+        entry = by_id[change_id]
+        disposition = str(entry.get("disposition") or "").strip()
+        if disposition not in {"covered", "not_applicable"}:
+            return (
+                "documentation-coverage-incomplete",
+                f"{change_id} must use disposition covered or not_applicable",
+            )
+        if disposition == "not_applicable":
+            if not str(entry.get("reason") or "").strip():
+                return (
+                    "documentation-coverage-incomplete",
+                    f"{change_id} not_applicable disposition requires a reason",
+                )
+            continue
+        if not _nonempty_string_list(entry.get("readme_sections")):
+            return (
+                "documentation-coverage-incomplete",
+                f"{change_id} must cite at least one README section",
+            )
+        if not _nonempty_string_list(entry.get("changelog_sections")):
+            return (
+                "documentation-coverage-incomplete",
+                f"{change_id} must cite at least one CHANGELOG section",
+            )
+        evidence_paths = _nonempty_string_list(entry.get("evidence_paths"))
+        if not evidence_paths:
+            return (
+                "documentation-evidence-invalid",
+                f"{change_id} must cite at least one implementation evidence path",
+            )
+        for raw_path in evidence_paths:
+            evidence_path = (root / raw_path).resolve()
+            if not evidence_path.is_relative_to(root) or not evidence_path.exists():
+                return (
+                    "documentation-evidence-invalid",
+                    f"{change_id} cites missing or out-of-repository evidence path: {raw_path}",
+                )
+
+    reviewed = set(_nonempty_string_list(verification_metadata.get("reviewed_change_ids")))
+    if reviewed != set(delivery_ids):
+        unreviewed = sorted(set(delivery_ids) - reviewed)
+        return (
+            "documentation-coverage-incomplete",
+            "DOCS VERIFIER did not review: " + ", ".join(unreviewed or delivery_ids),
+        )
+    uncovered = _nonempty_string_list(verification_metadata.get("uncovered_change_ids"))
+    if uncovered:
+        return (
+            "documentation-coverage-incomplete",
+            "DOCS VERIFIER found uncovered changes: " + ", ".join(uncovered),
+        )
+    unsupported = _nonempty_string_list(verification_metadata.get("unsupported_claims"))
+    if unsupported:
+        return (
+            "documentation-claim-unsupported",
+            "DOCS VERIFIER found unsupported claims: " + "; ".join(unsupported),
+        )
+    return None
+
+
+def _nonempty_string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
 
 def _frontmatter(path: Path) -> dict:
