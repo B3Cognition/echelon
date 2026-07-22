@@ -17,7 +17,7 @@ uv tool install specify-cli --force --from "git+git@github.com:mbachorik/spec-ki
 # 2. Clone echelon
 git clone https://github.com/B3Cognition/echelon.git ~/echelon
 
-# 3. Install all CLI tools + SOAR into a shared venv
+# 3. Install the core CLI tools and shared MemPalace support
 bash ~/echelon/scripts/install.sh
 source ~/.zshrc   # or restart terminal
 
@@ -25,14 +25,20 @@ source ~/.zshrc   # or restart terminal
 specify extension add --dev ~/echelon/extension
 ```
 
-`install.sh` installs four CLI tools into `~/.echelon/venv/bin/` and adds that directory to your PATH:
+`install.sh` installs the core CLI tools into `~/.echelon/venv/bin/`, adds that
+directory to your PATH, and keeps MemPalace available to ordinary squad runs.
+The SOAR-backed codegen pipeline is opt-in:
+
+```bash
+bash ~/echelon/scripts/install.sh --with-codegen
+```
 
 | Tool | Purpose |
 | ---- | ------- |
 | `echelon` | Main CLI - workspace, spec, phase, RE publication, delivery, benchmark, stack |
 | `echelon delivery` | Build/delivery subcommands — init, run, resume, land |
 | `echelon spec` | Spec lifecycle subcommands — run, status, target, verify, defer, plan, reopen |
-| `codegen` | SOAR codegen pipeline (also called by `echelon codegen`) |
+| `codegen` | Optional SOAR codegen pipeline, installed with `--with-codegen` |
 | `understanding` | Requirements quality metrics |
 
 See [INSTALLATION.md](INSTALLATION.md) for prerequisites, upgrade, and uninstall instructions.
@@ -870,7 +876,14 @@ guidance use the `spec` and `delivery` namespaces.
 
 `speckit.echelon.codegen` is a first-class alternative to `speckit.echelon.build`. It drives the same Phase A artifacts (`spec.md`, `tasks.md`, `constitution.md`, `research.md`) through a SOAR-powered pipeline with inviolable CQ-ISC quality gates instead of the multi-agent squad.
 
-The `codegen` CLI and SOAR binary are bundled — installed by `scripts/install.sh`, no separate setup needed.
+Install the optional `codegen` CLI and pinned SOAR binary explicitly:
+
+```bash
+bash ~/echelon/scripts/install.sh --with-codegen
+```
+
+MemPalace remains part of the default installation because non-SOAR squad runs
+also use it for contextual retrieval and published-spec mining.
 
 Two entry points are available:
 

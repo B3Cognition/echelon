@@ -7666,6 +7666,9 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
         print(USAGE)
         sys.exit(1)
 
+    if command == "codegen":
+        _require_codegen_installation()
+
     project_dir = Path.cwd()
     _require_provider_capability(
         f"echelon {command}",
@@ -7699,6 +7702,19 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
         _run_claude_streaming(bin_, prompt, project_dir, tool_policy=tool_policy)
         return  # _run_claude_streaming calls sys.exit
     sys.exit(result.returncode)
+
+
+def _require_codegen_installation() -> None:
+    """Require the installer-owned codegen launcher before SOAR dispatch."""
+    launcher = Path(sys.executable).with_name("codegen")
+    if launcher.is_file() and os.access(launcher, os.X_OK):
+        return
+    print(
+        "echelon codegen: the optional SOAR/codegen pipeline is not installed.\n"
+        "Install it with: bash scripts/install.sh --with-codegen",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 
 # ── RE lifecycle and publication subcommands ────────────────────────────────

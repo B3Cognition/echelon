@@ -40,7 +40,6 @@ dev = [
 
 [project.scripts]
 echelon       = "echelon.cli:main"
-codegen       = "codegen.cli.codegen_cli:main"
 understanding = "understanding.cli:main"
 lexicon       = "lexicon.cli:main"
 hormone-calc  = "hormone_calc.cli:main"

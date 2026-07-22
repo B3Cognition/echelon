@@ -1,13 +1,44 @@
 #!/usr/bin/env bash
 # install.sh — One-command setup for echelon (includes harness)
-# Usage: bash scripts/install.sh
+# Usage: bash scripts/install.sh [--with-codegen]
 set -e
+
+_usage() {
+  cat <<'EOF'
+Usage: bash scripts/install.sh [--with-codegen]
+
+Options:
+  --with-codegen  Install the SOAR runtime and codegen pipeline launcher.
+  --help          Show this help without changing the system.
+EOF
+}
+
+WITH_CODEGEN="0"
+if [ "$#" -gt 1 ]; then
+  echo "✗ Expected at most one option." >&2
+  _usage >&2
+  exit 2
+fi
+case "$1" in
+  "") ;;
+  --with-codegen) WITH_CODEGEN="1" ;;
+  --help)
+    _usage
+    exit 0
+    ;;
+  *)
+    echo "✗ Unknown option: $1" >&2
+    _usage >&2
+    exit 2
+    ;;
+esac
 
 ECHELON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOAR_VERSION="9.6.4"
 CODEGRAPH_CLI_VERSION="1.4.1"
 SOAR_DIR="$HOME/.echelon/soar"
 VENV_DIR="$HOME/.echelon/venv"
+CODEGEN_LAUNCHER="$VENV_DIR/bin/codegen"
 MEMORY_DIR="$HOME/.echelon/memory"
 NODE_RUNTIME_ROOT="${ECHELON_HOME:-$HOME/.echelon}/node"
 CODEGRAPH_SOURCE_DIR="$ECHELON_DIR/extension/scripts/node/codegraph"
@@ -79,19 +110,6 @@ if ! command -v uv &>/dev/null; then
   exit 1
 fi
 
-# ── Detect platform ──────────────────────────────────────────────────────────
-OS="$(uname -s)"
-ARCH="$(uname -m)"
-case "$OS/$ARCH" in
-  Darwin/arm64)   PLATFORM="mac_ARM64" ;;
-  Darwin/x86_64)  PLATFORM="mac_x86-64" ;;
-  Linux/x86_64)   PLATFORM="linux_x86-64" ;;
-  *)
-    echo "  ✗ Unsupported platform: $OS/$ARCH"
-    exit 1
-    ;;
-esac
-
 # ── 1. Download SoarSuite from GitHub releases ────────────────────────────────
 _download_soar() {
   local zip_url="https://github.com/SoarGroup/Soar/releases/download/releases%2F${SOAR_VERSION}/SoarSuite_${SOAR_VERSION}-Multiplatform.zip"
@@ -122,33 +140,60 @@ _download_soar() {
   rm -rf "$extract_tmp"
 }
 
-echo "▶ Installing SOAR ${SOAR_VERSION}..."
-if [ -f "$SOAR_DIR/bin/soar" ]; then
-  echo "  ✓ SOAR already at $SOAR_DIR/bin/ (delete $SOAR_DIR to re-download)"
-else
-  _download_soar
+if [ "$WITH_CODEGEN" = "1" ]; then
+  # Platform support is required only by the optional SOAR runtime.
+  OS="$(uname -s)"
+  ARCH="$(uname -m)"
+  case "$OS/$ARCH" in
+    Darwin/arm64)   PLATFORM="mac_ARM64" ;;
+    Darwin/x86_64)  PLATFORM="mac_x86-64" ;;
+    Linux/x86_64)   PLATFORM="linux_x86-64" ;;
+    *)
+      echo "  ✗ Unsupported platform for SOAR: $OS/$ARCH"
+      exit 1
+      ;;
+  esac
+
+  echo "▶ Installing SOAR ${SOAR_VERSION}..."
+  if [ -f "$SOAR_DIR/bin/soar" ]; then
+    echo "  ✓ SOAR already at $SOAR_DIR/bin/ (delete $SOAR_DIR to re-download)"
+  else
+    _download_soar
+  fi
+
+  # Add SOAR to PATH if needed (idempotent — checks file, not current session)
+  if ! grep -qF "$SOAR_DIR/bin" "$SHELL_RC"; then
+    echo "  Adding $SOAR_DIR/bin to PATH in $SHELL_RC"
+    printf '\n# SOAR binary (echelon codegen)\nexport PATH="%s/bin:$PATH"\n' "$SOAR_DIR" >> "$SHELL_RC"
+    export PATH="$SOAR_DIR/bin:$PATH"
+    echo "  ✓ Added to PATH (restart terminal or: source $SHELL_RC)"
+  else
+    echo "  ✓ SOAR on PATH"
+  fi
 fi
 
-# Add SOAR to PATH if needed (idempotent — checks file, not current session)
-if ! grep -qF "$SOAR_DIR/bin" "$SHELL_RC"; then
-  echo "  Adding $SOAR_DIR/bin to PATH in $SHELL_RC"
-  printf '\n# SOAR binary (echelon dependency)\nexport PATH="%s/bin:$PATH"\n' "$SOAR_DIR" >> "$SHELL_RC"
-  export PATH="$SOAR_DIR/bin:$PATH"
-  echo "  ✓ Added to PATH (restart terminal or: source $SHELL_RC)"
-else
-  echo "  ✓ SOAR on PATH"
-fi
-
-# ── 2. echelon venv (echelon + codegen + understanding + all deps) ───────────
+# ── 2. echelon venv (core tools + shared dependencies) ──────────────────────
 echo "▶ Installing echelon into $VENV_DIR..."
 uv venv "$VENV_DIR" -q 2>/dev/null || true
 uv pip install -q --python "$VENV_DIR" -e "$ECHELON_DIR"
+
+if [ "$WITH_CODEGEN" = "1" ]; then
+  printf '#!%s\nfrom codegen.cli.codegen_cli import main\nmain()\n' "$VENV_DIR/bin/python" > "$CODEGEN_LAUNCHER"
+  chmod +x "$CODEGEN_LAUNCHER"
+else
+  rm -f "$CODEGEN_LAUNCHER"
+fi
+
 ECHELON_VER=$("$VENV_DIR/bin/echelon" --version 2>/dev/null || echo "unknown")
 echo "  ✓ echelon installed ($ECHELON_VER)"
 echo "    echelon       → $VENV_DIR/bin/echelon"
-echo "    codegen       → $VENV_DIR/bin/codegen"
 echo "    understanding → $VENV_DIR/bin/understanding"
 echo "    harness       → $VENV_DIR/bin/harness"
+if [ "$WITH_CODEGEN" = "1" ]; then
+  echo "    codegen       → $CODEGEN_LAUNCHER"
+else
+  echo "    codegen       → not installed (bash scripts/install.sh --with-codegen)"
+fi
 
 # Add venv/bin to PATH if needed (idempotent)
 if ! grep -qF "$VENV_DIR/bin" "$SHELL_RC"; then
@@ -282,11 +327,16 @@ echo "╔═══════════════════════�
 echo "║              Install complete            ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
-echo "  SOAR          → $SOAR_DIR/bin/soar"
 echo "  echelon       → $VENV_DIR/bin/echelon"
-echo "  codegen       → $VENV_DIR/bin/codegen"
 echo "  understanding → $VENV_DIR/bin/understanding"
 echo "  harness       → $VENV_DIR/bin/harness"
+if [ "$WITH_CODEGEN" = "1" ]; then
+  echo "  SOAR          → $SOAR_DIR/bin/soar"
+  echo "  codegen       → $CODEGEN_LAUNCHER"
+else
+  echo "  SOAR          → not installed (bash scripts/install.sh --with-codegen)"
+  echo "  codegen       → not installed (bash scripts/install.sh --with-codegen)"
+fi
 if [ -d "$CODEGRAPH_NODE_DIR/node_modules" ]; then
   echo "  CodeGraph bridge → $CODEGRAPH_NODE_DIR/node_modules"
 else

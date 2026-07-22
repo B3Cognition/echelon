@@ -21,14 +21,22 @@ git clone https://github.com/B3Cognition/echelon.git ~/echelon
 bash ~/echelon/scripts/install.sh
 ```
 
-The installer does six things automatically:
+The default installer:
 
-1. Downloads `SoarSuite_9.6.4-Multiplatform.zip` from GitHub and extracts the SOAR binary for your platform into `~/.echelon/soar/bin/`
-2. Adds `~/.echelon/soar/bin` to your PATH
-3. Creates a venv at `~/.echelon/venv/` and installs all four CLIs (`echelon`, `harness`, `codegen`, `understanding`) into it
-4. Installs the pinned Context7, CodeGraph, and PerlGraph runtimes under `~/.echelon/node/`
-5. Adds `~/.echelon/venv/bin` to your PATH
-6. Creates `~/.echelon/memory/` and caches the AI embedding model (~80MB, one time)
+1. Creates a venv at `~/.echelon/venv/` and installs the core Echelon and understanding CLIs, including delivery/harness subcommands
+2. Installs the pinned Context7, CodeGraph, and PerlGraph runtimes under `~/.echelon/node/`
+3. Adds `~/.echelon/venv/bin` to your PATH
+4. Creates `~/.echelon/memory/` and caches the MemPalace embedding model (~80MB, one time)
+
+Install the optional SOAR-backed codegen pipeline with:
+
+```bash
+bash ~/echelon/scripts/install.sh --with-codegen
+```
+
+That mode also downloads SOAR 9.6.4 into `~/.echelon/soar/bin/`, adds it to
+PATH, and creates the standalone `codegen` launcher. MemPalace is installed and
+warmed in both modes because non-SOAR pipelines use it too.
 
 Set `ECHELON_HOME` before installation to relocate the shared Node runtimes. A
 complete project-deployed runtime takes precedence when present; otherwise
@@ -49,13 +57,13 @@ specify extension add --dev ~/echelon/extension
 ## Verify Installation
 
 ```bash
-# Check CLIs are on PATH (may need a terminal restart after install)
+# Check core CLIs are on PATH (may need a terminal restart after install)
 echelon --help
 echelon delivery --help
-codegen --help
 understanding version
 
-# Check SOAR is on PATH
+# After installing with --with-codegen, check the optional pipeline
+codegen --help
 soar --version
 
 # Check memory stores
