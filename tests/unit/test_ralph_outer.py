@@ -1678,7 +1678,7 @@ class TestOuterLoopConvergence:
     def test_documentation_gate_blocks_convergence_when_required_docs_missing(
         self, tmp_path: Path
     ) -> None:
-        controller, *_rest, state_store = _make_controller(tmp_path)
+        controller, *_ = _make_controller(tmp_path)
         worktree = tmp_path / "worktree"
         _init_git_repo(worktree)
         spec_dir = worktree / "specs" / "spec-001-demo"
@@ -1707,7 +1707,7 @@ class TestOuterLoopConvergence:
     def test_documentation_gate_accepts_not_applicable_report_in_ralph(
         self, tmp_path: Path
     ) -> None:
-        controller, *_rest, state_store = _make_controller(tmp_path)
+        controller, *_ = _make_controller(tmp_path)
         worktree = tmp_path / "worktree"
         spec_dir = worktree / "specs" / "spec-001-demo"
         spec_dir.mkdir(parents=True)
