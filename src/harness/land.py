@@ -15,6 +15,7 @@ from typing import Any, Iterator, Optional
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from echelon.ui import banner as _banner
 
+from harness.errors import GitOpsError
 from harness.gitops import _run_git
 from harness.paths import runs_dir
 from harness.spec_frontmatter import find_spec_dir, read_frontmatter, read_targets, write_status
@@ -570,7 +571,24 @@ def land(
     if spec_dir is not None:
         project_dir = resolve_land_repo(wrapper_project_dir, spec_dir)
 
-    feature_branch = gitops.find_feature_branch(spec_id)
+    try:
+        feature_branch = gitops.find_feature_branch(spec_id)
+    except GitOpsError as exc:
+        logger.error("land: could not resolve feature branch for %s: %s", spec_id, exc)
+        _banner(
+            "LAND — BRANCH RESOLUTION BLOCKED",
+            [
+                ("spec", spec_id),
+                ("problem", str(exc)),
+                (
+                    "next step",
+                    "repair repository or mirror access, then re-run land",
+                ),
+            ],
+            subtitle="Echelon will not treat a branch lookup failure as an already-landed spec.",
+        )
+        return False
+
     if feature_branch is None:
         try:
             feature_branch = _find_latest_harness_branch(spec_id, project_dir)

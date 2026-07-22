@@ -446,21 +446,18 @@ class GitOpsManager:
             logger.warning("Mirror does not exist — cannot search for feature branch")
             return None
 
-        try:
-            self.fetch_mirror()
-        except GitOpsError as e:
-            logger.warning("Could not fetch mirror while looking for feature branch: %s", e)
+        self.fetch_mirror()
 
         def _list_branches(pattern: str) -> list[str]:
-            try:
-                result = _run_git(
-                    ["branch", "--list", pattern],
-                    cwd=str(self._mirror_path),
-                )
-                return [_clean_branch_listing(b) for b in result.stdout.splitlines() if b.strip()]
-            except GitOpsError as e:
-                logger.warning("Could not list branches (pattern=%r) for spec %s: %s", pattern, spec_id, e)
-                return []
+            result = _run_git(
+                ["branch", "--list", pattern],
+                cwd=str(self._mirror_path),
+            )
+            return [
+                _clean_branch_listing(branch)
+                for branch in result.stdout.splitlines()
+                if branch.strip()
+            ]
 
         for pattern in (spec_id, f"{spec_id}-*"):
             branches = _list_branches(pattern)
