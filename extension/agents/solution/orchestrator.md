@@ -357,38 +357,22 @@ echelon_result:
 
 ## Tasks Gate Mode (when `lexicon_gate.artifacts.tasks.enabled`)
 
-**Activation — read the flag yourself.** Before authoring `tasks.md`, run:
+The controller decides whether this gate is active and validates `tasks.md`
+after dispatch. Author `tasks.md` in the **canonical row format** per
+`extension/templates/tasks-template.md` — one `- [ ] T-### [P] complexity=
+phase= req= depends= target=` row per task, each followed by nested
+`**Title:** / **Description:** / **Test:** / **Acceptance Criteria:**`.
 
-```bash
-python3 -c "from pathlib import Path; import yaml; p=Path('.echelon/config.yml'); p=p if p.exists() else Path('.specify/extensions/echelon/echelon-config.yml'); g=((yaml.safe_load(p.read_text()) or {}) if p.exists() else {}).get('lexicon_gate') or {}; a=(g.get('artifacts') or {}).get('tasks') or {}; print('TASKS_GATE=on' if (g.get('enabled') and a.get('enabled')) else 'TASKS_GATE=off'); print('spec_ref='+str(a.get('spec_ref','requirements.lexicon.md'))); print('max_repair='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "TASKS_GATE=off"
-```
+If the previous dispatch failed the tasks gate, repair the cited task rows with
+localized fixes: `parse-error` → ensure each task starts with a canonical row;
+`task-no-test` → add a `**Test:**` line; `req-uncovered` → add a task for the
+requirement; `task-orphan-req` → fix `req=`; `task-not-atomic` → split;
+`banned-word`/`placeholder` → make measurable; `dep-cycle`/`dep-missing` → fix
+`depends=`.
 
-If the output is `TASKS_GATE=off` (or the file/key is absent), this entire section is INERT —
-author `tasks.md` per the standard planning protocol above. Only when it reads `TASKS_GATE=on`
-do you enter Tasks Gate mode using the `spec_ref` / `max_repair` values printed above.
-
-If `TASKS_GATE=on`, author `tasks.md` in the **canonical row format** per `extension/templates/tasks-template.md` — one `- [ ] T-### [P] complexity= phase= req= depends= target=` row per task, each followed by nested `**Title:** / **Description:** / **Test:** / **Acceptance Criteria:**`. Then run the self-validation repair loop:
-
-```bash
-LEXICON="lexicon"; command -v lexicon >/dev/null 2>&1 || LEXICON="python3 -m lexicon.cli"
-$LEXICON validate "{spec_dir}/tasks.md" --type tasks --spec-ref "{spec_dir}/${spec_ref}" --glossary "{spec_dir}/glossary.md" --json
-```
-
-Parse the JSON; if `ok` is false, apply the localized fix per finding code (`parse-error` →
-ensure each task starts with a canonical row; `task-no-test` → add a `**Test:**` line;
-`req-uncovered` → add a task for the req; `task-orphan-req` → fix `req=`; `task-not-atomic` →
-split; `banned-word`/`placeholder` → make measurable; `dep-cycle`/`dep-missing` → fix `depends=`).
-Re-run, up to `max_repair_attempts`. Emit in `echelon_result.state_updates`:
-
-```yaml
-echelon_result:
-  state_updates:
-    tasks_lexicon_pass: true   # authoritative final validator verdict
-    tasks_lexicon_attempts: <int>
-```
-
-ALWAYS treat the `lexicon validate --type tasks` verdict as authoritative.
-NEVER report `tasks_lexicon_pass: true` without a final run that returned `ok: true`.
+Do not report `tasks_lexicon_pass`; the controller validates the on-disk
+artifact and writes that verdict. You may report `tasks_lexicon_attempts` when
+you performed a repair pass.
 
 ALWAYS apply the smallest fix that resolves a finding (add/split a single TASK, fix one REQ= or DEPENDS= field).
 NEVER rewrite tasks.md wholesale or discard passing TASK blocks while repairing a failing one.

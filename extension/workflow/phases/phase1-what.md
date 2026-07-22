@@ -63,7 +63,7 @@ Use the Agent tool to dispatch a subagent with:
   Validation Tool Contract:
   - For diagnostic scoring during authoring/amendment, use `understanding scan "{spec_dir}/spec.md" --enhanced --per-req --json --output /tmp/cartographer-understanding.json`; read JSON from the output file, not stdout.
   - The enhanced scan output file is a JSON list; normalize it before reading metrics: `payload=json.load(open("/tmp/cartographer-understanding.json")); report=payload[0] if isinstance(payload, list) and payload else payload`. Do not call `.keys()` or `.get("metrics")` on the root payload before this normalization.
-  - Do NOT run `understanding validate` or guess module commands; SAGE owns the formal Understanding validation skill in WHY2/WHY3.
+  - Do not run formal Understanding validation or guess validation commands; the harness owns formal analysis in `phase1-understanding` and `phase3-understanding`.
   - For Lexicon Gate validation, use `lexicon validate "{spec_dir}/{lexicon_path}" --type {artifact_type} --source-ref "{spec_dir}/{source_ref}" --glossary "{spec_dir}/{glossary_file}" --json`; the controller independently certifies the final `lexicon_pass` from the derived artifact on disk.
 
   Lexicon Repair Invariant:
@@ -167,7 +167,7 @@ This step is part of the `echelon_result.state_updates` block above. Skipping it
 
 1. Return `spec_status: planned` in `echelon_result.state_updates`.
 2. Update `{spec_dir}/spec.md`: replace the line `**Status**: Draft` with `**Status**: Planned`.
-3. **Verification (run after the harness applies state updates, before transitioning to phase1-why2):**
+3. **Verification (run after the harness applies state updates, before transitioning to phase1-understanding):**
 
    ```bash
    grep -q '^\*\*Status\*\*: Planned' "${spec_dir}/spec.md" || { echo "ERROR: spec.md still shows Draft" >&2; exit 1; }
@@ -217,7 +217,7 @@ COMMANDER owns the re-dispatch decision on that controlled outcome (the "re-disp
 - `lexicon_evaluation == pending` → re-dispatch `phase1-what` (`increment_iteration`).
   This means the derived artifact was absent or the controller validator could not execute;
   it is not a validation failure and never produces `lexicon_pass: false`.
-- `lexicon_pass == true` → proceed to `phase1-why2` (soft `understanding`/SAGE scoring runs there,
+- `lexicon_pass == true` → proceed to `phase1-understanding` (controller-certified Understanding analysis runs there,
   once, on rich `spec.md`, after the derived requirements artifact is structurally clean).
 - `lexicon_evaluation == failed AND lexicon_attempts < max_repair_attempts AND iteration < max_iterations`
   → re-dispatch `phase1-what` (`increment_iteration`). This is the only condition that
@@ -225,7 +225,7 @@ COMMANDER owns the re-dispatch decision on that controlled outcome (the "re-disp
   handles an unevaluated artifact — see the transitions in `workflow/definition.yaml`.
 - `lexicon_attempts >= max_repair_attempts` (or the secondary `iteration >= max_iterations` cap)
   → honor `lexicon_gate.on_exhausted`:
-  `warn` → proceed to `phase1-why2` with a `lexicon_gate_exhausted` warning journal entry;
+  `warn` → proceed to `phase1-understanding` with a `lexicon_gate_exhausted` warning journal entry;
   `block` → set `spec_status: blocked`, `blocked_reason: "lexicon gate not satisfied"`, and stop.
 
 **Agent state updates (added to the §4.3 block when the gate is enabled):**
@@ -241,9 +241,9 @@ The controller then writes `lexicon_evaluation: pending|passed|failed` and, only
 deterministic validation runs, `lexicon_pass: true|false`.
 
 > Ordering invariant: Lexicon is the FIRST, hard, deterministic gate; `understanding`/SAGE
-> (phase1-why2) is the soft score that runs only AFTER `lexicon_pass`. The hard gate validates
+> (`phase1-understanding`) runs only AFTER `lexicon_pass`. The hard gate validates
 > `requirements.lexicon.md`; the soft score still reads the canonical rich `spec.md`. Never let
 > the soft score gate structure — that is the "score-quality-later" anti-pattern this gate
 > replaces.
 
-**Transition:** `phases[phase1-why2]` — see `workflow/definition.yaml`
+**Transition:** `phases[phase1-understanding]` — see `workflow/definition.yaml`

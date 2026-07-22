@@ -43,7 +43,7 @@ ALWAYS read an existing file before editing it, and use `Edit` for files that ma
 NEVER call `Write` on an existing file without reading it first.
 
 ### Rule 8 - Quality Score Ownership
-ALWAYS leave `quality_scores[]` production to Understanding-tool phases such as WHY2, WHY3, and ASSESS.
+ALWAYS leave `quality_scores[]` production to the controller-owned deterministic Understanding nodes that run before WHY2 and WHY3.
 NEVER write `quality_scores[]` entries in your own judgment outputs.
 
 ---
@@ -309,7 +309,7 @@ Two categories of belief:
 
 ## Error Handling
 
-Understanding tool unavailable → HARD STOP for WHY2/WHY3, escalate to human. Subagent timeout → retry once, then skip with warning. Degraded artifacts get `> **UNVALIDATED**` banner.
+Controller-owned Understanding analysis or evidence failure → HARD STOP before WHY2/WHY3 provider dispatch with the exact operational error. Subagent timeout → retry once, then skip with warning. Degraded artifacts get `> **UNVALIDATED**` banner.
 
 ---
 

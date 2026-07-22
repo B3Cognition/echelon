@@ -5,17 +5,29 @@
 ## Preflight checks
 
 ### 1. analysis.json exists
-Read `{state.output_dir}/analysis.json` using Read tool. If not found: HARD STOP — "Run /speckit.echelon.re-extract first."
+The harness verifies `{state.output_dir}/analysis.json`. If it is absent, stop
+with: "Run Echelon reverse engineering first."
 
 ### 2. Strategic stubs exist
-Check that `re/workspace/strategy/constitution.md` exists (created by re-extract Phase 7). If not found: HARD STOP - "Run /speckit.echelon.re-extract first to generate strategic artifacts."
+The harness verifies that `re/workspace/strategy/constitution.md` exists. If it
+is absent, stop with: "Run Echelon reverse engineering first to generate
+strategic artifacts."
 
-### 3. Count [REQUIRES INPUT] markers
+### 3. Inventory unresolved decisions
 
-```bash
-grep -r "\[REQUIRES INPUT\]" re/workspace/strategy/constitution.md re/workspace/strategy/migration-strategy.md re/workspace/strategy/risk-matrix.md re/workspace/strategy/gap-analysis.md re/workspace/strategy/adrs/ 2>/dev/null | wc -l
-```
+The harness calls its retarget marker discovery over the four canonical
+strategy files:
 
-Report count to user: "Found {N} decisions needing human input."
+- `re/workspace/strategy/constitution.md`
+- `re/workspace/strategy/migration-strategy.md`
+- `re/workspace/strategy/risk-matrix.md`
+- `re/workspace/strategy/gap-analysis.md`
+- `re/workspace/strategy/adrs/**/*.md`
+
+It supplies a sorted
+inventory containing `path`, `line`, `occurrence`, and `context` for every
+exact `[REQUIRES INPUT]` marker.
+
+Report its count to the user: "Found {N} decisions needing human input."
 
 Preflight complete. Advance to `re-retarget-1-input`.

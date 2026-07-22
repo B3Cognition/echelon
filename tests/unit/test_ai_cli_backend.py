@@ -1827,8 +1827,8 @@ def test_openai_compatible_backend_executes_nonstreaming_write_file_tool_call(
     assert "tool_budget=1/24" in captured.err
     assert "[openai-compatible] turn 2: request" in captured.err
     assert "messages=4" in captured.err
-    assert "  llm> echelon_result:" in captured.err
-    assert "  llm>   verdict: DONE" in captured.err
+    assert "  llm | echelon_result:" in captured.err
+    assert "  llm |   verdict: DONE" in captured.err
     assert "[openai-compatible] turn 2 summary:" in captured.err
     assert "tool_budget=1/24" in captured.err
     assert "[openai-compatible] final: finish_reason=stop" in captured.err
@@ -2361,7 +2361,9 @@ def test_openai_compatible_backend_executes_streamed_tool_call_chunks(
 
         def __init__(self) -> None:
             self._lines = iter([
-                b'data: {"choices":[{"delta":{"content":"echelon_result:\\n  verdict: DONE\\n"},"finish_reason":"stop"}],"usage":{"total_tokens":5}}\n',
+                b'data: {"choices":[{"delta":{"content":"echelon_"}}]}\n',
+                b'data: {"choices":[{"delta":{"content":"result:\\n  verdict"}}]}\n',
+                b'data: {"choices":[{"delta":{"content":": DONE\\n"},"finish_reason":"stop"}],"usage":{"total_tokens":5}}\n',
                 b"data: [DONE]\n",
             ])
 
@@ -2404,11 +2406,185 @@ def test_openai_compatible_backend_executes_streamed_tool_call_chunks(
     assert result.metadata["tool_call_count"] == 1
     assert result.token_usage == 16
     captured = capsys.readouterr()
-    assert "[openai-compatible] stream: tool_call_delta" in captured.err
-    assert "args_chars=" in captured.err
-    assert "[openai-compatible] stream: content_delta chars=" in captured.err
-    assert "  llm> echelon_result:" in captured.err
+    assert "[openai-compatible] stream: tool_call_delta" not in captured.err
+    assert "[openai-compatible] stream: content_delta chars=" not in captured.err
+    assert "  llm | echelon_result:" in captured.err
+    assert "  llm |   verdict: DONE" in captured.err
+    assert "  llm | echelon_" not in captured.err.splitlines()
     assert "[openai-compatible] tool write_file result: ok bytes=12 path=notes.md" in captured.err
+
+
+def test_openai_compatible_backend_debug_progress_keeps_stream_delta_counters(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    class StreamingResponse:
+        headers = {"Content-Type": "text/event-stream"}
+
+        def __init__(self) -> None:
+            self._lines = iter([
+                b'data: {"choices":[{"delta":{"content":"echelon_"}}]}\n',
+                b'data: {"choices":[{"delta":{"content":"result:\\n"}}],"usage":{"total_tokens":5}}\n',
+                b"data: [DONE]\n",
+            ])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def readline(self):
+            return next(self._lines, b"")
+
+    def fake_urlopen(request, timeout):
+        return StreamingResponse()
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        fake_urlopen,
+    )
+
+    result = OpenAICompatibleBackend(
+        _openai_config(
+            features={
+                "streaming": True,
+                "tool_calls": False,
+                "progress_detail": "debug",
+            }
+        )
+    ).run_prompt(
+        CliRunRequest(
+            cwd=str(tmp_path),
+            prompt="Return result.",
+            env={},
+            timeout_s=12.5,
+        )
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == "echelon_result:\n"
+    captured = capsys.readouterr()
+    assert "[openai-compatible] stream: content_delta chars=8 total_chars=8" in captured.err
+    assert "[openai-compatible] stream: content_delta chars=8 total_chars=16" in captured.err
+    assert "  llm | echelon_result:" in captured.err
+
+
+def test_openai_stream_preview_is_bounded_and_marks_truncation_once(capsys) -> None:
+    from harness.ai_cli_backends.openai_compatible_progress import OpenAIStreamPreview
+
+    preview = OpenAIStreamPreview(max_chars=11, max_lines=4)
+    preview.append("hello\n\nworld\nagain\nmore\n")
+    preview.flush()
+
+    lines = capsys.readouterr().err.splitlines()
+    assert lines == [
+        "  llm | hello",
+        "  llm | world",
+        "  llm | ... preview truncated ...",
+    ]
+    assert preview.emitted is True
+    assert preview.truncated is True
+
+
+def test_openai_stream_preview_respects_line_ceiling(capsys) -> None:
+    from harness.ai_cli_backends.openai_compatible_progress import OpenAIStreamPreview
+
+    preview = OpenAIStreamPreview(max_chars=100, max_lines=2)
+    preview.append("one\ntwo\nthree\nfour\n")
+    preview.flush()
+
+    lines = capsys.readouterr().err.splitlines()
+    assert lines == [
+        "  llm | one",
+        "  llm | two",
+        "  llm | ... preview truncated ...",
+    ]
+
+
+def test_openai_stream_preview_preserves_stdout_without_terminal_replay(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    class StreamingResponse:
+        headers = {"Content-Type": "text/event-stream"}
+
+        def __init__(self) -> None:
+            self._lines = iter([
+                b'data: {"choices":[{"delta":{"content":"echelon_result:\\n  verdict: DONE\\n"},"finish_reason":"stop"}],"usage":{"total_tokens":5}}\n',
+                b"data: [DONE]\n",
+            ])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def readline(self):
+            return next(self._lines, b"")
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        lambda request, timeout: StreamingResponse(),
+    )
+    result = OpenAICompatibleBackend(
+        _openai_config(features={"streaming": True, "tool_calls": False})
+    ).run_prompt(
+        CliRunRequest(cwd=str(tmp_path), prompt="Return result.", env={}, timeout_s=10)
+    )
+
+    captured = capsys.readouterr()
+    assert result.stdout == "echelon_result:\n  verdict: DONE\n"
+    assert captured.out == ""
+    assert captured.err.count("echelon_result:") == 1
+
+
+def test_openai_stream_preview_can_be_disabled_without_losing_terminal_output(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from harness.ai_cli_backends.openai_compatible import OpenAICompatibleBackend
+
+    class StreamingResponse:
+        headers = {"Content-Type": "text/event-stream"}
+
+        def __init__(self) -> None:
+            self._lines = iter([
+                b'data: {"choices":[{"delta":{"content":"complete response"},"finish_reason":"stop"}]}\n',
+                b"data: [DONE]\n",
+            ])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def readline(self):
+            return next(self._lines, b"")
+
+    monkeypatch.setattr(
+        "harness.ai_cli_backends.openai_compatible.urllib.request.urlopen",
+        lambda request, timeout: StreamingResponse(),
+    )
+    result = OpenAICompatibleBackend(
+        _openai_config(
+            features={
+                "streaming": True,
+                "tool_calls": False,
+                "stream_preview": False,
+            }
+        )
+    ).run_prompt(
+        CliRunRequest(cwd=str(tmp_path), prompt="Return result.", env={}, timeout_s=10)
+    )
+
+    captured = capsys.readouterr()
+    assert result.stdout == "complete response"
+    assert captured.out == "complete response\n"
+    assert "  llm |" not in captured.err
 
 
 def test_openai_compatible_backend_tool_rejects_path_escape(

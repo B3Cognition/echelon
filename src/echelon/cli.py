@@ -56,7 +56,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.7.8"
+CLI_VERSION = "3.7.9"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -6042,7 +6042,12 @@ def _derive_roadmap_phases(workflow_path: Path) -> list[str]:
                 if not isinstance(transition, dict):
                     continue
                 candidate = str(transition.get("to") or "")
-                if candidate and candidate != current and candidate != "escalate":
+                if (
+                    candidate
+                    and candidate != current
+                    and candidate != "escalate"
+                    and candidate not in seen
+                ):
                     next_phase = candidate
                     break
         current = next_phase

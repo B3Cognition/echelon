@@ -52,14 +52,14 @@ class TestRePromptOutputContracts:
             text = path.read_text(encoding="utf-8")
 
             assert "re-analysis-manifest.json" in text
-            assert "--source-output-root" in text
             assert "sources/{source-id}/analysis.json" in text
 
         analyzer = RE_ANALYZER.read_text(encoding="utf-8")
-        assert '--profile "$RE_PROFILE"' in analyzer
-        assert '--depth "$RE_DEPTH"' in analyzer
-        assert '--max-lines-per-file "$RE_MAX_LINES"' in analyzer
-        assert '--git-history-limit "$RE_GIT_LIMIT"' in analyzer
+        assert "controller-owned analysis step" in analyzer
+        assert "NEVER invoke repository discovery" in analyzer
+        phase = RE_EXTRACT_1_ANALYZE.read_text(encoding="utf-8")
+        assert "Summarize only analysis artifacts already present" in phase
+        assert "--source-output-root" not in phase
 
     def test_re_specifier_uses_domain_placeholder_in_output_examples(self) -> None:
         for path in [RE_SPECIFIER, RE_EXTRACT_2_SPECIFY]:
@@ -142,7 +142,8 @@ class TestRePromptOutputContracts:
 
         assert "Prepared Target Artifact" in text
         assert "ALWAYS read the controller-prepared target" in text
-        assert "NEVER create or replace the target with shell redirection" in text
+        assert "NEVER bypass the prepared target artifact" in text
+        assert "backup, temporary, alternate, or scratch files" in text
 
     def test_re_verifier_rejects_specs_without_source_evidence(self) -> None:
         text = (ROOT / "extension" / "agents" / "re" / "verifier.md").read_text(
@@ -150,8 +151,9 @@ class TestRePromptOutputContracts:
         )
 
         assert "Source Evidence" in text
-        assert "coverage_pct: 0" in text
         assert "shallow_summary_only" in text
+        assert "controller-written eligible, covered, and orphan inventory" in text
+        assert "NEVER enumerate source files or recompute coverage" in text
 
     def test_re_agents_reference_the_deterministic_deep_spec_gate(self) -> None:
         specifier = RE_SPECIFIER.read_text(encoding="utf-8")

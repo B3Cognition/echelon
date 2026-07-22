@@ -50,16 +50,19 @@ from harness.squad_executors import (
     AgentExecutor,
     CommanderInternalExecutor,
     ConditionalSequentialExecutor,
+    DeterministicUnderstandingExecutor,
     HumanGateExecutor,
     PhaseExecutor,
     StagedParallelExecutor,
 )
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
+from echelon.telemetry.phase_timing import record_phase_finish, record_phase_start
 from echelon.telemetry.provider import DispatchContext, InstrumentedProvider
 from echelon.telemetry.store import TelemetryStore
 from harness.squad_state import SquadStateStore
 from harness.prompt_markdown import read_prompt_markdown
 from harness.terminal import color_text
+from harness.understanding_gate import has_current_understanding_evidence
 
 
 PHASE_TERMINAL_BLOCKED = "terminal-blocked"
@@ -348,6 +351,7 @@ class SquadController:
         self._executors: dict[str, PhaseExecutor] = {
             "agent": AgentExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "commander_internal": CommanderInternalExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "deterministic_understanding": DeterministicUnderstandingExecutor(phase_graph, ext_dir, project_root, self._squad_dir),
             "staged_parallel": StagedParallelExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "conditional_sequential": ConditionalSequentialExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "human_gate": HumanGateExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
@@ -372,6 +376,112 @@ class SquadController:
             logger.warning(
                 "Could not initialize telemetry manifest for run_id=%s",
                 state.get("run_id") or self._squad_dir.name,
+                exc_info=True,
+            )
+
+    def _start_declared_phase_timing(self, node: PhaseNode) -> None:
+        """Open a workflow-declared timing window before phase dispatch."""
+        phase = str(node.timing_window_start or "").strip()
+        budget = node.budget_seconds
+        if not phase or budget is None:
+            return
+        try:
+            record_phase_start(
+                self._telemetry_store,
+                phase=phase,
+                budget_seconds=float(budget),
+            )
+        except Exception:
+            logger.warning(
+                "Could not start declared phase timing for %s",
+                phase,
+                exc_info=True,
+            )
+
+    def _declared_phase_timing_budget(self, phase: str) -> float | None:
+        """Resolve a timing budget from start or transition declarations."""
+        for phase_id in self._graph.all_phase_ids():
+            candidate = self._graph.get(phase_id)
+            if (
+                candidate.timing_window_start == phase
+                and candidate.budget_seconds is not None
+            ):
+                return float(candidate.budget_seconds)
+            transition = candidate.timing_window_transition
+            if (
+                isinstance(transition, dict)
+                and str(transition.get("open") or "").strip() == phase
+                and transition.get("open_budget_seconds") is not None
+            ):
+                return float(transition["open_budget_seconds"])
+        return None
+
+    def _apply_declared_phase_timing_transition(
+        self,
+        node: PhaseNode,
+        next_phase: str,
+    ) -> None:
+        """Apply timing close/open metadata after a successful phase advance."""
+        if next_phase == node.id:
+            return
+        transition = node.timing_window_transition
+        if not isinstance(transition, dict) or not transition:
+            return
+
+        close_phase = str(transition.get("close") or "").strip()
+        open_phase = str(transition.get("open") or "").strip()
+        open_budget = transition.get("open_budget_seconds")
+        try:
+            if close_phase:
+                events, diagnostics = self._telemetry_store.read_phase_timings()
+                if diagnostics:
+                    raise ValueError("invalid phase timing telemetry")
+                latest = next(
+                    (
+                        event
+                        for event in reversed(events)
+                        if event.phase == close_phase
+                    ),
+                    None,
+                )
+                if latest is None:
+                    close_budget = self._declared_phase_timing_budget(close_phase)
+                    if close_budget is None:
+                        raise ValueError(
+                            f"no timing budget declared for {close_phase!r}"
+                        )
+                    record_phase_start(
+                        self._telemetry_store,
+                        phase=close_phase,
+                        budget_seconds=close_budget,
+                    )
+                    latest = next(
+                        event
+                        for event in reversed(
+                            self._telemetry_store.read_phase_timings()[0]
+                        )
+                        if event.phase == close_phase
+                    )
+                if latest.event == "started":
+                    record_phase_finish(
+                        self._telemetry_store,
+                        phase=close_phase,
+                    )
+
+            if open_phase:
+                if open_budget is None:
+                    raise ValueError(
+                        f"no timing budget declared for {open_phase!r}"
+                    )
+                record_phase_start(
+                    self._telemetry_store,
+                    phase=open_phase,
+                    budget_seconds=float(open_budget),
+                )
+        except Exception:
+            logger.warning(
+                "Could not apply declared phase timing transition for %s",
+                node.id,
                 exc_info=True,
             )
 
@@ -621,6 +731,27 @@ class SquadController:
                     run_id=existing.get("run_id", ""),
                 )
 
+        # Deterministic analysis failures are retryable at the same node. Keep
+        # their immutable evidence pointer and run identity instead of treating
+        # them like an incomplete provider dispatch that must be reinitialized.
+        elif (
+            existing_status == "blocked"
+            and self._is_deterministic_understanding_phase(
+                str(existing.get("phase") or "")
+            )
+        ):
+            state = self._state_store.load()
+            state["status"] = "running"
+            state["blocked_reason"] = None
+            self._state_store.save(state)
+            existing_status = "running"
+            force_resume = True
+            print(
+                f"[squad] deterministic analysis recovery → retrying "
+                f"{state.get('phase')!r}",
+                flush=True,
+            )
+
         # ── Escalation block ──────────────────────────────────────────────
         elif existing_status == "blocked" and existing.get("escalation_question"):
             q = existing.get("escalation_question", "")
@@ -752,6 +883,7 @@ class SquadController:
 
         while True:
             phase = self._state_store.current_phase()
+            phase = self._guard_understanding_evidence(phase)
             guarded_phase = self._apply_phase_recommendation_guard(phase)
             if guarded_phase != phase:
                 phase = guarded_phase
@@ -806,6 +938,8 @@ class SquadController:
 
             if self._skip_phase_if_condition_false(node):
                 continue
+
+            self._start_declared_phase_timing(node)
 
             # Per-phase dispatch cap — prevents runaway loops on any phase.
             # WHY phases use max_iterations as their cap (they legitimately iterate).
@@ -881,6 +1015,8 @@ class SquadController:
                     self._block_after_phase_a_readiness_failure(readiness)
                     return SquadResult.from_state(self._state_store.load())
 
+            self._apply_declared_phase_timing_transition(node, next_phase)
+
             self._state_store.advance(
                 phase,
                 next_phase,
@@ -952,6 +1088,39 @@ class SquadController:
             else:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
                 continue
+
+    def _guard_understanding_evidence(self, phase: str) -> str:
+        """Route legacy or stale SAGE dispatches through deterministic analysis."""
+        gate_by_target = {
+            "phase1-why2": "phase1-understanding",
+            "phase3-consensus": "phase3-understanding",
+        }
+        gate = gate_by_target.get(phase)
+        if gate is None:
+            return phase
+        state = self._state_store.load()
+        if has_current_understanding_evidence(
+            state,
+            project_root=self._project_root,
+            phase=phase,
+        ):
+            return phase
+        state["phase"] = gate
+        self._state_store.save(state)
+        print(
+            f"[squad] {phase}: certified Understanding evidence missing or stale; "
+            f"routing through {gate}",
+            flush=True,
+        )
+        return gate
+
+    def _is_deterministic_understanding_phase(self, phase: str) -> bool:
+        if not phase:
+            return False
+        try:
+            return self._graph.get(phase).type == "deterministic_understanding"
+        except KeyError:
+            return False
 
     def _attach_published_re_context(self) -> None:
         """Snapshot the latest durable RE publication for this spec run."""
@@ -1050,6 +1219,7 @@ class SquadController:
         label = node.label or node.id
         if self._skip_phase_if_condition_false(node, manual_phase_run=True):
             return SquadResult.from_state(self._state_store.load())
+        self._start_declared_phase_timing(node)
         print(
             _format_phase_dispatch_line(
                 node,
@@ -1104,6 +1274,8 @@ class SquadController:
                 return SquadResult.from_state(self._state_store.load())
         else:
             self._publish_manual_phase_artifacts()
+
+        self._apply_declared_phase_timing_transition(node, next_phase)
 
         self._state_store.advance(
             phase,
@@ -1833,9 +2005,15 @@ class SquadController:
         state = self._state_store.load()
         if phase == "phase1-what":
             self._preserve_cartographer_spec_context(state)
-        state["phase"] = PHASE_TERMINAL_BLOCKED
+        retryable_analysis = self._is_deterministic_understanding_phase(phase)
+        state["phase"] = phase if retryable_analysis else PHASE_TERMINAL_BLOCKED
         state["status"] = "blocked"
         state["blocked_reason"] = reason
+        if retryable_analysis:
+            node = self._graph.get(phase)
+            for key in node.controller_state_updates:
+                if key in (result.state_updates or {}) and key != "blocked_reason":
+                    state[key] = result.state_updates[key]
         if reason == "provider_session_limit":
             state["provider_limit_message"] = result.provider_limit_message
             if result.echelon_result is None:
@@ -1850,7 +2028,11 @@ class SquadController:
         }
         self._state_store.save(state)
         self._record_blocker_event(phase, reason)
-        detail = "phase not marked complete"
+        detail = (
+            "retryable deterministic phase"
+            if retryable_analysis
+            else "phase not marked complete"
+        )
         if reason == "provider_session_limit":
             detail = f"missing_echelon_result; provider: {result.provider_limit_message}"
         print(f"[squad] ✗ {phase} blocked: {reason} ({detail})", flush=True)
@@ -2105,8 +2287,12 @@ class SquadController:
             return self._gate_config_cache
         cfg: dict = {}
         try:
-            import yaml
-            data = yaml.safe_load(self._project_config_path().read_text()) or {}
+            from harness.config import get_full_resolved_config
+
+            data = get_full_resolved_config(
+                self._project_root,
+                fallback_config_path=self._ext_dir / "echelon-config.yml",
+            )
             block = data.get("lexicon_gate")
             if isinstance(block, dict):
                 cfg = {"lexicon_gate": block}
@@ -2145,6 +2331,8 @@ class SquadController:
         artifacts = gate.get("artifacts", {})
         spec_gate = artifacts.get("spec", {}) if isinstance(artifacts, dict) else {}
         if not isinstance(spec_gate, dict) or not spec_gate.get("enabled", False):
+            result.state_updates["lexicon_pass"] = True
+            result.state_updates["lexicon_attempts"] = 0
             return
 
         updates = result.state_updates
@@ -2172,20 +2360,9 @@ class SquadController:
                 from lexicon.source_contract import source_contract_findings
                 from lexicon.validity import validate as validate_lexicon
 
-                glossary: set[str] = set()
-                if glossary_path.is_file():
-                    import re
-
-                    for raw in glossary_path.read_text(encoding="utf-8").splitlines():
-                        line = raw.strip()
-                        if not line or line.startswith("#"):
-                            continue
-                        terms = re.findall(r"\*\*([^*]+)\*\*", line)
-                        glossary.update(term.strip() for term in terms or [line])
-
                 report = validate_lexicon(
                     derived_path.read_text(encoding="utf-8"),
-                    glossary=glossary,
+                    glossary=self._load_lexicon_glossary_terms(glossary_path),
                     artifact_type="SPEC",
                 )
                 findings = [*report.findings, *source_contract_findings(
@@ -2229,6 +2406,177 @@ class SquadController:
         if changed:
             self._state_store.save(persisted)
 
+    def _enforce_tasks_lexicon_gate_result(
+        self,
+        node: PhaseNode,
+        state: dict,
+        result: SquadAgentResult,
+    ) -> None:
+        """Certify an enabled tasks Lexicon gate at the controller boundary."""
+
+        if node.id not in {"phase3-plan", "phase3-consensus"}:
+            return
+        gate = self._lexicon_gate_config().get("lexicon_gate", {})
+        if not isinstance(gate, dict) or not gate.get("enabled", False):
+            return
+        artifacts = gate.get("artifacts", {})
+        tasks_gate = artifacts.get("tasks", {}) if isinstance(artifacts, dict) else {}
+        if not isinstance(tasks_gate, dict) or not tasks_gate.get("enabled", False):
+            result.state_updates["tasks_lexicon_pass"] = True
+            result.state_updates["tasks_lexicon_attempts"] = 0
+            return
+
+        updates = result.state_updates
+        spec_dir_ref = str(updates.get("spec_dir") or state.get("spec_dir") or "").strip()
+        if not spec_dir_ref:
+            self._mark_tasks_lexicon_uncertified(updates)
+            return
+        spec_dir = Path(spec_dir_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+
+        report = self._validate_tasks_gate_artifacts(spec_dir, gate, tasks_gate)
+        report_path = spec_dir / str(
+            tasks_gate.get("report") or "tasks-lexicon-report.json"
+        ).strip()
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        updates["tasks_lexicon_report"] = str(report_path)
+        updates["tasks_lexicon_findings"] = len(report["findings"])
+        updates["tasks_lexicon_pass"] = bool(report["ok"])
+        if report["ok"]:
+            updates["tasks_lexicon_attempts"] = 0
+            return
+
+        previous_attempts = state.get("tasks_lexicon_attempts", 0)
+        try:
+            attempts = int(previous_attempts)
+        except (TypeError, ValueError):
+            attempts = 0
+        updates["tasks_lexicon_attempts"] = max(0, attempts) + 1
+
+    def _validate_tasks_gate_artifacts(
+        self,
+        spec_dir: Path,
+        gate: dict,
+        tasks_gate: dict,
+    ) -> dict[str, object]:
+        tasks_name = str(tasks_gate.get("path") or "tasks.md").strip()
+        spec_ref_name = str(
+            tasks_gate.get("spec_ref") or "requirements.lexicon.md"
+        ).strip()
+        glossary_name = str(
+            tasks_gate.get("glossary_file")
+            or gate.get("glossary_file")
+            or "glossary.md"
+        ).strip()
+        tasks_path = spec_dir / tasks_name
+        spec_ref_path = spec_dir / spec_ref_name
+        glossary_path = spec_dir / glossary_name
+        findings: list[dict[str, object]] = []
+
+        for artifact in (
+            tasks_name,
+            "critical-path.md",
+            "risk-matrix.md",
+            "dependencies.md",
+        ):
+            if not (spec_dir / artifact).is_file():
+                findings.append({
+                    "code": "missing-plan-output",
+                    "message": f"required planning artifact is missing: {artifact}",
+                    "artifact": artifact,
+                })
+        if not spec_ref_path.is_file():
+            findings.append({
+                "code": "missing-spec-ref",
+                "message": f"tasks specification reference is missing: {spec_ref_name}",
+                "artifact": spec_ref_name,
+            })
+
+        if tasks_path.is_file() and spec_ref_path.is_file():
+            try:
+                from lexicon.tasks import validate_tasks
+
+                lexicon_report = validate_tasks(
+                    tasks_path.read_text(encoding="utf-8"),
+                    glossary=self._load_lexicon_glossary_terms(glossary_path),
+                    spec_text=spec_ref_path.read_text(encoding="utf-8"),
+                )
+                findings.extend(
+                    {
+                        "code": str(item.code),
+                        "message": str(item.message),
+                        "line": int(item.line),
+                        "span": str(item.span),
+                    }
+                    for item in lexicon_report.findings
+                )
+            except Exception as exc:
+                findings.append({
+                    "code": "tasks-validator-error",
+                    "message": f"tasks validator failed: {exc}",
+                })
+
+            try:
+                from harness.spec_frontmatter import read_targets
+                from harness.task_targets import validate_task_targets
+
+                target_report = validate_task_targets(
+                    tasks_path.read_text(encoding="utf-8", errors="replace"),
+                    declared_targets=read_targets(spec_dir),
+                    allow_legacy_single_target=False,
+                )
+                target_findings = (
+                    ("undeclared-target", target_report.missing_targets),
+                    ("unused-declared-target", target_report.unreferenced_targets),
+                    ("task-without-target", target_report.unowned_tasks),
+                    ("cross-target-task", tuple(sorted(target_report.cross_target_tasks))),
+                    ("target-file-mismatch", tuple(sorted(target_report.path_target_mismatches))),
+                )
+                for code, values in target_findings:
+                    for value in values:
+                        findings.append({
+                            "code": code,
+                            "message": f"task target ownership failure: {value}",
+                            "target": str(value),
+                        })
+            except Exception as exc:
+                findings.append({
+                    "code": "task-target-validator-error",
+                    "message": f"task target validator failed: {exc}",
+                })
+
+        return {
+            "schema_version": 1,
+            "ok": not findings,
+            "tasks": tasks_name,
+            "spec_ref": spec_ref_name,
+            "findings": findings,
+        }
+
+    def _mark_tasks_lexicon_uncertified(self, updates: dict) -> None:
+        """Record that the controller could not certify tasks as passing."""
+        updates["tasks_lexicon_pass"] = False
+        updates["tasks_lexicon_attempts"] = 0
+
+    @staticmethod
+    def _load_lexicon_glossary_terms(glossary_path: Path) -> set[str]:
+        if not glossary_path.is_file():
+            return set()
+        import re
+
+        glossary: set[str] = set()
+        for raw in glossary_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            terms = re.findall(r"\*\*([^*]+)\*\*", line)
+            glossary.update(term.strip() for term in terms or [line])
+        return glossary
+
     @staticmethod
     def _advance_state_update_keys(node: PhaseNode) -> list[str] | None:
         """Allow controller-owned state only after agent-result validation.
@@ -2260,13 +2608,18 @@ class SquadController:
         gate_artifacts = {
             "phase1-what": ("spec", "lexicon_pass", "lexicon_attempts"),
             "phase3-plan": ("tasks", "tasks_lexicon_pass", "tasks_lexicon_attempts"),
+            "phase3-consensus": ("tasks", "tasks_lexicon_pass", "tasks_lexicon_attempts"),
         }
         gate_fields = gate_artifacts.get(node.id)
         if gate_fields is None:
             return False
         artifact_name, pass_key, attempts_key = gate_fields
         gate = self._lexicon_gate_config().get("lexicon_gate", {})
-        if not isinstance(gate, dict) or str(gate.get("on_exhausted", "block")).lower() != "block":
+        if (
+            not isinstance(gate, dict)
+            or not gate.get("enabled", False)
+            or str(gate.get("on_exhausted", "block")).lower() != "block"
+        ):
             return False
         artifacts = gate.get("artifacts", {})
         artifact_gate = artifacts.get(artifact_name, {}) if isinstance(artifacts, dict) else {}
@@ -2306,50 +2659,248 @@ class SquadController:
         of returning None and punting the routing decision to COMMANDER.
         Returns {} when the file is absent or unparseable.
 
-        Also injects default `True` for the structural-gate pass flags
+        Also injects defaults for the structural-gate pass flags
         (feasibility_structural_pass, intent_alignment_check_structural_pass).
-        This is FAIL-OPEN by design — deliberate trade-off recorded here:
-
-        (a) Fail-open is consistent with `governance.on_exhausted: warn`: when
-            the gate exhausts its repair iterations the run proceeds with a
-            warning rather than blocking.  Defaulting absent flags to True
-            extends that same "warn and continue" philosophy to the case where
-            the agent simply did not emit the flag at all.
-
-        (b) The alternative — absent flag → COMMANDER judgment dispatch — would
-            make phase2-decide and phase2-tracker-alignment non-deterministic.
-            The lexicon gate (phase1-what, phase3-plan) lives with that
-        indeterminacy because their controller-certified verdicts drive
-        explicit deterministic transitions; for the structural gates the flag
-        is conditional on the repair loop running, so a missing flag is the
-        common case (gate disabled or agent pre-empted). Defaulting to True
-        avoids that COMMANDER punt entirely.
-
-        (c) A real gate failure (agent emits flag=False) is still honoured: the
-            re-dispatch condition `governance.enabled AND NOT <flag>` evaluates
-            to True, triggering a re-dispatch.  result.state_updates merges at
-            higher precedence than these defaults in eval_state (see
-            _evaluate_transitions), so an explicit False always wins.
+        Configured structural gates default to False so an omitted model field
+        cannot fail open. Disabled or absent gates default to True so the guard
+        remains inert when governance is not active for that artifact.
         """
         if self._gov_config_cache is not None:
             return self._gov_config_cache
         cfg: dict = {}
         try:
-            import yaml
-            data = yaml.safe_load(self._project_config_path().read_text()) or {}
+            from harness.config import get_full_resolved_config
+
+            data = get_full_resolved_config(
+                self._project_root,
+                fallback_config_path=self._ext_dir / "echelon-config.yml",
+            )
             block = data.get("governance")
             if isinstance(block, dict):
                 cfg = {"governance": block}
         except Exception:
             cfg = {}
-        # Structural gate pass flags default to True (= "not triggered" / "already
-        # passed"). GATEKEEPER and TRACKER override via state_updates when the gate
-        # is active. Without these defaults, absent flags produce NOT None = None,
-        # which triggers an unwanted COMMANDER judgment dispatch.
-        cfg.setdefault("feasibility_structural_pass", True)
-        cfg.setdefault("intent_alignment_check_structural_pass", True)
+        governance = cfg.get("governance", {})
+        governance_enabled = isinstance(governance, dict) and governance.get("enabled", False)
+        artifacts = governance.get("artifacts", {}) if isinstance(governance, dict) else {}
+
+        def _structural_gate_enabled(key: str) -> bool:
+            entry = artifacts.get(key, {}) if isinstance(artifacts, dict) else {}
+            if not isinstance(entry, dict):
+                return False
+            if entry.get("enabled", True) is False:
+                return False
+            return governance_enabled and str(entry.get("tier") or "").lower() == "structural"
+
+        cfg.setdefault("feasibility_structural_pass", not _structural_gate_enabled("feasibility"))
+        cfg.setdefault(
+            "intent_alignment_check_structural_pass",
+            not _structural_gate_enabled("intent-alignment-check"),
+        )
         self._gov_config_cache = cfg
         return cfg
+
+    def _enforce_governance_structural_gate_result(
+        self,
+        node: PhaseNode,
+        state: dict,
+        result: SquadAgentResult,
+    ) -> None:
+        """Validate governance artifacts after dispatch and own their gate state."""
+        gates = {
+            "phase2-decide": (
+                "feasibility",
+                "feasibility.md",
+                "feasibility_structural_pass",
+                "feasibility_structural_attempts",
+                "feasibility_structural_findings",
+                "feasibility_structural_report",
+            ),
+            "phase2-tracker-alignment": (
+                "intent-alignment-check",
+                "intent-alignment-check.md",
+                "intent_alignment_check_structural_pass",
+                "intent_alignment_check_structural_attempts",
+                "intent_alignment_check_structural_findings",
+                "intent_alignment_check_structural_report",
+            ),
+        }
+        gate_fields = gates.get(node.id)
+        if gate_fields is None:
+            return
+
+        artifact_key, default_name, pass_key, attempts_key, findings_key, report_key = gate_fields
+        governance = self._governance_config().get("governance", {})
+        artifacts = governance.get("artifacts", {}) if isinstance(governance, dict) else {}
+        entry = artifacts.get(artifact_key, {}) if isinstance(artifacts, dict) else {}
+        gate_enabled = (
+            isinstance(governance, dict)
+            and governance.get("enabled", False)
+            and isinstance(entry, dict)
+            and entry.get("enabled", True) is not False
+            and str(entry.get("tier") or "").lower() == "structural"
+        )
+        updates = result.state_updates
+        # These keys are controller-owned. Discard any model-supplied value
+        # before writing the deterministic result below.
+        for key in (pass_key, attempts_key, findings_key, report_key):
+            updates.pop(key, None)
+        if not gate_enabled:
+            updates[pass_key] = True
+            updates[attempts_key] = 0
+            return
+
+        spec_dir_ref = str(updates.get("spec_dir") or state.get("spec_dir") or "").strip()
+        if spec_dir_ref:
+            spec_dir = Path(spec_dir_ref)
+            if not spec_dir.is_absolute():
+                spec_dir = self._project_root / spec_dir
+        else:
+            spec_dir = self._project_root / "runs" / str(state.get("run_id") or "unknown") / "specs"
+
+        artifact_name = str(entry.get("path") or default_name).strip()
+        artifact_path = spec_dir / artifact_name
+        report = self._validate_governance_structural_artifact(
+            artifact_key=artifact_key,
+            artifact_path=artifact_path,
+            spec_dir=spec_dir,
+            entry=entry,
+        )
+        report_path = spec_dir / str(
+            entry.get("report") or f"{artifact_key}-structural-report.json"
+        ).strip()
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        updates[report_key] = str(report_path)
+        updates[findings_key] = len(report["findings"])
+        updates[pass_key] = bool(report["ok"])
+        if report["ok"]:
+            updates[attempts_key] = 0
+            return
+
+        try:
+            previous_attempts = int(state.get(attempts_key, 0))
+        except (TypeError, ValueError):
+            previous_attempts = 0
+        updates[attempts_key] = max(0, previous_attempts) + 1
+
+    def _validate_governance_structural_artifact(
+        self,
+        *,
+        artifact_key: str,
+        artifact_path: Path,
+        spec_dir: Path,
+        entry: dict,
+    ) -> dict[str, object]:
+        findings: list[dict[str, object]] = []
+        if not artifact_path.is_file():
+            findings.append({
+                "code": "missing-structural-artifact",
+                "message": f"required governance artifact is missing: {artifact_path.name}",
+                "artifact": artifact_path.name,
+            })
+        else:
+            spec_chunks: list[str] = []
+            for cross_ref in entry.get("cross_refs") or []:
+                against = str(cross_ref.get("against") or "").strip()
+                if not against:
+                    continue
+                spec_path = spec_dir / against
+                if spec_path.is_file():
+                    spec_chunks.append(spec_path.read_text(encoding="utf-8", errors="replace"))
+                else:
+                    findings.append({
+                        "code": "missing-cross-reference",
+                        "message": f"structural reference artifact is missing: {against}",
+                        "artifact": against,
+                    })
+            try:
+                from lexicon.structural import structural_validate
+
+                validation_entry = dict(entry)
+                template = str(validation_entry.get("template") or "").strip()
+                if template:
+                    validation_entry["template"] = self._ext_dir / "templates" / template
+                validation = structural_validate(
+                    artifact_path.read_text(encoding="utf-8", errors="replace"),
+                    validation_entry,
+                    spec_text="\n\n".join(spec_chunks),
+                )
+                findings.extend(
+                    {
+                        "code": str(item.code),
+                        "message": str(item.message),
+                        "line": int(item.line),
+                        "span": str(item.span),
+                    }
+                    for item in validation.findings
+                )
+            except Exception as exc:
+                findings.append({
+                    "code": "structural-validator-error",
+                    "message": f"structural validator failed: {exc}",
+                })
+
+        return {
+            "schema_version": 1,
+            "artifact": artifact_key,
+            "path": str(artifact_path),
+            "ok": not findings,
+            "findings": findings,
+        }
+
+    def _governance_gate_must_stop_on_exhaustion(
+        self,
+        node: PhaseNode,
+        state: dict,
+        result: SquadAgentResult,
+    ) -> bool:
+        gate_fields = {
+            "phase2-decide": (
+                "feasibility",
+                "feasibility_structural_pass",
+                "feasibility_structural_attempts",
+            ),
+            "phase2-tracker-alignment": (
+                "intent-alignment-check",
+                "intent_alignment_check_structural_pass",
+                "intent_alignment_check_structural_attempts",
+            ),
+        }.get(node.id)
+        if gate_fields is None:
+            return False
+        artifact_key, pass_key, attempts_key = gate_fields
+        governance = self._governance_config().get("governance", {})
+        if not isinstance(governance, dict) or result.state_updates.get(pass_key) is True:
+            return False
+        try:
+            repair_cap = int(governance.get("max_repair_attempts", 3))
+        except (TypeError, ValueError):
+            repair_cap = 3
+        try:
+            attempts = int(result.state_updates.get(attempts_key, state.get(attempts_key, 0)))
+        except (TypeError, ValueError):
+            attempts = 0
+        iterations_exhausted = int(state.get("iteration") or 0) >= int(
+            state.get("max_iterations") or self._max_iterations
+        )
+        if not ((repair_cap > 0 and attempts >= repair_cap) or iterations_exhausted):
+            return False
+
+        result.state_updates["governance_gate_exhausted"] = artifact_key
+        if str(governance.get("on_exhausted") or "warn").lower() != "block":
+            return False
+
+        exhausted = self._state_store.load()
+        exhausted["phase"] = PHASE_TERMINAL_BLOCKED
+        exhausted["status"] = "blocked"
+        exhausted["blocked_reason"] = "governance_gate_exhausted"
+        exhausted["governance_gate_exhausted"] = artifact_key
+        self._state_store.save(exhausted)
+        return True
 
     def _evaluate_transitions(
         self, node: PhaseNode, result: SquadAgentResult
@@ -2358,7 +2909,11 @@ class SquadController:
         if node.id in WHY_PHASES:
             self._normalize_why_result_quality_scores(result)
         self._enforce_spec_lexicon_gate_result(node, state, result)
+        self._enforce_tasks_lexicon_gate_result(node, state, result)
+        self._enforce_governance_structural_gate_result(node, state, result)
         if self._lexicon_gate_must_block_on_exhaustion(node, state, result):
+            return PHASE_TERMINAL_BLOCKED
+        if self._governance_gate_must_stop_on_exhaustion(node, state, result):
             return PHASE_TERMINAL_BLOCKED
         # Merge order (lowest→highest precedence): lexicon_gate config, governance
         # config, then state, then result.state_updates — so freshly-written values
@@ -2394,7 +2949,12 @@ class SquadController:
                 elif verdict_upper in ("DONE", "COMPLETE", "PASS"):
                     eval_state["quality_scores"] = [{"pass": True}]
 
-            is_fail = self._evaluator.evaluate("quality_gates.fail", eval_state, result) is True
+            verdict_upper = (result.verdict or "").upper()
+            is_fail = (
+                self._evaluator.evaluate("quality_gates.fail", eval_state, result)
+                is True
+                or verdict_upper in ("FAIL", "BLOCKED")
+            )
             if is_fail:
                 fail_count = self._state_store.increment_why_fail_count()
                 if fail_count >= 2 and not state.get("escalation_question"):

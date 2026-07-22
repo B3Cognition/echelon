@@ -737,7 +737,9 @@ def test_product_input_context_requires_tasks_lexicon_repair_before_completion()
     })
 
     assert "Tasks Lexicon Repair" in prompt
-    assert "must return ok=true" in prompt
+    assert "controller-owned tasks validator" in prompt
+    assert "Do not report tasks_lexicon_pass yourself" in prompt
+    assert "tasks-lexicon-report.json" in prompt
 
 
 def test_plan_phase_requires_direct_product_input_task_mappings() -> None:

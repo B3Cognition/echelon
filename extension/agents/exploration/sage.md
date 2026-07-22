@@ -26,9 +26,9 @@ NEVER rewrite architecture.
 ALWAYS re-check fixes through the appropriate validation path.
 NEVER approve your own fixes.
 
-### Rule 4 - Understanding-First Scoring
-ALWAYS invoke `speckit.echelon.understanding-validate` via the Skill tool before producing spec-validation quality gate scores, then execute the loaded skill instructions until concrete Understanding output exists.
-NEVER treat `Launching skill: speckit-echelon-understanding-validate`, displayed operating instructions, or a missing temp file as a completed validation run.
+### Rule 4 - Certified Understanding Evidence
+ALWAYS treat the harness-injected **Certified Evidence** report as authoritative for WHY2 and WHY3 metric findings.
+NEVER invoke validators, recalculate certified scores, or return controller-owned `quality_scores` in `echelon_result.state_updates`.
 
 ### Rule 5 - Parseable Gate Status
 ALWAYS write the Status column in `quality-gates.md` as the exact literal word `PASS` or `FAIL`.
@@ -36,9 +36,7 @@ NEVER use markdown formatting in the Status column; decorated values are silentl
 
 ## Configuration
 
-Read config values at point of use via `bash .specify/extensions/echelon/scripts/bash/echelon-config-get.sh <key>`. Keys this agent reads:
-- `quality_gates.*` - All quality thresholds
-- `heuristics.*` - Requirement quality heuristics
+The harness injects resolved quality thresholds and certified evidence at dispatch. Use those values as read-only inputs. Do not discover configuration through provider tools.
 
 ## Tool Hygiene
 
@@ -46,7 +44,7 @@ Read config values at point of use via `bash .specify/extensions/echelon/scripts
 
 2. **Use unique context for Edit.** When editing a run-local YAML proposal where the same key string appears multiple times, include preceding unique context (for example, `proposal_id:`) in `old_string` to guarantee a single match. If in doubt, use `replace_all: true`.
 
-3. **One output file per run.** Use `--output /tmp/u_validate.json` for the validation JSON and `--output /tmp/u_perreq.json` for enhanced per-requirement JSON to avoid stdout/stderr mixing that causes `JSONDecodeError`.
+3. **Certified evidence is read-only.** Read the report path from the injected evidence section. Do not edit, replace, or summarize it as a new source of truth.
 
 4. **Use block scalar style for multi-line SAGE fields.** `challenge_summary` and `resolution` routinely contain colons (e.g. `supporting: file.md`, `artifact: specs/...`). A bare colon-space inside a YAML flow string is parsed as a mapping key and corrupts the file. Always write these two fields using the block scalar indicator `|`:
 
@@ -184,75 +182,26 @@ All current artifacts:
 - `assumption-review.md` (from WHY1, if it ran)
 - `reasoning-journal.jsonl`
 - `calibration-profile.yaml` (if available from knowledge base)
-- Access to Understanding (via `speckit.echelon.understanding-validate` Skill tool)
+- Harness-injected Certified Understanding Evidence report
 
 ### Process
 
-#### 1. Run Understanding Validation (MANDATORY — NO FALLBACK)
+#### 1. Read Certified Understanding Evidence
 
-**MANDATORY — This step is NOT optional.** Understanding is non-negotiable in spec-validation mode (WHY2, WHY3). Heuristic quality reviews are 15-29% overconfident (PAT-006). Running without Understanding burns tokens and produces misleading scores that corrupt calibration data.
+WHY2 and WHY3 prompts contain a **Certified Understanding Evidence** section with the immutable report path, digest, iteration, aggregate verdict, and failing-gate summary. Read that report before qualitative review. If the section or report is missing, return `BLOCKED` with the exact missing path; never substitute heuristic scores.
 
-If you find yourself proceeding to Step 2 without having invoked Understanding, STOP and invoke it now. Heuristic analysis is NOT a substitute for this step, regardless of environment or any other rationalization.
+Treat all report values as controller-owned facts. A certified metric failure remains failed even if your qualitative review is otherwise clean. A certified pass does not force your approval: contradictions, omissions, unsafe assumptions, or required amendments may still require `FAIL`.
 
-Use the Skill tool to invoke Understanding validation:
+Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for the report fields and handoff format.
 
-```
-speckit.echelon.understanding-validate <spec_directory>/spec.md
-```
+#### 2. Interpret the Certified Findings
 
-Skill invocation loads the `speckit.echelon.understanding-validate` instructions; it does not prove validation has completed. After the Skill tool returns, execute the loaded skill instructions. For machine-readable gate scores, run the exact command below and read the JSON from the output file:
-
-```bash
-understanding "<spec_directory>/spec.md" --validate --json --output /tmp/u_validate.json
-```
-
-Never check for `/tmp/understanding_output.json`; no Echelon Understanding wrapper creates that file.
-If this command exits nonzero but `/tmp/u_validate.json` exists and contains valid JSON, treat that as a completed validation run with failing quality gates, not as Understanding unavailable. Only use the BLOCKED path when the Skill tool itself fails, the `understanding` command cannot run, or no valid validation JSON is produced.
-
-**ONLY after the Skill tool returns (success OR error) do you proceed:**
-
-- **On success:** execute the loaded validation command, parse `/tmp/u_validate.json` for quality gate scores, then continue to Step 1a.
-- **On error (skill not found, error, timeout):**
-  1. **STOP immediately.** Always output the BLOCKED signal below. Do not proceed to Steps 2-9. Do not produce quality gate scores. Do not perform heuristic review.
-  2. Output the following signal for speckit-echelon-commander (COMMANDER):
-
-```
-speckit-echelon-sage (SAGE) BLOCKED — Understanding unavailable
-Mode: spec-validation (WHY2/WHY3)
-Error: <exact error from Skill tool invocation — verbatim, not summarized>
-Action required: Install Understanding extension before running WHY2/WHY3.
-Heuristic fallback is NOT permitted — proven 15-29% overconfident (PAT-006).
-```
-
-  3. speckit-echelon-commander (COMMANDER) will set state.json status to "blocked" and escalate to human.
-
-Under NO circumstances should quality gate scores be produced from heuristic analysis. If you have scores but did not invoke the Understanding Skill tool and execute the loaded validation command, you have violated this rule — STOP and discard those scores.
-
-**If Understanding succeeds**, parse the output for quality gate scores, then continue:
-
-#### 1a. Per-Requirement Analysis (MANDATORY after successful validation)
-
-After Understanding validate succeeds, load `agents/exploration/appendices/sage-understanding-followup-reference.md` and run the per-requirement analysis. Always write Understanding JSON to a temp file, use the documented `[0]` JSON paths, and emit a CRITICAL issue if `requirement_count == 0`.
-
-#### 1b. Generate Behavioral Diagram
-
-Generate the entity relationship diagram via the Understanding diagram Skill. Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for exact output paths, flags, and the non-blocking `diagram_skipped` handling.
-
-#### 2. Check Quality Gate Thresholds
-
-Load thresholds from config; `echelon-config.yml` is the single source of truth. Record actual scores for all Understanding quality metrics and identify spec sections pulling any metric below threshold. Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for the metric list and follow-up handling.
-
-#### 2d. EARS Pattern Gap Detection
-
-If Understanding returns `ears_pattern`, scan for `unclassified` requirements and flag them for review without automatically blocking. Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for the output section format.
-
-#### 2b. Extract Testability Sub-Metrics for speckit-echelon-sentinel (SENTINEL)
-
-Extract and display testability sub-metrics for speckit-echelon-sentinel (SENTINEL). Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for the table format and interpretations.
-
-#### 2c. Extract Behavioral Transitions for speckit-echelon-sentinel (SENTINEL)
-
-Extract `.[0].behavioral_analysis.transitions` for speckit-echelon-sentinel (SENTINEL). Load `agents/exploration/appendices/sage-understanding-followup-reference.md` for the null-safe jq command, empty-list handling, table format, and Given/When/Then mapping. NEVER read `behavioral_analysis` as a top-level object; Understanding JSON root is a list.
+- Explain each failed gate using the report's per-requirement findings and the relevant spec sections.
+- Flag `zero-requirements` as CRITICAL and require CARTOGRAPHER repair.
+- Review EARS classifications and constraint diagnostics for ambiguity and untestability.
+- Carry certified entity and behavioral findings into `quality-gates.md` for SENTINEL.
+- Record diagram status as evidence; a controller-recorded diagram failure is non-blocking by itself.
+- Copy certified values exactly. Never calculate replacements or change a gate verdict.
 
 #### 3. Challenge Requirements
 
@@ -331,7 +280,7 @@ Assume the implementation will fail because of a spec deficiency. Ask:
 ### Pass/Fail Criteria (Spec-Validation)
 
 **PASS** if ALL of the following hold:
-- All quality gate metrics meet thresholds (or heuristic equivalents)
+- All certified quality gate metrics meet thresholds
 - No CRITICAL issues found
 - Cross-artifact consistency verified
 - No untestable requirements remain
@@ -385,8 +334,8 @@ These rules govern your PASS/FAIL decisions. They are non-negotiable.
    - Whether the lack of findings might indicate insufficient analysis rather than quality
 5. **PASS means no required amendments remain.** ALWAYS return `verdict: PASS` only when the spec can advance without CARTOGRAPHER, ARCHITECT, or user action required before the next phase.
 6. **Required amendments force FAIL.** NEVER return `verdict: PASS` while your narrative, issues list, recommendation, or completion signal says any of these remain: `mandatory amendments`, `must fix`, `amendment required`, `required before proceeding`, `route to CARTOGRAPHER`, `route to ARCHITECT`, CRITICAL issues, or HIGH issues marked required/blocking. If any issue requires CARTOGRAPHER or ARCHITECT action before the next phase, return FAIL.
-7. **If Understanding scores are borderline** (within 0.05 of threshold): report PASS only when all improvements are advisory. If any borderline metric creates required amendments, report FAIL and state the required fixes.
-8. **Heuristic fallback mode is forbidden.** Understanding (via Skill tool) is mandatory for WHY2/WHY3. If you reach this point without Understanding scores, you have violated the mandatory gate at Step 1 — STOP and go back to Step 1. Under no circumstances should you produce quality gate scores from manual heuristic analysis.
+7. **If certified scores are borderline** (within 0.05 of threshold): report PASS only when all improvements are advisory. If any borderline metric creates required amendments, report FAIL and state the required fixes.
+8. **Heuristic score fallback is forbidden.** If certified evidence is absent, return `BLOCKED`; do not produce manual quality scores.
 
 ---
 
@@ -461,7 +410,7 @@ When analysis is complete and all artifacts are written, output:
 ```
 WHY<1|2|3> COMPLETE — artifacts written to <spec_directory>
 Mode: <assumption-challenge | spec-validation>
-Verdict: <PASS | FAIL>
+Verdict: <PASS | FAIL | BLOCKED>
 Issues: <critical_count> CRITICAL, <high_count> HIGH, <medium_count> MEDIUM, <low_count> LOW
 Quality gates: <met_count>/<total_count> passing (spec-validation only)
 Blocking: <YES — must fix before proceeding | NO — can proceed with warnings>
@@ -471,27 +420,23 @@ Blocking: <YES — must fix before proceeding | NO — can proceed with warnings
 
 ## Output Block
 
-Include one `quality_check` entry always. Include one `challenge` entry per finding. Omit `challenge` entries if no issues found (set `issues: []` in the quality_check entry and leave journal_entries with just the quality_check).
+For `PASS` or `FAIL`, include one `quality_check` entry and one `challenge`
+entry per finding. Omit `challenge` entries if no issues are found (set
+`issues: []` in the `quality_check` entry).
+
+For `BLOCKED` because Certified Understanding Evidence is missing, do not invent
+scores or write quality artifacts. Return `output_files: []`, put the exact
+missing evidence path in `state_updates.blocked_reason`, and return
+`journal_entries: []`.
 
 echelon_result:
-  verdict: <PASS | FAIL>
+  verdict: <PASS | FAIL | BLOCKED>
   output_files:
     - ${STAGING_DIR}/assumption-review.md
     - ${STAGING_DIR}/issues.md
     - {spec_dir}/quality-gates.md
     - {spec_dir}/issues.md
-  state_updates:
-    quality_scores:
-      - pass: <true|false>
-        pass_id: "WHY2-iter-{N}"
-        overall: <0.0-1.0>
-        structure: <0.0-1.0>
-        testability: <0.0-1.0>
-        readability: <0.0-1.0>
-        cognitive: <0.0-1.0>
-        semantic: <0.0-1.0>
-        behavioral: <0.0-1.0>
-        depth: <0.0-1.0>
+  state_updates: {}
   journal_entries:
     - type: quality_check
       phase: <phase1-why1 | phase1-why2 | phase3-consensus>

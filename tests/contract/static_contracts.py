@@ -50,7 +50,7 @@ def validate_commander_loading_contract(root: Path) -> list[str]:
     build = root / "extension/commands/echelon.build.md"
     commander = root / "extension/agents/control/commander.md"
     finalize = root / "extension/workflow/phases/build-8-finalize.md"
-    why2 = root / "extension/workflow/phases/phase1-why2.md"
+    definition = root / "extension/workflow/definition.yaml"
     return _run_checks(
         [
             PatternCheck("run delegates to Python squad harness", run, r"squad.py|squad harness"),
@@ -60,7 +60,11 @@ def validate_commander_loading_contract(root: Path) -> list[str]:
             PatternCheck("commander contains Toulmin", commander, r"Toulmin"),
             PatternCheck("finalize contains Convergence Rules", finalize, r"Convergence Rules"),
             PatternCheck("commander contains Meta-Cognition", commander, r"Meta-Cognition"),
-            PatternCheck("why2 contains token budget stop condition", why2, r"token_budget_k|token_budget_exhausted"),
+            PatternCheck(
+                "controller definition contains bounded WHY2 iteration routing",
+                definition,
+                r"quality_gates\.fail AND iteration < max_iterations",
+            ),
             PatternCheck("run mentions COMMANDER judgment role", run, r"COMMANDER"),
             PatternCheck(
                 "build avoids workflow definition routing",
@@ -90,7 +94,12 @@ def validate_commander_routing_mandate_contract(root: Path) -> list[str]:
             PatternCheck("reason required field", journal_types, r"required_data_fields.*reason|from_phase.*reason", flags),
             PatternCheck("evoi_score required field", journal_types, r"required_data_fields.*evoi_score|reason.*evoi_score", flags),
             PatternCheck("quality_scores NEVER rule", commander, r"NEVER write.*quality_scores", flags),
-            PatternCheck("understanding validation reference", why2, r"understanding\.validate|understanding-validate", flags),
+            PatternCheck(
+                "WHY2 consumes certified Understanding evidence",
+                why2,
+                r"Certified Understanding Evidence",
+                flags,
+            ),
             PatternCheck("pass_counter normalization", accessors, r"pass_counter", flags),
         ]
     )
@@ -220,9 +229,9 @@ def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
             should_match=False,
         ),
         PatternCheck(
-            "ORCHESTRATOR validates tasks against configured spec_ref",
-            orchestrator,
-            r"--spec-ref\s+\"\{spec_dir\}/\$\{?spec_ref\}?",
+            "controller validates tasks against configured spec_ref",
+            root / "src/harness/squad.py",
+            r"tasks_gate\.get\(\"spec_ref\"\).*requirements\.lexicon\.md",
         ),
         PatternCheck(
             "ORCHESTRATOR does not hardcode tasks gate spec_ref to spec.md",
@@ -308,7 +317,7 @@ def validate_cartographer_tool_usage_contract(root: Path) -> list[str]:
 
 
 def validate_sage_understanding_followup_contract(root: Path) -> list[str]:
-    """SAGE must use the documented Understanding JSON shape for handoff extraction."""
+    """SAGE must interpret certified evidence without executing Understanding."""
 
     sage = root / "extension/agents/exploration/sage.md"
     appendix = root / "extension/agents/exploration/appendices/sage-understanding-followup-reference.md"
@@ -316,29 +325,33 @@ def validate_sage_understanding_followup_contract(root: Path) -> list[str]:
     return _run_checks(
         [
             PatternCheck(
-                "SAGE appendix documents indexed behavioral transition path",
+                "SAGE appendix documents certified behavioral transitions",
                 appendix,
-                r"\.\[0\]\.behavioral_analysis\.transitions",
+                r"behavioral_analysis\.transitions",
             ),
             PatternCheck(
-                "SAGE appendix uses empty-list transition fallback",
+                "SAGE appendix identifies controller authority",
                 appendix,
-                r"behavioral_analysis\.transitions\s*//\s*\[\]",
+                r"controller-owned evidence",
+                re.IGNORECASE,
             ),
             PatternCheck(
-                "SAGE appendix uses null-safe transition cell fallback",
+                "SAGE appendix forbids score state updates",
                 appendix,
-                r"//\s*\"-\"",
+                r"must not.*quality_scores|return `quality_scores`",
+                re.IGNORECASE | re.DOTALL,
             ),
             PatternCheck(
-                "SAGE prompt references indexed behavioral transition path",
+                "SAGE prompt consumes certified evidence",
                 sage,
-                r"\.\[0\]\.behavioral_analysis\.transitions",
+                r"Certified Understanding Evidence",
             ),
             PatternCheck(
-                "SAGE prompt forbids top-level behavioral_analysis reads",
+                "SAGE prompt contains no provider-side Understanding invocation",
                 sage,
-                r"NEVER read `behavioral_analysis` as a top-level object",
+                r"understanding-validate|/tmp/u_|jq\s+-|understanding-diagram",
+                re.IGNORECASE,
+                should_match=False,
             ),
         ]
     )
@@ -559,9 +572,18 @@ def validate_re_source_ownership_contract(root: Path) -> list[str]:
         PatternCheck("constituter workspace strategy", constituter, r"\$RE_OUTPUT_DIR/workspace/strategy/constitution\.md"),
         PatternCheck("golddigger workspace mode", golddigger, r"Mode 1 - Workspace Reverse Engineering"),
         PatternCheck("golddigger no project-root overview", golddigger, r"specs/000-re-overview", should_match=False),
-        PatternCheck("preflight initializes workspace mode", preflight, r"'mode': 'workspace'"),
-        PatternCheck("preflight does not initialize single mode", preflight, r"'mode': 'single'", should_match=False),
-        PatternCheck("preflight allows empty workspace", preflight, r"empty declared workspace is valid"),
+        PatternCheck(
+            "controller initializes workspace mode",
+            root / "src/harness/re_controller.py",
+            r'mode="workspace"',
+        ),
+        PatternCheck(
+            "controller does not initialize single mode",
+            root / "src/harness/re_controller.py",
+            r'mode="single"',
+            should_match=False,
+        ),
+        PatternCheck("preflight allows empty workspace", preflight, r"empty declared workspace as valid"),
         PatternCheck("finalize stages RE index", finalize, r"re/index\.json"),
         PatternCheck("finalize stages RE sources", finalize, r"re/sources"),
         PatternCheck("finalize stages RE workspace", finalize, r"re/workspace"),
@@ -911,14 +933,14 @@ def validate_constitution_context_pack_contract(root: Path) -> list[str]:
             r"id:\s+phase3-plan[\s\S]*?context_pack:[\s\S]*?- constitution\.md",
         ),
         PatternCheck(
-            "workflow WHY3 includes constitution snapshot",
+            "workflow WHY3 includes canonical constitution memory",
             workflow,
-            r"id:\s+speckit-echelon-sage[\s\S]*?mode:\s+WHY3[\s\S]*?context_pack:[\s\S]*?- constitution\.md",
+            r"id:\s+speckit-echelon-sage[\s\S]*?mode:\s+WHY3[\s\S]*?context_pack:[\s\S]*?- \.specify/memory/constitution\.md",
         ),
         PatternCheck(
-            "workflow PLAN2 includes constitution snapshot",
+            "workflow PLAN2 includes canonical constitution memory",
             workflow,
-            r"id:\s+speckit-echelon-orchestrator[\s\S]*?mode:\s+PLAN2[\s\S]*?context_pack:[\s\S]*?- constitution\.md",
+            r"id:\s+speckit-echelon-orchestrator[\s\S]*?mode:\s+PLAN2[\s\S]*?context_pack:[\s\S]*?- \.specify/memory/constitution\.md",
         ),
         PatternCheck(
             "phase1 what prompt includes read-only constitution",
@@ -949,13 +971,13 @@ def validate_constitution_context_pack_contract(root: Path) -> list[str]:
         PatternCheck(
             "phase3 consensus PLAN2 includes read-only constitution",
             phase3_consensus,
-            r"PLAN2 Context Pack[\s\S]*?`constitution\.md` \(read-only published Phase A governance snapshot\)",
+            r"PLAN2 Context Pack[\s\S]*?`\.specify/memory/constitution\.md` \(read-only governance\)",
             flags,
         ),
         PatternCheck(
             "phase3 consensus PLAN2 forbids constitution mutation",
             phase3_consensus,
-            r"Treat `constitution\.md` as read-only governance context\. Do not edit, rewrite, append to, or output `constitution\.md`",
+            r"Treat `\.specify/memory/constitution\.md` as read-only governance context\. Do not edit, rewrite, append to, or output it\.",
         ),
         PatternCheck(
             "ARCHITECT consumes published constitution snapshot",

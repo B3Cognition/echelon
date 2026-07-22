@@ -95,6 +95,10 @@ limits:
 # QUALITY GATES — High bar, push for excellence
 # =============================================================================
 
+understanding:
+  diagram:
+    enabled: false
+
 quality_gates:
   overall: 0.75
   structure: 0.75

@@ -22,17 +22,9 @@ NEVER generate tasks for a domain missing `plan.md`.
 ALWAYS write tasks beside the canonical source-owned spec and plan.
 NEVER write RE tasks to project-root `specs/` or another source's domain directory.
 
-## Bash Command Guidelines
-
-ALWAYS use Glob, Read, and Grep tools for ad hoc file exploration; when a Bash tool call is needed, keep it single-line and chain operations with `&&`.
-NEVER use multi-line Bash or Bash `ls`, `find`, `cat`, `echo`, or `grep` for ad hoc exploration. This restriction does not apply to running project scripts, generated shell scripts, or literal workflow snippets whose purpose is shell script content.
-
 ## Configuration
 
-Read config values at point of use:
-```bash
-eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_RE_)"
-```
+Read resolved config and profile values from controller-provided context artifacts.
 
 ## Work Instructions
 
@@ -40,7 +32,7 @@ eval "$(specify extension config resolve echelon --format env --prefix ECHELON_C
 
 Read `re/workspace/strategy/constitution.md`. If absent, report BLOCKED.
 
-Use Glob to find all `re/sources/{source-id}/specs/{domain-id}/spec.md` files. For each domain, require the adjacent `plan.md`; log and skip a domain missing its plan without failing unrelated source domains.
+Inspect all `re/sources/{source-id}/specs/{domain-id}/spec.md` files. For each domain, require the adjacent `plan.md`; log and skip a domain missing its plan without failing unrelated source domains.
 
 ### Step 2: Load Shared Context
 

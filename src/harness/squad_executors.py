@@ -16,6 +16,7 @@ from harness.quality_scores import (
     render_quality_gate_context,
     resolve_quality_gate_thresholds,
 )
+from harness.understanding_gate import run_understanding_gate
 
 if TYPE_CHECKING:
     from harness.phase_graph import PhaseGraph, PhaseNode
@@ -337,16 +338,82 @@ def _render_product_input_context(state: dict) -> str:
                 target = str(task.get("target") or "(none)")
                 lines.append(f"- {task_id}: req=[{requirements}]; target={target}")
     if state.get("tasks_lexicon_pass") is False:
+        report = str(
+            state.get("tasks_lexicon_report")
+            or "{spec_dir}/tasks-lexicon-report.json"
+        )
         lines.extend([
             "",
             "## Tasks Lexicon Repair (Controller-Enforced)",
             "The previous PLAN result failed the tasks hard gate.",
-            "Run the authoritative tasks validator, repair every finding in tasks.md or glossary.md, "
-            "then rerun it. Do not treat parse_pass or a soft score as success: the result must return ok=true.",
-            "Do not return COMPLETE with tasks_lexicon_pass: false.",
+            f"Read the controller finding report at `{report}` and repair every listed finding.",
+            "Repair tasks.md and glossary.md so the controller-owned tasks validator can certify the artifact after dispatch.",
+            "Do not report tasks_lexicon_pass yourself; the controller writes that verdict.",
         ])
     lines.append("")
     return "\n".join(lines)
+
+
+def _render_controller_repair_context(state: dict) -> str:
+    """Render controller-owned artifact findings for the next repair dispatch."""
+    gates = (
+        (
+            "feasibility_structural_pass",
+            "feasibility_structural_report",
+            "feasibility.md",
+        ),
+        (
+            "intent_alignment_check_structural_pass",
+            "intent_alignment_check_structural_report",
+            "intent-alignment-check.md",
+        ),
+    )
+    sections: list[str] = []
+    for pass_key, report_key, artifact in gates:
+        if state.get(pass_key) is not False:
+            continue
+        report = str(state.get(report_key) or "").strip()
+        if not report:
+            continue
+        sections.extend([
+            "## Controller Structural Repair",
+            f"The previous `{artifact}` failed the controller-owned structural gate.",
+            f"Read `{report}` and repair every listed finding in `{artifact}`.",
+            "Preserve sections that already pass and keep the artifact aligned with its template.",
+            f"Do not report `{pass_key}` or run a validator; the controller certifies the file after dispatch.",
+            "",
+        ])
+    return "\n".join(sections)
+
+
+def _render_certified_understanding_context(state: dict, dispatch: str) -> str:
+    """Render concise controller evidence for SAGE validation dispatches."""
+    expected_phase = {
+        "phase1-why2": "phase1-why2",
+        "WHY3": "phase3-consensus",
+    }.get(dispatch)
+    evidence = state.get("understanding_evidence")
+    if expected_phase is None or not isinstance(evidence, dict):
+        return ""
+    if (
+        evidence.get("phase") != expected_phase
+        or evidence.get("status") != "completed"
+    ):
+        return ""
+    failing = evidence.get("failing_gates")
+    failing_gates = failing if isinstance(failing, list) else []
+    rendered_failing = ", ".join(f"`{gate}`" for gate in failing_gates) or "none"
+    certified_pass = str(bool(evidence.get("pass"))).lower()
+    return (
+        "# Certified Understanding Evidence\n"
+        "The Echelon controller produced this report before provider dispatch. "
+        "Interpret it; do not recalculate or override its scores.\n"
+        f"- Report: `{evidence.get('path')}`\n"
+        f"- Digest: `{evidence.get('digest')}`\n"
+        f"- Iteration: `{evidence.get('iteration')}`\n"
+        f"- Certified pass: `{certified_pass}`\n"
+        f"- Failing gates: {rendered_failing}\n\n"
+    )
 
 
 def _render_published_re_context(state: dict) -> str:
@@ -422,19 +489,59 @@ def _spec_search_bases(spec_dir_ref: str, project_root: Path, staging_dir: str) 
     return bases
 
 
+def _render_active_spec_roots_context(
+    spec_dir_ref: str,
+    state: dict,
+    project_root: Path,
+) -> str:
+    """Render the authoritative active and published spec artifact roots."""
+    if not spec_dir_ref:
+        return ""
+
+    spec_dir_path = Path(spec_dir_ref)
+    if not spec_dir_path.is_absolute():
+        spec_dir_path = project_root / spec_dir_path
+    spec_dir_path = spec_dir_path.resolve()
+
+    published_ref = str(state.get("published_spec_dir") or "").strip()
+    if not published_ref:
+        published_ref = f"specs/{spec_dir_path.name}" if spec_dir_path.name else ""
+    if not published_ref:
+        return ""
+
+    published_path = Path(published_ref)
+    if not published_path.is_absolute():
+        published_path = project_root / published_path
+    published_path = published_path.resolve()
+
+    return (
+        "## Active Spec Artifact Roots\n"
+        f"ACTIVE_SPEC_DIR={spec_dir_path}\n"
+        f"PUBLISHED_SPEC_DIR={published_path}\n"
+        "- ALWAYS read and write squad phase artifacts under ACTIVE_SPEC_DIR / `{spec_dir}`.\n"
+        "- NEVER switch to PUBLISHED_SPEC_DIR during squad phase execution unless a phase explicitly asks for publication.\n"
+        "- PUBLISHED_SPEC_DIR is the final project target used by build/harness after publication.\n"
+        "- Every injected artifact heading below is the resolved filesystem path that was read.\n\n"
+    )
+
+
 def _render_context_candidate(file_ref: str, candidate: Path) -> str:
     """Render a context-pack file or directory into deterministic prompt text."""
+    resolved_candidate = candidate.resolve()
     if candidate.is_dir():
-        chunks = [f"\n---\n# {file_ref.rstrip('/')}/"]
+        chunks = [f"\n---\n# {resolved_candidate.as_posix().rstrip('/')}/"]
         for path in sorted(p for p in candidate.rglob("*") if p.is_file()):
             rel = path.relative_to(candidate)
-            display = f"{file_ref.rstrip('/')}/{rel.as_posix()}"
+            display = f"{resolved_candidate.as_posix().rstrip('/')}/{rel.as_posix()}"
             chunks.append(
                 f"\n## {display}\n"
                 f"{path.read_text(encoding='utf-8', errors='replace')}"
             )
         return "\n".join(chunks)
-    return f"\n---\n# {file_ref}\n{candidate.read_text(encoding='utf-8', errors='replace')}"
+    return (
+        f"\n---\n# {resolved_candidate.as_posix()}\n"
+        f"{candidate.read_text(encoding='utf-8', errors='replace')}"
+    )
 
 
 def _routing_contract(node: "PhaseNode") -> str:
@@ -487,7 +594,8 @@ def _routing_contract(node: "PhaseNode") -> str:
         fields.append(("lexicon_findings", "<integer>"))
 
     if "tasks_lexicon_pass" in condition_text:
-        fields.append(("tasks_lexicon_pass", "true | false  # required when the tasks Lexicon gate is enabled"))
+        if node.id != "phase3-plan":
+            fields.append(("tasks_lexicon_pass", "true | false  # required when the tasks Lexicon gate is enabled"))
         fields.append(("tasks_lexicon_attempts", "<integer>"))
 
     if not fields:
@@ -844,30 +952,13 @@ class PhaseExecutor(ABC):
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_product_input_context(state)}"
+            f"{_render_controller_repair_context(state)}"
             f"{_render_published_re_context(state)}"
+            f"{_render_certified_understanding_context(state, node.id)}"
+            f"{_render_active_spec_roots_context(spec_dir_ref, state, self._project_root)}"
             f"{self._extension_path_context()}"
             f"{render_quality_gate_context(self._quality_gate_thresholds())}"
         )
-        if spec_dir_ref:
-            spec_dir_path = Path(spec_dir_ref)
-            if not spec_dir_path.is_absolute():
-                spec_dir_path = self._project_root / spec_dir_path
-            published_ref = str(state.get("published_spec_dir") or "").strip()
-            if not published_ref:
-                spec_id = spec_dir_path.name
-                published_ref = f"specs/{spec_id}" if spec_id else ""
-            if published_ref:
-                published_path = Path(published_ref)
-                if not published_path.is_absolute():
-                    published_path = self._project_root / published_path
-                context_preamble += (
-                    "## Active Spec Artifact Roots\n"
-                    f"ACTIVE_SPEC_DIR={spec_dir_path}\n"
-                    f"PUBLISHED_SPEC_DIR={published_path}\n"
-                    "- ALWAYS read and write squad phase artifacts under ACTIVE_SPEC_DIR / `{spec_dir}`.\n"
-                    "- NEVER switch to PUBLISHED_SPEC_DIR during squad phase execution unless a phase explicitly asks for publication.\n"
-                    "- PUBLISHED_SPEC_DIR is the final project target used by build/harness after publication.\n\n"
-                )
         resumable_spec = False
         if node.id == "phase1-what" and state.get("cartographer_resume_existing_spec"):
             candidate = Path(str(state.get("spec_dir") or ""))
@@ -988,6 +1079,7 @@ class PhaseExecutor(ABC):
             + _workspace_source_roots_context(self._project_root)
             + _render_implementation_target_context(state)
             + _render_product_input_context(state)
+            + _render_controller_repair_context(state)
             + _render_published_re_context(state)
             + self._extension_path_context()
             + _allowed_state_updates_contract(
@@ -1175,6 +1267,74 @@ class CommanderInternalExecutor(PhaseExecutor):
         )
 
 
+class DeterministicUnderstandingExecutor(PhaseExecutor):
+    """Certify Understanding evidence without invoking an AI provider."""
+
+    def __init__(
+        self,
+        phase_graph: "PhaseGraph",
+        ext_dir: Path,
+        project_root: Path,
+        squad_dir: Optional[Path] = None,
+    ) -> None:
+        self._graph = phase_graph
+        self._ext_dir = ext_dir
+        self._project_root = project_root
+        from harness.paths import runs_dir as _runs_dir
+
+        self._squad_dir = squad_dir if squad_dir is not None else _runs_dir(project_root)
+
+    def execute(
+        self, node: "PhaseNode", state_store: "SquadStateStore"
+    ) -> "SquadAgentResult":
+        from harness.config import get_full_resolved_config
+        from harness.squad_provider import SquadAgentResult
+
+        state = state_store.load()
+        target = str(getattr(node, "understanding_target", "") or "").strip()
+        if not target:
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {
+                        "blocked_reason": (
+                            f"deterministic Understanding node {node.id!r} has no target"
+                        )
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+
+        gate = run_understanding_gate(
+            project_root=self._project_root,
+            squad_dir=state_store.squad_dir,
+            phase=target,
+            iteration=int(state.get("iteration") or 0),
+            spec_dir=str(state.get("spec_dir") or ""),
+            config=get_full_resolved_config(self._project_root),
+        )
+        updates = gate.state_updates(state.get("quality_scores"))
+        if gate.operational_error:
+            updates["blocked_reason"] = gate.operational_error
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={"verdict": "BLOCKED", "state_updates": updates},
+                raw_output=str(gate.report_path or ""),
+                duration_ms=0,
+                timed_out=False,
+            )
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": updates},
+            raw_output=str(gate.report_path or ""),
+            duration_ms=0,
+            timed_out=False,
+        )
+
+
 class StagedParallelExecutor(PhaseExecutor):
     """Handles type: staged_parallel — phase3-consensus (WHY3+ASSESS2 then PLAN2).
 
@@ -1262,11 +1422,15 @@ class StagedParallelExecutor(PhaseExecutor):
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_product_input_context(state)}"
+            f"{_render_controller_repair_context(state)}"
+            f"{_render_certified_understanding_context(state, mode_label)}"
+            f"{_render_active_spec_roots_context(spec_dir_ref, state, self._project_root)}"
             f"{render_quality_gate_context(self._quality_gate_thresholds())}"
             f"Operate in **{mode_label}** mode.\n\n"
         )
 
         prompt = "\n\n".join(static_parts + [preamble] + dynamic_parts)
+        prompt = prompt.replace("{spec_dir}", spec_dir_ref)
         prompt = prompt.replace("{context_dir}", context_dir_str)
         prompt = prompt.replace("{staging_dir}", staging_dir_str)
         return (
@@ -1340,21 +1504,37 @@ class StagedParallelExecutor(PhaseExecutor):
                 state[k] = v
             state_store.save(state)
 
-        # Stage 2: PLAN2 — requires implementability-report.md from ASSESS2
+        # Stage 2: PLAN2 requires the exact run-local ASSESS2 report.
         impl_report_path: Optional[Path] = None
-        report_bases: list[Path] = []
         spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
         if spec_dir_ref:
             spec_dir = Path(spec_dir_ref)
             if not spec_dir.is_absolute():
                 spec_dir = self._project_root / spec_dir
-            report_bases.append(spec_dir)
-        report_bases.extend([self._squad_dir / "staging", self._project_root])
-        for base in report_bases:
-            candidate = base / "implementability-report.md"
-            if candidate.exists():
-                impl_report_path = candidate
-                break
+            impl_report_path = spec_dir / "implementability-report.md"
+
+        if stage2_agents and (
+            impl_report_path is None or not impl_report_path.is_file()
+        ):
+            expected = (
+                impl_report_path
+                if impl_report_path is not None
+                else Path(spec_dir_ref or "{spec_dir}") / "implementability-report.md"
+            )
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {
+                        "blocked_reason": "missing_consensus_prerequisite",
+                        "missing_outputs": [str(expected)],
+                    },
+                    "journal_entries": [],
+                },
+                raw_output=f"required PLAN2 input is missing: {expected}",
+                duration_ms=0,
+                timed_out=False,
+            )
 
         state = state_store.load()
         for agent_entry in stage2_agents:
@@ -1362,7 +1542,7 @@ class StagedParallelExecutor(PhaseExecutor):
             prompt = self._build_agent_prompt(
                 agent_entry,
                 state,
-                extra_files=[impl_report_path] if impl_report_path else [],
+                extra_files=[impl_report_path],
                 allowed_state_updates=result_contract.allowed_state_update_keys,
                 required_state_updates=result_contract.required_state_update_keys,
                 state_update_types=result_contract.state_update_types,
@@ -1429,6 +1609,7 @@ class ConditionalSequentialExecutor(PhaseExecutor):
                         _shared_agent_contract()
                         + path.read_text()
                         + _render_product_input_context(state)
+                        + _render_controller_repair_context(state)
                         + _allowed_state_updates_contract(
                             result_contract.allowed_state_update_keys,
                             required_state_updates=result_contract.required_state_update_keys,

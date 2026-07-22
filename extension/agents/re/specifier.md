@@ -35,9 +35,9 @@ NEVER rewrite analysis, workspace synthesis, planner JSON, or another failed sou
 ALWAYS treat `$RE_OUTPUT_DIR/sources/{source-id}/domain-manifest.json` and the controller-owned target appended to the dispatch as the complete scope for this invocation.
 NEVER collapse several manifest domains into one spec, create a spec for another target, or claim `DONE` before the target spec has five valid backticked source-root or domain-root line citations.
 
-### Rule 4c - Executable Gate Verification
-ALWAYS run the exact `echelon re check-domain <run-id> <source-id> <domain-id>` command appended by the controller after editing a source-domain spec, and return `DONE` only when it exits successfully.
-NEVER treat a citation's existing file path, a manual `grep`, or a prose completion summary as evidence that the deterministic gate passed; every cited line range must be within that file's actual line count.
+### Rule 4c - Controller-Owned Gate Verification
+ALWAYS satisfy the deterministic source-domain quality contract before returning `DONE`; the controller runs the gate after dispatch and routes any failures into bounded repair.
+NEVER treat a citation's existing file path or a prose completion summary as evidence that the deterministic gate will pass; every cited line range must be within that file's actual line count.
 
 ### Rule 4d - Hidden Directory Exclusion
 ALWAYS exclude every hidden directory beneath the source root from reverse-engineering scope, including `.git`, `.github`, `.claude`, and `.npm`.
@@ -45,7 +45,7 @@ NEVER inspect, cite, summarize, or create a domain for files below a hidden dire
 
 ### Rule 4e - Prepared Target Artifact
 ALWAYS read the controller-prepared target `spec.md` or `supporting-artifacts.md` before updating it; it may be empty for a newly discovered target.
-NEVER create or replace the target with shell redirection, `cat`, `tee`, or another filesystem command; for a source-domain target, never create backup, temporary, alternate, or scratch files beside `spec.md`.
+NEVER bypass the prepared target artifact or create backup, temporary, alternate, or scratch files beside `spec.md`.
 
 ### Rule 5 - Workspace Synthesis
 ALWAYS synthesize workspace relationships and contracts from the complete input union in `re-workspace-inputs.json`.
@@ -136,10 +136,10 @@ are controller-owned.
 
 ### FULL-depth acceptance gate
 
-Before returning `DONE`, run the controller-appended `echelon re check-domain` command. It verifies the target spec meets the controller-provided adaptive scenario/FR/NFR counts, every listed item has the required valid evidence, every scenario includes Given/When/Then, and the spec contains at least five concrete backticked `path:line` references. Each reference may be source-root or domain-root relative, but must resolve inside its owned root and line range. On failure fix the reported target and run the command again; do not return `DONE`.
+Before returning `DONE`, make the target spec satisfy the controller-owned deterministic gate. The gate verifies the target spec meets the controller-provided adaptive scenario/FR/NFR counts, every listed item has the required valid evidence, every scenario includes Given/When/Then, and the spec contains at least five concrete backticked `path:line` references. Each reference may be source-root or domain-root relative, but must resolve inside its owned root and line range. The controller runs this gate after dispatch, records the authoritative target-quality report, and routes bounded repair when it fails.
 
-ALWAYS return `verdict: BLOCKED` with the concise `echelon re check-domain` failure in top-level `blocked_reason` when the gate still fails after a repair attempt; leave the canonical target spec available for controller measurement.
-NEVER replace a deterministic target-quality failure with a generic dispatch failure, delete the target spec, or return `DONE` while the gate fails.
+ALWAYS return `verdict: BLOCKED` with a concise source/artifact blocker only when you cannot inspect or update the requested target; leave the canonical target spec available for controller measurement.
+NEVER replace a deterministic target-quality concern with a generic dispatch failure, delete the target spec, or return `DONE` for a knowingly incomplete target.
 
 ## Workspace Synthesis Protocol
 

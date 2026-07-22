@@ -32,6 +32,6 @@ echelon_result:
     - type: phase_complete
       phase: re-extract-3-verify
       data:
-        summary: "Computed independent source coverage"
+        summary: "Explained controller-measured source coverage"
   blocked_reason: null
 ```

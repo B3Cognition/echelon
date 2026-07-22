@@ -207,13 +207,15 @@ echelon_result:
   verdict: PASS | KILL | DEFER
   state_updates: {}
   output_files:
-    - feasibility.md
-    - prioritization.md
-    - estimates.md
-    - mvp-scope.md
+    - {spec_dir}/feasibility.md
+    - {spec_dir}/prioritization.md
+    - {spec_dir}/estimates.md
+    - {spec_dir}/mvp-scope.md
+    - {spec_dir}/kill-report.md  # KILL only
   journal_entries:
     - type: assessment
       phase: phase2-decide
+      agent: speckit-echelon-gatekeeper (GATEKEEPER)
       data:
         verdict: PASS | KILL | DEFER
         rationale: "..."
@@ -237,7 +239,7 @@ Re-evaluate feasibility and estimates now that concrete architecture exists. Run
 - `contracts/` — API and interface specifications
 - `tasks.md` — task breakdown (from PLAN)
 - `estimates.md` — original estimates (from first-pass ASSESS)
-- `constitution.md` — project governance and team constraints
+- `.specify/memory/constitution.md` — read-only project governance and team constraints
 - `specialist outputs` — any specialist reports (security, performance, domain, etc.)
 - `reasoning-journal.jsonl`
 
@@ -277,7 +279,7 @@ For EACH task in `tasks.md`, evaluate:
 
 3. **Parallelism Integrity:** Are tasks marked with `[P]` (parallelizable) truly independent? Look for hidden shared state — database migrations that must run first, shared configuration files, services that depend on each other's existence.
 
-4. **Skill Match:** Does the tech stack match available team skills as described in `constitution.md`? If the constitution lists "team: 1 backend developer (Python)" but `plan.md` specifies Rust, flag it.
+4. **Skill Match:** Does the tech stack match available team skills as described in `.specify/memory/constitution.md`? If the constitution lists "team: 1 backend developer (Python)" but `plan.md` specifies Rust, flag it.
 
 5. **Task Containment:** Are task descriptions self-contained, or do they require reading 5 other documents to understand what to do? A developer should be able to read one task and start working.
 
@@ -312,6 +314,10 @@ reserved for list-shaped WHY/SAGE quality gate scores.
 
 ```yaml
 echelon_result:
+  verdict: PASS | REJECTED | BLOCKED
+  output_files:
+    - {spec_dir}/implementability-report.md
+    - {spec_dir}/estimates.md
   state_updates:
     gate_decision: PASS
     phase_recommendation: proceed-to-build
@@ -323,38 +329,32 @@ echelon_result:
       feasibility: <FEASIBLE | FEASIBLE_WITH_RISKS | UNFEASIBLE>
       effort_person_weeks_most_likely: <float>
       effort_confidence: <low | medium | high>
+  journal_entries:
+    - type: assessment
+      phase: phase3-consensus
+      agent: speckit-echelon-gatekeeper (GATEKEEPER)
+      data:
+        verdict: PASS | REJECTED
+        rationale: "<evidence-backed consensus feasibility decision>"
+        scope_notes: "<required PLAN2 clarification or scope consequence>"
+        risk_flags: []
+        deferred_items: []
 ```
 
 ---
 
-## Structural Gate Mode (when `governance.enabled` and the artifact's `tier: structural`)
+## Controller-Owned Structural Gate
 
-**Activation — read the flag yourself.** Before finalising `feasibility.md`, run:
+Author `feasibility.md` using `extension/templates/feasibility-template.md` and
+make every required section substantive. State the PASS, DEFER, or KILL decision
+unambiguously in `Kill / Defer / Pass Decision`.
 
-```bash
-python3 -c "from pathlib import Path; import yaml; p=Path('.echelon/config.yml'); p=p if p.exists() else Path('.specify/extensions/echelon/echelon-config.yml'); g=((yaml.safe_load(p.read_text()) or {}) if p.exists() else {}).get('governance') or {}; a=(g.get('artifacts') or {}).get('feasibility') or {}; print('STRUCT_GATE=on' if (g.get('enabled') and a.get('tier')=='structural') else 'STRUCT_GATE=off'); print('max_repair='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "STRUCT_GATE=off"
-```
-
-If `STRUCT_GATE=off` (or the key is absent) this section is INERT — author `feasibility.md` per the standard protocol above. If on, self-validate and repair:
-
-```bash
-LEXICON="lexicon"; command -v lexicon >/dev/null 2>&1 || LEXICON="python3 -m lexicon.cli"
-$LEXICON validate "{spec_dir}/feasibility.md" --type structural --artifact feasibility --spec-ref "{spec_dir}/spec.md" --json
-```
-
-Parse JSON; on `ok:false` apply the smallest fix per finding (`missing-section` → add the section; `missing-verdict` → state PASS/KILL/DEFER explicitly; `unresolved-ref` → correct the id; `placeholder` → fill). Re-run, up to `max_repair`. Emit in `echelon_result.state_updates`:
-
-```yaml
-echelon_result:
-  state_updates:
-    feasibility_structural_pass: true   # authoritative final validator verdict
-    feasibility_structural_attempts: <int>
-```
-
-ALWAYS treat the `structural` validator verdict as authoritative.
-NEVER report `feasibility_structural_pass: true` without a final run that returned `ok: true`.
-ALWAYS apply the smallest fix that resolves a finding.
-NEVER rewrite passing sections while repairing a failing one.
+The Echelon controller selects the governance policy, validates the file after
+dispatch, records findings, and owns repair attempts and routing. On a repair
+dispatch, read the controller report supplied in the prompt and apply the
+smallest change that resolves every finding. Preserve sections that already
+pass. Do not inspect governance configuration, invoke validation commands, or
+return structural certification fields in `echelon_result.state_updates`.
 
 ---
 
@@ -383,6 +383,7 @@ When analysis is complete and all artifacts are written, output:
 ASSESS<1|2> COMPLETE — artifacts written to <spec_directory>
 Mode: <first-pass | consensus>
 Decision: <KILL | DEFER | PASS> (first-pass only)
+Consensus verdict: <PASS | REJECTED | BLOCKED> (consensus only)
 Feasibility: <FEASIBLE | FEASIBLE_WITH_RISKS | UNFEASIBLE>
 MVP features: <count> must-ship, <count> deferred
 Effort estimate: <optimistic>-<pessimistic> person-weeks (confidence: <low|medium|high>)
@@ -393,20 +394,7 @@ Implementability: <READY>/<NEEDS_CLARIFICATION>/<BLOCKED> tasks (consensus only)
 
 ## Output Block
 
-Include one `assessment` entry per feasibility or implementability assessment. If verdict is KILL, `output_files` should include the kill-report path.
-
-echelon_result:
-  verdict: <PASS | KILL | DEFER>
-  output_files:
-    - {spec_dir}/kill-report.md
-  state_updates: {}
-  journal_entries:
-    - type: assessment
-      phase: <phase2-decide | phase3-consensus>
-      agent: speckit-echelon-gatekeeper (GATEKEEPER)
-      data:
-        verdict: "<PASS | KILL | DEFER>"
-        rationale: "<why this verdict — specific evidence and reasoning>"
-        scope_notes: "<any scope adjustments if DEFER>"
-        risk_flags: ["<risk 1>"]
-        deferred_items: ["<deferred item if DEFER>"]
+Use the mode-specific result block above and the canonical final contract
+appended by the harness. Include one `assessment` journal entry per feasibility
+or implementability assessment. First-pass verdicts are `PASS`, `KILL`, or
+`DEFER`; consensus verdicts are `PASS`, `REJECTED`, or `BLOCKED`.

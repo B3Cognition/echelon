@@ -631,6 +631,57 @@ def test_assemble_prompt_injects_resolved_project_quality_gates(tmp_path):
     assert "Never substitute thresholds copied from agent or phase files" in prompt
 
 
+def test_why2_prompt_injects_certified_understanding_evidence_once(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    report = squad_dir / "evidence" / "understanding" / "phase1-why2-iter-2.json"
+    state = {
+        "squad_dir": str(squad_dir),
+        "understanding_evidence": {
+            "phase": "phase1-why2",
+            "iteration": 2,
+            "status": "completed",
+            "path": str(report),
+            "digest": "abc123",
+            "pass": False,
+            "failing_gates": ["testability", "behavioral"],
+            "error": None,
+        },
+    }
+
+    prompt = ex._assemble_prompt(PhaseNode(id="phase1-why2", type="agent"), state)
+
+    assert prompt.count("# Certified Understanding Evidence") == 1
+    assert prompt.count(str(report)) == 1
+    assert "Digest: `abc123`" in prompt
+    assert "Certified pass: `false`" in prompt
+    assert "Failing gates: `testability`, `behavioral`" in prompt
+
+
+def test_why1_prompt_does_not_receive_understanding_evidence(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-why1", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "understanding_evidence": {
+                "phase": "phase1-why2",
+                "status": "completed",
+                "path": "/evidence/report.json",
+            },
+        },
+    )
+
+    assert "# Certified Understanding Evidence" not in prompt
+
+
 def test_assemble_prompt_injects_extension_path_resolution(tmp_path):
     """Runtime agents get unambiguous installed-extension path mappings."""
     squad_dir = tmp_path / "squad" / "run-test"
@@ -1172,6 +1223,39 @@ def test_staged_prompt_includes_allowed_state_updates(tmp_path):
     assert "- `quality_scores`" in prompt
 
 
+def test_why3_staged_prompt_injects_certified_understanding_evidence(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    (ext_dir / "agents").mkdir(parents=True)
+    (ext_dir / "agents" / "why3.md").write_text("# WHY3\n", encoding="utf-8")
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/why3.md"
+    ex = StagedParallelExecutor(MagicMock(), graph, ext_dir, tmp_path, squad_dir)
+    report = squad_dir / "evidence" / "understanding" / "phase3-consensus-iter-1.json"
+
+    prompt = ex._build_agent_prompt(
+        {"id": "speckit-echelon-sage", "mode": "WHY3"},
+        {
+            "squad_dir": str(squad_dir),
+            "understanding_evidence": {
+                "phase": "phase3-consensus",
+                "iteration": 1,
+                "status": "completed",
+                "path": str(report),
+                "digest": "def456",
+                "pass": True,
+                "failing_gates": [],
+                "error": None,
+            },
+        },
+    )
+
+    assert prompt.count("# Certified Understanding Evidence") == 1
+    assert prompt.count(str(report)) == 1
+    assert "Certified pass: `true`" in prompt
+
+
 def test_blocked_validation_result_preserves_original_error(tmp_path):
     """Provider-created BLOCKED wrappers are harness-owned, not phase state writes."""
     ex = _executor(tmp_path)
@@ -1334,16 +1418,72 @@ def test_staged_parallel_quarantines_state_update_outside_allowlist(tmp_path):
     assert entries[0]["data"]["dropped_keys"] == ["unexpected"]
 
 
+def test_staged_parallel_blocks_plan2_when_implementability_report_is_missing(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    state = state_store.load()
+    state["spec_dir"] = str(spec_dir)
+    state_store.save(state)
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "PASS",
+            "state_updates": {},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(
+        provider, graph, tmp_path / "ext", tmp_path, squad_dir
+    )
+    node = SimpleNamespace(
+        id="phase3-consensus",
+        agents=[
+            {
+                "id": "speckit-echelon-gatekeeper",
+                "mode": "ASSESS2",
+                "stage": 1,
+                "context_pack": [],
+                "allowed_verdicts": ["PASS", "REJECTED", "BLOCKED"],
+            },
+            {
+                "id": "speckit-echelon-orchestrator",
+                "mode": "PLAN2",
+                "stage": 2,
+                "context_pack": [],
+                "allowed_verdicts": ["COMPLETE", "DONE", "BLOCKED"],
+            },
+        ],
+        allowed_state_updates=[],
+    )
+
+    result = executor.execute(node, state_store)
+
+    assert result.verdict == "BLOCKED"
+    assert result.state_updates["blocked_reason"] == "missing_consensus_prerequisite"
+    assert result.state_updates["missing_outputs"] == [
+        str(spec_dir / "implementability-report.md")
+    ]
+    assert provider.exec_agent.call_count == 1
+
+
 def test_plan2_reporting_state_is_quarantined_without_blocking(tmp_path):
     ex = _executor(tmp_path)
     node = SimpleNamespace(
         id="phase3-consensus",
-        allowed_state_updates=["tasks_lexicon_pass", "tasks_lexicon_attempts"],
+        allowed_state_updates=["tasks_lexicon_attempts"],
         required_state_updates=[],
-        state_update_types={
-            "tasks_lexicon_pass": "boolean",
-            "tasks_lexicon_attempts": "integer",
-        },
+        state_update_types={"tasks_lexicon_attempts": "integer"},
         allowed_verdicts=["COMPLETE", "BLOCKED"],
     )
     result = SquadAgentResult(
@@ -1412,12 +1552,9 @@ def test_staged_prompt_uses_agent_specific_state_contract(tmp_path):
     entry = {
         "id": "speckit-echelon-orchestrator",
         "mode": "PLAN2",
-        "allowed_state_updates": ["tasks_lexicon_pass", "tasks_lexicon_attempts"],
+        "allowed_state_updates": ["tasks_lexicon_attempts"],
         "required_state_updates": [],
-        "state_update_types": {
-            "tasks_lexicon_pass": "boolean",
-            "tasks_lexicon_attempts": "integer",
-        },
+        "state_update_types": {"tasks_lexicon_attempts": "integer"},
         "allowed_verdicts": ["COMPLETE", "BLOCKED"],
     }
 
@@ -1430,7 +1567,7 @@ def test_staged_prompt_uses_agent_specific_state_contract(tmp_path):
         allowed_verdicts=entry["allowed_verdicts"],
     )
 
-    assert "- `tasks_lexicon_pass` (boolean)" in prompt
+    assert "- `tasks_lexicon_pass` (boolean)" not in prompt
     assert "- `tasks_lexicon_attempts` (integer)" in prompt
     assert "Allowed verdicts: `COMPLETE`, `BLOCKED`" in prompt
     assert "quality_scores" not in prompt
@@ -1466,8 +1603,8 @@ def test_staged_prompt_includes_directory_context_pack_contents(tmp_path):
         },
     )
 
-    assert "# contracts/" in prompt
-    assert "## contracts/internal-interfaces.md" in prompt
+    assert f"# {contracts.resolve()}/" in prompt
+    assert f"## {contracts.resolve()}/internal-interfaces.md" in prompt
     assert "CONTRACT CONTENT" in prompt
 
 
@@ -1556,8 +1693,9 @@ def test_assemble_prompt_preserves_active_run_spec_dir(tmp_path):
 
     assert "ACTIVE RUN SPEC" in prompt
     assert "REAL SPEC" not in prompt
-    assert "ACTIVE_SPEC_DIR=" in prompt
+    assert f"ACTIVE_SPEC_DIR={active_spec.resolve()}" in prompt
     assert "PUBLISHED_SPEC_DIR=" in prompt
+    assert f"# {active_spec.resolve() / 'spec.md'}" in prompt
 
 
 def test_assemble_prompt_reads_fresh_clarifications_from_run_staging(tmp_path):
@@ -1629,6 +1767,9 @@ def test_staged_prompt_preserves_active_run_spec_dir(tmp_path):
 
     assert "ACTIVE RUN SPEC" in prompt
     assert "REAL SPEC" not in prompt
+    assert f"ACTIVE_SPEC_DIR={active_spec.resolve()}" in prompt
+    assert f"# {active_spec.resolve() / 'spec.md'}" in prompt
+    assert "{spec_dir}" not in prompt
 
 
 def test_agent_prompt_declares_subagent_without_global_skill_tool_ban(tmp_path):

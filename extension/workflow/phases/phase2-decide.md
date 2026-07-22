@@ -25,7 +25,9 @@ Every file below MUST be included (or marked `[ABSENT: <path>]` if missing). Sil
 | `extension/templates/kill-report.md` | `extension/templates/kill-report.md` | Required |
 | `reasoning-journal.jsonl` | `${SQUAD_DIR}/reasoning-journal.jsonl` | Required |
 
-**Verification before dispatch:** for each row, run `[ -f <path> ] && echo "OK $path" || echo "ABSENT $path"`. Absences are acceptable for `calibration-profile.yaml` and `estimates-log.yaml` only.
+The harness assembles the declared context pack before dispatch. Treat absent
+calibration files as a cold start; do not search the filesystem or run a
+preflight command to rediscover context.
 
 ### Dispatch
 
@@ -70,58 +72,19 @@ echelon_result:
     status: killed
 ```
 
-**MANDATORY — run before transitioning to phase2-strategic-overview:**
-
-```bash
-# Budget: definition.yaml phases[phase2-decide].budget_seconds = 1800
-# Start phase2-decide timing if not already started (idempotent — skips if start_ts exists)
-bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase2-decide 1800
-```
-
-Always leave phase2-decide open here — it spans through phase2-strategic-overview and phase2-tracker-alignment. Do NOT close it until phase3-specialists.
-
-Phase budget map for consistency across all transitions:
-
-- `phase1-understand=2400`
-- `phase2-decide=1800`
-- `phase3-solution=2400`
-- `phase4-build=7200`
+The harness owns the `phase2-decide` timing window declared in
+`workflow/definition.yaml`; the agent does not start or stop timers.
 
 **Transition:** `phases[phase2-strategic-overview]` — see `workflow/definition.yaml`
 
-### Feasibility Structural Gate — Controlled-Outcome Routing
+### Feasibility Structural Gate
 
-When `governance.enabled` and the artifact has `tier: structural`, GATEKEEPER authors
-`feasibility.md` in the STRUCTURAL grammar and runs the in-dispatch
-`$LEXICON validate --type structural --artifact feasibility` repair loop
-(see `agents/feasibility/gatekeeper.md §Structural Gate Mode`). COMMANDER owns the
-re-dispatch decision on the controlled outcome and is the sole writer to `state.json`;
-COMMANDER does NOT run `lexicon` itself.
+GATEKEEPER authors `feasibility.md`; the harness validates it after dispatch
+when the structural governance gate is enabled. The harness writes
+`feasibility-structural-report.json`, owns the pass and attempt state, and
+applies `governance.max_repair_attempts` plus `governance.on_exhausted`.
 
-> **Fail-open note:** If the gate is enabled but GATEKEEPER returns no
-> `feasibility_structural_pass` flag, routing treats it as passed (fail-open, consistent
-> with `on_exhausted: warn`).
-
-**Controlled-outcome routing.** After the dispatch, COMMANDER persists GATEKEEPER's
-`echelon_result.state_updates` and reads `state.json.feasibility_structural_pass`:
-- `feasibility_structural_pass == true` → proceed to `phase2-strategic-overview` (normal forward flow).
-- `feasibility_structural_pass == false AND iteration < max_iterations` → re-dispatch `phase2-decide`
-  (`increment_iteration`). This is the only condition that re-dispatches GATEKEEPER on the
-  structural outcome — see the transitions in `workflow/definition.yaml`.
-- `iteration >= max_iterations` → honor `governance.on_exhausted`:
-  `warn` → proceed to `phase2-strategic-overview` with a `structural_gate_exhausted` warning journal entry;
-  `block` → set `status: blocked`, `blocked_reason: "feasibility structural gate not satisfied"`, stop.
-
-**State updates (added to the dispatch's `echelon_result` block when the gate is enabled):**
-
-```yaml
-echelon_result:
-  state_updates:
-    feasibility_structural_pass: true     # authoritative validator verdict for this pass (true|false)
-    feasibility_structural_attempts: <int>
-```
-
-> Registration invariant: `feasibility_structural_pass` is an authoritative state key (declared in
-> this node's `outputs:` and read here), exactly as `lexicon_pass` is for phase1-what. The re-dispatch
-> guard in `definition.yaml` references only `governance.enabled` + `feasibility_structural_pass` so it
-> stays deterministically evaluable — it must NOT reference unresolvable config paths.
+On re-dispatch, the prompt contains the report path and repair instructions.
+Repair every listed finding, preserve passing sections, and return the normal
+phase verdict. Deterministic validation and structural gate state remain
+harness-owned.

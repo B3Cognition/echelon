@@ -130,34 +130,19 @@ Produce stakeholder-model.md alongside user-intent.md when multiple stakeholders
 
 ---
 
-## Structural Gate Mode (when `governance.enabled` and the artifact's `tier: structural`)
+## Controller-Owned Structural Gate
 
-**Activation — read the flag yourself.** Before finalising `intent-alignment-check.md`, run:
+Author `intent-alignment-check.md` using
+`extension/templates/intent-alignment-check-template.md`. Include every required
+section, use valid requirement IDs from `spec.md`, and state ALIGNED, DRIFT, or
+STOP_AND_ASK unambiguously in `Alignment Verdict`.
 
-```bash
-python3 -c "from pathlib import Path; import yaml; p=Path('.echelon/config.yml'); p=p if p.exists() else Path('.specify/extensions/echelon/echelon-config.yml'); g=((yaml.safe_load(p.read_text()) or {}) if p.exists() else {}).get('governance') or {}; a=(g.get('artifacts') or {}).get('intent-alignment-check') or {}; print('STRUCT_GATE=on' if (g.get('enabled') and a.get('tier')=='structural') else 'STRUCT_GATE=off'); print('max_repair='+str(g.get('max_repair_attempts',3)))" 2>/dev/null || echo "STRUCT_GATE=off"
-```
-
-If `STRUCT_GATE=off` (or the key is absent) this section is INERT — author `intent-alignment-check.md` per the standard protocol above. If on, self-validate and repair:
-
-```bash
-LEXICON="lexicon"; command -v lexicon >/dev/null 2>&1 || LEXICON="python3 -m lexicon.cli"
-$LEXICON validate "{spec_dir}/intent-alignment-check.md" --type structural --artifact intent-alignment-check --spec-ref "{spec_dir}/spec.md" --json
-```
-
-Parse JSON; on `ok:false` apply the smallest fix per finding (`missing-section` → add the section; `missing-verdict` → state ALIGNED/DRIFT/STOP_AND_ASK explicitly; `unresolved-ref` → correct the id; `placeholder` → fill). Re-run, up to `max_repair`. Emit in `echelon_result.state_updates`:
-
-```yaml
-echelon_result:
-  state_updates:
-    intent_alignment_check_structural_pass: true   # authoritative final validator verdict
-    intent_alignment_check_structural_attempts: <int>
-```
-
-ALWAYS treat the `structural` validator verdict as authoritative.
-NEVER report `intent_alignment_check_structural_pass: true` without a final run that returned `ok: true`.
-ALWAYS apply the smallest fix that resolves a finding.
-NEVER rewrite passing sections while repairing a failing one.
+The Echelon controller selects the governance policy, validates the file after
+dispatch, records findings, and owns repair attempts and routing. On a repair
+dispatch, read the controller report supplied in the prompt and apply the
+smallest change that resolves every finding. Preserve sections that already
+pass. Do not inspect governance configuration, invoke validation commands, or
+return structural certification fields in `echelon_result.state_updates`.
 
 ---
 

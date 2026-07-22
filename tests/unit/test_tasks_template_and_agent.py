@@ -11,4 +11,5 @@ def test_orchestrator_authors_canonical_rows():
     txt = pathlib.Path("extension/agents/solution/orchestrator.md").read_text()
     assert "canonical" in txt.lower() and "**Test:**" in txt
     assert "ARTIFACT: TASKS" not in txt   # block grammar instruction removed
-    assert "--type tasks" in txt          # gate self-validation unchanged
+    assert "controller validates" in txt
+    assert "--type tasks" not in txt

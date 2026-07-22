@@ -212,6 +212,75 @@ def test_sage_uses_appendix_for_understanding_followup_reference():
     assert "agents/exploration/appendices/sage-understanding-followup-reference.md" in text
 
 
+def test_sage_understanding_contract_is_interpretation_only():
+    sage = (EXTENSION_ROOT / "agents" / "exploration" / "sage.md").read_text()
+    appendix = (
+        EXTENSION_ROOT
+        / "agents"
+        / "exploration"
+        / "appendices"
+        / "sage-understanding-followup-reference.md"
+    ).read_text()
+    why2 = (EXTENSION_ROOT / "workflow" / "phases" / "phase1-why2.md").read_text()
+    why3 = (EXTENSION_ROOT / "workflow" / "phases" / "phase3-consensus.md").read_text()
+    combined = "\n".join((sage, appendix, why2, why3))
+
+    forbidden = (
+        "speckit.echelon.understanding-validate",
+        "understanding scan",
+        "understanding validate",
+        "/tmp/u_",
+        "jq -",
+        "echelon-config-get.sh quality_gates",
+        "speckit.echelon.understanding-diagram",
+    )
+    assert not [token for token in forbidden if token in combined]
+    assert "Certified Understanding Evidence" in sage
+    assert "controller-owned" in sage
+
+
+def test_authoring_phases_route_to_controller_understanding_nodes():
+    what = (EXTENSION_ROOT / "workflow" / "phases" / "phase1-what.md").read_text()
+    plan = (EXTENSION_ROOT / "workflow" / "phases" / "phase3-plan.md").read_text()
+
+    assert "phase1-understanding" in what
+    assert "SAGE owns the formal Understanding" not in what
+    assert "phase3-understanding" in plan
+
+    commander = (EXTENSION_ROOT / "agents" / "control" / "commander.md").read_text()
+    assert "controller-owned deterministic Understanding nodes" in commander
+    assert "Understanding tool unavailable" not in commander
+
+
+def test_product_phase_timing_is_not_model_executed():
+    phase_names = (
+        "phase2-decide.md",
+        "phase2-strategic-overview.md",
+        "phase3-specialists.md",
+        "phase3-sentinel.md",
+        "phase3-plan.md",
+        "phase3-consensus.md",
+    )
+    violations = []
+    for phase_name in phase_names:
+        text = (EXTENSION_ROOT / "workflow" / "phases" / phase_name).read_text()
+        if "phase-timing.sh" in text:
+            violations.append(phase_name)
+
+    assert not violations
+
+
+def test_consensus_phase_describes_the_harness_owned_two_stage_dispatch():
+    text = (
+        EXTENSION_ROOT / "workflow" / "phases" / "phase3-consensus.md"
+    ).read_text()
+
+    assert "Executed by: Echelon staged-parallel harness" in text
+    assert "WHY3 and ASSESS2 in parallel, then PLAN2 sequentially" in text
+    assert "all three agents in one parallel batch" in text
+    assert "using multiple Agent tool calls in a single message" not in text
+
+
 def test_sage_uses_appendix_for_contradiction_detection_reference():
     prompt = EXTENSION_ROOT / "agents" / "exploration" / "sage.md"
     text = prompt.read_text()
@@ -326,7 +395,7 @@ def test_re_constituter_contract_is_controller_owned_and_rerunnable():
     assert not re.search(r"state_updates:\n\s+status:\s+done", agent)
     assert "read an existing strategy output before updating it" in agent
     assert "read it before updating it" in phase
-    assert "shell redirection" in agent
+    assert "backup files, temporary siblings, alternate filenames" in agent
     assert "backup, temporary, alternate" in phase
 
 
@@ -658,21 +727,16 @@ def test_phase1_why2_routes_state_updates_through_echelon_result():
     assert "State fields to write" not in text
     assert "echelon_result.state_updates" in text
     assert "status: blocked" in text
-    assert "quality_scores:" in text
+    assert "Do not include `quality_scores`" in text
 
 
-def test_sage_quality_scores_use_boolean_pass_and_separate_iteration_marker():
-    import re
-
+def test_sage_does_not_emit_controller_owned_quality_scores():
     prompt = EXTENSION_ROOT / "agents" / "exploration" / "sage.md"
     text = prompt.read_text()
-    match = re.search(r"state_updates:\n(?P<block>.*?)(?:\n  journal_entries:)", text, re.S)
-    assert match is not None
-    state_update_block = match.group("block")
 
-    assert "pass: <true|false>" in state_update_block
-    assert 'pass_id: "WHY2-iter-{N}"' in state_update_block
-    assert 'pass: "WHY2-iter-{N}"' not in state_update_block
+    assert "state_updates: {}" in text
+    assert 'pass_id: "WHY2-iter-{N}"' not in text
+    assert "return controller-owned `quality_scores`" in text
 
 
 def test_phase1_modeler_routes_last_dispatch_through_echelon_result():
@@ -715,12 +779,13 @@ def test_phase4_document_routes_done_state_through_echelon_result():
     assert "status: done" in text
 
 
-def test_phase3_consensus_references_returned_done_state():
+def test_phase3_consensus_leaves_final_timing_close_to_controller():
     prompt = EXTENSION_ROOT / "workflow" / "phases" / "phase3-consensus.md"
     text = prompt.read_text()
 
     assert 'state.json.status = "done"' not in text
-    assert "BEFORE returning status: done" in text
+    assert "closes after successful `phase4-document` execution" in text
+    assert "agents do not start, stop, or report" in text
 
 
 def test_codegen_decompose_names_codegen_state_explicitly():

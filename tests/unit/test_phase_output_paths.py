@@ -101,7 +101,7 @@ class TestPhaseOutputPaths:
         text = PHASE1_WHY2.read_text(encoding="utf-8")
 
         assert "specs/{feature}/" not in text
-        assert "artifacts in `{spec_dir}/`" in text
+        assert "Produce in `{spec_dir}/`" in text
 
     def test_phase3_consensus_uses_canonical_context_artifact_path(self) -> None:
         text = PHASE3_CONSENSUS.read_text(encoding="utf-8")

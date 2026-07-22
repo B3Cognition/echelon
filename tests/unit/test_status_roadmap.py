@@ -31,7 +31,12 @@ def _workflow_primary_path() -> list[str]:
         next_phase = ""
         for transition in transitions:
             candidate = transition.get("to")
-            if candidate and candidate != current and candidate != "escalate":
+            if (
+                candidate
+                and candidate != current
+                and candidate != "escalate"
+                and candidate not in seen
+            ):
                 next_phase = candidate
                 break
         current = next_phase

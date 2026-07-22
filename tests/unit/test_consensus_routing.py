@@ -37,11 +37,15 @@ def _consensus_node():
 
 
 def _runtime_route(tmp_path, state_updates, *, iteration=0):
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("lexicon_gate:\n  enabled: false\n", encoding="utf-8")
     graph = PhaseGraph(DEFINITION, EXT_YML)
     store = SquadStateStore(tmp_path / "squad" / "run-test")
     store.initialize("r", "semi", "msg", 0, "phase3-consensus", max_iterations=5)
     state = store.load()
     state["iteration"] = iteration
+    state["quality_scores"] = [{"pass": True, "source": "harness:understanding"}]
     state.update(state_updates)
     store.save(state)
 
@@ -118,6 +122,52 @@ def test_iteration_cap_fallback_preserved():
 
 
 @pytest.mark.unit
+def test_certified_metric_failure_precedes_consensus_success_and_risk_acceptance():
+    transitions = _consensus_node()["transitions"]
+    quality_failure = next(
+        index
+        for index, transition in enumerate(transitions)
+        if "quality_gates.fail" in transition.get("condition", "")
+    )
+    success = next(
+        index
+        for index, transition in enumerate(transitions)
+        if "why3-verdict = PASS" in transition.get("condition", "")
+    )
+    accept_risk = next(
+        index
+        for index, transition in enumerate(transitions)
+        if "accept_with_risk" in transition.get("condition", "")
+    )
+    qualitative_failure = next(
+        index
+        for index, transition in enumerate(transitions)
+        if "why3-verdict = FAIL" in transition.get("condition", "")
+    )
+
+    assert quality_failure < qualitative_failure < success < accept_risk
+
+
+@pytest.mark.unit
+def test_legacy_consensus_resume_redirects_to_deterministic_gate(tmp_path):
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+    store = SquadStateStore(tmp_path / "squad" / "run-test")
+    store.initialize("r", "semi", "msg", 0, "phase3-consensus", max_iterations=5)
+    ctrl = SquadController(
+        provider=MagicMock(),
+        state_store=store,
+        phase_graph=graph,
+        ext_dir=ROOT / "extension",
+        project_root=tmp_path,
+        token_budget=0,
+        squad_dir=store.squad_dir,
+    )
+
+    assert ctrl._guard_understanding_evidence("phase3-consensus") == "phase3-understanding"
+    assert store.current_phase() == "phase3-understanding"
+
+
+@pytest.mark.unit
 def test_runtime_why3_fail_routes_to_what_before_cap(tmp_path):
     assert _runtime_route(
         tmp_path,
@@ -133,6 +183,23 @@ def test_runtime_assess2_rejected_routes_to_how_before_cap(tmp_path):
         {"why3_verdict": "PASS", "assess2_verdict": "REJECTED"},
         iteration=4,
     ) == "phase3-how"
+
+
+@pytest.mark.unit
+def test_runtime_certified_metric_failure_routes_to_spec_repair_before_success(
+    tmp_path,
+):
+    assert _runtime_route(
+        tmp_path,
+        {
+            "why3_verdict": "PASS",
+            "assess2_verdict": "PASS",
+            "quality_scores": [
+                {"pass": False, "source": "harness:understanding"}
+            ],
+        },
+        iteration=4,
+    ) == "phase1-what"
 
 
 @pytest.mark.unit

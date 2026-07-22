@@ -61,53 +61,30 @@ speckit-echelon-orchestrator (ORCHESTRATOR) produces these four files in `{spec_
 - Always include standalone `risk-matrix.md`; NEVER omit it (some risk content may also live in tasks.md, but the standalone file is required).
 - Always keep the specified filenames; NEVER rename to `task-list.md`, `plan.md`, or any other variant.
 
-**Verification (run before transition to phase3-consensus):**
+The controller verifies all four required outputs after dispatch. It also
+validates canonical task rows, Lexicon requirements coverage, and every task's
+explicit `target=` metadata plus its `**Files:**` paths against the run's
+declared targets. The validation never writes `targets.yml`. Missing,
+undeclared, mismatched, or cross-target ownership must be repaired or split
+before transitioning.
 
-```bash
-for f in tasks.md critical-path.md risk-matrix.md dependencies.md; do
-  [ -f "{spec_dir}/$f" ] || { echo "ERROR: speckit-echelon-orchestrator (ORCHESTRATOR) missing $f" >&2; exit 1; }
-done
-```
+Phase timing is controller-owned. The harness closes `phase3-solution`, opens
+`phase4-build`, and writes append-only telemetry before dispatching consensus
+agents.
 
-Also verify `tasks.md` uses canonical task rows:
-
-```bash
-python -m harness validate-tasks "{spec_dir}/tasks.md"
-python -m harness validate-task-targets "{spec_dir}"
-```
-
-`validate-task-targets` reads the targets declared by the run and validates
-every task's explicit `target=` metadata plus its `**Files:**` paths. It never
-writes `targets.yml`. Missing, undeclared, mismatched, or cross-target ownership
-must be repaired or split before transitioning.
-
-**MANDATORY — run before transitioning to phase3-consensus:**
-
-```bash
-# Budgets: definition.yaml phases[phase3-plan].timing_window_transition
-#   close: phase3-solution (open_budget_seconds=2400)
-#   open:  phase4-build (open_budget_seconds=7200)
-bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" end_phase phase3-solution
-bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase4-build 7200
-```
-
-Confirm the append-only `telemetry/events.jsonl` stream contains the phase
-timing event before dispatching consensus agents. Do not modify `state.json`
-for telemetry.
-
-**Transition:** `phases[phase3-consensus]` — see `workflow/definition.yaml`
+**Transition:** `phases[phase3-understanding]` — see `workflow/definition.yaml`
 
 ### Tasks Lexicon Gate — Controlled-Outcome Routing
 
-When `lexicon_gate.artifacts.tasks.enabled`, ORCHESTRATOR authors `tasks.md` in the TASKS
-grammar and runs the in-dispatch `lexicon validate --type tasks` repair loop (the "fix" —
-see `agents/solution/orchestrator.md §Tasks Gate Mode`). COMMANDER owns the re-dispatch
-decision on the controlled outcome (the "re-dispatch") and is the sole writer to `state.json`;
-COMMANDER does NOT run `lexicon` itself.
+When `lexicon_gate.artifacts.tasks.enabled`, ORCHESTRATOR authors `tasks.md` in
+the TASKS grammar. After the dispatch, the controller validates the on-disk
+artifact and writes `state.json.tasks_lexicon_pass`; the model never owns that
+Boolean verdict.
 
-**Controlled-outcome routing.** After the dispatch, COMMANDER persists ORCHESTRATOR's
-`echelon_result.state_updates` and reads `state.json.tasks_lexicon_pass`:
-- `tasks_lexicon_pass == true` → proceed to `phase3-consensus` (soft `understanding`/consensus
+**Controlled-outcome routing.** After the dispatch, the controller validates
+`tasks.md` against the configured `spec_ref` and glossary, persists the
+certified outcome, and reads `state.json.tasks_lexicon_pass`:
+- `tasks_lexicon_pass == true` → proceed to `phase3-understanding` (controller-certified Understanding analysis and then consensus
   scoring runs there, once, on a structurally-clean `tasks.md`).
 - `tasks_lexicon_pass == false AND tasks_lexicon_attempts < max_repair_attempts AND iteration < max_iterations`
   → re-dispatch `phase3-plan` (`increment_iteration`). This is the only condition that
@@ -115,19 +92,24 @@ COMMANDER does NOT run `lexicon` itself.
   `workflow/definition.yaml`.
 - `tasks_lexicon_attempts >= max_repair_attempts` (or the secondary `iteration >= max_iterations` cap)
   → honor `lexicon_gate.on_exhausted`:
-  `warn` → proceed to `phase3-consensus` with a `lexicon_gate_exhausted` warning journal entry;
+  `warn` → proceed to `phase3-understanding` with a `lexicon_gate_exhausted` warning journal entry;
   `block` → set `plan_status: blocked`, `blocked_reason: "tasks lexicon gate not satisfied"`, stop.
 
-**State updates (added to the dispatch's `echelon_result` block when the gate is enabled):**
+**State updates (added to the dispatch's `echelon_result` block when a repair
+attempt was made):**
 
 ```yaml
 echelon_result:
   state_updates:
-    tasks_lexicon_pass: true     # authoritative validator verdict for this pass (true|false)
     tasks_lexicon_attempts: <int>
 ```
 
-> Registration invariant: `tasks_lexicon_pass` is an authoritative state key (declared in this
-> node's `outputs:` and read here), exactly as `lexicon_pass` is for phase1-what. The re-dispatch
-> guard in `definition.yaml` references only `lexicon_gate.enabled` + `tasks_lexicon_pass` so it
-> stays deterministically evaluable — it must NOT reference unresolvable config paths.
+> Registration invariant: `tasks_lexicon_pass` is controller-owned, exactly as
+> `lexicon_pass` is for phase1-what. The re-dispatch guard in
+> `definition.yaml` references only `lexicon_gate.enabled` +
+> `tasks_lexicon_pass` so it stays deterministically evaluable — it must NOT
+> reference unresolvable config paths.
+
+The controller repeats the same certification after PLAN2 because PLAN2 may
+revise `tasks.md`. A failed post-PLAN2 certificate routes back to `phase3-plan`
+with the structured findings in `{spec_dir}/tasks-lexicon-report.json`.

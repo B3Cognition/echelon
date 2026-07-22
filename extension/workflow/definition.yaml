@@ -478,6 +478,20 @@ phases:
       - to: phase1-what
         condition: "lexicon_gate.enabled AND lexicon_evaluation = failed AND lexicon_attempts < lexicon_gate.max_repair_attempts AND iteration < max_iterations"
         action: increment_iteration
+      - to: phase1-understanding
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-understanding
+    label: "Deterministic Spec Analysis (Understanding)"
+    type: deterministic_understanding
+    understanding_target: phase1-why2
+    allowed_state_updates: []
+    controller_state_updates:
+      - quality_scores
+      - understanding_evidence
+      - blocked_reason
+    transitions:
       - to: phase1-why2
         condition: always
 
@@ -490,39 +504,38 @@ phases:
     mode: WHY2
     tier: exploration
     context_pack:
-      - spec.md
-      - constitution.md
-      - assumptions.md
+      - "{spec_dir}/spec.md"
+      - .specify/memory/constitution.md
+      - "{spec_dir}/assumptions.md"
       - "{context_dir}/prior-spec-context.md"
       - "{context_dir}/current-feature-context.md"
       - "{context_dir}/stale-memory-report.md"
       - .specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-what]
       - calibration_map entry for speckit-echelon-sage (SAGE)
     outputs:
-      - quality_scores[pass=N] → state.json
+      - quality-gates.md
+      - issues.md
       - issues → state.json.issues_log (severity-tagged)
     allowed_state_updates:
       - dependency_checks
-      - quality_scores
       - escalation_question
       - blocked_reason
       - status
       - shadow_output_recovered
     state_update_types:
       dependency_checks: object
-      quality_scores: quality_scores
       status: string
     state_update_enums:
       status: [blocked]
     transitions:
-      - to: checkpoint-assess
-        condition: "no_CRITICAL_issues AND quality_gates.pass"
       - to: phase1-what
-        condition: "CRITICAL_issues AND iteration < max_iterations"
+        condition: "verdict = FAIL AND iteration < max_iterations"
         action: increment_iteration
       - to: phase1-what
         condition: "quality_gates.fail AND iteration < max_iterations"
         action: increment_iteration
+      - to: checkpoint-assess
+        condition: "verdict = PASS AND no_CRITICAL_issues AND quality_gates.pass"
       - to: checkpoint-assess
         condition: "iteration >= max_iterations"
         action: force_convergence_warning
@@ -563,34 +576,26 @@ phases:
       - gatekeeper_verdict: PASS | KILL | DEFER
       - kill-report.md    # if KILL
       - scope adjustments # if DEFER
-      - feasibility_structural_pass → state.json   # only when governance.enabled and the artifact has tier: structural; drives the re-dispatch below
+      - feasibility.md
     allowed_state_updates:
       - status
+      - shadow_output_recovered
+    controller_state_updates:
       - feasibility_structural_pass
       - feasibility_structural_attempts
-      - shadow_output_recovered
+      - feasibility_structural_findings
+      - feasibility_structural_report
+      - governance_gate_exhausted
     state_update_types:
       status: string
-      feasibility_structural_pass: boolean
-      feasibility_structural_attempts: integer
     state_update_enums:
       status: [blocked, killed]
     transitions:
-      # Feasibility structural gate (INERT unless governance.enabled in echelon-config.yml).
-      # GATEKEEPER runs the in-dispatch repair loop (the "fix"); this is the
-      # COMMANDER-level re-dispatch on the controlled validator outcome (the
-      # "re-dispatch"), capped by the Orchestrator repair budget. The broader
-      # convergence iteration cap remains a secondary safety net. When the gate
-      # is disabled this condition is false and flow falls through unchanged.
+      # Controller validates feasibility.md after dispatch. When enabled, an
+      # invalid artifact is re-dispatched within both governance and convergence
+      # repair budgets. Disabled gates are made routing-inert by the controller.
       - to: phase2-decide
-        # Mirrors the proven phase1-what guard shape: references only keys the
-        # COMMANDER state evaluator resolves (governance.enabled + the persisted
-        # feasibility_structural_pass). The deeper config path
-        # governance.artifacts.feasibility.enabled is intentionally NOT in the
-        # condition — it is unresolvable as state and made the guard indeterminate;
-        # gate enablement is enforced by GATEKEEPER only emitting
-        # feasibility_structural_pass when artifacts.feasibility.enabled (see phase2-decide.md).
-        condition: "governance.enabled AND NOT feasibility_structural_pass AND iteration < max_iterations"
+        condition: "governance.enabled AND NOT feasibility_structural_pass AND feasibility_structural_attempts < governance.max_repair_attempts AND iteration < max_iterations"
         action: increment_iteration
       - to: phase2-strategic-overview
         condition: "verdict = PASS"
@@ -636,10 +641,7 @@ phases:
       - strategic-overview.md
     outputs:
       - intent-alignment-check.md   # ALIGNED | DRIFT | STOP_AND_ASK
-      - intent_alignment_check_structural_pass → state.json   # only when governance.enabled and the artifact has tier: structural; drives the re-dispatch below
     allowed_state_updates:
-      - intent_alignment_check_structural_pass
-      - intent_alignment_check_structural_attempts
       - status
       - blocked_reason
       - escalation_question
@@ -647,28 +649,21 @@ phases:
       - escalation_recommended_answer
       - escalation_default_answer
       - shadow_output_recovered
+    controller_state_updates:
+      - intent_alignment_check_structural_pass
+      - intent_alignment_check_structural_attempts
+      - intent_alignment_check_structural_findings
+      - intent_alignment_check_structural_report
+      - governance_gate_exhausted
     state_update_types:
-      intent_alignment_check_structural_pass: boolean
-      intent_alignment_check_structural_attempts: integer
       status: string
     state_update_enums:
       status: [blocked]
     transitions:
-      # Intent alignment check structural gate (INERT unless governance.enabled in echelon-config.yml).
-      # TRACKER runs the in-dispatch repair loop (the "fix"); this is the
-      # COMMANDER-level re-dispatch on the controlled validator outcome (the
-      # "re-dispatch"), capped by convergence.max_squad_iterations. When the gate
-      # is disabled this condition is false and flow falls through unchanged.
+      # Controller validates intent-alignment-check.md after dispatch. Invalid
+      # artifacts are re-dispatched within the configured repair budgets.
       - to: phase2-tracker-alignment
-        # Mirrors the proven phase1-what guard shape: references only keys the
-        # COMMANDER state evaluator resolves (governance.enabled + the persisted
-        # intent_alignment_check_structural_pass). The deeper config path
-        # governance.artifacts.intent-alignment-check.enabled is intentionally NOT
-        # in the condition — it is unresolvable as state and made the guard
-        # indeterminate; gate enablement is enforced by TRACKER only emitting
-        # intent_alignment_check_structural_pass when the artifact is enabled
-        # (see phase2-tracker-alignment.md).
-        condition: "governance.enabled AND NOT intent_alignment_check_structural_pass AND iteration < max_iterations"
+        condition: "governance.enabled AND NOT intent_alignment_check_structural_pass AND intent_alignment_check_structural_attempts < governance.max_repair_attempts AND iteration < max_iterations"
         action: increment_iteration
       - to: phase3-specialists    # specialists run BEFORE speckit-echelon-architect (ARCHITECT) so their findings feed the design
         condition: "verdict = ALIGNED OR verdict = DRIFT OR verdict = DRIFTING"
@@ -852,15 +847,17 @@ phases:
       - critical-path.md
       - risk-matrix.md
       - dependencies.md
-      - tasks_lexicon_pass → state.json   # only when lexicon_gate.artifacts.tasks.enabled; drives the re-dispatch below
+      - tasks_lexicon_pass → state.json   # controller-owned: certified after validating tasks.md
     allowed_state_updates:
-      - tasks_lexicon_pass
       - tasks_lexicon_attempts
       - plan_status
       - blocked_reason
       - shadow_output_recovered
+    controller_state_updates:
+      - tasks_lexicon_pass
+      - tasks_lexicon_findings
+      - tasks_lexicon_report
     state_update_types:
-      tasks_lexicon_pass: boolean
       tasks_lexicon_attempts: integer
       plan_status: string
     state_update_enums:
@@ -871,19 +868,31 @@ phases:
       open_budget_seconds: 7200      # phase4-build budget (spans consensus + finalize)
     transitions:
       # Tasks lexicon gate (INERT unless lexicon_gate.artifacts.tasks.enabled in echelon-config.yml).
-      # ORCHESTRATOR runs the in-dispatch repair loop (the "fix"); this is the
-      # COMMANDER-level re-dispatch on the controlled validator outcome (the
-      # "re-dispatch"), capped by convergence.max_squad_iterations. When the gate
-      # is disabled this condition is false and flow falls through unchanged.
+      # ORCHESTRATOR authors/repairs tasks.md. The controller validates the
+      # on-disk artifact after dispatch and writes tasks_lexicon_pass before
+      # evaluating this transition.
       - to: phase3-plan
         # Mirrors the proven phase1-what guard shape: references only keys the
         # COMMANDER state evaluator resolves (lexicon_gate.enabled + the persisted
         # tasks_lexicon_pass). The deeper config path lexicon_gate.artifacts.tasks.enabled
         # is intentionally NOT in the condition — it is unresolvable as state and made
-        # the guard indeterminate; gate enablement is enforced by ORCHESTRATOR only
-        # emitting tasks_lexicon_pass when artifacts.tasks.enabled (see phase3-plan.md).
+        # the guard indeterminate; gate enablement is enforced by the controller.
         condition: "lexicon_gate.enabled AND NOT tasks_lexicon_pass AND tasks_lexicon_attempts < lexicon_gate.max_repair_attempts AND iteration < max_iterations"
         action: increment_iteration
+      - to: phase3-understanding
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase3-understanding
+    label: "Deterministic Consensus Analysis (Understanding)"
+    type: deterministic_understanding
+    understanding_target: phase3-consensus
+    allowed_state_updates: []
+    controller_state_updates:
+      - quality_scores
+      - understanding_evidence
+      - blocked_reason
+    transitions:
       - to: phase3-consensus
         condition: always
 
@@ -901,27 +910,25 @@ phases:
         mode: WHY3
         stage: 1
         tier: exploration
-        allowed_state_updates:
-          - quality_scores
-        state_update_types:
-          quality_scores: quality_scores
+        allowed_state_updates: []
+        state_update_types: {}
         state_update_enums: {}
         allowed_verdicts: [PASS, FAIL, BLOCKED]
         context_pack:
-          - spec.md
-          - constitution.md
-          - plan.md
-          - research.md
-          - data-model.md
-          - contracts/
-          - tasks.md
-          - test-strategy.md
-          - coverage-map.md
-          - critical-path.md
-          - risk-matrix.md
-          - dependencies.md
+          - "{spec_dir}/spec.md"
+          - .specify/memory/constitution.md
+          - "{spec_dir}/plan.md"
+          - "{spec_dir}/research.md"
+          - "{spec_dir}/data-model.md"
+          - "{spec_dir}/contracts/"
+          - "{spec_dir}/tasks.md"
+          - "{spec_dir}/test-strategy.md"
+          - "{spec_dir}/coverage-map.md"
+          - "{spec_dir}/critical-path.md"
+          - "{spec_dir}/risk-matrix.md"
+          - "{spec_dir}/dependencies.md"
         outputs:
-          - why3-verdict: PASS | FAIL
+          - why3-verdict: PASS | FAIL | BLOCKED
           - issues (CRITICAL | HIGH | MEDIUM)
 
       - id: speckit-echelon-gatekeeper
@@ -932,33 +939,29 @@ phases:
           - gate_decision
           - phase_recommendation
           - implementability_metrics
-          - feasibility_structural_pass
-          - feasibility_structural_attempts
         state_update_types:
           gate_decision: string
           phase_recommendation: string
           implementability_metrics: object
-          feasibility_structural_pass: boolean
-          feasibility_structural_attempts: integer
         state_update_enums:
           gate_decision: [PASS, REJECTED, accept_with_risk]
           phase_recommendation: [proceed-to-build, phase3-how, advance_past_consensus_to_delivery]
         allowed_verdicts: [PASS, REJECTED, BLOCKED]
         context_pack:
-          - spec.md
-          - constitution.md
-          - plan.md
-          - research.md
-          - data-model.md
-          - contracts/
-          - tasks.md
-          - test-strategy.md
-          - coverage-map.md
-          - estimates.md
-          - mvp-scope.md
+          - "{spec_dir}/spec.md"
+          - .specify/memory/constitution.md
+          - "{spec_dir}/plan.md"
+          - "{spec_dir}/research.md"
+          - "{spec_dir}/data-model.md"
+          - "{spec_dir}/contracts/"
+          - "{spec_dir}/tasks.md"
+          - "{spec_dir}/test-strategy.md"
+          - "{spec_dir}/coverage-map.md"
+          - "{spec_dir}/estimates.md"
+          - "{spec_dir}/mvp-scope.md"
           - extension/templates/estimates-template.md
         outputs:
-          - assess2-verdict: PASS | REJECTED
+          - assess2-verdict: PASS | REJECTED | BLOCKED
           - implementability-report.md     # required by PLAN2
 
       - id: speckit-echelon-orchestrator
@@ -967,49 +970,43 @@ phases:
         depends_on: [speckit-echelon-gatekeeper-assess2]   # needs implementability-report.md
         tier: solution
         allowed_state_updates:
-          - tasks_lexicon_pass
           - tasks_lexicon_attempts
         state_update_types:
-          tasks_lexicon_pass: boolean
           tasks_lexicon_attempts: integer
         state_update_enums: {}
         allowed_verdicts: [COMPLETE, DONE, BLOCKED]
         context_pack:
-          - spec.md
-          - constitution.md
-          - plan.md
-          - research.md
-          - data-model.md
-          - contracts/
-          - tasks.md
-          - test-strategy.md
-          - coverage-map.md
-          - critical-path.md
-          - risk-matrix.md
-          - dependencies.md
-          - quality-gates.md          # from speckit-echelon-sage (SAGE) WHY3 output
-          - issues.md                 # from speckit-echelon-sage (SAGE) WHY3 output
-          - implementability-report.md  # MUST exist before PLAN2 is dispatched
+          - "{spec_dir}/spec.md"
+          - .specify/memory/constitution.md
+          - "{spec_dir}/plan.md"
+          - "{spec_dir}/research.md"
+          - "{spec_dir}/data-model.md"
+          - "{spec_dir}/contracts/"
+          - "{spec_dir}/tasks.md"
+          - "{spec_dir}/test-strategy.md"
+          - "{spec_dir}/coverage-map.md"
+          - "{spec_dir}/critical-path.md"
+          - "{spec_dir}/risk-matrix.md"
+          - "{spec_dir}/dependencies.md"
+          - "{spec_dir}/quality-gates.md"          # from speckit-echelon-sage (SAGE) WHY3 output
+          - "{spec_dir}/issues.md"                 # from speckit-echelon-sage (SAGE) WHY3 output
+          - "{spec_dir}/implementability-report.md"  # MUST exist before PLAN2 is dispatched
         outputs:
           - revised tasks.md  # if changes needed
 
     allowed_state_updates:
-      - quality_scores
       - gate_decision
       - phase_recommendation
       - implementability_metrics
-      - feasibility_structural_pass
-      - feasibility_structural_attempts
-      - tasks_lexicon_pass
       - tasks_lexicon_attempts
+    controller_state_updates:
+      - tasks_lexicon_pass
+      - tasks_lexicon_findings
+      - tasks_lexicon_report
     state_update_types:
-      quality_scores: quality_scores
       gate_decision: string
       phase_recommendation: string
       implementability_metrics: object
-      feasibility_structural_pass: boolean
-      feasibility_structural_attempts: integer
-      tasks_lexicon_pass: boolean
       tasks_lexicon_attempts: integer
     state_update_enums:
       gate_decision: [PASS, REJECTED, accept_with_risk]
@@ -1017,6 +1014,15 @@ phases:
     unexpected_state_updates: quarantine
 
     transitions:
+      - to: phase3-plan
+        condition: "lexicon_gate.enabled AND NOT tasks_lexicon_pass AND tasks_lexicon_attempts < lexicon_gate.max_repair_attempts AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase1-what
+        condition: "quality_gates.fail AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase1-what
+        condition: "why3-verdict = FAIL AND iteration < max_iterations"
+        action: increment_iteration
       - to: checkpoint-plan
         condition: "why3-verdict = PASS AND assess2-verdict = PASS"
       - to: checkpoint-plan
@@ -1030,9 +1036,6 @@ phases:
       # phase1-why2 → phase1-what spec-quality re-dispatch (same agent, SAGE).
       # Evaluated before the ASSESS2 branch so a combined failure repairs the
       # upstream (spec) constraint first, then re-flows.
-      - to: phase1-what
-        condition: "why3-verdict = FAIL AND iteration < max_iterations"
-        action: increment_iteration
       # An ASSESS2 REJECTED is a FEASIBILITY failure owned by ARCHITECT → HOW.
       - to: phase3-how
         condition: "assess2-verdict = REJECTED AND iteration < max_iterations"
@@ -1075,6 +1078,8 @@ phases:
       - kb_apply_status
       - kb_contract_violations
       - kb_apply_report
+    timing_window_transition:
+      close: phase4-build
     transitions:
       - to: done
         condition: always
@@ -1858,7 +1863,7 @@ re_extraction:
         - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
       outputs:
         - "{state.output_dir}/quality/{source-id}/coverage-report.md"
-        - state.json[coverage_pct, verify_expand_iterations]
+        - state.json[coverage_pct, verify_expand_iterations]  # controller-owned
       transitions:
         - to: re-extract-4-expand
           condition: "coverage_pct < coverage_threshold AND verify_expand_iterations < max_verify_expand_iterations"
@@ -1878,7 +1883,7 @@ re_extraction:
         - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
       outputs:
         - "{state.output_dir}/sources/{source-id}/specs/{domain-id}/spec.md"
-        - state.json[verify_expand_iterations]
+        - state.json[verify_expand_iterations]  # controller-owned
       transitions:
         - to: re-extract-3-verify
           condition: always                  # loop back until coverage met

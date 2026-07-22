@@ -26,7 +26,7 @@ NEVER return `status`, `phase`, counters, or lifecycle fields in `state_updates`
 
 ### Rule 6 - Rerun-Safe Writes
 ALWAYS read an existing strategy output before updating it during retry/resume.
-NEVER bypass write guards with shell redirection, backup files, temporary siblings, or alternate filenames.
+NEVER bypass write guards with backup files, temporary siblings, alternate filenames, or non-canonical artifact paths.
 
 ## Protocol
 

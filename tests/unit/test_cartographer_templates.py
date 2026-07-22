@@ -86,6 +86,12 @@ class TestCartographerTemplates:
             assert "payload[0] if isinstance(payload, list) and payload else payload" in text
             assert "Do not call `.keys()`" in text or "NEVER call `.keys()`" in text
 
+    def test_phase_distinguishes_diagnostic_scan_from_formal_validation(self) -> None:
+        text = PHASE.read_text(encoding="utf-8")
+
+        assert "Do not run formal Understanding validation" in text
+        assert "Do not run Understanding or guess validation commands" not in text
+
     def test_workflow_definition_lists_cartographer_outputs(self) -> None:
         text = DEFINITION.read_text(encoding="utf-8")
 

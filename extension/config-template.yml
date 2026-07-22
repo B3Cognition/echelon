@@ -228,6 +228,10 @@ lexicon_gate:
 # QUALITY GATES (SAGE, Understanding thresholds)
 # =============================================================================
 
+understanding:
+  diagram:
+    enabled: false
+
 quality_gates:
   # WHY spec-validation mode thresholds (from Understanding CLI v3.6+)
   # @belief(claim: "0.70 overall threshold represents minimum viable spec quality for reliable squad output", verified: 2026-03-28, expires: 2026-09-28, confidence: 0.75, severity: high)
@@ -1226,6 +1230,10 @@ harness:
   #   # max_tokens: 8192
   #   # features:
   #   #   streaming: true
+  #   #   stream_preview: true
+  #   #   stream_preview_max_chars: 1200
+  #   #   stream_preview_max_lines: 12
+  #   #   progress_detail: normal  # normal | debug
   #   #   stream_options: true
   #   #   json_mode: false
   #   #   structured_outputs: false

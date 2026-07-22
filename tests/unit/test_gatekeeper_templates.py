@@ -86,15 +86,19 @@ class TestGatekeeperTemplates:
             assert f"extension/templates/{filename}" in text
 
         assert ".specify/..." not in text
-        assert (
-            "  output_files:\n"
-            "    - {spec_dir}/kill-report.md\n"
-            "  state_updates: {}\n"
-            "  journal_entries:\n"
-            in text
-        )
+        assert "verdict: PASS | KILL | DEFER" in text
+        assert "verdict: PASS | REJECTED | BLOCKED" in text
+        assert "- {spec_dir}/kill-report.md  # KILL only" in text
+        assert "- {spec_dir}/implementability-report.md" in text
         assert "agent: speckit-echelon-gatekeeper (GATEKEEPER)" in text
         assert "agent: ASSESS" not in text
+
+    def test_gatekeeper_mode_contracts_do_not_conflict(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "verdict: <PASS | KILL | DEFER>" not in text
+        assert "Use the mode-specific result block above" in text
+        assert "`.specify/memory/constitution.md`" in text
 
     def test_phase2_decide_dispatch_includes_first_pass_templates(self) -> None:
         text = PHASE2.read_text(encoding="utf-8")

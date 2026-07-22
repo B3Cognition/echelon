@@ -101,6 +101,12 @@ class TestConditionEvaluator:
              "validate_iterations": 1, "max_validate_iterations": 3},
         ) is False
 
+    def test_and_false_dominates_unknown(self):
+        assert self.ev.evaluate(
+            "lexicon_gate.enabled AND NOT tasks_lexicon_pass",
+            {"lexicon_gate": {"enabled": False}},
+        ) is False
+
     def test_and_verdict_and_field(self):
         assert self.ev.evaluate(
             "verdict = PASS AND convergence_detected",

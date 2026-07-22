@@ -11,7 +11,7 @@ ALWAYS read the constitution before generating a plan.
 NEVER generate a plan without the target stack and architectural principles.
 
 ### Rule 2 - Migration Context
-ALWAYS load `migration-strategy.md`, `risk-matrix.md`, and `gap-analysis.md` when they exist, verifying presence with Glob before skipping.
+ALWAYS load `migration-strategy.md`, `risk-matrix.md`, and `gap-analysis.md` when the controller-provided context includes them.
 NEVER skip available migration context artifacts.
 
 ### Rule 3 - 6R Evidence
@@ -22,17 +22,9 @@ NEVER invent the 6R recommendation.
 ALWAYS write each plan beside its canonical source-owned spec.
 NEVER write RE plans to project-root `specs/` or another source's domain directory.
 
-## Bash Command Guidelines
-
-ALWAYS use Glob, Read, and Grep tools for ad hoc file exploration; when a Bash tool call is needed, keep it single-line and chain operations with `&&`.
-NEVER use multi-line Bash or Bash `ls`, `find`, `cat`, `echo`, or `grep` for ad hoc exploration. This restriction does not apply to running project scripts, generated shell scripts, or literal workflow snippets whose purpose is shell script content.
-
 ## Configuration
 
-Read config values at point of use:
-```bash
-eval "$(specify extension config resolve echelon --format env --prefix ECHELON_CFG_RE_)"
-```
+Read resolved config and profile values from controller-provided context artifacts.
 
 ## Work Instructions
 
@@ -40,13 +32,13 @@ eval "$(specify extension config resolve echelon --format env --prefix ECHELON_C
 
 Read `re/workspace/strategy/constitution.md`. If absent, report BLOCKED.
 
-Use Glob to find all `re/sources/{source-id}/specs/{domain-id}/spec.md` files. If none exist, report BLOCKED. `{domain-id}` uses `NNN-re-{domain}` and numbering is local to each source.
+Inspect all `re/sources/{source-id}/specs/{domain-id}/spec.md` files. If none exist, report BLOCKED. `{domain-id}` uses `NNN-re-{domain}` and numbering is local to each source.
 
 ### Step 2: Load Shared Context (once, cached for all domains)
 
 **From `re/workspace/strategy/constitution.md`**: target technology stack, architectural principles, coding standards, quality gates.
 
-**From `re/workspace/strategy/migration-strategy.md`** (if exists - verify with Glob): 6R recommendation per source/domain, migration wave assignment, rollback strategy.
+**From `re/workspace/strategy/migration-strategy.md`** (when present in context): 6R recommendation per source/domain, migration wave assignment, rollback strategy.
 
 **From `re/workspace/strategy/risk-matrix.md`** (if exists): domain-specific risks and mitigation strategies.
 
@@ -76,7 +68,7 @@ CG.dep_order      = relationships[] where kind in ["extends","implements","impor
 CG.index_state    = summary.index_state or index_stats.index_state
 ```
 
-Print: `[CodeGraph] Impact map: {len(CG.impact_map)} symbols | Top coupled pair: {CG.coupled_pairs[0]} | Dep edges: {len(CG.dep_order)} | state: {CG.index_state}`
+Record a compact CodeGraph summary in the plan rationale: symbol count, highest-coupled pair when present, dependency-edge count, and index state.
 
 **If neither file exists**: set CG = null.
 
