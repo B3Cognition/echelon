@@ -226,7 +226,10 @@ def test_contract_errors_are_sorted_and_value_redacted(tmp_path: Path) -> None:
         error.json_path for error in errors
     )
     assert all("secret-invalid-value" not in str(error) for error in errors)
-    assert all("constraint" in error.message for error in errors)
+    assert [error.message for error in errors] == [
+        "minimum constraint 0 violated at $.state_updates.count",
+        'type constraint "boolean" violated at $.state_updates.pass',
+    ]
 
 
 def test_contract_validation_rejects_boolean_for_integer_schema(tmp_path: Path) -> None:
@@ -239,4 +242,6 @@ def test_contract_validation_rejects_boolean_for_integer_schema(tmp_path: Path) 
     assert [(error.json_path, error.validator) for error in errors] == [
         ("$.state_updates.count", "type")
     ]
-    assert "True" not in errors[0].message
+    assert errors[0].message == (
+        'type constraint "integer" violated at $.state_updates.count'
+    )
