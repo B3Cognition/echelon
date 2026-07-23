@@ -79,7 +79,7 @@ class TestPhaseGraph:
             {
                 "to": "phase1-what",
                 "condition": (
-                    "lexicon_gate.enabled AND lexicon_evaluation = pending "
+                    "lexicon_gate.spec_enabled AND lexicon_evaluation = pending "
                     "AND iteration < max_iterations"
                 ),
                 "action": "increment_iteration",
@@ -87,7 +87,7 @@ class TestPhaseGraph:
             {
                 "to": "phase1-what",
                 "condition": (
-                    "lexicon_gate.enabled AND lexicon_evaluation = failed "
+                    "lexicon_gate.spec_enabled AND lexicon_evaluation = failed "
                     "AND lexicon_attempts < lexicon_gate.max_repair_attempts "
                     "AND iteration < max_iterations"
                 ),

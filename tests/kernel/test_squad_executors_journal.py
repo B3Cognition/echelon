@@ -545,7 +545,7 @@ def test_spec_lexicon_routing_contract_requires_certificate_fields():
         id="phase1-what",
         type="agent",
         transitions=[{
-            "condition": "lexicon_gate.enabled AND lexicon_evaluation = failed AND iteration < max_iterations",
+            "condition": "lexicon_gate.spec_enabled AND lexicon_evaluation = failed AND iteration < max_iterations",
             "to": "phase1-what",
         }],
     )

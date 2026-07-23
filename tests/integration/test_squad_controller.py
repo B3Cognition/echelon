@@ -3172,11 +3172,28 @@ THEN: The dashboard is visible
             == "phase1-understanding"
         )
 
+    @pytest.mark.parametrize(
+        "config_text",
+        [
+            "lexicon_gate:\n  enabled: false\n",
+            (
+                "lexicon_gate:\n"
+                "  enabled: true\n"
+                "  artifacts:\n"
+                "    spec:\n"
+                "      enabled: false\n"
+            ),
+        ],
+        ids=["global-disabled", "spec-subgate-disabled"],
+    )
     def test_disabled_spec_lexicon_result_prepares_and_persists_as_pending(
         self,
         tmp_path: Path,
+        config_text: str,
     ) -> None:
-        _disable_lexicon_gate(tmp_path)
+        config_path = tmp_path / ".echelon" / "config.yml"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(config_text, encoding="utf-8")
         ctrl, store = _controller(tmp_path)
         store.initialize(
             "r",
@@ -3252,6 +3269,35 @@ THEN: The dashboard is visible
         cfg = ctrl._lexicon_gate_config()
         assert "lexicon_gate" in cfg
         assert cfg["lexicon_gate"].get("enabled") is True
+
+    @pytest.mark.parametrize(
+        ("config_text", "expected"),
+        [
+            ("lexicon_gate:\n  enabled: false\n", False),
+            (
+                "lexicon_gate:\n"
+                "  enabled: true\n"
+                "  artifacts:\n"
+                "    spec:\n"
+                "      enabled: false\n",
+                False,
+            ),
+            ("lexicon_gate:\n  enabled: true\n", True),
+        ],
+        ids=["global-disabled", "spec-subgate-disabled", "subgate-default-enabled"],
+    )
+    def test_gate_config_derives_effective_spec_enablement(
+        self,
+        tmp_path: Path,
+        config_text: str,
+        expected: bool,
+    ) -> None:
+        config_path = tmp_path / ".echelon" / "config.yml"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(config_text, encoding="utf-8")
+        ctrl, _ = _controller(tmp_path)
+
+        assert ctrl._lexicon_gate_config()["lexicon_gate"]["spec_enabled"] is expected
 
     def test_spec_lexicon_gate_uses_the_iteration_dispatch_budget(self):
         """WHAT repairs and their visible gate use max_iterations, not the generic cap."""

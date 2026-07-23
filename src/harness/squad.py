@@ -2363,10 +2363,12 @@ class SquadController:
         """Load the `lexicon_gate` config block once for transition evaluation.
 
         The spec Lexicon repair guard references the config-namespace key
-        `lexicon_gate.enabled`, which does not live in state.json. Merging this
-        block into the eval state lets that guard resolve deterministically.
-        Only `lexicon_gate` is merged to keep the blast radius constrained.
-        Returns {} when the file is absent or unparseable.
+        `lexicon_gate.spec_enabled`, derived from both the global gate and the
+        spec artifact subgate. Merging this block into the eval state lets that
+        guard resolve deterministically without changing global enablement used
+        by other Lexicon artifacts. Only `lexicon_gate` is merged to keep the
+        blast radius constrained. Returns {} when the file is absent or
+        unparseable.
         """
         if self._gate_config_cache is not None:
             return self._gate_config_cache
@@ -2380,7 +2382,16 @@ class SquadController:
             )
             block = data.get("lexicon_gate")
             if isinstance(block, dict):
-                cfg = {"lexicon_gate": block}
+                resolved_gate = dict(block)
+                artifacts = resolved_gate.get("artifacts")
+                artifacts = artifacts if isinstance(artifacts, dict) else {}
+                spec_gate = artifacts.get("spec")
+                spec_gate = spec_gate if isinstance(spec_gate, dict) else {}
+                resolved_gate["spec_enabled"] = bool(
+                    resolved_gate.get("enabled", False)
+                    and spec_gate.get("enabled", True) is not False
+                )
+                cfg = {"lexicon_gate": resolved_gate}
         except Exception:
             cfg = {}
         # The workflow conditions compare each controlled gate's repair count
