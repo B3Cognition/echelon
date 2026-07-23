@@ -1,13 +1,14 @@
 import pytest, yaml, pathlib
 
 @pytest.mark.unit
-def test_orchestrator_has_tasks_gate_mode():
+def test_orchestrator_only_owns_tasks_lexicon_authoring():
     txt = pathlib.Path("extension/agents/solution/orchestrator.md").read_text()
-    assert "Tasks Gate Mode" in txt
+    assert "Tasks Lexicon Authoring Contract" in txt
     assert "canonical row format" in txt
-    assert "controller validates" in txt
+    assert "deterministic node validates" in txt
     assert "lexicon validate" not in txt
     assert "Do not report `tasks_lexicon_pass`" in txt
+    assert "Do not report `tasks_lexicon_attempts`" in txt
 
 @pytest.mark.unit
 def test_phase3_plan_redispatch_transition():
@@ -42,7 +43,8 @@ def test_phase3_plan_doc_declares_controller_owned_tasks_gate():
     txt = pathlib.Path("extension/workflow/phases/phase3-plan.md").read_text()
     assert "state.json.tasks_lexicon_pass" in txt
     assert "tasks_lexicon_attempts" in txt
-    assert "controller validates" in txt
+    assert "`phase3-tasks-lexicon`" in txt
+    assert "deterministic node validates" in txt
     assert "lexicon validate" not in txt
     assert "tasks-lexicon-report.json" in txt
     assert "python -m harness" not in txt
@@ -66,3 +68,12 @@ def test_phase3_consensus_recertifies_plan2_tasks():
     assert "tasks_lexicon_action = block" in conds
     assert "why3-verdict = FAIL" in conds
     assert "assess2-verdict = REJECTED" in conds
+
+
+@pytest.mark.unit
+def test_tasks_gate_has_no_hidden_post_dispatch_controller_hook():
+    txt = pathlib.Path("src/harness/squad.py").read_text()
+    assert "_enforce_tasks_lexicon_gate_result" not in txt
+    assert "_validate_tasks_gate_artifacts" not in txt
+    assert "_mark_tasks_lexicon_uncertified" not in txt
+    assert "_load_lexicon_glossary_terms" not in txt

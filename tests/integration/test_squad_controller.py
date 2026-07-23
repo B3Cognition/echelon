@@ -360,17 +360,20 @@ def test_cartographer_context_preservation_requires_spec_md(tmp_path: Path) -> N
 
 class TestConsensusCannotBeSkipped:
     """Regression: phase3-consensus was previously skipped via EVOI fabrication.
-    With the harness, phase3-plan routes through deterministic Understanding
-    before phase3-consensus. Python evaluates both edges; no code path skips it.
+    The plan now routes through deterministic Tasks Lexicon and Understanding
+    nodes before consensus. Python evaluates every edge; no code path skips it.
     """
 
     def test_phase3_plan_transitions_to_consensus(self):
         graph = PhaseGraph(DEFINITION, EXT_YML)
         plan_node = graph.get("phase3-plan")
-        targets = [t["to"] for t in plan_node.transitions]
-        assert "phase3-understanding" in targets, (
-            f"phase3-plan must transition to phase3-understanding. Got: {targets}"
-        )
+        assert plan_node.transitions == [
+            {"to": "phase3-tasks-lexicon", "condition": "always"}
+        ]
+        assert graph.get("phase3-tasks-lexicon").transitions[-1] == {
+            "to": "phase3-understanding",
+            "condition": "tasks_lexicon_action in [proceed, proceed_with_warning]",
+        }
         assert graph.get("phase3-understanding").transitions == [
             {"to": "phase3-consensus", "condition": "always"}
         ]
@@ -378,12 +381,7 @@ class TestConsensusCannotBeSkipped:
     def test_phase3_plan_to_consensus_condition_is_always(self):
         graph = PhaseGraph(DEFINITION, EXT_YML)
         plan_node = graph.get("phase3-plan")
-        for t in plan_node.transitions:
-            if t["to"] == "phase3-understanding":
-                assert t["condition"] == "always", (
-                    f"phase3-plan → phase3-understanding must be 'always', "
-                    f"got {t['condition']!r}"
-                )
+        assert plan_node.transitions[0]["condition"] == "always"
 
     def test_staged_parallel_has_stage1_and_stage2_agents(self):
         graph = PhaseGraph(DEFINITION, EXT_YML)
@@ -1690,16 +1688,19 @@ class TestConsensusAcceptWithRiskRouting:
         )
         store.save(state)
 
+        consensus_result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
         assert ctrl._evaluate_transitions(
-            ctrl._graph.get("phase3-consensus"),
-            SquadAgentResult(
-                exit_code=0,
-                echelon_result={"verdict": "DONE", "state_updates": {}},
-                raw_output="",
-                duration_ms=0,
-                timed_out=False,
-            ),
-        ) == "phase1-what"
+            ctrl._graph.get("phase3-consensus"), consensus_result
+        ) == "phase3-consensus-tasks-lexicon"
+        gate = ctrl._graph.get("phase3-consensus-tasks-lexicon")
+        gate_result = ctrl._executors["deterministic_lexicon"].execute(gate, store)
+        assert ctrl._evaluate_transitions(gate, gate_result) == "phase1-what"
 
     def test_accept_with_risk_can_override_feasibility_rejection_only(self, tmp_path):
         _disable_lexicon_gate(tmp_path)
@@ -1719,16 +1720,19 @@ class TestConsensusAcceptWithRiskRouting:
         )
         store.save(state)
 
+        consensus_result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
         assert ctrl._evaluate_transitions(
-            ctrl._graph.get("phase3-consensus"),
-            SquadAgentResult(
-                exit_code=0,
-                echelon_result={"verdict": "DONE", "state_updates": {}},
-                raw_output="",
-                duration_ms=0,
-                timed_out=False,
-            ),
-        ) == "checkpoint-plan"
+            ctrl._graph.get("phase3-consensus"), consensus_result
+        ) == "phase3-consensus-tasks-lexicon"
+        gate = ctrl._graph.get("phase3-consensus-tasks-lexicon")
+        gate_result = ctrl._executors["deterministic_lexicon"].execute(gate, store)
+        assert ctrl._evaluate_transitions(gate, gate_result) == "checkpoint-plan"
 
 
 class TestBuildPhaseRouting:
@@ -2546,7 +2550,11 @@ class TestGovernanceConfigMerge:
             "_judgment_dispatch",
             side_effect=AssertionError("disabled tasks gate dispatched COMMANDER"),
         ):
-            assert ctrl._evaluate_transitions(node, result) == "phase3-understanding"
+            assert ctrl._evaluate_transitions(node, result) == "phase3-tasks-lexicon"
+            gate = ctrl._graph.get("phase3-tasks-lexicon")
+            gate_result = ctrl._executors["deterministic_lexicon"].execute(gate, store)
+            assert gate_result.state_updates["tasks_lexicon_action"] == "proceed"
+            assert ctrl._evaluate_transitions(gate, gate_result) == "phase3-understanding"
 
 
 class TestStructuralGuardDeterminism:
@@ -3083,7 +3091,7 @@ THEN: The dashboard is visible
         assert "phase1-what" in ITERATIVE_PHASES
         assert "phase1-lexicon" in ITERATIVE_PHASES
 
-    def test_tasks_gate_failure_redispatches_without_commander(self, tmp_path):
+    def test_plan_routes_to_visible_tasks_gate_without_hidden_certification(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase3-plan")
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
@@ -3097,11 +3105,41 @@ THEN: The dashboard is visible
             "spec_dir": str(spec_dir.relative_to(tmp_path)),
         })
         store.save(st)
-        result = self._result({"tasks_lexicon_pass": True, "tasks_lexicon_attempts": 3})
+        result = self._result({})
         with patch.object(ctrl, "_judgment_dispatch",
                           side_effect=AssertionError("guard punted to COMMANDER — not deterministic")):
             nxt = ctrl._evaluate_transitions(node, result)
-        assert nxt == "phase3-plan"   # deterministic re-dispatch on gate failure
+
+        assert nxt == "phase3-tasks-lexicon"
+        assert result.state_updates == {}
+        assert not (spec_dir / "tasks-lexicon-report.json").exists()
+
+    def test_tasks_gate_failure_redispatches_without_provider_or_commander(self, tmp_path):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = ctrl._graph.get("phase3-tasks-lexicon")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "requirements.lexicon.md").write_text(
+            _valid_lexicon_spec(), encoding="utf-8"
+        )
+        (spec_dir / "tasks.md").write_text("not canonical tasks\n", encoding="utf-8")
+        st = store.load()
+        st.update({
+            "iteration": 0,
+            "max_iterations": 3,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+        })
+        store.save(st)
+
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
+        with patch.object(ctrl, "_judgment_dispatch",
+                          side_effect=AssertionError("gate punted to COMMANDER")):
+            nxt = ctrl._evaluate_transitions(node, result)
+
+        provider.exec_agent.assert_not_called()
+        assert nxt == "phase3-plan"
+        assert result.state_updates["tasks_lexicon_action"] == "repair"
         assert result.state_updates["tasks_lexicon_pass"] is False
         assert result.state_updates["tasks_lexicon_attempts"] == 1
         report_path = Path(result.state_updates["tasks_lexicon_report"])
@@ -3110,9 +3148,10 @@ THEN: The dashboard is visible
         assert report["ok"] is False
         assert any(item["code"] == "parse-error" for item in report["findings"])
 
-    def test_tasks_gate_pass_falls_through_to_consensus(self, tmp_path):
-        ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase3-plan")
+    def test_tasks_gate_pass_falls_through_to_understanding(self, tmp_path):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = ctrl._graph.get("phase3-tasks-lexicon")
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         _write_valid_plan_artifacts(spec_dir)
@@ -3125,17 +3164,22 @@ THEN: The dashboard is visible
             "tasks_lexicon_attempts": 3,
         })
         store.save(st)
-        result = self._result({"tasks_lexicon_pass": False, "tasks_lexicon_attempts": 3})
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
         with patch.object(ctrl, "_judgment_dispatch",
-                          side_effect=AssertionError("guard punted to COMMANDER — not deterministic")):
+                          side_effect=AssertionError("gate punted to COMMANDER")):
             nxt = ctrl._evaluate_transitions(node, result)
-        assert nxt == "phase3-understanding"   # deterministic analysis precedes consensus
+
+        provider.exec_agent.assert_not_called()
+        assert nxt == "phase3-understanding"
+        assert result.state_updates["tasks_lexicon_action"] == "proceed"
         assert result.state_updates["tasks_lexicon_pass"] is True
         assert result.state_updates["tasks_lexicon_attempts"] == 0
 
     def test_consensus_revalidates_tasks_after_plan2(self, tmp_path):
-        ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase3-consensus")
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        consensus = ctrl._graph.get("phase3-consensus")
+        node = ctrl._graph.get("phase3-consensus-tasks-lexicon")
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         _write_valid_plan_artifacts(spec_dir)
@@ -3151,7 +3195,14 @@ THEN: The dashboard is visible
         })
         store.save(state)
 
-        result = self._result({})
+        consensus_result = self._result({})
+        assert (
+            ctrl._evaluate_transitions(consensus, consensus_result)
+            == "phase3-consensus-tasks-lexicon"
+        )
+        assert consensus_result.state_updates == {}
+
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
         with patch.object(
             ctrl,
             "_judgment_dispatch",
@@ -3159,12 +3210,13 @@ THEN: The dashboard is visible
         ):
             nxt = ctrl._evaluate_transitions(node, result)
 
+        provider.exec_agent.assert_not_called()
         assert nxt == "phase3-plan"
         assert result.state_updates["tasks_lexicon_pass"] is False
 
     def test_tasks_gate_rejects_invalid_target_ownership(self, tmp_path):
         ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase3-plan")
+        node = ctrl._graph.get("phase3-tasks-lexicon")
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         _write_valid_plan_artifacts(spec_dir)
@@ -3180,7 +3232,7 @@ THEN: The dashboard is visible
         })
         store.save(state)
 
-        result = self._result({})
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
         assert ctrl._evaluate_transitions(node, result) == "phase3-plan"
         report = json.loads(
             Path(result.state_updates["tasks_lexicon_report"]).read_text(encoding="utf-8")
@@ -3189,7 +3241,7 @@ THEN: The dashboard is visible
 
     def test_tasks_gate_reports_missing_plan_outputs(self, tmp_path):
         ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase3-consensus")
+        node = ctrl._graph.get("phase3-consensus-tasks-lexicon")
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         _write_valid_plan_artifacts(spec_dir)
@@ -3204,7 +3256,7 @@ THEN: The dashboard is visible
         })
         store.save(state)
 
-        result = self._result({})
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
         assert ctrl._evaluate_transitions(node, result) == "phase3-plan"
         report = json.loads(
             Path(result.state_updates["tasks_lexicon_report"]).read_text(encoding="utf-8")

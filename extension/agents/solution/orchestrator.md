@@ -355,24 +355,25 @@ echelon_result:
 
 ---
 
-## Tasks Gate Mode (when `lexicon_gate.artifacts.tasks.enabled`)
+## Tasks Lexicon Authoring Contract
 
-The controller decides whether this gate is active and validates `tasks.md`
-after dispatch. Author `tasks.md` in the **canonical row format** per
+Author `tasks.md` in the **canonical row format** per
 `extension/templates/tasks-template.md` — one `- [ ] T-### [P] complexity=
 phase= req= depends= target=` row per task, each followed by nested
 `**Title:** / **Description:** / **Test:** / **Acceptance Criteria:**`.
 
-If the previous dispatch failed the tasks gate, repair the cited task rows with
-localized fixes: `parse-error` → ensure each task starts with a canonical row;
-`task-no-test` → add a `**Test:**` line; `req-uncovered` → add a task for the
-requirement; `task-orphan-req` → fix `req=`; `task-not-atomic` → split;
+After the authoring phase, a provider-free deterministic node validates
+`tasks.md`. If that node routes a repair back here, use its structured findings
+from `tasks-lexicon-report.json` and make localized fixes: `parse-error` →
+ensure each task starts with a canonical row; `task-no-test` → add a
+`**Test:**` line; `req-uncovered` → add a task for the requirement;
+`task-orphan-req` → fix `req=`; `task-not-atomic` → split;
 `banned-word`/`placeholder` → make measurable; `dep-cycle`/`dep-missing` → fix
 `depends=`.
 
-Do not report `tasks_lexicon_pass`; the controller validates the on-disk
-artifact and writes that verdict. You may report `tasks_lexicon_attempts` when
-you performed a repair pass.
+Do not report `tasks_lexicon_pass`. Do not report `tasks_lexicon_attempts`.
+The deterministic node validates the on-disk artifact and owns all
+`tasks_lexicon_*` state.
 
 ALWAYS apply the smallest fix that resolves a finding (add/split a single TASK, fix one REQ= or DEPENDS= field).
 NEVER rewrite tasks.md wholesale or discard passing TASK blocks while repairing a failing one.

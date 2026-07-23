@@ -61,55 +61,43 @@ speckit-echelon-orchestrator (ORCHESTRATOR) produces these four files in `{spec_
 - Always include standalone `risk-matrix.md`; NEVER omit it (some risk content may also live in tasks.md, but the standalone file is required).
 - Always keep the specified filenames; NEVER rename to `task-list.md`, `plan.md`, or any other variant.
 
-The controller verifies all four required outputs after dispatch. It also
-validates canonical task rows, Lexicon requirements coverage, and every task's
-explicit `target=` metadata plus its `**Files:**` paths against the run's
-declared targets. The validation never writes `targets.yml`. Missing,
-undeclared, mismatched, or cross-target ownership must be repaired or split
-before transitioning.
+The explicit `phase3-tasks-lexicon` deterministic node verifies all four
+required outputs after this authoring phase. It also validates canonical task
+rows, Lexicon requirements coverage, and every task's explicit `target=`
+metadata plus its `**Files:**` paths against the run's declared targets. The
+validation never writes `targets.yml`. Missing, undeclared, mismatched, or
+cross-target ownership must be repaired or split before transitioning.
 
 Phase timing is controller-owned. The harness closes `phase3-solution`, opens
 `phase4-build`, and writes append-only telemetry before dispatching consensus
 agents.
 
-**Transition:** `phases[phase3-understanding]` — see `workflow/definition.yaml`
+**Transition:** `phases[phase3-tasks-lexicon]` — see `workflow/definition.yaml`
 
 ### Tasks Lexicon Gate — Controlled-Outcome Routing
 
 When `lexicon_gate.artifacts.tasks.enabled`, ORCHESTRATOR authors `tasks.md` in
-the TASKS grammar. After the dispatch, the controller validates the on-disk
-artifact and writes `state.json.tasks_lexicon_pass`; the model never owns that
-Boolean verdict.
+the TASKS grammar and reports no Lexicon verdict or attempt count. The workflow
+then always advances to `phase3-tasks-lexicon`. That provider-free deterministic
+node validates `tasks.md` against the configured `spec_ref` and glossary,
+writes `{spec_dir}/tasks-lexicon-report.json`, and persists these
+controller-owned fields:
 
-**Controlled-outcome routing.** After the dispatch, the controller validates
-`tasks.md` against the configured `spec_ref` and glossary, persists the
-certified outcome, and reads `state.json.tasks_lexicon_pass`:
-- `tasks_lexicon_pass == true` → proceed to `phase3-understanding` (controller-certified Understanding analysis and then consensus
-  scoring runs there, once, on a structurally-clean `tasks.md`).
-- `tasks_lexicon_pass == false AND tasks_lexicon_attempts < max_repair_attempts AND iteration < max_iterations`
-  → re-dispatch `phase3-plan` (`increment_iteration`). This is the only condition that
-  re-dispatches ORCHESTRATOR on the Lexicon outcome — see the transitions in
-  `workflow/definition.yaml`.
-- `tasks_lexicon_attempts >= max_repair_attempts` (or the secondary `iteration >= max_iterations` cap)
-  → honor `lexicon_gate.on_exhausted`:
-  `warn` → proceed to `phase3-understanding` with a `lexicon_gate_exhausted` warning journal entry;
-  `block` → set `plan_status: blocked`, `blocked_reason: "tasks lexicon gate not satisfied"`, stop.
+- `state.json.tasks_lexicon_action`
+- `state.json.tasks_lexicon_pass`
+- `state.json.tasks_lexicon_attempts`
+- `state.json.tasks_lexicon_findings`
+- `state.json.tasks_lexicon_report`
+- `state.json.blocked_reason`, when required
 
-**State updates (added to the dispatch's `echelon_result` block when a repair
-attempt was made):**
+The deterministic node validates and chooses exactly one routing action:
 
-```yaml
-echelon_result:
-  state_updates:
-    tasks_lexicon_attempts: <int>
-```
+- `repair` → re-dispatch `phase3-plan` with `increment_iteration`
+- `proceed` or `proceed_with_warning` → advance to `phase3-understanding`
+- `block` → advance normally to `terminal-blocked`
 
-> Registration invariant: `tasks_lexicon_pass` is controller-owned, exactly as
-> `lexicon_pass` is for phase1-what. The re-dispatch guard in
-> `definition.yaml` references only `lexicon_gate.enabled` +
-> `tasks_lexicon_pass` so it stays deterministically evaluable — it must NOT
-> reference unresolvable config paths.
-
-The controller repeats the same certification after PLAN2 because PLAN2 may
-revise `tasks.md`. A failed post-PLAN2 certificate routes back to `phase3-plan`
-with the structured findings in `{spec_dir}/tasks-lexicon-report.json`.
+Because the result is produced by its own workflow node, state advancement and
+phase checkpointing use the same controller path as other successful nodes.
+There is no post-dispatch validation hook on ORCHESTRATOR. The separate
+`phase3-consensus-tasks-lexicon` node repeats this certification after PLAN2,
+because PLAN2 may revise `tasks.md`.

@@ -5934,7 +5934,8 @@ _FALLBACK_ROADMAP_PHASES = [
     "checkpoint-assess", "phase2-decide",
     "phase2-strategic-overview", "phase2-tracker-alignment",
     "phase3-specialists", "phase3-how", "phase3-sentinel", "phase3-plan",
-    "phase3-consensus", "checkpoint-plan", "phase4-document", "done",
+    "phase3-tasks-lexicon", "phase3-understanding", "phase3-consensus",
+    "phase3-consensus-tasks-lexicon", "checkpoint-plan", "phase4-document", "done",
 ]
 
 

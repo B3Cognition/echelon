@@ -2330,12 +2330,10 @@ class SquadController:
     def _lexicon_gate_config(self) -> dict:
         """Load the `lexicon_gate` config block once for transition evaluation.
 
-        Self-loop guard conditions (phase1-what, phase3-plan) reference the
-        config-namespace key `lexicon_gate.enabled`, which does not live in
-        state.json. Merging this block into the eval state lets those guards
-        resolve deterministically instead of returning None and punting the
-        re-dispatch decision to COMMANDER. Only `lexicon_gate` is merged (not
-        the whole config) to keep the blast radius to the gate transitions.
+        The spec Lexicon repair guard references the config-namespace key
+        `lexicon_gate.enabled`, which does not live in state.json. Merging this
+        block into the eval state lets that guard resolve deterministically.
+        Only `lexicon_gate` is merged to keep the blast radius constrained.
         Returns {} when the file is absent or unparseable.
         """
         if self._gate_config_cache is not None:
@@ -2358,180 +2356,8 @@ class SquadController:
         # reported repairs", never an indeterminate condition that falls
         # through to a later phase.
         cfg.setdefault("lexicon_attempts", 0)
-        cfg.setdefault("tasks_lexicon_attempts", 0)
         self._gate_config_cache = cfg
         return cfg
-
-    def _enforce_tasks_lexicon_gate_result(
-        self,
-        node: PhaseNode,
-        state: dict,
-        result: SquadAgentResult,
-    ) -> None:
-        """Certify an enabled tasks Lexicon gate at the controller boundary."""
-
-        if node.id not in {"phase3-plan", "phase3-consensus"}:
-            return
-        gate = self._lexicon_gate_config().get("lexicon_gate", {})
-        if not isinstance(gate, dict) or not gate.get("enabled", False):
-            return
-        artifacts = gate.get("artifacts", {})
-        tasks_gate = artifacts.get("tasks", {}) if isinstance(artifacts, dict) else {}
-        if not isinstance(tasks_gate, dict) or not tasks_gate.get("enabled", False):
-            result.state_updates["tasks_lexicon_pass"] = True
-            result.state_updates["tasks_lexicon_attempts"] = 0
-            return
-
-        updates = result.state_updates
-        spec_dir_ref = str(updates.get("spec_dir") or state.get("spec_dir") or "").strip()
-        if not spec_dir_ref:
-            self._mark_tasks_lexicon_uncertified(updates)
-            return
-        spec_dir = Path(spec_dir_ref)
-        if not spec_dir.is_absolute():
-            spec_dir = self._project_root / spec_dir
-
-        report = self._validate_tasks_gate_artifacts(spec_dir, gate, tasks_gate)
-        report_path = spec_dir / str(
-            tasks_gate.get("report") or "tasks-lexicon-report.json"
-        ).strip()
-        report_path.write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        updates["tasks_lexicon_report"] = str(report_path)
-        updates["tasks_lexicon_findings"] = len(report["findings"])
-        updates["tasks_lexicon_pass"] = bool(report["ok"])
-        if report["ok"]:
-            updates["tasks_lexicon_attempts"] = 0
-            return
-
-        previous_attempts = state.get("tasks_lexicon_attempts", 0)
-        try:
-            attempts = int(previous_attempts)
-        except (TypeError, ValueError):
-            attempts = 0
-        updates["tasks_lexicon_attempts"] = max(0, attempts) + 1
-
-    def _validate_tasks_gate_artifacts(
-        self,
-        spec_dir: Path,
-        gate: dict,
-        tasks_gate: dict,
-    ) -> dict[str, object]:
-        tasks_name = str(tasks_gate.get("path") or "tasks.md").strip()
-        spec_ref_name = str(
-            tasks_gate.get("spec_ref") or "requirements.lexicon.md"
-        ).strip()
-        glossary_name = str(
-            tasks_gate.get("glossary_file")
-            or gate.get("glossary_file")
-            or "glossary.md"
-        ).strip()
-        tasks_path = spec_dir / tasks_name
-        spec_ref_path = spec_dir / spec_ref_name
-        glossary_path = spec_dir / glossary_name
-        findings: list[dict[str, object]] = []
-
-        for artifact in (
-            tasks_name,
-            "critical-path.md",
-            "risk-matrix.md",
-            "dependencies.md",
-        ):
-            if not (spec_dir / artifact).is_file():
-                findings.append({
-                    "code": "missing-plan-output",
-                    "message": f"required planning artifact is missing: {artifact}",
-                    "artifact": artifact,
-                })
-        if not spec_ref_path.is_file():
-            findings.append({
-                "code": "missing-spec-ref",
-                "message": f"tasks specification reference is missing: {spec_ref_name}",
-                "artifact": spec_ref_name,
-            })
-
-        if tasks_path.is_file() and spec_ref_path.is_file():
-            try:
-                from lexicon.tasks import validate_tasks
-
-                lexicon_report = validate_tasks(
-                    tasks_path.read_text(encoding="utf-8"),
-                    glossary=self._load_lexicon_glossary_terms(glossary_path),
-                    spec_text=spec_ref_path.read_text(encoding="utf-8"),
-                )
-                findings.extend(
-                    {
-                        "code": str(item.code),
-                        "message": str(item.message),
-                        "line": int(item.line),
-                        "span": str(item.span),
-                    }
-                    for item in lexicon_report.findings
-                )
-            except Exception as exc:
-                findings.append({
-                    "code": "tasks-validator-error",
-                    "message": f"tasks validator failed: {exc}",
-                })
-
-            try:
-                from harness.spec_frontmatter import read_targets
-                from harness.task_targets import validate_task_targets
-
-                target_report = validate_task_targets(
-                    tasks_path.read_text(encoding="utf-8", errors="replace"),
-                    declared_targets=read_targets(spec_dir),
-                    allow_legacy_single_target=False,
-                )
-                target_findings = (
-                    ("undeclared-target", target_report.missing_targets),
-                    ("unused-declared-target", target_report.unreferenced_targets),
-                    ("task-without-target", target_report.unowned_tasks),
-                    ("cross-target-task", tuple(sorted(target_report.cross_target_tasks))),
-                    ("target-file-mismatch", tuple(sorted(target_report.path_target_mismatches))),
-                )
-                for code, values in target_findings:
-                    for value in values:
-                        findings.append({
-                            "code": code,
-                            "message": f"task target ownership failure: {value}",
-                            "target": str(value),
-                        })
-            except Exception as exc:
-                findings.append({
-                    "code": "task-target-validator-error",
-                    "message": f"task target validator failed: {exc}",
-                })
-
-        return {
-            "schema_version": 1,
-            "ok": not findings,
-            "tasks": tasks_name,
-            "spec_ref": spec_ref_name,
-            "findings": findings,
-        }
-
-    def _mark_tasks_lexicon_uncertified(self, updates: dict) -> None:
-        """Record that the controller could not certify tasks as passing."""
-        updates["tasks_lexicon_pass"] = False
-        updates["tasks_lexicon_attempts"] = 0
-
-    @staticmethod
-    def _load_lexicon_glossary_terms(glossary_path: Path) -> set[str]:
-        if not glossary_path.is_file():
-            return set()
-        import re
-
-        glossary: set[str] = set()
-        for raw in glossary_path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            terms = re.findall(r"\*\*([^*]+)\*\*", line)
-            glossary.update(term.strip() for term in terms or [line])
-        return glossary
 
     @staticmethod
     def _advance_state_update_keys(node: PhaseNode) -> list[str] | None:
@@ -2562,8 +2388,6 @@ class SquadController:
         """
         gate_artifacts = {
             "phase1-lexicon": ("spec", "lexicon_pass", "lexicon_attempts"),
-            "phase3-plan": ("tasks", "tasks_lexicon_pass", "tasks_lexicon_attempts"),
-            "phase3-consensus": ("tasks", "tasks_lexicon_pass", "tasks_lexicon_attempts"),
         }
         gate_fields = gate_artifacts.get(node.id)
         if gate_fields is None:
@@ -2864,7 +2688,6 @@ class SquadController:
         state = self._state_store.load()
         if node.id in WHY_PHASES:
             self._normalize_why_result_quality_scores(result)
-        self._enforce_tasks_lexicon_gate_result(node, state, result)
         self._enforce_governance_structural_gate_result(node, state, result)
         if self._lexicon_gate_must_block_on_exhaustion(node, state, result):
             return PHASE_TERMINAL_BLOCKED
@@ -2872,7 +2695,7 @@ class SquadController:
             return PHASE_TERMINAL_BLOCKED
         # Merge order (lowest→highest precedence): lexicon_gate config, governance
         # config, then state, then result.state_updates — so freshly-written values
-        # (quality_scores, tasks_lexicon_pass, etc.) win, while config-namespace
+        # (quality_scores, lexicon_pass, etc.) win, while config-namespace
         # keys (lexicon_gate.*, governance.*) the self-loop guards reference resolve.
         eval_state = {**self._lexicon_gate_config(), **self._governance_config(), **state, **(result.state_updates or {})}
 
