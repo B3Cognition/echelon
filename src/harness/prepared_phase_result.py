@@ -1149,6 +1149,14 @@ def prepare_phase_result(
         )
 
     final_keys = frozenset(provider_updates) | frozenset(normalized_controller)
+    reserved_final = final_keys & _RESERVED_TRANSACTION_KEYS
+    if reserved_final:
+        key = sorted(reserved_final)[0]
+        raise _ownership_violation(
+            f"state update key {key!r} is owned by the transaction",
+            contract,
+            json_path=f"$.state_updates.{key}",
+        )
     if provider_allowed is not None:
         unknown_final = final_keys - (provider_allowed | controller_allowed)
         if unknown_final:

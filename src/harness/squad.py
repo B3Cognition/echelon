@@ -3560,5 +3560,7 @@ class SquadController:
 
     def _handle_sigint(self, signum, frame) -> None:
         print("\n[squad] Interrupted — finishing current phase then stopping.")
+        # Signal handlers must not enter the file-backed state lock: SIGINT can
+        # interrupt this thread while it already owns that non-reentrant lock.
+        # The main loop persists the interrupted state after the current phase.
         self._cancelled = True
-        self._state_store.set_cancel_requested()

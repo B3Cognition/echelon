@@ -12,6 +12,9 @@ if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.controller_state_contracts import (
+    ControllerStateContractViolation,
+)
 from harness.prepared_phase_result import PreparedPhaseResult, prepare_phase_result
 from harness.squad_state import StateAdvanceError, SquadStateStore
 from harness.squad_provider import SquadAgentResult
@@ -140,6 +143,34 @@ class TestSquadStateStore:
         store.initialize("r", "greenfield", "msg", 0, "init")
         _advance(store, "init", "phase1-discover", _result())
         assert store.current_phase() == "phase1-discover"
+
+    def test_preparation_rejects_transaction_owned_phase_update(self):
+        with pytest.raises(ControllerStateContractViolation) as raised:
+            _result(
+                "DONE",
+                {"phase": "attacker-selected"},
+                phase_id="init",
+            )
+
+        assert raised.value.validator == "ownership"
+        assert raised.value.json_path == "$.state_updates.phase"
+
+    def test_stale_public_save_cannot_overwrite_successful_advance(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        stale = store.load()
+        _advance(store, "init", "phase1-discover", _result())
+        published = store.load()
+
+        stale["cancel_requested"] = True
+        with pytest.raises(StateAdvanceError) as raised:
+            store.save(stale)
+
+        assert raised.value.validator == "stale_state"
+        assert store.load() == published
 
     def test_advance_rejects_persisted_phase_mismatch_without_write(
         self,

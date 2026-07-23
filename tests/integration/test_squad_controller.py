@@ -1040,6 +1040,15 @@ class TestSquadControllerBasics:
         assert state["phase"] == "init"
         assert state["interrupted_phase"] == "init"
 
+    def test_sigint_handler_defers_state_store_io(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+
+        with patch.object(store, "set_cancel_requested") as persist_cancel:
+            ctrl._handle_sigint(None, None)
+
+        assert ctrl._cancelled is True
+        persist_cancel.assert_not_called()
+
     def test_stale_cancel_requested_cleared_on_resume(self, tmp_path):
         """cancel_requested left in state.json by a previous Ctrl+C does not
         prevent a fresh echelon run invocation from proceeding."""
