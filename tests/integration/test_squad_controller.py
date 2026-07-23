@@ -13,6 +13,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Event, Thread
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -505,6 +506,78 @@ class TestSolutionPhaseOrdering:
 
 
 class TestAgentResultIntegrity:
+    def test_provider_usage_increment_preserves_concurrent_state_mutation(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        original_load = store.load
+        original_increment_token_usage = store.increment_token_usage
+        original_mutate = store._mutate
+        injected = False
+        mutation_requested = Event()
+        mutation_complete = Event()
+        mutation_errors: list[BaseException] = []
+
+        def mutate_concurrently() -> None:
+            if not mutation_requested.wait(timeout=5):
+                return
+            try:
+                original_mutate(
+                    lambda live: live.__setitem__("concurrent_marker", "kept")
+                )
+            except BaseException as exc:
+                mutation_errors.append(exc)
+            finally:
+                mutation_complete.set()
+
+        mutation_thread = Thread(target=mutate_concurrently)
+        mutation_thread.start()
+
+        def request_concurrent_mutation() -> None:
+            nonlocal injected
+            if not injected:
+                injected = True
+                mutation_requested.set()
+                assert mutation_complete.wait(timeout=5)
+
+        def racing_load() -> dict:
+            snapshot = original_load()
+            request_concurrent_mutation()
+            return snapshot
+
+        def racing_increment_token_usage(tokens: int) -> None:
+            request_concurrent_mutation()
+            original_increment_token_usage(tokens)
+
+        monkeypatch.setattr(store, "load", racing_load)
+        monkeypatch.setattr(
+            store,
+            "increment_token_usage",
+            racing_increment_token_usage,
+        )
+        try:
+            ctrl._record_provider_usage(
+                SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={"verdict": "DONE", "state_updates": {}},
+                    raw_output="",
+                    duration_ms=0,
+                    timed_out=False,
+                    token_usage=37,
+                )
+            )
+            state = original_load()
+            assert state["concurrent_marker"] == "kept"
+            assert state["token_usage"] == 37
+            assert not mutation_errors
+        finally:
+            mutation_requested.set()
+            mutation_thread.join(timeout=5)
+            assert not mutation_thread.is_alive()
+
     def test_provider_limit_without_result_fails_closed_at_preparation(self, tmp_path):
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(

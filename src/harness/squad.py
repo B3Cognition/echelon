@@ -579,15 +579,7 @@ class SquadController:
             if self._deferred_provider_usage is not None:
                 self._deferred_provider_usage["tokens"] += raw
                 return
-            state = self._state_store.load()
-            existing = state.get("token_usage")
-            existing = (
-                existing
-                if type(existing) is int and existing >= 0
-                else 0
-            )
-            state["token_usage"] = existing + raw
-            self._state_store.save(state)
+            self._state_store.increment_token_usage(raw)
 
     @contextmanager
     def _defer_routing_provider_usage(self):
