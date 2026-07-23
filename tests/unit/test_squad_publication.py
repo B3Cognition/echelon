@@ -1127,9 +1127,7 @@ def test_builder_rejects_publication_control_namespace_targets(
     if protected_kind == "outbox":
         target = staged.relative_to(project_root)
     else:
-        target = (
-            squad_dir.relative_to(project_root) / ".publication.lock"
-        )
+        target = Path(".echelon/runtime/publication.lock")
 
     _assert_error_code(
         "manifest_invalid",
@@ -1260,11 +1258,18 @@ def test_cooperating_publishers_serialize_precheck_and_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    project_root, squad_dir = _roots(tmp_path)
+    project_root = tmp_path / "project"
+    project_root.mkdir()
+    squad_dirs = (
+        project_root / ".echelon" / "runs" / "run-a",
+        project_root / ".echelon" / "runs" / "run-b",
+    )
+    for squad_dir in squad_dirs:
+        squad_dir.mkdir(parents=True)
     prepared = []
-    for transaction_id, content in (
-        ("a" * 32, b"first"),
-        ("b" * 32, b"second"),
+    for squad_dir, transaction_id, content in (
+        (squad_dirs[0], "a" * 32, b"first"),
+        (squad_dirs[1], "b" * 32, b"second"),
     ):
         transaction = SquadPublicationTransaction.begin(
             project_root,
