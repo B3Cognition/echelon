@@ -233,6 +233,16 @@ def validate_workflow_definition(
                     phase_id=phase_id,
                     path=f"{path} agents[{agent_index}]",
                 ))
+            if (
+                node.controller_state_contract is not None
+                and "allowed_state_updates" in agent_entry
+                and agent_entry.get("allowed_state_updates") is None
+            ):
+                issues.append(WorkflowValidationIssue(
+                    "nested agent cannot override allowed_state_updates with null",
+                    phase_id=phase_id,
+                    path=f"{path} agents[{agent_index}]",
+                ))
             nested_allowed = agent_entry.get(
                 "allowed_state_updates",
                 phase.get("allowed_state_updates"),
@@ -470,11 +480,16 @@ def _validate_controller_ownership(
         allowed: set[str] = set()
     else:
         raw_allowed = phase.get("allowed_state_updates")
-        allowed = (
-            set(str(key) for key in raw_allowed)
-            if isinstance(raw_allowed, list)
-            else set()
-        )
+        if not isinstance(raw_allowed, list):
+            issues.append(WorkflowValidationIssue(
+                "controller_state_contract requires allowed_state_updates "
+                "to be a list",
+                phase_id=phase_id,
+                path=path,
+            ))
+            allowed = set()
+        else:
+            allowed = set(str(key) for key in raw_allowed)
 
     overlap = contract.state_update_keys & allowed
     if overlap:
