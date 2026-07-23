@@ -698,6 +698,41 @@ def _fsync_target_directory_chain(
         os.close(root_fd)
 
 
+def _fsync_existing_target_directory_chain(
+    project_root: Path,
+    relative: Path,
+) -> None:
+    root_fd = _open_directory(
+        project_root,
+        missing_code="publish_io",
+        invalid_code="publish_io",
+    )
+    opened = [root_fd]
+    current_fd = root_fd
+    try:
+        for part in relative.parts[:-1]:
+            try:
+                next_fd = os.open(
+                    part,
+                    _directory_open_flags(),
+                    dir_fd=current_fd,
+                )
+            except FileNotFoundError:
+                break
+            except (OSError, TypeError, NotImplementedError):
+                _raise("target_drift")
+            opened.append(next_fd)
+            current_fd = next_fd
+        try:
+            for fd in reversed(opened):
+                os.fsync(fd)
+        except OSError:
+            _raise("publish_io")
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
+
+
 def _copy_pinned_stage_to_temporary(
     pinned: _PinnedRegular,
     parent_fd: int,
@@ -1550,6 +1585,24 @@ class PreparedSquadPublication:
     ) -> None:
         relative = Path(str(operation["target"]))
         expected_postimage = dict(operation["postimage"])
+        if expected_postimage["kind"] == "missing":
+            if _target_image(
+                self._project_root,
+                relative,
+                invalid_code="target_drift",
+            ) != expected_postimage:
+                _raise("target_drift")
+            _fsync_existing_target_directory_chain(
+                self._project_root,
+                relative,
+            )
+            if _target_image(
+                self._project_root,
+                relative,
+                invalid_code="target_drift",
+            ) != expected_postimage:
+                _raise("target_drift")
+            return
         parent_fd = _open_parent_directory(
             self._project_root,
             relative,
