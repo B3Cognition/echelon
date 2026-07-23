@@ -5,15 +5,17 @@ import json
 import logging
 import os
 import tempfile
+from copy import deepcopy
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
 
 from harness.blocked_decision import ensure_blocked_decision
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
     validate_echelon_result,
 )
+from harness.prepared_phase_result import PreparedPhaseResult
 
 logger = logging.getLogger(__name__)
 
@@ -32,15 +34,176 @@ PHASE_A_IDENTITY_KEYS = frozenset(
     }
 )
 
-if TYPE_CHECKING:
-    from harness.squad_provider import SquadAgentResult
-
-
 VALID_SQUAD_TRANSITIONS: dict[str, set[str]] = {
     "running": {"blocked", "done"},
     "blocked": {"running"},
     "done": set(),
 }
+
+
+class StateAdvanceError(RuntimeError):
+    """Raised when a prepared phase result cannot be committed safely."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        json_path: str = "$.prepared_result",
+        validator: str = "state_advance",
+    ) -> None:
+        super().__init__(message)
+        self.json_path = json_path
+        self.validator = validator
+
+
+@dataclass(frozen=True)
+class AdvanceReceipt:
+    from_phase: str
+    to_phase: str
+    completed_at: str
+    controller_contract: str | None
+    controller_contract_sha256: str | None
+
+
+def _prepared_result_error(
+    message: str,
+    *,
+    json_path: str = "$.prepared_result",
+    validator: str = "ownership",
+) -> StateAdvanceError:
+    return StateAdvanceError(
+        message,
+        json_path=json_path,
+        validator=validator,
+    )
+
+
+def _validate_prepared_result(prepared: PreparedPhaseResult) -> dict:
+    """Validate the immutable payload and its ownership receipt together."""
+    if type(prepared) is not PreparedPhaseResult:
+        raise _prepared_result_error(
+            "advance requires a PreparedPhaseResult",
+            validator="prepared_result",
+        )
+
+    provider_keys = prepared.provider_update_keys
+    controller_keys = prepared.controller_update_keys
+    if type(provider_keys) is not frozenset or type(controller_keys) is not frozenset:
+        raise _prepared_result_error("prepared ownership keys must be frozen sets")
+    if any(not isinstance(key, str) for key in provider_keys | controller_keys):
+        raise _prepared_result_error(
+            "prepared ownership keys must be strings",
+            json_path="$.prepared_result.ownership",
+        )
+    overlap = provider_keys & controller_keys
+    if overlap:
+        key = sorted(overlap)[0]
+        raise _prepared_result_error(
+            f"prepared ownership overlaps at key {key!r}",
+            json_path=f"$.state_updates.{key}",
+        )
+
+    contract_name = prepared.controller_contract_name
+    contract_sha256 = prepared.controller_contract_sha256
+    if (contract_name is None) != (contract_sha256 is None):
+        raise _prepared_result_error(
+            "prepared controller contract receipt is incomplete",
+            json_path="$.prepared_result.controller_contract",
+            validator="receipt",
+        )
+    if contract_name is None:
+        if controller_keys:
+            raise _prepared_result_error(
+                "controller-owned updates require a controller contract receipt",
+                json_path="$.prepared_result.controller_update_keys",
+            )
+        if prepared.normalized_paths:
+            raise _prepared_result_error(
+                "normalized controller paths require a controller contract receipt",
+                json_path="$.prepared_result.normalized_paths",
+                validator="receipt",
+            )
+    else:
+        if not isinstance(contract_name, str) or not contract_name.strip():
+            raise _prepared_result_error(
+                "prepared controller contract name is invalid",
+                json_path="$.prepared_result.controller_contract_name",
+                validator="receipt",
+            )
+        if (
+            not isinstance(contract_sha256, str)
+            or len(contract_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in contract_sha256)
+        ):
+            raise _prepared_result_error(
+                "prepared controller contract digest is invalid",
+                json_path="$.prepared_result.controller_contract_sha256",
+                validator="receipt",
+            )
+
+    normalized_paths = prepared.normalized_paths
+    if (
+        type(normalized_paths) is not tuple
+        or any(
+            not isinstance(path, str)
+            or not path.startswith("$.state_updates")
+            for path in normalized_paths
+        )
+        or normalized_paths != tuple(sorted(set(normalized_paths)))
+    ):
+        raise _prepared_result_error(
+            "prepared normalized path receipt is invalid",
+            json_path="$.prepared_result.normalized_paths",
+            validator="receipt",
+        )
+    if normalized_paths and not controller_keys:
+        raise _prepared_result_error(
+            "normalized paths require controller-owned updates",
+            json_path="$.prepared_result.normalized_paths",
+            validator="receipt",
+        )
+    routing_override = prepared.routing_override
+    if routing_override is not None and (
+        not isinstance(routing_override, str) or not routing_override.strip()
+    ):
+        raise _prepared_result_error(
+            "prepared routing override is invalid",
+            json_path="$.prepared_result.routing_override",
+            validator="receipt",
+        )
+
+    try:
+        result = validate_echelon_result(
+            prepared.echelon_result,
+            allowed_state_update_keys=provider_keys | controller_keys,
+        )
+    except EchelonResultValidationError as exc:
+        raise _prepared_result_error(
+            "prepared echelon_result validation failed",
+            json_path="$.echelon_result",
+            validator="echelon_result",
+        ) from exc
+
+    result_keys = frozenset(result["state_updates"])
+    owned_keys = provider_keys | controller_keys
+    if result_keys != owned_keys:
+        raise _prepared_result_error(
+            "prepared state update ownership does not match payload",
+            json_path="$.prepared_result.ownership",
+        )
+    if prepared.state_updates != result["state_updates"]:
+        raise _prepared_result_error(
+            "prepared state update receipt does not match payload",
+            json_path="$.prepared_result.state_updates",
+            validator="receipt",
+        )
+    if prepared.verdict != result["verdict"]:
+        raise _prepared_result_error(
+            "prepared verdict receipt does not match payload",
+            json_path="$.prepared_result.verdict",
+            validator="receipt",
+        )
+    return result
 
 
 class SquadStateStore:
@@ -177,79 +340,116 @@ class SquadStateStore:
         self,
         from_phase: str,
         to_phase: str,
-        result: "SquadAgentResult",
+        prepared: PreparedPhaseResult,
         *,
-        allowed_state_update_keys: Iterable[str] | None = None,
+        increment_iteration: bool = False,
         manual_phase_run: bool = False,
-    ) -> None:
+    ) -> AdvanceReceipt:
         state = self.load()
+        next_state = deepcopy(state)
         try:
-            result.echelon_result = validate_echelon_result(
-                result.echelon_result,
-                allowed_state_update_keys=allowed_state_update_keys,
-            )
-        except EchelonResultValidationError as exc:
-            logger.warning(
-                "Invalid echelon_result blocked before state advance: %s "
-                "(run_id=%s)",
-                exc,
-                state.get("run_id", "?"),
-            )
-            self._transition_status(state, "blocked")
-            state["blocked_reason"] = f"echelon_result validation failed: {exc}"
-            self.save(state)
-            return
+            result = _validate_prepared_result(prepared)
+        except StateAdvanceError:
+            raise
+        except Exception as exc:
+            raise StateAdvanceError(
+                "prepared result validation failed",
+                validator="prepared_result",
+            ) from exc
+
         logger.debug(
             "squad advance %s → %s verdict=%s run_id=%s",
             from_phase,
             to_phase,
-            result.verdict,
+            prepared.verdict,
             state.get("run_id", "?"),
         )
-        state["phase"] = to_phase
-        state["last_dispatch"] = {
+        completed_at = datetime.now(timezone.utc).isoformat()
+        next_state["phase"] = to_phase
+        next_state["last_dispatch"] = {
             "phase_id": from_phase,
-            "verdict": result.verdict,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "verdict": prepared.verdict,
+            "completed_at": completed_at,
+            "controller_contract": prepared.controller_contract_name,
+            "controller_contract_sha256": prepared.controller_contract_sha256,
+            "controller_normalized": bool(prepared.normalized_paths),
         }
         if manual_phase_run:
-            state["last_dispatch"]["manual_phase_run"] = True
-            manual_runs = state.get("manual_phase_runs")
+            next_state["last_dispatch"]["manual_phase_run"] = True
+            manual_runs = next_state.get("manual_phase_runs")
             if not isinstance(manual_runs, list):
                 manual_runs = []
+            else:
+                manual_runs = list(manual_runs)
             manual_runs.append(
                 {
                     "phase_id": from_phase,
                     "next_phase": to_phase,
-                    "verdict": result.verdict,
-                    "completed_at": state["last_dispatch"]["completed_at"],
+                    "verdict": prepared.verdict,
+                    "completed_at": completed_at,
                 }
             )
-            state["manual_phase_runs"] = manual_runs
-        completed = state.get("completed_phases")
+            next_state["manual_phase_runs"] = manual_runs
+        completed = next_state.get("completed_phases")
         if not isinstance(completed, list):
             completed = []
+        else:
+            completed = list(completed)
         if from_phase not in completed:
             completed.append(from_phase)
-        state["completed_phases"] = completed
-        identity_is_bootstrapped = bool(state.get("feature_branch"))
-        for key, value in result.state_updates.items():
-            if identity_is_bootstrapped and key in PHASE_A_IDENTITY_KEYS:
-                if state.get(key) != value:
-                    logger.warning(
-                        "Ignoring agent attempt to change controller-owned Phase A identity "
-                        "%s: %r -> %r (run_id=%s)",
-                        key,
-                        state.get(key),
-                        value,
-                        state.get("run_id", "?"),
-                    )
-                continue
-            if key == "status":
-                self._transition_status(state, value)
-            else:
-                state[key] = value
-        self.save(state)
+        next_state["completed_phases"] = completed
+        identity_is_bootstrapped = bool(next_state.get("feature_branch"))
+        try:
+            for key, value in result["state_updates"].items():
+                if identity_is_bootstrapped and key in PHASE_A_IDENTITY_KEYS:
+                    if next_state.get(key) != value:
+                        logger.warning(
+                            "Ignoring agent attempt to change controller-owned "
+                            "Phase A identity %s: %r -> %r (run_id=%s)",
+                            key,
+                            next_state.get(key),
+                            value,
+                            next_state.get("run_id", "?"),
+                        )
+                    continue
+                if key == "status":
+                    self._transition_status(next_state, value)
+                else:
+                    next_state[key] = value
+        except Exception as exc:
+            raise StateAdvanceError(
+                "prepared state updates could not be applied",
+                json_path="$.state_updates",
+                validator="state_advance",
+            ) from exc
+        if increment_iteration and "iteration" not in result["state_updates"]:
+            try:
+                next_state["iteration"] = int(
+                    next_state.get("iteration") or 0
+                ) + 1
+            except (TypeError, ValueError) as exc:
+                raise StateAdvanceError(
+                    "workflow iteration is not an integer",
+                    json_path="$.iteration",
+                    validator="type",
+                ) from exc
+        next_state.pop("controller_contract_error", None)
+
+        try:
+            self.save(next_state)
+        except Exception as exc:
+            raise StateAdvanceError(
+                "atomic state save failed",
+                json_path="$.state",
+                validator="save",
+            ) from exc
+        return AdvanceReceipt(
+            from_phase=from_phase,
+            to_phase=to_phase,
+            completed_at=completed_at,
+            controller_contract=prepared.controller_contract_name,
+            controller_contract_sha256=prepared.controller_contract_sha256,
+        )
 
     def set_blocked(self, reason: str) -> None:
         state = self.load()

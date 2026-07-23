@@ -1,27 +1,71 @@
 """Tests for SquadStateStore."""
 import sys
+from dataclasses import replace
 from pathlib import Path
+from pathlib import PurePath
 from unittest.mock import patch
+
+import pytest
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
+from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.prepared_phase_result import PreparedPhaseResult, prepare_phase_result
 from harness.squad_state import SquadStateStore
 from harness.squad_provider import SquadAgentResult
+
+DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
+EXT_YML = EXT_ROOT / "extension/extension.yml"
 
 
 def _store(tmp_path: Path) -> SquadStateStore:
     return SquadStateStore(tmp_path / "squad/run-test")
 
 
-def _result(verdict="DONE", updates=None) -> SquadAgentResult:
+def _raw_result(verdict="DONE", updates=None) -> SquadAgentResult:
     return SquadAgentResult(
         exit_code=0,
         echelon_result={"verdict": verdict, "state_updates": updates or {}},
         raw_output="",
         duration_ms=100,
         timed_out=False,
+    )
+
+
+def _result(verdict="DONE", updates=None) -> PreparedPhaseResult:
+    updates = updates or {}
+    return prepare_phase_result(
+        PhaseNode(
+            id="test-phase",
+            type="agent",
+            allowed_state_updates=list(updates),
+        ),
+        _raw_result(verdict, updates),
+        controller_updates={},
+    )
+
+
+def _tasks_result(
+    *,
+    report: object = "tasks-lexicon-report.json",
+) -> PreparedPhaseResult:
+    node = PhaseGraph(DEFINITION, EXT_YML).get("phase3-tasks-lexicon")
+    return prepare_phase_result(
+        node,
+        _raw_result(
+            "DONE",
+            {
+                "tasks_lexicon_action": "proceed",
+                "tasks_lexicon_pass": True,
+                "tasks_lexicon_attempts": 0,
+                "tasks_lexicon_findings": 0,
+                "tasks_lexicon_report": report,
+            },
+        ),
+        controller_updates={},
+        controller_owns_result_updates=True,
     )
 
 
@@ -111,7 +155,6 @@ class TestSquadStateStore:
             "phase1-what",
             "phase1-why2",
             _result("DONE", {"spec_id": "005", "spec_dir": "specs/005-opta-search-shows-stats"}),
-            allowed_state_update_keys={"spec_id", "spec_dir"},
         )
 
         state = store.load()
@@ -119,49 +162,207 @@ class TestSquadStateStore:
         assert state["spec_dir"] == "runs/r/specs/005-opta-search-shows-stats"
         assert state["published_spec_dir"] == "specs/005-opta-search-shows-stats"
 
-    def test_advance_blocks_invalid_result_without_mutating_state(self, tmp_path):
+    def test_invalid_advance_raises_without_success_state_mutation(self, tmp_path):
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "init")
-        result = SquadAgentResult(
-            exit_code=0,
-            echelon_result={
-                "verdict": "DONE",
-                "state_updates": {
-                    "coverage_pct": 72,
-                    "last_dispatch": {"phase_id": "fake"},
-                },
-            },
-            raw_output="",
-            duration_ms=100,
-            timed_out=False,
+        before = store.load()
+        invalid = replace(
+            _result("DONE", {"coverage_pct": 72}),
+            provider_update_keys=frozenset(),
         )
 
-        store.advance("init", "phase1-discover", result)
+        with patch.object(store, "save", wraps=store.save) as save:
+            with pytest.raises(RuntimeError) as raised:
+                store.advance("init", "phase1-discover", invalid)
 
-        state = store.load()
-        assert state["status"] == "blocked"
-        assert state["phase"] == "init"
-        assert state["completed_phases"] == []
-        assert "coverage_pct" not in state
-        assert "echelon_result validation failed" in state["blocked_reason"]
+        after = store.load()
+        assert raised.type.__name__ == "StateAdvanceError"
+        assert save.call_count == 0
+        assert after["status"] == before["status"]
+        assert after["phase"] == before["phase"]
+        assert after["completed_phases"] == before["completed_phases"]
+        assert after["last_dispatch"] == before["last_dispatch"]
+        assert "coverage_pct" not in after
 
-    def test_advance_blocks_state_update_outside_allowlist(self, tmp_path):
+    def test_advance_rejects_raw_result_without_compatibility_fallback(self, tmp_path):
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "init")
+        before = store.load()
+
+        with pytest.raises(RuntimeError) as raised:
+            store.advance("init", "phase1-discover", _raw_result())
+
+        assert raised.type.__name__ == "StateAdvanceError"
+        assert store.load() == before
+
+    @pytest.mark.parametrize(
+        "tampered",
+        [
+            lambda prepared: replace(
+                prepared,
+                controller_contract_sha256=None,
+            ),
+            lambda prepared: replace(
+                prepared,
+                controller_update_keys=frozenset(),
+            ),
+        ],
+        ids=["missing-contract-digest", "ownership-key-mismatch"],
+    )
+    def test_advance_rejects_tampered_prepared_receipt_without_write(
+        self,
+        tmp_path,
+        tampered,
+    ):
+        store = _store(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase3-tasks-lexicon",
+        )
+        before = store.load()
+
+        with patch.object(store, "save", wraps=store.save) as save:
+            with pytest.raises(RuntimeError) as raised:
+                store.advance(
+                    "phase3-tasks-lexicon",
+                    "phase3-understanding",
+                    tampered(_tasks_result()),
+                )
+
+        assert raised.type.__name__ == "StateAdvanceError"
+        assert save.call_count == 0
+        assert store.load() == before
+
+    def test_advance_applies_iteration_and_contract_receipt_atomically(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase3-tasks-lexicon",
+        )
+        state = store.load()
+        state["controller_contract_error"] = {"prior": "diagnostic"}
+        store.save(state)
+        prepared = _tasks_result(report=PurePath("tasks-lexicon-report.json"))
+
+        with patch.object(store, "save", wraps=store.save) as save:
+            receipt = store.advance(
+                "phase3-tasks-lexicon",
+                "phase3-understanding",
+                prepared,
+                increment_iteration=True,
+            )
+
+        state = store.load()
+        assert save.call_count == 1
+        assert state["phase"] == "phase3-understanding"
+        assert state["iteration"] == 1
+        assert state["last_dispatch"]["controller_contract"] == "tasks_lexicon"
+        assert (
+            state["last_dispatch"]["controller_contract_sha256"]
+            == prepared.controller_contract_sha256
+        )
+        assert state["last_dispatch"]["controller_normalized"] is True
+        assert "controller_contract_error" not in state
+        assert receipt.from_phase == "phase3-tasks-lexicon"
+        assert receipt.to_phase == "phase3-understanding"
+        assert receipt.controller_contract == "tasks_lexicon"
+        assert (
+            receipt.controller_contract_sha256
+            == prepared.controller_contract_sha256
+        )
+
+    def test_explicit_iteration_update_wins_over_selected_increment(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase3-plan")
 
         store.advance(
-            "init",
-            "phase1-discover",
-            _result("DONE", {"unexpected": True}),
-            allowed_state_update_keys={"coverage_pct"},
+            "phase3-plan",
+            "phase3-tasks-lexicon",
+            _result("DONE", {"iteration": 7}),
+            increment_iteration=True,
+        )
+
+        assert store.load()["iteration"] == 7
+
+    def test_self_loop_manual_advance_records_one_successful_receipt(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase2-decide")
+
+        receipt = store.advance(
+            "phase2-decide",
+            "phase2-decide",
+            _result("PASS"),
+            manual_phase_run=True,
         )
 
         state = store.load()
-        assert state["status"] == "blocked"
-        assert state["phase"] == "init"
-        assert state["completed_phases"] == []
-        assert "unexpected" not in state
-        assert "not allowed" in state["blocked_reason"]
+        assert state["phase"] == "phase2-decide"
+        assert state["completed_phases"] == ["phase2-decide"]
+        assert state["last_dispatch"]["manual_phase_run"] is True
+        assert state["manual_phase_runs"] == [
+            {
+                "phase_id": "phase2-decide",
+                "next_phase": "phase2-decide",
+                "verdict": "PASS",
+                "completed_at": receipt.completed_at,
+            }
+        ]
+
+    def test_advance_preserves_status_guard_and_phase_a_identity(self, tmp_path, caplog):
+        import logging
+
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase1-what")
+        state = store.load()
+        state.update(
+            {
+                "status": "done",
+                "spec_id": "005-demo",
+                "feature_branch": "005-demo",
+            }
+        )
+        store.save(state)
+
+        with caplog.at_level(logging.WARNING, logger="harness.squad_state"):
+            store.advance(
+                "phase1-what",
+                "phase1-why2",
+                _result(
+                    "DONE",
+                    {
+                        "status": "blocked",
+                        "spec_id": "999-tampered",
+                    },
+                ),
+            )
+
+        advanced = store.load()
+        assert "Invalid squad status transition" in caplog.text
+        assert advanced["status"] == "blocked"
+        assert advanced["spec_id"] == "005-demo"
+
+    def test_in_memory_advance_failure_is_typed_and_writes_nothing(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        before = store.load()
+        prepared = _result("DONE", {"status": []})
+
+        with patch.object(store, "save", wraps=store.save) as save:
+            with pytest.raises(RuntimeError) as raised:
+                store.advance("init", "phase1-discover", prepared)
+
+        assert raised.type.__name__ == "StateAdvanceError"
+        assert save.call_count == 0
+        assert store.load() == before
 
     def test_cancel_flag(self, tmp_path):
         store = _store(tmp_path)
@@ -439,16 +640,9 @@ class TestStatusTransitions:
 
     def test_state_updates_status_routes_through_guard(self, tmp_path, caplog):
         import logging
-        from harness.squad_provider import SquadAgentResult
         store = SquadStateStore(tmp_path / "squad/run-test")
         store.initialize("r1", "semi", "msg", 0, "init")
-        result = SquadAgentResult(
-            exit_code=0,
-            echelon_result={"verdict": "DONE", "state_updates": {"status": "done"}},
-            raw_output="",
-            duration_ms=10,
-            timed_out=False,
-        )
+        result = _result("DONE", {"status": "done"})
         with caplog.at_level(logging.WARNING, logger="harness.squad_state"):
             store.advance("init", "phase1-discover", result)
         # running → done is valid, no warning

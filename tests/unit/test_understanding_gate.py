@@ -477,11 +477,11 @@ def test_legacy_model_scored_resume_adds_certified_evidence(
     assert controller._guard_understanding_evidence(target_phase) == gate_phase
     node = graph.get(gate_phase)
     result = controller._executors["deterministic_understanding"].execute(node, store)
+    prepared = controller._prepare_phase_result(node, result)
     store.advance(
         gate_phase,
         target_phase,
-        result,
-        allowed_state_update_keys=controller._advance_state_update_keys(node),
+        prepared,
     )
 
     migrated = store.load()

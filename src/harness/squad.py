@@ -66,7 +66,7 @@ from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from echelon.telemetry.phase_timing import record_phase_finish, record_phase_start
 from echelon.telemetry.provider import DispatchContext, InstrumentedProvider
 from echelon.telemetry.store import TelemetryStore
-from harness.squad_state import SquadStateStore
+from harness.squad_state import AdvanceReceipt, StateAdvanceError, SquadStateStore
 from harness.prompt_markdown import read_prompt_markdown
 from harness.terminal import color_text
 from harness.understanding_gate import has_current_understanding_evidence
@@ -1084,43 +1084,29 @@ class SquadController:
                 return SquadResult.from_state(self._state_store.load())
 
             next_phase = self._coordinate_transition_routing(node, prepared)
+            increment_iteration = self._transition_increments_iteration(
+                node,
+                next_phase,
+            )
             if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
                 readiness = self._publish_phase_a_artifacts_for_build()
                 if not readiness.ready:
                     self._block_after_phase_a_readiness_failure(readiness)
                     return SquadResult.from_state(self._state_store.load())
 
+            receipt = self._advance_prepared_result_or_block(
+                node,
+                phase,
+                next_phase,
+                prepared,
+                increment_iteration=increment_iteration,
+            )
+            if receipt is None:
+                return SquadResult.from_state(self._state_store.load())
             self._apply_declared_phase_timing_transition(node, next_phase)
-
-            previous_last_dispatch = deepcopy(
-                self._state_store.load().get("last_dispatch")
-            )
-            self._state_store.advance(
-                phase,
-                next_phase,
-                prepared.as_squad_agent_result(),
-                allowed_state_update_keys=self._advance_state_update_keys(node),
-            )
-            self._clear_controller_contract_error_after_advance(
-                phase,
-                next_phase,
-                previous_last_dispatch=previous_last_dispatch,
-            )
             if not self._checkpoint_successful_phase(phase, next_phase):
                 return SquadResult.from_state(self._state_store.load())
             self._refresh_run_context(f"phase advance {phase} -> {next_phase}")
-
-            # Enforce iteration increment for transitions that declare action: increment_iteration.
-            # The condition `iteration < max_iterations` in definition.yaml must work regardless
-            # of whether the agent included `iteration` in its state_updates.
-            # Only increment if the agent didn't already write it explicitly.
-            if "iteration" not in prepared.state_updates:
-                for t in node.transitions:
-                    if t.get("to") == next_phase and t.get("action") == "increment_iteration":
-                        s = self._state_store.load()
-                        s["iteration"] = s.get("iteration", 0) + 1
-                        self._state_store.save(s)
-                        break
 
             # Inline escalation check — fires when _evaluate_transitions detected
             # escalation_question in state_updates and returned the current phase.
@@ -1418,6 +1404,10 @@ class SquadController:
             return SquadResult.from_state(self._state_store.load())
 
         next_phase = self._coordinate_transition_routing(node, prepared)
+        increment_iteration = self._transition_increments_iteration(
+            node,
+            next_phase,
+        )
         if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
             readiness = self._publish_phase_a_artifacts_for_build()
             if not readiness.ready:
@@ -1426,23 +1416,17 @@ class SquadController:
         else:
             self._publish_manual_phase_artifacts()
 
-        self._apply_declared_phase_timing_transition(node, next_phase)
-
-        previous_last_dispatch = deepcopy(
-            self._state_store.load().get("last_dispatch")
-        )
-        self._state_store.advance(
+        receipt = self._advance_prepared_result_or_block(
+            node,
             phase,
             next_phase,
-            prepared.as_squad_agent_result(),
-            allowed_state_update_keys=self._advance_state_update_keys(node),
+            prepared,
+            increment_iteration=increment_iteration,
             manual_phase_run=True,
         )
-        self._clear_controller_contract_error_after_advance(
-            phase,
-            next_phase,
-            previous_last_dispatch=previous_last_dispatch,
-        )
+        if receipt is None:
+            return SquadResult.from_state(self._state_store.load())
+        self._apply_declared_phase_timing_transition(node, next_phase)
         if not self._checkpoint_successful_phase(phase, next_phase):
             return SquadResult.from_state(self._state_store.load())
         self._refresh_run_context(f"manual phase advance {phase} -> {next_phase}")
@@ -1496,21 +1480,21 @@ class SquadController:
             if prepared is None:
                 return True
             next_phase = self._coordinate_transition_routing(node, prepared)
-            previous_last_dispatch = deepcopy(
-                self._state_store.load().get("last_dispatch")
+            increment_iteration = self._transition_increments_iteration(
+                node,
+                next_phase,
             )
-            self._state_store.advance(
+            receipt = self._advance_prepared_result_or_block(
+                node,
                 node.id,
                 next_phase,
-                prepared.as_squad_agent_result(),
-                allowed_state_update_keys=self._advance_state_update_keys(node),
+                prepared,
+                increment_iteration=increment_iteration,
                 manual_phase_run=manual_phase_run,
             )
-            self._clear_controller_contract_error_after_advance(
-                node.id,
-                next_phase,
-                previous_last_dispatch=previous_last_dispatch,
-            )
+            if receipt is None:
+                return True
+            self._apply_declared_phase_timing_transition(node, next_phase)
             if not self._checkpoint_successful_phase(node.id, next_phase):
                 return True
             self._refresh_run_context(f"phase skip {node.id} -> {next_phase}")
@@ -2485,21 +2469,6 @@ class SquadController:
         self._gate_config_cache = cfg
         return cfg
 
-    @staticmethod
-    def _advance_state_update_keys(node: PhaseNode) -> list[str] | None:
-        """Allow controller-owned state only after agent-result validation.
-
-        AgentExecutor validates the original agent result against
-        ``node.allowed_state_updates``. Provider-free deterministic nodes return
-        controller-owned evidence fields. The state-store boundary must accept
-        those additions without granting agents permission to report them.
-        """
-        if node.allowed_state_updates is None:
-            return None
-        allowed = list(node.allowed_state_updates)
-        allowed.extend(node.controller_state_update_keys)
-        return allowed
-
     def _lexicon_gate_enrichment(
         self,
         node: PhaseNode,
@@ -2893,26 +2862,85 @@ class SquadController:
             self._state_store.save(state)
             return None
 
-    def _clear_controller_contract_error_after_advance(
+    def _advance_prepared_result_or_block(
         self,
+        node: PhaseNode,
         from_phase: str,
         to_phase: str,
+        prepared: PreparedPhaseResult,
         *,
-        previous_last_dispatch: object,
+        increment_iteration: bool = False,
+        manual_phase_run: bool = False,
+    ) -> AdvanceReceipt | None:
+        """Commit one prepared result or persist a separate redacted failure."""
+        try:
+            receipt = self._state_store.advance(
+                from_phase,
+                to_phase,
+                prepared,
+                increment_iteration=increment_iteration,
+                manual_phase_run=manual_phase_run,
+            )
+            if not isinstance(receipt, AdvanceReceipt):
+                raise StateAdvanceError(
+                    "state advance did not return a receipt",
+                    json_path="$.advance_receipt",
+                    validator="receipt",
+                )
+            return receipt
+        except StateAdvanceError as exc:
+            self._block_after_state_advance_failure(
+                node,
+                from_phase,
+                exc,
+            )
+            return None
+
+    def _block_after_state_advance_failure(
+        self,
+        node: PhaseNode,
+        from_phase: str,
+        error: StateAdvanceError,
     ) -> None:
-        """Clear a diagnostic only when advance wrote a new dispatch snapshot."""
+        """Persist a stable diagnostic without treating failure as an advance."""
         state = self._state_store.load()
-        last_dispatch = state.get("last_dispatch")
-        if (
-            state.get("phase") != to_phase
-            or not isinstance(last_dispatch, dict)
-            or last_dispatch.get("phase_id") != from_phase
-            or last_dispatch == previous_last_dispatch
-            or "controller_contract_error" not in state
-        ):
-            return
-        state.pop("controller_contract_error", None)
+        contract = node.controller_state_contract
+        json_path = (
+            error.json_path
+            if isinstance(error.json_path, str)
+            and error.json_path.startswith("$")
+            else "$.prepared_result"
+        )
+        validator = (
+            error.validator
+            if isinstance(error.validator, str)
+            and re.fullmatch(r"[a-zA-Z0-9_.-]+", error.validator)
+            else "state_advance"
+        )
+        state["phase"] = from_phase
+        state["status"] = "blocked"
+        state["blocked_reason"] = (
+            "controller_state_contract_validation_failed"
+        )
+        state["controller_contract_error"] = {
+            "phase_id": from_phase,
+            "contract": (
+                contract.name if contract is not None else "prepared_result"
+            ),
+            "contract_sha256": (
+                contract.sha256 if contract is not None else None
+            ),
+            "json_path": json_path,
+            "validator": validator,
+            "message": (
+                f"state advance failed at {json_path} ({validator})"
+            ),
+        }
         self._state_store.save(state)
+        self._record_blocker_event(
+            from_phase,
+            "controller_state_contract_validation_failed",
+        )
 
     @staticmethod
     def _with_why_verdict_quality_fallback(
@@ -2968,6 +2996,7 @@ class SquadController:
                 result,
             )
             if evaluation is True:
+                self._matched_transition = (node.id, index)
                 return transition["to"]
             if evaluation is None:
                 raise _TransitionJudgmentRequired(condition, index)
@@ -3078,6 +3107,7 @@ class SquadController:
         prepared: PreparedPhaseResult,
     ) -> str:
         """Coordinate stateful routing policy around the read-only evaluator."""
+        self._matched_transition = None
         if prepared.routing_override:
             next_phase = self._evaluate_transitions(node, prepared)
             self._persist_controller_routing_override(node, prepared)
@@ -3142,6 +3172,28 @@ class SquadController:
                 if next_phase:
                     return str(next_phase)
                 start_index = unresolved.transition_index + 1
+
+    def _transition_increments_iteration(
+        self,
+        node: PhaseNode,
+        next_phase: str,
+    ) -> bool:
+        """Resolve action only from the transition selected during routing."""
+        matched = getattr(self, "_matched_transition", None)
+        if (
+            not isinstance(matched, tuple)
+            or len(matched) != 2
+            or matched[0] != node.id
+            or not isinstance(matched[1], int)
+            or matched[1] < 0
+            or matched[1] >= len(node.transitions)
+        ):
+            return False
+        transition = node.transitions[matched[1]]
+        return (
+            transition.get("to") == next_phase
+            and transition.get("action") == "increment_iteration"
+        )
 
     def _dispatch_reason(self, phase: str, attempt: int) -> str:
         """Choose telemetry reason from controller state, never model output."""

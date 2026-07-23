@@ -29,7 +29,7 @@ from harness.squad import (
 )
 from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
-from harness.squad_state import SquadStateStore
+from harness.squad_state import StateAdvanceError, SquadStateStore
 from harness.understanding_gate import UnderstandingGateResult
 from echelon.telemetry.spec_adapter import analyze_spec_run
 
@@ -1155,12 +1155,12 @@ class TestSquadControllerBasics:
         )
         assert result.state_updates == {}
         assert "quality_scores" in result.quarantined_state_updates
-        next_phase = _coordinate_prepared_result(ctrl, node, result)
+        prepared = ctrl._prepare_phase_result(node, result)
+        next_phase = ctrl._coordinate_transition_routing(node, prepared)
         store.advance(
             "phase1-why2",
             next_phase,
-            result,
-            allowed_state_update_keys=ctrl._advance_state_update_keys(node),
+            prepared,
         )
 
         state = store.load()
@@ -3182,8 +3182,8 @@ class TestFailClosedControllerPreparation:
             "prepare",
             "product",
             "routing",
-            "timing",
             "advance",
+            "timing",
             "checkpoint",
         ]
         assert resumed_state["phase"] == "phase3-understanding"
@@ -3193,20 +3193,10 @@ class TestFailClosedControllerPreparation:
         ]
         assert "controller_contract_error" not in resumed_state
 
-    @pytest.mark.parametrize(
-        ("advance_writes", "diagnostic_remains"),
-        [
-            (False, True),
-            (True, False),
-        ],
-        ids=["advance-no-op", "advance-writes-new-dispatch"],
-    )
-    def test_contract_self_loop_requires_new_dispatch_before_clearing_diagnostic(
+    def test_successful_self_loop_receipt_clears_prior_diagnostic(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
-        advance_writes: bool,
-        diagnostic_remains: bool,
     ) -> None:
         ctrl, store = _controller(tmp_path)
         self._patch_run_guards(ctrl, monkeypatch)
@@ -3254,8 +3244,6 @@ class TestFailClosedControllerPreparation:
             "_coordinate_transition_routing",
             lambda *_: "phase2-decide",
         )
-        if not advance_writes:
-            monkeypatch.setattr(store, "advance", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(
             ctrl,
             "_checkpoint_successful_phase",
@@ -3266,11 +3254,290 @@ class TestFailClosedControllerPreparation:
         final = store.load()
 
         assert result.status == "running"
-        assert ("controller_contract_error" in final) is diagnostic_remains
-        if advance_writes:
-            assert final["last_dispatch"] != prior_dispatch
-        else:
-            assert final["last_dispatch"] == prior_dispatch
+        assert "controller_contract_error" not in final
+        assert final["last_dispatch"] != prior_dispatch
+        assert final["phase"] == "phase2-decide"
+
+    @pytest.mark.parametrize(
+        ("route_flag", "expected_increment"),
+        [(False, True), (True, False)],
+        ids=["first-destination-match-increments", "later-same-destination-does-not"],
+    )
+    def test_duplicate_destination_uses_action_from_actual_first_match(
+        self,
+        tmp_path: Path,
+        route_flag: bool,
+        expected_increment: bool,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "duplicate-action")
+        node = PhaseNode(
+            id="duplicate-action",
+            type="agent",
+            allowed_state_updates=["route_flag"],
+            transitions=[
+                {
+                    "to": "shared-destination",
+                    "condition": "NOT route_flag",
+                    "action": "increment_iteration",
+                },
+                {
+                    "to": "shared-destination",
+                    "condition": "always",
+                },
+            ],
+        )
+        prepared = ctrl._prepare_phase_result(
+            node,
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {"route_flag": route_flag},
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+        )
+
+        next_phase = ctrl._coordinate_transition_routing(node, prepared)
+        increment = ctrl._transition_increments_iteration(node, next_phase)
+        store.advance(
+            node.id,
+            next_phase,
+            prepared,
+            increment_iteration=increment,
+        )
+
+        assert next_phase == "shared-destination"
+        assert store.load()["iteration"] == int(expected_increment)
+
+    def test_increment_and_receipt_precede_timing_and_checkpoint(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        self._patch_run_guards(ctrl, monkeypatch)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase3-tasks-lexicon",
+        )
+        executor = MagicMock()
+        executor.execute.return_value = self._tasks_result(
+            False,
+            action="repair",
+        )
+        ctrl._executors["deterministic_lexicon"] = executor
+        calls: list[str] = []
+        original_prepare = ctrl._prepare_phase_result_or_block
+        original_route = ctrl._coordinate_transition_routing
+        original_advance = store.advance
+
+        def record_prepare(*args):
+            calls.append("prepare")
+            return original_prepare(*args)
+
+        def record_route(*args):
+            calls.append("routing")
+            return original_route(*args)
+
+        def record_advance(*args, **kwargs):
+            calls.append("advance")
+            return original_advance(*args, **kwargs)
+
+        def record_post_commit(step: str):
+            state = store.load()
+            assert state["iteration"] == 1
+            assert state["phase"] == "phase3-plan"
+            assert (
+                state["last_dispatch"]["controller_contract"]
+                == "tasks_lexicon"
+            )
+            calls.append(step)
+
+        monkeypatch.setattr(ctrl, "_prepare_phase_result_or_block", record_prepare)
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_product_input_updates",
+            lambda *_: calls.append("product"),
+        )
+        monkeypatch.setattr(ctrl, "_coordinate_transition_routing", record_route)
+        monkeypatch.setattr(store, "advance", record_advance)
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_declared_phase_timing_transition",
+            lambda *_: record_post_commit("timing"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            lambda *_: record_post_commit("checkpoint") or False,
+        )
+
+        ctrl.run("msg", "banzai")
+
+        assert calls == [
+            "prepare",
+            "product",
+            "routing",
+            "advance",
+            "timing",
+            "checkpoint",
+        ]
+
+    def test_state_advance_failure_blocks_without_timing_or_checkpoint(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        self._patch_run_guards(ctrl, monkeypatch)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase3-tasks-lexicon",
+        )
+        before = store.load()
+        executor = MagicMock()
+        executor.execute.return_value = self._tasks_result(True)
+        ctrl._executors["deterministic_lexicon"] = executor
+        calls: list[str] = []
+
+        def fail_advance(*_args, **_kwargs):
+            raise StateAdvanceError(
+                "rejected-secret-value",
+                json_path="$.prepared_result.ownership",
+                validator="ownership",
+            )
+
+        monkeypatch.setattr(store, "advance", fail_advance)
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_declared_phase_timing_transition",
+            lambda *_: calls.append("timing"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            lambda *_: calls.append("checkpoint"),
+        )
+
+        result = ctrl.run("msg", "banzai")
+        blocked = store.load()
+
+        assert result.status == "blocked"
+        assert blocked["phase"] == "phase3-tasks-lexicon"
+        assert blocked["completed_phases"] == before["completed_phases"]
+        assert blocked["last_dispatch"] == before["last_dispatch"]
+        assert (
+            blocked["blocked_reason"]
+            == "controller_state_contract_validation_failed"
+        )
+        assert blocked["controller_contract_error"] == {
+            "phase_id": "phase3-tasks-lexicon",
+            "contract": "tasks_lexicon",
+            "contract_sha256": (
+                ctrl._graph.get(
+                    "phase3-tasks-lexicon"
+                ).controller_state_contract.sha256
+            ),
+            "json_path": "$.prepared_result.ownership",
+            "validator": "ownership",
+            "message": (
+                "state advance failed at "
+                "$.prepared_result.ownership (ownership)"
+            ),
+        }
+        assert "rejected-secret-value" not in json.dumps(blocked)
+        assert calls == []
+
+    def test_missing_advance_receipt_is_not_treated_as_success(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        self._patch_run_guards(ctrl, monkeypatch)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase3-tasks-lexicon",
+        )
+        executor = MagicMock()
+        executor.execute.return_value = self._tasks_result(True)
+        ctrl._executors["deterministic_lexicon"] = executor
+        calls: list[str] = []
+        monkeypatch.setattr(store, "advance", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_declared_phase_timing_transition",
+            lambda *_: calls.append("timing"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            lambda *_: calls.append("checkpoint"),
+        )
+
+        result = ctrl.run("msg", "banzai")
+
+        assert result.status == "blocked"
+        assert result.phase == "phase3-tasks-lexicon"
+        assert store.load()["controller_contract_error"]["validator"] == "receipt"
+        assert calls == []
+
+    def test_manual_success_advances_before_timing_and_checkpoint(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        self._patch_run_guards(ctrl, monkeypatch)
+        executor = MagicMock()
+        executor.execute.return_value = self._tasks_result(True)
+        ctrl._executors["deterministic_lexicon"] = executor
+        calls: list[str] = []
+        original_advance = store.advance
+
+        def record_advance(*args, **kwargs):
+            calls.append("advance")
+            return original_advance(*args, **kwargs)
+
+        monkeypatch.setattr(store, "advance", record_advance)
+        monkeypatch.setattr(
+            ctrl,
+            "_publish_manual_phase_artifacts",
+            lambda: None,
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_declared_phase_timing_transition",
+            lambda *_: calls.append("timing"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            lambda *_: calls.append("checkpoint") or False,
+        )
+
+        result = ctrl.run_single_phase(
+            "phase3-tasks-lexicon",
+            "validate",
+            "banzai",
+        )
+
+        assert calls == ["advance", "timing", "checkpoint"]
+        assert result.phase == "phase3-understanding"
+        assert store.load()["last_dispatch"]["manual_phase_run"] is True
 
     def test_valid_blocked_understanding_is_prepared_before_executor_block(
         self,
@@ -3704,11 +3971,11 @@ THEN: The dashboard is visible
         state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
         store.save(state)
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
+        prepared = ctrl._prepare_phase_result(node, result)
         store.advance(
             node.id,
             "phase1-understanding",
-            result,
-            allowed_state_update_keys=ctrl._advance_state_update_keys(node),
+            prepared,
         )
 
         guarded = ctrl._guard_spec_lexicon_evidence("phase1-understanding")
@@ -3790,8 +4057,7 @@ THEN: The dashboard is visible
         store.advance(
             node.id,
             next_phase,
-            prepared.as_squad_agent_result(),
-            allowed_state_update_keys=ctrl._advance_state_update_keys(node),
+            prepared,
         )
         persisted = store.load()
         assert persisted["lexicon_evaluation"] == "pending"
@@ -4128,7 +4394,8 @@ THEN: The dashboard is visible
             "_judgment_dispatch",
             side_effect=AssertionError("missing artifact punted to COMMANDER"),
         ):
-            nxt = _evaluate_prepared_result(ctrl, node, result)
+            prepared = ctrl._prepare_phase_result(node, result)
+            nxt = ctrl._evaluate_transitions(node, prepared)
 
         assert nxt == "phase1-what"
         assert "lexicon_pass" not in result.state_updates
@@ -4139,8 +4406,7 @@ THEN: The dashboard is visible
         store.advance(
             node.id,
             nxt,
-            result,
-            allowed_state_update_keys=ctrl._advance_state_update_keys(node),
+            prepared,
         )
         persisted = store.load()
         assert persisted["lexicon_evaluation"] == "pending"
@@ -4360,8 +4626,7 @@ THEN: The dashboard is visible
         store.advance(
             node.id,
             nxt,
-            prepared.as_squad_agent_result(),
-            allowed_state_update_keys=ctrl._advance_state_update_keys(node),
+            prepared,
         )
         assert ctrl._guard_spec_lexicon_evidence(nxt) == "phase1-understanding"
 
