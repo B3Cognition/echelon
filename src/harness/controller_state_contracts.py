@@ -226,7 +226,7 @@ def normalize_controller_updates(
             return result
         if value is None or isinstance(value, (str, bool, int, float)):
             return value
-        if isinstance(value, (list, tuple)):
+        if type(value) in (list, tuple):
             if len(value) > MAX_NORMALIZATION_COLLECTION:
                 raise collection_error(
                     path,
@@ -244,7 +244,7 @@ def normalize_controller_updates(
                 ]
             finally:
                 active.remove(identity)
-            if isinstance(value, tuple):
+            if type(value) is tuple:
                 normalized_paths.append(path)
             return result
         if isinstance(value, MappingABC):
@@ -281,7 +281,7 @@ def normalize_controller_updates(
             validator="type",
         )
 
-    result = visit(dict(updates), "$.state_updates", 0)
+    result = visit(updates, "$.state_updates", 0)
     return NormalizationOutcome(
         updates=result,
         normalized_paths=tuple(sorted(set(normalized_paths))),

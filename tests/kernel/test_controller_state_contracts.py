@@ -1,4 +1,5 @@
 from collections import UserDict
+from collections.abc import Mapping as MappingABC
 from enum import Enum
 from os import PathLike
 from pathlib import Path, PurePosixPath
@@ -22,6 +23,14 @@ class DemoEnum(Enum):
 class BytesPath(PathLike[bytes]):
     def __fspath__(self) -> bytes:
         return b"not-text"
+
+
+class ListSubclass(list[object]):
+    pass
+
+
+class TupleSubclass(tuple):
+    pass
 
 
 def _schema(
@@ -143,6 +152,38 @@ def test_normalizer_records_non_dict_mapping_conversion() -> None:
 
     assert outcome.updates == {"nested": {"value": 1}}
     assert outcome.normalized_paths == ("$.state_updates.nested",)
+
+
+def test_normalizer_records_root_non_dict_mapping_conversion() -> None:
+    outcome = normalize_controller_updates(UserDict({"value": 1}))
+
+    assert outcome.updates == {"value": 1}
+    assert outcome.normalized_paths == ("$.state_updates",)
+
+
+def test_normalizer_rejects_oversized_root_mapping_before_traversal() -> None:
+    class OversizedMapping(MappingABC[str, object]):
+        def __getitem__(self, key: str) -> object:
+            raise AssertionError(f"root mapping must not access {key!r}")
+
+        def __iter__(self):
+            raise AssertionError("root mapping must not be traversed")
+
+        def __len__(self) -> int:
+            return 10_001
+
+    with pytest.raises(ControllerStateContractViolation, match="too large") as raised:
+        normalize_controller_updates(OversizedMapping())
+
+    assert raised.value.validator == "maxProperties"
+
+
+@pytest.mark.parametrize("value", [ListSubclass(), TupleSubclass()])
+def test_normalizer_rejects_list_and_tuple_subclasses(value: object) -> None:
+    with pytest.raises(ControllerStateContractViolation, match="unsupported") as raised:
+        normalize_controller_updates({"value": value})
+
+    assert raised.value.validator == "type"
 
 
 @pytest.mark.parametrize("value", [{1, 2}, b"bytes"])
