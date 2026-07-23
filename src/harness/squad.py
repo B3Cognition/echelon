@@ -13,8 +13,11 @@ import sys
 import time
 import threading
 import uuid
-from dataclasses import dataclass
+from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Callable, Optional
 
 from echelon.artifact_index import write_artifact_index
@@ -39,6 +42,7 @@ from harness.phase_a_readiness import (
     validate_phase_a_readiness,
 )
 from harness.phase_checkpoints import create_phase_checkpoint
+from harness.prepared_phase_result import PreparedPhaseResult, prepare_phase_result
 from harness.quality_scores import (
     normalize_why_quality_scores,
     resolve_quality_gate_thresholds,
@@ -288,6 +292,31 @@ class SquadResult:
     @classmethod
     def interrupted(cls) -> "SquadResult":
         return cls(status="interrupted", phase="unknown", run_id="")
+
+
+@dataclass(frozen=True)
+class ControllerEnrichment:
+    """Controller-owned result additions produced before preparation."""
+
+    updates: Mapping[str, object] = field(default_factory=dict)
+    routing_override: str | None = None
+    controller_owns_result_updates: bool = False
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "updates",
+            MappingProxyType(deepcopy(dict(self.updates))),
+        )
+
+
+class _TransitionJudgmentRequired(RuntimeError):
+    """Signal that ordered routing needs external COMMANDER coordination."""
+
+    def __init__(self, condition: str, transition_index: int) -> None:
+        super().__init__(condition)
+        self.condition = condition
+        self.transition_index = transition_index
 
 
 class SquadController:
@@ -1015,7 +1044,8 @@ class SquadController:
                 self._block_after_executor_failure(phase, product_input_error, result)
                 return SquadResult.from_state(self._state_store.load())
 
-            next_phase = self._evaluate_transitions(node, result)
+            prepared = self._prepare_phase_result(node, result)
+            next_phase = self._coordinate_transition_routing(node, prepared)
             if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
                 readiness = self._publish_phase_a_artifacts_for_build()
                 if not readiness.ready:
@@ -1027,7 +1057,7 @@ class SquadController:
             self._state_store.advance(
                 phase,
                 next_phase,
-                result,
+                prepared.as_squad_agent_result(),
                 allowed_state_update_keys=self._advance_state_update_keys(node),
             )
             if not self._checkpoint_successful_phase(phase, next_phase):
@@ -1038,7 +1068,7 @@ class SquadController:
             # The condition `iteration < max_iterations` in definition.yaml must work regardless
             # of whether the agent included `iteration` in its state_updates.
             # Only increment if the agent didn't already write it explicitly.
-            if "iteration" not in (result.state_updates or {}):
+            if "iteration" not in prepared.state_updates:
                 for t in node.transitions:
                     if t.get("to") == next_phase and t.get("action") == "increment_iteration":
                         s = self._state_store.load()
@@ -1321,7 +1351,8 @@ class SquadController:
             self._block_after_executor_failure(phase, product_input_error, result)
             return SquadResult.from_state(self._state_store.load())
 
-        next_phase = self._evaluate_transitions(node, result)
+        prepared = self._prepare_phase_result(node, result)
+        next_phase = self._coordinate_transition_routing(node, prepared)
         if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
             readiness = self._publish_phase_a_artifacts_for_build()
             if not readiness.ready:
@@ -1335,7 +1366,7 @@ class SquadController:
         self._state_store.advance(
             phase,
             next_phase,
-            result,
+            prepared.as_squad_agent_result(),
             allowed_state_update_keys=self._advance_state_update_keys(node),
             manual_phase_run=True,
         )
@@ -1388,11 +1419,12 @@ class SquadController:
                 timed_out=False,
                 cost_usd=0.0,
             )
-            next_phase = self._evaluate_transitions(node, result)
+            prepared = self._prepare_phase_result(node, result)
+            next_phase = self._coordinate_transition_routing(node, prepared)
             self._state_store.advance(
                 node.id,
                 next_phase,
-                result,
+                prepared.as_squad_agent_result(),
                 allowed_state_update_keys=self._advance_state_update_keys(node),
                 manual_phase_run=manual_phase_run,
             )
@@ -2374,13 +2406,13 @@ class SquadController:
         allowed.extend(node.controller_state_update_keys)
         return allowed
 
-    def _lexicon_gate_must_block_on_exhaustion(
+    def _lexicon_gate_enrichment(
         self,
         node: PhaseNode,
         state: dict,
         result: SquadAgentResult,
-    ) -> bool:
-        """Block an enabled hard Lexicon gate instead of falling through.
+    ) -> tuple[dict[str, object], str | None]:
+        """Return spec Lexicon exhaustion updates without mutating state.
 
         A `warn` policy deliberately permits downstream review with a recorded
         warning.  A `block` policy is a hard delivery contract: after the final
@@ -2391,15 +2423,25 @@ class SquadController:
         }
         gate_fields = gate_artifacts.get(node.id)
         if gate_fields is None:
-            return False
+            return {}, None
         artifact_name, pass_key, attempts_key = gate_fields
         gate = self._lexicon_gate_config().get("lexicon_gate", {})
         if not isinstance(gate, dict) or not gate.get("enabled", False):
-            return False
+            if (
+                result.state_updates.get("lexicon_evaluation") == "passed"
+                and "lexicon_report" not in result.state_updates
+            ):
+                return {"lexicon_report": "lexicon-gate-disabled"}, None
+            return {}, None
         artifacts = gate.get("artifacts", {})
         artifact_gate = artifacts.get(artifact_name, {}) if isinstance(artifacts, dict) else {}
         if not isinstance(artifact_gate, dict) or not artifact_gate.get("enabled", False):
-            return False
+            if (
+                result.state_updates.get("lexicon_evaluation") == "passed"
+                and "lexicon_report" not in result.state_updates
+            ):
+                return {"lexicon_report": "lexicon-gate-disabled"}, None
+            return {}, None
         try:
             repair_cap = int(gate.get("max_repair_attempts", 3))
         except (TypeError, ValueError):
@@ -2414,22 +2456,14 @@ class SquadController:
             state.get("max_iterations") or self._max_iterations
         )
         if not repair_attempts_exhausted and not squad_iterations_exhausted:
-            return False
+            return {}, None
         if result.state_updates.get(pass_key) is True:
-            return False
+            return {}, None
 
         if str(gate.get("on_exhausted", "block")).lower() == "warn":
-            if node.id == "phase1-lexicon":
-                result.state_updates["lexicon_warning_waiver"] = True
-            return False
+            return {"lexicon_warning_waiver": True}, None
 
-        exhausted = self._state_store.load()
-        exhausted["phase"] = PHASE_TERMINAL_BLOCKED
-        exhausted["status"] = "blocked"
-        exhausted["blocked_reason"] = "lexicon_gate_exhausted"
-        exhausted["lexicon_gate_exhausted"] = True
-        self._state_store.save(exhausted)
-        return True
+        return {}, PHASE_TERMINAL_BLOCKED
 
     def _governance_config(self) -> dict:
         """Load the `governance` block so governance.* resolves in transition conditions.
@@ -2480,13 +2514,13 @@ class SquadController:
         self._gov_config_cache = cfg
         return cfg
 
-    def _enforce_governance_structural_gate_result(
+    def _governance_structural_gate_updates(
         self,
         node: PhaseNode,
         state: dict,
         result: SquadAgentResult,
-    ) -> None:
-        """Validate governance artifacts after dispatch and own their gate state."""
+    ) -> dict[str, object]:
+        """Validate governance artifacts and return controller-owned updates."""
         gates = {
             "phase2-decide": (
                 "feasibility",
@@ -2507,7 +2541,7 @@ class SquadController:
         }
         gate_fields = gates.get(node.id)
         if gate_fields is None:
-            return
+            return {}
 
         artifact_key, default_name, pass_key, attempts_key, findings_key, report_key = gate_fields
         governance = self._governance_config().get("governance", {})
@@ -2520,17 +2554,17 @@ class SquadController:
             and entry.get("enabled", True) is not False
             and str(entry.get("tier") or "").lower() == "structural"
         )
-        updates = result.state_updates
-        # These keys are controller-owned. Discard any model-supplied value
-        # before writing the deterministic result below.
-        for key in (pass_key, attempts_key, findings_key, report_key):
-            updates.pop(key, None)
+        updates: dict[str, object] = {}
         if not gate_enabled:
             updates[pass_key] = True
             updates[attempts_key] = 0
-            return
+            return updates
 
-        spec_dir_ref = str(updates.get("spec_dir") or state.get("spec_dir") or "").strip()
+        spec_dir_ref = str(
+            result.state_updates.get("spec_dir")
+            or state.get("spec_dir")
+            or ""
+        ).strip()
         if spec_dir_ref:
             spec_dir = Path(spec_dir_ref)
             if not spec_dir.is_absolute():
@@ -2559,13 +2593,14 @@ class SquadController:
         updates[pass_key] = bool(report["ok"])
         if report["ok"]:
             updates[attempts_key] = 0
-            return
+            return updates
 
         try:
             previous_attempts = int(state.get(attempts_key, 0))
         except (TypeError, ValueError):
             previous_attempts = 0
         updates[attempts_key] = max(0, previous_attempts) + 1
+        return updates
 
     def _validate_governance_structural_artifact(
         self,
@@ -2632,12 +2667,12 @@ class SquadController:
             "findings": findings,
         }
 
-    def _governance_gate_must_stop_on_exhaustion(
+    def _governance_exhaustion_enrichment(
         self,
         node: PhaseNode,
         state: dict,
-        result: SquadAgentResult,
-    ) -> bool:
+        controller_updates: Mapping[str, object],
+    ) -> tuple[dict[str, object], str | None]:
         gate_fields = {
             "phase2-decide": (
                 "feasibility",
@@ -2651,168 +2686,325 @@ class SquadController:
             ),
         }.get(node.id)
         if gate_fields is None:
-            return False
+            return {}, None
         artifact_key, pass_key, attempts_key = gate_fields
         governance = self._governance_config().get("governance", {})
-        if not isinstance(governance, dict) or result.state_updates.get(pass_key) is True:
-            return False
+        if (
+            not isinstance(governance, dict)
+            or controller_updates.get(pass_key) is True
+        ):
+            return {}, None
         try:
             repair_cap = int(governance.get("max_repair_attempts", 3))
         except (TypeError, ValueError):
             repair_cap = 3
         try:
-            attempts = int(result.state_updates.get(attempts_key, state.get(attempts_key, 0)))
+            attempts = int(
+                controller_updates.get(
+                    attempts_key,
+                    state.get(attempts_key, 0),
+                )
+            )
         except (TypeError, ValueError):
             attempts = 0
         iterations_exhausted = int(state.get("iteration") or 0) >= int(
             state.get("max_iterations") or self._max_iterations
         )
         if not ((repair_cap > 0 and attempts >= repair_cap) or iterations_exhausted):
-            return False
+            return {}, None
 
-        result.state_updates["governance_gate_exhausted"] = artifact_key
+        updates = {"governance_gate_exhausted": artifact_key}
         if str(governance.get("on_exhausted") or "warn").lower() != "block":
-            return False
+            return updates, None
 
-        exhausted = self._state_store.load()
-        exhausted["phase"] = PHASE_TERMINAL_BLOCKED
-        exhausted["status"] = "blocked"
-        exhausted["blocked_reason"] = "governance_gate_exhausted"
-        exhausted["governance_gate_exhausted"] = artifact_key
-        self._state_store.save(exhausted)
-        return True
+        return updates, PHASE_TERMINAL_BLOCKED
 
-    def _evaluate_transitions(
-        self, node: PhaseNode, result: SquadAgentResult
-    ) -> str:
-        state = self._state_store.load()
-        if node.id in WHY_PHASES:
-            self._normalize_why_result_quality_scores(result)
-        self._enforce_governance_structural_gate_result(node, state, result)
-        if self._lexicon_gate_must_block_on_exhaustion(node, state, result):
-            return PHASE_TERMINAL_BLOCKED
-        if self._governance_gate_must_stop_on_exhaustion(node, state, result):
-            return PHASE_TERMINAL_BLOCKED
-        # Merge order (lowest→highest precedence): lexicon_gate config, governance
-        # config, then state, then result.state_updates — so freshly-written values
-        # (quality_scores, lexicon_pass, etc.) win, while config-namespace
-        # keys (lexicon_gate.*, governance.*) the self-loop guards reference resolve.
-        eval_state = {**self._lexicon_gate_config(), **self._governance_config(), **state, **(result.state_updates or {})}
-
-        # ── WHY fail tracking + consecutive-fail safety net ──────────────────
-        if node.id in WHY_PHASES:
-            # Early escalation detection: agent explicitly signalled user-gated
-            # CRITICAL issues via escalation_question in state_updates.  Handle
-            # here before condition evaluation so empty quality_scores don't cause
-            # COMMANDER to be dispatched as a routing judge instead.
-            escalation_q = (result.state_updates or {}).get("escalation_question")
-            if escalation_q:
-                s = self._state_store.load()
-                s["escalation_question"] = escalation_q
-                s["blocked_reason"] = (result.state_updates or {}).get(
-                    "blocked_reason", "WHY phase: agent escalation"
-                )
-                s["status"] = "blocked"
-                self._state_store.save(s)
-                return node.id  # stay at current phase; inline loop check handles escalation
-
-            # WHY phases return verdict: FAIL without quality_scores by design
-            # (COMMANDER NEVER rule #8).  Inject a synthetic score derived from
-            # result.verdict so quality_gates conditions evaluate correctly,
-            # preventing COMMANDER from being dispatched as a routing judge.
-            if not eval_state.get("quality_scores"):
-                verdict_upper = (result.verdict or "").upper()
-                if verdict_upper in ("FAIL", "BLOCKED"):
-                    eval_state["quality_scores"] = [{"pass": False}]
-                elif verdict_upper in ("DONE", "COMPLETE", "PASS"):
-                    eval_state["quality_scores"] = [{"pass": True}]
-
-            verdict_upper = (result.verdict or "").upper()
-            is_fail = (
-                self._evaluator.evaluate("quality_gates.fail", eval_state, result)
-                is True
-                or verdict_upper in ("FAIL", "BLOCKED")
+    def _controller_enrichment(
+        self,
+        node: PhaseNode,
+        state: Mapping[str, object],
+        result: SquadAgentResult,
+    ) -> ControllerEnrichment:
+        """Build controller-owned updates without mutating result or state."""
+        state_copy = deepcopy(dict(state))
+        updates = self._governance_structural_gate_updates(
+            node,
+            state_copy,
+            result,
+        )
+        governance_updates, governance_override = (
+            self._governance_exhaustion_enrichment(
+                node,
+                state_copy,
+                updates,
             )
-            if is_fail:
-                fail_count = self._state_store.increment_why_fail_count()
-                if fail_count >= 2 and not state.get("escalation_question"):
-                    last_ts = (state.get("last_dispatch") or {}).get("completed_at")
-                    if not self._phase_artifacts_changed_since(last_ts):
-                        print(
-                            f"[squad] ✗ consecutive-fail guard: {fail_count} {node.id} FAILs "
-                            f"with no artifact progress — forcing escalation",
-                            flush=True,
-                        )
-                        s = self._state_store.load()
-                        s["escalation_question"] = (
-                            f"Auto-detected: {fail_count} consecutive {node.id} FAILs "
-                            f"with no artifact progress. User input or banzai COMMANDER "
-                            f"judgment required before continuing."
-                        )
-                        s["blocked_reason"] = "consecutive_why_fails"
-                        s["status"] = "blocked"
-                        self._state_store.save(s)
-                        self._record_blocker_event(node.id, "consecutive_why_fails")
-                        return PHASE_TERMINAL_BLOCKED
-            else:
-                self._state_store.reset_why_fail_count()
-        # ── end WHY tracking ─────────────────────────────────────────────────
+        )
+        updates.update(governance_updates)
+        lexicon_updates, lexicon_override = self._lexicon_gate_enrichment(
+            node,
+            state_copy,
+            result,
+        )
+        updates.update(lexicon_updates)
+        return ControllerEnrichment(
+            updates=updates,
+            routing_override=governance_override or lexicon_override,
+            controller_owns_result_updates=node.type
+            in {"deterministic_lexicon", "deterministic_understanding"},
+        )
 
-        for transition in node.transitions:
+    def _prepare_phase_result(
+        self,
+        node: PhaseNode,
+        result: SquadAgentResult,
+    ) -> PreparedPhaseResult:
+        """Prepare one detached executor result for routing and persistence."""
+        candidate = deepcopy(result)
+        if node.id in WHY_PHASES:
+            self._normalize_why_result_quality_scores(candidate)
+        enrichment = self._controller_enrichment(
+            node,
+            self._state_store.load(),
+            candidate,
+        )
+        return prepare_phase_result(
+            node,
+            candidate,
+            controller_updates=dict(enrichment.updates),
+            routing_override=enrichment.routing_override,
+            controller_owns_result_updates=(
+                enrichment.controller_owns_result_updates
+            ),
+        )
+
+    @staticmethod
+    def _with_why_verdict_quality_fallback(
+        node: PhaseNode,
+        result: SquadAgentResult,
+        eval_state: dict[str, object],
+    ) -> None:
+        if node.id not in WHY_PHASES or eval_state.get("quality_scores"):
+            return
+        verdict_upper = (result.verdict or "").upper()
+        if verdict_upper in ("FAIL", "BLOCKED"):
+            eval_state["quality_scores"] = [{"pass": False}]
+        elif verdict_upper in ("DONE", "COMPLETE", "PASS"):
+            eval_state["quality_scores"] = [{"pass": True}]
+
+    def _transition_evaluation_inputs(
+        self,
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+    ) -> tuple[SquadAgentResult, dict, dict[str, object]]:
+        result = prepared.as_squad_agent_result()
+        state = self._state_store.load()
+        # Merge order (lowest→highest precedence): controller config, persisted
+        # state, then the prepared canonical updates.
+        eval_state: dict[str, object] = {
+            **self._lexicon_gate_config(),
+            **self._governance_config(),
+            **state,
+            **prepared.state_updates,
+        }
+        self._with_why_verdict_quality_fallback(node, result, eval_state)
+        return result, state, eval_state
+
+    def _evaluate_transition_conditions(
+        self,
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+        *,
+        start_index: int = 0,
+    ) -> str:
+        result, _state, eval_state = self._transition_evaluation_inputs(
+            node,
+            prepared,
+        )
+        for index, transition in enumerate(
+            node.transitions[start_index:],
+            start=start_index,
+        ):
             condition = transition.get("condition", "always")
-            evaluation = self._evaluator.evaluate(condition, eval_state, result)
+            evaluation = self._evaluator.evaluate(
+                condition,
+                eval_state,
+                result,
+            )
             if evaluation is True:
                 return transition["to"]
             if evaluation is None:
+                raise _TransitionJudgmentRequired(condition, index)
+        return "DONE"
+
+    def _evaluate_transitions(
+        self,
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+    ) -> str:
+        """Select a route without mutating the prepared payload or state."""
+        if not isinstance(prepared, PreparedPhaseResult):
+            raise TypeError(
+                "_evaluate_transitions requires PreparedPhaseResult"
+            )
+        if prepared.routing_override:
+            return prepared.routing_override
+        return self._evaluate_transition_conditions(node, prepared)
+
+    def _coordinate_why_transition_state(
+        self,
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+    ) -> str | None:
+        """Apply WHY fail tracking before invoking the read-only evaluator."""
+        if node.id not in WHY_PHASES:
+            return None
+
+        result, state, eval_state = self._transition_evaluation_inputs(
+            node,
+            prepared,
+        )
+        escalation_q = prepared.state_updates.get("escalation_question")
+        if escalation_q:
+            current = self._state_store.load()
+            current["escalation_question"] = escalation_q
+            current["blocked_reason"] = prepared.state_updates.get(
+                "blocked_reason",
+                "WHY phase: agent escalation",
+            )
+            current["status"] = "blocked"
+            self._state_store.save(current)
+            return node.id
+
+        verdict_upper = (result.verdict or "").upper()
+        is_fail = (
+            self._evaluator.evaluate(
+                "quality_gates.fail",
+                eval_state,
+                result,
+            )
+            is True
+            or verdict_upper in ("FAIL", "BLOCKED")
+        )
+        if not is_fail:
+            self._state_store.reset_why_fail_count()
+            return None
+
+        fail_count = self._state_store.increment_why_fail_count()
+        if fail_count < 2 or state.get("escalation_question"):
+            return None
+        last_ts = (state.get("last_dispatch") or {}).get("completed_at")
+        if self._phase_artifacts_changed_since(last_ts):
+            return None
+
+        print(
+            f"[squad] ✗ consecutive-fail guard: {fail_count} {node.id} "
+            "FAILs with no artifact progress — forcing escalation",
+            flush=True,
+        )
+        current = self._state_store.load()
+        current["escalation_question"] = (
+            f"Auto-detected: {fail_count} consecutive {node.id} FAILs "
+            "with no artifact progress. User input or banzai COMMANDER "
+            "judgment required before continuing."
+        )
+        current["blocked_reason"] = "consecutive_why_fails"
+        current["status"] = "blocked"
+        self._state_store.save(current)
+        self._record_blocker_event(node.id, "consecutive_why_fails")
+        return PHASE_TERMINAL_BLOCKED
+
+    def _persist_controller_routing_override(
+        self,
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+    ) -> None:
+        """Persist terminal controller state outside enrichment/evaluation."""
+        if prepared.routing_override != PHASE_TERMINAL_BLOCKED:
+            return
+        state = self._state_store.load()
+        state["phase"] = PHASE_TERMINAL_BLOCKED
+        state["status"] = "blocked"
+        governance_artifact = prepared.state_updates.get(
+            "governance_gate_exhausted"
+        )
+        if governance_artifact:
+            state["blocked_reason"] = "governance_gate_exhausted"
+            state["governance_gate_exhausted"] = governance_artifact
+        elif node.id == "phase1-lexicon":
+            state["blocked_reason"] = "lexicon_gate_exhausted"
+            state["lexicon_gate_exhausted"] = True
+        self._state_store.save(state)
+
+    def _coordinate_transition_routing(
+        self,
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+    ) -> str:
+        """Coordinate stateful routing policy around the read-only evaluator."""
+        if prepared.routing_override:
+            next_phase = self._evaluate_transitions(node, prepared)
+            self._persist_controller_routing_override(node, prepared)
+            return next_phase
+
+        why_override = self._coordinate_why_transition_state(node, prepared)
+        if why_override:
+            return why_override
+
+        start_index = 0
+        while True:
+            try:
+                if start_index == 0:
+                    return self._evaluate_transitions(node, prepared)
+                return self._evaluate_transition_conditions(
+                    node,
+                    prepared,
+                    start_index=start_index,
+                )
+            except _TransitionJudgmentRequired as unresolved:
+                result = prepared.as_squad_agent_result()
                 judgment = self._judgment_dispatch(
-                    f"Cannot evaluate condition {condition!r} in phase {node.id!r}",
+                    f"Cannot evaluate condition {unresolved.condition!r} "
+                    f"in phase {node.id!r}",
                     node,
                     result,
                 )
-                if not self._ensure_judgment_state_updates_allowed(judgment, node.id):
+                if not self._ensure_judgment_state_updates_allowed(
+                    judgment,
+                    node.id,
+                ):
                     return PHASE_TERMINAL_BLOCKED
-                # Accept either "next_phase" or "phase" as the routing key.
                 next_phase = (
                     judgment.state_updates.get("next_phase")
                     or judgment.state_updates.get("phase")
                 )
-                # Hard-validate: next_phase must exist in the phase graph.
-                # Reject hallucinated phase names rather than silently routing
-                # to a non-existent phase or falling through to DONE.
                 valid_phases = self._graph.all_phase_ids()
                 if next_phase and next_phase not in valid_phases:
                     print(
-                        f"[squad] ✗ judgment returned invalid phase {next_phase!r} "
-                        f"— not in phase graph. Blocking.",
+                        f"[squad] ✗ judgment returned invalid phase "
+                        f"{next_phase!r} — not in phase graph. Blocking.",
                         flush=True,
                     )
                     self._state_store.set_blocked(
                         f"judgment returned invalid next_phase {next_phase!r}"
                     )
                     return PHASE_TERMINAL_BLOCKED
-                # Apply judgment state_updates (e.g. iteration increment) now —
-                # advance() only applies the executor result's state_updates.
                 routing_keys = {"next_phase", "phase"}
                 extra = {
-                    k: v for k, v in judgment.state_updates.items()
-                    if k not in routing_keys
+                    key: value
+                    for key, value in judgment.state_updates.items()
+                    if key not in routing_keys
                 }
-                if extra:
-                    if not self._apply_judgment_state_updates(
-                        judgment,
-                        node.id,
-                        exclude_keys=routing_keys,
-                    ):
-                        return PHASE_TERMINAL_BLOCKED
-                # If this judgment blocked the run (e.g. COMMANDER set
-                # status=blocked after reading SAGE artifacts), stop evaluating
-                # further transitions — continuing would let a second COMMANDER
-                # override the blocked state with a forward route.
+                if extra and not self._apply_judgment_state_updates(
+                    judgment,
+                    node.id,
+                    exclude_keys=routing_keys,
+                ):
+                    return PHASE_TERMINAL_BLOCKED
                 if self._state_store.load().get("status") == "blocked":
                     return node.id
                 if next_phase:
-                    return next_phase
-        return "DONE"
+                    return str(next_phase)
+                start_index = unresolved.transition_index + 1
 
     def _dispatch_reason(self, phase: str, attempt: int) -> str:
         """Choose telemetry reason from controller state, never model output."""

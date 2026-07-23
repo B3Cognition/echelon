@@ -39,13 +39,23 @@ def _route_tracker_verdict(tmp_path: Path, phase_id: str, verdict: str) -> str:
         exit_code=0,
         echelon_result={
             "verdict": verdict,
-            "state_updates": {"intent_alignment_check_structural_pass": True},
+            "state_updates": (
+                {
+                    "status": "blocked",
+                    "blocked_reason": "tracker requested clarification",
+                    "escalation_question": "Should the tracker proceed?",
+                }
+                if verdict == "STOP_AND_ASK"
+                else {}
+            ),
         },
         raw_output="",
         duration_ms=0,
         timed_out=False,
     )
-    return ctrl._evaluate_transitions(graph.get(phase_id), result)
+    node = graph.get(phase_id)
+    prepared = ctrl._prepare_phase_result(node, result)
+    return ctrl._evaluate_transitions(node, prepared)
 
 
 def _route_phase2_tracker_verdict(tmp_path: Path, verdict: str) -> str:

@@ -69,13 +69,19 @@ def _runtime_route(tmp_path, state_updates, *, iteration=0):
         duration_ms=0,
         timed_out=False,
     )
-    assert ctrl._evaluate_transitions(
-        graph.get("phase3-consensus"),
+    consensus = graph.get("phase3-consensus")
+    consensus_prepared = ctrl._prepare_phase_result(
+        consensus,
         consensus_result,
-    ) == "phase3-consensus-tasks-lexicon"
+    )
+    assert (
+        ctrl._evaluate_transitions(consensus, consensus_prepared)
+        == "phase3-consensus-tasks-lexicon"
+    )
     gate = graph.get("phase3-consensus-tasks-lexicon")
     gate_result = ctrl._executors["deterministic_lexicon"].execute(gate, store)
-    return ctrl._evaluate_transitions(gate, gate_result)
+    gate_prepared = ctrl._prepare_phase_result(gate, gate_result)
+    return ctrl._evaluate_transitions(gate, gate_prepared)
 
 
 @pytest.mark.unit

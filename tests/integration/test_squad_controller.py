@@ -8,6 +8,7 @@ import sys
 import json
 import hashlib
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -126,6 +127,28 @@ def _disable_governance_gate(tmp_path: Path) -> None:
     prefix = f"{existing}\n" if existing else ""
     config_path.write_text(
         f"{prefix}governance:\n  enabled: false\n", encoding="utf-8"
+    )
+
+
+def _evaluate_prepared_result(
+    ctrl: SquadController,
+    node: PhaseNode,
+    result: SquadAgentResult,
+) -> str:
+    return ctrl._evaluate_transitions(
+        node,
+        ctrl._prepare_phase_result(node, result),
+    )
+
+
+def _coordinate_prepared_result(
+    ctrl: SquadController,
+    node: PhaseNode,
+    result: SquadAgentResult,
+) -> str:
+    return ctrl._coordinate_transition_routing(
+        node,
+        ctrl._prepare_phase_result(node, result),
     )
 
 
@@ -1103,7 +1126,7 @@ class TestSquadControllerBasics:
         )
         assert result.state_updates == {}
         assert "quality_scores" in result.quarantined_state_updates
-        next_phase = ctrl._evaluate_transitions(node, result)
+        next_phase = _coordinate_prepared_result(ctrl, node, result)
         store.advance(
             "phase1-why2",
             next_phase,
@@ -1139,7 +1162,7 @@ class TestSquadControllerBasics:
             timed_out=False,
         )
 
-        next_phase = ctrl._evaluate_transitions(
+        next_phase = _coordinate_prepared_result(ctrl,
             ctrl._graph.get("phase1-why2"),
             result,
         )
@@ -1273,7 +1296,7 @@ class TestSquadControllerBasics:
             exit_code=0,
             echelon_result={
                 "verdict": "FAIL",
-                "state_updates": {"quality_scores": [{"pass": False}]},
+                "state_updates": {},
             },
             raw_output="",
             duration_ms=0,
@@ -1292,7 +1315,7 @@ class TestSquadControllerBasics:
         store.save(state)
 
         node = ctrl._graph.get("phase1-why2")
-        next_phase = ctrl._evaluate_transitions(node, result)
+        next_phase = _coordinate_prepared_result(ctrl, node, result)
 
         assert next_phase == "phase1-what"
         assert store.load().get("escalation_question") is None
@@ -1695,12 +1718,12 @@ class TestConsensusAcceptWithRiskRouting:
             duration_ms=0,
             timed_out=False,
         )
-        assert ctrl._evaluate_transitions(
+        assert _evaluate_prepared_result(ctrl,
             ctrl._graph.get("phase3-consensus"), consensus_result
         ) == "phase3-consensus-tasks-lexicon"
         gate = ctrl._graph.get("phase3-consensus-tasks-lexicon")
         gate_result = ctrl._executors["deterministic_lexicon"].execute(gate, store)
-        assert ctrl._evaluate_transitions(gate, gate_result) == "phase1-what"
+        assert _evaluate_prepared_result(ctrl, gate, gate_result) == "phase1-what"
 
     def test_accept_with_risk_can_override_feasibility_rejection_only(self, tmp_path):
         _disable_lexicon_gate(tmp_path)
@@ -1727,12 +1750,12 @@ class TestConsensusAcceptWithRiskRouting:
             duration_ms=0,
             timed_out=False,
         )
-        assert ctrl._evaluate_transitions(
+        assert _evaluate_prepared_result(ctrl,
             ctrl._graph.get("phase3-consensus"), consensus_result
         ) == "phase3-consensus-tasks-lexicon"
         gate = ctrl._graph.get("phase3-consensus-tasks-lexicon")
         gate_result = ctrl._executors["deterministic_lexicon"].execute(gate, store)
-        assert ctrl._evaluate_transitions(gate, gate_result) == "checkpoint-plan"
+        assert _evaluate_prepared_result(ctrl, gate, gate_result) == "checkpoint-plan"
 
 
 class TestBuildPhaseRouting:
@@ -2246,7 +2269,7 @@ class TestCommanderJudgmentStateUpdates:
         )
         ctrl, store = _controller(tmp_path, provider=provider)
 
-        next_phase = ctrl._evaluate_transitions(
+        next_phase = _coordinate_prepared_result(ctrl,
             self._ambiguous_node(),
             self._phase_result(),
         )
@@ -2277,7 +2300,7 @@ class TestCommanderJudgmentStateUpdates:
         )
         ctrl, store = _controller(tmp_path, provider=provider)
 
-        next_phase = ctrl._evaluate_transitions(
+        next_phase = _coordinate_prepared_result(ctrl,
             self._ambiguous_node(),
             self._phase_result(),
         )
@@ -2550,11 +2573,11 @@ class TestGovernanceConfigMerge:
             "_judgment_dispatch",
             side_effect=AssertionError("disabled tasks gate dispatched COMMANDER"),
         ):
-            assert ctrl._evaluate_transitions(node, result) == "phase3-tasks-lexicon"
+            assert _evaluate_prepared_result(ctrl, node, result) == "phase3-tasks-lexicon"
             gate = ctrl._graph.get("phase3-tasks-lexicon")
             gate_result = ctrl._executors["deterministic_lexicon"].execute(gate, store)
             assert gate_result.state_updates["tasks_lexicon_action"] == "proceed"
-            assert ctrl._evaluate_transitions(gate, gate_result) == "phase3-understanding"
+            assert _evaluate_prepared_result(ctrl, gate, gate_result) == "phase3-understanding"
 
 
 class TestStructuralGuardDeterminism:
@@ -2593,9 +2616,7 @@ class TestStructuralGuardDeterminism:
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
         with patch.object(ctrl, "_judgment_dispatch",
                           side_effect=AssertionError("guard punted to COMMANDER")):
-            nxt = ctrl._evaluate_transitions(
-                node, self._result({"feasibility_structural_pass": False})
-            )
+            nxt = _evaluate_prepared_result(ctrl, node, self._result({}))
         assert nxt == "phase2-decide"
 
     def test_omitted_feasibility_structural_result_does_not_fail_open(self, tmp_path):
@@ -2616,7 +2637,7 @@ class TestStructuralGuardDeterminism:
 
         with patch.object(ctrl, "_judgment_dispatch",
                           side_effect=AssertionError("guard punted to COMMANDER")):
-            nxt = ctrl._evaluate_transitions(node, result)
+            nxt = _evaluate_prepared_result(ctrl, node, result)
 
         assert nxt == "phase2-decide"
 
@@ -2638,7 +2659,7 @@ class TestStructuralGuardDeterminism:
 
         with patch.object(ctrl, "_judgment_dispatch",
                           side_effect=AssertionError("guard punted to COMMANDER")):
-            nxt = ctrl._evaluate_transitions(node, result)
+            nxt = _evaluate_prepared_result(ctrl, node, result)
 
         assert nxt == "phase2-tracker-alignment"
 
@@ -2656,11 +2677,13 @@ class TestStructuralGuardDeterminism:
         })
         store.save(state)
 
-        result = self._result({"feasibility_structural_pass": True})
-        assert ctrl._evaluate_transitions(node, result) == "phase2-decide"
-        assert result.state_updates["feasibility_structural_pass"] is False
+        result = self._result({})
+        prepared = ctrl._prepare_phase_result(node, result)
+        assert ctrl._evaluate_transitions(node, prepared) == "phase2-decide"
+        assert result.state_updates == {}
+        assert prepared.state_updates["feasibility_structural_pass"] is False
         report = json.loads(
-            Path(result.state_updates["feasibility_structural_report"]).read_text(
+            Path(prepared.state_updates["feasibility_structural_report"]).read_text(
                 encoding="utf-8"
             )
         )
@@ -2692,14 +2715,16 @@ class TestStructuralGuardDeterminism:
             exit_code=0,
             echelon_result={
                 "verdict": "PASS",
-                "state_updates": {"feasibility_structural_pass": False},
+                "state_updates": {},
             },
             raw_output="",
             duration_ms=0,
             timed_out=False,
         )
-        assert ctrl._evaluate_transitions(node, result) == "phase2-strategic-overview"
-        assert result.state_updates["feasibility_structural_pass"] is True
+        prepared = ctrl._prepare_phase_result(node, result)
+        assert ctrl._evaluate_transitions(node, prepared) == "phase2-strategic-overview"
+        assert result.state_updates == {}
+        assert prepared.state_updates["feasibility_structural_pass"] is True
 
     def test_governance_warn_exhaustion_is_explicit(self, tmp_path):
         ctrl, store = _controller(tmp_path)
@@ -2723,8 +2748,10 @@ class TestStructuralGuardDeterminism:
             duration_ms=0,
             timed_out=False,
         )
-        assert ctrl._evaluate_transitions(node, result) == "phase2-strategic-overview"
-        assert result.state_updates["governance_gate_exhausted"] == "feasibility"
+        prepared = ctrl._prepare_phase_result(node, result)
+        assert ctrl._evaluate_transitions(node, prepared) == "phase2-strategic-overview"
+        assert prepared.state_updates["governance_gate_exhausted"] == "feasibility"
+        assert "governance_gate_exhausted" not in result.state_updates
 
     def test_governance_block_exhaustion_stops_pipeline(self, tmp_path):
         config_dir = tmp_path / ".echelon"
@@ -2756,8 +2783,97 @@ class TestStructuralGuardDeterminism:
             duration_ms=0,
             timed_out=False,
         )
-        assert ctrl._evaluate_transitions(node, result) == "terminal-blocked"
+        assert _coordinate_prepared_result(ctrl, node, result) == "terminal-blocked"
         assert store.load()["blocked_reason"] == "governance_gate_exhausted"
+
+    def test_governance_enrichment_does_not_mutate_provider_result(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase2-decide")
+        provider_result = self._result({"status": "blocked"})
+        original = deepcopy(provider_result.echelon_result)
+
+        enrichment = ctrl._controller_enrichment(
+            node,
+            store.load(),
+            provider_result,
+        )
+
+        assert provider_result.echelon_result == original
+        assert "feasibility_structural_pass" in enrichment.updates
+        assert enrichment.controller_owns_result_updates is False
+
+    def test_governance_hard_exhaustion_is_an_unpersisted_routing_override(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        config_dir = tmp_path / ".echelon"
+        config_dir.mkdir()
+        (config_dir / "config.yml").write_text(
+            "governance:\n"
+            "  enabled: true\n"
+            "  max_repair_attempts: 1\n"
+            "  on_exhausted: block\n",
+            encoding="utf-8",
+        )
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase2-decide")
+        before_state = store.load()
+        provider_result = self._result({})
+        original = deepcopy(provider_result.echelon_result)
+
+        enrichment = ctrl._controller_enrichment(
+            node,
+            before_state,
+            provider_result,
+        )
+
+        assert enrichment.routing_override == "terminal-blocked"
+        assert enrichment.updates["governance_gate_exhausted"] == "feasibility"
+        assert store.load() == before_state
+        assert provider_result.echelon_result == original
+
+
+class TestPreparedTransitionBoundary:
+    def test_transition_evaluation_does_not_mutate_prepared_result_or_state(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        _disable_lexicon_gate(tmp_path)
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase3-tasks-lexicon",
+            max_iterations=5,
+        )
+        node = ctrl._graph.get("phase3-tasks-lexicon")
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {
+                    "tasks_lexicon_action": "proceed",
+                    "tasks_lexicon_pass": True,
+                    "tasks_lexicon_attempts": 0,
+                    "tasks_lexicon_findings": 0,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        prepared = ctrl._prepare_phase_result(node, result)
+        before_state = store.load()
+        before_payload = prepared.echelon_result
+
+        assert ctrl._evaluate_transitions(node, prepared) == "phase3-understanding"
+        assert store.load() == before_state
+        assert prepared.echelon_result == before_payload
 
 
 class TestProductInputMappingRepair:
@@ -3145,7 +3261,7 @@ THEN: The dashboard is visible
         result = self._result({})
         with patch.object(ctrl, "_judgment_dispatch",
                           side_effect=AssertionError("guard punted to COMMANDER — not deterministic")):
-            nxt = ctrl._evaluate_transitions(node, result)
+            nxt = _evaluate_prepared_result(ctrl, node, result)
 
         assert nxt == "phase3-tasks-lexicon"
         assert result.state_updates == {}
@@ -3172,7 +3288,7 @@ THEN: The dashboard is visible
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
         with patch.object(ctrl, "_judgment_dispatch",
                           side_effect=AssertionError("gate punted to COMMANDER")):
-            nxt = ctrl._evaluate_transitions(node, result)
+            nxt = _evaluate_prepared_result(ctrl, node, result)
 
         provider.exec_agent.assert_not_called()
         assert nxt == "phase3-plan"
@@ -3204,7 +3320,7 @@ THEN: The dashboard is visible
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
         with patch.object(ctrl, "_judgment_dispatch",
                           side_effect=AssertionError("gate punted to COMMANDER")):
-            nxt = ctrl._evaluate_transitions(node, result)
+            nxt = _evaluate_prepared_result(ctrl, node, result)
 
         provider.exec_agent.assert_not_called()
         assert nxt == "phase3-understanding"
@@ -3234,7 +3350,7 @@ THEN: The dashboard is visible
 
         consensus_result = self._result({})
         assert (
-            ctrl._evaluate_transitions(consensus, consensus_result)
+            _evaluate_prepared_result(ctrl, consensus, consensus_result)
             == "phase3-consensus-tasks-lexicon"
         )
         assert consensus_result.state_updates == {}
@@ -3245,7 +3361,7 @@ THEN: The dashboard is visible
             "_judgment_dispatch",
             side_effect=AssertionError("post-PLAN2 tasks gate punted to COMMANDER"),
         ):
-            nxt = ctrl._evaluate_transitions(node, result)
+            nxt = _evaluate_prepared_result(ctrl, node, result)
 
         provider.exec_agent.assert_not_called()
         assert nxt == "phase3-plan"
@@ -3270,7 +3386,7 @@ THEN: The dashboard is visible
         store.save(state)
 
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
-        assert ctrl._evaluate_transitions(node, result) == "phase3-plan"
+        assert _evaluate_prepared_result(ctrl, node, result) == "phase3-plan"
         report = json.loads(
             Path(result.state_updates["tasks_lexicon_report"]).read_text(encoding="utf-8")
         )
@@ -3294,7 +3410,7 @@ THEN: The dashboard is visible
         store.save(state)
 
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
-        assert ctrl._evaluate_transitions(node, result) == "phase3-plan"
+        assert _evaluate_prepared_result(ctrl, node, result) == "phase3-plan"
         report = json.loads(
             Path(result.state_updates["tasks_lexicon_report"]).read_text(encoding="utf-8")
         )
@@ -3322,7 +3438,7 @@ THEN: The dashboard is visible
             "_judgment_dispatch",
             side_effect=AssertionError("missing Lexicon result punted to COMMANDER"),
         ):
-            nxt = ctrl._evaluate_transitions(node, self._result({}))
+            nxt = _evaluate_prepared_result(ctrl, node, self._result({}))
 
         assert nxt == "phase1-lexicon"
 
@@ -3351,7 +3467,7 @@ THEN: The dashboard is visible
             "_judgment_dispatch",
             side_effect=AssertionError("missing artifact punted to COMMANDER"),
         ):
-            nxt = ctrl._evaluate_transitions(node, result)
+            nxt = _evaluate_prepared_result(ctrl, node, result)
 
         assert nxt == "phase1-what"
         assert "lexicon_pass" not in result.state_updates
@@ -3414,7 +3530,7 @@ THEN: The dashboard is visible
         store.save(state)
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
 
-        nxt = ctrl._evaluate_transitions(node, result)
+        nxt = _evaluate_prepared_result(ctrl, node, result)
 
         assert nxt == "phase1-understanding"
         assert result.state_updates["lexicon_evaluation"] == "passed"
@@ -3443,7 +3559,7 @@ THEN: The dashboard is visible
         store.save(state)
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
 
-        assert ctrl._evaluate_transitions(node, result) == "phase1-what"
+        assert _evaluate_prepared_result(ctrl, node, result) == "phase1-what"
         assert result.state_updates["lexicon_evaluation"] == "failed"
         assert result.state_updates["lexicon_pass"] is False
         assert result.state_updates["lexicon_findings"] > 0
@@ -3498,7 +3614,7 @@ THEN: The dashboard is visible
         store.save(state)
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
 
-        assert ctrl._evaluate_transitions(node, result) == "phase1-what"
+        assert _evaluate_prepared_result(ctrl, node, result) == "phase1-what"
         report = json.loads(
             Path(result.state_updates["lexicon_report"]).read_text(encoding="utf-8")
         )
@@ -3531,7 +3647,8 @@ THEN: The dashboard is visible
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
 
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
-        nxt = ctrl._evaluate_transitions(node, result)
+        prepared = ctrl._prepare_phase_result(node, result)
+        nxt = ctrl._coordinate_transition_routing(node, prepared)
 
         assert nxt == "terminal-blocked"
         state = store.load()
@@ -3565,22 +3682,24 @@ THEN: The dashboard is visible
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
 
+        prepared = ctrl._prepare_phase_result(node, result)
         with patch.object(
             ctrl,
             "_judgment_dispatch",
             side_effect=AssertionError("pending Lexicon state punted to COMMANDER"),
         ):
-            nxt = ctrl._evaluate_transitions(node, result)
+            nxt = ctrl._evaluate_transitions(node, prepared)
 
         assert nxt == "phase1-understanding"
         assert result.state_updates["lexicon_evaluation"] == "pending"
         assert "lexicon_pass" not in result.state_updates
-        assert result.state_updates["lexicon_warning_waiver"] is True
+        assert prepared.state_updates["lexicon_warning_waiver"] is True
+        assert "lexicon_warning_waiver" not in result.state_updates
 
         store.advance(
             node.id,
             nxt,
-            result,
+            prepared.as_squad_agent_result(),
             allowed_state_update_keys=ctrl._advance_state_update_keys(node),
         )
         assert ctrl._guard_spec_lexicon_evidence(nxt) == "phase1-understanding"
@@ -3613,7 +3732,7 @@ THEN: The dashboard is visible
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
 
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
-        nxt = ctrl._evaluate_transitions(node, result)
+        nxt = _evaluate_prepared_result(ctrl, node, result)
 
         assert nxt == "phase1-what"
         assert result.state_updates["lexicon_evaluation"] == "pending"
