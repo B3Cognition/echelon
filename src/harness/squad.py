@@ -77,7 +77,9 @@ ITERATIVE_PHASES = WHY_PHASES | frozenset(
         "phase3-how",
         "phase3-sentinel",
         "phase3-plan",
+        "phase3-tasks-lexicon",
         "phase3-consensus",
+        "phase3-consensus-tasks-lexicon",
     }
 )
 

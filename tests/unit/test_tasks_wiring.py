@@ -12,15 +12,30 @@ def test_orchestrator_has_tasks_gate_mode():
 @pytest.mark.unit
 def test_phase3_plan_redispatch_transition():
     d = yaml.safe_load(pathlib.Path("extension/workflow/definition.yaml").read_text())
-    node = next(n for n in d["phases"] if n["id"] == "phase3-plan")
-    conds = " ".join(t.get("condition","") for t in node["transitions"])
-    assert "tasks_lexicon_pass" in conds and "NOT tasks_lexicon_pass" in conds
-    # Condition aligned to the proven phase1-what shape: the re-dispatch guard
-    # references only resolvable keys. The redundant config-namespace conjunct
-    # `lexicon_gate.artifacts.tasks.enabled` (which COMMANDER's state evaluator
-    # cannot resolve, making the guard indeterminate) must be dropped.
-    assert "lexicon_gate.enabled AND NOT tasks_lexicon_pass" in conds
-    assert "artifacts.tasks.enabled" not in conds
+    nodes = {node["id"]: node for node in d["phases"]}
+    assert nodes["phase3-plan"]["transitions"] == [
+        {"to": "phase3-tasks-lexicon", "condition": "always"}
+    ]
+    gate = nodes["phase3-tasks-lexicon"]
+    assert gate["type"] == "deterministic_lexicon"
+    assert gate["lexicon_artifact"] == "tasks"
+    assert gate["transitions"] == [
+        {
+            "to": "phase3-plan",
+            "condition": "tasks_lexicon_action = repair",
+            "action": "increment_iteration",
+        },
+        {
+            "to": "terminal-blocked",
+            "condition": "tasks_lexicon_action = block",
+        },
+        {
+            "to": "phase3-understanding",
+            "condition": (
+                "tasks_lexicon_action in [proceed, proceed_with_warning]"
+            ),
+        },
+    ]
 
 @pytest.mark.unit
 def test_phase3_plan_doc_declares_controller_owned_tasks_gate():
@@ -36,7 +51,18 @@ def test_phase3_plan_doc_declares_controller_owned_tasks_gate():
 @pytest.mark.unit
 def test_phase3_consensus_recertifies_plan2_tasks():
     d = yaml.safe_load(pathlib.Path("extension/workflow/definition.yaml").read_text())
-    node = next(n for n in d["phases"] if n["id"] == "phase3-consensus")
-    conds = " ".join(t.get("condition", "") for t in node["transitions"])
-    assert "lexicon_gate.enabled AND NOT tasks_lexicon_pass" in conds
-    assert "tasks_lexicon_pass" in node["controller_state_updates"]
+    nodes = {node["id"]: node for node in d["phases"]}
+    assert nodes["phase3-consensus"]["transitions"] == [
+        {
+            "to": "phase3-consensus-tasks-lexicon",
+            "condition": "always",
+        }
+    ]
+    gate = nodes["phase3-consensus-tasks-lexicon"]
+    assert gate["type"] == "deterministic_lexicon"
+    assert gate["lexicon_artifact"] == "tasks"
+    conds = " ".join(t.get("condition", "") for t in gate["transitions"])
+    assert "tasks_lexicon_action = repair" in conds
+    assert "tasks_lexicon_action = block" in conds
+    assert "why3-verdict = FAIL" in conds
+    assert "assess2-verdict = REJECTED" in conds
