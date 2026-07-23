@@ -299,16 +299,37 @@ def _render_product_input_context(state: dict) -> str:
     if isinstance(repair, dict):
         blockers = repair.get("blockers")
         if isinstance(blockers, list) and blockers:
+            is_phase_one_id_repair = repair.get("phase") == "phase1-what"
             lines.extend([
                 "",
                 "## Product Input Mapping Repair (Controller-Enforced)",
-                "The prior planning result did not resolve these ledger entries:",
+                "The prior result did not resolve these ledger entries:",
                 *[f"- {str(blocker)}" for blocker in blockers],
-                "Read PRODUCT_INPUT_TRACEABILITY before editing tasks.",
-                "Return one canonical product_input_updates entry for every unresolved unit, "
-                "with task_ids whose req= values intersect that unit's spec_ids.",
-                "Do not return COMPLETE while any listed unit remains open_question or conflict.",
             ])
+            if is_phase_one_id_repair:
+                invalid_ids = [
+                    str(value) for value in repair.get("invalid_input_unit_ids", [])
+                    if str(value).strip()
+                ]
+                valid_ids = [
+                    str(value) for value in repair.get("valid_requirement_ids", [])
+                    if str(value).strip()
+                ]
+                if invalid_ids:
+                    lines.append(f"Invalid IDs from the prior result: {', '.join(invalid_ids)}")
+                if valid_ids:
+                    lines.append(f"Only these canonical IDs may be used: {', '.join(valid_ids)}")
+                lines.extend([
+                    "Never derive an ID from a requirement label; copy it exactly from the allowlist above.",
+                    "Return only Phase 1 product_input_updates: use spec_ids for FR/AC mappings, with task_ids: [] and targets: [].",
+                ])
+            else:
+                lines.extend([
+                    "Read PRODUCT_INPUT_TRACEABILITY before editing tasks.",
+                    "Return one canonical product_input_updates entry for every unresolved unit, "
+                    "with task_ids whose req= values intersect that unit's spec_ids.",
+                    "Do not return COMPLETE while any listed unit remains open_question or conflict.",
+                ])
         candidates = repair.get("candidates")
         task_matrix = repair.get("task_requirement_matrix")
         if isinstance(candidates, list) or isinstance(task_matrix, list):

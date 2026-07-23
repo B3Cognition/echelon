@@ -90,9 +90,10 @@ MAX_CONVERGENCE_GUARD_FIRES = 3
 # Max dispatches of any single phase per run before forcing escalation.
 # WHY phases are governed separately by why_fail_count; this cap applies to all others.
 MAX_PHASE_DISPATCHES = 5
-# A planning agent gets the original pass plus two controller-directed repairs
-# to resolve its own product-input mapping omissions.  This is intentionally
-# bounded: the controller may demand evidence, but must never invent mappings.
+# An authoring or planning agent gets the original pass plus two
+# controller-directed repairs to resolve its own product-input mapping errors.
+# This is intentionally bounded: the controller may demand evidence, but must
+# never invent mappings.
 MAX_PRODUCT_INPUT_MAPPING_REPAIRS = 2
 PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION = 2
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
@@ -1794,6 +1795,12 @@ class SquadController:
         """Validate and persist agent proposals through the controller-owned ledger."""
         payload = result.echelon_result or {}
         updates = payload.get("product_input_updates")
+        # DISCOVER consumes requirement and reference material as evidence, but
+        # it does not own specification or task traceability.  Ignore an
+        # over-eager agent's ledger proposal here so an informative IN-REF-* ID
+        # cannot be misclassified as a requirement and terminate the run.
+        if phase == "phase1-discover":
+            return None
         state = self._state_store.load()
         metadata = state.get("product_inputs")
         if not isinstance(metadata, dict) or not metadata:
@@ -1877,14 +1884,14 @@ class SquadController:
         error: str,
         result: SquadAgentResult | None = None,
     ) -> bool:
-        """Re-dispatch PLAN with exact unresolved product-input evidence.
+        """Re-dispatch a phase with exact unresolved product-input evidence.
 
-        Product-input mappings are authored by ORCHESTRATOR, not inferred by the
-        controller.  A missing/invalid update therefore gets a bounded repair
-        pass with the ledger blockers injected into its prompt; only exhaustion
-        becomes a terminal block.
+        Product-input mappings are authored by agents, not inferred by the
+        controller. A missing or invalid update therefore gets a bounded repair
+        pass with controller-derived evidence; only exhaustion becomes a
+        terminal block.
         """
-        if phase not in {"phase3-plan", "phase3-consensus"}:
+        if phase not in {"phase1-what", "phase3-plan", "phase3-consensus"}:
             return False
         prefixes = (
             "invalid product input task mappings:",
@@ -1923,7 +1930,36 @@ class SquadController:
         payload = result.echelon_result if result is not None else None
         updates = payload.get("product_input_updates") if isinstance(payload, dict) else None
         active_spec_dir = self._active_phase_a_spec_dir(state)
-        if isinstance(updates, list) and active_spec_dir is not None:
+        if phase == "phase1-what":
+            metadata = state.get("product_inputs")
+            traceability_ref = (
+                str(metadata.get("traceability") or "").strip()
+                if isinstance(metadata, dict)
+                else ""
+            )
+            if traceability_ref:
+                traceability_path = Path(traceability_ref)
+                if not traceability_path.is_absolute():
+                    traceability_path = self._project_root / traceability_path
+                try:
+                    ledger = json.loads(traceability_path.read_text(encoding="utf-8"))
+                    requirements = ledger.get("requirements") if isinstance(ledger, dict) else []
+                    valid_ids = [
+                        str(entry.get("input_unit_id"))
+                        for entry in requirements
+                        if isinstance(entry, dict) and str(entry.get("input_unit_id") or "").strip()
+                    ]
+                    invalid_ids = re.findall(
+                        r"unknown requirement unit ['\"]([^'\"]+)['\"]",
+                        error,
+                    )
+                    hints = {
+                        "invalid_input_unit_ids": invalid_ids,
+                        "valid_requirement_ids": valid_ids,
+                    }
+                except (OSError, json.JSONDecodeError) as exc:
+                    logger.warning("Could not construct phase-one product-input ID repair hints: %s", exc)
+        elif isinstance(updates, list) and active_spec_dir is not None:
             try:
                 from echelon.product_inputs import build_product_input_mapping_repair_hints
 
@@ -1942,6 +1978,7 @@ class SquadController:
         state["product_input_mapping_repair"] = {
             "attempt": attempts + 1,
             "blockers": blockers,
+            "phase": phase,
             "protocol_version": PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION,
             **hints,
         }

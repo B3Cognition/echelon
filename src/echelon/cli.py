@@ -7537,6 +7537,7 @@ def _run_claude_streaming(
     project_dir: Path,
     extra_args: list[str] | None = None,
     tool_policy: LlmToolPolicy | None = None,
+    config_dir: str | None = None,
 ) -> None:
     """Invoke claude -p with stream-json output and print live progress to stdout."""
     import json as _json
@@ -7549,12 +7550,17 @@ def _run_claude_streaming(
         stream_json=True,
     ) + (extra_args or [])
 
+    env = os.environ.copy()
+    if config_dir:
+        env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(config_dir)
+
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=None,  # inherit so errors are visible
         cwd=str(project_dir),
+        env=env,
     )
     assert proc.stdin and proc.stdout
     proc.stdin.write(prompt.encode("utf-8"))
@@ -7641,7 +7647,13 @@ def _dispatch_skill_command(command: str, args: list[str]) -> None:
     else:
         # claude: use stream-json for live tool-call progress in the terminal
         prompt = _build_prompt(skill_path, arguments)
-        _run_claude_streaming(bin_, prompt, project_dir, tool_policy=tool_policy)
+        _run_claude_streaming(
+            bin_,
+            prompt,
+            project_dir,
+            tool_policy=tool_policy,
+            config_dir=config.llm.config_dir,
+        )
         return  # _run_claude_streaming calls sys.exit
     sys.exit(result.returncode)
 

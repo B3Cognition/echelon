@@ -8,7 +8,7 @@ For the grounded role inventory, see [Agent Role Catalog](docs/agent-role-catalo
 
 ## Quick Start
 
-### First-time install
+### Install Spec Kit and Echelon
 
 ```bash
 # 1. Install spec-kit
@@ -20,14 +20,12 @@ git clone https://github.com/B3Cognition/echelon.git ~/echelon
 # 3. Install the core CLI tools and shared MemPalace support
 bash ~/echelon/scripts/install.sh
 source ~/.zshrc   # or restart terminal
-
-# 4. Register the spec-kit extension
-specify extension add --dev ~/echelon/extension
 ```
 
 `install.sh` installs the core CLI tools into `~/.echelon/venv/bin/`, adds that
 directory to your PATH, and keeps MemPalace available to ordinary squad runs.
-The SOAR-backed codegen pipeline is opt-in:
+This is enough to author specs and run the default delivery strategy. The
+SOAR-backed codegen pipeline is opt-in:
 
 ```bash
 bash ~/echelon/scripts/install.sh --with-codegen
@@ -42,6 +40,37 @@ bash ~/echelon/scripts/install.sh --with-codegen
 | `understanding` | Requirements quality metrics |
 
 See [INSTALLATION.md](INSTALLATION.md) for prerequisites, upgrade, and uninstall instructions.
+
+### First spec in a new or existing workspace
+
+Create or enter a Git-backed workspace, initialize Spec Kit there, install the
+Echelon extension into that workspace, then initialize Echelon. The extension
+belongs in your project—not in the `~/echelon` checkout.
+
+```bash
+# For an existing repository
+cd ~/work/my-project
+
+# For a new project instead:
+# mkdir -p ~/work/hello-world && cd ~/work/hello-world && git init -b main
+
+# Choose the integration you use; Claude is shown here. `--offline` keeps
+# initialization local to the installed Spec Kit templates.
+specify init --here --integration claude --offline
+specify extension add --force --dev ~/echelon/extension
+
+# Creates .echelon/config.yml and asks for local host-tool approval on a TTY.
+echelon workspace init
+
+# Phase A: write a specification and plan. No SOAR/codegen installation needed.
+echelon spec run "Create a sample Hello World program in Python"
+```
+
+Use `--integration copilot`, `--integration codex`, or another supported Spec
+Kit integration in place of `--integration claude` when appropriate. Add
+`--force` to `specify init --here` only when you intentionally want it to merge
+into an existing non-empty setup. The extension command uses `--force` so it
+can safely refresh a prior development install.
 
 ### Local Git hooks
 
@@ -64,7 +93,7 @@ fall back to that shared installation. Agents never need a physical Node entrypo
 ```bash
 cd ~/echelon && git pull
 bash ~/echelon/scripts/install.sh   # re-run to pick up dependency updates
-specify extension update --dev ~/echelon/extension
+specify extension add --dev --force ~/echelon/extension
 ```
 
 Knowledge-base data (calibration, feedback, patterns) is protected by `.extensionignore` — updates never overwrite your runtime learning data.
@@ -77,33 +106,11 @@ extension directory before running the command. When you see `EXTENSION DRIFT`,
 rerun:
 
 ```bash
-specify extension update --dev ~/echelon/extension
+specify extension add --dev --force ~/echelon/extension
 ```
 
-### Per-project setup (once per repo)
-
-```bash
-cd ~/my-project
-
-# Claude Code (default)
-specify init --here --offline
-specify extension add --dev ~/echelon/extension
-
-# GitHub Copilot
-specify init --integration copilot --here --offline
-specify extension add --dev ~/echelon/extension
-
-# Opencode
-specify init --integration opencode --here --offline
-specify extension add --dev ~/echelon/extension
-
-echelon workspace init    # bootstrap .echelon/config.yml; prompts for local host-tool approval on a TTY
-# or: echelon workspace init --allow-unsafe-host-execution
-echelon delivery init    # write workspace-level delivery defaults into .echelon/config.yml
-```
-
-`echelon workspace init`, `echelon delivery init`, and `echelon delivery target`
-are pure Python — no AI session required.
+`echelon workspace init` is pure Python—no AI session is required. Run
+`echelon delivery init` later, when you are ready to start Phase B delivery.
 
 ### Workspace contract
 
@@ -128,6 +135,27 @@ sources:
 Use `sources: []` for a planning-only workspace. Run `echelon workspace doctor`
 to validate the contract, or `echelon workspace migrate --write` to copy legacy
 config, ignore runtime state, and stage the canonical workspace files.
+
+### Optional: add an existing repository and publish reverse engineering
+
+For an existing implementation repository, place it under `sources/`, sync the
+workspace configuration, then run RE. This is optional: a greenfield spec can
+start immediately after `echelon workspace init`.
+
+```bash
+git clone <repository-url> sources/app
+echelon workspace sources sync --write
+echelon workspace doctor
+
+# Analyze the declared source roots. Keep the run ID printed by this command.
+echelon re run --re-policy changed
+
+# Publish a validated completed run so subsequent spec runs receive its snapshot.
+echelon re publish <run-id>
+
+# Target the existing repository when authoring a spec for it.
+echelon spec run "Add a health endpoint" --target sources/app
+```
 
 ### Published reverse engineering
 
@@ -178,11 +206,12 @@ default profile remains `full` depth with `max_lines_per_file: 5000` and
 `git_history_limit: 2500`; `echelon re run --re-policy` overrides selection
 without changing those depth defaults.
 
-A successful complete `echelon re run` publishes atomically. A default
-`--re-policy changed` run makes zero provider calls when the publication is
-current. Empty declared sources publish an explicit `empty` manifest without
-inventing domain specs. Partial output never auto-publishes and remains blocked
-for inspection or explicit manual publication.
+A successful complete `echelon re run` remains run-local until you explicitly
+publish it with `echelon re publish <run-id>`. A default `--re-policy changed`
+run makes zero provider calls when the publication is current. Empty declared
+sources can publish an explicit `empty` manifest without inventing domain specs.
+Partial output never auto-publishes and remains blocked for inspection or an
+explicit `--allow-partial` publication.
 
 ```bash
 echelon re run                               # changed policy; no-op when current
@@ -212,7 +241,7 @@ echelon spec artifacts 001                 # generate specs/001-*/ARTIFACTS.md
 echelon wiki build                         # generate workspace-wide human navigation
 echelon spec continue                      # run the next no-input recovery/phase action
 echelon spec resume "your clarification"   # answer a human-input block, then continue
-echelon spec rewind <phase-id>             # recover a safe Phase 3 checkpoint, then continue
+echelon spec rewind <phase-id> --confirm   # recover a safe Phase 3 checkpoint, then continue
 
 # Deliberately remove a requirement or task from the landing scope, without an LLM call
 echelon spec defer 001 NFR-008 --reason "Owner decision" --dry-run
@@ -224,7 +253,7 @@ echelon spec plan 001 NFR-008
 
 # Phase B — build, verify in Docker, open PR
 echelon delivery run 001                    # echelon squad build (default)
-echelon delivery run 001 strategy=codegen   # SOAR pipeline build (alternative)
+echelon delivery run 001 --strategy codegen # SOAR pipeline build (alternative)
 
 # Polyrepo/workspace: declare implementation roots before Phase A dispatches
 echelon spec run "Build dashboards" --target sources/api --target sources/web
@@ -238,21 +267,46 @@ echelon spec run "Add player connections" \
   --input reference:sources/provision
 echelon spec targets 001                        # display every task grouped by target
 echelon delivery target 001                     # detect target verify metadata from targets.yml
-echelon delivery run 001 mode=semi              # validates and runs target-owned task slices
-echelon delivery run 001 mode=banzai            # same deterministic target/dependency selection
+echelon delivery run 001 --mode semi             # validates and runs target-owned task slices
+echelon delivery run 001 --mode banzai           # same deterministic target/dependency selection
 
 # After build converges, fulfillment passes, and PR is open
 echelon delivery land 001                  # lands the target repo branch, then marks the spec landed
 
 # After PR is open — review triage runs automatically via harness Phase 3
 # but can also be invoked directly:
-echelon review 001 pr_url=https://github.com/org/repo/pull/42
+echelon review 001 --pr-url https://github.com/org/repo/pull/42
 ```
 
-`--input` is repeatable and has two explicit roles: `requirement:` is normative
-product intent, while `reference:` is informative only. Echelon snapshots accepted
-files under the run, excludes secret-like and hidden files, and publishes the safe
-manifest, catalog, snapshots, and traceability ledger at `specs/<id>/inputs/`.
+### Product inputs: requirements versus references
+
+`--input` is repeatable and deliberately separates product obligations from
+contextual evidence. Choose the role based on the authority you want the input to
+have—not its file type.
+
+| Role | Use it for | What Echelon records |
+| ---- | ---------- | -------------------- |
+| `requirement:<path>` | Statements that must be resolved by the specification and delivery plan | `IN-REQ-*` units in the requirement traceability ledger. Included units must map to specification IDs and implementation tasks before finalization. |
+| `reference:<path>` | API documentation, design material, examples, existing-product behavior, or other context that informs decisions | `IN-REF-*` catalog entries. Agents may use them as evidence, but they never become requirements or task mappings. |
+
+For example, API documentation for a new SDK is reference evidence, while a
+commitment such as “publish a Python SDK” belongs in the request itself or in a
+`requirement:` input:
+
+```bash
+echelon spec run "Create a Python SDK for our API" \
+  --input reference:sources/api-docs
+```
+
+During DISCOVER, references inform SCOUT's domain analysis only; they do not
+change the requirement-traceability ledger. Use `requirement:` when a statement
+must be represented by functional requirements, acceptance criteria, and tasks.
+
+Echelon snapshots accepted inputs under the run and publishes the manifest,
+catalog, snapshots, and traceability evidence at `specs/<id>/inputs/`. It excludes
+hidden files and scans text for high-confidence secret patterns, but this is a
+safety net—not a secret-sharing mechanism. Never put passwords, API keys, tokens,
+or private keys in an input file; use your normal secret-management path instead.
 An offline Figma evidence bundle (`manifest.json`, `design.json`, frame assets) is
 supported; PNG/SVG/PDF exports are reduced-fidelity evidence. A Figma URL is
 resolved with `FIGMA_ACCESS_TOKEN` (or an offline bundle); the token is never placed
@@ -349,7 +403,7 @@ Use rewind when a resumed squad run reports `missing_echelon_result`,
 proper context:
 
 ```bash
-echelon spec rewind phase3-sentinel
+echelon spec rewind phase3-sentinel --confirm
 echelon spec continue
 ```
 
@@ -577,7 +631,8 @@ wiki:
 
 ### Build Strategies
 
-`echelon delivery run` accepts a `strategy` argument that controls which build engine Phase 1 uses:
+`echelon delivery run` accepts `--strategy` to choose the build engine used in
+Phase 1:
 
 | Strategy | Build engine | When to use |
 | -------- | ------------ | ----------- |
@@ -586,7 +641,7 @@ wiki:
 
 ```bash
 echelon delivery run 001                    # default — echelon squad build
-echelon delivery run 001 strategy=codegen   # SOAR pipeline build
+echelon delivery run 001 --strategy codegen # SOAR pipeline build
 ```
 
 Both strategies follow the same outer loop: build → Docker verify → feedback if needed → commit + PR. On retry, both strategies fix failures by editing worktree files directly rather than re-running the full pipeline.
@@ -792,9 +847,10 @@ File: agents/exploration/scout.md
 
 ## Brownfield Support
 
-Run brownfield extraction explicitly with `echelon re run`. Complete results are
-published under `re/`; blocked work uses `echelon re continue` or `echelon re
-resume`. Phase A does not invoke GOLDDIGGER. SCOUT receives the immutable
+Run brownfield extraction explicitly with `echelon re run`, then publish a
+validated run with `echelon re publish <run-id>`. Blocked work uses `echelon re
+continue` or `echelon re resume`. Phase A does not invoke GOLDDIGGER. SCOUT
+receives the immutable
 published snapshot when available and otherwise performs normal scoped manual
 analysis.
 
@@ -818,19 +874,22 @@ This keeps commands readable and makes individual phases independently editable 
 | Terminal | Spec-kit skill | Purpose |
 | -------- | -------------- | ------- |
 | `echelon workspace init [--allow-unsafe-host-execution]` | `speckit.echelon.init` | One-time project setup — `.echelon/config.yml`, local tool-policy approval, deploy infra, git hook |
-| `echelon spec run "<description>" [--target <source-path>]... [--input <role:path>]... [--init] [--ignore-re]` | `speckit.echelon.run` | Phase A: snapshot optional published RE and immutable product evidence, then run the squad → spec.md, plan.md, tasks.md, targets.yml, feature branch |
-| `echelon re run [--re-policy <policy>] [--re-max-inner <n>] [--reset]` | — | Start or reuse the independent workspace RE lifecycle; complete output publishes automatically |
+| `echelon spec run "<description>" [--mode <semi\|banzai\|guided>] [--target <source-path>]... [--input <role:path>]... [--init] [--ignore-re]` | `speckit.echelon.run` | Phase A: snapshot optional published RE and immutable product evidence, then run the squad → spec.md, plan.md, tasks.md, targets.yml, feature branch |
+| `echelon re run [--re-policy <policy>] [--re-max-inner <n>] [--profile <fast\|balanced\|high>] [--reset]` | — | Start or resume the independent workspace RE lifecycle; publish a validated completed run explicitly |
 | `echelon re continue [--re-max-inner <n>]` | — | Continue the active RE run without supplying a new answer |
 | `echelon re resume "<answer>" [--re-max-inner <n>]` | — | Resolve a structured RE human-input block and continue |
+| `echelon re publish <run-id> [--allow-partial] [--commit]` | — | Publish a validated RE run into `re/`; optionally commit only durable published RE artifacts |
 | `echelon spec bugfix <id> "<desc>"` | `speckit.echelon.bugfix` | DEBUGGER + SENTINEL + SPEC GUARD → bugfix plan + tasks |
 | `echelon build <id>` | `speckit.echelon.build` | Build phase (agent-driven) |
 | `echelon codegen <id>` | `speckit.echelon.codegen` | Build phase via SOAR pipeline (alternative to build) |
-| `echelon review <id> [pr_url=…]` | `speckit.echelon.review` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
-| `echelon spec verify <id> [strict=true] [--reconcile] [--dry-run]` | `speckit.echelon.verify-spec` | Audit fulfillment; with `--reconcile`, apply deterministic task-progress bookkeeping fixes through harness helpers. Use `--reconcile --dry-run` to preview changes only |
+| `echelon review <id> [--pr-url <url>]` | `speckit.echelon.review` | PR review triage — groups blocking comments, runs DEBUGGER → SENTINEL → SPEC GUARD per group, writes `review-fix-{n}.md` + tasks, signals `review_fix_queued` to harness |
+| `echelon spec verify <id> [--reconcile] [--dry-run]` | `speckit.echelon.verify-spec` | Audit fulfillment; with `--reconcile`, apply deterministic task-progress bookkeeping fixes through harness helpers. Use `--reconcile --dry-run` to preview changes only |
 | `echelon spec defer <id> <ID...> --reason <reason> [--dry-run]` | — | Commit an auditable owner deferral for direct tasks or canonical FR/NFR/AC/SC requirements; displays mapped tasks and requirements that remain active |
 | `echelon spec plan <id> <ID...> [--dry-run]` | — | Restore matching deferred work to the planned scope, preserving the deferral ledger history |
 | `echelon spec reopen <id> [from=<report>]` | `speckit.echelon.reopen` | Reopen a spec from fulfillment gaps and append harness-ready `FG-T*` tasks |
 | `echelon spec change <id> "<desc>"` | `speckit.echelon.change` | Handle spec change during build |
+| `echelon spec amend <id> "<desc>" [--input <role:path>]... [--dry-run]` | — | Prepare an isolated product-input amendment for an unbuilt spec |
+| `echelon spec repair-traceability [--confirm]` | — | Preview or apply a safe repair that removes only contextual task references, then resumes finalization |
 | `echelon cicd` | — | Retired; re-run `echelon delivery init` to auto-detect high-confidence `verify_command` |
 | `echelon spec status` | `speckit.echelon.status` | Re-orient summary — run state, staging artifacts, open issues, cost, next step |
 | `echelon spec publish <numeric-id>` | — | Copy the matching committed `specs/<id>/` snapshot from its unique canonical local branch to the local default branch and commit it; source branches are retained and nothing is pushed |
@@ -843,7 +902,9 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon wiki clean` | — | Safely remove only the manifest-owned generated vault under `.echelon/runtime/wiki/` |
 | `echelon spec continue` | — | Run the next no-input recovery action: resume an active/interrupted run, retry recoverable failed dispatches, or advance incomplete Phase A work |
 | `echelon spec resume "<answer>"` | `speckit.echelon.resume` | Provide an answer only when the squad asked for human input; after recording it, Echelon delegates back to continuation |
-| `echelon spec rewind <phase-id>` | — | Rewind the active squad run to a safe checkpoint such as `phase3-how`, `phase3-sentinel`, or `phase3-plan`, then continue |
+| `echelon spec rewind <phase-id> [--confirm]` | — | Preview or rewind the active squad run to a safe checkpoint such as `phase3-how`, `phase3-sentinel`, or `phase3-plan`, then continue |
+| `echelon spec switch <spec-or-run-id> [--stash \| --discard --confirm]` | — | Select a checkpointed Phase A spec run while preserving or explicitly discarding outgoing dirty state |
+| `echelon spec checkpoint list\|accept\|commit ...` | — | Inspect, accept, or commit a named Phase A checkpoint |
 | `echelon phase list` | — | List deterministic workflow phase IDs available for targeted repair/replay |
 | `echelon phase run <phase-id> [--spec <id>]` | — | Run exactly one workflow phase through the normal COMMANDER/state/journal contracts, publish artifacts to the target spec directory when resolvable, then stop |
 | `echelon benchmark list` / `echelon benchmark run <fixture> --variant <id> --baseline-ref <ref>` | — | Experimental EGR-063 artifact-quality benchmark runner. Variants compare baseline Phase A/build behavior against opt-in constitution, tasks, and ADR cleanse phases; each real run resets to the supplied committed Phase A baseline before and after execution |
@@ -864,9 +925,12 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon delivery init` | `speckit.echelon.harness-init` | One-time workspace delivery setup — provider, sandbox, config defaults |
 | `echelon delivery target <id>` | — | Prepare target-scoped delivery metadata in `specs/<id>/targets.yml`, including high-confidence `verify_command` detection |
 | `echelon delivery run <id>` | `speckit.echelon.harness-run <id>` | Build → Docker verify → PR (echelon squad strategy); validates persisted Phase A targets and target-owned task slices without inferring or rewriting them; prints `HARNESS HISTORY` |
-| `echelon delivery run <id> strategy=codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
+| `echelon delivery run <id> --strategy codegen` | `speckit.echelon.harness-run <id> strategy=codegen` | Build → Docker verify → PR (SOAR pipeline strategy) |
 | `echelon delivery continue <id>` | `speckit.echelon.harness-resume <id>` | Continue a blocked/checkpointed delivery loop when no new human answer is needed, including missing `verify_command`, Docker/Podman outage recovery, checkpoint recovery, provider reset, or repaired harness errors; prints `HARNESS HISTORY` |
 | `echelon delivery resume <id> "<answer>"` | `speckit.echelon.harness-resume <id> <answer>` | Resume a blocked delivery loop by recording the human answer to a pending escalation, then continuing the loop |
+| `echelon delivery status [<id>] [--strategy <strategy>]` | `speckit.echelon.harness-status [<id>]` | Show the active or selected delivery state, iterations, cost, and PR context |
+| `echelon delivery checkpoint list <id>` | — | List delivery checkpoints and recovery commits for a spec |
+| `echelon delivery land <id> [--continue] [--prepare-only]` | — | Merge or prepare the target feature branch, then clean up after fulfillment gates pass |
 | *(spec-kit only)* | `speckit.echelon.harness-status [<id>]` | Show active loop status, iterations, token usage, PR URL |
 
 Legacy aliases may still exist for older scripts, but current docs and operator
@@ -943,7 +1007,7 @@ mempalace:
 
 #### Mine requirements into MemPalace
 
-**When using `echelon delivery run strategy=codegen`, mining happens automatically.** The codegen pipeline always runs `codegen requirements mine` on the feature's `spec.md` and `research.md` at the start of every run — no manual step needed.
+**When using `echelon delivery run --strategy codegen`, mining happens automatically.** The codegen pipeline always runs `codegen requirements mine` on the feature's `spec.md` and `research.md` at the start of every run — no manual step needed.
 
 The manual command is only needed when you want to pre-populate MemPalace before running codegen, or to mine spec files outside the standard feature directory:
 
