@@ -2,10 +2,17 @@
 import sys
 from pathlib import Path
 
+import pytest
+import yaml
+
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
+from harness.controller_state_contracts import (
+    ControllerContractRegistryError,
+    validate_controller_result,
+)
 from harness.phase_graph import PhaseGraph
 
 DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
@@ -60,7 +67,7 @@ class TestPhaseGraph:
         assert lexicon.type == "deterministic_lexicon"
         assert lexicon.lexicon_artifact == "spec"
         assert lexicon.allowed_state_updates == []
-        assert set(lexicon.controller_state_updates) == {
+        assert lexicon.controller_state_update_keys == {
             "lexicon_evaluation",
             "lexicon_pass",
             "lexicon_attempts",
@@ -400,8 +407,8 @@ def test_phase2_governance_verdicts_are_controller_owned():
     for phase_id, pass_key in gates.items():
         node = graph.get(phase_id)
         assert pass_key not in (node.allowed_state_updates or [])
-        assert pass_key in node.controller_state_updates
-        assert "governance_gate_exhausted" in node.controller_state_updates
+        assert pass_key in node.controller_state_update_keys
+        assert "governance_gate_exhausted" in node.controller_state_update_keys
 
 
 def test_phase1_lexicon_reserves_verdict_fields_for_the_controller():
@@ -417,7 +424,7 @@ def test_phase1_lexicon_reserves_verdict_fields_for_the_controller():
         "lexicon_warning_waiver",
     }
     assert controller_fields.isdisjoint(node.allowed_state_updates or [])
-    assert set(node.controller_state_updates) == controller_fields
+    assert node.controller_state_update_keys == controller_fields
 
 
 def test_tasks_lexicon_runs_in_two_visible_provider_free_nodes():
@@ -443,7 +450,325 @@ def test_tasks_lexicon_runs_in_two_visible_provider_free_nodes():
         assert node.type == "deterministic_lexicon"
         assert node.lexicon_artifact == "tasks"
         assert node.allowed_state_updates == []
-        assert set(node.controller_state_updates) == controller_fields
+        assert node.controller_state_update_keys == controller_fields
+
+
+def test_shared_controller_contracts_are_compiled_once() -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+    first = graph.get("phase3-tasks-lexicon").controller_state_contract
+    second = graph.get("phase3-consensus-tasks-lexicon").controller_state_contract
+
+    assert first is second
+    assert first is graph.controller_contract("tasks_lexicon")
+    assert first.name == "tasks_lexicon"
+    assert first.state_update_keys == {
+        "tasks_lexicon_action",
+        "tasks_lexicon_pass",
+        "tasks_lexicon_attempts",
+        "tasks_lexicon_findings",
+        "tasks_lexicon_report",
+        "blocked_reason",
+    }
+
+
+def test_production_contracts_own_exact_existing_controller_field_inventory() -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+    expected = {
+        "spec_lexicon": {
+            "lexicon_evaluation",
+            "lexicon_pass",
+            "lexicon_attempts",
+            "lexicon_findings",
+            "lexicon_report",
+            "lexicon_warning_waiver",
+        },
+        "tasks_lexicon": {
+            "tasks_lexicon_action",
+            "tasks_lexicon_pass",
+            "tasks_lexicon_attempts",
+            "tasks_lexicon_findings",
+            "tasks_lexicon_report",
+            "blocked_reason",
+        },
+        "understanding": {
+            "quality_scores",
+            "understanding_evidence",
+            "blocked_reason",
+        },
+        "feasibility_structural": {
+            "feasibility_structural_pass",
+            "feasibility_structural_attempts",
+            "feasibility_structural_findings",
+            "feasibility_structural_report",
+            "governance_gate_exhausted",
+        },
+        "intent_alignment_structural": {
+            "intent_alignment_check_structural_pass",
+            "intent_alignment_check_structural_attempts",
+            "intent_alignment_check_structural_findings",
+            "intent_alignment_check_structural_report",
+            "governance_gate_exhausted",
+        },
+    }
+
+    assert {
+        name: graph.controller_contract(name).state_update_keys
+        for name in expected
+    } == expected
+    assert len(set().union(*expected.values())) == 23
+
+
+def test_production_contracts_reject_incomplete_success_results() -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+
+    assert validate_controller_result(
+        graph.controller_contract("spec_lexicon"),
+        "DONE",
+        {},
+    )
+    assert validate_controller_result(
+        graph.controller_contract("understanding"),
+        "DONE",
+        {},
+    )
+
+
+@pytest.mark.parametrize(
+    ("contract_name", "verdict", "updates"),
+    [
+        (
+            "spec_lexicon",
+            "DONE",
+            {"lexicon_evaluation": "pending", "lexicon_attempts": 0},
+        ),
+        (
+            "spec_lexicon",
+            "DONE",
+            {
+                "lexicon_evaluation": "passed",
+                "lexicon_attempts": 0,
+                "lexicon_pass": True,
+                "lexicon_findings": 0,
+                "lexicon_report": "spec-lexicon-report.json",
+            },
+        ),
+        (
+            "tasks_lexicon",
+            "DONE",
+            {
+                "tasks_lexicon_action": "block",
+                "tasks_lexicon_pass": False,
+                "tasks_lexicon_attempts": 1,
+                "tasks_lexicon_findings": 1,
+                "tasks_lexicon_report": "tasks-lexicon-report.json",
+                "blocked_reason": "lexicon_gate_exhausted",
+            },
+        ),
+        (
+            "understanding",
+            "DONE",
+            {
+                "quality_scores": [{"pass": True, "source": "harness"}],
+                "understanding_evidence": {
+                    "phase": "phase1-why2",
+                    "iteration": 0,
+                    "status": "completed",
+                    "path": "understanding.json",
+                    "digest": "abc123",
+                    "pass": True,
+                    "failing_gates": [],
+                    "error": None,
+                },
+            },
+        ),
+        (
+            "understanding",
+            "BLOCKED",
+            {
+                "understanding_evidence": {
+                    "phase": "phase1-why2",
+                    "iteration": 0,
+                    "status": "error",
+                    "path": None,
+                    "digest": None,
+                    "pass": None,
+                    "failing_gates": [],
+                    "error": "analysis failed",
+                },
+                "blocked_reason": "analysis failed",
+            },
+        ),
+        (
+            "feasibility_structural",
+            "PASS",
+            {
+                "feasibility_structural_pass": True,
+                "feasibility_structural_attempts": 0,
+            },
+        ),
+        (
+            "intent_alignment_structural",
+            "DRIFT",
+            {
+                "intent_alignment_check_structural_pass": False,
+                "intent_alignment_check_structural_attempts": 1,
+                "intent_alignment_check_structural_findings": 2,
+                "intent_alignment_check_structural_report": "intent-report.json",
+                "governance_gate_exhausted": "intent-alignment-check",
+            },
+        ),
+    ],
+)
+def test_production_contracts_accept_valid_semantic_branches(
+    contract_name: str,
+    verdict: str,
+    updates: dict[str, object],
+) -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+
+    assert not validate_controller_result(
+        graph.controller_contract(contract_name),
+        verdict,
+        updates,
+    )
+
+
+@pytest.mark.parametrize(
+    ("contract_name", "updates"),
+    [
+        (
+            "spec_lexicon",
+            {
+                "lexicon_evaluation": "pending",
+                "lexicon_attempts": 0,
+                "lexicon_pass": False,
+            },
+        ),
+        (
+            "spec_lexicon",
+            {
+                "lexicon_evaluation": "passed",
+                "lexicon_attempts": 0,
+                "lexicon_pass": True,
+                "lexicon_findings": 1,
+                "lexicon_report": "report.json",
+            },
+        ),
+        (
+            "tasks_lexicon",
+            {
+                "tasks_lexicon_action": "proceed",
+                "tasks_lexicon_pass": False,
+                "tasks_lexicon_attempts": 0,
+                "tasks_lexicon_findings": 0,
+            },
+        ),
+        (
+            "tasks_lexicon",
+            {
+                "tasks_lexicon_action": "block",
+                "tasks_lexicon_pass": False,
+                "tasks_lexicon_attempts": 1,
+                "tasks_lexicon_findings": 0,
+            },
+        ),
+        (
+            "understanding",
+            {
+                "quality_scores": [{"pass": "yes"}],
+                "understanding_evidence": {
+                    "status": "completed",
+                    "iteration": 0,
+                    "digest": "abc",
+                    "path": "report.json",
+                    "pass": True,
+                },
+            },
+        ),
+        (
+            "understanding",
+            {
+                "understanding_evidence": {
+                    "status": "error",
+                    "iteration": 0,
+                    "error": "analysis failed",
+                },
+            },
+        ),
+        (
+            "feasibility_structural",
+            {
+                "feasibility_structural_pass": False,
+                "feasibility_structural_attempts": 1,
+                "feasibility_structural_findings": 1,
+            },
+        ),
+        (
+            "intent_alignment_structural",
+            {
+                "intent_alignment_check_structural_pass": False,
+                "intent_alignment_check_structural_attempts": 1,
+                "governance_gate_exhausted": "feasibility",
+            },
+        ),
+    ],
+)
+def test_production_contracts_reject_semantic_invariant_violations(
+    contract_name: str,
+    updates: dict[str, object],
+) -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+
+    assert validate_controller_result(
+        graph.controller_contract(contract_name),
+        "DONE",
+        updates,
+    )
+
+
+def test_phase_graph_rejects_unknown_controller_contract(tmp_path: Path) -> None:
+    registry = tmp_path / "contracts.yaml"
+    registry.write_text(
+        yaml.safe_dump({
+            "schema_version": 1,
+            "contracts": {
+                "known": {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["verdict", "state_updates"],
+                    "properties": {
+                        "verdict": {"type": "string"},
+                        "state_updates": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {"known": {"type": "boolean"}},
+                        },
+                    },
+                }
+            },
+        }),
+        encoding="utf-8",
+    )
+    definition = tmp_path / "definition.yaml"
+    definition.write_text(
+        yaml.safe_dump({
+            "controller_state_contracts_file": registry.name,
+            "phases": [{
+                "id": "start",
+                "controller_state_contract": "missing",
+            }],
+        }),
+        encoding="utf-8",
+    )
+    extension_yml = tmp_path / "extension.yml"
+    extension_yml.write_text("provides: {commands: []}\n", encoding="utf-8")
+
+    with pytest.raises(
+        ControllerContractRegistryError,
+        match="unknown controller state contract 'missing'",
+    ):
+        PhaseGraph(definition, extension_yml)
 
 
 def test_provider_nodes_do_not_own_tasks_lexicon_state():
@@ -458,7 +783,7 @@ def test_provider_nodes_do_not_own_tasks_lexicon_state():
     }
     assert not {
         key
-        for key in consensus.controller_state_updates
+        for key in consensus.controller_state_update_keys
         if key.startswith("tasks_lexicon_")
     }
     plan2 = next(entry for entry in consensus.agents if entry["mode"] == "PLAN2")

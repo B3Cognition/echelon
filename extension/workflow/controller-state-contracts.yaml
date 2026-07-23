@@ -1,0 +1,312 @@
+schema_version: 1
+contracts:
+  spec_lexicon:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    additionalProperties: false
+    required: [verdict, state_updates]
+    properties:
+      verdict: {type: string}
+      state_updates:
+        type: object
+        additionalProperties: false
+        properties:
+          lexicon_evaluation:
+            type: string
+            enum: [pending, passed, failed]
+          lexicon_pass: {type: boolean}
+          lexicon_attempts: {type: integer, minimum: 0}
+          lexicon_findings: {type: integer, minimum: 0}
+          lexicon_report: {type: string, minLength: 1}
+          lexicon_warning_waiver: {type: boolean}
+    allOf:
+      - if:
+          properties:
+            verdict:
+              not: {const: BLOCKED}
+        then:
+          properties:
+            state_updates:
+              required: [lexicon_evaluation, lexicon_attempts]
+      - if:
+          properties:
+            state_updates:
+              required: [lexicon_evaluation]
+              properties:
+                lexicon_evaluation: {const: pending}
+        then:
+          properties:
+            state_updates:
+              not:
+                anyOf:
+                  - required: [lexicon_pass]
+                  - required: [lexicon_report]
+      - if:
+          properties:
+            state_updates:
+              required: [lexicon_evaluation]
+              properties:
+                lexicon_evaluation: {const: passed}
+        then:
+          properties:
+            state_updates:
+              required:
+                - lexicon_pass
+                - lexicon_findings
+                - lexicon_report
+              properties:
+                lexicon_pass: {const: true}
+                lexicon_findings: {const: 0}
+      - if:
+          properties:
+            state_updates:
+              required: [lexicon_evaluation]
+              properties:
+                lexicon_evaluation: {const: failed}
+        then:
+          properties:
+            state_updates:
+              required:
+                - lexicon_pass
+                - lexicon_findings
+                - lexicon_report
+              properties:
+                lexicon_pass: {const: false}
+                lexicon_findings: {minimum: 1}
+
+  tasks_lexicon:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    additionalProperties: false
+    required: [verdict, state_updates]
+    properties:
+      verdict: {type: string}
+      state_updates:
+        type: object
+        additionalProperties: false
+        properties:
+          tasks_lexicon_action:
+            type: string
+            enum: [proceed, repair, proceed_with_warning, block]
+          tasks_lexicon_pass: {type: boolean}
+          tasks_lexicon_attempts: {type: integer, minimum: 0}
+          tasks_lexicon_findings: {type: integer, minimum: 0}
+          tasks_lexicon_report: {type: string, minLength: 1}
+          blocked_reason: {type: string, minLength: 1}
+    allOf:
+      - if:
+          properties:
+            verdict:
+              not: {const: BLOCKED}
+        then:
+          properties:
+            state_updates:
+              required:
+                - tasks_lexicon_action
+                - tasks_lexicon_pass
+                - tasks_lexicon_attempts
+                - tasks_lexicon_findings
+      - if:
+          properties:
+            state_updates:
+              required: [tasks_lexicon_action]
+              properties:
+                tasks_lexicon_action: {const: proceed}
+        then:
+          properties:
+            state_updates:
+              required: [tasks_lexicon_pass]
+              properties:
+                tasks_lexicon_pass: {const: true}
+      - if:
+          properties:
+            state_updates:
+              required: [tasks_lexicon_action]
+              properties:
+                tasks_lexicon_action:
+                  enum: [repair, proceed_with_warning, block]
+        then:
+          properties:
+            state_updates:
+              required: [tasks_lexicon_pass]
+              properties:
+                tasks_lexicon_pass: {const: false}
+      - if:
+          properties:
+            state_updates:
+              required: [tasks_lexicon_action]
+              properties:
+                tasks_lexicon_action: {const: block}
+        then:
+          properties:
+            state_updates:
+              required: [blocked_reason]
+
+  understanding:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    additionalProperties: false
+    required: [verdict, state_updates]
+    properties:
+      verdict: {type: string}
+      state_updates:
+        type: object
+        additionalProperties: false
+        properties:
+          quality_scores:
+            type: array
+            items:
+              type: object
+              required: [pass]
+              properties:
+                pass: {type: boolean}
+          understanding_evidence:
+            type: object
+            additionalProperties: false
+            required: [status, iteration]
+            properties:
+              phase: {type: string}
+              iteration: {type: integer, minimum: 0}
+              status:
+                type: string
+                enum: [completed, error]
+              path:
+                type: [string, "null"]
+              digest:
+                type: [string, "null"]
+              pass:
+                type: [boolean, "null"]
+              failing_gates:
+                type: array
+                items: {type: string}
+              error:
+                type: [string, "null"]
+          blocked_reason: {type: string, minLength: 1}
+    allOf:
+      - if:
+          properties:
+            verdict:
+              not: {const: BLOCKED}
+        then:
+          properties:
+            state_updates:
+              required: [understanding_evidence]
+      - if:
+          properties:
+            state_updates:
+              required: [understanding_evidence]
+              properties:
+                understanding_evidence:
+                  properties:
+                    status: {const: completed}
+        then:
+          properties:
+            state_updates:
+              required: [quality_scores]
+              properties:
+                understanding_evidence:
+                  required: [digest, path, pass]
+                  properties:
+                    digest: {type: string, minLength: 1}
+                    path: {type: string, minLength: 1}
+                    pass: {type: boolean}
+      - if:
+          properties:
+            state_updates:
+              required: [understanding_evidence]
+              properties:
+                understanding_evidence:
+                  properties:
+                    status: {const: error}
+        then:
+          properties:
+            state_updates:
+              required: [blocked_reason]
+              properties:
+                understanding_evidence:
+                  required: [error]
+                  properties:
+                    error: {type: string, minLength: 1}
+
+  feasibility_structural:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    additionalProperties: false
+    required: [verdict, state_updates]
+    properties:
+      verdict: {type: string}
+      state_updates:
+        type: object
+        additionalProperties: false
+        properties:
+          feasibility_structural_pass: {type: boolean}
+          feasibility_structural_attempts: {type: integer, minimum: 0}
+          feasibility_structural_findings: {type: integer, minimum: 0}
+          feasibility_structural_report: {type: string, minLength: 1}
+          governance_gate_exhausted:
+            type: string
+            enum: [feasibility]
+    allOf:
+      - if:
+          properties:
+            verdict:
+              not: {const: BLOCKED}
+        then:
+          properties:
+            state_updates:
+              required:
+                - feasibility_structural_pass
+                - feasibility_structural_attempts
+      - if:
+          properties:
+            state_updates:
+              required: [feasibility_structural_findings]
+              properties:
+                feasibility_structural_findings: {minimum: 1}
+        then:
+          properties:
+            state_updates:
+              required: [feasibility_structural_report]
+
+  intent_alignment_structural:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    additionalProperties: false
+    required: [verdict, state_updates]
+    properties:
+      verdict: {type: string}
+      state_updates:
+        type: object
+        additionalProperties: false
+        properties:
+          intent_alignment_check_structural_pass: {type: boolean}
+          intent_alignment_check_structural_attempts:
+            {type: integer, minimum: 0}
+          intent_alignment_check_structural_findings:
+            {type: integer, minimum: 0}
+          intent_alignment_check_structural_report:
+            {type: string, minLength: 1}
+          governance_gate_exhausted:
+            type: string
+            enum: [intent-alignment-check]
+    allOf:
+      - if:
+          properties:
+            verdict:
+              not: {const: BLOCKED}
+        then:
+          properties:
+            state_updates:
+              required:
+                - intent_alignment_check_structural_pass
+                - intent_alignment_check_structural_attempts
+      - if:
+          properties:
+            state_updates:
+              required: [intent_alignment_check_structural_findings]
+              properties:
+                intent_alignment_check_structural_findings: {minimum: 1}
+        then:
+          properties:
+            state_updates:
+              required: [intent_alignment_check_structural_report]

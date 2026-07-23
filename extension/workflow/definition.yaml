@@ -25,6 +25,7 @@
 # =============================================================================
 
 schema_version: 1
+controller_state_contracts_file: controller-state-contracts.yaml
 
 # =============================================================================
 # GLOSSARY
@@ -475,13 +476,7 @@ phases:
       - lexicon_report → state.json      # controller-owned report path
       - lexicon_warning_waiver → state.json  # true only after warn-policy exhaustion
     allowed_state_updates: []
-    controller_state_updates:
-      - lexicon_evaluation
-      - lexicon_pass
-      - lexicon_attempts
-      - lexicon_findings
-      - lexicon_report
-      - lexicon_warning_waiver
+    controller_state_contract: spec_lexicon
     transitions:
       # CARTOGRAPHER authors or repairs the derived artifact. This provider-free
       # node validates it, persists findings, increments the repair count, and
@@ -502,10 +497,7 @@ phases:
     type: deterministic_understanding
     understanding_target: phase1-why2
     allowed_state_updates: []
-    controller_state_updates:
-      - quality_scores
-      - understanding_evidence
-      - blocked_reason
+    controller_state_contract: understanding
     transitions:
       - to: phase1-why2
         condition: always
@@ -595,12 +587,7 @@ phases:
     allowed_state_updates:
       - status
       - shadow_output_recovered
-    controller_state_updates:
-      - feasibility_structural_pass
-      - feasibility_structural_attempts
-      - feasibility_structural_findings
-      - feasibility_structural_report
-      - governance_gate_exhausted
+    controller_state_contract: feasibility_structural
     state_update_types:
       status: string
     state_update_enums:
@@ -664,12 +651,7 @@ phases:
       - escalation_recommended_answer
       - escalation_default_answer
       - shadow_output_recovered
-    controller_state_updates:
-      - intent_alignment_check_structural_pass
-      - intent_alignment_check_structural_attempts
-      - intent_alignment_check_structural_findings
-      - intent_alignment_check_structural_report
-      - governance_gate_exhausted
+    controller_state_contract: intent_alignment_structural
     state_update_types:
       status: string
     state_update_enums:
@@ -892,13 +874,7 @@ phases:
       - tasks_lexicon_report → state.json
       - blocked_reason → state.json
     allowed_state_updates: []
-    controller_state_updates:
-      - tasks_lexicon_action
-      - tasks_lexicon_pass
-      - tasks_lexicon_attempts
-      - tasks_lexicon_findings
-      - tasks_lexicon_report
-      - blocked_reason
+    controller_state_contract: tasks_lexicon
     transitions:
       - to: phase3-plan
         condition: "tasks_lexicon_action = repair"
@@ -914,10 +890,7 @@ phases:
     type: deterministic_understanding
     understanding_target: phase3-consensus
     allowed_state_updates: []
-    controller_state_updates:
-      - quality_scores
-      - understanding_evidence
-      - blocked_reason
+    controller_state_contract: understanding
     transitions:
       - to: phase3-consensus
         condition: always
@@ -1049,13 +1022,7 @@ phases:
       - tasks_lexicon_report → state.json
       - blocked_reason → state.json
     allowed_state_updates: []
-    controller_state_updates:
-      - tasks_lexicon_action
-      - tasks_lexicon_pass
-      - tasks_lexicon_attempts
-      - tasks_lexicon_findings
-      - tasks_lexicon_report
-      - blocked_reason
+    controller_state_contract: tasks_lexicon
     transitions:
       - to: phase3-plan
         condition: "tasks_lexicon_action = repair"

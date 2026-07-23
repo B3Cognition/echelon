@@ -2066,7 +2066,7 @@ class SquadController:
         state["blocked_reason"] = reason
         if retryable_analysis:
             node = self._graph.get(phase)
-            for key in node.controller_state_updates:
+            for key in node.controller_state_update_keys:
                 if key in (result.state_updates or {}) and key != "blocked_reason":
                     state[key] = result.state_updates[key]
         if reason == "provider_session_limit":
@@ -2371,7 +2371,7 @@ class SquadController:
         if node.allowed_state_updates is None:
             return None
         allowed = list(node.allowed_state_updates)
-        allowed.extend(node.controller_state_updates)
+        allowed.extend(node.controller_state_update_keys)
         return allowed
 
     def _lexicon_gate_must_block_on_exhaustion(

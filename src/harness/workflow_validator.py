@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 
 from harness.echelon_result_schema import ALLOWED_VERDICTS, SUPPORTED_STATE_UPDATE_TYPES
-from harness.phase_graph import PhaseGraph
+from harness.phase_graph import PhaseGraph, PhaseNode
 
 
 SUPPORTED_TRANSITION_KEYS = frozenset({
@@ -172,11 +172,20 @@ def validate_workflow_definition(
                 )
             )
         seen.add(phase_id)
-        known_condition_fields.update(_phase_condition_fields(phase))
+        node = graph.get(phase_id)
+        known_condition_fields.update(_phase_condition_fields(node))
 
         issues.extend(
             _validate_result_contract_definition(
                 phase,
+                phase_id=phase_id,
+                path=path,
+            )
+        )
+        issues.extend(
+            _validate_controller_ownership(
+                phase,
+                node=node,
                 phase_id=phase_id,
                 path=path,
             )
@@ -212,6 +221,35 @@ def validate_workflow_definition(
                     path=f"{path} agents[{agent_index}]",
                 )
             )
+            if "controller_state_updates" in agent_entry:
+                issues.append(WorkflowValidationIssue(
+                    "controller_state_updates is no longer supported",
+                    phase_id=phase_id,
+                    path=f"{path} agents[{agent_index}]",
+                ))
+            if "controller_state_contract" in agent_entry:
+                issues.append(WorkflowValidationIssue(
+                    "nested agents cannot declare controller_state_contract",
+                    phase_id=phase_id,
+                    path=f"{path} agents[{agent_index}]",
+                ))
+            nested_allowed = agent_entry.get(
+                "allowed_state_updates",
+                phase.get("allowed_state_updates"),
+            )
+            nested_allowed_set = (
+                set(str(key) for key in nested_allowed)
+                if isinstance(nested_allowed, list)
+                else set()
+            )
+            overlap = node.controller_state_update_keys & nested_allowed_set
+            if overlap:
+                issues.append(WorkflowValidationIssue(
+                    "nested agent allowed_state_updates overlap controller-owned "
+                    f"fields: {', '.join(sorted(overlap))}",
+                    phase_id=phase_id,
+                    path=f"{path} agents[{agent_index}]",
+                ))
 
         phase_condition = phase.get("condition")
         if phase_condition is not None:
@@ -290,7 +328,6 @@ def _validate_result_contract_definition(
 ) -> list[WorkflowValidationIssue]:
     issues: list[WorkflowValidationIssue] = []
     allowed = contract.get("allowed_state_updates")
-    controller_owned = contract.get("controller_state_updates", [])
     required = contract.get("required_state_updates", [])
     value_types = contract.get("state_update_types", {})
     value_enums = contract.get("state_update_enums", {})
@@ -309,24 +346,6 @@ def _validate_result_contract_definition(
         allowed_set: set[str] | None = set()
     else:
         allowed_set = set(allowed) if allowed is not None else None
-
-    if not isinstance(controller_owned, list) or not all(
-        isinstance(key, str) and key for key in controller_owned
-    ):
-        issues.append(WorkflowValidationIssue(
-            "controller_state_updates must be a list of non-empty strings",
-            phase_id=phase_id,
-            path=path,
-        ))
-        controller_owned_set: set[str] = set()
-    else:
-        controller_owned_set = set(controller_owned)
-    if allowed_set is not None and controller_owned_set & allowed_set:
-        issues.append(WorkflowValidationIssue(
-            "controller_state_updates must not overlap allowed_state_updates",
-            phase_id=phase_id,
-            path=path,
-        ))
 
     if not isinstance(required, list) or not all(
         isinstance(key, str) and key for key in required
@@ -416,6 +435,63 @@ def _validate_result_contract_definition(
     if unexpected not in {"reject", "quarantine"}:
         issues.append(WorkflowValidationIssue(
             "unexpected_state_updates must be 'reject' or 'quarantine'",
+            phase_id=phase_id,
+            path=path,
+        ))
+    return issues
+
+
+def _validate_controller_ownership(
+    phase: dict[str, Any],
+    *,
+    node: PhaseNode,
+    phase_id: str,
+    path: str,
+) -> list[WorkflowValidationIssue]:
+    issues: list[WorkflowValidationIssue] = []
+    if "controller_state_updates" in phase:
+        issues.append(WorkflowValidationIssue(
+            "controller_state_updates is no longer supported",
+            phase_id=phase_id,
+            path=path,
+        ))
+
+    contract = node.controller_state_contract
+    if contract is None:
+        return issues
+
+    if "allowed_state_updates" not in phase:
+        issues.append(WorkflowValidationIssue(
+            "controller_state_contract requires an explicit "
+            "allowed_state_updates list",
+            phase_id=phase_id,
+            path=path,
+        ))
+        allowed: set[str] = set()
+    else:
+        raw_allowed = phase.get("allowed_state_updates")
+        allowed = (
+            set(str(key) for key in raw_allowed)
+            if isinstance(raw_allowed, list)
+            else set()
+        )
+
+    overlap = contract.state_update_keys & allowed
+    if overlap:
+        issues.append(WorkflowValidationIssue(
+            "controller state contract must not overlap allowed_state_updates: "
+            + ", ".join(sorted(overlap)),
+            phase_id=phase_id,
+            path=path,
+        ))
+
+    on_greenfield = phase.get("on_greenfield")
+    if (
+        isinstance(on_greenfield, dict)
+        and on_greenfield.get("action") == "skip_agent_proceed_to_next"
+    ):
+        issues.append(WorkflowValidationIssue(
+            "skip_agent_proceed_to_next cannot bypass a controller state contract",
             phase_id=phase_id,
             path=path,
         ))
@@ -528,12 +604,12 @@ def _validate_transition(
     return issues
 
 
-def _phase_condition_fields(phase: dict[str, Any]) -> set[str]:
-    fields = set(str(key) for key in phase.get("allowed_state_updates") or [])
-    fields.update(str(key) for key in phase.get("controller_state_updates") or [])
-    fields.update(_output_fields(phase.get("outputs") or []))
+def _phase_condition_fields(phase: PhaseNode) -> set[str]:
+    fields = set(str(key) for key in phase.allowed_state_updates or [])
+    fields.update(phase.controller_state_update_keys)
+    fields.update(_output_fields(phase.outputs or []))
     fields.update(_nested_agent_output_fields(phase))
-    transitions = phase.get("transitions") or []
+    transitions = phase.transitions or []
     if isinstance(transitions, list):
         for transition in transitions:
             if isinstance(transition, dict) and isinstance(transition.get("state_update"), dict):
@@ -541,9 +617,9 @@ def _phase_condition_fields(phase: dict[str, Any]) -> set[str]:
     return fields
 
 
-def _nested_agent_output_fields(phase: dict[str, Any]) -> set[str]:
+def _nested_agent_output_fields(phase: PhaseNode) -> set[str]:
     fields: set[str] = set()
-    for agent in phase.get("agents") or []:
+    for agent in phase.agents or []:
         if isinstance(agent, dict):
             fields.update(_output_fields(agent.get("outputs") or []))
     return fields

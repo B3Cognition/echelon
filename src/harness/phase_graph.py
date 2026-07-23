@@ -7,6 +7,12 @@ from typing import Optional
 
 import yaml
 
+from harness.controller_state_contracts import (
+    CompiledControllerStateContract,
+    ControllerContractRegistryError,
+    load_controller_state_contracts,
+)
+
 
 @dataclass
 class PhaseNode:
@@ -27,13 +33,18 @@ class PhaseNode:
     condition: Optional[str] = None
     on_greenfield: dict = field(default_factory=dict)
     allowed_state_updates: Optional[list] = None
-    controller_state_updates: list = field(default_factory=list)
+    controller_state_contract: CompiledControllerStateContract | None = None
     required_state_updates: list = field(default_factory=list)
     state_update_types: dict = field(default_factory=dict)
     state_update_enums: dict = field(default_factory=dict)
     allowed_verdicts: Optional[list] = None
     unexpected_state_updates: str = "quarantine"
     transitions: list = field(default_factory=list)
+
+    @property
+    def controller_state_update_keys(self) -> frozenset[str]:
+        contract = self.controller_state_contract
+        return contract.state_update_keys if contract is not None else frozenset()
 
     def result_contract(self, agent_entry: dict | None = None):
         """Build the immutable result contract for one concrete dispatch."""
@@ -80,8 +91,34 @@ class PhaseGraph:
 
     def __init__(self, definition_path: Path, extension_yml_path: Path) -> None:
         raw = yaml.safe_load(definition_path.read_text())
+        contracts_file = raw.get("controller_state_contracts_file")
+        if contracts_file is None:
+            self._controller_contracts = {}
+        elif not isinstance(contracts_file, str) or not contracts_file.strip():
+            raise ControllerContractRegistryError(
+                "controller_state_contracts_file must be a non-empty path"
+            )
+        else:
+            self._controller_contracts = load_controller_state_contracts(
+                definition_path.parent / contracts_file
+            )
         self._phases: dict[str, PhaseNode] = {}
         for p in raw.get("phases", []):
+            contract_name = p.get("controller_state_contract")
+            if contract_name is None:
+                contract = None
+            elif not isinstance(contract_name, str) or not contract_name.strip():
+                raise ControllerContractRegistryError(
+                    f"phase {p.get('id')!r} has an invalid controller state "
+                    "contract reference"
+                )
+            else:
+                contract = self._controller_contracts.get(contract_name)
+                if contract is None:
+                    raise ControllerContractRegistryError(
+                        f"unknown controller state contract {contract_name!r} "
+                        f"referenced by phase {p.get('id')!r}"
+                    )
             node = PhaseNode(
                 id=p["id"],
                 type=p.get("type", "agent"),
@@ -104,7 +141,7 @@ class PhaseGraph:
                     if "allowed_state_updates" in p
                     else None
                 ),
-                controller_state_updates=p.get("controller_state_updates", []),
+                controller_state_contract=contract,
                 required_state_updates=p.get("required_state_updates", []),
                 state_update_types=p.get("state_update_types", {}),
                 state_update_enums=p.get("state_update_enums", {}),
@@ -133,6 +170,14 @@ class PhaseGraph:
         if phase_id not in self._phases:
             raise KeyError(f"Phase not found in definition.yaml: {phase_id!r}")
         return self._phases[phase_id]
+
+    def controller_contract(self, name: str) -> CompiledControllerStateContract:
+        contract = self._controller_contracts.get(name)
+        if contract is None:
+            raise ControllerContractRegistryError(
+                f"unknown controller state contract {name!r}"
+            )
+        return contract
 
     def entry_phase(self) -> str:
         return next(iter(self._phases))
