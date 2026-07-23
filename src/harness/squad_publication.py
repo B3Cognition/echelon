@@ -7,7 +7,6 @@ import json
 import os
 import re
 import secrets
-import shutil
 import stat
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
@@ -80,6 +79,7 @@ def _secure_posix_capabilities_available() -> bool:
     required_dir_fd_functions = (
         os.open,
         os.mkdir,
+        os.rmdir,
         os.stat,
         os.unlink,
     )
@@ -99,7 +99,7 @@ def _secure_posix_capabilities_available() -> bool:
             for function in required_dir_fd_functions
         )
         and os.stat in os.supports_follow_symlinks
-        and getattr(shutil.rmtree, "avoids_symlink_attacks", False)
+        and os.listdir in os.supports_fd
     )
 
 
@@ -679,6 +679,25 @@ def _open_parent_directory(
         raise
 
 
+def _fsync_target_directory_chain(
+    project_root: Path,
+    relative: Path,
+) -> None:
+    root_fd = _open_directory(
+        project_root,
+        missing_code="publish_io",
+        invalid_code="publish_io",
+    )
+    try:
+        _fsync_relative_parent_directories(
+            root_fd,
+            relative,
+            code="publish_io",
+        )
+    finally:
+        os.close(root_fd)
+
+
 def _copy_pinned_stage_to_temporary(
     pinned: _PinnedRegular,
     parent_fd: int,
@@ -1053,7 +1072,9 @@ def _publication_exclusivity(project_root: Path) -> Iterator[None]:
 
 @dataclass
 class _PinnedTransaction:
+    squad_fd: int
     outbox_fd: int
+    outbox_identity: tuple[int, int, int]
     transaction_fd: int
     transaction_id: str
     transaction_identity: tuple[int, int, int]
@@ -1062,24 +1083,14 @@ class _PinnedTransaction:
     stages: dict[str, _PinnedRegular]
 
     def verify(self) -> None:
-        try:
-            current = os.stat(
-                self.transaction_id,
-                dir_fd=self.outbox_fd,
-                follow_symlinks=False,
-            )
-            opened = os.fstat(self.transaction_fd)
-        except FileNotFoundError:
-            _raise("stage_missing")
-        except OSError:
-            _raise("stage_corrupt")
-        if (
-            stat.S_ISLNK(current.st_mode)
-            or not stat.S_ISDIR(current.st_mode)
-            or _directory_identity(current) != self.transaction_identity
-            or _directory_identity(opened) != self.transaction_identity
-        ):
-            _raise("stage_corrupt")
+        _verify_transaction_directories(
+            self.squad_fd,
+            self.outbox_fd,
+            self.outbox_identity,
+            self.transaction_fd,
+            self.transaction_id,
+            self.transaction_identity,
+        )
         _verify_pinned_regular(
             self.transaction_fd,
             self.manifest,
@@ -1114,17 +1125,67 @@ class _PinnedTransaction:
             os.close(self.outbox_fd)
         except OSError:
             pass
+        try:
+            os.close(self.squad_fd)
+        except OSError:
+            pass
+
+
+def _verify_transaction_directories(
+    squad_fd: int,
+    outbox_fd: int,
+    outbox_identity: tuple[int, int, int],
+    transaction_fd: int,
+    transaction_id: str,
+    transaction_identity: tuple[int, int, int],
+) -> None:
+    try:
+        outbox_entry = os.stat(
+            _OUTBOX_DIRECTORY,
+            dir_fd=squad_fd,
+            follow_symlinks=False,
+        )
+        opened_outbox = os.fstat(outbox_fd)
+        transaction_entry = os.stat(
+            transaction_id,
+            dir_fd=outbox_fd,
+            follow_symlinks=False,
+        )
+        opened_transaction = os.fstat(transaction_fd)
+    except FileNotFoundError:
+        _raise("stage_missing")
+    except (OSError, TypeError, NotImplementedError):
+        _raise("stage_corrupt")
+    if (
+        stat.S_ISLNK(outbox_entry.st_mode)
+        or not stat.S_ISDIR(outbox_entry.st_mode)
+        or _directory_identity(outbox_entry) != outbox_identity
+        or _directory_identity(opened_outbox) != outbox_identity
+        or stat.S_ISLNK(transaction_entry.st_mode)
+        or not stat.S_ISDIR(transaction_entry.st_mode)
+        or _directory_identity(transaction_entry) != transaction_identity
+        or _directory_identity(opened_transaction) != transaction_identity
+    ):
+        _raise("stage_corrupt")
 
 
 def _open_transaction_directories(
     squad_dir: Path,
     marker: PublicationMarker,
-) -> tuple[int, int, tuple[int, int, int]]:
+) -> tuple[
+    int,
+    int,
+    tuple[int, int, int],
+    int,
+    tuple[int, int, int],
+]:
     squad_fd = _open_directory(
         squad_dir,
         missing_code="stage_missing",
         invalid_code="stage_corrupt",
     )
+    outbox_fd: int | None = None
+    transaction_fd: int | None = None
     try:
         outbox_fd = _open_directory(
             _OUTBOX_DIRECTORY,
@@ -1132,10 +1193,19 @@ def _open_transaction_directories(
             missing_code="stage_missing",
             invalid_code="stage_corrupt",
         )
-    finally:
-        os.close(squad_fd)
-    transaction_fd: int | None = None
-    try:
+        opened_outbox = os.fstat(outbox_fd)
+        outbox_entry = os.stat(
+            _OUTBOX_DIRECTORY,
+            dir_fd=squad_fd,
+            follow_symlinks=False,
+        )
+        outbox_identity = _directory_identity(opened_outbox)
+        if (
+            stat.S_ISLNK(outbox_entry.st_mode)
+            or not stat.S_ISDIR(outbox_entry.st_mode)
+            or _directory_identity(outbox_entry) != outbox_identity
+        ):
+            _raise("stage_corrupt")
         transaction_fd = _open_directory(
             marker.transaction_id,
             dir_fd=outbox_fd,
@@ -1151,18 +1221,25 @@ def _open_transaction_directories(
     except PublicationError:
         if transaction_fd is not None:
             os.close(transaction_fd)
-        os.close(outbox_fd)
+        if outbox_fd is not None:
+            os.close(outbox_fd)
+        os.close(squad_fd)
         raise
     except FileNotFoundError:
         if transaction_fd is not None:
             os.close(transaction_fd)
-        os.close(outbox_fd)
+        if outbox_fd is not None:
+            os.close(outbox_fd)
+        os.close(squad_fd)
         _raise("stage_missing")
-    except OSError:
+    except (OSError, TypeError, NotImplementedError):
         if transaction_fd is not None:
             os.close(transaction_fd)
-        os.close(outbox_fd)
+        if outbox_fd is not None:
+            os.close(outbox_fd)
+        os.close(squad_fd)
         _raise("stage_corrupt")
+    assert outbox_fd is not None
     assert transaction_fd is not None
     identity = _directory_identity(opened)
     if (
@@ -1172,8 +1249,15 @@ def _open_transaction_directories(
     ):
         os.close(transaction_fd)
         os.close(outbox_fd)
+        os.close(squad_fd)
         _raise("stage_corrupt")
-    return outbox_fd, transaction_fd, identity
+    return (
+        squad_fd,
+        outbox_fd,
+        outbox_identity,
+        transaction_fd,
+        identity,
+    )
 
 
 def _load_prepared_pinned(
@@ -1194,9 +1278,13 @@ def _load_prepared_pinned(
         )
     except TypeError:
         _raise("manifest_invalid")
-    outbox_fd, transaction_fd, transaction_identity = (
-        _open_transaction_directories(squad, validated_marker)
-    )
+    (
+        squad_fd,
+        outbox_fd,
+        outbox_identity,
+        transaction_fd,
+        transaction_identity,
+    ) = _open_transaction_directories(squad, validated_marker)
     manifest: _PinnedRegular | None = None
     stages: dict[str, _PinnedRegular] = {}
     try:
@@ -1244,7 +1332,9 @@ def _load_prepared_pinned(
             ):
                 _raise("stage_corrupt")
         pinned = _PinnedTransaction(
+            squad_fd=squad_fd,
             outbox_fd=outbox_fd,
+            outbox_identity=outbox_identity,
             transaction_fd=transaction_fd,
             transaction_id=validated_marker.transaction_id,
             transaction_identity=transaction_identity,
@@ -1273,7 +1363,73 @@ def _load_prepared_pinned(
             os.close(manifest.fd)
         os.close(transaction_fd)
         os.close(outbox_fd)
+        os.close(squad_fd)
         raise
+
+
+def _remove_directory_contents(directory_fd: int) -> None:
+    """Remove only descendants reached through a retained directory FD."""
+
+    try:
+        names = os.listdir(directory_fd)
+    except (OSError, TypeError, NotImplementedError):
+        _raise("publish_io")
+    for name in names:
+        try:
+            metadata = os.stat(
+                name,
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            _raise("stage_corrupt")
+        except (OSError, TypeError, NotImplementedError):
+            _raise("publish_io")
+        if stat.S_ISDIR(metadata.st_mode) and not stat.S_ISLNK(
+            metadata.st_mode
+        ):
+            child_fd = _open_directory(
+                name,
+                dir_fd=directory_fd,
+                missing_code="stage_corrupt",
+                invalid_code="stage_corrupt",
+            )
+            try:
+                opened = os.fstat(child_fd)
+                if _directory_identity(opened) != _directory_identity(
+                    metadata
+                ):
+                    _raise("stage_corrupt")
+                _remove_directory_contents(child_fd)
+                current = os.stat(
+                    name,
+                    dir_fd=directory_fd,
+                    follow_symlinks=False,
+                )
+                if _directory_identity(current) != _directory_identity(
+                    opened
+                ):
+                    _raise("stage_corrupt")
+                os.rmdir(name, dir_fd=directory_fd)
+            except PublicationError:
+                raise
+            except FileNotFoundError:
+                _raise("stage_corrupt")
+            except (OSError, TypeError, NotImplementedError):
+                _raise("publish_io")
+            finally:
+                os.close(child_fd)
+        else:
+            try:
+                os.unlink(name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                _raise("stage_corrupt")
+            except (OSError, TypeError, NotImplementedError):
+                _raise("publish_io")
+    try:
+        os.fsync(directory_fd)
+    except OSError:
+        _raise("publish_io")
 
 
 @dataclass(frozen=True)
@@ -1344,6 +1500,7 @@ class PreparedSquadPublication:
                 except OSError:
                     pass
             os.close(parent_fd)
+        _fsync_target_directory_chain(self._project_root, relative)
         if (
             _target_image(
                 self._project_root,
@@ -1379,11 +1536,81 @@ class PreparedSquadPublication:
                 _raise("target_drift")
         finally:
             os.close(parent_fd)
+        _fsync_target_directory_chain(self._project_root, relative)
         if _target_image(
             self._project_root,
             relative,
             invalid_code="target_drift",
         ) != {"kind": "missing"}:
+            _raise("target_drift")
+
+    def _durably_accept_postimage(
+        self,
+        operation: dict[str, object],
+    ) -> None:
+        relative = Path(str(operation["target"]))
+        expected_postimage = dict(operation["postimage"])
+        parent_fd = _open_parent_directory(
+            self._project_root,
+            relative,
+            create=False,
+        )
+        try:
+            if (
+                _target_image_at(parent_fd, relative.name)
+                != expected_postimage
+            ):
+                _raise("target_drift")
+            if expected_postimage["kind"] == "file":
+                try:
+                    target_fd = os.open(
+                        relative.name,
+                        _regular_open_flags(),
+                        dir_fd=parent_fd,
+                    )
+                except OSError:
+                    _raise("target_drift")
+                try:
+                    before = os.fstat(target_fd)
+                    if (
+                        not stat.S_ISREG(before.st_mode)
+                        or _hash_fd(target_fd, code="target_drift")
+                        != expected_postimage["sha256"]
+                    ):
+                        _raise("target_drift")
+                    try:
+                        os.fsync(target_fd)
+                    except OSError:
+                        _raise("publish_io")
+                    after = os.fstat(target_fd)
+                    if _regular_identity(after) != _regular_identity(before):
+                        _raise("target_drift")
+                except PublicationError:
+                    raise
+                except OSError:
+                    _raise("target_drift")
+                finally:
+                    os.close(target_fd)
+            try:
+                os.fsync(parent_fd)
+            except OSError:
+                _raise("publish_io")
+            if (
+                _target_image_at(parent_fd, relative.name)
+                != expected_postimage
+            ):
+                _raise("target_drift")
+        finally:
+            os.close(parent_fd)
+        _fsync_target_directory_chain(self._project_root, relative)
+        if (
+            _target_image(
+                self._project_root,
+                relative,
+                invalid_code="target_drift",
+            )
+            != expected_postimage
+        ):
             _raise("target_drift")
 
     @staticmethod
@@ -1433,6 +1660,7 @@ class PreparedSquadPublication:
                     )
                     postimage = dict(operation["postimage"])
                     if current == postimage:
+                        verified._durably_accept_postimage(operation)
                         continue
                     if current != dict(operation["preimage"]):
                         _raise("target_drift")
@@ -1469,66 +1697,68 @@ class PreparedSquadPublication:
         if self._transaction_root != expected_root:
             _raise("manifest_invalid")
         with _publication_exclusivity(self._project_root):
-            squad_fd = _open_directory(
-                self._squad_dir,
-                missing_code="stage_corrupt",
-                invalid_code="stage_corrupt",
-            )
             try:
-                try:
-                    outbox_fd = os.open(
-                        _OUTBOX_DIRECTORY,
-                        _directory_open_flags(),
-                        dir_fd=squad_fd,
-                    )
-                except FileNotFoundError:
+                (
+                    squad_fd,
+                    outbox_fd,
+                    outbox_identity,
+                    transaction_fd,
+                    transaction_identity,
+                ) = _open_transaction_directories(
+                    self._squad_dir,
+                    marker,
+                )
+            except PublicationError as error:
+                if error.code == "stage_missing":
                     return
-                except OSError:
-                    _raise("stage_corrupt")
-            finally:
-                os.close(squad_fd)
+                raise
             try:
+                _verify_transaction_directories(
+                    squad_fd,
+                    outbox_fd,
+                    outbox_identity,
+                    transaction_fd,
+                    marker.transaction_id,
+                    transaction_identity,
+                )
+                _remove_directory_contents(transaction_fd)
+                _verify_transaction_directories(
+                    squad_fd,
+                    outbox_fd,
+                    outbox_identity,
+                    transaction_fd,
+                    marker.transaction_id,
+                    transaction_identity,
+                )
                 try:
-                    metadata = os.stat(
+                    os.rmdir(
                         marker.transaction_id,
                         dir_fd=outbox_fd,
+                    )
+                    outbox_entry = os.stat(
+                        _OUTBOX_DIRECTORY,
+                        dir_fd=squad_fd,
                         follow_symlinks=False,
                     )
-                except FileNotFoundError:
-                    return
-                except OSError:
-                    _raise("publish_io")
-                if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(
-                    metadata.st_mode
-                ):
-                    _raise("stage_corrupt")
-                transaction_fd: int | None = None
-                try:
-                    transaction_fd = os.open(
-                        marker.transaction_id,
-                        _directory_open_flags(),
-                        dir_fd=outbox_fd,
-                    )
-                    opened = os.fstat(transaction_fd)
-                except OSError:
-                    _raise("stage_corrupt")
-                finally:
-                    if transaction_fd is not None:
-                        os.close(transaction_fd)
-                if _directory_identity(opened) != _directory_identity(
-                    metadata
-                ):
-                    _raise("stage_corrupt")
-                try:
-                    shutil.rmtree(
-                        marker.transaction_id,
-                        dir_fd=outbox_fd,
-                    )
+                    opened_outbox = os.fstat(outbox_fd)
+                    if (
+                        _directory_identity(outbox_entry)
+                        != outbox_identity
+                        or _directory_identity(opened_outbox)
+                        != outbox_identity
+                    ):
+                        _raise("stage_corrupt")
                     os.fsync(outbox_fd)
+                except PublicationError:
+                    raise
+                except FileNotFoundError:
+                    _raise("stage_corrupt")
                 except (OSError, TypeError, NotImplementedError):
                     _raise("publish_io")
             finally:
+                os.close(transaction_fd)
                 os.close(outbox_fd)
+                os.close(squad_fd)
 
 
 class SquadPublicationTransaction:
@@ -1638,7 +1868,13 @@ class SquadPublicationTransaction:
 
     def _open_transaction(
         self,
-    ) -> tuple[int, int, tuple[int, int, int]]:
+    ) -> tuple[
+        int,
+        int,
+        tuple[int, int, int],
+        int,
+        tuple[int, int, int],
+    ]:
         marker = PublicationMarker(
             schema_version=_SCHEMA_VERSION,
             transaction_id=self._transaction_id,
@@ -1708,7 +1944,13 @@ class SquadPublicationTransaction:
         staged_relative = _normalize_relative_path(staged_relative)
         if staged_relative == Path(_MANIFEST_NAME):
             _raise("manifest_invalid")
-        outbox_fd, transaction_fd, _ = self._open_transaction()
+        (
+            squad_fd,
+            outbox_fd,
+            _,
+            transaction_fd,
+            _,
+        ) = self._open_transaction()
         try:
             pinned = _pin_regular_at(
                 transaction_fd,
@@ -1723,6 +1965,7 @@ class SquadPublicationTransaction:
         finally:
             os.close(transaction_fd)
             os.close(outbox_fd)
+            os.close(squad_fd)
         preimage = _target_image(
             self._project_root,
             relative,
@@ -1780,9 +2023,13 @@ class SquadPublicationTransaction:
         }
         manifest_bytes = _canonical_json(manifest)
         manifest_digest = hashlib.sha256(manifest_bytes).hexdigest()
-        outbox_fd, transaction_fd, transaction_identity = (
-            self._open_transaction()
-        )
+        (
+            squad_fd,
+            outbox_fd,
+            outbox_identity,
+            transaction_fd,
+            transaction_identity,
+        ) = self._open_transaction()
         stage_pins: dict[str, _PinnedRegular] = {}
         manifest_pin: _PinnedRegular | None = None
         try:
@@ -1831,19 +2078,16 @@ class SquadPublicationTransaction:
             ):
                 _raise("manifest_mismatch")
             try:
-                opened = os.fstat(transaction_fd)
-                current = os.stat(
+                _verify_transaction_directories(
+                    squad_fd,
+                    outbox_fd,
+                    outbox_identity,
+                    transaction_fd,
                     self._transaction_id,
-                    dir_fd=outbox_fd,
-                    follow_symlinks=False,
+                    transaction_identity,
                 )
-            except OSError:
-                _raise("stage_corrupt")
-            if (
-                _directory_identity(opened) != transaction_identity
-                or _directory_identity(current) != transaction_identity
-            ):
-                _raise("stage_corrupt")
+            except PublicationError:
+                raise
             for pinned in stage_pins.values():
                 _verify_pinned_regular(
                     transaction_fd,
@@ -1863,6 +2107,7 @@ class SquadPublicationTransaction:
                 os.close(pinned.fd)
             os.close(transaction_fd)
             os.close(outbox_fd)
+            os.close(squad_fd)
         marker = PublicationMarker(
             schema_version=_SCHEMA_VERSION,
             transaction_id=self._transaction_id,
