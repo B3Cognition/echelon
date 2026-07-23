@@ -9,6 +9,8 @@ import json
 import hashlib
 import subprocess
 from copy import deepcopy
+from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -29,7 +31,11 @@ from harness.squad import (
 )
 from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
-from harness.squad_state import StateAdvanceError, SquadStateStore
+from harness.squad_state import (
+    AdvanceReceipt,
+    StateAdvanceError,
+    SquadStateStore,
+)
 from harness.understanding_gate import UnderstandingGateResult
 from echelon.telemetry.spec_adapter import analyze_spec_run
 
@@ -3494,6 +3500,191 @@ class TestFailClosedControllerPreparation:
         assert result.phase == "phase3-tasks-lexicon"
         assert store.load()["controller_contract_error"]["validator"] == "receipt"
         assert calls == []
+
+    @pytest.mark.parametrize(
+        "forge_receipt",
+        [
+            lambda receipt: replace(receipt, from_phase="forged-from"),
+            lambda receipt: replace(receipt, to_phase="forged-to"),
+            lambda receipt: replace(
+                receipt,
+                controller_contract="forged-contract",
+            ),
+            lambda receipt: replace(
+                receipt,
+                controller_contract_sha256="f" * 64,
+            ),
+            lambda receipt: replace(
+                receipt,
+                completed_at="2026-07-23T00:00:00+00:00",
+            ),
+        ],
+        ids=[
+            "from-phase",
+            "to-phase",
+            "contract",
+            "contract-digest",
+            "completion-identity",
+        ],
+    )
+    def test_forged_typed_receipt_restores_pre_advance_state_and_blocks(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        forge_receipt,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        self._patch_run_guards(ctrl, monkeypatch)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase3-tasks-lexicon",
+        )
+        before = store.load()
+        executor = MagicMock()
+        executor.execute.return_value = self._tasks_result(True)
+        ctrl._executors["deterministic_lexicon"] = executor
+        original_advance = store.advance
+        calls: list[str] = []
+
+        def return_forged_receipt(*args, **kwargs):
+            return forge_receipt(original_advance(*args, **kwargs))
+
+        monkeypatch.setattr(store, "advance", return_forged_receipt)
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_declared_phase_timing_transition",
+            lambda *_: calls.append("timing"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            lambda *_: calls.append("checkpoint"),
+        )
+
+        result = ctrl.run("msg", "banzai")
+        blocked = store.load()
+
+        assert result.status == "blocked"
+        assert blocked["phase"] == before["phase"]
+        assert blocked["completed_phases"] == before["completed_phases"]
+        assert blocked["last_dispatch"] == before["last_dispatch"]
+        assert blocked["iteration"] == before["iteration"]
+        assert blocked["controller_contract_error"]["validator"] == "receipt"
+        assert calls == []
+
+    def test_typed_receipt_without_persisted_dispatch_is_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase3-tasks-lexicon",
+        )
+        node = ctrl._graph.get("phase3-tasks-lexicon")
+        prepared = ctrl._prepare_phase_result(
+            node,
+            self._tasks_result(True),
+        )
+        monkeypatch.setattr(
+            store,
+            "advance",
+            lambda *_args, **_kwargs: AdvanceReceipt(
+                from_phase=node.id,
+                to_phase="phase3-understanding",
+                completed_at=datetime.now(timezone.utc).isoformat(),
+                controller_contract=prepared.controller_contract_name,
+                controller_contract_sha256=(
+                    prepared.controller_contract_sha256
+                ),
+            ),
+        )
+
+        receipt = ctrl._advance_prepared_result_or_block(
+            node,
+            node.id,
+            "phase3-understanding",
+            prepared,
+        )
+
+        assert receipt is None
+        diagnostic = store.load()["controller_contract_error"]
+        assert diagnostic["validator"] == "receipt"
+        assert diagnostic["json_path"] == "$.last_dispatch"
+
+    def test_typed_but_stale_self_loop_receipt_is_rejected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase2-decide")
+        node = ctrl._graph.get("phase2-decide")
+        monkeypatch.setattr(
+            ctrl,
+            "_controller_enrichment",
+            lambda *_: ControllerEnrichment(
+                updates={
+                    "feasibility_structural_pass": False,
+                    "feasibility_structural_attempts": 1,
+                },
+            ),
+        )
+        prepared = ctrl._prepare_phase_result(
+            node,
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={"verdict": "PASS", "state_updates": {}},
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+        )
+        completed_at = "2026-07-23T00:00:00+00:00"
+        stale_receipt = AdvanceReceipt(
+            from_phase=node.id,
+            to_phase=node.id,
+            completed_at=completed_at,
+            controller_contract=prepared.controller_contract_name,
+            controller_contract_sha256=prepared.controller_contract_sha256,
+        )
+        state = store.load()
+        state["last_dispatch"] = {
+            "phase_id": node.id,
+            "verdict": prepared.verdict,
+            "completed_at": completed_at,
+            "controller_contract": prepared.controller_contract_name,
+            "controller_contract_sha256": (
+                prepared.controller_contract_sha256
+            ),
+            "controller_normalized": bool(prepared.normalized_paths),
+        }
+        store.save(state)
+        prior_dispatch = deepcopy(store.load()["last_dispatch"])
+        monkeypatch.setattr(
+            store,
+            "advance",
+            lambda *_args, **_kwargs: stale_receipt,
+        )
+
+        receipt = ctrl._advance_prepared_result_or_block(
+            node,
+            node.id,
+            node.id,
+            prepared,
+        )
+
+        assert receipt is None
+        blocked = store.load()
+        assert blocked["last_dispatch"] == prior_dispatch
+        assert blocked["controller_contract_error"]["validator"] == "receipt"
 
     def test_manual_success_advances_before_timing_and_checkpoint(
         self,

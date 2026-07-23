@@ -2873,6 +2873,7 @@ class SquadController:
         manual_phase_run: bool = False,
     ) -> AdvanceReceipt | None:
         """Commit one prepared result or persist a separate redacted failure."""
+        before_state = deepcopy(self._state_store.load())
         try:
             receipt = self._state_store.advance(
                 from_phase,
@@ -2887,23 +2888,156 @@ class SquadController:
                     json_path="$.advance_receipt",
                     validator="receipt",
                 )
+            self._validate_advance_receipt(
+                receipt,
+                from_phase=from_phase,
+                to_phase=to_phase,
+                prepared=prepared,
+                before_state=before_state,
+                manual_phase_run=manual_phase_run,
+            )
             return receipt
         except StateAdvanceError as exc:
             self._block_after_state_advance_failure(
                 node,
                 from_phase,
                 exc,
+                before_state=before_state,
             )
             return None
+
+    def _validate_advance_receipt(
+        self,
+        receipt: AdvanceReceipt,
+        *,
+        from_phase: str,
+        to_phase: str,
+        prepared: PreparedPhaseResult,
+        before_state: dict,
+        manual_phase_run: bool,
+    ) -> None:
+        """Prove that a typed receipt identifies the requested persisted commit."""
+
+        def reject(message: str, json_path: str) -> None:
+            raise StateAdvanceError(
+                message,
+                json_path=json_path,
+                validator="receipt",
+            )
+
+        persisted = deepcopy(self._state_store.load())
+        last_dispatch = persisted.get("last_dispatch")
+        if not isinstance(last_dispatch, dict):
+            reject(
+                "state advance receipt has no persisted dispatch",
+                "$.last_dispatch",
+            )
+        if last_dispatch == before_state.get("last_dispatch"):
+            reject(
+                "state advance receipt identifies a stale dispatch",
+                "$.last_dispatch",
+            )
+        if receipt.from_phase != from_phase:
+            reject(
+                "state advance receipt has the wrong source phase",
+                "$.advance_receipt.from_phase",
+            )
+        if receipt.to_phase != to_phase:
+            reject(
+                "state advance receipt has the wrong destination phase",
+                "$.advance_receipt.to_phase",
+            )
+        if receipt.controller_contract != prepared.controller_contract_name:
+            reject(
+                "state advance receipt has the wrong controller contract",
+                "$.advance_receipt.controller_contract",
+            )
+        if (
+            receipt.controller_contract_sha256
+            != prepared.controller_contract_sha256
+        ):
+            reject(
+                "state advance receipt has the wrong contract digest",
+                "$.advance_receipt.controller_contract_sha256",
+            )
+        if (
+            not isinstance(receipt.completed_at, str)
+            or not receipt.completed_at.strip()
+        ):
+            reject(
+                "state advance receipt has no completion identity",
+                "$.advance_receipt.completed_at",
+            )
+        if persisted.get("phase") != to_phase:
+            reject(
+                "persisted state does not match receipt destination",
+                "$.phase",
+            )
+        expected_dispatch = {
+            "phase_id": from_phase,
+            "verdict": prepared.verdict,
+            "completed_at": receipt.completed_at,
+            "controller_contract": prepared.controller_contract_name,
+            "controller_contract_sha256": (
+                prepared.controller_contract_sha256
+            ),
+            "controller_normalized": bool(prepared.normalized_paths),
+        }
+        for key, expected in expected_dispatch.items():
+            if last_dispatch.get(key) != expected:
+                reject(
+                    "persisted dispatch does not match advance receipt",
+                    f"$.last_dispatch.{key}",
+                )
+        if bool(last_dispatch.get("manual_phase_run")) != manual_phase_run:
+            reject(
+                "persisted dispatch has the wrong manual-run identity",
+                "$.last_dispatch.manual_phase_run",
+            )
+        completed = persisted.get("completed_phases")
+        if not isinstance(completed, list) or from_phase not in completed:
+            reject(
+                "persisted state has no phase completion",
+                "$.completed_phases",
+            )
+        if "controller_contract_error" in persisted:
+            reject(
+                "persisted state retained a prior contract diagnostic",
+                "$.controller_contract_error",
+            )
+        if manual_phase_run:
+            manual_runs = persisted.get("manual_phase_runs")
+            if not isinstance(manual_runs, list) or not manual_runs:
+                reject(
+                    "persisted state has no manual-run receipt",
+                    "$.manual_phase_runs",
+                )
+            expected_manual = {
+                "phase_id": from_phase,
+                "next_phase": to_phase,
+                "verdict": prepared.verdict,
+                "completed_at": receipt.completed_at,
+            }
+            if manual_runs[-1] != expected_manual:
+                reject(
+                    "persisted manual-run receipt does not match advance receipt",
+                    "$.manual_phase_runs",
+                )
 
     def _block_after_state_advance_failure(
         self,
         node: PhaseNode,
         from_phase: str,
         error: StateAdvanceError,
+        *,
+        before_state: dict | None = None,
     ) -> None:
         """Persist a stable diagnostic without treating failure as an advance."""
-        state = self._state_store.load()
+        state = (
+            deepcopy(before_state)
+            if isinstance(before_state, dict)
+            else self._state_store.load()
+        )
         contract = node.controller_state_contract
         json_path = (
             error.json_path

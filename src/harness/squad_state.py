@@ -15,7 +15,11 @@ from harness.echelon_result_schema import (
     EchelonResultValidationError,
     validate_echelon_result,
 )
-from harness.prepared_phase_result import PreparedPhaseResult
+from harness.prepared_phase_result import (
+    PreparedPhaseResult,
+    PreparedPhaseResultAttestationError,
+    verify_prepared_phase_result_attestation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,13 +82,30 @@ def _prepared_result_error(
     )
 
 
-def _validate_prepared_result(prepared: PreparedPhaseResult) -> dict:
+def _validate_prepared_result(
+    prepared: PreparedPhaseResult,
+    *,
+    from_phase: str,
+    to_phase: str,
+) -> dict:
     """Validate the immutable payload and its ownership receipt together."""
     if type(prepared) is not PreparedPhaseResult:
         raise _prepared_result_error(
             "advance requires a PreparedPhaseResult",
             validator="prepared_result",
         )
+    try:
+        attested_payload = verify_prepared_phase_result_attestation(
+            prepared,
+            from_phase=from_phase,
+            to_phase=to_phase,
+        )
+    except PreparedPhaseResultAttestationError as exc:
+        raise _prepared_result_error(
+            "prepared result attestation validation failed",
+            json_path="$.prepared_result.attestation",
+            validator="attestation",
+        ) from exc
 
     provider_keys = prepared.provider_update_keys
     controller_keys = prepared.controller_update_keys
@@ -174,7 +195,7 @@ def _validate_prepared_result(prepared: PreparedPhaseResult) -> dict:
 
     try:
         result = validate_echelon_result(
-            prepared.echelon_result,
+            attested_payload,
             allowed_state_update_keys=provider_keys | controller_keys,
         )
     except EchelonResultValidationError as exc:
@@ -190,18 +211,6 @@ def _validate_prepared_result(prepared: PreparedPhaseResult) -> dict:
         raise _prepared_result_error(
             "prepared state update ownership does not match payload",
             json_path="$.prepared_result.ownership",
-        )
-    if prepared.state_updates != result["state_updates"]:
-        raise _prepared_result_error(
-            "prepared state update receipt does not match payload",
-            json_path="$.prepared_result.state_updates",
-            validator="receipt",
-        )
-    if prepared.verdict != result["verdict"]:
-        raise _prepared_result_error(
-            "prepared verdict receipt does not match payload",
-            json_path="$.prepared_result.verdict",
-            validator="receipt",
         )
     return result
 
@@ -348,7 +357,11 @@ class SquadStateStore:
         state = self.load()
         next_state = deepcopy(state)
         try:
-            result = _validate_prepared_result(prepared)
+            result = _validate_prepared_result(
+                prepared,
+                from_phase=from_phase,
+                to_phase=to_phase,
+            )
         except StateAdvanceError:
             raise
         except Exception as exc:
@@ -361,14 +374,14 @@ class SquadStateStore:
             "squad advance %s → %s verdict=%s run_id=%s",
             from_phase,
             to_phase,
-            prepared.verdict,
+            result["verdict"],
             state.get("run_id", "?"),
         )
         completed_at = datetime.now(timezone.utc).isoformat()
         next_state["phase"] = to_phase
         next_state["last_dispatch"] = {
             "phase_id": from_phase,
-            "verdict": prepared.verdict,
+            "verdict": result["verdict"],
             "completed_at": completed_at,
             "controller_contract": prepared.controller_contract_name,
             "controller_contract_sha256": prepared.controller_contract_sha256,
@@ -385,7 +398,7 @@ class SquadStateStore:
                 {
                     "phase_id": from_phase,
                     "next_phase": to_phase,
-                    "verdict": prepared.verdict,
+                    "verdict": result["verdict"],
                     "completed_at": completed_at,
                 }
             )

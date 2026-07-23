@@ -331,6 +331,26 @@ def test_invalid_base_result_is_reported_as_contract_violation() -> None:
     assert raised.value.validator == "echelon_result"
 
 
+def test_prepare_reports_unattestable_provider_cycle_as_contract_violation() -> None:
+    node = PhaseNode(
+        id="provider",
+        type="agent",
+        allowed_state_updates=["cyclic"],
+    )
+    cyclic: list[object] = []
+    cyclic.append(cyclic)
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            node,
+            _result({"cyclic": cyclic}),
+            controller_updates={},
+        )
+
+    assert raised.value.contract == "preparation"
+    assert raised.value.validator == "attestation"
+
+
 @pytest.mark.parametrize("routing_override", ["", "  ", 42])
 def test_prepare_rejects_invalid_routing_override(
     routing_override: object,

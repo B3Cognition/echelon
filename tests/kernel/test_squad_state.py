@@ -13,7 +13,7 @@ if str(EXT_ROOT) not in sys.path:
 
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.prepared_phase_result import PreparedPhaseResult, prepare_phase_result
-from harness.squad_state import SquadStateStore
+from harness.squad_state import StateAdvanceError, SquadStateStore
 from harness.squad_provider import SquadAgentResult
 
 DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
@@ -34,16 +34,23 @@ def _raw_result(verdict="DONE", updates=None) -> SquadAgentResult:
     )
 
 
-def _result(verdict="DONE", updates=None) -> PreparedPhaseResult:
+def _result(
+    verdict="DONE",
+    updates=None,
+    *,
+    phase_id: str = "init",
+    routing_override: str | None = None,
+) -> PreparedPhaseResult:
     updates = updates or {}
     return prepare_phase_result(
         PhaseNode(
-            id="test-phase",
+            id=phase_id,
             type="agent",
             allowed_state_updates=list(updates),
         ),
         _raw_result(verdict, updates),
         controller_updates={},
+        routing_override=routing_override,
     )
 
 
@@ -124,7 +131,11 @@ class TestSquadStateStore:
     def test_advance_records_completed_phase_provenance(self, tmp_path):
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "init")
-        store.advance("phase1-constitution", "phase1-what", _result("DONE"))
+        store.advance(
+            "phase1-constitution",
+            "phase1-what",
+            _result("DONE", phase_id="phase1-constitution"),
+        )
 
         assert store.load()["completed_phases"] == ["phase1-constitution"]
 
@@ -154,7 +165,11 @@ class TestSquadStateStore:
         store.advance(
             "phase1-what",
             "phase1-why2",
-            _result("DONE", {"spec_id": "005", "spec_dir": "specs/005-opta-search-shows-stats"}),
+            _result(
+                "DONE",
+                {"spec_id": "005", "spec_dir": "specs/005-opta-search-shows-stats"},
+                phase_id="phase1-what",
+            ),
         )
 
         state = store.load()
@@ -236,6 +251,109 @@ class TestSquadStateStore:
         assert save.call_count == 0
         assert store.load() == before
 
+    @pytest.mark.parametrize("tamper_mode", ["mutate", "replace"])
+    def test_advance_rejects_schema_valid_private_result_tampering(
+        self,
+        tmp_path,
+        tamper_mode,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        before = store.load()
+        prepared = _result("DONE", {"coverage_pct": 72})
+        if tamper_mode == "mutate":
+            prepared._result.echelon_result["state_updates"]["coverage_pct"] = 73
+        else:
+            object.__setattr__(
+                prepared,
+                "_result",
+                _raw_result("DONE", {"coverage_pct": 73}),
+            )
+
+        with patch.object(store, "save", wraps=store.save) as save:
+            with pytest.raises(StateAdvanceError):
+                store.advance("init", "phase1-discover", prepared)
+
+        assert save.call_count == 0
+        assert store.load() == before
+
+    @pytest.mark.parametrize(
+        "tamper",
+        [
+            lambda prepared: replace(
+                prepared,
+                controller_contract_name="forged_valid_name",
+                controller_contract_sha256="a" * 64,
+            ),
+            lambda prepared: replace(
+                prepared,
+                provider_update_keys=prepared.controller_update_keys,
+                controller_update_keys=frozenset(),
+            ),
+            lambda prepared: replace(
+                prepared,
+                normalized_paths=(
+                    "$.state_updates.tasks_lexicon_report",
+                ),
+            ),
+            lambda prepared: replace(
+                prepared,
+                routing_override="phase3-understanding",
+            ),
+        ],
+        ids=[
+            "valid-looking-contract-pair",
+            "provider-controller-reclassification",
+            "normalized-paths",
+            "routing-override",
+        ],
+    )
+    def test_advance_rejects_outer_metadata_forgery_against_attestation(
+        self,
+        tmp_path,
+        tamper,
+    ):
+        store = _store(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase3-tasks-lexicon",
+        )
+        before = store.load()
+
+        with patch.object(store, "save", wraps=store.save) as save:
+            with pytest.raises(StateAdvanceError):
+                store.advance(
+                    "phase3-tasks-lexicon",
+                    "phase3-understanding",
+                    tamper(_tasks_result()),
+                )
+
+        assert save.call_count == 0
+        assert store.load() == before
+
+    def test_attested_routing_override_must_match_requested_destination(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        before = store.load()
+        prepared = _result(
+            "DONE",
+            phase_id="init",
+            routing_override="phase1-discover",
+        )
+
+        with patch.object(store, "save", wraps=store.save) as save:
+            with pytest.raises(StateAdvanceError):
+                store.advance("init", "phase1-what", prepared)
+
+        assert save.call_count == 0
+        assert store.load() == before
+
     def test_advance_applies_iteration_and_contract_receipt_atomically(
         self,
         tmp_path,
@@ -287,7 +405,7 @@ class TestSquadStateStore:
         store.advance(
             "phase3-plan",
             "phase3-tasks-lexicon",
-            _result("DONE", {"iteration": 7}),
+            _result("DONE", {"iteration": 7}, phase_id="phase3-plan"),
             increment_iteration=True,
         )
 
@@ -300,7 +418,7 @@ class TestSquadStateStore:
         receipt = store.advance(
             "phase2-decide",
             "phase2-decide",
-            _result("PASS"),
+            _result("PASS", phase_id="phase2-decide"),
             manual_phase_run=True,
         )
 
@@ -342,6 +460,7 @@ class TestSquadStateStore:
                         "status": "blocked",
                         "spec_id": "999-tampered",
                     },
+                    phase_id="phase1-what",
                 ),
             )
 
