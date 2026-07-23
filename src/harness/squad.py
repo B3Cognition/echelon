@@ -145,6 +145,7 @@ _PRODUCT_INPUT_PATH_KEYS = frozenset(
         "requirement_context",
         "reference_context",
         "traceability",
+        "traceability_markdown",
     }
 )
 JUDGMENT_STATE_UPDATE_KEYS = frozenset(
@@ -1879,6 +1880,23 @@ class SquadController:
             and phase in {"phase3-plan", "phase3-consensus"}
         )
 
+    def _require_run_local_product_inputs(
+        self,
+        path: Path,
+        *,
+        staged_path: Path | None = None,
+    ) -> None:
+        candidate = Path(os.path.abspath(path))
+        allowed = {
+            Path(os.path.abspath(self._squad_dir / "inputs")),
+        }
+        if staged_path is not None:
+            allowed.add(Path(os.path.abspath(staged_path)))
+        if candidate not in allowed:
+            raise _ProductInputCommitError(
+                "product input evidence directory is not owned by this squad run"
+            )
+
     def _stage_product_input_effects(
         self,
         transaction: SquadPublicationTransaction,
@@ -1900,6 +1918,7 @@ class SquadController:
                 "product input staging path is missing from run state"
             )
         source_inputs = self._absolute_project_path(inputs_ref)
+        self._require_run_local_product_inputs(source_inputs)
         virtual_inputs = transaction.build_path(
             Path("work/product-inputs")
         )
@@ -2101,6 +2120,12 @@ class SquadController:
                     ),
                 )
             source_inputs = self._absolute_project_path(inputs_ref)
+            self._require_run_local_product_inputs(
+                source_inputs,
+                staged_path=transaction.build_path(
+                    Path("work/product-inputs")
+                ),
+            )
             source_input_files = self._controller_tree_files(
                 source_inputs,
                 exclude_echelon=False,
@@ -2654,7 +2679,6 @@ class SquadController:
         return None
 
     def _checkpoint_successful_phase(self, phase: str, next_phase: str) -> bool:
-        self._materialize_implementation_targets()
         state = self._state_store.load()
         spec_dir = self._active_phase_a_spec_dir(state)
         if spec_dir is None or not spec_dir.exists():

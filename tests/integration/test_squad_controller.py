@@ -1317,6 +1317,30 @@ class TestAgentResultIntegrity:
         assert "specs/001-themed-ascii-animation/run-history.json" in targets
         assert "specs/001-themed-ascii-animation/feature-metadata.yml" in targets
 
+    def test_publication_staging_keeps_target_materialization_out_of_checkpoint(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        materialize = MagicMock(
+            side_effect=AssertionError(
+                "checkpoint attempted an untracked targets.yml write"
+            )
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_materialize_implementation_targets",
+            materialize,
+        )
+
+        assert ctrl._checkpoint_successful_phase(
+            "phase1-what",
+            "phase1-why1",
+        )
+        materialize.assert_not_called()
+
     def test_checkpoint_plan_auto_routes_without_commander_judgment(self, tmp_path):
         _disable_lexicon_gate(tmp_path)
         provider = MagicMock()
