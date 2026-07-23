@@ -2427,20 +2427,10 @@ class SquadController:
         artifact_name, pass_key, attempts_key = gate_fields
         gate = self._lexicon_gate_config().get("lexicon_gate", {})
         if not isinstance(gate, dict) or not gate.get("enabled", False):
-            if (
-                result.state_updates.get("lexicon_evaluation") == "passed"
-                and "lexicon_report" not in result.state_updates
-            ):
-                return {"lexicon_report": "lexicon-gate-disabled"}, None
             return {}, None
         artifacts = gate.get("artifacts", {})
         artifact_gate = artifacts.get(artifact_name, {}) if isinstance(artifacts, dict) else {}
         if not isinstance(artifact_gate, dict) or not artifact_gate.get("enabled", False):
-            if (
-                result.state_updates.get("lexicon_evaluation") == "passed"
-                and "lexicon_report" not in result.state_updates
-            ):
-                return {"lexicon_report": "lexicon-gate-disabled"}, None
             return {}, None
         try:
             repair_cap = int(gate.get("max_repair_attempts", 3))

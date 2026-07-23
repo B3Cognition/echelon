@@ -481,7 +481,7 @@ phases:
       # CARTOGRAPHER authors or repairs the derived artifact. This provider-free
       # node validates it, persists findings, increments the repair count, and
       # re-dispatches WHAT with report context. When disabled, the executor emits
-      # a passing bypass and flow continues to deterministic Understanding.
+      # a pending/unexecuted marker and flow continues to deterministic Understanding.
       - to: phase1-what
         condition: "lexicon_gate.enabled AND lexicon_evaluation = pending AND iteration < max_iterations"
         action: increment_iteration

@@ -3172,6 +3172,59 @@ THEN: The dashboard is visible
             == "phase1-understanding"
         )
 
+    def test_disabled_spec_lexicon_result_prepares_and_persists_as_pending(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        _disable_lexicon_gate(tmp_path)
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "brownfield",
+            "msg",
+            0,
+            "phase1-lexicon",
+        )
+        stale = store.load()
+        stale.update(
+            {
+                "lexicon_pass": True,
+                "lexicon_findings": 0,
+                "lexicon_report": "/invented/certificate.json",
+            }
+        )
+        store.save(stale)
+        node = ctrl._graph.get("phase1-lexicon")
+
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
+        prepared = ctrl._prepare_phase_result(node, result)
+        next_phase = ctrl._evaluate_transitions(node, prepared)
+
+        expected = {
+            "lexicon_evaluation": "pending",
+            "lexicon_attempts": 0,
+        }
+        assert result.state_updates == expected
+        assert prepared.state_updates == expected
+        assert next_phase == "phase1-understanding"
+
+        store.advance(
+            node.id,
+            next_phase,
+            prepared.as_squad_agent_result(),
+            allowed_state_update_keys=ctrl._advance_state_update_keys(node),
+        )
+        persisted = store.load()
+        assert persisted["lexicon_evaluation"] == "pending"
+        assert persisted["lexicon_attempts"] == 0
+        assert "lexicon_pass" not in persisted
+        assert "lexicon_findings" not in persisted
+        assert "lexicon_report" not in persisted
+        assert (
+            ctrl._guard_spec_lexicon_evidence(next_phase)
+            == "phase1-understanding"
+        )
+
     def test_manual_spec_lexicon_node_is_visible_and_provider_free(
         self, tmp_path, capsys
     ):
