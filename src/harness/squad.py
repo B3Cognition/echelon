@@ -29,6 +29,7 @@ from echelon.spec_lifecycle import (
     SpecRunExecutionLock,
 )
 from harness.condition_evaluator import ConditionEvaluator
+from harness.controller_state_contracts import ControllerStateContractViolation
 from harness.echelon_result_schema import (
     EchelonResultContract,
     EchelonResultValidationError,
@@ -766,6 +767,24 @@ class SquadController:
                     run_id=existing.get("run_id", ""),
                 )
 
+        # Contract failures are retryable at the same node. Keep the diagnostic
+        # until a later successful state advance proves that the phase completed.
+        elif (
+            existing_status == "blocked"
+            and blocked_reason == "controller_state_contract_validation_failed"
+        ):
+            state = self._state_store.load()
+            state["status"] = "running"
+            state["blocked_reason"] = None
+            self._state_store.save(state)
+            existing_status = "running"
+            force_resume = True
+            print(
+                f"[squad] controller contract recovery → retrying "
+                f"{state.get('phase')!r}",
+                flush=True,
+            )
+
         # Deterministic analysis failures are retryable at the same node. Keep
         # their immutable evidence pointer and run identity instead of treating
         # them like an incomplete provider dispatch that must be reinitialized.
@@ -1033,18 +1052,37 @@ class SquadController:
                 ):
                     result = executor.execute(node, self._state_store)
 
-            blocked_result = self._blocked_executor_reason(result)
-            if blocked_result:
-                self._block_after_executor_failure(phase, blocked_result, result)
+            prepared = self._prepare_phase_result_or_block(node, result)
+            if prepared is None:
                 return SquadResult.from_state(self._state_store.load())
-            product_input_error = self._apply_product_input_updates(result, phase)
+            prepared_result = prepared.as_squad_agent_result()
+
+            blocked_result = self._blocked_executor_reason(prepared_result)
+            if blocked_result:
+                self._block_after_executor_failure(
+                    phase,
+                    blocked_result,
+                    prepared_result,
+                )
+                return SquadResult.from_state(self._state_store.load())
+            product_input_error = self._apply_product_input_updates(
+                prepared_result,
+                phase,
+            )
             if product_input_error:
-                if self._schedule_product_input_mapping_repair(phase, product_input_error, result):
+                if self._schedule_product_input_mapping_repair(
+                    phase,
+                    product_input_error,
+                    prepared_result,
+                ):
                     continue
-                self._block_after_executor_failure(phase, product_input_error, result)
+                self._block_after_executor_failure(
+                    phase,
+                    product_input_error,
+                    prepared_result,
+                )
                 return SquadResult.from_state(self._state_store.load())
 
-            prepared = self._prepare_phase_result(node, result)
             next_phase = self._coordinate_transition_routing(node, prepared)
             if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
                 readiness = self._publish_phase_a_artifacts_for_build()
@@ -1059,6 +1097,10 @@ class SquadController:
                 next_phase,
                 prepared.as_squad_agent_result(),
                 allowed_state_update_keys=self._advance_state_update_keys(node),
+            )
+            self._clear_controller_contract_error_after_advance(
+                phase,
+                next_phase,
             )
             if not self._checkpoint_successful_phase(phase, next_phase):
                 return SquadResult.from_state(self._state_store.load())
@@ -1340,18 +1382,37 @@ class SquadController:
             ):
                 result = executor.execute(node, self._state_store)
 
-        blocked_result = self._blocked_executor_reason(result)
-        if blocked_result:
-            self._block_after_executor_failure(phase, blocked_result, result)
+        prepared = self._prepare_phase_result_or_block(node, result)
+        if prepared is None:
             return SquadResult.from_state(self._state_store.load())
-        product_input_error = self._apply_product_input_updates(result, phase)
+        prepared_result = prepared.as_squad_agent_result()
+
+        blocked_result = self._blocked_executor_reason(prepared_result)
+        if blocked_result:
+            self._block_after_executor_failure(
+                phase,
+                blocked_result,
+                prepared_result,
+            )
+            return SquadResult.from_state(self._state_store.load())
+        product_input_error = self._apply_product_input_updates(
+            prepared_result,
+            phase,
+        )
         if product_input_error:
-            if self._schedule_product_input_mapping_repair(phase, product_input_error, result):
+            if self._schedule_product_input_mapping_repair(
+                phase,
+                product_input_error,
+                prepared_result,
+            ):
                 return SquadResult.from_state(self._state_store.load())
-            self._block_after_executor_failure(phase, product_input_error, result)
+            self._block_after_executor_failure(
+                phase,
+                product_input_error,
+                prepared_result,
+            )
             return SquadResult.from_state(self._state_store.load())
 
-        prepared = self._prepare_phase_result(node, result)
         next_phase = self._coordinate_transition_routing(node, prepared)
         if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
             readiness = self._publish_phase_a_artifacts_for_build()
@@ -1369,6 +1430,10 @@ class SquadController:
             prepared.as_squad_agent_result(),
             allowed_state_update_keys=self._advance_state_update_keys(node),
             manual_phase_run=True,
+        )
+        self._clear_controller_contract_error_after_advance(
+            phase,
+            next_phase,
         )
         if not self._checkpoint_successful_phase(phase, next_phase):
             return SquadResult.from_state(self._state_store.load())
@@ -1419,7 +1484,9 @@ class SquadController:
                 timed_out=False,
                 cost_usd=0.0,
             )
-            prepared = self._prepare_phase_result(node, result)
+            prepared = self._prepare_phase_result_or_block(node, result)
+            if prepared is None:
+                return True
             next_phase = self._coordinate_transition_routing(node, prepared)
             self._state_store.advance(
                 node.id,
@@ -1427,6 +1494,10 @@ class SquadController:
                 prepared.as_squad_agent_result(),
                 allowed_state_update_keys=self._advance_state_update_keys(node),
                 manual_phase_run=manual_phase_run,
+            )
+            self._clear_controller_contract_error_after_advance(
+                node.id,
+                next_phase,
             )
             if not self._checkpoint_successful_phase(node.id, next_phase):
                 return True
@@ -2777,6 +2848,56 @@ class SquadController:
                 enrichment.controller_owns_result_updates
             ),
         )
+
+    def _prepare_phase_result_or_block(
+        self,
+        node: PhaseNode,
+        result: SquadAgentResult,
+    ) -> PreparedPhaseResult | None:
+        """Prepare a result or persist one stable, redacted contract failure."""
+        try:
+            return self._prepare_phase_result(node, result)
+        except ControllerStateContractViolation as exc:
+            state = self._state_store.load()
+            contract = node.controller_state_contract
+            state["phase"] = node.id
+            state["status"] = "blocked"
+            state["blocked_reason"] = (
+                "controller_state_contract_validation_failed"
+            )
+            state["controller_contract_error"] = {
+                "phase_id": node.id,
+                "contract": exc.contract,
+                "contract_sha256": (
+                    contract.sha256 if contract is not None else None
+                ),
+                "json_path": exc.json_path,
+                "validator": exc.validator,
+                "message": (
+                    "controller result preparation failed at "
+                    f"{exc.json_path} ({exc.validator})"
+                ),
+            }
+            self._state_store.save(state)
+            return None
+
+    def _clear_controller_contract_error_after_advance(
+        self,
+        from_phase: str,
+        to_phase: str,
+    ) -> None:
+        """Clear a prior contract diagnostic only after the current API advances."""
+        state = self._state_store.load()
+        last_dispatch = state.get("last_dispatch")
+        if (
+            state.get("phase") != to_phase
+            or not isinstance(last_dispatch, dict)
+            or last_dispatch.get("phase_id") != from_phase
+            or "controller_contract_error" not in state
+        ):
+            return
+        state.pop("controller_contract_error", None)
+        self._state_store.save(state)
 
     @staticmethod
     def _with_why_verdict_quality_fallback(

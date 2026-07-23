@@ -6,7 +6,15 @@ from unittest.mock import MagicMock
 import pytest
 import yaml
 
+from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController
+from harness.squad_provider import SquadAgentResult
+from harness.squad_state import SquadStateStore
+
+
+EXT_ROOT = Path(__file__).resolve().parent.parent.parent
+DEFINITION = EXT_ROOT / "extension" / "workflow" / "definition.yaml"
+EXT_YML = EXT_ROOT / "extension" / "extension.yml"
 
 
 @pytest.mark.parametrize(
@@ -153,6 +161,82 @@ def test_squad_records_checkpoint_after_successful_advance(
     assert calls[0]["next_phase"] == "phase3-consensus"
     assert calls[0]["run_id"] == "squad-1"
     assert calls[0]["spec_id"] == "001-demo"
+
+
+def test_malformed_controller_result_never_reaches_checkpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    squad_dir = tmp_path / "runs" / "run-test"
+    store = SquadStateStore(squad_dir)
+    store.initialize(
+        "run-test",
+        "greenfield",
+        "msg",
+        0,
+        "phase3-tasks-lexicon",
+    )
+    controller = SquadController(
+        provider=MagicMock(),
+        state_store=store,
+        phase_graph=PhaseGraph(DEFINITION, EXT_YML),
+        ext_dir=EXT_ROOT / "extension",
+        project_root=tmp_path,
+        squad_dir=squad_dir,
+    )
+    executor = MagicMock()
+    executor.execute.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {
+                "tasks_lexicon_action": "proceed",
+                "tasks_lexicon_pass": "not-boolean",
+                "tasks_lexicon_attempts": 0,
+                "tasks_lexicon_findings": 0,
+            },
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    controller._executors["deterministic_lexicon"] = executor
+    monkeypatch.setattr(
+        controller,
+        "_guard_constitution_provenance",
+        lambda phase: phase,
+    )
+    monkeypatch.setattr(
+        controller,
+        "_guard_spec_lexicon_evidence",
+        lambda phase: phase,
+    )
+    monkeypatch.setattr(
+        controller,
+        "_guard_understanding_evidence",
+        lambda phase: phase,
+    )
+    monkeypatch.setattr(controller, "_refresh_run_context", lambda *_: None)
+    monkeypatch.setattr(controller, "_ensure_telemetry_manifest", lambda: None)
+    checkpoint_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        controller,
+        "_checkpoint_successful_phase",
+        lambda phase, next_phase: checkpoint_calls.append(
+            (phase, next_phase)
+        ),
+    )
+
+    result = controller.run_single_phase(
+        "phase3-tasks-lexicon",
+        "validate",
+        "banzai",
+    )
+
+    assert result.status == "blocked"
+    assert result.phase == "phase3-tasks-lexicon"
+    assert checkpoint_calls == []
+    assert store.load()["completed_phases"] == []
 
 
 def test_squad_checkpoints_staging_spec_with_state_spec_id(
