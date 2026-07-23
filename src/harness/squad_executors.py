@@ -17,6 +17,7 @@ from harness.quality_scores import (
     resolve_quality_gate_thresholds,
 )
 from harness.spec_lexicon_gate import run_spec_lexicon_gate
+from harness.tasks_lexicon_gate import run_tasks_lexicon_gate
 from harness.understanding_gate import run_understanding_gate
 
 if TYPE_CHECKING:
@@ -1433,14 +1434,16 @@ class DeterministicLexiconExecutor(PhaseExecutor):
         from harness.config import get_full_resolved_config
         from harness.squad_provider import SquadAgentResult
 
-        if str(getattr(node, "lexicon_artifact", "") or "") != "spec":
+        artifact = str(getattr(node, "lexicon_artifact", "") or "")
+        if artifact not in {"spec", "tasks"}:
             return SquadAgentResult(
                 exit_code=0,
                 echelon_result={
                     "verdict": "BLOCKED",
                     "state_updates": {
                         "blocked_reason": (
-                            f"deterministic Lexicon node {node.id!r} has no supported artifact"
+                            f"deterministic Lexicon node {node.id!r} has "
+                            f"unsupported artifact {artifact!r}"
                         )
                     },
                 },
@@ -1450,38 +1453,62 @@ class DeterministicLexiconExecutor(PhaseExecutor):
             )
 
         state = state_store.load()
-        if "lexicon_warning_waiver" in state:
-            state.pop("lexicon_warning_waiver")
-            state_store.save(state)
-        gate = run_spec_lexicon_gate(
-            project_root=self._project_root,
-            spec_dir_ref=str(state.get("spec_dir") or ""),
-            config=get_full_resolved_config(
-                self._project_root,
-                fallback_config_path=self._ext_dir / "echelon-config.yml",
-            ),
-            previous_attempts=state.get("lexicon_attempts", 0),
+        config = get_full_resolved_config(
+            self._project_root,
+            fallback_config_path=self._ext_dir / "echelon-config.yml",
         )
-        if gate.evaluation == "pending":
-            stale = state_store.load()
-            changed = False
-            for key in ("lexicon_pass", "lexicon_findings", "lexicon_report"):
-                if key in stale:
-                    stale.pop(key)
-                    changed = True
-            if changed:
-                state_store.save(stale)
-
-        updates = gate.state_updates()
-        marker = "✓" if gate.passed is True else "~" if gate.passed is None else "✗"
+        if artifact == "spec":
+            if "lexicon_warning_waiver" in state:
+                state.pop("lexicon_warning_waiver")
+                state_store.save(state)
+            gate = run_spec_lexicon_gate(
+                project_root=self._project_root,
+                spec_dir_ref=str(state.get("spec_dir") or ""),
+                config=config,
+                previous_attempts=state.get("lexicon_attempts", 0),
+            )
+            if gate.evaluation == "pending":
+                stale = state_store.load()
+                changed = False
+                for key in ("lexicon_pass", "lexicon_findings", "lexicon_report"):
+                    if key in stale:
+                        stale.pop(key)
+                        changed = True
+                if changed:
+                    state_store.save(stale)
+            updates = gate.state_updates()
+            marker = (
+                "✓" if gate.passed is True else "~" if gate.passed is None else "✗"
+            )
+            label = f"spec Lexicon {gate.evaluation}: {gate.detail}"
+            raw_output = str(gate.report_path or gate.detail)
+        else:
+            gate = run_tasks_lexicon_gate(
+                project_root=self._project_root,
+                spec_dir_ref=str(state.get("spec_dir") or ""),
+                config=config,
+                previous_attempts=state.get("tasks_lexicon_attempts", 0),
+                workflow_iteration=state.get("iteration", 0),
+                max_workflow_iterations=state.get("max_iterations", 0),
+            )
+            updates = gate.state_updates()
+            marker = (
+                "✓"
+                if gate.action == "proceed"
+                else "~"
+                if gate.action in {"repair", "proceed_with_warning"}
+                else "✗"
+            )
+            label = f"tasks Lexicon {gate.action}: {gate.detail}"
+            raw_output = str(gate.report_path or gate.detail)
         print(
-            f"[squad] {marker} spec Lexicon {gate.evaluation}: {gate.detail}",
+            f"[squad] {marker} {label}",
             flush=True,
         )
         return SquadAgentResult(
             exit_code=0,
             echelon_result={"verdict": "DONE", "state_updates": updates},
-            raw_output=str(gate.report_path or gate.detail),
+            raw_output=raw_output,
             duration_ms=0,
             timed_out=False,
         )
