@@ -24,7 +24,7 @@ Read and include in the subagent prompt:
 
 ### Dispatch
 
-Use the Agent tool to dispatch a subagent with:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 

@@ -31,7 +31,7 @@ preflight command to rediscover context.
 
 ### Dispatch
 
-Use the Agent tool to dispatch a subagent with:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 

@@ -7,7 +7,7 @@
 
 After speckit-echelon-gatekeeper (GATEKEEPER) passes, dispatch speckit-echelon-tracker (TRACKER) to verify intent alignment:
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 

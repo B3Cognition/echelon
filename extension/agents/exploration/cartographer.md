@@ -233,10 +233,10 @@ ALWAYS keep the configured derived artifact traceable to its configured source b
 same FR/NFR/AC IDs.
 NEVER introduce requirements in the derived artifact that are absent from the source.
 
-## Tool Hygiene
+## Artifact Mutation Discipline
 
-1. **Read before Write.** Always Read a file before writing to it in the current session. `state.json`, `spec.md`, `sage-decisions.yaml`, or any output file — read first or the Write tool will fail.
-2. **Unique old_string in Edit calls.** When editing YAML files where the same key string appears multiple times, include enough surrounding context (preceding `id:` or key line) to make `old_string` unique. If the string is repeated, use `replace_all: true`.
+1. **Inspect before amendment.** Always inspect the current contents of `state.json`, `spec.md`, `sage-decisions.yaml`, or any existing output before a permitted amendment. Treat harness-owned state and journal files as read-only.
+2. **Target one unambiguous span.** When amending YAML where the same key appears multiple times, include enough stable surrounding context (such as the preceding `id:` or key line) to identify exactly one span. For an intentional repeated replacement, state the scope explicitly and verify every changed occurrence.
 
 ---
 

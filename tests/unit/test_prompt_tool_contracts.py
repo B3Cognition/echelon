@@ -17,6 +17,7 @@ from tests.contract.prompt_tool_contracts import (
     VERIFY_SPEC_RUN_DISCOVERY_TARGETS,
     VERIFY_SPEC_RUN_DISCOVERY_VERBS,
     _default_prompt_paths,
+    scan_phase_a_provider_native_language,
     scan_prompt_tool_contracts,
 )
 
@@ -970,3 +971,117 @@ def test_current_agent_and_phase_prompts_have_contracted_tool_references() -> No
     root = Path(__file__).resolve().parents[2]
 
     assert scan_prompt_tool_contracts(root) == []
+
+
+def test_phase_a_provider_native_scanner_rejects_named_provider_interfaces(
+    tmp_path: Path,
+) -> None:
+    prompts = {
+        "scout.md": "Use WebSearch and WebFetch for public evidence.\n",
+        "architect.md": "Never call ToolSearch for connector discovery.\n",
+        "investigator.md": "Use Bash to run the experiment.\n",
+        "commander.md": "Every delegated dispatch uses the Agent tool.\n",
+        "sage.md": "The Write tool fails unless the Read tool ran first.\n",
+        "cartographer.md": (
+            "Use Edit calls with unique old_string context or replace_all.\n"
+        ),
+        "writer.md": "Use Read/Write/Edit for artifact mutation.\n",
+        "api-call.md": 'Call Agent(subagent_type="worker").\n',
+        "read-call.md": "Read(path) before Write(path).\n",
+        "glob-call.md": "Use Glob calls for discovery.\n",
+        "lowercase.md": "Never use the agent tool here.\n",
+        "interface.md": "Use the Agent interface for delegation.\n",
+        "dispatch-via.md": "Dispatch via Agent.\n",
+        "delegate-with.md": "Delegate with Agent.\n",
+        "runtime-invokes.md": "The runtime invokes Agent for delegation.\n",
+    }
+    paths: list[Path] = []
+    for name, content in prompts.items():
+        prompt = tmp_path / "extension" / "agents" / "exploration" / name
+        prompt.parent.mkdir(parents=True, exist_ok=True)
+        prompt.write_text(content, encoding="utf-8")
+        paths.append(prompt)
+
+    findings = scan_phase_a_provider_native_language(tmp_path, paths)
+
+    assert len(findings) == len(prompts)
+    assert {finding.reason for finding in findings} == {
+        "provider_native_tool_language"
+    }
+
+
+def test_phase_a_provider_native_scanner_accepts_capabilities_and_ordinary_verbs(
+    tmp_path: Path,
+) -> None:
+    prompt = tmp_path / "extension" / "agents" / "exploration" / "scout.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "Use the public-web search and URL retrieval capabilities exposed for "
+        "this dispatch.\n"
+        "Read the evidence, edit the requirement, and write the report.\n"
+        "Read and Write the report sections in order.\n",
+        encoding="utf-8",
+    )
+
+    assert scan_phase_a_provider_native_language(tmp_path, [prompt]) == []
+
+
+def test_default_phase_a_provider_native_scanner_includes_phase_specs(
+    tmp_path: Path,
+) -> None:
+    prompt = (
+        tmp_path
+        / "extension"
+        / "workflow"
+        / "phases"
+        / "phase1-discover.md"
+    )
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text("Use the Agent tool for dispatch.\n", encoding="utf-8")
+
+    findings = scan_phase_a_provider_native_language(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].path == prompt
+    assert findings[0].reason == "provider_native_tool_language"
+
+
+def test_phase_a_provider_native_scanner_ignores_frontmatter_metadata(
+    tmp_path: Path,
+) -> None:
+    prompt = tmp_path / "extension" / "agents" / "control" / "chief.md"
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text(
+        "---\n"
+        "tools: Read Write Edit Bash Glob Grep\n"
+        "---\n"
+        "Inspect the current artifact before amending it.\n",
+        encoding="utf-8",
+    )
+
+    assert scan_phase_a_provider_native_language(tmp_path, [prompt]) == []
+
+
+def test_current_phase_a_prompt_bodies_are_provider_neutral() -> None:
+    root = Path(__file__).resolve().parents[2]
+
+    assert scan_phase_a_provider_native_language(root) == []
+
+
+def test_investigator_stops_experiment_steps_when_capability_is_unavailable() -> None:
+    root = Path(__file__).resolve().parents[2]
+    prompt = (
+        root / "extension" / "agents" / "specialists" / "investigator.md"
+    ).read_text(encoding="utf-8")
+
+    assert "skip the remaining EXPERIMENT steps" in prompt
+
+
+def test_investigator_has_structured_blocked_capability_fallback() -> None:
+    root = Path(__file__).resolve().parents[2]
+    prompt = (
+        root / "extension" / "agents" / "specialists" / "investigator.md"
+    ).read_text(encoding="utf-8")
+
+    assert 'blocked_reason: "required research capabilities unavailable' in prompt
+    assert "When the available evidence supports a defensible conclusion" in prompt

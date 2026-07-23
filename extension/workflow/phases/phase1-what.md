@@ -35,7 +35,7 @@ On resumed/amendment passes, reuse `{spec_dir}` when `{spec_dir}/spec.md`
 exists. A reserved run-local directory without `spec.md` is a first WHAT pass:
 write the specification in that exact directory.
 
-Use the Agent tool to dispatch a subagent with:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 

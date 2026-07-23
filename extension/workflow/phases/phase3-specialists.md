@@ -50,7 +50,7 @@ Context pack:
 - `extension/templates/experiment-results-template.md`
 - `reasoning-journal.jsonl`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -84,7 +84,7 @@ Context pack:
 - `extension/templates/security-findings-template.md`
 - `reasoning-journal.jsonl`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -112,7 +112,7 @@ Context pack:
 - `extension/templates/terminology-corrections-template.md`
 - `reasoning-journal.jsonl`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -139,7 +139,7 @@ Context pack:
 - `extension/templates/performance-amendments-template.md`
 - `reasoning-journal.jsonl`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -166,7 +166,7 @@ Context pack:
 - `extension/templates/ux-amendments-template.md`
 - `reasoning-journal.jsonl`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -194,7 +194,7 @@ Context pack:
 - `extension/templates/challenge-assumptions-template.md`
 - `reasoning-journal.jsonl`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 

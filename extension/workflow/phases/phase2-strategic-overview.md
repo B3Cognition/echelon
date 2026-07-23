@@ -7,7 +7,7 @@
 
 After ASSESS passes, dispatch STRATEGIC OVERVIEW to build the initial risk-weighted map:
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 

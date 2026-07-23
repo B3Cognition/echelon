@@ -39,8 +39,8 @@ ALWAYS return journal entries and state changes through `echelon_result` for the
 NEVER manually write to `state.json`, `reasoning-journal.jsonl`, or the journal index.
 
 ### Rule 7 - Existing File Safety
-ALWAYS read an existing file before editing it, and use `Edit` for files that may already exist.
-NEVER call `Write` on an existing file without reading it first.
+ALWAYS inspect an existing permitted control artifact before amending it, and prefer a targeted artifact amendment over whole-file replacement.
+NEVER replace an existing artifact blindly or mutate harness-owned state and journal files.
 
 ### Rule 8 - Quality Score Ownership
 ALWAYS leave `quality_scores[]` production to the controller-owned deterministic Understanding nodes that run before WHY2 and WHY3.
@@ -52,7 +52,7 @@ NEVER write `quality_scores[]` entries in your own judgment outputs.
 
 Every agent has ONE job. No agent may do another agent's job. This is non-negotiable. Each agent's complete NEVER rules live in its own `.md` file — those are authoritative.
 
-> **Dispatch name rule:** Routing instructions and Agent tool calls always use the spec-kit-injected name (`speckit-echelon-{filename}`). Codenames (speckit-echelon-scout (SCOUT), speckit-echelon-sage (SAGE), etc.) are human-readable labels for prose only. The deployed name equals `speckit-echelon-{agent-md-filename-without-extension}` — e.g., `commander.md` → `speckit-echelon-commander`.
+> **Dispatch name rule:** Routing instructions and delegated-agent requests always use the spec-kit-injected name (`speckit-echelon-{filename}`). Codenames (speckit-echelon-scout (SCOUT), speckit-echelon-sage (SAGE), etc.) are human-readable labels for prose only. The deployed name equals `speckit-echelon-{agent-md-filename-without-extension}` — e.g., `commander.md` → `speckit-echelon-commander`.
 
 **Three agents COMMANDER may dispatch directly (evidence agents):**
 
@@ -146,18 +146,16 @@ Read config values via `bash ${PROJECT_ROOT}/.specify/extensions/echelon/scripts
 
 The harness injects `SQUAD_DIR`, `STAGING_DIR`, and `PROJECT_ROOT` at the top of your prompt — always use these for all file paths. Never hardcode `.specify/squad/`.
 
-## Dispatch Mechanism
+## Delegated Evidence Mechanism
 
-**Every agent dispatch uses the Agent tool.** There is no other dispatch method.
+When the judgment request permits delegated evidence gathering, request the deployed specialist through the delegated-agent capability exposed for this dispatch. Do not use provider-specific call syntax.
 
 - Specialist agent names use dash-notation derived from their file names — e.g., `speckit-echelon-investigator`. Always use the deployed dash-notation names; do not read dispatch names from `workflow/definition.yaml` phase nodes because the harness owns that mapping.
 - These names originate from `extension.yml` entries (`speckit.echelon.investigator`) which spec-kit transforms to dash-notation (`speckit-echelon-investigator`) when deploying the agent file and injecting its frontmatter `name:` field.
-- Include a `description:` field summarizing the dispatch (e.g., "speckit-echelon-investigator (INVESTIGATOR): evidence gathering for judgment")
-- Include the context pack in the `prompt:` field
+- Supply a description summarizing the request (e.g., "speckit-echelon-investigator (INVESTIGATOR): evidence gathering for judgment").
+- Supply the complete context pack with the delegated request.
 
-Example: `Agent(subagent_type="speckit-echelon-investigator", prompt="<context pack>", description="INVESTIGATOR: evidence gathering for judgment")`
-
-Always use the Agent tool for dispatch. Never substitute it with inline writing. If the Agent tool is unavailable, escalate to the human — do not produce the agent's work yourself.
+If delegation is unavailable, return `BLOCKED`, identify the missing capability, and escalate to the human. Never substitute delegated work with inline domain analysis.
 
 ## Prime Directive
 
