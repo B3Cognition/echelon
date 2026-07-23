@@ -3193,6 +3193,85 @@ class TestFailClosedControllerPreparation:
         ]
         assert "controller_contract_error" not in resumed_state
 
+    @pytest.mark.parametrize(
+        ("advance_writes", "diagnostic_remains"),
+        [
+            (False, True),
+            (True, False),
+        ],
+        ids=["advance-no-op", "advance-writes-new-dispatch"],
+    )
+    def test_contract_self_loop_requires_new_dispatch_before_clearing_diagnostic(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        advance_writes: bool,
+        diagnostic_remains: bool,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        self._patch_run_guards(ctrl, monkeypatch)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase2-decide",
+        )
+        prior_dispatch = {
+            "phase_id": "phase2-decide",
+            "verdict": "PASS",
+            "completed_at": "2026-07-23T00:00:00+00:00",
+        }
+        state = store.load()
+        state["last_dispatch"] = deepcopy(prior_dispatch)
+        state["completed_phases"] = ["phase2-decide"]
+        state["controller_contract_error"] = {"prior": "diagnostic"}
+        store.save(state)
+        executor = MagicMock()
+        executor.execute.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "PASS",
+                "state_updates": {},
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl._executors["agent"] = executor
+        monkeypatch.setattr(
+            ctrl,
+            "_controller_enrichment",
+            lambda *_: ControllerEnrichment(
+                updates={
+                    "feasibility_structural_pass": False,
+                    "feasibility_structural_attempts": 1,
+                },
+            ),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_coordinate_transition_routing",
+            lambda *_: "phase2-decide",
+        )
+        if not advance_writes:
+            monkeypatch.setattr(store, "advance", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            lambda *_: False,
+        )
+
+        result = ctrl.run("msg", "banzai")
+        final = store.load()
+
+        assert result.status == "running"
+        assert ("controller_contract_error" in final) is diagnostic_remains
+        if advance_writes:
+            assert final["last_dispatch"] != prior_dispatch
+        else:
+            assert final["last_dispatch"] == prior_dispatch
+
     def test_valid_blocked_understanding_is_prepared_before_executor_block(
         self,
         tmp_path: Path,

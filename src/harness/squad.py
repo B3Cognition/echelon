@@ -1092,6 +1092,9 @@ class SquadController:
 
             self._apply_declared_phase_timing_transition(node, next_phase)
 
+            previous_last_dispatch = deepcopy(
+                self._state_store.load().get("last_dispatch")
+            )
             self._state_store.advance(
                 phase,
                 next_phase,
@@ -1101,6 +1104,7 @@ class SquadController:
             self._clear_controller_contract_error_after_advance(
                 phase,
                 next_phase,
+                previous_last_dispatch=previous_last_dispatch,
             )
             if not self._checkpoint_successful_phase(phase, next_phase):
                 return SquadResult.from_state(self._state_store.load())
@@ -1424,6 +1428,9 @@ class SquadController:
 
         self._apply_declared_phase_timing_transition(node, next_phase)
 
+        previous_last_dispatch = deepcopy(
+            self._state_store.load().get("last_dispatch")
+        )
         self._state_store.advance(
             phase,
             next_phase,
@@ -1434,6 +1441,7 @@ class SquadController:
         self._clear_controller_contract_error_after_advance(
             phase,
             next_phase,
+            previous_last_dispatch=previous_last_dispatch,
         )
         if not self._checkpoint_successful_phase(phase, next_phase):
             return SquadResult.from_state(self._state_store.load())
@@ -1488,6 +1496,9 @@ class SquadController:
             if prepared is None:
                 return True
             next_phase = self._coordinate_transition_routing(node, prepared)
+            previous_last_dispatch = deepcopy(
+                self._state_store.load().get("last_dispatch")
+            )
             self._state_store.advance(
                 node.id,
                 next_phase,
@@ -1498,6 +1509,7 @@ class SquadController:
             self._clear_controller_contract_error_after_advance(
                 node.id,
                 next_phase,
+                previous_last_dispatch=previous_last_dispatch,
             )
             if not self._checkpoint_successful_phase(node.id, next_phase):
                 return True
@@ -2885,14 +2897,17 @@ class SquadController:
         self,
         from_phase: str,
         to_phase: str,
+        *,
+        previous_last_dispatch: object,
     ) -> None:
-        """Clear a prior contract diagnostic only after the current API advances."""
+        """Clear a diagnostic only when advance wrote a new dispatch snapshot."""
         state = self._state_store.load()
         last_dispatch = state.get("last_dispatch")
         if (
             state.get("phase") != to_phase
             or not isinstance(last_dispatch, dict)
             or last_dispatch.get("phase_id") != from_phase
+            or last_dispatch == previous_last_dispatch
             or "controller_contract_error" not in state
         ):
             return
