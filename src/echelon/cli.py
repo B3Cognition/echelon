@@ -4976,7 +4976,12 @@ def _phase_run_requires_task_lexicon_config(phase_id: str) -> bool:
     repair. It must not block unrelated targeted repairs such as CHIEF
     constitution replay.
     """
-    return phase_id in {"phase3-plan", "phase3-consensus"}
+    return phase_id in {
+        "phase3-plan",
+        "phase3-tasks-lexicon",
+        "phase3-consensus",
+        "phase3-consensus-tasks-lexicon",
+    }
 
 
 _AUTONOMY_MODES = {"semi", "banzai", "guided"}
@@ -5977,6 +5982,7 @@ def _derive_roadmap_phases(workflow_path: Path) -> list[str]:
                     candidate
                     and candidate != current
                     and candidate != "escalate"
+                    and candidate != "terminal-blocked"
                     and candidate not in seen
                 ):
                     next_phase = candidate

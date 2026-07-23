@@ -91,6 +91,6 @@ class TestOrchestratorTemplates:
         assert "Produce outputs in `{spec_dir}/`" in text
         assert "files in `specs/{NNN}-{feature}/`" not in text
         assert "files in `{spec_dir}/`" in text
-        assert "The controller verifies all four required outputs" in text
+        assert "`phase3-tasks-lexicon` deterministic node verifies all four" in text
         assert "validation never writes `targets.yml`" in text
         assert "python -m harness" not in text

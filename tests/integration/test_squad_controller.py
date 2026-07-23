@@ -3091,6 +3091,43 @@ THEN: The dashboard is visible
         assert "phase1-what" in ITERATIVE_PHASES
         assert "phase1-lexicon" in ITERATIVE_PHASES
 
+    @pytest.mark.parametrize(
+        ("phase_id", "next_phase"),
+        [
+            ("phase3-tasks-lexicon", "phase3-understanding"),
+            ("phase3-consensus-tasks-lexicon", "checkpoint-plan"),
+        ],
+    )
+    def test_run_resumes_tasks_lexicon_nodes_without_provider(
+        self,
+        tmp_path,
+        phase_id,
+        next_phase,
+    ):
+        _disable_lexicon_gate(tmp_path)
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, phase_id, max_iterations=3)
+        _mark_constitution_complete(tmp_path, store)
+        state = store.load()
+        state.update({
+            "why3_verdict": "PASS",
+            "assess2_verdict": "PASS",
+            "quality_scores": [{"pass": True, "source": "harness:understanding"}],
+        })
+        store.save(state)
+        ctrl._checkpoint_successful_phase = MagicMock(return_value=False)
+
+        result = ctrl.run("msg", "banzai")
+
+        provider.exec_agent.assert_not_called()
+        assert result.phase == next_phase
+        assert phase_id in store.load()["completed_phases"]
+        ctrl._checkpoint_successful_phase.assert_called_once_with(
+            phase_id,
+            next_phase,
+        )
+
     def test_plan_routes_to_visible_tasks_gate_without_hidden_certification(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase3-plan")
