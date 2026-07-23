@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import threading
 from dataclasses import FrozenInstanceError
 from pathlib import Path
@@ -914,6 +915,54 @@ def test_discard_removes_only_this_transaction_stage(
     assert not transaction_root.exists()
     assert (unrelated / "value.txt").read_bytes() == b"keep"
     prepared.discard()
+
+
+def test_discard_rechecks_pinned_transaction_before_final_removal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, squad_dir, prepared, _ = _sealed_mixed_publication(tmp_path)
+    transaction_root = next(squad_dir.rglob("manifest.json")).parent
+    moved_transaction = tmp_path / "moved-original-transaction"
+    replacement_keep = transaction_root / "keep.txt"
+    transaction_inode = os.stat(transaction_root).st_ino
+    fstat_call = publication_module.os.fstat
+    transaction_pinned = threading.Event()
+    replacement_ready = threading.Event()
+    injected = False
+
+    def pausing_fstat(fd: int) -> os.stat_result:
+        nonlocal injected
+        metadata = fstat_call(fd)
+        if (
+            stat.S_ISDIR(metadata.st_mode)
+            and metadata.st_ino == transaction_inode
+            and not injected
+        ):
+            injected = True
+            transaction_pinned.set()
+            assert replacement_ready.wait(timeout=2)
+        return metadata
+
+    def substitute_transaction() -> None:
+        assert transaction_pinned.wait(timeout=2)
+        transaction_root.rename(moved_transaction)
+        transaction_root.mkdir()
+        replacement_keep.write_bytes(b"replacement")
+        replacement_ready.set()
+
+    substituter = threading.Thread(target=substitute_transaction)
+
+    monkeypatch.setattr(
+        publication_module.os, "fstat", pausing_fstat
+    )
+    substituter.start()
+
+    _assert_error_code("stage_corrupt", prepared.discard)
+
+    substituter.join(timeout=2)
+    assert not substituter.is_alive()
+    assert replacement_keep.read_bytes() == b"replacement"
 
 
 def test_loading_rejects_manifest_symlink_swap_between_check_and_read(
