@@ -176,6 +176,7 @@ fi
 echo "▶ Installing echelon into $VENV_DIR..."
 uv venv "$VENV_DIR" -q 2>/dev/null || true
 uv pip install -q --python "$VENV_DIR" -e "$ECHELON_DIR"
+echo "  ℹ pdftotext (Poppler) is recommended for higher-fidelity PDF extraction; it was not installed."
 
 if [ "$WITH_CODEGEN" = "1" ]; then
   printf '#!%s\nfrom codegen.cli.codegen_cli import main\nmain()\n' "$VENV_DIR/bin/python" > "$CODEGEN_LAUNCHER"

@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -92,9 +93,40 @@ def resolve_product_inputs(
     declarations: Sequence[ProductInputDeclaration],
 ) -> ProductInputResolution:
     """Resolve local declarations and write an immutable run-local evidence package."""
+    return _resolve_product_inputs_to(
+        project_root,
+        Path(run_dir) / "inputs",
+        declarations,
+        replace_existing=True,
+    )
+
+
+def resolve_product_input_revision(
+    project_root: Path,
+    inputs_dir: Path,
+    declarations: Sequence[ProductInputDeclaration],
+) -> ProductInputResolution:
+    """Write one amendment input revision without replacing prior evidence."""
+    return _resolve_product_inputs_to(
+        project_root,
+        Path(inputs_dir),
+        declarations,
+        replace_existing=False,
+    )
+
+
+def _resolve_product_inputs_to(
+    project_root: Path,
+    inputs_dir: Path,
+    declarations: Sequence[ProductInputDeclaration],
+    *,
+    replace_existing: bool,
+) -> ProductInputResolution:
+    """Resolve input declarations to one explicitly selected evidence directory."""
     project_root = project_root.resolve()
-    inputs_dir = run_dir / "inputs"
     if inputs_dir.exists():
+        if not replace_existing:
+            raise ProductInputError(f"product input evidence directory already exists: {inputs_dir}")
         shutil.rmtree(inputs_dir)
     inputs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -174,15 +206,25 @@ def resolve_product_inputs(
                 "size_bytes": len(content),
                 "media_type": media_type,
             })
-            catalog_units.extend(_unitize(
-                declaration.role,
-                declaration_id,
-                locator,
-                snapshot.relative_to(inputs_dir).as_posix(),
-                digest,
-                media_type,
-                text,
-            ))
+            if resource.suffix.lower() == ".pdf" and declaration.role == "requirement":
+                catalog_units.extend(_unitize_requirement_pdf(
+                    resource,
+                    declaration_id,
+                    locator,
+                    snapshot.relative_to(inputs_dir).as_posix(),
+                    digest,
+                    media_type,
+                ))
+            else:
+                catalog_units.extend(_unitize(
+                    declaration.role,
+                    declaration_id,
+                    locator,
+                    snapshot.relative_to(inputs_dir).as_posix(),
+                    digest,
+                    media_type,
+                    text,
+                ))
 
     manifest = {"schema_version": 1, "declarations": declaration_rows, "resources": manifest_resources}
     catalog = {"schema_version": 1, "units": catalog_units}
@@ -661,6 +703,95 @@ def _decode_text(path: Path, content: bytes) -> str | None:
         return content.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ProductInputError(f"text input is not UTF-8: {path}") from exc
+
+
+def _unitize_requirement_pdf(
+    path: Path,
+    declaration_id: str,
+    locator: str,
+    snapshot: str,
+    digest: str,
+    media_type: str,
+) -> list[dict[str, object]]:
+    pages = _extract_pdf_pages(path)
+    if not pages:
+        raise ProductInputError(f"requirement PDF has no extractable text: {locator}")
+    return [
+        _unit(
+            "requirement",
+            declaration_id,
+            locator,
+            snapshot,
+            digest,
+            media_type,
+            f"page:{page_number}",
+            page,
+        )
+        for page_number, page in enumerate(pages, start=1)
+        if page.strip()
+    ]
+
+
+def _extract_pdf_pages(path: Path) -> list[str]:
+    """Extract pages with the bundled reader, then Poppler when it adds fidelity."""
+    try:
+        pages = _extract_pdf_pages_with_pypdf(path)
+    except ProductInputError as pypdf_error:
+        return _extract_pdf_pages_with_pdftotext(path, pypdf_error)
+    if pages:
+        return pages
+    return _extract_pdf_pages_with_pdftotext(
+        path,
+        ProductInputError("pypdf found no extractable text"),
+    )
+
+
+def _extract_pdf_pages_with_pypdf(path: Path) -> list[str]:
+    """Use the Python PDF reader when Poppler is unavailable on the host."""
+
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise ProductInputError(
+            "requirement PDF input requires pdftotext or the pypdf package; "
+            "install Echelon dependencies or provide OCR text"
+        ) from exc
+    try:
+        reader = PdfReader(path)
+        return [
+            text.strip()
+            for page in reader.pages
+            if (text := (page.extract_text() or "")).strip()
+        ]
+    except Exception as exc:
+        raise ProductInputError(f"could not extract requirement PDF text from {path}: {exc}") from exc
+
+
+def _extract_pdf_pages_with_pdftotext(
+    path: Path,
+    pypdf_error: ProductInputError,
+) -> list[str]:
+    """Use Poppler when pypdf is unavailable or cannot read useful text."""
+
+    try:
+        result = subprocess.run(
+            ["pdftotext", "-layout", str(path), "-"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise ProductInputError(
+            f"could not extract requirement PDF text from {path}: {pypdf_error}; "
+            "pdftotext (Poppler) is not installed"
+        ) from exc
+    if result.returncode:
+        raise ProductInputError(
+            f"could not extract requirement PDF text from {path}: {pypdf_error}; "
+            f"pdftotext fallback failed: {result.stderr.strip()}"
+        )
+    return [page.strip() for page in result.stdout.split("\f") if page.strip()]
 
 
 def _media_type(path: Path) -> str:

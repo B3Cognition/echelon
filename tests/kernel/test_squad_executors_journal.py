@@ -21,6 +21,7 @@ from harness.squad_executors import (
     AgentExecutor,
     ConditionalSequentialExecutor,
     StagedParallelExecutor,
+    _MANDATORY_PHASE_OUTPUTS,
     _canonical_echelon_result_contract,
     _allowed_state_updates_contract,
 )
@@ -56,6 +57,13 @@ def _result(entries=None, verdict="DONE") -> SquadAgentResult:
         raw_output="",
         duration_ms=0,
         timed_out=False,
+    )
+
+
+def test_phase1_investigate_requires_evidence_artifacts() -> None:
+    assert _MANDATORY_PHASE_OUTPUTS["phase1-investigate"] == (
+        "evidence-resolution.md",
+        "evidence-grades.md",
     )
 
 

@@ -126,6 +126,30 @@ class TestPhaseGraph:
         assert "constitution.md" not in context_pack
         assert "assumptions.md" not in context_pack
 
+    def test_why2_routes_external_evidence_requests_to_phase1_investigate(self):
+        why2 = self.graph.get("phase1-why2")
+        investigate = self.graph.get("phase1-investigate")
+
+        assert why2.transitions[0] == {
+            "to": "phase1-investigate",
+            "condition": "evidence_resolution_status = pending",
+        }
+        assert {"evidence_resolution_status", "evidence_requests"}.issubset(
+            why2.allowed_state_updates or []
+        )
+        assert investigate.type == "agent"
+        assert investigate.agent == "speckit-echelon-investigator"
+        assert investigate.transitions == [
+            {
+                "to": "phase1-what",
+                "condition": "evidence_resolution_status in [validated, conflicting]",
+            },
+            {
+                "to": "terminal-blocked",
+                "condition": "evidence_resolution_status in [inconclusive, access_required]",
+            },
+        ]
+
     def test_phase3_consensus_context_packs_cover_spec_plan_and_tasks(self):
         """Consensus agents must receive enough artifacts to validate plan/tasks."""
         node = self.graph.get("phase3-consensus")
@@ -221,6 +245,12 @@ class TestPhaseGraph:
         node = self.graph.get("phase1-what")
 
         assert "{staging_dir}/user-clarifications.md" in node.context_pack
+
+    def test_phase1_what_receives_evidence_resolution_artifacts(self):
+        context_pack = set(self.graph.get("phase1-what").context_pack)
+
+        assert "{spec_dir}/evidence-resolution.md" in context_pack
+        assert "{spec_dir}/evidence-grades.md" in context_pack
 
     def test_phase1_modeler_loads_node_condition_and_greenfield_skip(self):
         node = self.graph.get("phase1-modeler")

@@ -11,7 +11,6 @@ into CI or an echelon `commander_internal` phase the same way
 from __future__ import annotations
 
 import json as _json
-import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -19,6 +18,7 @@ from typing import Optional
 import typer
 
 from . import __version__
+from .glossary import load_glossary_terms as _load_glossary
 from .validity import validate as _validate
 
 app = typer.Typer(
@@ -26,9 +26,6 @@ app = typer.Typer(
     help="Deterministic validation of Lexicon controlled specifications.",
     add_completion=False,
 )
-
-_BOLD_TERM_RE = re.compile(r"\*\*([^*]+)\*\*")
-
 
 def _version_callback(value: bool) -> None:
     if value:
@@ -46,27 +43,6 @@ def main_callback(
     """Lexicon controlled-specification validator."""
 
 
-def _load_glossary(path: Optional[Path]) -> set[str]:
-    """Read approved terms from a glossary file.
-
-    Accepts one term per line; also harvests **bold** terms so a real
-    glossary.md works. Blank lines and ``#`` comments are ignored.
-    """
-    if path is None:
-        return set()
-    terms: set[str] = set()
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        bold = _BOLD_TERM_RE.findall(line)
-        if bold:
-            terms.update(t.strip() for t in bold)
-        else:
-            terms.add(line)
-    return terms
-
-
 @app.command()
 def validate(
     spec: Path = typer.Argument(..., exists=True, readable=True, help="Artifact file to validate."),
@@ -75,7 +51,7 @@ def validate(
     ),
     glossary: Optional[Path] = typer.Option(
         None, "--glossary", exists=True, readable=True,
-        help="Glossary file of approved terms (one per line or **bold** in markdown).",
+        help="Glossary file of approved terms (one per line, ### headings, or **bold** Markdown).",
     ),
     spec_ref: Optional[Path] = typer.Option(
         None, "--spec-ref", exists=True, readable=True,

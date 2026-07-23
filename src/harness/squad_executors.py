@@ -538,6 +538,7 @@ def _render_published_re_context(state: dict) -> str:
 
 _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
     "phase1-what": ("spec.md", "00-overview.md"),
+    "phase1-investigate": ("evidence-resolution.md", "evidence-grades.md"),
     "phase3-how": ("plan.md", "research.md", "data-model.md", "contracts"),
     "phase3-sentinel": ("test-strategy.md", "test-architecture.md", "coverage-map.md"),
     "phase3-plan": ("tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md"),

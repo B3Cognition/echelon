@@ -1150,6 +1150,119 @@ class TestSquadControllerBasics:
         assert store.load()["quality_scores"][-1]["pass"] is True
         assert store.load().get("why_fail_count", 0) == 1
 
+    def test_why2_external_evidence_request_routes_to_investigator(self, tmp_path):
+        """WHY2 sends source-dependent questions to INVESTIGATOR before WHAT."""
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        state = store.load()
+        state["quality_scores"] = [{"pass": False, "pass_id": "WHY2-iter-0"}]
+        store.save(state)
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {
+                    "evidence_resolution_status": "pending",
+                    "evidence_requests": {
+                        "requests": [
+                            {
+                                "id": "ER-001",
+                                "question": "What authentication mechanism does the service require?",
+                            }
+                        ]
+                    },
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        next_phase = ctrl._evaluate_transitions(
+            ctrl._graph.get("phase1-why2"), result,
+        )
+
+        assert next_phase == "phase1-investigate"
+
+    def test_why2_repeated_evidence_request_without_new_evidence_escalates(self, tmp_path):
+        """A completed investigation cannot be silently sent through again."""
+        ctrl, store = _controller(tmp_path)
+        requests = {
+            "requests": [
+                {
+                    "id": "ER-001",
+                    "question": "What authentication mechanism does the service require?",
+                }
+            ]
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(requests, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "quality_scores": [{"pass": False, "pass_id": "WHY2-iter-1"}],
+                "evidence_request_fingerprint": fingerprint,
+                "evidence_resolution_status": "validated",
+            }
+        )
+        store.save(state)
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {
+                    "evidence_resolution_status": "pending",
+                    "evidence_requests": requests,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        next_phase = ctrl._evaluate_transitions(
+            ctrl._graph.get("phase1-why2"), result,
+        )
+
+        assert next_phase == "terminal-blocked"
+        blocked = store.load()
+        assert blocked["blocked_reason"] == "evidence_resolution_no_new_evidence"
+        assert "ER-001" in blocked["escalation_question"]
+
+    def test_why2_stagnant_certified_metrics_escalate_after_two_cycles(self, tmp_path):
+        """Repeated score plateaus stop semantic retries before the dispatch cap."""
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "quality_scores": [
+                    {"pass": False, "pass_id": "WHY2-iter-0", "overall": 0.64, "testability": 0.57},
+                    {"pass": False, "pass_id": "WHY2-iter-1", "overall": 0.64, "testability": 0.57},
+                ],
+                "why2_metric_stagnation_count": 1,
+            }
+        )
+        store.save(state)
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "FAIL", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        next_phase = ctrl._evaluate_transitions(
+            ctrl._graph.get("phase1-why2"), result,
+        )
+
+        assert next_phase == "terminal-blocked"
+        blocked = store.load()
+        assert blocked["blocked_reason"] == "why2_metric_stagnation"
+        assert "metrics did not improve" in blocked["escalation_question"]
+
     def test_understanding_operational_failure_remains_at_retryable_gate(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase1-understanding")
@@ -2910,7 +3023,10 @@ class TestLexiconGateGuardDeterminism:
 - **AC-001**: Given data, when rendering, then the dashboard is visible.
 """
         (spec_dir / "spec.md").write_text(source, encoding="utf-8")
-        (spec_dir / "glossary.md").write_text("", encoding="utf-8")
+        (spec_dir / "glossary.md").write_text(
+            "### dashboard_key\n- **Definition:** A dashboard identifier.\n",
+            encoding="utf-8",
+        )
         digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
         (spec_dir / "requirements.lexicon.md").write_text(
             f"""# SOURCE: spec.md
@@ -2919,7 +3035,7 @@ ARTIFACT: SPEC
 TITLE: Dashboard
 
 REQ: FR-001
-GIVEN: data is available
+GIVEN: dashboard_key is available
 WHEN: the user opens the dashboard
 THEN: The system SHALL render the dashboard
 OUTPUT: The dashboard is visible
@@ -2955,7 +3071,9 @@ THEN: The dashboard is visible
         assert report["source_sha256"] == hashlib.sha256(
             (spec_dir / "spec.md").read_bytes()
         ).hexdigest()
-        assert report["glossary_sha256"] == hashlib.sha256(b"").hexdigest()
+        assert report["glossary_sha256"] == hashlib.sha256(
+            (spec_dir / "glossary.md").read_bytes()
+        ).hexdigest()
 
     def test_legacy_understanding_resume_routes_through_visible_spec_gate(self, tmp_path):
         ctrl, store = _controller(tmp_path)

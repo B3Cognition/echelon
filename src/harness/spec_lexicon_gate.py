@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -202,13 +201,14 @@ def _validate_spec_lexicon_artifacts(
     glossary_path: Path,
     artifact_type: str,
 ) -> dict[str, object]:
+    from lexicon.glossary import load_glossary_terms
     from lexicon.source_contract import source_contract_findings
     from lexicon.validity import validate as validate_lexicon
 
     derived_text = derived_path.read_text(encoding="utf-8")
     validation = validate_lexicon(
         derived_text,
-        glossary=_load_glossary_terms(glossary_path),
+        glossary=load_glossary_terms(glossary_path),
         artifact_type=artifact_type,
     )
     raw_findings = [
@@ -244,19 +244,6 @@ def _sha256_file(path: Path) -> str:
 
 def _optional_sha256_file(path: Path) -> str | None:
     return _sha256_file(path) if path.is_file() else None
-
-
-def _load_glossary_terms(glossary_path: Path) -> set[str]:
-    if not glossary_path.is_file():
-        return set()
-    glossary: set[str] = set()
-    for raw in glossary_path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        terms = re.findall(r"\*\*([^*]+)\*\*", line)
-        glossary.update(term.strip() for term in terms or [line])
-    return glossary
 
 
 def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:

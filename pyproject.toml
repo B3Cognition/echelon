@@ -28,6 +28,8 @@ dependencies = [
   "torch>=2.0.0",
   # lexicon
   "lark>=1.1",
+  # PDF requirement evidence fallback when Poppler is not available on the host.
+  "pypdf>=5.0",
 ]
 
 [project.optional-dependencies]

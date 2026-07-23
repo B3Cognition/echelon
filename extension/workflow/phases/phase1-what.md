@@ -16,6 +16,7 @@ Read and include in the subagent prompt:
 - `${STAGING_DIR}/assumptions.md` + `${STAGING_DIR}/unknowns.md`
 - `${STAGING_DIR}/reference-architectures.md` (if greenfield)
 - `${STAGING_DIR}/user-clarifications.md` (if present; fresh control-plane input on every WHAT pass)
+- `{spec_dir}/evidence-resolution.md` + `{spec_dir}/evidence-grades.md` (if Phase 1 INVESTIGATOR ran; treat recorded facts as authoritative evidence for this amendment)
 - `reasoning-journal.jsonl` (filtered to DISCOVER + WHY1 entries)
 - User input (original request)
 - `agents/exploration/templates/cartographer-spec-template.md`
@@ -41,13 +42,14 @@ Use the Agent tool to dispatch a subagent with:
 
   ```xml
   <context>
-  [include read-only .specify/memory/constitution.md, glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md if greenfield, cartographer output templates, reasoning-journal.jsonl — staging artifacts from ${STAGING_DIR}/, user input]
+  [include read-only .specify/memory/constitution.md, glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, evidence-resolution.md and evidence-grades.md if present, reference-architectures.md if greenfield, cartographer output templates, reasoning-journal.jsonl — staging artifacts from ${STAGING_DIR}/, user input]
   </context>
 
   <instructions>
   You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
   Phase A identity is controller-owned. If this is a first WHAT pass with no existing `{spec_dir}/spec.md`, create it from the supplied template in `{spec_dir}`, move discovery artifacts there, then enhance it with speckit-echelon-scout (SCOUT)'s domain insights. If this is a resumed/amendment pass, enhance the existing file in place. Never create, switch, rename, or discover a branch or another spec directory.
   Treat `.specify/memory/constitution.md` as read-only governance context. Apply its principles while authoring `spec.md`; do not edit, patch, append to, or regenerate the constitution from this phase.
+  If `evidence-resolution.md` is present, apply its observed facts and confidence limits to the amendment. Do not re-investigate the same source, discard evidence because it conflicts with the prior draft, or invent facts beyond its stated gaps.
   When the Product Input Contract is present, read its requirement snapshot and cite every adopted or challenged `IN-REQ-*` unit. Return one `echelon_result.product_input_updates` entry per normative unit. This is a strict API contract: copy the catalog ID into `input_unit_id`; use exactly one of `included`, `excluded`, `duplicate`, `open_question`, or `conflict` for `disposition`; give an evidence-backed `rationale`; place mapped FR/AC IDs in `spec_ids`; and set `task_ids: []` and `targets: []` in this phase. Never use aliases such as `unit`, `adopted`, or `mapped`. Do not write the ledger file directly; COMMANDER validates and persists the structured updates. Example:
   ```yaml
   product_input_updates:

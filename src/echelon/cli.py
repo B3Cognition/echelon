@@ -100,6 +100,8 @@ Commands:
   spec reopen <spec_id> [from=<report>]      Reopen spec from fulfillment gaps.
   spec bugfix <spec_id> <description>        Diagnose and plan a bugfix.
   spec change <spec_id> <description>        Plan a scope change.
+  spec amend <spec_id> <description> [--input <role:path>]... [--dry-run]
+                                            Prepare an isolated amendment for an unbuilt spec.
 
   phase list                                List workflow phases available for manual replay.
   phase run <phase-id> [--spec <id>] [--mode semi|banzai|guided]
@@ -3380,6 +3382,63 @@ def _phase_a_result_line(status: str, state: dict) -> str:
     return "  ·  ".join(parts)
 
 
+def _current_issues_recap(
+    project_root: Path,
+    squad_dir: Path,
+    state: dict,
+) -> tuple[str, str] | None:
+    """Return a compact recap and absolute path for the current run's issues."""
+    candidates: list[Path] = []
+    for key in ("published_spec_dir", "spec_dir"):
+        spec_ref = str(state.get(key) or "").strip()
+        if not spec_ref:
+            continue
+        spec_dir = Path(spec_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = project_root / spec_dir
+        candidates.append(spec_dir / "issues.md")
+    candidates.append(_run_artifact_dir(project_root, squad_dir) / "issues.md")
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        issues_path = candidate.resolve()
+        if issues_path in seen:
+            continue
+        seen.add(issues_path)
+        if not issues_path.is_file():
+            continue
+        try:
+            issues_md = issues_path.read_text(errors="replace")
+        except OSError:
+            continue
+
+        counts: list[str] = []
+        for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+            match = re.search(rf"\*\*{severity}:\*\*\s*(\d+)", issues_md)
+            if match and int(match.group(1)):
+                counts.append(f"{severity} {match.group(1)}")
+
+        issue_blocks = re.findall(
+            r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### |\Z)",
+            issues_md,
+            re.MULTILINE | re.DOTALL,
+        )
+        issues: list[str] = []
+        for title, body in issue_blocks[:5]:
+            severity = re.search(r"\*\*Severity:\*\*\s*(\w+)", body)
+            label = severity.group(1).upper() if severity else "ISSUE"
+            short_title = re.sub(r"^ISS-\d+:\s*", "", title).strip()
+            issues.append(f"[{label}] {short_title}")
+        if len(issue_blocks) > len(issues):
+            issues.append(f"… and {len(issue_blocks) - len(issues)} more")
+
+        recap = " · ".join(counts) if counts else "Issues recorded"
+        if issues:
+            recap += "\n" + "\n".join(f"- {issue}" for issue in issues)
+        return recap, str(issues_path)
+    return None
+
+
 def _print_squad_summary(
     project_root: Path,
     squad_dir: Path,
@@ -3464,6 +3523,12 @@ def _print_squad_summary(
             fields.append((label, command))
         if action.note:
             fields.append(("note", action.note))
+        if status == "blocked" and "issues.md" in action.note.lower():
+            issues_recap = _current_issues_recap(project_root, squad_dir, state)
+            if issues_recap:
+                recap, issues_path = issues_recap
+                fields.append(("issues", recap))
+                fields.append(("issues file", issues_path))
     fields.append(("result", _phase_a_result_line(status, state)))
     _banner("SQUAD SUMMARY", fields, subtitle=f"{icon} {status_text}")
 
@@ -8296,6 +8361,8 @@ def _cmd_spec(args: list[str]) -> None:
         _cmd_artifacts(args[1:])
     elif subcmd == "verify":
         _dispatch_skill_command("verify-spec", args[1:])
+    elif subcmd == "amend":
+        _cmd_spec_amend(args[1:])
     elif subcmd in {"bugfix", "change", "reopen"}:
         _require_phase_a_git_ownership(
             Path.cwd(),
@@ -8317,6 +8384,53 @@ def _installed_extension_or_exit(project_root: Path) -> Path:
         )
         sys.exit(1)
     return ext_dir
+
+
+def _cmd_spec_amend(args: list[str]) -> None:
+    """Prepare a pre-build amendment without switching the caller checkout."""
+    if args and args[0] == "status":
+        if len(args) != 2:
+            print("Usage: echelon spec amend status <amendment-id-or-spec-id>", file=sys.stderr)
+            raise SystemExit(2)
+        from echelon.spec_amendment import load_amendment_state
+
+        print(json.dumps(load_amendment_state(Path.cwd(), args[1]), indent=2))
+        return
+    if args and args[0] == "abandon":
+        if len(args) != 2:
+            print("Usage: echelon spec amend abandon <amendment-id-or-spec-id>", file=sys.stderr)
+            raise SystemExit(2)
+        from echelon.spec_amendment import abandon_amendment
+
+        state = abandon_amendment(Path.cwd(), args[1])
+        print(f"Amendment abandoned: {state['amendment_id']}")
+        return
+    if len(args) < 2:
+        print(
+            "Usage: echelon spec amend <spec-id> <description> "
+            "[--input requirement:<path>|reference:<path>]... [--dry-run]",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    from echelon.spec_amendment import prepare_amendment
+
+    result = prepare_amendment(Path.cwd(), args)
+    if result.dry_run:
+        print(
+            f"Amendment dry run: {result.amendment_id}\n"
+            f"  baseline: {result.baseline.branch}@{result.baseline.commit}\n"
+            "  no worktree or amendment state was created"
+        )
+        return
+    assert result.worktree is not None and result.state_path is not None
+    print(
+        f"Amendment prepared: {result.amendment_id}\n"
+        f"  baseline: {result.baseline.branch}@{result.baseline.commit}\n"
+        f"  worktree: {result.worktree.path}\n"
+        f"  state: {result.state_path}\n"
+        "  No canonical spec, plan, or task artifact has been changed.\n"
+        "  Next: inspect change-request.md and impact.md in the amendment worktree."
+    )
 
 
 def _cmd_spec_run(args: list[str]) -> None:

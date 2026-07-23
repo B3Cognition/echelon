@@ -95,6 +95,51 @@ MAX_PHASE_DISPATCHES = 5
 MAX_PRODUCT_INPUT_MAPPING_REPAIRS = 2
 PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION = 2
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
+WHY2_METRIC_STAGNATION_LIMIT = 2
+WHY2_METRIC_MIN_DELTA = 0.01
+_WHY2_CERTIFIED_METRICS = (
+    "overall",
+    "structure",
+    "testability",
+    "behavioral",
+    "semantic",
+    "cognitive",
+    "readability",
+    "depth",
+)
+
+
+def _evidence_requests_fingerprint(requests: object) -> str:
+    """Return a stable identity for a WHY2 evidence-resolution request set."""
+    if not isinstance(requests, dict) or not requests:
+        return ""
+    try:
+        payload = json.dumps(requests, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        return ""
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _why2_certified_metrics_improved(scores: object) -> bool | None:
+    """Return whether the latest two certified WHY2 scores moved materially."""
+    if not isinstance(scores, list):
+        return None
+    why2_scores = [
+        score for score in scores
+        if isinstance(score, dict) and str(score.get("pass_id") or "").startswith("WHY2-")
+    ]
+    if len(why2_scores) < 2:
+        return None
+    previous, latest = why2_scores[-2:]
+    comparable = []
+    for metric in _WHY2_CERTIFIED_METRICS:
+        try:
+            comparable.append(float(latest[metric]) - float(previous[metric]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not comparable:
+        return None
+    return any(delta >= WHY2_METRIC_MIN_DELTA for delta in comparable)
 JUDGMENT_STATE_UPDATE_KEYS = frozenset(
     {
         "next_phase",
@@ -2555,18 +2600,9 @@ class SquadController:
 
     @staticmethod
     def _load_lexicon_glossary_terms(glossary_path: Path) -> set[str]:
-        if not glossary_path.is_file():
-            return set()
-        import re
+        from lexicon.glossary import load_glossary_terms
 
-        glossary: set[str] = set()
-        for raw in glossary_path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            terms = re.findall(r"\*\*([^*]+)\*\*", line)
-            glossary.update(term.strip() for term in terms or [line])
-        return glossary
+        return load_glossary_terms(glossary_path)
 
     @staticmethod
     def _advance_state_update_keys(node: PhaseNode) -> list[str] | None:
@@ -2913,6 +2949,63 @@ class SquadController:
 
         # ── WHY fail tracking + consecutive-fail safety net ──────────────────
         if node.id in WHY_PHASES:
+            evidence_resolution_pending = (
+                node.id == "phase1-why2"
+                and result.state_updates.get("evidence_resolution_status") == "pending"
+            )
+            if (
+                evidence_resolution_pending
+            ):
+                requests = result.state_updates.get("evidence_requests")
+                fingerprint = _evidence_requests_fingerprint(requests)
+                if not fingerprint:
+                    blocked = self._state_store.load()
+                    blocked["status"] = "blocked"
+                    blocked["phase"] = PHASE_TERMINAL_BLOCKED
+                    blocked["blocked_reason"] = "evidence_resolution_invalid_request"
+                    blocked["escalation_question"] = (
+                        "WHY2 requested evidence resolution without a valid "
+                        "evidence_requests object. Please provide the missing "
+                        "project-specific evidence request."
+                    )
+                    self._state_store.save(blocked)
+                    self._record_blocker_event(node.id, "evidence_resolution_invalid_request")
+                    return PHASE_TERMINAL_BLOCKED
+
+                prior_fingerprint = str(state.get("evidence_request_fingerprint") or "")
+                prior_status = str(state.get("evidence_resolution_status") or "")
+                if (
+                    prior_fingerprint == fingerprint
+                    and prior_status in {"validated", "conflicting"}
+                ):
+                    request_ids = []
+                    raw_requests = requests.get("requests") if isinstance(requests, dict) else None
+                    if isinstance(raw_requests, list):
+                        request_ids = [
+                            str(item.get("id") or "").strip()
+                            for item in raw_requests
+                            if isinstance(item, dict) and str(item.get("id") or "").strip()
+                        ]
+                    blocked = self._state_store.load()
+                    blocked["status"] = "blocked"
+                    blocked["phase"] = PHASE_TERMINAL_BLOCKED
+                    blocked["blocked_reason"] = "evidence_resolution_no_new_evidence"
+                    blocked["escalation_question"] = (
+                        "WHY2 repeated an already completed evidence request"
+                        + (f" ({', '.join(request_ids)})." if request_ids else ".")
+                        + " Provide new evidence or authorize a different investigation."
+                    )
+                    self._state_store.save(blocked)
+                    self._record_blocker_event(node.id, "evidence_resolution_no_new_evidence")
+                    return PHASE_TERMINAL_BLOCKED
+
+                pending = self._state_store.load()
+                pending["evidence_request_fingerprint"] = fingerprint
+                pending["evidence_resolution_attempts"] = int(
+                    pending.get("evidence_resolution_attempts") or 0
+                ) + 1
+                self._state_store.save(pending)
+
             # Early escalation detection: agent explicitly signalled user-gated
             # CRITICAL issues via escalation_question in state_updates.  Handle
             # here before condition evaluation so empty quality_scores don't cause
@@ -2946,6 +3039,35 @@ class SquadController:
                 or verdict_upper in ("FAIL", "BLOCKED")
             )
             if is_fail:
+                if node.id == "phase1-why2" and not evidence_resolution_pending:
+                    metrics_improved = _why2_certified_metrics_improved(
+                        state.get("quality_scores")
+                    )
+                    if metrics_improved is True:
+                        refreshed = self._state_store.load()
+                        refreshed["why2_metric_stagnation_count"] = 0
+                        self._state_store.save(refreshed)
+                    elif metrics_improved is False:
+                        refreshed = self._state_store.load()
+                        stagnation_count = int(
+                            refreshed.get("why2_metric_stagnation_count") or 0
+                        ) + 1
+                        refreshed["why2_metric_stagnation_count"] = stagnation_count
+                        if stagnation_count >= WHY2_METRIC_STAGNATION_LIMIT:
+                            refreshed["status"] = "blocked"
+                            refreshed["phase"] = PHASE_TERMINAL_BLOCKED
+                            refreshed["blocked_reason"] = "why2_metric_stagnation"
+                            refreshed["escalation_question"] = (
+                                "WHY2 certified metrics did not improve across "
+                                f"{stagnation_count} consecutive repair cycles. "
+                                "Provide new evidence, narrow scope, or authorize "
+                                "a different repair strategy."
+                            )
+                            self._state_store.save(refreshed)
+                            self._record_blocker_event(node.id, "why2_metric_stagnation")
+                            return PHASE_TERMINAL_BLOCKED
+                        self._state_store.save(refreshed)
+
                 fail_count = self._state_store.increment_why_fail_count()
                 if fail_count >= 2 and not state.get("escalation_question"):
                     last_ts = (state.get("last_dispatch") or {}).get("completed_at")

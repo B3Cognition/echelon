@@ -90,6 +90,42 @@ routing are controller-owned. Required amendments are mandatory amendments:
 even without a CRITICAL issue, HIGH issues marked required keep the verdict at
 `FAIL` until repaired.
 
+## Evidence Resolution Routing
+
+Classify each failed finding before choosing a repair route:
+
+- `spec_repair`: CARTOGRAPHER can repair it from evidence already present in
+  the active artifact root; return an ordinary `FAIL` and do not request
+  investigation.
+- `evidence_resolution`: a project-specific fact must be established from a
+  declared reference input, its directly relevant primary material, a
+  repository, a database export or snapshot, or a permitted read-only service.
+  Return `FAIL` with the exact state updates below.
+- `human_decision`: the answer requires the user's policy, scope, or authority;
+  use the User-Gated Critical Issues protocol below.
+
+For `evidence_resolution`, return a machine-readable request. Do not merely
+write “route to INVESTIGATOR” in prose:
+
+```yaml
+echelon_result:
+  verdict: FAIL
+  state_updates:
+    evidence_resolution_status: pending
+    evidence_requests:
+      requests:
+        - id: ER-001
+          question: "<project-specific fact to establish>"
+          affected_requirements: [FR-001]
+          evidence_needed: "<minimum authoritative evidence required>"
+          supplied_reference_ids: [IN-REF-...]
+```
+
+Create a request only when the missing fact cannot be resolved by amending the
+specification. Every request must name the affected requirement and the
+minimum evidence needed. Never request an investigation based only on a generic
+best practice or an unsupported inference.
+
 ## User-Gated Critical Issues
 
 Set `escalation_question`, `blocked_reason`, and `status: blocked` only when all
