@@ -832,6 +832,26 @@ def test_retry_redurably_accepts_delete_after_parent_sync_failure(
     assert not target.exists()
 
 
+def test_missing_to_missing_delete_does_not_create_parent_directory(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    transaction.add_delete(
+        Path("never/existed.txt"),
+        owned_paths={Path("never/existed.txt")},
+    )
+    prepared = transaction.seal()
+
+    prepared.publish()
+
+    assert not (project_root / "never").exists()
+
+
 def test_retry_syncs_full_target_chain_after_created_parent_sync_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
