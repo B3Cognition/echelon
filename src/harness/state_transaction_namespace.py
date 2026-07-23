@@ -2,8 +2,20 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 
+
+PENDING_EXTERNAL_PUBLICATION_KEY = "pending_external_publication"
+_PENDING_EXTERNAL_PUBLICATION_KEYS = frozenset(
+    {
+        "schema_version",
+        "transaction_id",
+        "manifest_sha256",
+    }
+)
+_TRANSACTION_ID_PATTERN = re.compile(r"\A[0-9a-f]{32}\Z")
+_MANIFEST_SHA256_PATTERN = re.compile(r"\A[0-9a-f]{64}\Z")
 
 CAS_AND_RUN_IDENTITY_KEYS = frozenset(
     {
@@ -70,6 +82,8 @@ LIFECYCLE_AND_DIAGNOSTIC_KEYS = frozenset(
         "phase_dispatch_limit_recovery",
         "lexicon_gate_exhausted",
         "tasks_lexicon_gate_exhausted",
+        PENDING_EXTERNAL_PUBLICATION_KEY,
+        "external_publication_failure",
     }
 )
 
@@ -125,6 +139,7 @@ TRUSTED_ROUTING_EFFECT_KEYS = frozenset(
         "phase_dispatch_limit",
         "phase_dispatch_limit_recovery",
         "cartographer_resume_existing_spec",
+        PENDING_EXTERNAL_PUBLICATION_KEY,
         *PHASE_A_IDENTITY_KEYS,
     }
 )
@@ -142,3 +157,43 @@ PROVIDER_CONTROL_INTENT_KEYS = frozenset(
 def store_owned_update_keys(keys: Iterable[str]) -> frozenset[str]:
     """Return transaction-owned keys from an already detached update map."""
     return frozenset(keys) & STORE_OWNED_TRANSACTION_KEYS
+
+
+def validate_pending_external_publication(
+    value: object,
+) -> dict[str, object]:
+    """Return a detached exact-schema durable publication marker."""
+    if (
+        type(value) is not dict
+        or frozenset(dict.keys(value))
+        != _PENDING_EXTERNAL_PUBLICATION_KEYS
+    ):
+        raise ValueError(
+            "pending external publication marker must have exact fields"
+        )
+    schema_version = dict.__getitem__(value, "schema_version")
+    transaction_id = dict.__getitem__(value, "transaction_id")
+    manifest_sha256 = dict.__getitem__(value, "manifest_sha256")
+    if type(schema_version) is not int or schema_version != 1:
+        raise ValueError(
+            "pending external publication schema version is invalid"
+        )
+    if (
+        type(transaction_id) is not str
+        or _TRANSACTION_ID_PATTERN.fullmatch(transaction_id) is None
+    ):
+        raise ValueError(
+            "pending external publication transaction id is invalid"
+        )
+    if (
+        type(manifest_sha256) is not str
+        or _MANIFEST_SHA256_PATTERN.fullmatch(manifest_sha256) is None
+    ):
+        raise ValueError(
+            "pending external publication manifest digest is invalid"
+        )
+    return {
+        "schema_version": schema_version,
+        "transaction_id": transaction_id,
+        "manifest_sha256": manifest_sha256,
+    }

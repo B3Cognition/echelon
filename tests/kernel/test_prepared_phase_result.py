@@ -7,6 +7,7 @@ from pathlib import Path, PurePath
 import pytest
 
 import harness.prepared_phase_result as prepared_phase_result_module
+import harness.state_transaction_namespace as state_transaction_namespace
 from harness.controller_state_contracts import (
     CompiledControllerStateContract,
     ControllerStateContractViolation,
@@ -23,12 +24,18 @@ from harness.prepared_phase_result import (
 )
 from harness.squad_provider import SquadAgentResult
 from harness.state_transaction_namespace import (
+    PENDING_EXTERNAL_PUBLICATION_KEY,
     STORE_OWNED_TRANSACTION_KEYS,
     TRUSTED_ROUTING_EFFECT_KEYS,
 )
 
 
 _RAW_ATTESTATION_SECRET = "raw-attestation-secret"
+VALID_MARKER = {
+    "schema_version": 1,
+    "transaction_id": "a" * 32,
+    "manifest_sha256": "b" * 64,
+}
 
 
 class _ExplodingPath:
@@ -342,6 +349,157 @@ def test_routing_queue_cannot_own_any_store_transaction_key(
         raised.value.json_path
         == f"$.queued_state_updates.{reserved_key}"
     )
+
+
+@pytest.mark.parametrize(
+    "invalid_marker",
+    [
+        None,
+        [],
+        {
+            "schema_version": True,
+            "transaction_id": "a" * 32,
+            "manifest_sha256": "b" * 64,
+        },
+        {
+            "schema_version": 1,
+            "transaction_id": "A" * 32,
+            "manifest_sha256": "b" * 64,
+        },
+        {
+            "schema_version": 1,
+            "transaction_id": "a" * 32,
+            "manifest_sha256": "b" * 63,
+        },
+        {
+            "schema_version": 1,
+            "transaction_id": "a" * 32,
+            "manifest_sha256": "b" * 64,
+            "extra": False,
+        },
+    ],
+)
+def test_pending_publication_marker_rejects_non_exact_values(
+    invalid_marker: object,
+) -> None:
+    with pytest.raises(ValueError):
+        state_transaction_namespace.validate_pending_external_publication(
+            invalid_marker
+        )
+
+
+def test_pending_publication_marker_rejects_dict_and_string_subclasses() -> None:
+    class DictSubclass(dict):
+        pass
+
+    class StringSubclass(str):
+        pass
+
+    with pytest.raises(ValueError):
+        state_transaction_namespace.validate_pending_external_publication(
+            DictSubclass(VALID_MARKER)
+        )
+    with pytest.raises(ValueError):
+        state_transaction_namespace.validate_pending_external_publication(
+            {
+                **VALID_MARKER,
+                "transaction_id": StringSubclass("a" * 32),
+            }
+        )
+
+
+def test_pending_publication_marker_returns_an_exact_detached_record() -> None:
+    marker = dict(VALID_MARKER)
+
+    validated = (
+        state_transaction_namespace.validate_pending_external_publication(
+            marker
+        )
+    )
+    marker["transaction_id"] = "c" * 32
+
+    assert validated == VALID_MARKER
+    assert validated is not marker
+    assert type(validated) is dict
+    assert all(type(value) in {int, str} for value in validated.values())
+
+
+def test_pending_publication_key_is_reserved_for_all_untrusted_owners() -> None:
+    assert PENDING_EXTERNAL_PUBLICATION_KEY in STORE_OWNED_TRANSACTION_KEYS
+
+    node = PhaseNode(
+        id="provider",
+        type="agent",
+        allowed_state_updates=[PENDING_EXTERNAL_PUBLICATION_KEY],
+    )
+    with pytest.raises(ControllerStateContractViolation):
+        prepare_phase_result(
+            node,
+            _result({PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER}),
+            controller_updates={},
+        )
+    with pytest.raises(ControllerStateContractViolation):
+        prepare_phase_result(
+            PhaseNode(
+                id="provider",
+                type="agent",
+                allowed_state_updates=[],
+            ),
+            _result({}),
+            controller_updates={},
+            state_removals={PENDING_EXTERNAL_PUBLICATION_KEY},
+        )
+
+    prepared = prepare_phase_result(
+        PhaseNode(
+            id="provider",
+            type="agent",
+            allowed_state_updates=[],
+        ),
+        _result({}),
+        controller_updates={},
+    )
+    with pytest.raises(ControllerStateContractViolation):
+        prepare_routing_decision(
+            prepared,
+            from_phase="provider",
+            to_phase="next",
+            expected_state_revision=1,
+            expected_previous_dispatch_sha256="0" * 64,
+            queued_state_updates={
+                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER
+            },
+        )
+
+
+def test_pending_publication_marker_is_the_only_trusted_publication_effect() -> None:
+    assert PENDING_EXTERNAL_PUBLICATION_KEY in TRUSTED_ROUTING_EFFECT_KEYS
+    assert "external_publication_failure" in STORE_OWNED_TRANSACTION_KEYS
+    assert "external_publication_failure" not in TRUSTED_ROUTING_EFFECT_KEYS
+
+    prepared = prepare_phase_result(
+        PhaseNode(
+            id="provider",
+            type="agent",
+            allowed_state_updates=[],
+        ),
+        _result({}),
+        controller_updates={},
+    )
+    decision = prepare_routing_decision(
+        prepared,
+        from_phase="provider",
+        to_phase="next",
+        expected_state_revision=1,
+        expected_previous_dispatch_sha256="0" * 64,
+        transaction_state_updates={
+            PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER
+        },
+    )
+
+    assert decision.transaction_state_updates == {
+        PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER
+    }
 
 
 @pytest.mark.parametrize(

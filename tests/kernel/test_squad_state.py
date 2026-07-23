@@ -18,9 +18,17 @@ from harness.controller_state_contracts import (
 from harness.prepared_phase_result import PreparedPhaseResult, prepare_phase_result
 from harness.squad_state import StateAdvanceError, SquadStateStore
 from harness.squad_provider import SquadAgentResult
+from harness.state_transaction_namespace import (
+    PENDING_EXTERNAL_PUBLICATION_KEY,
+)
 
 DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
 EXT_YML = EXT_ROOT / "extension/extension.yml"
+VALID_MARKER = {
+    "schema_version": 1,
+    "transaction_id": "a" * 32,
+    "manifest_sha256": "b" * 64,
+}
 
 
 def _store(tmp_path: Path) -> SquadStateStore:
@@ -191,6 +199,222 @@ class TestSquadStateStore:
 
         assert receipt.from_phase == receipt.to_phase == "repair"
         assert store.load()["phase"] == "repair"
+
+    def test_old_state_without_pending_publication_still_advances(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+
+        _advance(
+            store,
+            "init",
+            "phase1-discover",
+            _result("DONE"),
+        )
+
+        advanced = store.load()
+        assert advanced["phase"] == "phase1-discover"
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in advanced
+
+    def test_trusted_pending_publication_marker_commits_with_advance(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+
+        _advance(
+            store,
+            "init",
+            "phase1-discover",
+            _result("DONE"),
+            transaction_state_updates={
+                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER
+            },
+        )
+
+        assert store.load()[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
+
+    def test_invalid_pending_publication_marker_cannot_advance(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        before = store.load()
+
+        with pytest.raises(
+            (ControllerStateContractViolation, StateAdvanceError)
+        ):
+            _advance(
+                store,
+                "init",
+                "phase1-discover",
+                _result("DONE"),
+                transaction_state_updates={
+                    PENDING_EXTERNAL_PUBLICATION_KEY: {
+                        **VALID_MARKER,
+                        "schema_version": True,
+                    }
+                },
+            )
+
+        assert store.load() == before
+
+    def test_record_external_publication_failure_blocks_and_preserves_marker(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        state = store.load()
+        state[PENDING_EXTERNAL_PUBLICATION_KEY] = VALID_MARKER
+        store.save(state)
+
+        store.record_external_publication_failure(
+            VALID_MARKER,
+            "target_drift",
+        )
+
+        failed = store.load()
+        assert failed["status"] == "blocked"
+        assert failed["blocked_reason"] == "external_publication_pending"
+        assert failed["external_publication_failure"]["code"] == "target_drift"
+        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
+        assert failed["external_publication_failure"] == {
+            "schema_version": 1,
+            "code": "target_drift",
+            "resume_status": "running",
+            "resume_blocked_reason": None,
+        }
+
+    def test_repeated_external_publication_failure_updates_only_bounded_code(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        state = store.load()
+        state.update(
+            {
+                "status": "blocked",
+                "blocked_reason": "needs_judgment",
+                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
+            }
+        )
+        store.save(state)
+        store.record_external_publication_failure(
+            VALID_MARKER,
+            "stage_missing",
+        )
+        original_diagnostic = store.load()["external_publication_failure"]
+
+        store.record_external_publication_failure(
+            VALID_MARKER,
+            "publish_io",
+        )
+
+        repeated = store.load()
+        assert repeated["external_publication_failure"] == {
+            **original_diagnostic,
+            "code": "publish_io",
+        }
+        assert repeated["status"] == "blocked"
+        assert repeated["blocked_reason"] == "external_publication_pending"
+
+    @pytest.mark.parametrize(
+        "method_name,args",
+        [
+            (
+                "record_external_publication_failure",
+                ("target_drift",),
+            ),
+            ("complete_external_publication", ()),
+        ],
+    )
+    def test_external_publication_marker_mismatch_cannot_record_or_clear(
+        self,
+        tmp_path,
+        method_name,
+        args,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        state = store.load()
+        state[PENDING_EXTERNAL_PUBLICATION_KEY] = VALID_MARKER
+        store.save(state)
+        before = store.load()
+        mismatched = {
+            **VALID_MARKER,
+            "transaction_id": "c" * 32,
+        }
+
+        with pytest.raises(StateAdvanceError):
+            getattr(store, method_name)(mismatched, *args)
+
+        assert store.load() == before
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            "unknown",
+            True,
+            "",
+            "manifest-invalid",
+        ],
+    )
+    def test_external_publication_failure_rejects_unbounded_code(
+        self,
+        tmp_path,
+        code,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        state = store.load()
+        state[PENDING_EXTERNAL_PUBLICATION_KEY] = VALID_MARKER
+        store.save(state)
+        before = store.load()
+
+        with pytest.raises((ValueError, StateAdvanceError)):
+            store.record_external_publication_failure(VALID_MARKER, code)
+
+        assert store.load() == before
+
+    def test_complete_external_publication_restores_lifecycle_in_one_save(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        state = store.load()
+        state.update(
+            {
+                "status": "blocked",
+                "blocked_reason": "needs_judgment",
+                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
+            }
+        )
+        store.save(state)
+        store.record_external_publication_failure(
+            VALID_MARKER,
+            "stage_missing",
+        )
+
+        with patch.object(
+            store,
+            "_save_unlocked",
+            wraps=store._save_unlocked,
+        ) as save:
+            store.complete_external_publication(VALID_MARKER)
+
+        completed = store.load()
+        assert save.call_count == 1
+        assert completed["status"] == "blocked"
+        assert completed["blocked_reason"] == "needs_judgment"
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
+        assert "external_publication_failure" not in completed
 
     def test_snapshot_bound_failure_diagnostic_rejects_same_phase_new_revision(
         self,

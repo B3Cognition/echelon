@@ -28,9 +28,11 @@ from harness.prepared_phase_result import (
     verify_prepared_routing_decision_attestation,
 )
 from harness.state_transaction_namespace import (
+    PENDING_EXTERNAL_PUBLICATION_KEY,
     PHASE_A_IDENTITY_KEYS,
     PROVIDER_CONTROL_INTENT_KEYS,
     store_owned_update_keys,
+    validate_pending_external_publication,
 )
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,26 @@ VALID_SQUAD_TRANSITIONS: dict[str, set[str]] = {
     "blocked": {"running"},
     "done": set(),
 }
+_EXTERNAL_PUBLICATION_FAILURE_KEY = "external_publication_failure"
+_EXTERNAL_PUBLICATION_FAILURE_CODES = frozenset(
+    {
+        "manifest_invalid",
+        "manifest_mismatch",
+        "publish_io",
+        "stage_corrupt",
+        "stage_missing",
+        "state_finalize",
+        "target_drift",
+    }
+)
+_EXTERNAL_PUBLICATION_FAILURE_KEYS = frozenset(
+    {
+        "schema_version",
+        "code",
+        "resume_status",
+        "resume_blocked_reason",
+    }
+)
 
 
 class StateAdvanceError(RuntimeError):
@@ -104,6 +126,50 @@ def _prepared_result_error(
         json_path=json_path,
         validator=validator,
     )
+
+
+def _validate_external_publication_failure(
+    value: object,
+) -> dict[str, object]:
+    if (
+        type(value) is not dict
+        or frozenset(dict.keys(value))
+        != _EXTERNAL_PUBLICATION_FAILURE_KEYS
+    ):
+        raise ValueError(
+            "external publication failure diagnostic has invalid fields"
+        )
+    schema_version = dict.__getitem__(value, "schema_version")
+    code = dict.__getitem__(value, "code")
+    resume_status = dict.__getitem__(value, "resume_status")
+    resume_blocked_reason = dict.__getitem__(
+        value,
+        "resume_blocked_reason",
+    )
+    if type(schema_version) is not int or schema_version != 1:
+        raise ValueError(
+            "external publication failure schema version is invalid"
+        )
+    if (
+        type(code) is not str
+        or code not in _EXTERNAL_PUBLICATION_FAILURE_CODES
+    ):
+        raise ValueError("external publication failure code is invalid")
+    if type(resume_status) is not str:
+        raise ValueError("external publication resume status is invalid")
+    if (
+        resume_blocked_reason is not None
+        and type(resume_blocked_reason) is not str
+    ):
+        raise ValueError(
+            "external publication resume blocked reason is invalid"
+        )
+    return {
+        "schema_version": schema_version,
+        "code": code,
+        "resume_status": resume_status,
+        "resume_blocked_reason": resume_blocked_reason,
+    }
 
 
 def _validate_routing_decision(
@@ -285,6 +351,24 @@ def _validate_routing_decision(
         for key, value in result["state_updates"].items()
         if key not in promoted_control_keys
     }
+    if PENDING_EXTERNAL_PUBLICATION_KEY in verified.transaction_state_updates:
+        try:
+            verified.transaction_state_updates[
+                PENDING_EXTERNAL_PUBLICATION_KEY
+            ] = validate_pending_external_publication(
+                verified.transaction_state_updates[
+                    PENDING_EXTERNAL_PUBLICATION_KEY
+                ]
+            )
+        except ValueError as exc:
+            raise _prepared_result_error(
+                "pending external publication marker is invalid",
+                json_path=(
+                    "$.transaction_state_updates."
+                    f"{PENDING_EXTERNAL_PUBLICATION_KEY}"
+                ),
+                validator="type",
+            ) from exc
     return (
         result,
         verified.queued_state_updates,
@@ -915,6 +999,122 @@ class SquadStateStore:
             )
             self._save_unlocked(next_state)
             return True
+
+    @staticmethod
+    def _require_external_publication_marker(
+        state: dict[str, Any],
+        expected_marker: dict[str, object],
+    ) -> None:
+        try:
+            current_marker = validate_pending_external_publication(
+                state.get(PENDING_EXTERNAL_PUBLICATION_KEY)
+            )
+        except ValueError as exc:
+            raise StateAdvanceError(
+                "persisted external publication marker is invalid",
+                json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
+                validator="state_contract",
+            ) from exc
+        if current_marker != expected_marker:
+            raise StateAdvanceError(
+                "external publication marker changed",
+                json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
+                validator="stale_state",
+            )
+
+    def record_external_publication_failure(
+        self,
+        marker: object,
+        code: object,
+    ) -> None:
+        try:
+            expected_marker = validate_pending_external_publication(marker)
+        except ValueError as exc:
+            raise StateAdvanceError(
+                "external publication marker is invalid",
+                json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
+                validator="type",
+            ) from exc
+        if (
+            type(code) is not str
+            or code not in _EXTERNAL_PUBLICATION_FAILURE_CODES
+        ):
+            raise StateAdvanceError(
+                "external publication failure code is invalid",
+                json_path=f"$.{_EXTERNAL_PUBLICATION_FAILURE_KEY}.code",
+                validator="enum",
+            )
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            self._require_external_publication_marker(
+                state,
+                expected_marker,
+            )
+            if _EXTERNAL_PUBLICATION_FAILURE_KEY in state:
+                try:
+                    diagnostic = _validate_external_publication_failure(
+                        state[_EXTERNAL_PUBLICATION_FAILURE_KEY]
+                    )
+                except ValueError as exc:
+                    raise StateAdvanceError(
+                        "persisted external publication failure is invalid",
+                        json_path=f"$.{_EXTERNAL_PUBLICATION_FAILURE_KEY}",
+                        validator="state_contract",
+                    ) from exc
+                diagnostic["code"] = code
+            else:
+                resume_status = state.get("status", "running")
+                resume_blocked_reason = state.get("blocked_reason")
+                diagnostic = _validate_external_publication_failure(
+                    {
+                        "schema_version": 1,
+                        "code": code,
+                        "resume_status": resume_status,
+                        "resume_blocked_reason": resume_blocked_reason,
+                    }
+                )
+            state[_EXTERNAL_PUBLICATION_FAILURE_KEY] = diagnostic
+            state["status"] = "blocked"
+            state["blocked_reason"] = "external_publication_pending"
+            self._save_unlocked(state)
+
+    def complete_external_publication(self, marker: object) -> None:
+        try:
+            expected_marker = validate_pending_external_publication(marker)
+        except ValueError as exc:
+            raise StateAdvanceError(
+                "external publication marker is invalid",
+                json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
+                validator="type",
+            ) from exc
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            self._require_external_publication_marker(
+                state,
+                expected_marker,
+            )
+            if _EXTERNAL_PUBLICATION_FAILURE_KEY in state:
+                try:
+                    diagnostic = _validate_external_publication_failure(
+                        state[_EXTERNAL_PUBLICATION_FAILURE_KEY]
+                    )
+                except ValueError as exc:
+                    raise StateAdvanceError(
+                        "persisted external publication failure is invalid",
+                        json_path=f"$.{_EXTERNAL_PUBLICATION_FAILURE_KEY}",
+                        validator="state_contract",
+                    ) from exc
+                state["status"] = diagnostic["resume_status"]
+                resume_blocked_reason = diagnostic[
+                    "resume_blocked_reason"
+                ]
+                if resume_blocked_reason is None:
+                    state.pop("blocked_reason", None)
+                else:
+                    state["blocked_reason"] = resume_blocked_reason
+            state.pop(PENDING_EXTERNAL_PUBLICATION_KEY, None)
+            state.pop(_EXTERNAL_PUBLICATION_FAILURE_KEY, None)
+            self._save_unlocked(state)
 
     def set_blocked(self, reason: str) -> None:
         def mutate(state: dict) -> None:
