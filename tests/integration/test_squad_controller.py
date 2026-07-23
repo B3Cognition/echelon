@@ -21,6 +21,7 @@ EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
+from harness.controller_state_contracts import ControllerStateContractViolation
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.phase_checkpoints import PhaseCheckpointError
 from harness.squad import (
@@ -3127,6 +3128,21 @@ class TestFailClosedControllerPreparation:
         executor.execute.return_value = malicious
         ctrl._executors["deterministic_lexicon"] = executor
         calls = self._patch_success_steps(ctrl, store, monkeypatch)
+        violations: list[ControllerStateContractViolation] = []
+        original_prepare = ctrl._prepare_phase_result
+
+        def capture_violation(*args):
+            try:
+                return original_prepare(*args)
+            except ControllerStateContractViolation as exc:
+                violations.append(exc)
+                raise
+
+        monkeypatch.setattr(
+            ctrl,
+            "_prepare_phase_result",
+            capture_violation,
+        )
 
         result = ctrl.run_single_phase(
             "phase3-tasks-lexicon",
@@ -3140,6 +3156,14 @@ class TestFailClosedControllerPreparation:
         blocked = store.load()
         assert blocked["completed_phases"] == []
         assert blocked["last_dispatch"] is None
+        assert len(violations) == 1
+        violation = violations[0]
+        assert str(violation) == "prepared result attestation failed"
+        assert violation.contract == "tasks_lexicon"
+        assert violation.json_path == "$.echelon_result"
+        assert violation.validator == "attestation"
+        assert violation.__cause__ is None
+        assert violation.__context__ is None
         assert blocked["controller_contract_error"] == {
             "phase_id": "phase3-tasks-lexicon",
             "contract": "tasks_lexicon",

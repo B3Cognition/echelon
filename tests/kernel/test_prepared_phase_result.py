@@ -409,6 +409,7 @@ def test_prepare_redacts_attestation_protocol_exceptions(
     assert raised.value.json_path == "$.echelon_result"
     assert raised.value.validator == "attestation"
     assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
     diagnostic = {
         "message": str(raised.value),
         "contract": raised.value.contract,

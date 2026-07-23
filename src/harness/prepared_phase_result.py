@@ -556,6 +556,7 @@ def prepare_phase_result(
     controller_contract_sha256 = (
         contract.sha256 if contract is not None else None
     )
+    attestation_failure: ControllerStateContractViolation | None = None
     try:
         attestation = _create_preparation_attestation(
             phase_id=node.id,
@@ -571,12 +572,14 @@ def prepare_phase_result(
     except ControllerStateContractViolation:
         raise
     except Exception:
-        raise ControllerStateContractViolation(
+        attestation_failure = ControllerStateContractViolation(
             "prepared result attestation failed",
             contract=_contract_label(contract),
             json_path="$.echelon_result",
             validator="attestation",
-        ) from None
+        )
+    if attestation_failure is not None:
+        raise attestation_failure
     return PreparedPhaseResult(
         _result=sealed_result,
         provider_update_keys=provider_update_keys,
