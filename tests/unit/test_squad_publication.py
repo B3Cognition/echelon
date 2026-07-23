@@ -1,0 +1,1013 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+import harness.squad_publication as publication_module
+from harness.squad_publication import (
+    PublicationError,
+    PublicationMarker,
+    SquadPublicationTransaction,
+    load_prepared_publication,
+)
+
+
+TRANSACTION_ID = "a" * 32
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "manifest_invalid",
+        "manifest_mismatch",
+        "publish_io",
+        "stage_corrupt",
+        "stage_missing",
+        "state_finalize",
+        "target_drift",
+    ],
+)
+def test_publication_error_preserves_only_bounded_diagnostic_codes(
+    code: str,
+) -> None:
+    error = PublicationError(code)
+
+    assert error.code == code
+    assert str(error) == code
+
+
+def test_publication_error_sanitizes_an_unbounded_diagnostic() -> None:
+    error = PublicationError("/secret/path and content")
+
+    assert error.code == "publish_io"
+    assert str(error) == "publish_io"
+
+
+def _roots(tmp_path: Path) -> tuple[Path, Path]:
+    project_root = tmp_path / "project"
+    squad_dir = project_root / ".echelon" / "squad"
+    project_root.mkdir()
+    squad_dir.mkdir(parents=True)
+    return project_root, squad_dir
+
+
+def _staged_file(
+    transaction: SquadPublicationTransaction,
+    name: str,
+    content: bytes,
+) -> Path:
+    staged = transaction.build_path(name)
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_bytes(content)
+    return staged
+
+
+def _assert_error_code(code: str, action) -> None:
+    with pytest.raises(PublicationError) as raised:
+        action()
+    assert raised.value.code == code
+    assert str(raised.value) == code
+
+
+def _sealed_write(
+    tmp_path: Path,
+    *,
+    target_name: str = "published/result.txt",
+    old_content: bytes | None = None,
+    new_content: bytes = b"new bytes\n",
+) -> tuple[
+    Path,
+    Path,
+    SquadPublicationTransaction,
+    Path,
+    object,
+]:
+    project_root, squad_dir = _roots(tmp_path)
+    target = project_root / target_name
+    if old_content is not None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(old_content)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged = _staged_file(transaction, "build/result.txt", new_content)
+    transaction.add_write(
+        Path(target_name),
+        staged,
+        owned_paths={Path(target_name)},
+    )
+    prepared = transaction.seal()
+    return project_root, squad_dir, transaction, staged, prepared
+
+
+def test_seal_writes_a_canonical_sorted_exact_image_manifest(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    (project_root / "z.txt").write_bytes(b"old z")
+    (project_root / "middle.txt").write_bytes(b"remove me")
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged_z = _staged_file(transaction, "build/z.txt", b"new z")
+    staged_a = _staged_file(transaction, "build/a.txt", b"new a")
+    owned = {Path("a.txt"), Path("middle.txt"), Path("z.txt")}
+
+    transaction.add_write(Path("z.txt"), staged_z, owned_paths=owned)
+    transaction.add_delete(Path("middle.txt"), owned_paths=owned)
+    transaction.add_write(Path("a.txt"), staged_a, owned_paths=owned)
+
+    prepared = transaction.seal()
+    manifest_path = next(squad_dir.rglob("manifest.json"))
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = json.loads(manifest_bytes)
+
+    assert manifest_bytes == (
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    assert list(manifest) == ["operations", "schema_version", "transaction_id"]
+    assert manifest["schema_version"] == 1
+    assert manifest["transaction_id"] == TRANSACTION_ID
+    assert [operation["target"] for operation in manifest["operations"]] == [
+        "a.txt",
+        "middle.txt",
+        "z.txt",
+    ]
+    assert manifest["operations"] == [
+        {
+            "action": "write",
+            "postimage": {
+                "kind": "file",
+                "sha256": hashlib.sha256(b"new a").hexdigest(),
+            },
+            "preimage": {"kind": "missing"},
+            "staged": "build/a.txt",
+            "target": "a.txt",
+        },
+        {
+            "action": "delete",
+            "postimage": {"kind": "missing"},
+            "preimage": {
+                "kind": "file",
+                "sha256": hashlib.sha256(b"remove me").hexdigest(),
+            },
+            "target": "middle.txt",
+        },
+        {
+            "action": "write",
+            "postimage": {
+                "kind": "file",
+                "sha256": hashlib.sha256(b"new z").hexdigest(),
+            },
+            "preimage": {
+                "kind": "file",
+                "sha256": hashlib.sha256(b"old z").hexdigest(),
+            },
+            "staged": "build/z.txt",
+            "target": "z.txt",
+        },
+    ]
+    expected_digest = hashlib.sha256(manifest_bytes).hexdigest()
+    assert prepared.marker == PublicationMarker(
+        schema_version=1,
+        transaction_id=TRANSACTION_ID,
+        manifest_sha256=expected_digest,
+    )
+    assert prepared.marker.to_dict() == {
+        "schema_version": 1,
+        "transaction_id": TRANSACTION_ID,
+        "manifest_sha256": expected_digest,
+    }
+    assert (project_root / "z.txt").read_bytes() == b"old z"
+    assert not (project_root / "a.txt").exists()
+    assert (project_root / "middle.txt").read_bytes() == b"remove me"
+
+
+def test_seal_flushes_stages_and_manifest_and_syncs_directories(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged = _staged_file(transaction, "nested/staged.txt", b"durable")
+    transaction.add_write(
+        Path("target.txt"),
+        staged,
+        owned_paths={Path("target.txt")},
+    )
+    real_fsync = publication_module.os.fsync
+    fsynced: list[int] = []
+
+    def recording_fsync(fd: int) -> None:
+        fsynced.append(fd)
+        real_fsync(fd)
+
+    monkeypatch.setattr(publication_module.os, "fsync", recording_fsync)
+
+    transaction.seal()
+
+    assert len(fsynced) >= 4
+
+
+def test_seal_rereads_staged_file_and_rejects_preseal_mutation(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged = _staged_file(transaction, "build/value.txt", b"expected")
+    transaction.add_write(
+        Path("value.txt"),
+        staged,
+        owned_paths={Path("value.txt")},
+    )
+    staged.write_bytes(b"mutated")
+
+    _assert_error_code("stage_corrupt", transaction.seal)
+
+
+def test_seal_rereads_manifest_after_the_durable_replace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged = _staged_file(transaction, "build/value.txt", b"expected")
+    transaction.add_write(
+        Path("value.txt"),
+        staged,
+        owned_paths={Path("value.txt")},
+    )
+    durable_write = publication_module._durable_write_bytes
+
+    def corrupting_write(path: Path, content: bytes) -> None:
+        durable_write(path, content)
+        if path.name == "manifest.json":
+            path.write_bytes(content + b" ")
+
+    monkeypatch.setattr(
+        publication_module,
+        "_durable_write_bytes",
+        corrupting_write,
+    )
+
+    _assert_error_code("manifest_mismatch", transaction.seal)
+
+
+@pytest.mark.parametrize(
+    "targets",
+    [
+        (Path("same.txt"), Path("same.txt")),
+        (Path("tree"), Path("tree/child.txt")),
+        (Path("tree/child.txt"), Path("tree")),
+    ],
+)
+def test_duplicate_or_ancestor_overlapping_targets_are_rejected(
+    tmp_path: Path,
+    targets: tuple[Path, Path],
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    first = _staged_file(transaction, "build/first.txt", b"first")
+    second = _staged_file(transaction, "build/second.txt", b"second")
+    owned = set(targets)
+    transaction.add_write(targets[0], first, owned_paths=owned)
+
+    _assert_error_code(
+        "manifest_invalid",
+        lambda: transaction.add_write(
+            targets[1],
+            second,
+            owned_paths=owned,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        Path("/absolute.txt"),
+        Path("../escape.txt"),
+        Path("nested/../../escape.txt"),
+        Path("."),
+        Path(""),
+    ],
+)
+def test_unsafe_workspace_target_is_rejected(
+    tmp_path: Path,
+    target: Path,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged = _staged_file(transaction, "build/value.txt", b"value")
+
+    _assert_error_code(
+        "manifest_invalid",
+        lambda: transaction.add_write(
+            target,
+            staged,
+            owned_paths={target},
+        ),
+    )
+
+
+def test_target_not_in_exact_owned_path_set_is_rejected(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged = _staged_file(transaction, "build/value.txt", b"value")
+
+    _assert_error_code(
+        "manifest_invalid",
+        lambda: transaction.add_write(
+            Path("not-owned.txt"),
+            staged,
+            owned_paths={Path("owned.txt")},
+        ),
+    )
+
+
+@pytest.mark.parametrize("kind", ["symlink", "directory", "fifo"])
+def test_non_regular_target_is_rejected(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    target = project_root / "unsafe"
+    if kind == "symlink":
+        target.symlink_to(project_root / "elsewhere")
+    elif kind == "directory":
+        target.mkdir()
+    else:
+        os.mkfifo(target)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+
+    _assert_error_code(
+        "manifest_invalid",
+        lambda: transaction.add_delete(
+            Path("unsafe"),
+            owned_paths={Path("unsafe")},
+        ),
+    )
+
+
+def test_symlinked_target_ancestor_is_rejected(tmp_path: Path) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (project_root / "linked").symlink_to(outside, target_is_directory=True)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged = _staged_file(transaction, "build/value.txt", b"value")
+
+    _assert_error_code(
+        "manifest_invalid",
+        lambda: transaction.add_write(
+            Path("linked/value.txt"),
+            staged,
+            owned_paths={Path("linked/value.txt")},
+        ),
+    )
+
+
+@pytest.mark.parametrize("kind", ["outside", "symlink", "fifo"])
+def test_unsafe_staged_file_is_rejected(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    if kind == "outside":
+        staged = tmp_path / "outside.txt"
+        staged.write_bytes(b"value")
+    elif kind == "symlink":
+        outside = tmp_path / "outside.txt"
+        outside.write_bytes(b"value")
+        staged = transaction.build_path("build/link.txt")
+        staged.parent.mkdir(parents=True)
+        staged.symlink_to(outside)
+    else:
+        staged = transaction.build_path("build/fifo")
+        staged.parent.mkdir(parents=True)
+        os.mkfifo(staged)
+
+    _assert_error_code(
+        "manifest_invalid",
+        lambda: transaction.add_write(
+            Path("value.txt"),
+            staged,
+            owned_paths={Path("value.txt")},
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "transaction_id",
+    [
+        "A" * 32,
+        "a" * 31,
+        "a" * 33,
+        "../" + "a" * 29,
+        "g" * 32,
+    ],
+)
+def test_invalid_transaction_id_is_rejected(
+    tmp_path: Path,
+    transaction_id: str,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+
+    _assert_error_code(
+        "manifest_invalid",
+        lambda: SquadPublicationTransaction.begin(
+            project_root,
+            squad_dir,
+            transaction_id,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["../outside", "/absolute", "nested/../../outside", "", "."],
+)
+def test_build_path_rejects_unsafe_names(
+    tmp_path: Path,
+    name: str,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+
+    _assert_error_code(
+        "manifest_invalid",
+        lambda: transaction.build_path(name),
+    )
+
+
+def test_loading_rejects_a_mutated_staged_file(tmp_path: Path) -> None:
+    project_root, squad_dir, _, staged, prepared = _sealed_write(tmp_path)
+    staged.write_bytes(b"corrupt")
+
+    _assert_error_code(
+        "stage_corrupt",
+        lambda: load_prepared_publication(
+            project_root,
+            squad_dir,
+            prepared.marker,
+        ),
+    )
+
+
+def test_loading_rejects_a_missing_staged_file(tmp_path: Path) -> None:
+    project_root, squad_dir, _, staged, prepared = _sealed_write(tmp_path)
+    staged.unlink()
+
+    _assert_error_code(
+        "stage_missing",
+        lambda: load_prepared_publication(
+            project_root,
+            squad_dir,
+            prepared.marker,
+        ),
+    )
+
+
+def test_loading_rejects_a_missing_transaction_stage(tmp_path: Path) -> None:
+    project_root, squad_dir, _, _, prepared = _sealed_write(tmp_path)
+    manifest_path = next(squad_dir.rglob("manifest.json"))
+    transaction_root = manifest_path.parent
+    for path in sorted(
+        transaction_root.rglob("*"),
+        key=lambda item: len(item.parts),
+        reverse=True,
+    ):
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink()
+    transaction_root.rmdir()
+
+    _assert_error_code(
+        "stage_missing",
+        lambda: load_prepared_publication(
+            project_root,
+            squad_dir,
+            prepared.marker,
+        ),
+    )
+
+
+def test_loading_rejects_manifest_bytes_that_do_not_match_marker(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir, _, _, prepared = _sealed_write(tmp_path)
+    manifest_path = next(squad_dir.rglob("manifest.json"))
+    manifest_path.write_bytes(manifest_path.read_bytes() + b" ")
+
+    _assert_error_code(
+        "manifest_mismatch",
+        lambda: load_prepared_publication(
+            project_root,
+            squad_dir,
+            prepared.marker,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        {},
+        {
+            "schema_version": True,
+            "transaction_id": TRANSACTION_ID,
+            "manifest_sha256": "b" * 64,
+        },
+        {
+            "schema_version": 1,
+            "transaction_id": "A" * 32,
+            "manifest_sha256": "b" * 64,
+        },
+        {
+            "schema_version": 1,
+            "transaction_id": TRANSACTION_ID,
+            "manifest_sha256": "B" * 64,
+        },
+        {
+            "schema_version": 1,
+            "transaction_id": TRANSACTION_ID,
+            "manifest_sha256": "b" * 64,
+            "extra": 1,
+        },
+    ],
+)
+def test_loading_rejects_non_exact_marker(
+    tmp_path: Path,
+    marker: object,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+
+    _assert_error_code(
+        "manifest_invalid",
+        lambda: load_prepared_publication(
+            project_root,
+            squad_dir,
+            marker,
+        ),
+    )
+
+
+def _sealed_mixed_publication(
+    tmp_path: Path,
+) -> tuple[Path, Path, object, list[Path]]:
+    project_root, squad_dir = _roots(tmp_path)
+    (project_root / "b.txt").write_bytes(b"old b")
+    (project_root / "c.txt").write_bytes(b"remove c")
+    (project_root / "unrelated.txt").write_bytes(b"leave alone")
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged_a = _staged_file(transaction, "build/a.txt", b"new a")
+    staged_b = _staged_file(transaction, "build/b.txt", b"new b")
+    owned = {Path("a.txt"), Path("b.txt"), Path("c.txt")}
+    transaction.add_delete(Path("c.txt"), owned_paths=owned)
+    transaction.add_write(Path("b.txt"), staged_b, owned_paths=owned)
+    transaction.add_write(Path("a.txt"), staged_a, owned_paths=owned)
+    return (
+        project_root,
+        squad_dir,
+        transaction.seal(),
+        [staged_a, staged_b],
+    )
+
+
+def test_publish_installs_writes_and_deletes_only_exact_owned_files(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir, prepared, staged = (
+        _sealed_mixed_publication(tmp_path)
+    )
+    transaction_root = next(squad_dir.rglob("manifest.json")).parent
+
+    prepared.publish()
+
+    assert (project_root / "a.txt").read_bytes() == b"new a"
+    assert (project_root / "b.txt").read_bytes() == b"new b"
+    assert not (project_root / "c.txt").exists()
+    assert (project_root / "unrelated.txt").read_bytes() == b"leave alone"
+    assert transaction_root.is_dir()
+    assert [path.read_bytes() for path in staged] == [b"new a", b"new b"]
+
+
+def test_publish_creates_missing_target_directories_durably(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged = _staged_file(transaction, "build/new.txt", b"new")
+    transaction.add_write(
+        Path("new/deep/value.txt"),
+        staged,
+        owned_paths={Path("new/deep/value.txt")},
+    )
+    prepared = transaction.seal()
+    real_fsync = publication_module.os.fsync
+    fsynced: list[int] = []
+
+    def recording_fsync(fd: int) -> None:
+        fsynced.append(fd)
+        real_fsync(fd)
+
+    monkeypatch.setattr(publication_module.os, "fsync", recording_fsync)
+
+    prepared.publish()
+
+    assert (project_root / "new/deep/value.txt").read_bytes() == b"new"
+    assert len(fsynced) >= 5
+
+
+@pytest.mark.parametrize("fault_position", [0, 1, 2, 3])
+def test_retry_after_each_operation_position_is_idempotent(
+    tmp_path: Path,
+    fault_position: int,
+) -> None:
+    project_root, squad_dir, prepared, _ = _sealed_mixed_publication(
+        tmp_path
+    )
+
+    def fault_hook(position: int) -> None:
+        if position == fault_position:
+            raise RuntimeError(f"fault at {position}")
+
+    _assert_error_code(
+        "publish_io",
+        lambda: prepared.publish(fault_hook=fault_hook),
+    )
+    assert (project_root / "unrelated.txt").read_bytes() == b"leave alone"
+    assert next(squad_dir.rglob("manifest.json")).is_file()
+
+    recovered = load_prepared_publication(
+        project_root,
+        squad_dir,
+        prepared.marker.to_dict(),
+    )
+    recovered.publish()
+
+    assert (project_root / "a.txt").read_bytes() == b"new a"
+    assert (project_root / "b.txt").read_bytes() == b"new b"
+    assert not (project_root / "c.txt").exists()
+    assert (project_root / "unrelated.txt").read_bytes() == b"leave alone"
+
+
+@pytest.mark.parametrize(
+    ("drift", "old_content"),
+    [
+        ("unexpected_creation", None),
+        ("unexpected_deletion", b"old"),
+        ("content", b"old"),
+        ("directory", b"old"),
+        ("symlink", b"old"),
+        ("fifo", b"old"),
+    ],
+)
+def test_publish_rejects_every_unexpected_target_drift(
+    tmp_path: Path,
+    drift: str,
+    old_content: bytes | None,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    target = project_root / "target.txt"
+    if old_content is not None:
+        target.write_bytes(old_content)
+    (project_root / "unrelated.txt").write_bytes(b"unchanged")
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    staged = _staged_file(transaction, "build/new.txt", b"new")
+    transaction.add_write(
+        Path("target.txt"),
+        staged,
+        owned_paths={Path("target.txt")},
+    )
+    prepared = transaction.seal()
+    if drift == "unexpected_creation":
+        target.write_bytes(b"intruder")
+    elif drift == "unexpected_deletion":
+        target.unlink()
+    elif drift == "content":
+        target.write_bytes(b"changed")
+    elif drift == "directory":
+        target.unlink()
+        target.mkdir()
+    elif drift == "symlink":
+        target.unlink()
+        target.symlink_to(tmp_path / "outside")
+    else:
+        target.unlink()
+        os.mkfifo(target)
+
+    _assert_error_code("target_drift", prepared.publish)
+
+    assert (project_root / "unrelated.txt").read_bytes() == b"unchanged"
+    assert staged.read_bytes() == b"new"
+    assert next(squad_dir.rglob("manifest.json")).is_file()
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt", "special"])
+def test_stage_preflight_failure_never_touches_an_earlier_target(
+    tmp_path: Path,
+    damage: str,
+) -> None:
+    project_root, squad_dir, prepared, staged = (
+        _sealed_mixed_publication(tmp_path)
+    )
+    damaged = staged[1]
+    if damage == "missing":
+        damaged.unlink()
+        expected_code = "stage_missing"
+    elif damage == "corrupt":
+        damaged.write_bytes(b"corrupt")
+        expected_code = "stage_corrupt"
+    else:
+        damaged.unlink()
+        os.mkfifo(damaged)
+        expected_code = "stage_corrupt"
+
+    _assert_error_code(expected_code, prepared.publish)
+
+    assert not (project_root / "a.txt").exists()
+    assert (project_root / "b.txt").read_bytes() == b"old b"
+    assert (project_root / "c.txt").read_bytes() == b"remove c"
+    assert (project_root / "unrelated.txt").read_bytes() == b"leave alone"
+    assert next(squad_dir.rglob("manifest.json")).is_file()
+
+
+def test_manifest_mismatch_at_publish_entry_never_touches_targets(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir, prepared, _ = _sealed_mixed_publication(
+        tmp_path
+    )
+    manifest_path = next(squad_dir.rglob("manifest.json"))
+    manifest_path.write_bytes(manifest_path.read_bytes() + b" ")
+
+    _assert_error_code("manifest_mismatch", prepared.publish)
+
+    assert not (project_root / "a.txt").exists()
+    assert (project_root / "b.txt").read_bytes() == b"old b"
+    assert (project_root / "c.txt").read_bytes() == b"remove c"
+
+
+def test_stage_changed_after_entry_check_is_rejected_before_install(
+    tmp_path: Path,
+) -> None:
+    project_root, _, prepared, staged = _sealed_mixed_publication(tmp_path)
+
+    def mutate_stage(position: int) -> None:
+        if position == 0:
+            staged[0].write_bytes(b"changed after preflight")
+
+    _assert_error_code(
+        "stage_corrupt",
+        lambda: prepared.publish(fault_hook=mutate_stage),
+    )
+
+    assert not (project_root / "a.txt").exists()
+    assert (project_root / "b.txt").read_bytes() == b"old b"
+    assert (project_root / "c.txt").read_bytes() == b"remove c"
+
+
+def test_postimage_verification_failure_retains_stage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir, _, staged, prepared = _sealed_write(
+        tmp_path,
+        old_content=b"old",
+    )
+    target = project_root / "published/result.txt"
+    expected_digest = hashlib.sha256(b"new bytes\n").hexdigest()
+    target_image = publication_module._target_image
+
+    def incorrect_postimage(
+        root: Path,
+        relative: Path,
+        *,
+        invalid_code: str,
+    ) -> dict[str, str]:
+        image = target_image(root, relative, invalid_code=invalid_code)
+        if image.get("sha256") == expected_digest:
+            return {"kind": "file", "sha256": "0" * 64}
+        return image
+
+    monkeypatch.setattr(
+        publication_module,
+        "_target_image",
+        incorrect_postimage,
+    )
+
+    _assert_error_code("target_drift", prepared.publish)
+
+    assert staged.is_file()
+    assert next(squad_dir.rglob("manifest.json")).is_file()
+
+
+def test_publish_error_never_exposes_fault_text_or_paths(
+    tmp_path: Path,
+) -> None:
+    project_root, _, prepared, _ = _sealed_mixed_publication(tmp_path)
+    secret_path = project_root / "secret-name.txt"
+
+    def fault_hook(position: int) -> None:
+        raise OSError(f"do not expose {secret_path} at {position}")
+
+    with pytest.raises(PublicationError) as raised:
+        prepared.publish(fault_hook=fault_hook)
+
+    assert raised.value.code == "publish_io"
+    assert str(raised.value) == "publish_io"
+    assert str(secret_path) not in str(raised.value)
+
+
+def test_discard_removes_only_this_transaction_stage(
+    tmp_path: Path,
+) -> None:
+    _, squad_dir, prepared, _ = _sealed_mixed_publication(tmp_path)
+    transaction_root = next(squad_dir.rglob("manifest.json")).parent
+    unrelated = transaction_root.parent / "keep"
+    unrelated.mkdir()
+    (unrelated / "value.txt").write_bytes(b"keep")
+
+    prepared.discard()
+
+    assert not transaction_root.exists()
+    assert (unrelated / "value.txt").read_bytes() == b"keep"
+    prepared.discard()
+
+
+def test_loading_rejects_manifest_symlink_swap_between_check_and_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir, _, _, prepared = _sealed_write(tmp_path)
+    manifest_path = next(squad_dir.rglob("manifest.json"))
+    original_manifest = manifest_path.read_bytes()
+    outside_manifest = tmp_path / "outside-manifest.json"
+    outside_manifest.write_bytes(original_manifest)
+    backup_manifest = tmp_path / "original-manifest.json"
+    real_lstat = publication_module.os.lstat
+    swapped = False
+
+    def swapping_lstat(path) -> os.stat_result:
+        nonlocal swapped
+        metadata = real_lstat(path)
+        if Path(path) == manifest_path and not swapped:
+            swapped = True
+            manifest_path.rename(backup_manifest)
+            manifest_path.symlink_to(outside_manifest)
+        return metadata
+
+    monkeypatch.setattr(publication_module.os, "lstat", swapping_lstat)
+
+    _assert_error_code(
+        "manifest_invalid",
+        lambda: load_prepared_publication(
+            project_root,
+            squad_dir,
+            prepared.marker,
+        ),
+    )
+
+
+def test_discard_rejects_replaced_outbox_ancestor_without_deleting_stage(
+    tmp_path: Path,
+) -> None:
+    _, squad_dir, prepared, _ = _sealed_mixed_publication(tmp_path)
+    outbox = next(squad_dir.rglob("manifest.json")).parent.parent
+    moved_outbox = tmp_path / "moved-outbox"
+    outbox.rename(moved_outbox)
+    outbox.symlink_to(moved_outbox, target_is_directory=True)
+    moved_transaction = moved_outbox / TRANSACTION_ID
+
+    _assert_error_code("stage_corrupt", prepared.discard)
+
+    assert (moved_transaction / "manifest.json").is_file()
+
+
+def test_loading_empty_manifest_rejects_symlinked_outbox_ancestor(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    prepared = transaction.seal()
+    outbox = next(squad_dir.rglob("manifest.json")).parent.parent
+    moved_outbox = tmp_path / "moved-empty-outbox"
+    outbox.rename(moved_outbox)
+    outbox.symlink_to(moved_outbox, target_is_directory=True)
+
+    _assert_error_code(
+        "stage_corrupt",
+        lambda: load_prepared_publication(
+            project_root,
+            squad_dir,
+            prepared.marker,
+        ),
+    )
+
+
+def test_stage_metadata_io_error_is_bounded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, _, _, _, prepared = _sealed_write(tmp_path)
+
+    def failing_fstat(fd: int) -> os.stat_result:
+        raise OSError(f"do not expose {project_root}")
+
+    monkeypatch.setattr(publication_module.os, "fstat", failing_fstat)
+
+    _assert_error_code("manifest_invalid", prepared.publish)
+
+
+def test_stage_copy_metadata_io_error_is_bounded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, _, _, _, prepared = _sealed_write(tmp_path)
+    real_fstat = publication_module.os.fstat
+    calls = 0
+
+    def failing_copy_fstat(fd: int) -> os.stat_result:
+        nonlocal calls
+        calls += 1
+        if calls == 5:
+            raise OSError(f"do not expose {project_root}")
+        return real_fstat(fd)
+
+    monkeypatch.setattr(
+        publication_module.os,
+        "fstat",
+        failing_copy_fstat,
+    )
+
+    _assert_error_code("stage_corrupt", prepared.publish)
