@@ -338,6 +338,8 @@ def test_resume_phase_dispatch_limit_resets_the_capped_phase(
     )
 
     resumed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert resumed["phase"] == "phase1-what"
     assert "phase1-what" not in resumed["phase_dispatch_counts"]
     assert resumed["phase_dispatch_counts"] == {"phase1-why2": 3}
     assert resumed["phase_dispatch_limit_recovery"]["phase"] == "phase1-what"
+    assert resumed["resume_metadata"]["resumed_phase"] == "phase1-what"

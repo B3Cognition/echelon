@@ -7317,14 +7317,6 @@ def _cmd_resume(
         if option_id:
             state["escalation_selected_option"] = option_id
 
-    resumed_phase = str(state.get("phase", "")).strip()
-    mark_blocked_decision_resolved(
-        state,
-        answer=answer,
-        selected_option=selected_option,
-        resumed_phase=resumed_phase,
-    )
-
     if blocked_reason == "phase_dispatch_limit" and capped_phase:
         counts = state.get("phase_dispatch_counts") or {}
         if isinstance(counts, dict):
@@ -7335,6 +7327,19 @@ def _cmd_resume(
                 "previous_dispatch_count": previous_count,
                 "answer": answer,
             }
+        # A dispatch-cap block is a targeted retry, not a generic terminal
+        # escalation.  Resume at the phase that exhausted its retry window so
+        # `spec continue` cannot infer a later phase from existing artifacts.
+        state["phase"] = capped_phase
+        state.pop("next_phase", None)
+
+    resumed_phase = str(state.get("phase", "")).strip()
+    mark_blocked_decision_resolved(
+        state,
+        answer=answer,
+        selected_option=selected_option,
+        resumed_phase=resumed_phase,
+    )
 
     # Clear the blocked state.
     state["escalation_question"] = None
