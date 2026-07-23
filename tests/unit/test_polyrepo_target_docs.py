@@ -10,10 +10,22 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_readme_documents_polyrepo_target_preflight() -> None:
     text = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "echelon delivery run 001 mode=semi" in text
-    assert "echelon delivery run 001 mode=banzai" in text
+    assert "echelon delivery run 001 --mode semi" in text
+    assert "echelon delivery run 001 --mode banzai" in text
     assert "source root" in text
     assert "lands the target repo branch" in text
+
+
+@pytest.mark.unit
+def test_readme_documents_the_first_spec_path() -> None:
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "### First spec in a new or existing workspace" in text
+    assert "specify init --here --integration claude --offline" in text
+    assert "specify extension add --force --dev ~/echelon/extension" in text
+    assert "echelon workspace init" in text
+    assert "echelon workspace sources sync --write" in text
+    assert 'echelon spec run "Create a sample Hello World program in Python"' in text
 
 
 @pytest.mark.unit
