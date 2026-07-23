@@ -846,6 +846,370 @@ class TestAgentResultIntegrity:
         assert history["runs"][-1]["run_id"] == "r"
         assert state["published_spec_dir"] == "specs/001-demo"
 
+    @staticmethod
+    def _phase_a_publication_staging_fixture(
+        tmp_path: Path,
+    ) -> tuple[SquadController, SquadStateStore, SquadAgentResult, Path, Path]:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase4-document",
+            max_iterations=5,
+            implementation_targets=["sources/app"],
+        )
+        _mark_constitution_complete(tmp_path, store)
+        active_spec_dir = tmp_path / "squad" / "run-test" / "specs" / "001"
+        active_spec_dir.mkdir(parents=True)
+        for name in (
+            "spec.md",
+            "plan.md",
+            "research.md",
+            "data-model.md",
+            "tasks.md",
+            "test-strategy.md",
+            "test-architecture.md",
+            "coverage-map.md",
+        ):
+            (active_spec_dir / name).write_text(
+                f"# active {name}\n\nFR-001\n",
+                encoding="utf-8",
+            )
+        (active_spec_dir / "contracts").mkdir()
+        (active_spec_dir / "contracts" / "api.md").write_text(
+            "# Active API contract\n",
+            encoding="utf-8",
+        )
+        runtime_file = active_spec_dir / ".echelon" / "checkpoints.json"
+        runtime_file.parent.mkdir()
+        runtime_file.write_text('{"private": true}\n', encoding="utf-8")
+
+        published_spec_dir = (
+            tmp_path / "specs" / "001-themed-ascii-animation"
+        )
+        published_spec_dir.mkdir(parents=True)
+        (published_spec_dir / "spec.md").write_text(
+            "# stale published spec\n",
+            encoding="utf-8",
+        )
+        (published_spec_dir / "manual-note.md").write_text(
+            "# Preserve this destination-only note\n",
+            encoding="utf-8",
+        )
+        (published_spec_dir / ".echelon").mkdir()
+        (published_spec_dir / ".echelon" / "local.json").write_text(
+            '{"destination": true}\n',
+            encoding="utf-8",
+        )
+
+        state = store.load()
+        state["spec_id"] = "001"
+        state["spec_dir"] = str(active_spec_dir.relative_to(tmp_path))
+        state["published_spec_dir"] = str(
+            published_spec_dir.relative_to(tmp_path)
+        )
+        store.save(state)
+        kb_report = tmp_path / "runs" / "r" / "kb-apply-report.yaml"
+        kb_report.parent.mkdir(parents=True)
+        kb_report.write_text("status: degraded\n", encoding="utf-8")
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        return ctrl, store, result, active_spec_dir, published_spec_dir
+
+    @staticmethod
+    def _visible_tree_bytes(root: Path) -> dict[str, bytes]:
+        return {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in sorted(root.rglob("*"))
+            if path.is_file()
+        }
+
+    @pytest.mark.parametrize(
+        "fault_point",
+        [
+            "active_overlay",
+            "product_evidence",
+            "constitution",
+            "kb",
+            "history",
+            "report",
+            "artifact_index",
+            "metadata",
+            "readiness",
+        ],
+    )
+    def test_phase_a_publication_staging_failure_keeps_visible_spec_identical(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fault_point: str,
+    ) -> None:
+        import echelon.context_metadata as context_metadata
+        import echelon.kb_proposals as kb_proposals
+        import harness.squad as squad_module
+        from harness.phase_a_readiness import PhaseAReadinessResult
+        from harness.squad import _PhaseAReadinessCommitError
+
+        ctrl, store, result, _, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        before = self._visible_tree_bytes(published)
+
+        if fault_point == "active_overlay":
+            original = ctrl._copy_spec_tree
+
+            def fault(*args, **kwargs):
+                original(*args, **kwargs)
+                raise OSError("injected active overlay failure")
+
+            monkeypatch.setattr(ctrl, "_copy_spec_tree", fault)
+        elif fault_point == "product_evidence":
+            original = ctrl._publish_product_input_evidence
+
+            def fault(*args, **kwargs):
+                original(*args, **kwargs)
+                raise OSError("injected product evidence failure")
+
+            monkeypatch.setattr(ctrl, "_publish_product_input_evidence", fault)
+        elif fault_point == "constitution":
+            original = ctrl._publish_constitution_snapshot
+
+            def fault(*args, **kwargs):
+                original(*args, **kwargs)
+                raise OSError("injected constitution failure")
+
+            monkeypatch.setattr(ctrl, "_publish_constitution_snapshot", fault)
+        elif fault_point == "kb":
+            original = kb_proposals.publish_kb_reports
+
+            def fault(*args, **kwargs):
+                original(*args, **kwargs)
+                raise OSError("injected KB failure")
+
+            monkeypatch.setattr(kb_proposals, "publish_kb_reports", fault)
+        elif fault_point == "history":
+            original = squad_module.append_phase_a_run
+
+            def fault(*args, **kwargs):
+                original(*args, **kwargs)
+                raise OSError("injected history failure")
+
+            monkeypatch.setattr(squad_module, "append_phase_a_run", fault)
+        elif fault_point == "report":
+            original = ctrl._write_squad_report
+
+            def fault(*args, **kwargs):
+                original(*args, **kwargs)
+                raise OSError("injected report failure")
+
+            monkeypatch.setattr(ctrl, "_write_squad_report", fault)
+        elif fault_point == "artifact_index":
+            original = squad_module.write_artifact_index
+
+            def fault(*args, **kwargs):
+                original(*args, **kwargs)
+                raise OSError("injected artifact index failure")
+
+            monkeypatch.setattr(squad_module, "write_artifact_index", fault)
+        elif fault_point == "metadata":
+            original = context_metadata.write_feature_metadata
+
+            def fault(*args, **kwargs):
+                original(*args, **kwargs)
+                raise OSError("injected metadata failure")
+
+            monkeypatch.setattr(context_metadata, "write_feature_metadata", fault)
+        else:
+            monkeypatch.setattr(
+                squad_module,
+                "validate_phase_a_readiness",
+                lambda *_: PhaseAReadinessResult(
+                    ready=False,
+                    blockers=["injected readiness failure"],
+                    missing={},
+                    ready_spec_dir=None,
+                ),
+            )
+
+        with pytest.raises(_PhaseAReadinessCommitError):
+            ctrl._prepare_external_phase_effects(
+                result,
+                "phase4-document",
+                store.load(),
+                manual_phase_run=False,
+            )
+
+        assert self._visible_tree_bytes(published) == before
+        assert "pending_external_publication" not in store.load()
+
+    def test_phase_a_publication_staging_manifest_is_exact_and_preserves_note(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store, result, active, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        before = self._visible_tree_bytes(published)
+
+        prepared = ctrl._prepare_external_phase_effects(
+            result,
+            "phase4-document",
+            store.load(),
+            manual_phase_run=False,
+        )
+
+        assert prepared is not None
+        assert self._visible_tree_bytes(published) == before
+        manifest_path = (
+            ctrl._squad_dir
+            / ".publication-outbox"
+            / prepared.marker.transaction_id
+            / "manifest.json"
+        )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        targets = {operation["target"] for operation in manifest["operations"]}
+        prefix = "specs/001-themed-ascii-animation/"
+        active_files = {
+            prefix + path.relative_to(active).as_posix()
+            for path in active.rglob("*")
+            if path.is_file() and ".echelon" not in path.parts
+        }
+        generated = {
+            prefix + name
+            for name in (
+                "constitution.md",
+                "targets.yml",
+                "run-history.json",
+                "squad-report.md",
+                "ARTIFACTS.md",
+                "feature-metadata.yml",
+            )
+        }
+        assert targets == active_files | generated | {
+            prefix + "kb/kb-apply-report.yaml"
+        }
+        assert prefix + "manual-note.md" not in targets
+        assert not any("/.echelon/" in target for target in targets)
+
+        prepared.publish()
+
+        assert (published / "manual-note.md").read_text(encoding="utf-8") == (
+            "# Preserve this destination-only note\n"
+        )
+        assert (published / "spec.md").read_text(encoding="utf-8").startswith(
+            "# active spec.md"
+        )
+
+    @pytest.mark.parametrize("fault_point", ["constitution", "artifact_index"])
+    def test_manual_publication_staging_failure_keeps_visible_spec_identical(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fault_point: str,
+    ) -> None:
+        import harness.squad as squad_module
+        from harness.squad import _PhaseAReadinessCommitError
+
+        ctrl, store, result, _, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        before = self._visible_tree_bytes(published)
+        if fault_point == "constitution":
+            original = ctrl._publish_constitution_snapshot
+
+            def fault(*args, **kwargs):
+                original(*args, **kwargs)
+                raise OSError("injected manual constitution failure")
+
+            monkeypatch.setattr(ctrl, "_publish_constitution_snapshot", fault)
+        else:
+            original = squad_module.write_artifact_index
+
+            def fault(*args, **kwargs):
+                original(*args, **kwargs)
+                raise OSError("injected manual index failure")
+
+            monkeypatch.setattr(squad_module, "write_artifact_index", fault)
+
+        with pytest.raises(_PhaseAReadinessCommitError):
+            ctrl._prepare_external_phase_effects(
+                result,
+                "phase3-plan",
+                store.load(),
+                manual_phase_run=True,
+            )
+
+        assert self._visible_tree_bytes(published) == before
+
+    def test_manual_publication_staging_owns_only_generated_files(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store, result, _, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        before = self._visible_tree_bytes(published)
+
+        prepared = ctrl._prepare_external_phase_effects(
+            result,
+            "phase3-plan",
+            store.load(),
+            manual_phase_run=True,
+        )
+
+        assert prepared is not None
+        manifest = json.loads(
+            (
+                ctrl._squad_dir
+                / ".publication-outbox"
+                / prepared.marker.transaction_id
+                / "manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert {
+            operation["target"] for operation in manifest["operations"]
+        } == {
+            "specs/001-themed-ascii-animation/ARTIFACTS.md",
+            "specs/001-themed-ascii-animation/constitution.md",
+        }
+        assert self._visible_tree_bytes(published) == before
+
+    def test_manual_phase4_publication_staging_uses_full_phase_a_path(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store, result, _, _ = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+
+        prepared = ctrl._prepare_external_phase_effects(
+            result,
+            "phase4-document",
+            store.load(),
+            manual_phase_run=True,
+        )
+
+        assert prepared is not None
+        manifest = json.loads(
+            (
+                ctrl._squad_dir
+                / ".publication-outbox"
+                / prepared.marker.transaction_id
+                / "manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        targets = {operation["target"] for operation in manifest["operations"]}
+        assert "specs/001-themed-ascii-animation/spec.md" in targets
+        assert "specs/001-themed-ascii-animation/run-history.json" in targets
+        assert "specs/001-themed-ascii-animation/feature-metadata.yml" in targets
+
     def test_checkpoint_plan_auto_routes_without_commander_judgment(self, tmp_path):
         _disable_lexicon_gate(tmp_path)
         provider = MagicMock()

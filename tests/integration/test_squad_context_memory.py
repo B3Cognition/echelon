@@ -200,3 +200,67 @@ def test_phase4_publish_keeps_readiness_when_mempalace_setup_fails(tmp_path: Pat
     assert (published_dir / "feature-metadata.yml").exists()
     assert read_feature_metadata(published_dir) is not None
     mock_from_project.assert_any_call(tmp_path, run_id="run-test")
+
+
+def test_context_metadata_publication_staging_defers_mining(
+    tmp_path: Path,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize(
+        "run-test",
+        "banzai",
+        "msg",
+        0,
+        "phase4-document",
+        max_iterations=5,
+    )
+    _mark_constitution_complete(tmp_path, store)
+    active_spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001"
+    active_spec_dir.mkdir(parents=True)
+    for name in (
+        "spec.md",
+        "plan.md",
+        "research.md",
+        "data-model.md",
+        "tasks.md",
+        "test-strategy.md",
+        "test-architecture.md",
+        "coverage-map.md",
+    ):
+        (active_spec_dir / name).write_text(
+            "# Photo Album\n\nFR-001: Upload a photo.\n",
+            encoding="utf-8",
+        )
+    state = store.load()
+    state["spec_id"] = "001"
+    state["spec_dir"] = str(active_spec_dir.relative_to(tmp_path))
+    store.save(state)
+    result = SquadAgentResult(
+        exit_code=0,
+        echelon_result={"verdict": "DONE", "state_updates": {}},
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    mock_ctx = object()
+    mock_miner = MagicMock()
+
+    with patch(
+        "codegen.memory.context.MemPalaceContext.from_project",
+        return_value=mock_ctx,
+    ) as mock_from_project:
+        with patch(
+            "codegen.memory.requirements_miner.RequirementsMiner",
+            return_value=mock_miner,
+        ):
+            prepared = ctrl._prepare_external_phase_effects(
+                result,
+                "phase4-document",
+                store.load(),
+                manual_phase_run=False,
+            )
+
+    assert prepared is not None
+    assert not (tmp_path / "specs" / "001-photo-album").exists()
+    mock_from_project.assert_not_called()
+    mock_miner.mine_file.assert_not_called()
