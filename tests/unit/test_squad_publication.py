@@ -1372,6 +1372,57 @@ def test_intermediate_stage_symlink_swap_fails_before_target_creation(
     assert not (project_root / "new").exists()
 
 
+def test_outbox_swap_after_descriptor_open_fails_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir, _, _, prepared = _sealed_write(
+        tmp_path,
+        target_name="new/deep/value.txt",
+    )
+    outbox = next(squad_dir.rglob("manifest.json")).parent.parent
+    outbox_inode = os.stat(outbox).st_ino
+    moved_outbox = tmp_path / "moved-open-outbox"
+    fstat_call = publication_module.os.fstat
+    outbox_pinned = threading.Event()
+    replacement_ready = threading.Event()
+    injected = False
+
+    def pausing_fstat(fd: int) -> os.stat_result:
+        nonlocal injected
+        metadata = fstat_call(fd)
+        if (
+            stat.S_ISDIR(metadata.st_mode)
+            and metadata.st_ino == outbox_inode
+            and not injected
+        ):
+            injected = True
+            outbox_pinned.set()
+            assert replacement_ready.wait(timeout=2)
+        return metadata
+
+    def substitute_outbox() -> None:
+        assert outbox_pinned.wait(timeout=2)
+        outbox.rename(moved_outbox)
+        outbox.mkdir()
+        replacement_ready.set()
+
+    substituter = threading.Thread(target=substitute_outbox)
+    monkeypatch.setattr(
+        publication_module.os,
+        "fstat",
+        pausing_fstat,
+    )
+    substituter.start()
+
+    _assert_error_code("stage_corrupt", prepared.publish)
+
+    substituter.join(timeout=2)
+    assert not substituter.is_alive()
+    assert not (project_root / "new").exists()
+    assert (moved_outbox / TRANSACTION_ID / "manifest.json").is_file()
+
+
 def test_missing_stage_preflight_creates_no_target_directories(
     tmp_path: Path,
 ) -> None:
