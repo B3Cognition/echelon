@@ -72,7 +72,9 @@ from harness.squad_executors import (
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from harness.squad_publication import (
     PreparedSquadPublication,
+    PublicationError,
     SquadPublicationTransaction,
+    load_prepared_publication,
 )
 from echelon.telemetry.phase_timing import record_phase_finish, record_phase_start
 from echelon.telemetry.provider import DispatchContext, InstrumentedProvider
@@ -84,8 +86,10 @@ from harness.squad_state import (
     SquadStateStore,
 )
 from harness.state_transaction_namespace import (
+    PENDING_EXTERNAL_PUBLICATION_KEY,
     STORE_OWNED_TRANSACTION_KEYS,
     TRUSTED_ROUTING_EFFECT_KEYS,
+    validate_pending_external_publication,
 )
 from harness.prompt_markdown import read_prompt_markdown
 from harness.terminal import color_text
@@ -724,6 +728,8 @@ class SquadController:
     def _run_with_execution_lease(
         self,
         execute: Callable[[], SquadResult],
+        *,
+        stop_after_recovered_manual: bool = False,
     ) -> SquadResult:
         """Serialize controller execution for this run before touching state."""
 
@@ -731,6 +737,31 @@ class SquadController:
         try:
             with PhaseAExecutionLock.acquire(self._project_root, operation_id):
                 with SpecRunExecutionLock.acquire(self._squad_dir, operation_id):
+                    recovery_state = self._state_store.load()
+                    had_pending_publication = (
+                        PENDING_EXTERNAL_PUBLICATION_KEY
+                        in recovery_state
+                    )
+                    if not self._recover_pending_external_publication():
+                        return SquadResult.from_state(
+                            self._state_store.load()
+                        )
+                    if had_pending_publication:
+                        if not self._complete_recovered_route_success(
+                            recovery_state
+                        ):
+                            return SquadResult.from_state(
+                                self._state_store.load()
+                            )
+                        last_dispatch = recovery_state.get("last_dispatch")
+                        if (
+                            stop_after_recovered_manual
+                            and isinstance(last_dispatch, Mapping)
+                            and last_dispatch.get("manual_phase_run") is True
+                        ):
+                            return SquadResult.from_state(
+                                self._state_store.load()
+                            )
                     return execute()
         except SpecLifecycleLocked as exc:
             state = self._state_store.load()
@@ -742,6 +773,222 @@ class SquadController:
                 flush=True,
             )
             return SquadResult(status="busy", phase=phase, run_id=run_id)
+
+    def _complete_recovered_route_success(
+        self,
+        recovery_state: Mapping[str, object],
+    ) -> bool:
+        """Finish deferred success work after recovered marker clearance."""
+        try:
+            if (
+                PENDING_EXTERNAL_PUBLICATION_KEY
+                in self._state_store.load()
+            ):
+                return False
+        except Exception:
+            return False
+        diagnostic = recovery_state.get("external_publication_failure")
+        resume_status = (
+            diagnostic.get("resume_status")
+            if isinstance(diagnostic, Mapping)
+            else recovery_state.get("status")
+        )
+        last_dispatch = recovery_state.get("last_dispatch")
+        if not isinstance(last_dispatch, Mapping):
+            return True
+        phase = str(last_dispatch.get("phase_id") or "")
+        next_phase = str(last_dispatch.get("next_phase") or "")
+        routing_sha = str(
+            last_dispatch.get("routing_decision_sha256") or ""
+        )
+        if phase == "phase4-document":
+            self._phase_a_published_this_run = True
+            self._mine_published_context_after_publication()
+        if resume_status == "done" or not phase or not next_phase:
+            return True
+        pending_judgments = self._pending_judgment_results.pop(
+            routing_sha,
+            (),
+        )
+        for judgment in pending_judgments:
+            self._write_journal_entries(judgment, phase)
+        try:
+            node = self._graph.get(phase)
+        except Exception:
+            return True
+        self._apply_declared_phase_timing_transition(node, next_phase)
+        if not self._checkpoint_successful_phase(phase, next_phase):
+            return False
+        self._refresh_run_context(
+            f"recovered phase advance {phase} -> {next_phase}"
+        )
+        return True
+
+    def _record_external_publication_failure_best_effort(
+        self,
+        marker: Mapping[str, object],
+        code: str,
+    ) -> None:
+        try:
+            self._state_store.record_external_publication_failure(
+                marker,
+                code,
+            )
+        except Exception:
+            logger.exception(
+                "Could not persist external publication failure code %s",
+                code,
+            )
+
+    def _publish_and_finalize(
+        self,
+        prepared: PreparedSquadPublication,
+        marker: Mapping[str, object],
+    ) -> bool:
+        """Publish one authorized stage and durably clear its exact marker."""
+        try:
+            expected_marker = validate_pending_external_publication(marker)
+            persisted_marker = validate_pending_external_publication(
+                self._state_store.load().get(
+                    PENDING_EXTERNAL_PUBLICATION_KEY
+                )
+            )
+        except Exception:
+            return False
+        if persisted_marker != expected_marker:
+            return False
+        try:
+            prepared.publish()
+        except PublicationError as exc:
+            self._record_external_publication_failure_best_effort(
+                expected_marker,
+                exc.code,
+            )
+            return False
+        except Exception:
+            self._record_external_publication_failure_best_effort(
+                expected_marker,
+                "publish_io",
+            )
+            return False
+
+        try:
+            self._state_store.complete_external_publication(expected_marker)
+            if (
+                PENDING_EXTERNAL_PUBLICATION_KEY
+                in self._state_store.load()
+            ):
+                raise StateAdvanceError(
+                    "external publication marker was not cleared",
+                    json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
+                    validator="state_finalize",
+                )
+        except Exception:
+            try:
+                completion_won = (
+                    PENDING_EXTERNAL_PUBLICATION_KEY
+                    not in self._state_store.load()
+                )
+            except Exception:
+                completion_won = False
+            if completion_won:
+                try:
+                    prepared.discard()
+                except PublicationError:
+                    logger.warning(
+                        "Could not discard completed external publication stage",
+                        exc_info=True,
+                    )
+                return True
+            self._record_external_publication_failure_best_effort(
+                expected_marker,
+                "state_finalize",
+            )
+            return False
+
+        try:
+            prepared.discard()
+        except PublicationError:
+            logger.warning(
+                "Could not discard completed external publication stage",
+                exc_info=True,
+            )
+        return True
+
+    def _recover_pending_external_publication(self) -> bool:
+        """Replay the exact state-authorized stage before any phase work."""
+        state = self._state_store.load()
+        marker_value = state.get(PENDING_EXTERNAL_PUBLICATION_KEY)
+        if marker_value is None:
+            return True
+        try:
+            marker = validate_pending_external_publication(marker_value)
+            prepared = load_prepared_publication(
+                self._project_root,
+                self._squad_dir,
+                marker,
+            )
+        except PublicationError as exc:
+            marker = (
+                marker_value
+                if isinstance(marker_value, Mapping)
+                else {}
+            )
+            self._record_external_publication_failure_best_effort(
+                marker,
+                exc.code,
+            )
+            return False
+        except Exception:
+            marker = (
+                marker_value
+                if isinstance(marker_value, Mapping)
+                else {}
+            )
+            self._record_external_publication_failure_best_effort(
+                marker,
+                "manifest_invalid",
+            )
+            return False
+        completed = self._publish_and_finalize(prepared, marker)
+        if completed:
+            last_dispatch = state.get("last_dispatch")
+            if (
+                (
+                    isinstance(last_dispatch, Mapping)
+                    and last_dispatch.get("phase_id")
+                    == "phase4-document"
+                )
+                or (
+                    str(state.get("phase") or "") in TERMINAL_PHASES
+                    and bool(state.get("published_spec_dir"))
+                )
+            ):
+                self._phase_a_published_this_run = True
+                self._mine_published_context_after_publication()
+        return completed
+
+    def _discard_publication_without_authority(
+        self,
+        prepared: PreparedSquadPublication | None,
+    ) -> None:
+        """Discard a stage only after proving its marker is not durable."""
+        if prepared is None:
+            return
+        marker = prepared.marker.to_dict()
+        try:
+            state = self._state_store.load()
+        except Exception:
+            return
+        if state.get(PENDING_EXTERNAL_PUBLICATION_KEY) == marker:
+            return
+        try:
+            prepared.discard()
+        except PublicationError:
+            logger.warning(
+                "Could not discard unreferenced external publication stage",
+                exc_info=True,
+            )
 
     def run(
         self,
@@ -958,6 +1205,13 @@ class SquadController:
         if existing and existing_status == "done" and str(existing.get("phase") or "") in TERMINAL_PHASES:
             readiness = self._publish_terminal_phase_a_artifacts_if_available()
             if readiness is not None and not readiness.ready:
+                if (
+                    PENDING_EXTERNAL_PUBLICATION_KEY
+                    in self._state_store.load()
+                ):
+                    return SquadResult.from_state(
+                        self._state_store.load()
+                    )
                 self._block_after_phase_a_readiness_failure(readiness)
             else:
                 state = self._state_store.load()
@@ -1048,6 +1302,13 @@ class SquadController:
                 if state.get("status") != "blocked":
                     readiness = self._publish_terminal_phase_a_artifacts_if_available()
                     if readiness is not None and not readiness.ready:
+                        if (
+                            PENDING_EXTERNAL_PUBLICATION_KEY
+                            in self._state_store.load()
+                        ):
+                            return SquadResult.from_state(
+                                self._state_store.load()
+                            )
                         self._block_after_phase_a_readiness_failure(readiness)
                         return SquadResult.from_state(self._state_store.load())
                     state["status"] = "done"
@@ -1174,30 +1435,15 @@ class SquadController:
                 )
                 return SquadResult.from_state(self._state_store.load())
 
-            routing_updates = self._planned_phase_a_publication_updates(
-                phase,
-                snapshot.state,
-            )
-            decision = self._construct_routing_decision_or_block(
-                node,
-                prepared,
-                snapshot,
-                additional_state_updates=routing_updates,
-            )
-            if decision is None:
-                return SquadResult.from_state(self._state_store.load())
-            next_phase = decision.to_phase
-
+            prepared_publication: PreparedSquadPublication | None = None
             try:
-                receipt = self._advance_prepared_result_or_block(
-                    node,
-                    decision,
-                    before_commit=lambda: self._commit_external_phase_effects(
+                prepared_publication = (
+                    self._prepare_external_phase_effects(
                         prepared_result,
                         phase,
                         snapshot.state,
                         manual_phase_run=False,
-                    ),
+                    )
                 )
             except _ProductInputCommitError as exc:
                 product_input_error = exc.reason
@@ -1221,6 +1467,33 @@ class SquadController:
                     snapshot=snapshot,
                 )
                 return SquadResult.from_state(self._state_store.load())
+
+            routing_updates = self._planned_phase_a_publication_updates(
+                phase,
+                snapshot.state,
+            )
+            if prepared_publication is not None:
+                routing_updates[PENDING_EXTERNAL_PUBLICATION_KEY] = (
+                    prepared_publication.marker.to_dict()
+                )
+            decision = self._construct_routing_decision_or_block(
+                node,
+                prepared,
+                snapshot,
+                additional_state_updates=routing_updates,
+            )
+            if decision is None:
+                self._discard_publication_without_authority(
+                    prepared_publication,
+                )
+                return SquadResult.from_state(self._state_store.load())
+            next_phase = decision.to_phase
+
+            receipt = self._advance_prepared_result_or_block(
+                node,
+                decision,
+                prepared_publication=prepared_publication,
+            )
             if receipt is None:
                 return SquadResult.from_state(self._state_store.load())
             self._apply_declared_phase_timing_transition(node, next_phase)
@@ -1376,7 +1649,8 @@ class SquadController:
                 user_message,
                 mode,
                 initial_state_updates,
-            )
+            ),
+            stop_after_recovered_manual=True,
         )
 
     def _run_single_phase_locked(
@@ -1510,31 +1784,13 @@ class SquadController:
             )
             return SquadResult.from_state(self._state_store.load())
 
-        routing_updates = self._planned_phase_a_publication_updates(
-            phase,
-            snapshot.state,
-        )
-        decision = self._construct_routing_decision_or_block(
-            node,
-            prepared,
-            snapshot,
-            additional_state_updates=routing_updates,
-            manual_phase_run=True,
-        )
-        if decision is None:
-            return SquadResult.from_state(self._state_store.load())
-        next_phase = decision.to_phase
-
+        prepared_publication: PreparedSquadPublication | None = None
         try:
-            receipt = self._advance_prepared_result_or_block(
-                node,
-                decision,
-                before_commit=lambda: self._commit_external_phase_effects(
-                    prepared_result,
-                    phase,
-                    snapshot.state,
-                    manual_phase_run=True,
-                ),
+            prepared_publication = self._prepare_external_phase_effects(
+                prepared_result,
+                phase,
+                snapshot.state,
+                manual_phase_run=True,
             )
         except _ProductInputCommitError as exc:
             product_input_error = exc.reason
@@ -1558,6 +1814,34 @@ class SquadController:
                 snapshot=snapshot,
             )
             return SquadResult.from_state(self._state_store.load())
+
+        routing_updates = self._planned_phase_a_publication_updates(
+            phase,
+            snapshot.state,
+        )
+        if prepared_publication is not None:
+            routing_updates[PENDING_EXTERNAL_PUBLICATION_KEY] = (
+                prepared_publication.marker.to_dict()
+            )
+        decision = self._construct_routing_decision_or_block(
+            node,
+            prepared,
+            snapshot,
+            additional_state_updates=routing_updates,
+            manual_phase_run=True,
+        )
+        if decision is None:
+            self._discard_publication_without_authority(
+                prepared_publication,
+            )
+            return SquadResult.from_state(self._state_store.load())
+        next_phase = decision.to_phase
+
+        receipt = self._advance_prepared_result_or_block(
+            node,
+            decision,
+            prepared_publication=prepared_publication,
+        )
         if receipt is None:
             return SquadResult.from_state(self._state_store.load())
         self._apply_declared_phase_timing_transition(node, next_phase)
@@ -2401,7 +2685,89 @@ class SquadController:
                 if not published_spec_dir.is_absolute():
                     published_spec_dir = self._project_root / published_spec_dir
                 return validate_phase_a_readiness(state, [published_spec_dir])
-        return self._publish_phase_a_artifacts_for_build()
+        snapshot = self._state_store.capture_routing_snapshot(
+            expected_phase=str(state.get("phase") or "")
+        )
+        terminal_result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        try:
+            prepared = self._prepare_external_phase_effects(
+                terminal_result,
+                "phase4-document",
+                snapshot.state,
+                manual_phase_run=False,
+            )
+        except _PhaseAReadinessCommitError as exc:
+            return exc.readiness
+        except _ProductInputCommitError as exc:
+            return PhaseAReadinessResult(
+                ready=False,
+                blockers=[exc.reason],
+                missing={},
+                ready_spec_dir=None,
+            )
+        planned_updates = self._planned_phase_a_publication_updates(
+            "phase4-document",
+            snapshot.state,
+        )
+        if prepared is None:
+            published_ref = str(
+                planned_updates.get("published_spec_dir")
+                or state.get("published_spec_dir")
+                or ""
+            ).strip()
+            if not published_ref:
+                return None
+            return validate_phase_a_readiness(
+                state,
+                [self._absolute_project_path(published_ref)],
+            )
+        marker = prepared.marker.to_dict()
+        try:
+            self._state_store.begin_external_publication(
+                marker,
+                snapshot=snapshot,
+                state_updates=planned_updates,
+            )
+        except StateAdvanceError:
+            self._discard_publication_without_authority(prepared)
+            return PhaseAReadinessResult(
+                ready=False,
+                blockers=[
+                    "failed to commit terminal external publication marker"
+                ],
+                missing={},
+                ready_spec_dir=None,
+            )
+        if not self._publish_and_finalize(prepared, marker):
+            return PhaseAReadinessResult(
+                ready=False,
+                blockers=["external publication remains pending"],
+                missing={},
+                ready_spec_dir=None,
+            )
+        self._phase_a_published_this_run = True
+        self._mine_published_context_after_publication()
+        published_ref = str(
+            self._state_store.load().get("published_spec_dir") or ""
+        ).strip()
+        if not published_ref:
+            return PhaseAReadinessResult(
+                ready=False,
+                blockers=["published Phase A directory is missing from state"],
+                missing={},
+                ready_spec_dir=None,
+            )
+        published_spec_dir = self._absolute_project_path(published_ref)
+        return validate_phase_a_readiness(
+            self._state_store.load(),
+            [published_spec_dir],
+        )
 
     def _phase_a_readiness_candidate_dirs(
         self,
@@ -2636,6 +3002,31 @@ class SquadController:
             published_spec_dir,
             published_spec_dir / "spec.md",
             run_id,
+            metadata,
+        )
+
+    def _mine_published_context_after_publication(self) -> None:
+        """Mine canonical metadata only after durable marker clearance."""
+        state = self._state_store.load()
+        published_ref = str(state.get("published_spec_dir") or "").strip()
+        if not published_ref:
+            return
+        published_spec_dir = self._absolute_project_path(published_ref)
+        spec_file = published_spec_dir / "spec.md"
+        if not spec_file.is_file():
+            return
+        try:
+            from echelon.context_metadata import read_feature_metadata
+
+            metadata = read_feature_metadata(published_spec_dir)
+        except Exception:
+            return
+        if metadata is None:
+            return
+        self._mine_published_spec_best_effort(
+            published_spec_dir,
+            spec_file,
+            str(state.get("run_id") or ""),
             metadata,
         )
 
@@ -2928,29 +3319,6 @@ class SquadController:
         except (OSError, ProductInputError) as exc:
             return f"invalid product input updates: {exc}"
         return None
-
-    def _commit_external_phase_effects(
-        self,
-        result: SquadAgentResult,
-        phase: str,
-        state: Mapping[str, object],
-        *,
-        manual_phase_run: bool,
-    ) -> None:
-        """Publish external effects only after the routing CAS is known current."""
-        product_input_error = self._apply_product_input_updates(
-            result,
-            phase,
-            state,
-        )
-        if product_input_error:
-            raise _ProductInputCommitError(product_input_error)
-        if phase == "phase4-document":
-            readiness = self._publish_phase_a_artifacts_for_build(state)
-            if not readiness.ready:
-                raise _PhaseAReadinessCommitError(readiness)
-        elif manual_phase_run:
-            self._publish_manual_phase_artifacts(state)
 
     def _schedule_product_input_mapping_repair(
         self,
@@ -3939,19 +4307,34 @@ class SquadController:
         node: PhaseNode,
         decision: PreparedRoutingDecision,
         *,
-        before_commit: Callable[[], None] | None = None,
+        prepared_publication: PreparedSquadPublication | None = None,
     ) -> AdvanceReceipt | None:
         """Commit one sealed route or persist a separate redacted failure."""
-        pending_judgments = self._pending_judgment_results.pop(
+        pending_judgments = self._pending_judgment_results.get(
             decision.routing_sha256,
             (),
         )
         try:
+            if prepared_publication is not None:
+                expected_marker = prepared_publication.marker.to_dict()
+                if (
+                    dict(decision.transaction_state_updates).get(
+                        PENDING_EXTERNAL_PUBLICATION_KEY
+                    )
+                    != expected_marker
+                ):
+                    raise StateAdvanceError(
+                        "routing decision does not authorize publication",
+                        json_path=(
+                            "$.transaction_state_updates."
+                            f"{PENDING_EXTERNAL_PUBLICATION_KEY}"
+                        ),
+                        validator="ownership",
+                    )
             receipt = self._state_store.advance(
                 decision.from_phase,
                 decision.to_phase,
                 decision,
-                before_commit=before_commit,
             )
             if not isinstance(receipt, AdvanceReceipt):
                 raise StateAdvanceError(
@@ -3959,10 +4342,27 @@ class SquadController:
                     json_path="$.advance_receipt",
                     validator="receipt",
                 )
+            if prepared_publication is not None:
+                marker = prepared_publication.marker.to_dict()
+                if not self._publish_and_finalize(
+                    prepared_publication,
+                    marker,
+                ):
+                    return None
+                if decision.from_phase == "phase4-document":
+                    self._phase_a_published_this_run = True
+                    self._mine_published_context_after_publication()
+            self._pending_judgment_results.pop(
+                decision.routing_sha256,
+                None,
+            )
             for judgment in pending_judgments:
                 self._write_journal_entries(judgment, decision.from_phase)
             return receipt
         except StateAdvanceError as exc:
+            self._discard_publication_without_authority(
+                prepared_publication,
+            )
             self._block_after_state_advance_failure(
                 node,
                 decision.from_phase,

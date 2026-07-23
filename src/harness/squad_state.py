@@ -755,8 +755,6 @@ class SquadStateStore:
         from_phase: str,
         to_phase: str,
         decision: PreparedRoutingDecision,
-        *,
-        before_commit: Callable[[], None] | None = None,
     ) -> AdvanceReceipt:
         try:
             (
@@ -940,12 +938,6 @@ class SquadStateStore:
             )
             next_state.pop("controller_contract_error", None)
 
-            # External controller-owned publication is guarded by the same
-            # exclusive CAS window. A stale decision is rejected above before
-            # this callback can produce any side effect.
-            if before_commit is not None:
-                before_commit()
-
             try:
                 saved_state = self._save_unlocked(next_state)
             except Exception as exc:
@@ -999,6 +991,72 @@ class SquadStateStore:
             )
             self._save_unlocked(next_state)
             return True
+
+    def begin_external_publication(
+        self,
+        marker: object,
+        *,
+        snapshot: RoutingStateSnapshot,
+        state_updates: dict[str, object] | None = None,
+    ) -> None:
+        """Install one terminal publication marker under an exact state CAS."""
+        try:
+            expected_marker = validate_pending_external_publication(marker)
+        except ValueError as exc:
+            raise StateAdvanceError(
+                "external publication marker is invalid",
+                json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
+                validator="type",
+            ) from exc
+        if not isinstance(snapshot, RoutingStateSnapshot):
+            raise StateAdvanceError(
+                "external publication snapshot is invalid",
+                json_path="$.routing_snapshot",
+                validator="type",
+            )
+        updates = deepcopy(state_updates or {})
+        if frozenset(updates) - {"published_spec_dir"}:
+            raise StateAdvanceError(
+                "external publication state update is not owned",
+                json_path="$.state_updates",
+                validator="ownership",
+            )
+        if "published_spec_dir" in updates and (
+            type(updates["published_spec_dir"]) is not str
+            or not updates["published_spec_dir"].strip()
+        ):
+            raise StateAdvanceError(
+                "published spec directory is invalid",
+                json_path="$.state_updates.published_spec_dir",
+                validator="type",
+            )
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            revision = state.get("state_revision", 0)
+            if (
+                state.get("phase") != snapshot.phase
+                or type(revision) is not int
+                or revision != snapshot.state_revision
+                or _last_dispatch_sha256(state)
+                != snapshot.previous_dispatch_sha256
+                or PENDING_EXTERNAL_PUBLICATION_KEY in state
+            ):
+                raise StateAdvanceError(
+                    "persisted state changed before external publication",
+                    json_path="$.routing_snapshot",
+                    validator="stale_state",
+                )
+            next_state = deepcopy(state)
+            next_state.update(updates)
+            next_state[PENDING_EXTERNAL_PUBLICATION_KEY] = expected_marker
+            try:
+                self._save_unlocked(next_state)
+            except Exception as exc:
+                raise StateAdvanceError(
+                    "atomic external publication marker save failed",
+                    json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
+                    validator="save",
+                ) from exc
 
     @staticmethod
     def _require_external_publication_marker(

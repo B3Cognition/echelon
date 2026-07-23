@@ -13,6 +13,9 @@ from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
+from harness.state_transaction_namespace import (
+    PENDING_EXTERNAL_PUBLICATION_KEY,
+)
 
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -424,6 +427,42 @@ def test_squad_terminal_phase4_checkpoint_includes_published_spec(
     controller._checkpoint_successful_phase("phase4-document", "done")
 
     assert calls[0]["additional_spec_dirs"] == (published,)
+
+
+def test_recovered_route_success_work_requires_durable_marker_clearance(
+    tmp_path: Path,
+) -> None:
+    controller = object.__new__(SquadController)
+    controller._state_store = MagicMock()
+    controller._state_store.load.return_value = {
+        PENDING_EXTERNAL_PUBLICATION_KEY: {
+            "schema_version": 1,
+            "transaction_id": "a" * 32,
+            "manifest_sha256": "b" * 64,
+        }
+    }
+    controller._pending_judgment_results = {}
+    controller._graph = MagicMock()
+    controller._apply_declared_phase_timing_transition = MagicMock()
+    controller._checkpoint_successful_phase = MagicMock(return_value=True)
+    controller._refresh_run_context = MagicMock()
+    controller._mine_published_context_after_publication = MagicMock()
+    controller._phase_a_published_this_run = False
+    recovery_state = {
+        "status": "running",
+        "last_dispatch": {
+            "phase_id": "phase3-plan",
+            "next_phase": "phase3-consensus",
+            "routing_decision_sha256": "c" * 64,
+        },
+    }
+
+    assert controller._complete_recovered_route_success(
+        recovery_state
+    ) is False
+    controller._apply_declared_phase_timing_transition.assert_not_called()
+    controller._checkpoint_successful_phase.assert_not_called()
+    controller._refresh_run_context.assert_not_called()
 
 
 def test_squad_terminal_phase4_checkpoint_includes_accepted_kb_targets(

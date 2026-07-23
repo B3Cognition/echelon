@@ -9,6 +9,7 @@ import sys
 import json
 import hashlib
 import subprocess
+import uuid
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -34,10 +35,18 @@ from harness.squad import (
 )
 from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
+from harness.squad_publication import (
+    PreparedSquadPublication,
+    PublicationError,
+    SquadPublicationTransaction,
+)
 from harness.squad_state import (
     AdvanceReceipt,
     StateAdvanceError,
     SquadStateStore,
+)
+from harness.state_transaction_namespace import (
+    PENDING_EXTERNAL_PUBLICATION_KEY,
 )
 from harness.understanding_gate import UnderstandingGateResult
 from echelon.telemetry.spec_adapter import analyze_spec_run
@@ -173,6 +182,107 @@ def _disable_governance_gate(tmp_path: Path) -> None:
     config_path.write_text(
         f"{prefix}governance:\n  enabled: false\n", encoding="utf-8"
     )
+
+
+def _sealed_publication_fixture(
+    ctrl: SquadController,
+) -> tuple[PreparedSquadPublication, dict[str, Path]]:
+    targets = {
+        "replace": ctrl._project_root / "owned" / "a-replace.txt",
+        "create": ctrl._project_root / "owned" / "b-create.txt",
+        "delete": ctrl._project_root / "owned" / "c-delete.txt",
+    }
+    targets["replace"].parent.mkdir(parents=True, exist_ok=True)
+    targets["replace"].write_text("old replace\n", encoding="utf-8")
+    targets["delete"].write_text("old delete\n", encoding="utf-8")
+    transaction = SquadPublicationTransaction.begin(
+        ctrl._project_root,
+        ctrl._squad_dir,
+        uuid.uuid4().hex,
+    )
+    staged_replace = transaction.build_path("work/a-replace.txt")
+    staged_replace.parent.mkdir(parents=True)
+    staged_replace.write_text("new replace\n", encoding="utf-8")
+    staged_create = transaction.build_path("work/b-create.txt")
+    staged_create.write_text("new create\n", encoding="utf-8")
+    owned = {
+        path.relative_to(ctrl._project_root)
+        for path in targets.values()
+    }
+    transaction.add_write(
+        targets["replace"].relative_to(ctrl._project_root),
+        staged_replace,
+        owned_paths=owned,
+    )
+    transaction.add_write(
+        targets["create"].relative_to(ctrl._project_root),
+        staged_create,
+        owned_paths=owned,
+    )
+    transaction.add_delete(
+        targets["delete"].relative_to(ctrl._project_root),
+        owned_paths=owned,
+    )
+    return transaction.seal(), targets
+
+
+def _install_publication_marker(
+    store: SquadStateStore,
+    prepared: PreparedSquadPublication,
+) -> dict[str, object]:
+    marker = prepared.marker.to_dict()
+    state = store.load()
+    state[PENDING_EXTERNAL_PUBLICATION_KEY] = marker
+    store.save(state)
+    return marker
+
+
+def _configure_tasks_lexicon_route(
+    ctrl: SquadController,
+    store: SquadStateStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store.initialize(
+        "r",
+        "greenfield",
+        "msg",
+        0,
+        "phase3-tasks-lexicon",
+    )
+    executor = MagicMock()
+    executor.execute.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {
+                "tasks_lexicon_action": "proceed",
+                "tasks_lexicon_pass": True,
+                "tasks_lexicon_attempts": 0,
+                "tasks_lexicon_findings": 0,
+                "tasks_lexicon_report": "tasks-lexicon-report.json",
+            },
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    ctrl._executors["deterministic_lexicon"] = executor
+    monkeypatch.setattr(
+        ctrl,
+        "_guard_constitution_provenance",
+        lambda phase: phase,
+    )
+    monkeypatch.setattr(
+        ctrl,
+        "_guard_spec_lexicon_evidence",
+        lambda phase: phase,
+    )
+    monkeypatch.setattr(
+        ctrl,
+        "_guard_understanding_evidence",
+        lambda phase: phase,
+    )
+    monkeypatch.setattr(ctrl, "_ensure_telemetry_manifest", lambda: None)
 
 
 def _evaluate_prepared_result(
@@ -1209,6 +1319,109 @@ class TestAgentResultIntegrity:
             "# active spec.md"
         )
 
+    def test_terminal_reconciliation_commits_marker_before_visible_write(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store, _, _, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        state = store.load()
+        state["phase"] = "DONE"
+        state["status"] = "done"
+        store.save(state)
+        before = self._visible_tree_bytes(published)
+        publish = PreparedSquadPublication.publish
+        calls: list[str] = []
+
+        def marker_guard(publication):
+            assert (
+                store.load()[PENDING_EXTERNAL_PUBLICATION_KEY]
+                == publication.marker.to_dict()
+            )
+            assert self._visible_tree_bytes(published) == before
+            calls.append("publish")
+            return publish(publication)
+
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            marker_guard,
+        )
+
+        readiness = ctrl._publish_terminal_phase_a_artifacts_if_available()
+
+        assert readiness is not None
+        assert readiness.ready is True
+        assert calls == ["publish"]
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+        assert (published / "spec.md").read_text(encoding="utf-8").startswith(
+            "# active spec.md"
+        )
+
+    def test_terminal_reconciliation_interruption_recovers_without_diagnostic_overwrite(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store, _, _, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        state = store.load()
+        state["phase"] = "DONE"
+        state["status"] = "done"
+        store.save(state)
+        publish = PreparedSquadPublication.publish
+
+        def interrupt(publication):
+            def fault(position: int) -> None:
+                if position == 1:
+                    raise RuntimeError("terminal publication interruption")
+
+            return publish(publication, fault_hook=fault)
+
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            interrupt,
+        )
+        checkpoint = MagicMock(
+            side_effect=AssertionError(
+                "terminal reconciliation replayed routed success work"
+            )
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            checkpoint,
+        )
+
+        first = ctrl.run("msg", "banzai")
+
+        failed = store.load()
+        assert first.status == "blocked"
+        assert failed["phase"] == "DONE"
+        assert failed["blocked_reason"] == "external_publication_pending"
+        assert failed["external_publication_failure"]["code"] == "publish_io"
+        assert PENDING_EXTERNAL_PUBLICATION_KEY in failed
+        assert "phase_a_readiness_failed" not in json.dumps(failed)
+
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            publish,
+        )
+        recovered = ctrl.run("msg", "banzai")
+
+        assert recovered.status == "done"
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+        assert "external_publication_failure" not in store.load()
+        assert checkpoint.call_count == 0
+        assert (published / "spec.md").read_text(encoding="utf-8").startswith(
+            "# active spec.md"
+        )
+
     def test_phase_a_publication_staging_uses_staged_product_evidence(
         self,
         tmp_path: Path,
@@ -1444,6 +1657,656 @@ class TestAgentResultIntegrity:
             "phase1-why1",
         )
         materialize.assert_not_called()
+
+    @pytest.mark.parametrize("fault_position", [0, 1, 2, 3])
+    def test_external_publication_fault_boundary_recovers_idempotently(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fault_position: int,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        prepared, targets = _sealed_publication_fixture(ctrl)
+        marker = _install_publication_marker(store, prepared)
+        original_publish = PreparedSquadPublication.publish
+
+        def faulted_publish(publication):
+            def fault(position: int) -> None:
+                if position == fault_position:
+                    raise RuntimeError("injected publication boundary")
+
+            return original_publish(publication, fault_hook=fault)
+
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            faulted_publish,
+        )
+
+        assert ctrl._publish_and_finalize(prepared, marker) is False
+        failed = store.load()
+        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
+        assert failed["status"] == "blocked"
+        assert failed["blocked_reason"] == "external_publication_pending"
+        assert failed["external_publication_failure"]["code"] == "publish_io"
+        transaction_root = (
+            ctrl._squad_dir
+            / ".publication-outbox"
+            / prepared.marker.transaction_id
+        )
+        assert transaction_root.is_dir()
+
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            original_publish,
+        )
+        assert ctrl._recover_pending_external_publication() is True
+
+        recovered = store.load()
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in recovered
+        assert "external_publication_failure" not in recovered
+        assert recovered["status"] == "running"
+        assert targets["replace"].read_text(encoding="utf-8") == (
+            "new replace\n"
+        )
+        assert targets["create"].read_text(encoding="utf-8") == "new create\n"
+        assert not targets["delete"].exists()
+        assert not transaction_root.exists()
+
+    def test_external_publication_retry_rejects_drifted_completed_postimage(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        prepared, targets = _sealed_publication_fixture(ctrl)
+        marker = _install_publication_marker(store, prepared)
+        publish = PreparedSquadPublication.publish
+
+        def stop_after_first(publication):
+            def fault(position: int) -> None:
+                if position == 1:
+                    raise RuntimeError("injected retry boundary")
+
+            return publish(publication, fault_hook=fault)
+
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            stop_after_first,
+        )
+        assert ctrl._publish_and_finalize(prepared, marker) is False
+        assert targets["replace"].read_text(encoding="utf-8") == (
+            "new replace\n"
+        )
+        targets["replace"].write_text(
+            "drifted after partial publication\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            publish,
+        )
+
+        assert ctrl._recover_pending_external_publication() is False
+        failed = store.load()
+        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
+        assert failed["external_publication_failure"]["code"] == (
+            "target_drift"
+        )
+        assert targets["replace"].read_text(encoding="utf-8") == (
+            "drifted after partial publication\n"
+        )
+
+    def test_external_publication_finalize_save_failure_recovers_after_postimages(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        prepared, targets = _sealed_publication_fixture(ctrl)
+        marker = _install_publication_marker(store, prepared)
+        complete = store.complete_external_publication
+        attempts = 0
+
+        def fail_first_clear(value):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError("injected marker-clear save failure")
+            return complete(value)
+
+        monkeypatch.setattr(
+            store,
+            "complete_external_publication",
+            fail_first_clear,
+        )
+
+        assert ctrl._publish_and_finalize(prepared, marker) is False
+        failed = store.load()
+        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
+        assert failed["external_publication_failure"]["code"] == (
+            "state_finalize"
+        )
+        assert targets["replace"].read_text(encoding="utf-8") == (
+            "new replace\n"
+        )
+        assert targets["create"].read_text(encoding="utf-8") == "new create\n"
+        assert not targets["delete"].exists()
+
+        assert ctrl._recover_pending_external_publication() is True
+        assert attempts == 2
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+
+    def test_external_publication_never_publishes_without_exact_state_marker(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        prepared, targets = _sealed_publication_fixture(ctrl)
+
+        assert ctrl._publish_and_finalize(
+            prepared,
+            prepared.marker.to_dict(),
+        ) is False
+        assert targets["replace"].read_text(encoding="utf-8") == (
+            "old replace\n"
+        )
+        assert not targets["create"].exists()
+        assert targets["delete"].read_text(encoding="utf-8") == (
+            "old delete\n"
+        )
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+
+    def test_external_publication_finalize_exception_after_clear_accepts_completion(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        prepared, targets = _sealed_publication_fixture(ctrl)
+        marker = _install_publication_marker(store, prepared)
+        complete = store.complete_external_publication
+
+        def clear_then_raise(value):
+            complete(value)
+            raise OSError("simulated post-save exception")
+
+        monkeypatch.setattr(
+            store,
+            "complete_external_publication",
+            clear_then_raise,
+        )
+
+        assert ctrl._publish_and_finalize(prepared, marker) is True
+        completed = store.load()
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
+        assert "external_publication_failure" not in completed
+        assert targets["replace"].read_text(encoding="utf-8") == (
+            "new replace\n"
+        )
+        assert not (
+            ctrl._squad_dir
+            / ".publication-outbox"
+            / prepared.marker.transaction_id
+        ).exists()
+
+    @pytest.mark.parametrize(
+        ("damage", "expected_code"),
+        [
+            ("target_drift", "target_drift"),
+            ("stage_missing", "stage_missing"),
+            ("stage_corrupt", "stage_corrupt"),
+            ("manifest_mismatch", "manifest_mismatch"),
+            ("manifest_invalid", "manifest_invalid"),
+        ],
+    )
+    def test_external_publication_recovery_failures_are_bounded(
+        self,
+        tmp_path: Path,
+        damage: str,
+        expected_code: str,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        prepared, targets = _sealed_publication_fixture(ctrl)
+        marker = _install_publication_marker(store, prepared)
+        transaction_root = (
+            ctrl._squad_dir
+            / ".publication-outbox"
+            / prepared.marker.transaction_id
+        )
+        manifest = transaction_root / "manifest.json"
+        if damage == "target_drift":
+            targets["replace"].write_text("unexpected\n", encoding="utf-8")
+        elif damage == "stage_missing":
+            prepared.discard()
+        elif damage == "stage_corrupt":
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            staged_ref = next(
+                operation["staged"]
+                for operation in payload["operations"]
+                if operation["action"] == "write"
+            )
+            (transaction_root / staged_ref).write_text(
+                "corrupt staged bytes\n",
+                encoding="utf-8",
+            )
+        elif damage == "manifest_mismatch":
+            manifest.write_bytes(manifest.read_bytes() + b" ")
+        else:
+            corrupt = b"{not-json"
+            manifest.write_bytes(corrupt)
+            marker = {
+                **marker,
+                "manifest_sha256": hashlib.sha256(corrupt).hexdigest(),
+            }
+            state = store.load()
+            state[PENDING_EXTERNAL_PUBLICATION_KEY] = marker
+            store.save(state)
+
+        assert ctrl._recover_pending_external_publication() is False
+
+        failed = store.load()
+        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
+        assert failed["status"] == "blocked"
+        assert failed["blocked_reason"] == "external_publication_pending"
+        assert failed["external_publication_failure"] == {
+            "schema_version": 1,
+            "code": expected_code,
+            "resume_status": "running",
+            "resume_blocked_reason": None,
+        }
+        assert expected_code in json.dumps(failed)
+        assert str(transaction_root) not in json.dumps(failed)
+
+    @pytest.mark.parametrize("entrypoint", ["normal", "manual"])
+    def test_pending_external_publication_recovers_before_entrypoint_status_logic(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        entrypoint: str,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        prepared, targets = _sealed_publication_fixture(ctrl)
+        _install_publication_marker(store, prepared)
+        calls: list[str] = []
+
+        def after_recovery(*_args, **_kwargs):
+            assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+            assert targets["create"].read_text(encoding="utf-8") == (
+                "new create\n"
+            )
+            calls.append(entrypoint)
+            return SquadResult.from_state(store.load())
+
+        if entrypoint == "normal":
+            monkeypatch.setattr(ctrl, "_run_locked", after_recovery)
+            ctrl.run("msg", "banzai")
+        else:
+            monkeypatch.setattr(
+                ctrl,
+                "_run_single_phase_locked",
+                after_recovery,
+            )
+            ctrl.run_single_phase("phase1-what", "msg", "banzai")
+
+        assert calls == [entrypoint]
+
+    @pytest.mark.parametrize("entrypoint", ["normal", "manual"])
+    def test_failed_external_publication_recovery_blocks_before_entrypoint_logic(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        entrypoint: str,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        prepared, _ = _sealed_publication_fixture(ctrl)
+        marker = _install_publication_marker(store, prepared)
+        prepared.discard()
+        callback = MagicMock(
+            side_effect=AssertionError("entrypoint ran before recovery")
+        )
+        if entrypoint == "normal":
+            monkeypatch.setattr(ctrl, "_run_locked", callback)
+            result = ctrl.run("msg", "banzai")
+        else:
+            monkeypatch.setattr(
+                ctrl,
+                "_run_single_phase_locked",
+                callback,
+            )
+            result = ctrl.run_single_phase(
+                "phase1-what",
+                "msg",
+                "banzai",
+            )
+
+        assert callback.call_count == 0
+        assert result.status == "blocked"
+        assert result.phase == "phase1-what"
+        failed = store.load()
+        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
+        assert failed["external_publication_failure"]["code"] == (
+            "stage_missing"
+        )
+
+    def test_routed_publication_orders_marker_before_publish_and_success_work(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        _configure_tasks_lexicon_route(ctrl, store, monkeypatch)
+        prepared, targets = _sealed_publication_fixture(ctrl)
+        calls: list[str] = []
+        route = ctrl._coordinate_transition_routing
+        advance = store.advance
+        publish = PreparedSquadPublication.publish
+        complete = store.complete_external_publication
+
+        def stage(*_args, **_kwargs):
+            calls.append("stage")
+            return prepared
+
+        def record_route(*args, **kwargs):
+            calls.append("route")
+            return route(*args, **kwargs)
+
+        def record_advance(*args, **kwargs):
+            receipt = advance(*args, **kwargs)
+            assert (
+                store.load()[PENDING_EXTERNAL_PUBLICATION_KEY]
+                == prepared.marker.to_dict()
+            )
+            calls.append("advance")
+            return receipt
+
+        def record_publish(publication):
+            assert (
+                store.load()[PENDING_EXTERNAL_PUBLICATION_KEY]
+                == prepared.marker.to_dict()
+            )
+            calls.append("publish")
+            return publish(publication)
+
+        def record_clear(marker):
+            result = complete(marker)
+            assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+            calls.append("clear")
+            return result
+
+        monkeypatch.setattr(ctrl, "_prepare_external_phase_effects", stage)
+        monkeypatch.setattr(
+            ctrl,
+            "_coordinate_transition_routing",
+            record_route,
+        )
+        monkeypatch.setattr(store, "advance", record_advance)
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            record_publish,
+        )
+        monkeypatch.setattr(
+            store,
+            "complete_external_publication",
+            record_clear,
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_declared_phase_timing_transition",
+            lambda *_: calls.append("timing"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            lambda *_: calls.append("checkpoint") or False,
+        )
+        monkeypatch.setattr(ctrl, "_refresh_run_context", lambda *_: None)
+
+        ctrl.run("msg", "banzai")
+
+        assert calls == [
+            "stage",
+            "route",
+            "advance",
+            "publish",
+            "clear",
+            "timing",
+            "checkpoint",
+        ]
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+        assert targets["replace"].read_text(encoding="utf-8") == (
+            "new replace\n"
+        )
+
+    @pytest.mark.parametrize("failure", ["stale", "save"])
+    def test_routed_precommit_failure_discards_unreferenced_stage_without_publish(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        failure: str,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        _configure_tasks_lexicon_route(ctrl, store, monkeypatch)
+        prepared, targets = _sealed_publication_fixture(ctrl)
+        transaction_root = (
+            ctrl._squad_dir
+            / ".publication-outbox"
+            / prepared.marker.transaction_id
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_prepare_external_phase_effects",
+            lambda *_args, **_kwargs: prepared,
+        )
+        success_calls: list[str] = []
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_declared_phase_timing_transition",
+            lambda *_: success_calls.append("timing"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            lambda *_: success_calls.append("checkpoint"),
+        )
+        if failure == "stale":
+            construct = ctrl._construct_routing_decision_or_block
+
+            def stale_after_seal(*args, **kwargs):
+                decision = construct(*args, **kwargs)
+                assert decision is not None
+                concurrent = store.load()
+                concurrent["concurrent_marker"] = "kept"
+                store.save(concurrent)
+                return decision
+
+            monkeypatch.setattr(
+                ctrl,
+                "_construct_routing_decision_or_block",
+                stale_after_seal,
+            )
+        else:
+            save = store._save_unlocked
+            injected = False
+
+            def fail_marker_save(state):
+                nonlocal injected
+                if (
+                    not injected
+                    and PENDING_EXTERNAL_PUBLICATION_KEY in state
+                ):
+                    injected = True
+                    raise OSError("injected routing save failure")
+                return save(state)
+
+            monkeypatch.setattr(
+                store,
+                "_save_unlocked",
+                fail_marker_save,
+            )
+
+        ctrl.run("msg", "banzai")
+
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+        assert not transaction_root.exists()
+        assert targets["replace"].read_text(encoding="utf-8") == (
+            "old replace\n"
+        )
+        assert not targets["create"].exists()
+        assert targets["delete"].read_text(encoding="utf-8") == (
+            "old delete\n"
+        )
+        assert success_calls == []
+
+    @pytest.mark.parametrize("entrypoint", ["normal", "manual"])
+    def test_crash_shaped_retry_defers_success_work_until_durable_clear(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        entrypoint: str,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        _configure_tasks_lexicon_route(ctrl, store, monkeypatch)
+        prepared, _ = _sealed_publication_fixture(ctrl)
+        monkeypatch.setattr(
+            ctrl,
+            "_prepare_external_phase_effects",
+            lambda *_args, **_kwargs: prepared,
+        )
+        construct = ctrl._construct_routing_decision_or_block
+        judgment = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {},
+                "journal_entries": [{"type": "decision", "summary": "kept"}],
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        def queue_judgment(*args, **kwargs):
+            decision = construct(*args, **kwargs)
+            assert decision is not None
+            ctrl._pending_judgment_results[
+                decision.routing_sha256
+            ] = (judgment,)
+            return decision
+
+        monkeypatch.setattr(
+            ctrl,
+            "_construct_routing_decision_or_block",
+            queue_judgment,
+        )
+        publish = PreparedSquadPublication.publish
+
+        def fail_after_first_operation(publication):
+            def fault(position: int) -> None:
+                if position == 1:
+                    raise RuntimeError("simulated crash")
+
+            return publish(publication, fault_hook=fault)
+
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            fail_after_first_operation,
+        )
+        success_calls: list[str] = []
+
+        def record_success(step: str):
+            assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+            success_calls.append(step)
+
+        monkeypatch.setattr(
+            ctrl,
+            "_write_journal_entries",
+            lambda *_: record_success("journal"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_declared_phase_timing_transition",
+            lambda *_: record_success("timing"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            lambda *_: record_success("checkpoint") or True,
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_refresh_run_context",
+            lambda reason="": (
+                record_success("context")
+                if str(reason).startswith("recovered phase advance")
+                else None
+            ),
+        )
+
+        if entrypoint == "normal":
+            first = ctrl.run("msg", "banzai")
+        else:
+            first = ctrl.run_single_phase(
+                "phase3-tasks-lexicon",
+                "msg",
+                "banzai",
+            )
+
+        assert first.status == "blocked"
+        assert success_calls == []
+        assert PENDING_EXTERNAL_PUBLICATION_KEY in store.load()
+
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            publish,
+        )
+        locked_runner = MagicMock(
+            side_effect=lambda *_args, **_kwargs: (
+                success_calls.append("runner")
+                or SquadResult.from_state(store.load())
+            )
+        )
+        if entrypoint == "normal":
+            monkeypatch.setattr(ctrl, "_run_locked", locked_runner)
+            ctrl.run("msg", "banzai")
+            assert locked_runner.call_count == 1
+            expected = [
+                "journal",
+                "timing",
+                "checkpoint",
+                "context",
+                "runner",
+            ]
+        else:
+            monkeypatch.setattr(
+                ctrl,
+                "_run_single_phase_locked",
+                locked_runner,
+            )
+            ctrl.run_single_phase(
+                "phase3-tasks-lexicon",
+                "msg",
+                "banzai",
+            )
+            assert locked_runner.call_count == 0
+            expected = ["journal", "timing", "checkpoint", "context"]
+
+        assert success_calls == expected
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
 
     def test_checkpoint_plan_auto_routes_without_commander_judgment(self, tmp_path):
         _disable_lexicon_gate(tmp_path)
@@ -2213,7 +3076,7 @@ class TestSquadControllerBasics:
         from harness.phase_a_readiness import PhaseAReadinessResult
         monkeypatch.setattr(
             ctrl,
-            "_publish_phase_a_artifacts_for_build",
+            "_publish_terminal_phase_a_artifacts_if_available",
             lambda: PhaseAReadinessResult(
                 ready=True,
                 blockers=[],
@@ -4366,8 +5229,8 @@ class TestFailClosedControllerPreparation:
         calls: list[str] = []
         monkeypatch.setattr(
             ctrl,
-            "_apply_product_input_updates",
-            lambda *_: calls.append("product"),
+            "_prepare_external_phase_effects",
+            lambda *_args, **_kwargs: calls.append("stage"),
         )
         monkeypatch.setattr(
             ctrl,
@@ -4673,13 +5536,8 @@ class TestFailClosedControllerPreparation:
         )
         monkeypatch.setattr(
             ctrl,
-            "_apply_product_input_updates",
-            lambda *_: calls.append("product"),
-        )
-        monkeypatch.setattr(
-            ctrl,
-            "_publish_manual_phase_artifacts",
-            lambda *_: calls.append("publication"),
+            "_prepare_external_phase_effects",
+            lambda *_args, **_kwargs: calls.append("stage"),
         )
         monkeypatch.setattr(
             store,
@@ -4706,7 +5564,7 @@ class TestFailClosedControllerPreparation:
 
         assert result.status == "blocked"
         assert result.phase == "phase3-tasks-lexicon"
-        assert calls == ["routing"]
+        assert calls == ["stage", "routing"]
         assert blocked["completed_phases"] == []
         assert blocked["last_dispatch"] is None
         assert blocked["controller_contract_error"] == {
@@ -4775,8 +5633,8 @@ class TestFailClosedControllerPreparation:
         monkeypatch.setattr(ctrl, "_prepare_phase_result_or_block", record_prepare)
         monkeypatch.setattr(
             ctrl,
-            "_apply_product_input_updates",
-            lambda *_: calls.append("product"),
+            "_prepare_external_phase_effects",
+            lambda *_args, **_kwargs: calls.append("stage"),
         )
         monkeypatch.setattr(
             ctrl,
@@ -4801,8 +5659,8 @@ class TestFailClosedControllerPreparation:
         assert resumed.status == "running"
         assert calls == [
             "prepare",
+            "stage",
             "routing",
-            "product",
             "advance",
             "timing",
             "checkpoint",
@@ -4996,8 +5854,8 @@ class TestFailClosedControllerPreparation:
         monkeypatch.setattr(ctrl, "_prepare_phase_result_or_block", record_prepare)
         monkeypatch.setattr(
             ctrl,
-            "_apply_product_input_updates",
-            lambda *_: calls.append("product"),
+            "_prepare_external_phase_effects",
+            lambda *_args, **_kwargs: calls.append("stage"),
         )
         monkeypatch.setattr(ctrl, "_coordinate_transition_routing", record_route)
         monkeypatch.setattr(store, "advance", record_advance)
@@ -5016,8 +5874,8 @@ class TestFailClosedControllerPreparation:
 
         assert calls == [
             "prepare",
+            "stage",
             "routing",
-            "product",
             "advance",
             "timing",
             "checkpoint",

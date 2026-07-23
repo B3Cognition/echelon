@@ -445,6 +445,115 @@ class TestSquadStateStore:
         assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
         assert "external_publication_failure" not in completed
 
+    def test_begin_external_publication_exact_cas_preserves_lifecycle(
+        self,
+        tmp_path,
+    ) -> None:
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "DONE")
+        state = store.load()
+        state["status"] = "done"
+        store.save(state)
+        snapshot = store.capture_routing_snapshot(expected_phase="DONE")
+        before = store.load()
+
+        with patch.object(
+            store,
+            "_save_unlocked",
+            wraps=store._save_unlocked,
+        ) as save:
+            store.begin_external_publication(
+                VALID_MARKER,
+                snapshot=snapshot,
+                state_updates={
+                    "published_spec_dir": "specs/001-demo",
+                },
+            )
+
+        started = store.load()
+        assert save.call_count == 1
+        assert started[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
+        assert started["published_spec_dir"] == "specs/001-demo"
+        assert started["phase"] == before["phase"]
+        assert started["status"] == before["status"]
+        assert started.get("blocked_reason") == before.get("blocked_reason")
+
+    def test_begin_external_publication_rejects_stale_snapshot_without_marker(
+        self,
+        tmp_path,
+    ) -> None:
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "DONE")
+        snapshot = store.capture_routing_snapshot(expected_phase="DONE")
+        concurrent = store.load()
+        concurrent["concurrent_marker"] = "kept"
+        store.save(concurrent)
+        before = store.load()
+
+        with pytest.raises(StateAdvanceError) as raised:
+            store.begin_external_publication(
+                VALID_MARKER,
+                snapshot=snapshot,
+            )
+
+        assert raised.value.validator == "stale_state"
+        assert store.load() == before
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+
+    def test_begin_external_publication_save_failure_leaves_marker_absent(
+        self,
+        tmp_path,
+    ) -> None:
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "DONE")
+        snapshot = store.capture_routing_snapshot(expected_phase="DONE")
+        before = store.load()
+
+        with patch.object(
+            store,
+            "_save_unlocked",
+            side_effect=OSError("injected save failure"),
+        ):
+            with pytest.raises(StateAdvanceError) as raised:
+                store.begin_external_publication(
+                    VALID_MARKER,
+                    snapshot=snapshot,
+                )
+
+        assert raised.value.validator == "save"
+        assert store.load() == before
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+
+    def test_advance_save_failure_never_durably_installs_publication_marker(
+        self,
+        tmp_path,
+    ) -> None:
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "repair")
+        snapshot = store.capture_routing_snapshot(expected_phase="repair")
+        decision = store.prepare_routing_decision(
+            _result("DONE", phase_id="repair"),
+            snapshot=snapshot,
+            from_phase="repair",
+            to_phase="next",
+            transaction_state_updates={
+                PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
+            },
+        )
+        before = store.load()
+
+        with patch.object(
+            store,
+            "_save_unlocked",
+            side_effect=OSError("injected save failure"),
+        ):
+            with pytest.raises(StateAdvanceError) as raised:
+                store.advance("repair", "next", decision)
+
+        assert raised.value.validator == "save"
+        assert store.load() == before
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
+
     def test_snapshot_bound_failure_diagnostic_rejects_same_phase_new_revision(
         self,
         tmp_path,
@@ -582,7 +691,7 @@ class TestSquadStateStore:
         assert raised.value.validator == "stale_state"
         assert store.load() == before_replay
 
-    def test_stale_advance_never_runs_before_commit_side_effect(
+    def test_stale_advance_rejects_before_any_state_commit(
         self,
         tmp_path,
     ) -> None:
@@ -598,21 +707,18 @@ class TestSquadStateStore:
         concurrent = store.load()
         concurrent["winner_marker"] = True
         store.save(concurrent)
-        side_effects: list[str] = []
 
         with pytest.raises(StateAdvanceError) as raised:
             store.advance(
                 "repair",
                 "next",
                 decision,
-                before_commit=lambda: side_effects.append("published"),
             )
 
         assert raised.value.validator == "stale_state"
-        assert side_effects == []
         assert store.load()["winner_marker"] is True
 
-    def test_before_commit_failure_does_not_persist_routing_state(
+    def test_advance_exposes_no_mutating_before_commit_hook(
         self,
         tmp_path,
     ) -> None:
@@ -626,18 +732,17 @@ class TestSquadStateStore:
             to_phase="next",
         )
         before = store.load()
+        side_effects: list[str] = []
 
-        def reject_publication() -> None:
-            raise RuntimeError("publication rejected")
-
-        with pytest.raises(RuntimeError, match="publication rejected"):
+        with pytest.raises(TypeError, match="before_commit"):
             store.advance(
                 "repair",
                 "next",
                 decision,
-                before_commit=reject_publication,
+                before_commit=lambda: side_effects.append("published"),
             )
 
+        assert side_effects == []
         assert store.load() == before
 
     def test_self_loop_replay_is_rejected_but_new_current_result_advances(
