@@ -832,6 +832,58 @@ def test_retry_redurably_accepts_delete_after_parent_sync_failure(
     assert not target.exists()
 
 
+def test_retry_syncs_full_target_chain_after_created_parent_sync_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, _, _, _, prepared = _sealed_write(
+        tmp_path,
+        target_name="new/deep/value.txt",
+    )
+    target = project_root / "new/deep/value.txt"
+    root_inode = os.stat(project_root).st_ino
+    fsync_call = publication_module.os.fsync
+    fstat_call = publication_module.os.fstat
+    failed = False
+    retrying = False
+    retry_synced_inodes: list[int] = []
+
+    def fail_once_then_record(fd: int) -> None:
+        nonlocal failed
+        metadata = fstat_call(fd)
+        if retrying:
+            retry_synced_inodes.append(metadata.st_ino)
+        if (
+            not failed
+            and stat.S_ISDIR(metadata.st_mode)
+            and metadata.st_ino == root_inode
+            and (project_root / "new").is_dir()
+        ):
+            failed = True
+            raise OSError("created parent sync fault")
+        fsync_call(fd)
+
+    monkeypatch.setattr(
+        publication_module.os,
+        "fsync",
+        fail_once_then_record,
+    )
+
+    _assert_error_code("publish_io", prepared.publish)
+    assert (project_root / "new").is_dir()
+    assert not target.exists()
+
+    retrying = True
+    prepared.publish()
+
+    assert root_inode in retry_synced_inodes
+    assert os.stat(project_root / "new").st_ino in retry_synced_inodes
+    assert os.stat(project_root / "new/deep").st_ino in (
+        retry_synced_inodes
+    )
+    assert target.read_bytes() == b"new bytes\n"
+
+
 @pytest.mark.parametrize(
     ("drift", "old_content"),
     [
