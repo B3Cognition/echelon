@@ -729,6 +729,109 @@ def test_retry_after_each_operation_position_is_idempotent(
     assert (project_root / "unrelated.txt").read_bytes() == b"leave alone"
 
 
+def test_retry_redurably_accepts_write_after_parent_sync_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, _, _, _, prepared = _sealed_write(
+        tmp_path,
+        old_content=b"old",
+        new_content=b"new",
+    )
+    target = project_root / "published/result.txt"
+    parent_inode = os.stat(target.parent).st_ino
+    fsync_call = publication_module.os.fsync
+    fstat_call = publication_module.os.fstat
+    failed = False
+    retrying = False
+    retry_synced_inodes: list[int] = []
+
+    def fail_once_then_record(fd: int) -> None:
+        nonlocal failed
+        metadata = fstat_call(fd)
+        if retrying:
+            retry_synced_inodes.append(metadata.st_ino)
+        if (
+            not failed
+            and stat.S_ISDIR(metadata.st_mode)
+            and metadata.st_ino == parent_inode
+            and target.read_bytes() == b"new"
+        ):
+            failed = True
+            raise OSError("parent sync fault")
+        fsync_call(fd)
+
+    monkeypatch.setattr(
+        publication_module.os,
+        "fsync",
+        fail_once_then_record,
+    )
+
+    _assert_error_code("publish_io", prepared.publish)
+    assert target.read_bytes() == b"new"
+
+    retrying = True
+    prepared.publish()
+
+    assert os.stat(target).st_ino in retry_synced_inodes
+    assert parent_inode in retry_synced_inodes
+
+
+def test_retry_redurably_accepts_delete_after_parent_sync_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir = _roots(tmp_path)
+    target = project_root / "remove.txt"
+    target.write_bytes(b"remove")
+    transaction = SquadPublicationTransaction.begin(
+        project_root,
+        squad_dir,
+        TRANSACTION_ID,
+    )
+    transaction.add_delete(
+        Path("remove.txt"),
+        owned_paths={Path("remove.txt")},
+    )
+    prepared = transaction.seal()
+    parent_inode = os.stat(project_root).st_ino
+    fsync_call = publication_module.os.fsync
+    fstat_call = publication_module.os.fstat
+    failed = False
+    retrying = False
+    retry_synced_inodes: list[int] = []
+
+    def fail_once_then_record(fd: int) -> None:
+        nonlocal failed
+        metadata = fstat_call(fd)
+        if retrying:
+            retry_synced_inodes.append(metadata.st_ino)
+        if (
+            not failed
+            and stat.S_ISDIR(metadata.st_mode)
+            and metadata.st_ino == parent_inode
+            and not target.exists()
+        ):
+            failed = True
+            raise OSError("parent sync fault")
+        fsync_call(fd)
+
+    monkeypatch.setattr(
+        publication_module.os,
+        "fsync",
+        fail_once_then_record,
+    )
+
+    _assert_error_code("publish_io", prepared.publish)
+    assert not target.exists()
+
+    retrying = True
+    prepared.publish()
+
+    assert parent_inode in retry_synced_inodes
+    assert not target.exists()
+
+
 @pytest.mark.parametrize(
     ("drift", "old_content"),
     [
