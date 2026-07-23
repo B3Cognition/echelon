@@ -37,6 +37,7 @@ from harness.state_transaction_namespace import (
     PROVIDER_CONTROL_INTENT_KEYS,
     STORE_OWNED_TRANSACTION_KEYS,
     TRUSTED_ROUTING_EFFECT_KEYS,
+    TRUSTED_ROUTING_REMOVAL_KEYS,
     store_owned_update_keys,
 )
 
@@ -1144,7 +1145,7 @@ def prepare_routing_decision(
         )
     unsupported_transaction_removals = (
         detached_transaction_removals
-        - TRUSTED_ROUTING_EFFECT_KEYS
+        - TRUSTED_ROUTING_REMOVAL_KEYS
     )
     if unsupported_transaction_removals:
         key = sorted(unsupported_transaction_removals)[0]
@@ -1400,7 +1401,7 @@ def _prepare_state_effects(
         type(key) is not str
         or not key
         or key not in STORE_OWNED_TRANSACTION_KEYS
-        or key not in TRUSTED_ROUTING_EFFECT_KEYS
+        or key not in TRUSTED_ROUTING_REMOVAL_KEYS
         for key in transaction_removals
     ):
         raise ControllerStateContractViolation(

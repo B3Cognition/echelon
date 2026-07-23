@@ -144,6 +144,13 @@ TRUSTED_ROUTING_EFFECT_KEYS = frozenset(
     }
 )
 
+# Durable publication completion is the only path allowed to remove its
+# exact-marker state. Other trusted routing effects retain their existing
+# update and removal authority.
+TRUSTED_ROUTING_REMOVAL_KEYS = (
+    TRUSTED_ROUTING_EFFECT_KEYS - {PENDING_EXTERNAL_PUBLICATION_KEY}
+)
+
 # These fields are valid provider control syntax, but never ordinary provider
 # state ownership. The controller extracts and promotes them before sealing.
 PROVIDER_CONTROL_INTENT_KEYS = frozenset(

@@ -298,6 +298,25 @@ def test_controller_can_seal_explicit_trusted_transaction_removals() -> None:
     }
 
 
+def test_prepared_phase_cannot_seal_pending_publication_removal() -> None:
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            PhaseNode(
+                id="controller",
+                type="agent",
+                allowed_state_updates=[],
+            ),
+            _result({}),
+            controller_updates={},
+            trusted_transaction_state_removals={
+                PENDING_EXTERNAL_PUBLICATION_KEY
+            },
+        )
+
+    assert raised.value.validator == "state_effects"
+    assert raised.value.json_path == "$.trusted_transaction_state_removals"
+
+
 @pytest.mark.parametrize(
     "invalid_key",
     sorted(STORE_OWNED_TRANSACTION_KEYS - TRUSTED_ROUTING_EFFECT_KEYS)[:3]
@@ -500,6 +519,36 @@ def test_pending_publication_marker_is_the_only_trusted_publication_effect() -> 
     assert decision.transaction_state_updates == {
         PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER
     }
+
+
+def test_pending_publication_marker_cannot_be_a_trusted_routing_removal() -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(
+            id="provider",
+            type="agent",
+            allowed_state_updates=[],
+        ),
+        _result({}),
+        controller_updates={},
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_routing_decision(
+            prepared,
+            from_phase="provider",
+            to_phase="next",
+            expected_state_revision=1,
+            expected_previous_dispatch_sha256="0" * 64,
+            transaction_state_removals={
+                PENDING_EXTERNAL_PUBLICATION_KEY
+            },
+        )
+
+    assert raised.value.validator == "ownership"
+    assert raised.value.json_path == (
+        "$.transaction_state_removals."
+        f"{PENDING_EXTERNAL_PUBLICATION_KEY}"
+    )
 
 
 @pytest.mark.parametrize(

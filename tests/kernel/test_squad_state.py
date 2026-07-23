@@ -263,6 +263,35 @@ class TestSquadStateStore:
 
         assert store.load() == before
 
+    def test_pending_publication_marker_cannot_be_removed_by_advance(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        state = store.load()
+        state[PENDING_EXTERNAL_PUBLICATION_KEY] = VALID_MARKER
+        store.save(state)
+        before = store.load()
+
+        with pytest.raises(ControllerStateContractViolation) as raised:
+            _advance(
+                store,
+                "init",
+                "phase1-discover",
+                _result("DONE"),
+                transaction_state_removals={
+                    PENDING_EXTERNAL_PUBLICATION_KEY
+                },
+            )
+
+        assert raised.value.validator == "ownership"
+        assert raised.value.json_path == (
+            "$.transaction_state_removals."
+            f"{PENDING_EXTERNAL_PUBLICATION_KEY}"
+        )
+        assert store.load() == before
+
     def test_record_external_publication_failure_blocks_and_preserves_marker(
         self,
         tmp_path,
