@@ -2810,6 +2810,38 @@ class TestProductInputMappingRepair:
             "IN-REQ-1: unresolved disposition open_question"
         ]
 
+    def test_what_phase_unknown_input_ids_are_requeued_with_canonical_ids(self, tmp_path):
+        from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+
+        ctrl, store = _controller(tmp_path)
+        source = tmp_path / "requirements.md"
+        source.write_text("A normative requirement.\n", encoding="utf-8")
+        resolution = resolve_product_inputs(
+            tmp_path,
+            store.squad_dir,
+            [parse_input_declaration("requirement:requirements.md")],
+        )
+        canonical_id = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))["units"][0]["id"]
+        store.initialize(
+            "r", "banzai", "msg", 0, "phase1-what", max_iterations=5,
+            product_inputs=resolution.state_payload(tmp_path),
+        )
+
+        repaired = ctrl._schedule_product_input_mapping_repair(
+            "phase1-what",
+            "invalid product input updates: product input update references unknown "
+            "requirement unit 'IN-REQ-FILTER-GROUPS'",
+        )
+
+        state = store.load()
+        assert repaired is True
+        assert state["phase"] == "phase1-what"
+        assert state["status"] == "running"
+        assert state["product_input_mapping_repair"]["invalid_input_unit_ids"] == [
+            "IN-REQ-FILTER-GROUPS"
+        ]
+        assert state["product_input_mapping_repair"]["valid_requirement_ids"] == [canonical_id]
+
     def test_plan_mapping_repair_stops_after_bounded_attempts(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)

@@ -655,6 +655,31 @@ def test_product_input_context_includes_controller_mapping_repair() -> None:
     assert "Do not return COMPLETE" in prompt
 
 
+def test_product_input_context_makes_phase_one_id_repair_allowlist_explicit() -> None:
+    from harness.squad_executors import _render_product_input_context
+
+    prompt = _render_product_input_context({
+        "product_inputs": {
+            "manifest": "runs/one/inputs/manifest.json",
+            "catalog": "runs/one/inputs/catalog.json",
+            "traceability": "runs/one/inputs/traceability.json",
+            "requirement_context": "runs/one/inputs/requirement-context.md",
+            "reference_context": "runs/one/inputs/reference-context.md",
+        },
+        "product_input_mapping_repair": {
+            "attempt": 1,
+            "phase": "phase1-what",
+            "blockers": ["product input update references unknown requirement unit 'IN-REQ-FILTER-GROUPS'"],
+            "invalid_input_unit_ids": ["IN-REQ-FILTER-GROUPS"],
+            "valid_requirement_ids": ["IN-REQ-CANONICAL"],
+        },
+    })
+
+    assert "Invalid IDs from the prior result: IN-REQ-FILTER-GROUPS" in prompt
+    assert "Only these canonical IDs may be used: IN-REQ-CANONICAL" in prompt
+    assert "Never derive an ID from a requirement label" in prompt
+
+
 def test_product_input_context_exposes_deterministic_mapping_worksheet() -> None:
     from harness.squad_executors import _render_product_input_context
 
