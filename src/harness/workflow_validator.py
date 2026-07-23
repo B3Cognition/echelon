@@ -8,6 +8,10 @@ from typing import Any
 
 import yaml
 
+from harness.controller_state_contract_requirements import (
+    is_controller_producing_phase,
+    required_controller_contract_name,
+)
 from harness.echelon_result_schema import ALLOWED_VERDICTS, SUPPORTED_STATE_UPDATE_TYPES
 from harness.phase_graph import PhaseGraph, PhaseNode
 
@@ -131,6 +135,14 @@ def validate_workflow_definition(
         return WorkflowValidationReport([
             WorkflowValidationIssue("workflow definition must contain phases[]", path=path)
         ])
+
+    required_contract_issues = _validate_required_controller_contracts(
+        raw,
+        phases,
+        path=path,
+    )
+    if required_contract_issues:
+        return WorkflowValidationReport(required_contract_issues)
 
     try:
         graph = PhaseGraph(definition_path, extension_yml_path)
@@ -329,6 +341,58 @@ def validate_workflow_definition(
             )
 
     return WorkflowValidationReport(issues)
+
+
+def _validate_required_controller_contracts(
+    workflow: dict[str, Any],
+    phases: list[Any],
+    *,
+    path: str,
+) -> list[WorkflowValidationIssue]:
+    issues: list[WorkflowValidationIssue] = []
+    producers = [
+        phase
+        for phase in phases
+        if isinstance(phase, dict)
+        and is_controller_producing_phase(phase)
+    ]
+    if (
+        producers
+        and not isinstance(
+            workflow.get("controller_state_contracts_file"),
+            str,
+        )
+    ):
+        issues.append(
+            WorkflowValidationIssue(
+                "controller-producing phases require "
+                "controller_state_contracts_file",
+                path=path,
+            )
+        )
+    for phase in producers:
+        phase_id = phase.get("id")
+        phase_id = phase_id if isinstance(phase_id, str) else None
+        expected = required_controller_contract_name(phase)
+        actual = phase.get("controller_state_contract")
+        if expected is None:
+            issues.append(
+                WorkflowValidationIssue(
+                    "controller-producing phase has an unsupported role/type",
+                    phase_id=phase_id,
+                    path=path,
+                )
+            )
+        elif actual != expected:
+            issues.append(
+                WorkflowValidationIssue(
+                    f"required controller state contract {expected!r}; "
+                    f"got {actual!r}",
+                    phase_id=phase_id,
+                    path=path,
+                )
+            )
+    return issues
 
 
 def _validate_result_contract_definition(

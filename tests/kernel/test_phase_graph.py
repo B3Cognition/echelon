@@ -17,6 +17,15 @@ from harness.phase_graph import PhaseGraph
 
 DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
 EXT_YML = EXT_ROOT / "extension/extension.yml"
+REQUIRED_CONTROLLER_CONTRACTS = {
+    "phase1-lexicon": "spec_lexicon",
+    "phase1-understanding": "understanding",
+    "phase2-decide": "feasibility_structural",
+    "phase2-tracker-alignment": "intent_alignment_structural",
+    "phase3-tasks-lexicon": "tasks_lexicon",
+    "phase3-understanding": "understanding",
+    "phase3-consensus-tasks-lexicon": "tasks_lexicon",
+}
 
 
 class TestPhaseGraph:
@@ -74,6 +83,7 @@ class TestPhaseGraph:
             "lexicon_findings",
             "lexicon_report",
             "lexicon_warning_waiver",
+            "blocked_reason",
         }
         assert lexicon.transitions == [
             {
@@ -422,6 +432,7 @@ def test_phase1_lexicon_reserves_verdict_fields_for_the_controller():
         "lexicon_findings",
         "lexicon_report",
         "lexicon_warning_waiver",
+        "blocked_reason",
     }
     assert controller_fields.isdisjoint(node.allowed_state_updates or [])
     assert node.controller_state_update_keys == controller_fields
@@ -496,6 +507,7 @@ def test_production_contracts_own_exact_existing_controller_field_inventory() ->
             "lexicon_findings",
             "lexicon_report",
             "lexicon_warning_waiver",
+            "blocked_reason",
         },
         "tasks_lexicon": {
             "tasks_lexicon_action",
@@ -741,6 +753,106 @@ def test_production_contracts_reject_semantic_invariant_violations(
     )
 
 
+@pytest.mark.parametrize(
+    ("contract_name", "verdict", "updates"),
+    [
+        (
+            "understanding",
+            "DONE",
+            {
+                "understanding_evidence": {
+                    "status": "error",
+                    "iteration": 0,
+                    "error": "analysis failed",
+                },
+                "blocked_reason": "analysis failed",
+            },
+        ),
+        ("understanding", "BLOCKED", {}),
+        (
+            "understanding",
+            "BLOCKED",
+            {
+                "quality_scores": [{"pass": True}],
+                "understanding_evidence": {
+                    "status": "completed",
+                    "iteration": 0,
+                    "digest": "abc",
+                    "path": "report.json",
+                    "pass": True,
+                },
+            },
+        ),
+        ("spec_lexicon", "BLOCKED", {}),
+        ("tasks_lexicon", "BLOCKED", {}),
+        (
+            "spec_lexicon",
+            "DONE",
+            {
+                "lexicon_evaluation": "pending",
+                "lexicon_attempts": 0,
+                "lexicon_findings": 1,
+            },
+        ),
+        (
+            "feasibility_structural",
+            "PASS",
+            {
+                "feasibility_structural_pass": True,
+                "feasibility_structural_attempts": 3,
+                "governance_gate_exhausted": "feasibility",
+            },
+        ),
+        (
+            "intent_alignment_structural",
+            "ALIGNED",
+            {
+                "intent_alignment_check_structural_pass": True,
+                "intent_alignment_check_structural_attempts": 3,
+                "governance_gate_exhausted": "intent-alignment-check",
+            },
+        ),
+    ],
+    ids=[
+        "understanding-success-with-error-evidence",
+        "understanding-empty-blocked",
+        "understanding-blocked-with-completed-evidence",
+        "spec-lexicon-empty-blocked",
+        "tasks-lexicon-empty-blocked",
+        "spec-lexicon-pending-with-findings",
+        "feasibility-pass-with-exhaustion",
+        "alignment-pass-with-exhaustion",
+    ],
+)
+def test_production_contracts_fail_closed_across_discriminator_branches(
+    contract_name: str,
+    verdict: str,
+    updates: dict[str, object],
+) -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+
+    assert validate_controller_result(
+        graph.controller_contract(contract_name),
+        verdict,
+        updates,
+    )
+
+
+def test_controller_node_outputs_contain_artifacts_only() -> None:
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+
+    assert graph.get("phase1-lexicon").outputs == [
+        "spec-lexicon-report.json",
+    ]
+    for phase_id in (
+        "phase3-tasks-lexicon",
+        "phase3-consensus-tasks-lexicon",
+    ):
+        assert graph.get(phase_id).outputs == [
+            "tasks-lexicon-report.json",
+        ]
+
+
 def test_phase_graph_rejects_unknown_controller_contract(tmp_path: Path) -> None:
     registry = tmp_path / "contracts.yaml"
     registry.write_text(
@@ -784,6 +896,74 @@ def test_phase_graph_rejects_unknown_controller_contract(tmp_path: Path) -> None
         match="unknown controller state contract 'missing'",
     ):
         PhaseGraph(definition, extension_yml)
+
+
+@pytest.mark.parametrize(
+    ("phase_id", "expected_contract"),
+    sorted(REQUIRED_CONTROLLER_CONTRACTS.items()),
+)
+@pytest.mark.parametrize("mutation", ["missing", "mismatched"])
+def test_phase_graph_requires_exact_contract_for_controller_role(
+    tmp_path: Path,
+    phase_id: str,
+    expected_contract: str,
+    mutation: str,
+) -> None:
+    raw = yaml.safe_load(DEFINITION.read_text(encoding="utf-8"))
+    phase = next(item for item in raw["phases"] if item["id"] == phase_id)
+    if mutation == "missing":
+        phase.pop("controller_state_contract")
+    else:
+        phase["controller_state_contract"] = (
+            "tasks_lexicon"
+            if expected_contract != "tasks_lexicon"
+            else "understanding"
+        )
+    definition = tmp_path / "definition.yaml"
+    definition.write_text(
+        yaml.safe_dump(raw, sort_keys=False),
+        encoding="utf-8",
+    )
+    registry = DEFINITION.parent / "controller-state-contracts.yaml"
+    (tmp_path / registry.name).write_text(
+        registry.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ControllerContractRegistryError,
+        match=(
+            f"phase {phase_id!r} requires controller state contract "
+            f"{expected_contract!r}"
+        ),
+    ):
+        PhaseGraph(definition, EXT_YML)
+
+
+def test_phase_graph_requires_registry_for_controller_producing_type(
+    tmp_path: Path,
+) -> None:
+    definition = tmp_path / "definition.yaml"
+    definition.write_text(
+        yaml.safe_dump(
+            {
+                "phases": [
+                    {
+                        "id": "custom-understanding",
+                        "type": "deterministic_understanding",
+                        "allowed_state_updates": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ControllerContractRegistryError,
+        match="controller-producing phases require",
+    ):
+        PhaseGraph(definition, EXT_YML)
 
 
 def test_provider_nodes_do_not_own_tasks_lexicon_state():

@@ -19,6 +19,7 @@ contracts:
           lexicon_findings: {type: integer, minimum: 0}
           lexicon_report: {type: string, minLength: 1}
           lexicon_warning_waiver: {type: boolean}
+          blocked_reason: {type: string, minLength: 1}
     allOf:
       - if:
           properties:
@@ -28,6 +29,10 @@ contracts:
           properties:
             state_updates:
               required: [lexicon_evaluation, lexicon_attempts]
+        else:
+          properties:
+            state_updates:
+              required: [blocked_reason]
       - if:
           properties:
             state_updates:
@@ -40,6 +45,7 @@ contracts:
               not:
                 anyOf:
                   - required: [lexicon_pass]
+                  - required: [lexicon_findings]
                   - required: [lexicon_report]
       - if:
           properties:
@@ -106,6 +112,10 @@ contracts:
                 - tasks_lexicon_pass
                 - tasks_lexicon_attempts
                 - tasks_lexicon_findings
+        else:
+          properties:
+            state_updates:
+              required: [blocked_reason]
       - if:
           properties:
             state_updates:
@@ -186,47 +196,29 @@ contracts:
       - if:
           properties:
             verdict:
-              not: {const: BLOCKED}
+              const: BLOCKED
         then:
           properties:
             state_updates:
-              required: [understanding_evidence]
-      - if:
-          properties:
-            state_updates:
-              required: [understanding_evidence]
-              properties:
-                understanding_evidence:
-                  properties:
-                    status: {const: completed}
-        then:
-          properties:
-            state_updates:
-              required: [quality_scores]
-              properties:
-                understanding_evidence:
-                  required: [digest, path, pass]
-                  properties:
-                    digest: {type: string, minLength: 1}
-                    path: {type: string, minLength: 1}
-                    pass: {type: boolean}
-      - if:
-          properties:
-            state_updates:
-              required: [understanding_evidence]
-              properties:
-                understanding_evidence:
-                  properties:
-                    status: {const: error}
-        then:
-          properties:
-            state_updates:
-              required: [blocked_reason]
+              required: [understanding_evidence, blocked_reason]
               properties:
                 understanding_evidence:
                   required: [error]
                   properties:
+                    status: {const: error}
                     error: {type: string, minLength: 1}
+        else:
+          properties:
+            state_updates:
+              required: [understanding_evidence, quality_scores]
+              properties:
+                understanding_evidence:
+                  required: [digest, path, pass]
+                  properties:
+                    status: {const: completed}
+                    digest: {type: string, minLength: 1}
+                    path: {type: string, minLength: 1}
+                    pass: {type: boolean}
 
   feasibility_structural:
     $schema: https://json-schema.org/draft/2020-12/schema
@@ -267,6 +259,16 @@ contracts:
           properties:
             state_updates:
               required: [feasibility_structural_report]
+      - if:
+          properties:
+            state_updates:
+              required: [governance_gate_exhausted]
+        then:
+          properties:
+            state_updates:
+              required: [feasibility_structural_pass]
+              properties:
+                feasibility_structural_pass: {const: false}
 
   intent_alignment_structural:
     $schema: https://json-schema.org/draft/2020-12/schema
@@ -310,3 +312,13 @@ contracts:
           properties:
             state_updates:
               required: [intent_alignment_check_structural_report]
+      - if:
+          properties:
+            state_updates:
+              required: [governance_gate_exhausted]
+        then:
+          properties:
+            state_updates:
+              required: [intent_alignment_check_structural_pass]
+              properties:
+                intent_alignment_check_structural_pass: {const: false}

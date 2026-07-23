@@ -12,6 +12,10 @@ from harness.controller_state_contracts import (
     ControllerContractRegistryError,
     load_controller_state_contracts,
 )
+from harness.controller_state_contract_requirements import (
+    is_controller_producing_phase,
+    required_controller_contract_name,
+)
 
 
 @dataclass
@@ -91,8 +95,25 @@ class PhaseGraph:
 
     def __init__(self, definition_path: Path, extension_yml_path: Path) -> None:
         raw = yaml.safe_load(definition_path.read_text())
+        if not isinstance(raw, dict):
+            raise ControllerContractRegistryError(
+                "workflow definition must be a mapping"
+            )
+        raw_phases = raw.get("phases", [])
+        phases = raw_phases if isinstance(raw_phases, list) else []
+        controller_producers = [
+            phase
+            for phase in phases
+            if isinstance(phase, dict)
+            and is_controller_producing_phase(phase)
+        ]
         contracts_file = raw.get("controller_state_contracts_file")
         if contracts_file is None:
+            if controller_producers:
+                raise ControllerContractRegistryError(
+                    "controller-producing phases require "
+                    "controller_state_contracts_file"
+                )
             self._controller_contracts = {}
         elif not isinstance(contracts_file, str) or not contracts_file.strip():
             raise ControllerContractRegistryError(
@@ -103,8 +124,21 @@ class PhaseGraph:
                 definition_path.parent / contracts_file
             )
         self._phases: dict[str, PhaseNode] = {}
-        for p in raw.get("phases", []):
+        for p in phases:
+            expected_contract = required_controller_contract_name(p)
             contract_name = p.get("controller_state_contract")
+            if is_controller_producing_phase(p):
+                if expected_contract is None:
+                    raise ControllerContractRegistryError(
+                        f"controller-producing phase {p.get('id')!r} has an "
+                        "unsupported role/type"
+                    )
+                if contract_name != expected_contract:
+                    raise ControllerContractRegistryError(
+                        f"phase {p.get('id')!r} requires controller state "
+                        f"contract {expected_contract!r}; got "
+                        f"{contract_name!r}"
+                    )
             if contract_name is None:
                 contract = None
             elif not isinstance(contract_name, str) or not contract_name.strip():

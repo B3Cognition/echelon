@@ -704,6 +704,92 @@ def test_workflow_validator_rejects_contract_bearing_greenfield_skip(
     )
 
 
+_REQUIRED_CONTROLLER_CONTRACTS = {
+    "phase1-lexicon": "spec_lexicon",
+    "phase1-understanding": "understanding",
+    "phase2-decide": "feasibility_structural",
+    "phase2-tracker-alignment": "intent_alignment_structural",
+    "phase3-tasks-lexicon": "tasks_lexicon",
+    "phase3-understanding": "understanding",
+    "phase3-consensus-tasks-lexicon": "tasks_lexicon",
+}
+
+
+def _write_real_workflow_copy(tmp_path: Path) -> Path:
+    raw = yaml.safe_load(DEFINITION.read_text(encoding="utf-8"))
+    path = tmp_path / "definition.yaml"
+    path.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
+    registry = DEFINITION.parent / "controller-state-contracts.yaml"
+    (tmp_path / registry.name).write_text(
+        registry.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.parametrize(
+    ("phase_id", "expected_contract"),
+    sorted(_REQUIRED_CONTROLLER_CONTRACTS.items()),
+)
+@pytest.mark.parametrize("mutation", ["missing", "mismatched"])
+def test_workflow_validator_requires_exact_contract_for_controller_role(
+    tmp_path: Path,
+    phase_id: str,
+    expected_contract: str,
+    mutation: str,
+) -> None:
+    definition = _write_real_workflow_copy(tmp_path)
+    raw = yaml.safe_load(definition.read_text(encoding="utf-8"))
+    phase = next(item for item in raw["phases"] if item["id"] == phase_id)
+    if mutation == "missing":
+        phase.pop("controller_state_contract")
+    else:
+        phase["controller_state_contract"] = (
+            "tasks_lexicon"
+            if expected_contract != "tasks_lexicon"
+            else "understanding"
+        )
+    definition.write_text(
+        yaml.safe_dump(raw, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=EXT_YML,
+    )
+
+    assert any(
+        phase_id == issue.phase_id
+        and expected_contract in issue.message
+        and "required controller state contract" in issue.message
+        for issue in report.issues
+    ), report.format()
+
+
+def test_workflow_validator_requires_registry_for_controller_producing_nodes(
+    tmp_path: Path,
+) -> None:
+    definition = _write_real_workflow_copy(tmp_path)
+    raw = yaml.safe_load(definition.read_text(encoding="utf-8"))
+    raw.pop("controller_state_contracts_file")
+    definition.write_text(
+        yaml.safe_dump(raw, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=EXT_YML,
+    )
+
+    assert any(
+        "controller-producing phases require controller_state_contracts_file"
+        in issue.message
+        for issue in report.issues
+    ), report.format()
+
+
 def test_workflow_validator_resolves_controller_condition_fields(
     tmp_path: Path,
 ) -> None:

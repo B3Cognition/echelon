@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping as MappingABC
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from os import PathLike, fspath
 from pathlib import Path
@@ -13,6 +13,8 @@ from typing import Any, Mapping
 import yaml
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
+from referencing import Registry
+from referencing.exceptions import NoSuchResource
 
 
 class ControllerContractRegistryError(ValueError):
@@ -53,13 +55,20 @@ class ControllerContractError:
     message: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CompiledControllerStateContract:
     name: str
     schema: Mapping[str, Any]
     state_update_keys: frozenset[str]
-    validator: Draft202012Validator
     sha256: str
+    _validator: Draft202012Validator = field(repr=False)
+
+    def iter_validation_errors(
+        self,
+        payload: Mapping[str, Any],
+    ) -> tuple[Any, ...]:
+        """Validate through the immutable, digest-bound compiled schema."""
+        return tuple(self._validator.iter_errors(payload))
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -90,24 +99,139 @@ def _freeze(value: Any) -> Any:
     return value
 
 
-def _reject_external_refs(value: Any, path: str = "$") -> None:
+def _jsonable_schema_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _jsonable_schema_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, tuple):
+        return [_jsonable_schema_value(item) for item in value]
+    return value
+
+
+_DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema"
+_FORBIDDEN_REFERENCE_KEYWORDS = frozenset(
+    {
+        "$dynamicRef",
+        "$recursiveRef",
+        "$dynamicAnchor",
+        "$recursiveAnchor",
+    }
+)
+_FORBIDDEN_IDENTIFIER_KEYWORDS = frozenset({"$id", "$anchor"})
+
+
+def _resolve_local_pointer(
+    root: dict[str, Any],
+    reference: str,
+    *,
+    path: str,
+) -> None:
+    current: Any = root
+    for raw_part in reference[2:].split("/"):
+        part = raw_part.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+            continue
+        if isinstance(current, list) and part.isdigit():
+            index = int(part)
+            if 0 <= index < len(current):
+                current = current[index]
+                continue
+        raise ControllerContractRegistryError(
+            f"unresolved local $ref {reference!r} at {path}"
+        )
+
+
+def _validate_schema_keywords(
+    value: Any,
+    *,
+    root: dict[str, Any],
+    path: str = "$",
+) -> None:
     if isinstance(value, dict):
         for key, item in value.items():
             child = f"{path}.{key}"
-            if key == "$ref" and (
-                not isinstance(item, str) or not item.startswith("#/$defs/")
-            ):
+            if key in _FORBIDDEN_REFERENCE_KEYWORDS:
                 raise ControllerContractRegistryError(
-                    f"remote or non-local $ref is forbidden at {child}"
+                    f"dynamic or recursive reference keyword {key} is "
+                    f"forbidden at {child}"
                 )
+            if key in _FORBIDDEN_IDENTIFIER_KEYWORDS:
+                raise ControllerContractRegistryError(
+                    f"controller contract does not satisfy the supported "
+                    f"schema profile: {key} is forbidden at {child}"
+                )
+            if key == "$ref":
+                if (
+                    not isinstance(item, str)
+                    or not item.startswith("#/$defs/")
+                ):
+                    raise ControllerContractRegistryError(
+                        f"remote or non-local $ref is forbidden at {child}"
+                    )
+                _resolve_local_pointer(root, item, path=child)
             if key == "default":
                 raise ControllerContractRegistryError(
                     f"schema defaults are forbidden at {child}"
                 )
-            _reject_external_refs(item, child)
+            _validate_schema_keywords(item, root=root, path=child)
     elif isinstance(value, list):
         for index, item in enumerate(value):
-            _reject_external_refs(item, f"{path}[{index}]")
+            _validate_schema_keywords(
+                item,
+                root=root,
+                path=f"{path}[{index}]",
+            )
+
+
+def _no_schema_retrieval(uri: str):
+    raise NoSuchResource(ref=uri)
+
+
+def _schema_profile_state_properties(
+    name: str,
+    schema: dict[str, Any],
+) -> dict[str, Any]:
+    properties = schema.get("properties")
+    verdict_schema = (
+        properties.get("verdict") if isinstance(properties, dict) else None
+    )
+    state_schema = (
+        properties.get("state_updates")
+        if isinstance(properties, dict)
+        else None
+    )
+    state_properties = (
+        state_schema.get("properties")
+        if isinstance(state_schema, dict)
+        else None
+    )
+    required = schema.get("required")
+    if (
+        schema.get("$schema") != _DRAFT_2020_12
+        or schema.get("type") != "object"
+        or schema.get("additionalProperties") is not False
+        or not isinstance(required, list)
+        or not {"verdict", "state_updates"}.issubset(required)
+        or not isinstance(verdict_schema, dict)
+        or verdict_schema.get("type") != "string"
+        or not isinstance(state_schema, dict)
+        or state_schema.get("type") != "object"
+        or state_schema.get("additionalProperties") is not False
+        or not isinstance(state_properties, dict)
+        or not state_properties
+        or any(
+            not isinstance(key, str) or not key
+            for key in state_properties
+        )
+    ):
+        raise ControllerContractRegistryError(
+            f"controller contract {name!r} does not satisfy the supported "
+            "schema profile"
+        )
+    return state_properties
 
 
 def load_controller_state_contracts(
@@ -135,37 +259,25 @@ def load_controller_state_contracts(
     for name, schema in contracts.items():
         if not isinstance(name, str) or not name.strip() or not isinstance(schema, dict):
             raise ControllerContractRegistryError("contract names and schemas must be mappings")
-        _reject_external_refs(schema)
+        _validate_schema_keywords(schema, root=schema)
         try:
             Draft202012Validator.check_schema(schema)
         except SchemaError as exc:
             raise ControllerContractRegistryError(
                 f"invalid controller contract {name!r}: {exc.message}"
             ) from exc
-        properties = schema.get("properties")
-        state_schema = properties.get("state_updates") if isinstance(properties, dict) else None
-        state_properties = (
-            state_schema.get("properties") if isinstance(state_schema, dict) else None
-        )
-        if (
-            schema.get("type") != "object"
-            or schema.get("additionalProperties") is not False
-            or not isinstance(state_schema, dict)
-            or state_schema.get("type") != "object"
-            or state_schema.get("additionalProperties") is not False
-            or not isinstance(state_properties, dict)
-            or not state_properties
-        ):
-            raise ControllerContractRegistryError(
-                f"controller contract {name!r} does not satisfy the supported schema profile"
-            )
+        state_properties = _schema_profile_state_properties(name, schema)
         canonical = json.dumps(schema, sort_keys=True, separators=(",", ":"))
+        immutable_schema = _freeze(schema)
         compiled[name] = CompiledControllerStateContract(
             name=name,
-            schema=_freeze(schema),
+            schema=immutable_schema,
             state_update_keys=frozenset(str(key) for key in state_properties),
-            validator=Draft202012Validator(schema),
             sha256=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+            _validator=Draft202012Validator(
+                immutable_schema,
+                registry=Registry(retrieve=_no_schema_retrieval),
+            ),
         )
     return MappingProxyType(compiled)
 
@@ -275,13 +387,26 @@ def normalize_controller_updates(
                 normalized_paths.append(path)
             return result
         raise ControllerStateContractViolation(
-            f"unsupported controller value type {type(value).__name__}",
+            "unsupported controller value type",
             contract="normalization",
             json_path=path,
             validator="type",
         )
 
-    result = visit(updates, "$.state_updates", 0)
+    protocol_failure: ControllerStateContractViolation | None = None
+    try:
+        result = visit(updates, "$.state_updates", 0)
+    except ControllerStateContractViolation:
+        raise
+    except Exception:
+        protocol_failure = ControllerStateContractViolation(
+            "controller value detachment failed",
+            contract="normalization",
+            json_path="$.state_updates",
+            validator="normalization_protocol",
+        )
+    if protocol_failure is not None:
+        raise protocol_failure
     return NormalizationOutcome(
         updates=result,
         normalized_paths=tuple(sorted(set(normalized_paths))),
@@ -295,14 +420,14 @@ def validate_controller_result(
 ) -> tuple[ControllerContractError, ...]:
     payload = {"verdict": verdict, "state_updates": dict(updates)}
     errors = []
-    for error in contract.validator.iter_errors(payload):
+    for error in contract.iter_validation_errors(payload):
         path = "$" + "".join(
             f"[{part}]" if isinstance(part, int) else f".{part}"
             for part in error.absolute_path
         )
         validator = str(error.validator or "schema")
         constraint = json.dumps(
-            error.validator_value,
+            _jsonable_schema_value(error.validator_value),
             ensure_ascii=True,
             separators=(",", ":"),
             sort_keys=True,

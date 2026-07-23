@@ -469,12 +469,6 @@ phases:
     lexicon_artifact: spec
     outputs:
       - spec-lexicon-report.json      # controller-owned findings report when the gate runs
-      - lexicon_evaluation → state.json  # controller-owned: pending, passed, or failed
-      - lexicon_pass → state.json        # controller-owned Boolean verdict after validation
-      - lexicon_attempts → state.json    # controller-owned failed-validation count
-      - lexicon_findings → state.json    # controller-owned finding count
-      - lexicon_report → state.json      # controller-owned report path
-      - lexicon_warning_waiver → state.json  # true only after warn-policy exhaustion
     allowed_state_updates: []
     controller_state_contract: spec_lexicon
     transitions:
@@ -867,12 +861,6 @@ phases:
     lexicon_artifact: tasks
     outputs:
       - tasks-lexicon-report.json
-      - tasks_lexicon_action → state.json
-      - tasks_lexicon_pass → state.json
-      - tasks_lexicon_attempts → state.json
-      - tasks_lexicon_findings → state.json
-      - tasks_lexicon_report → state.json
-      - blocked_reason → state.json
     allowed_state_updates: []
     controller_state_contract: tasks_lexicon
     transitions:
@@ -1015,12 +1003,6 @@ phases:
     lexicon_artifact: tasks
     outputs:
       - tasks-lexicon-report.json
-      - tasks_lexicon_action → state.json
-      - tasks_lexicon_pass → state.json
-      - tasks_lexicon_attempts → state.json
-      - tasks_lexicon_findings → state.json
-      - tasks_lexicon_report → state.json
-      - blocked_reason → state.json
     allowed_state_updates: []
     controller_state_contract: tasks_lexicon
     transitions:

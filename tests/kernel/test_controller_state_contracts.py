@@ -33,6 +33,22 @@ class TupleSubclass(tuple):
     pass
 
 
+class ExplodingPath(PathLike[str]):
+    def __fspath__(self) -> str:
+        raise RuntimeError("secret-path-protocol-detail")
+
+
+class ExplodingMapping(MappingABC[str, object]):
+    def __getitem__(self, key: str) -> object:
+        raise KeyError(key)
+
+    def __iter__(self):
+        raise RuntimeError("secret-mapping-protocol-detail")
+
+    def __len__(self) -> int:
+        return 1
+
+
 def _schema(
     fields: dict[str, object],
     *,
@@ -105,6 +121,96 @@ def test_registry_rejects_remote_ref(tmp_path: Path) -> None:
         },
     )
     with pytest.raises(ControllerContractRegistryError, match="remote.*\\$ref"):
+        load_controller_state_contracts(path)
+
+
+def test_registry_rejects_dangling_local_ref_at_startup(tmp_path: Path) -> None:
+    path = _write_registry(
+        tmp_path,
+        {
+            "sample": _schema(
+                {"value": {"$ref": "#/$defs/missing"}},
+            )
+        },
+    )
+
+    with pytest.raises(
+        ControllerContractRegistryError,
+        match="unresolved local.*\\$ref",
+    ):
+        load_controller_state_contracts(path)
+
+
+def test_registry_rejects_dynamic_and_recursive_reference_keywords(
+    tmp_path: Path,
+) -> None:
+    for keyword, reference in (
+        ("$dynamicRef", "https://example.test/schema"),
+        ("$recursiveRef", "#"),
+    ):
+        path = _write_registry(
+            tmp_path,
+            {
+                "sample": _schema(
+                    {"value": {"type": "string"}},
+                    extra={keyword: reference},
+                )
+            },
+        )
+
+        with pytest.raises(
+            ControllerContractRegistryError,
+            match="dynamic or recursive",
+        ):
+            load_controller_state_contracts(path)
+
+
+def test_compiled_contract_hides_an_immutable_validator_facade(
+    tmp_path: Path,
+) -> None:
+    contract = _load_sample_contract(tmp_path)
+
+    assert not hasattr(contract, "validator")
+    assert not contract.iter_validation_errors(
+        {"verdict": "DONE", "state_updates": {"count": 0, "pass": True}}
+    )
+    with pytest.raises(TypeError):
+        contract.schema["properties"]["state_updates"]["properties"]["count"][
+            "minimum"
+        ] = -100
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda schema: schema.update(
+            {"$schema": "https://json-schema.org/draft/2019-09/schema"}
+        ),
+        lambda schema: schema["required"].remove("verdict"),
+        lambda schema: schema["properties"].pop("verdict"),
+        lambda schema: schema.update({"$id": "https://example.test/contract"}),
+        lambda schema: schema.update({"$dynamicAnchor": "node"}),
+    ],
+    ids=[
+        "wrong-draft",
+        "verdict-not-required",
+        "missing-verdict-property",
+        "schema-id",
+        "dynamic-anchor",
+    ],
+)
+def test_registry_enforces_the_complete_supported_schema_profile(
+    tmp_path: Path,
+    mutate,
+) -> None:
+    schema = _schema({"value": {"type": "string"}})
+    mutate(schema)
+    path = _write_registry(tmp_path, {"sample": schema})
+
+    with pytest.raises(
+        ControllerContractRegistryError,
+        match="supported schema profile|dynamic or recursive",
+    ):
         load_controller_state_contracts(path)
 
 
@@ -253,6 +359,27 @@ def test_normalizer_rejects_non_string_mapping_keys() -> None:
         normalize_controller_updates({"value": {1: "one"}})
 
     assert raised.value.validator == "propertyNames"
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"value": ExplodingPath()},
+        ExplodingMapping(),
+    ],
+    ids=["pathlike-protocol", "mapping-protocol"],
+)
+def test_normalizer_converts_protocol_failures_to_context_free_violation(
+    updates: MappingABC[str, object],
+) -> None:
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        normalize_controller_updates(updates)
+
+    assert str(raised.value) == "controller value detachment failed"
+    assert raised.value.validator == "normalization_protocol"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert "secret-" not in repr(raised.value)
 
 
 def test_contract_errors_are_sorted_and_value_redacted(tmp_path: Path) -> None:
