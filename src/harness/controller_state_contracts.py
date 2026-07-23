@@ -127,7 +127,7 @@ def _resolve_local_pointer(
     reference: str,
     *,
     path: str,
-) -> None:
+) -> Any:
     current: Any = root
     for raw_part in reference[2:].split("/"):
         part = raw_part.replace("~1", "/").replace("~0", "~")
@@ -142,6 +142,62 @@ def _resolve_local_pointer(
         raise ControllerContractRegistryError(
             f"unresolved local $ref {reference!r} at {path}"
         )
+    return current
+
+
+def _local_references(value: Any) -> tuple[str, ...]:
+    references: set[str] = set()
+
+    def visit(item: Any) -> None:
+        if isinstance(item, dict):
+            reference = item.get("$ref")
+            if isinstance(reference, str) and reference.startswith("#/$defs/"):
+                references.add(reference)
+            for child in item.values():
+                visit(child)
+        elif isinstance(item, list):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    return tuple(sorted(references))
+
+
+def _validate_local_reference_graph(root: dict[str, Any]) -> None:
+    """Reject every direct or indirect local-reference cycle deterministically."""
+    graph: dict[str, tuple[str, ...]] = {}
+    for reference in _local_references(root):
+        target = _resolve_local_pointer(
+            root,
+            reference,
+            path=f"$ref graph node {reference}",
+        )
+        graph[reference] = _local_references(target)
+
+    complete: set[str] = set()
+    active: list[str] = []
+    active_positions: dict[str, int] = {}
+
+    def visit(reference: str) -> None:
+        if reference in complete:
+            return
+        if reference in active_positions:
+            cycle = active[active_positions[reference]:] + [reference]
+            raise ControllerContractRegistryError(
+                "cyclic local $ref graph: " + " -> ".join(cycle)
+            )
+        active_positions[reference] = len(active)
+        active.append(reference)
+        try:
+            for dependency in graph.get(reference, ()):
+                visit(dependency)
+        finally:
+            active.pop()
+            active_positions.pop(reference, None)
+        complete.add(reference)
+
+    for reference in sorted(graph):
+        visit(reference)
 
 
 def _validate_schema_keywords(
@@ -260,6 +316,7 @@ def load_controller_state_contracts(
         if not isinstance(name, str) or not name.strip() or not isinstance(schema, dict):
             raise ControllerContractRegistryError("contract names and schemas must be mappings")
         _validate_schema_keywords(schema, root=schema)
+        _validate_local_reference_graph(schema)
         try:
             Draft202012Validator.check_schema(schema)
         except SchemaError as exc:

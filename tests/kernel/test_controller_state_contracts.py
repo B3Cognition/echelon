@@ -141,6 +141,72 @@ def test_registry_rejects_dangling_local_ref_at_startup(tmp_path: Path) -> None:
         load_controller_state_contracts(path)
 
 
+@pytest.mark.parametrize(
+    ("definitions", "expected_chain"),
+    [
+        (
+            {"loop": {"$ref": "#/$defs/loop"}},
+            r"#/\$defs/loop -> #/\$defs/loop",
+        ),
+        (
+            {
+                "first": {"$ref": "#/$defs/second"},
+                "second": {"$ref": "#/$defs/third"},
+                "third": {"$ref": "#/$defs/first"},
+            },
+            (
+                r"#/\$defs/first -> #/\$defs/second -> "
+                r"#/\$defs/third -> #/\$defs/first"
+            ),
+        ),
+    ],
+    ids=["direct", "indirect"],
+)
+def test_registry_rejects_cyclic_local_ref_graph_at_startup(
+    tmp_path: Path,
+    definitions: dict[str, object],
+    expected_chain: str,
+) -> None:
+    path = _write_registry(
+        tmp_path,
+        {
+            "sample": _schema(
+                {"value": {"$ref": "#/$defs/first" if "first" in definitions else "#/$defs/loop"}},
+                extra={"$defs": definitions},
+            )
+        },
+    )
+
+    with pytest.raises(
+        ControllerContractRegistryError,
+        match=expected_chain,
+    ):
+        load_controller_state_contracts(path)
+
+
+def test_registry_accepts_acyclic_local_ref_chain(tmp_path: Path) -> None:
+    path = _write_registry(
+        tmp_path,
+        {
+            "sample": _schema(
+                {"value": {"$ref": "#/$defs/first"}},
+                extra={
+                    "$defs": {
+                        "first": {"$ref": "#/$defs/second"},
+                        "second": {"type": "string"},
+                    }
+                },
+            )
+        },
+    )
+
+    contract = load_controller_state_contracts(path)["sample"]
+
+    assert not contract.iter_validation_errors(
+        {"verdict": "DONE", "state_updates": {"value": "safe"}}
+    )
+
+
 def test_registry_rejects_dynamic_and_recursive_reference_keywords(
     tmp_path: Path,
 ) -> None:
