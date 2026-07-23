@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping as MappingABC
 from dataclasses import dataclass
+from enum import Enum
+from os import PathLike, fspath
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -29,6 +32,25 @@ class ControllerStateContractViolation(ValueError):
         self.contract = contract
         self.json_path = json_path
         self.validator = validator
+
+
+MAX_NORMALIZATION_DEPTH = 32
+MAX_NORMALIZATION_NODES = 10_000
+MAX_NORMALIZATION_COLLECTION = 10_000
+
+
+@dataclass(frozen=True)
+class NormalizationOutcome:
+    updates: dict[str, Any]
+    normalized_paths: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ControllerContractError:
+    contract: str
+    json_path: str
+    validator: str
+    message: str
 
 
 @dataclass(frozen=True)
@@ -146,3 +168,153 @@ def load_controller_state_contracts(
             sha256=hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
         )
     return MappingProxyType(compiled)
+
+
+def normalize_controller_updates(
+    updates: Mapping[str, Any],
+) -> NormalizationOutcome:
+    normalized_paths: list[str] = []
+    active: set[int] = set()
+    visited = 0
+
+    def limit_error(path: str) -> ControllerStateContractViolation:
+        return ControllerStateContractViolation(
+            "controller normalization limit exceeded",
+            contract="normalization",
+            json_path=path,
+            validator="normalization_limit",
+        )
+
+    def collection_error(
+        path: str,
+        validator: str,
+        message: str,
+    ) -> ControllerStateContractViolation:
+        return ControllerStateContractViolation(
+            message,
+            contract="normalization",
+            json_path=path,
+            validator=validator,
+        )
+
+    def visit(value: Any, path: str, depth: int) -> Any:
+        nonlocal visited
+        visited += 1
+        if depth > MAX_NORMALIZATION_DEPTH or visited > MAX_NORMALIZATION_NODES:
+            raise limit_error(path)
+        if isinstance(value, PathLike):
+            result = fspath(value)
+            if not isinstance(result, str):
+                raise ControllerStateContractViolation(
+                    "PathLike must normalize to text",
+                    contract="normalization",
+                    json_path=path,
+                    validator="pathlike",
+                )
+            normalized_paths.append(path)
+            return result
+        if isinstance(value, Enum):
+            result = visit(value.value, path, depth + 1)
+            if result is not None and not isinstance(result, (str, bool, int, float)):
+                raise ControllerStateContractViolation(
+                    "Enum value must be a supported scalar",
+                    contract="normalization",
+                    json_path=path,
+                    validator="enum",
+                )
+            normalized_paths.append(path)
+            return result
+        if value is None or isinstance(value, (str, bool, int, float)):
+            return value
+        if isinstance(value, (list, tuple)):
+            if len(value) > MAX_NORMALIZATION_COLLECTION:
+                raise collection_error(
+                    path,
+                    "maxItems",
+                    "controller collection is too large",
+                )
+            identity = id(value)
+            if identity in active:
+                raise collection_error(path, "cycle", "cyclic controller value")
+            active.add(identity)
+            try:
+                result = [
+                    visit(item, f"{path}[{index}]", depth + 1)
+                    for index, item in enumerate(value)
+                ]
+            finally:
+                active.remove(identity)
+            if isinstance(value, tuple):
+                normalized_paths.append(path)
+            return result
+        if isinstance(value, MappingABC):
+            if len(value) > MAX_NORMALIZATION_COLLECTION:
+                raise collection_error(
+                    path,
+                    "maxProperties",
+                    "controller mapping is too large",
+                )
+            if not all(isinstance(key, str) for key in value):
+                raise collection_error(
+                    path,
+                    "propertyNames",
+                    "controller mapping keys must be strings",
+                )
+            identity = id(value)
+            if identity in active:
+                raise collection_error(path, "cycle", "cyclic controller value")
+            active.add(identity)
+            try:
+                result = {
+                    key: visit(item, f"{path}.{key}", depth + 1)
+                    for key, item in value.items()
+                }
+            finally:
+                active.remove(identity)
+            if type(value) is not dict:
+                normalized_paths.append(path)
+            return result
+        raise ControllerStateContractViolation(
+            f"unsupported controller value type {type(value).__name__}",
+            contract="normalization",
+            json_path=path,
+            validator="type",
+        )
+
+    result = visit(dict(updates), "$.state_updates", 0)
+    return NormalizationOutcome(
+        updates=result,
+        normalized_paths=tuple(sorted(set(normalized_paths))),
+    )
+
+
+def validate_controller_result(
+    contract: CompiledControllerStateContract,
+    verdict: str,
+    updates: Mapping[str, Any],
+) -> tuple[ControllerContractError, ...]:
+    payload = {"verdict": verdict, "state_updates": dict(updates)}
+    errors = []
+    for error in contract.validator.iter_errors(payload):
+        path = "$" + "".join(
+            f"[{part}]" if isinstance(part, int) else f".{part}"
+            for part in error.absolute_path
+        )
+        validator = str(error.validator or "schema")
+        constraint = json.dumps(
+            error.validator_value,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        errors.append(
+            ControllerContractError(
+                contract=contract.name,
+                json_path=path,
+                validator=validator,
+                message=f"{validator} constraint {constraint} violated at {path}",
+            )
+        )
+    return tuple(
+        sorted(errors, key=lambda item: (item.json_path, item.validator, item.message))
+    )
