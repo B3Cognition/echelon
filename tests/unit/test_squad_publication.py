@@ -259,16 +259,29 @@ def test_seal_rereads_manifest_after_the_durable_replace(
         staged,
         owned_paths={Path("value.txt")},
     )
-    durable_write = publication_module._durable_write_bytes
+    durable_write = publication_module._durable_write_bytes_at
 
-    def corrupting_write(path: Path, content: bytes) -> None:
-        durable_write(path, content)
-        if path.name == "manifest.json":
-            path.write_bytes(content + b" ")
+    def corrupting_write(
+        parent_fd: int,
+        name: str,
+        content: bytes,
+    ) -> None:
+        durable_write(parent_fd, name, content)
+        if name == "manifest.json":
+            fd = os.open(
+                name,
+                os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW,
+                dir_fd=parent_fd,
+            )
+            try:
+                os.write(fd, b" ")
+                os.fsync(fd)
+            finally:
+                os.close(fd)
 
     monkeypatch.setattr(
         publication_module,
-        "_durable_write_bytes",
+        "_durable_write_bytes_at",
         corrupting_write,
     )
 
@@ -913,19 +926,23 @@ def test_loading_rejects_manifest_symlink_swap_between_check_and_read(
     outside_manifest = tmp_path / "outside-manifest.json"
     outside_manifest.write_bytes(original_manifest)
     backup_manifest = tmp_path / "original-manifest.json"
-    real_lstat = publication_module.os.lstat
+    open_regular_at = publication_module._open_regular_at
     swapped = False
 
-    def swapping_lstat(path) -> os.stat_result:
+    def swapping_open_regular_at(*args, **kwargs) -> int:
         nonlocal swapped
-        metadata = real_lstat(path)
-        if Path(path) == manifest_path and not swapped:
+        opened = open_regular_at(*args, **kwargs)
+        if args[1] == Path("manifest.json") and not swapped:
             swapped = True
             manifest_path.rename(backup_manifest)
             manifest_path.symlink_to(outside_manifest)
-        return metadata
+        return opened
 
-    monkeypatch.setattr(publication_module.os, "lstat", swapping_lstat)
+    monkeypatch.setattr(
+        publication_module,
+        "_open_regular_at",
+        swapping_open_regular_at,
+    )
 
     _assert_error_code(
         "manifest_invalid",
@@ -988,7 +1005,7 @@ def test_stage_metadata_io_error_is_bounded(
 
     monkeypatch.setattr(publication_module.os, "fstat", failing_fstat)
 
-    _assert_error_code("manifest_invalid", prepared.publish)
+    _assert_error_code("publish_io", prepared.publish)
 
 
 def test_stage_copy_metadata_io_error_is_bounded(
@@ -997,19 +1014,28 @@ def test_stage_copy_metadata_io_error_is_bounded(
 ) -> None:
     project_root, _, _, _, prepared = _sealed_write(tmp_path)
     real_fstat = publication_module.os.fstat
-    calls = 0
+    copy_stage = publication_module._copy_pinned_stage_to_temporary
 
-    def failing_copy_fstat(fd: int) -> os.stat_result:
-        nonlocal calls
-        calls += 1
-        if calls == 5:
-            raise OSError(f"do not expose {project_root}")
-        return real_fstat(fd)
+    def copy_with_failing_fstat(
+        pinned,
+        parent_fd: int,
+        expected_digest: str,
+    ) -> str:
+        def failing_fstat(fd: int) -> os.stat_result:
+            if fd == pinned.fd:
+                raise OSError(f"do not expose {project_root}")
+            return real_fstat(fd)
+
+        publication_module.os.fstat = failing_fstat
+        try:
+            return copy_stage(pinned, parent_fd, expected_digest)
+        finally:
+            publication_module.os.fstat = real_fstat
 
     monkeypatch.setattr(
-        publication_module.os,
-        "fstat",
-        failing_copy_fstat,
+        publication_module,
+        "_copy_pinned_stage_to_temporary",
+        copy_with_failing_fstat,
     )
 
     _assert_error_code("stage_corrupt", prepared.publish)
@@ -1170,29 +1196,25 @@ def test_intermediate_stage_symlink_swap_fails_before_target_creation(
     outside_stage = tmp_path / "outside-stage"
     outside_stage.mkdir()
     (outside_stage / "result.txt").write_bytes(b"expected")
-    validate_ancestors = publication_module._validate_existing_ancestors
+    open_directory = publication_module._open_directory
     swapped = False
 
-    def swapping_validation(
-        root: Path,
-        relative: Path,
-        *,
-        code: str,
-    ) -> None:
+    def swapping_open_directory(*args, **kwargs) -> int:
         nonlocal swapped
-        validate_ancestors(root, relative, code=code)
-        if root == transaction_root and not swapped:
+        opened = open_directory(*args, **kwargs)
+        if args[0] == "build" and not swapped:
             swapped = True
             staged_parent.rename(moved_stage)
             staged_parent.symlink_to(
                 outside_stage,
                 target_is_directory=True,
             )
+        return opened
 
     monkeypatch.setattr(
         publication_module,
-        "_validate_existing_ancestors",
-        swapping_validation,
+        "_open_directory",
+        swapping_open_directory,
     )
 
     _assert_error_code("stage_corrupt", prepared.publish)
