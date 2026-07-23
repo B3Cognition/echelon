@@ -22,7 +22,11 @@ except ImportError:  # pragma: no cover - exercised by the capability gate
 
 _SCHEMA_VERSION = 1
 _OUTBOX_DIRECTORY = ".publication-outbox"
-_PUBLICATION_LOCK_NAME = ".publication.lock"
+_PUBLICATION_CONTROL_DIRECTORY = Path(".echelon/runtime")
+_PUBLICATION_LOCK_NAME = "publication.lock"
+_PUBLICATION_LOCK_RELATIVE = (
+    _PUBLICATION_CONTROL_DIRECTORY / _PUBLICATION_LOCK_NAME
+)
 _MANIFEST_NAME = "manifest.json"
 _TRANSACTION_ID_PATTERN = re.compile(r"\A[0-9a-f]{32}\Z")
 _SHA256_PATTERN = re.compile(r"\A[0-9a-f]{64}\Z")
@@ -762,7 +766,7 @@ def _validate_target_namespace(
 ) -> None:
     protected = (
         squad_dir / _OUTBOX_DIRECTORY,
-        squad_dir / _PUBLICATION_LOCK_NAME,
+        project_root / _PUBLICATION_LOCK_RELATIVE,
     )
     for absolute in protected:
         try:
@@ -868,19 +872,80 @@ def _validate_manifest(
     }
 
 
-@contextmanager
-def _publication_exclusivity(squad_dir: Path) -> Iterator[None]:
-    """Serialize every cooperating Echelon target precheck and mutation."""
+def _directory_identity(metadata: os.stat_result) -> tuple[int, int, int]:
+    return (metadata.st_dev, metadata.st_ino, metadata.st_mode)
 
-    _require_secure_posix()
-    squad_fd = _open_directory(
-        squad_dir,
+
+def _verify_directory_entry(
+    parent_fd: int,
+    name: str,
+    opened_fd: int,
+) -> None:
+    try:
+        opened = os.fstat(opened_fd)
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except (OSError, TypeError, NotImplementedError):
+        _raise("publish_io")
+    if (
+        stat.S_ISLNK(current.st_mode)
+        or not stat.S_ISDIR(current.st_mode)
+        or _directory_identity(opened) != _directory_identity(current)
+    ):
+        _raise("publish_io")
+
+
+def _open_or_create_control_directory(
+    parent_fd: int,
+    name: str,
+) -> int:
+    created = False
+    try:
+        os.mkdir(name, dir_fd=parent_fd)
+        created = True
+    except FileExistsError:
+        pass
+    except (OSError, TypeError, NotImplementedError):
+        _raise("publish_io")
+    opened_fd = _open_directory(
+        name,
+        dir_fd=parent_fd,
         missing_code="publish_io",
         invalid_code="publish_io",
     )
+    try:
+        _verify_directory_entry(parent_fd, name, opened_fd)
+        if created:
+            os.fsync(opened_fd)
+            os.fsync(parent_fd)
+        return opened_fd
+    except BaseException:
+        os.close(opened_fd)
+        raise
+
+
+@contextmanager
+def _publication_exclusivity(project_root: Path) -> Iterator[None]:
+    """Serialize project-wide Echelon target prechecks and mutations."""
+
+    _require_secure_posix()
+    project_fd = _open_directory(
+        project_root,
+        missing_code="publish_io",
+        invalid_code="publish_io",
+    )
+    echelon_fd: int | None = None
+    control_fd: int | None = None
     lock_fd: int | None = None
     created = False
     try:
+        echelon_fd = _open_or_create_control_directory(
+            project_fd,
+            _PUBLICATION_CONTROL_DIRECTORY.parts[0],
+        )
+        control_fd = _open_or_create_control_directory(
+            echelon_fd,
+            _PUBLICATION_CONTROL_DIRECTORY.parts[1],
+        )
         create_flags = (
             os.O_RDWR
             | os.O_CREAT
@@ -893,7 +958,7 @@ def _publication_exclusivity(squad_dir: Path) -> Iterator[None]:
                 _PUBLICATION_LOCK_NAME,
                 create_flags,
                 0o600,
-                dir_fd=squad_fd,
+                dir_fd=control_fd,
             )
             created = True
         except FileExistsError:
@@ -901,7 +966,7 @@ def _publication_exclusivity(squad_dir: Path) -> Iterator[None]:
                 lock_fd = os.open(
                     _PUBLICATION_LOCK_NAME,
                     os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK,
-                    dir_fd=squad_fd,
+                    dir_fd=control_fd,
                 )
             except (OSError, TypeError, NotImplementedError):
                 _raise("publish_io")
@@ -911,7 +976,7 @@ def _publication_exclusivity(squad_dir: Path) -> Iterator[None]:
             opened = os.fstat(lock_fd)
             current = os.stat(
                 _PUBLICATION_LOCK_NAME,
-                dir_fd=squad_fd,
+                dir_fd=control_fd,
                 follow_symlinks=False,
             )
         except (OSError, TypeError, NotImplementedError):
@@ -927,7 +992,7 @@ def _publication_exclusivity(squad_dir: Path) -> Iterator[None]:
         if created:
             try:
                 os.fsync(lock_fd)
-                os.fsync(squad_fd)
+                os.fsync(control_fd)
             except (OSError, TypeError, NotImplementedError):
                 _raise("publish_io")
         try:
@@ -936,7 +1001,7 @@ def _publication_exclusivity(squad_dir: Path) -> Iterator[None]:
             locked = os.fstat(lock_fd)
             current = os.stat(
                 _PUBLICATION_LOCK_NAME,
-                dir_fd=squad_fd,
+                dir_fd=control_fd,
                 follow_symlinks=False,
             )
         except (OSError, TypeError, NotImplementedError):
@@ -947,6 +1012,16 @@ def _publication_exclusivity(squad_dir: Path) -> Iterator[None]:
             != (current.st_dev, current.st_ino)
         ):
             _raise("publish_io")
+        _verify_directory_entry(
+            project_fd,
+            _PUBLICATION_CONTROL_DIRECTORY.parts[0],
+            echelon_fd,
+        )
+        _verify_directory_entry(
+            echelon_fd,
+            _PUBLICATION_CONTROL_DIRECTORY.parts[1],
+            control_fd,
+        )
         try:
             yield
         finally:
@@ -960,14 +1035,20 @@ def _publication_exclusivity(squad_dir: Path) -> Iterator[None]:
                 os.close(lock_fd)
             except OSError:
                 pass
+        if control_fd is not None:
+            try:
+                os.close(control_fd)
+            except OSError:
+                pass
+        if echelon_fd is not None:
+            try:
+                os.close(echelon_fd)
+            except OSError:
+                pass
         try:
-            os.close(squad_fd)
+            os.close(project_fd)
         except OSError:
             pass
-
-
-def _directory_identity(metadata: os.stat_result) -> tuple[int, int, int]:
-    return (metadata.st_dev, metadata.st_ino, metadata.st_mode)
 
 
 @dataclass
@@ -1332,7 +1413,7 @@ class PreparedSquadPublication:
         )
         if self._transaction_root != expected_root:
             _raise("manifest_invalid")
-        with _publication_exclusivity(self._squad_dir):
+        with _publication_exclusivity(self._project_root):
             verified, pinned = _load_prepared_pinned(
                 self._project_root,
                 self._squad_dir,
@@ -1387,7 +1468,7 @@ class PreparedSquadPublication:
         )
         if self._transaction_root != expected_root:
             _raise("manifest_invalid")
-        with _publication_exclusivity(self._squad_dir):
+        with _publication_exclusivity(self._project_root):
             squad_fd = _open_directory(
                 self._squad_dir,
                 missing_code="stage_corrupt",
