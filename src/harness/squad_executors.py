@@ -1458,24 +1458,12 @@ class DeterministicLexiconExecutor(PhaseExecutor):
             fallback_config_path=self._ext_dir / "echelon-config.yml",
         )
         if artifact == "spec":
-            if "lexicon_warning_waiver" in state:
-                state.pop("lexicon_warning_waiver")
-                state_store.save(state)
             gate = run_spec_lexicon_gate(
                 project_root=self._project_root,
                 spec_dir_ref=str(state.get("spec_dir") or ""),
                 config=config,
                 previous_attempts=state.get("lexicon_attempts", 0),
             )
-            if gate.evaluation == "pending":
-                stale = state_store.load()
-                changed = False
-                for key in ("lexicon_pass", "lexicon_findings", "lexicon_report"):
-                    if key in stale:
-                        stale.pop(key)
-                        changed = True
-                if changed:
-                    state_store.save(stale)
             updates = gate.state_updates()
             marker = (
                 "✓" if gate.passed is True else "~" if gate.passed is None else "✗"

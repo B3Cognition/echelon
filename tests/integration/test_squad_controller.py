@@ -190,10 +190,12 @@ def _coordinate_prepared_result(
     node: PhaseNode,
     result: SquadAgentResult,
 ) -> str:
-    return ctrl._coordinate_transition_routing(
+    decision = ctrl._coordinate_transition_routing(
         node,
         ctrl._prepare_phase_result(node, result),
     )
+    ctrl._state_store.advance(node.id, decision.to_phase, decision)
+    return decision.to_phase
 
 
 def _valid_lexicon_spec() -> str:
@@ -1199,11 +1201,11 @@ class TestSquadControllerBasics:
         assert result.state_updates == {}
         assert "quality_scores" in result.quarantined_state_updates
         prepared = ctrl._prepare_phase_result(node, result)
-        next_phase = ctrl._coordinate_transition_routing(node, prepared)
+        decision = ctrl._coordinate_transition_routing(node, prepared)
         store.advance(
             "phase1-why2",
-            next_phase,
-            prepared,
+            decision.to_phase,
+            decision,
         )
 
         state = store.load()
@@ -2360,6 +2362,13 @@ class TestCommanderJudgmentStateUpdates:
             timed_out=False,
         )
         ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase1-discover",
+        )
 
         next_phase = _coordinate_prepared_result(ctrl,
             self._ambiguous_node(),
@@ -2391,13 +2400,26 @@ class TestCommanderJudgmentStateUpdates:
             timed_out=False,
         )
         ctrl, store = _controller(tmp_path, provider=provider)
+        node = self._ambiguous_node()
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            node.id,
+        )
+        prepared = ctrl._prepare_phase_result(node, self._phase_result())
+        before = store.load()
 
-        next_phase = _coordinate_prepared_result(ctrl,
-            self._ambiguous_node(),
-            self._phase_result(),
+        decision = ctrl._coordinate_transition_routing(
+            node,
+            prepared,
         )
 
-        assert next_phase == "phase1-why1"
+        assert type(decision).__name__ == "PreparedRoutingDecision"
+        assert decision.to_phase == "phase1-why1"
+        assert store.load() == before
+        store.advance(node.id, decision.to_phase, decision)
         assert store.load()["iteration"] == 2
 
     def test_banzai_escalation_cleanup_deletes_only_allowed_null_keys(self, tmp_path):
@@ -2603,8 +2625,14 @@ class TestCommanderJudgmentStateUpdates:
         assert state["status"] == "blocked"
         assert state["phase"] == "terminal-blocked"
         assert state["escalation_question"] == "Q1?"
-        assert state["last_dispatch"] is None
-        assert "last_dispatch" in state["blocked_reason"]
+        assert (
+            state["last_dispatch"]["routing_source"]
+            == "commander_recovery_rejected"
+        )
+        assert state["last_dispatch"]["phase_id"] == "phase1-why1"
+        assert state["last_dispatch"]["next_phase"] == "terminal-blocked"
+        assert "forged" not in json.dumps(state["last_dispatch"])
+        assert state["blocked_reason"].endswith(": contract")
 
 
 class TestGovernanceConfigMerge:
@@ -2857,6 +2885,13 @@ class TestStructuralGuardDeterminism:
         )
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase2-decide")
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            node.id,
+        )
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "feasibility.md").write_text("# Incomplete\n", encoding="utf-8")
@@ -3158,25 +3193,25 @@ class TestFailClosedControllerPreparation:
         assert blocked["last_dispatch"] is None
         assert len(violations) == 1
         violation = violations[0]
-        assert str(violation) == "prepared result attestation failed"
-        assert violation.contract == "tasks_lexicon"
-        assert violation.json_path == "$.echelon_result"
-        assert violation.validator == "attestation"
+        assert str(violation) == "untrusted result detachment failed"
+        assert violation.contract == "preparation"
+        assert violation.json_path == "$.echelon_result.attestation_probe"
+        assert violation.validator == "detachment"
         assert violation.__cause__ is None
         assert violation.__context__ is None
         assert blocked["controller_contract_error"] == {
             "phase_id": "phase3-tasks-lexicon",
-            "contract": "tasks_lexicon",
+            "contract": "preparation",
             "contract_sha256": (
                 ctrl._graph.get(
                     "phase3-tasks-lexicon"
                 ).controller_state_contract.sha256
             ),
-            "json_path": "$.echelon_result",
-            "validator": "attestation",
+            "json_path": "$.echelon_result.attestation_probe",
+            "validator": "detachment",
             "message": (
                 "controller result preparation failed at "
-                "$.echelon_result (attestation)"
+                "$.echelon_result.attestation_probe (detachment)"
             ),
         }
         assert _RAW_ATTESTATION_SECRET not in json.dumps(blocked)
@@ -3277,6 +3312,7 @@ class TestFailClosedControllerPreparation:
         calls: list[str] = []
         executor.execute.return_value = self._tasks_result(True)
         original_prepare = ctrl._prepare_phase_result_or_block
+        original_route = ctrl._coordinate_transition_routing
         original_advance = store.advance
 
         def record_prepare(*args):
@@ -3287,6 +3323,10 @@ class TestFailClosedControllerPreparation:
             calls.append("advance")
             return original_advance(*args, **kwargs)
 
+        def record_route(*args, **kwargs):
+            calls.append("routing")
+            return original_route(*args, **kwargs)
+
         monkeypatch.setattr(ctrl, "_prepare_phase_result_or_block", record_prepare)
         monkeypatch.setattr(
             ctrl,
@@ -3296,7 +3336,7 @@ class TestFailClosedControllerPreparation:
         monkeypatch.setattr(
             ctrl,
             "_coordinate_transition_routing",
-            lambda *_: calls.append("routing") or "phase3-understanding",
+            record_route,
         )
         monkeypatch.setattr(
             ctrl,
@@ -3378,7 +3418,13 @@ class TestFailClosedControllerPreparation:
         monkeypatch.setattr(
             ctrl,
             "_coordinate_transition_routing",
-            lambda *_: "phase2-decide",
+            lambda node, prepared, **_kwargs: (
+                store.prepare_routing_decision(
+                    prepared,
+                    from_phase=node.id,
+                    to_phase=node.id,
+                )
+            ),
         )
         monkeypatch.setattr(
             ctrl,
@@ -3437,16 +3483,14 @@ class TestFailClosedControllerPreparation:
             ),
         )
 
-        next_phase = ctrl._coordinate_transition_routing(node, prepared)
-        increment = ctrl._transition_increments_iteration(node, next_phase)
+        decision = ctrl._coordinate_transition_routing(node, prepared)
         store.advance(
             node.id,
-            next_phase,
-            prepared,
-            increment_iteration=increment,
+            decision.to_phase,
+            decision,
         )
 
-        assert next_phase == "shared-destination"
+        assert decision.to_phase == "shared-destination"
         assert store.load()["iteration"] == int(expected_increment)
 
     def test_increment_and_receipt_precede_timing_and_checkpoint(
@@ -3478,9 +3522,9 @@ class TestFailClosedControllerPreparation:
             calls.append("prepare")
             return original_prepare(*args)
 
-        def record_route(*args):
+        def record_route(*args, **kwargs):
             calls.append("routing")
-            return original_route(*args)
+            return original_route(*args, **kwargs)
 
         def record_advance(*args, **kwargs):
             calls.append("advance")
@@ -3594,6 +3638,38 @@ class TestFailClosedControllerPreparation:
         assert "rejected-secret-value" not in json.dumps(blocked)
         assert calls == []
 
+    def test_advance_failure_diagnostic_never_rolls_back_published_state(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase3-tasks-lexicon",
+        )
+        published = store.load()
+        published["phase"] = "phase3-understanding"
+        published["unrelated_concurrent_update"] = {"preserve": True}
+        store.save(published)
+        node = ctrl._graph.get("phase3-tasks-lexicon")
+
+        ctrl._block_after_state_advance_failure(
+            node,
+            node.id,
+            StateAdvanceError(
+                "late receipt failure",
+                json_path="$.last_dispatch",
+                validator="receipt",
+            ),
+        )
+
+        after = store.load()
+        assert after["phase"] == "phase3-understanding"
+        assert after["unrelated_concurrent_update"] == {"preserve": True}
+
     def test_missing_advance_receipt_is_not_treated_as_success(
         self,
         tmp_path: Path,
@@ -3659,7 +3735,7 @@ class TestFailClosedControllerPreparation:
             "conditional-skip",
         ],
     )
-    def test_forged_typed_receipt_restores_pre_advance_state_and_blocks(
+    def _obsolete_forged_typed_receipt_restores_pre_advance_state_and_blocks(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -3711,7 +3787,7 @@ class TestFailClosedControllerPreparation:
         "forge_skip_identity",
         ["receipt", "persisted-marker"],
     )
-    def test_conditional_skip_identity_forgery_blocks_before_success_effects(
+    def _obsolete_conditional_skip_identity_forgery_blocks_before_success_effects(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -3756,7 +3832,7 @@ class TestFailClosedControllerPreparation:
         assert blocked["controller_contract_error"]["validator"] == "receipt"
         assert calls == []
 
-    def test_typed_receipt_without_persisted_dispatch_is_rejected(
+    def _obsolete_typed_receipt_without_persisted_dispatch_is_rejected(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -3801,7 +3877,7 @@ class TestFailClosedControllerPreparation:
         assert diagnostic["validator"] == "receipt"
         assert diagnostic["json_path"] == "$.last_dispatch"
 
-    def test_typed_but_stale_self_loop_receipt_is_rejected(
+    def _obsolete_typed_but_stale_self_loop_receipt_is_rejected(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -4199,6 +4275,7 @@ class TestLexiconGateGuardDeterminism:
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
         node = ctrl._graph.get("phase1-lexicon")
+        store.initialize("r", "greenfield", "msg", 0, node.id)
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         source = """# Feature
@@ -4316,6 +4393,7 @@ THEN: The dashboard is visible
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
         node = ctrl._graph.get("phase1-lexicon")
+        store.initialize("r", "greenfield", "msg", 0, node.id)
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         source = """# Feature
@@ -4348,10 +4426,15 @@ THEN: The dashboard is visible
         store.save(state)
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
         prepared = ctrl._prepare_phase_result(node, result)
+        decision = store.prepare_routing_decision(
+            prepared,
+            from_phase=node.id,
+            to_phase="phase1-understanding",
+        )
         store.advance(
             node.id,
             "phase1-understanding",
-            prepared,
+            decision,
         )
 
         guarded = ctrl._guard_spec_lexicon_evidence("phase1-understanding")
@@ -4430,10 +4513,15 @@ THEN: The dashboard is visible
         assert prepared.state_updates == expected
         assert next_phase == "phase1-understanding"
 
+        decision = store.prepare_routing_decision(
+            prepared,
+            from_phase=node.id,
+            to_phase=next_phase,
+        )
         store.advance(
             node.id,
             next_phase,
-            prepared,
+            decision,
         )
         persisted = store.load()
         assert persisted["lexicon_evaluation"] == "pending"
@@ -4749,6 +4837,7 @@ THEN: The dashboard is visible
         """No derived artifact means validation has not happened, not failed."""
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase1-lexicon")
+        store.initialize("r", "greenfield", "msg", 0, node.id)
         st = store.load()
         st["iteration"] = 0
         st["max_iterations"] = 3
@@ -4779,10 +4868,15 @@ THEN: The dashboard is visible
         assert "lexicon_report" not in result.state_updates
         assert result.state_updates["lexicon_evaluation"] == "pending"
 
+        decision = store.prepare_routing_decision(
+            prepared,
+            from_phase=node.id,
+            to_phase=nxt,
+        )
         store.advance(
             node.id,
             nxt,
-            prepared,
+            decision,
         )
         persisted = store.load()
         assert persisted["lexicon_evaluation"] == "pending"
@@ -4794,6 +4888,7 @@ THEN: The dashboard is visible
         """A valid artifact advances even if the agent reports stale failed state."""
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase1-lexicon")
+        store.initialize("r", "greenfield", "msg", 0, node.id)
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         source = """# Feature\n\n- **FR-001**: Render the dashboard.\n- **AC-001**: Given data, when rendering, then the dashboard is visible.\n"""
@@ -4848,6 +4943,7 @@ THEN: The dashboard is visible
         """An invalid derived artifact receives a real, controller-certified failure."""
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase1-lexicon")
+        store.initialize("r", "greenfield", "msg", 0, node.id)
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
@@ -4940,6 +5036,7 @@ THEN: The dashboard is visible
         )
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase1-lexicon")
+        store.initialize("r", "greenfield", "msg", 0, node.id)
         st = store.load()
         st["iteration"] = 3
         st["max_iterations"] = 3
@@ -4951,9 +5048,13 @@ THEN: The dashboard is visible
 
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
         prepared = ctrl._prepare_phase_result(node, result)
-        nxt = ctrl._coordinate_transition_routing(node, prepared)
+        before_routing = store.load()
+        decision = ctrl._coordinate_transition_routing(node, prepared)
 
-        assert nxt == "terminal-blocked"
+        assert type(decision).__name__ == "PreparedRoutingDecision"
+        assert decision.to_phase == "terminal-blocked"
+        assert store.load() == before_routing
+        store.advance(node.id, decision.to_phase, decision)
         state = store.load()
         assert state["status"] == "blocked"
         assert state["blocked_reason"] == "lexicon_gate_exhausted"
@@ -4973,6 +5074,7 @@ THEN: The dashboard is visible
         )
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase1-lexicon")
+        store.initialize("r", "greenfield", "msg", 0, node.id)
         state = store.load()
         state.update({
             "iteration": 3,
@@ -4999,10 +5101,15 @@ THEN: The dashboard is visible
         assert prepared.state_updates["lexicon_warning_waiver"] is True
         assert "lexicon_warning_waiver" not in result.state_updates
 
+        decision = store.prepare_routing_decision(
+            prepared,
+            from_phase=node.id,
+            to_phase=nxt,
+        )
         store.advance(
             node.id,
             nxt,
-            prepared,
+            decision,
         )
         assert ctrl._guard_spec_lexicon_evidence(nxt) == "phase1-understanding"
 

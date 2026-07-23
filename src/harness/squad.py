@@ -43,7 +43,12 @@ from harness.phase_a_readiness import (
     validate_phase_a_readiness,
 )
 from harness.phase_checkpoints import create_phase_checkpoint
-from harness.prepared_phase_result import PreparedPhaseResult, prepare_phase_result
+from harness.prepared_phase_result import (
+    PreparedPhaseResult,
+    PreparedRoutingDecision,
+    detach_squad_agent_result,
+    prepare_phase_result,
+)
 from harness.quality_scores import (
     normalize_why_quality_scores,
     resolve_quality_gate_thresholds,
@@ -302,12 +307,24 @@ class ControllerEnrichment:
     updates: Mapping[str, object] = field(default_factory=dict)
     routing_override: str | None = None
     controller_owns_result_updates: bool = False
+    state_removals: frozenset[str] = frozenset()
+    control_updates: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "updates",
             MappingProxyType(deepcopy(dict(self.updates))),
+        )
+        object.__setattr__(
+            self,
+            "state_removals",
+            frozenset(self.state_removals),
+        )
+        object.__setattr__(
+            self,
+            "control_updates",
+            MappingProxyType(deepcopy(dict(self.control_updates))),
         )
 
 
@@ -819,17 +836,15 @@ class SquadController:
                     f"  Questions: {q[:120]}",
                     flush=True,
                 )
-                # Clear the block so run() proceeds after judgment
-                s = self._state_store.load()
-                s["status"] = "running"
-                s["blocked_reason"] = None
-                self._state_store.save(s)
-                existing_status = "running"
                 self._judgment_dispatch_escalation(
                     escalation_question=q,
                     blocked_phase=existing.get("phase", "unknown"),
                     recovery_reason=recovery_reason,
                 )
+                recovered = self._state_store.load()
+                existing_status = recovered.get("status")
+                if existing_status == "blocked":
+                    return SquadResult.from_state(recovered)
                 force_resume = True
             else:
                 # semi / guided: stop and require echelon spec resume
@@ -1083,23 +1098,28 @@ class SquadController:
                 )
                 return SquadResult.from_state(self._state_store.load())
 
-            next_phase = self._coordinate_transition_routing(node, prepared)
-            increment_iteration = self._transition_increments_iteration(
-                node,
-                next_phase,
-            )
-            if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
+            routing_updates: dict[str, object] = {}
+            if phase == "phase4-document":
                 readiness = self._publish_phase_a_artifacts_for_build()
                 if not readiness.ready:
                     self._block_after_phase_a_readiness_failure(readiness)
                     return SquadResult.from_state(self._state_store.load())
+                if readiness.ready_spec_dir is not None:
+                    routing_updates["published_spec_dir"] = (
+                        self._repo_relative_or_absolute(
+                            readiness.ready_spec_dir
+                        )
+                    )
+            decision = self._coordinate_transition_routing(
+                node,
+                prepared,
+                additional_state_updates=routing_updates,
+            )
+            next_phase = decision.to_phase
 
             receipt = self._advance_prepared_result_or_block(
                 node,
-                phase,
-                next_phase,
-                prepared,
-                increment_iteration=increment_iteration,
+                decision,
             )
             if receipt is None:
                 return SquadResult.from_state(self._state_store.load())
@@ -1122,11 +1142,6 @@ class SquadController:
                         f"[squad] ~ {node.id}  escalation — banzai COMMANDER judgment",
                         flush=True,
                     )
-                    # Clear blocked status before dispatch (mirrors top-of-loop handler)
-                    s = self._state_store.load()
-                    s["status"] = "running"
-                    s["blocked_reason"] = None
-                    self._state_store.save(s)
                     self._judgment_dispatch_escalation(
                         q,
                         phase,
@@ -1134,12 +1149,6 @@ class SquadController:
                     )
                     if self._state_store.load().get("status") == "blocked":
                         return SquadResult.from_state(self._state_store.load())
-                    # Unconditionally mark escalation resolved — do not rely on COMMANDER
-                    # to include it in state_updates. If it forgets, the check at line 354
-                    # re-fires on every iteration, which spins forever on WHY phases.
-                    s = self._state_store.load()
-                    s["escalation_resolved"] = True
-                    self._state_store.save(s)
                     if not self._checkpoint_successful_phase(phase, phase):
                         return SquadResult.from_state(self._state_store.load())
                     continue  # re-dispatch the same phase (e.g. phase1-why1) next iteration
@@ -1403,26 +1412,31 @@ class SquadController:
             )
             return SquadResult.from_state(self._state_store.load())
 
-        next_phase = self._coordinate_transition_routing(node, prepared)
-        increment_iteration = self._transition_increments_iteration(
-            node,
-            next_phase,
-        )
-        if phase == "phase4-document" and next_phase in TERMINAL_PHASES:
+        routing_updates: dict[str, object] = {}
+        if phase == "phase4-document":
             readiness = self._publish_phase_a_artifacts_for_build()
             if not readiness.ready:
                 self._block_after_phase_a_readiness_failure(readiness)
                 return SquadResult.from_state(self._state_store.load())
+            if readiness.ready_spec_dir is not None:
+                routing_updates["published_spec_dir"] = (
+                    self._repo_relative_or_absolute(
+                        readiness.ready_spec_dir
+                    )
+                )
         else:
             self._publish_manual_phase_artifacts()
+        decision = self._coordinate_transition_routing(
+            node,
+            prepared,
+            additional_state_updates=routing_updates,
+            manual_phase_run=True,
+        )
+        next_phase = decision.to_phase
 
         receipt = self._advance_prepared_result_or_block(
             node,
-            phase,
-            next_phase,
-            prepared,
-            increment_iteration=increment_iteration,
-            manual_phase_run=True,
+            decision,
         )
         if receipt is None:
             return SquadResult.from_state(self._state_store.load())
@@ -1479,19 +1493,16 @@ class SquadController:
             prepared = self._prepare_phase_result_or_block(node, result)
             if prepared is None:
                 return True
-            next_phase = self._coordinate_transition_routing(node, prepared)
-            increment_iteration = self._transition_increments_iteration(
+            decision = self._coordinate_transition_routing(
                 node,
-                next_phase,
-            )
-            receipt = self._advance_prepared_result_or_block(
-                node,
-                node.id,
-                next_phase,
                 prepared,
-                increment_iteration=increment_iteration,
                 manual_phase_run=manual_phase_run,
                 conditional_skip=True,
+            )
+            next_phase = decision.to_phase
+            receipt = self._advance_prepared_result_or_block(
+                node,
+                decision,
             )
             if receipt is None:
                 return True
@@ -1624,9 +1635,8 @@ class SquadController:
                 ready_spec_dir=None,
             )
 
-        updated = self._state_store.load()
+        updated = deepcopy(state)
         updated["published_spec_dir"] = self._repo_relative_or_absolute(published_spec_dir)
-        self._state_store.save(updated)
         self._phase_a_published_this_run = True
         return validate_phase_a_readiness(updated, [published_spec_dir])
 
@@ -1964,11 +1974,6 @@ class SquadController:
                     return "invalid product input task mappings: " + "; ".join(blockers)
         except (OSError, ProductInputError) as exc:
             return f"invalid product input updates: {exc}"
-        if phase in {"phase3-plan", "phase3-consensus"}:
-            repaired = self._state_store.load()
-            repaired.pop("product_input_mapping_repair", None)
-            repaired.pop("product_input_mapping_repair_attempts", None)
-            self._state_store.save(repaired)
         return None
 
     def _schedule_product_input_mapping_repair(
@@ -2260,70 +2265,29 @@ class SquadController:
     def _is_spec_feature_branch(self, branch: str) -> bool:
         return re.match(r"^[0-9]{3,4}-[A-Za-z0-9][A-Za-z0-9._-]*$", branch) is not None
 
-    def _block_after_judgment_validation_failure(
-        self,
-        phase: str,
-        reason: str,
-    ) -> None:
-        state = self._state_store.load()
-        state["phase"] = PHASE_TERMINAL_BLOCKED
-        state["status"] = "blocked"
-        state["blocked_reason"] = (
-            f"judgment state_updates validation failed: {reason}"
-        )
-        self._state_store.save(state)
-        print(
-            f"[squad] ✗ {phase} blocked: judgment state_updates validation failed: {reason}",
-            flush=True,
-        )
-
-    def _ensure_judgment_state_updates_allowed(
-        self,
+    @staticmethod
+    def _canonicalize_judgment_result(
         result: SquadAgentResult,
-        phase: str,
-    ) -> bool:
+    ) -> SquadAgentResult:
+        """Detach and validate COMMANDER output without mutating live state."""
+        candidate = detach_squad_agent_result(result)
         try:
             outcome = validate_echelon_result_contract(
-                result.echelon_result,
+                candidate.echelon_result,
                 JUDGMENT_RESULT_CONTRACT,
             )
-            result.echelon_result = outcome.result
-            result.quarantined_state_updates.update(
-                outcome.quarantined_state_updates
-            )
-            return True
         except EchelonResultValidationError as exc:
-            self._block_after_judgment_validation_failure(phase, str(exc))
-            return False
-
-    def _apply_judgment_state_updates(
-        self,
-        result: SquadAgentResult,
-        phase: str,
-        *,
-        exclude_keys: set[str] | None = None,
-        delete_null: bool = False,
-    ) -> bool:
-        if not self._ensure_judgment_state_updates_allowed(result, phase):
-            return False
-
-        excluded = exclude_keys or set()
-        updates = {
-            key: value
-            for key, value in result.state_updates.items()
-            if key not in excluded
-        }
-        if not updates:
-            return True
-
-        state = self._state_store.load()
-        for key, value in updates.items():
-            if delete_null and value is None:
-                state.pop(key, None)
-            else:
-                state[key] = value
-        self._state_store.save(state)
-        return True
+            raise ControllerStateContractViolation(
+                "COMMANDER judgment contract validation failed",
+                contract="judgment",
+                json_path="$.echelon_result",
+                validator="echelon_result",
+            ) from exc
+        candidate.echelon_result = outcome.result
+        candidate.quarantined_state_updates.update(
+            outcome.quarantined_state_updates
+        )
+        return candidate
 
     def _guard_constitution_provenance(self, phase: str) -> str:
         """Route normal spec/build phases through CHIEF until constitution is proven.
@@ -2800,11 +2764,46 @@ class SquadController:
             result,
         )
         updates.update(lexicon_updates)
+        state_removals: set[str] = set()
+        if node.id == "phase1-lexicon":
+            state_removals.add("lexicon_warning_waiver")
+            if result.state_updates.get("lexicon_evaluation") == "pending":
+                state_removals.update(
+                    {
+                        "lexicon_pass",
+                        "lexicon_findings",
+                        "lexicon_report",
+                    }
+                )
+        if node.id in {"phase3-plan", "phase3-consensus"}:
+            state_removals.update(
+                {
+                    "product_input_mapping_repair",
+                    "product_input_mapping_repair_attempts",
+                }
+            )
+        routing_override = governance_override or lexicon_override
+        control_updates: dict[str, object] = {}
+        if routing_override == PHASE_TERMINAL_BLOCKED:
+            control_updates["status"] = "blocked"
+            if governance_override:
+                control_updates["blocked_reason"] = (
+                    "governance_gate_exhausted"
+                )
+            elif lexicon_override:
+                control_updates.update(
+                    {
+                        "blocked_reason": "lexicon_gate_exhausted",
+                        "lexicon_gate_exhausted": True,
+                    }
+                )
         return ControllerEnrichment(
             updates=updates,
-            routing_override=governance_override or lexicon_override,
+            routing_override=routing_override,
             controller_owns_result_updates=node.type
             in {"deterministic_lexicon", "deterministic_understanding"},
+            state_removals=frozenset(state_removals),
+            control_updates=control_updates,
         )
 
     def _prepare_phase_result(
@@ -2813,7 +2812,7 @@ class SquadController:
         result: SquadAgentResult,
     ) -> PreparedPhaseResult:
         """Prepare one detached executor result for routing and persistence."""
-        candidate = deepcopy(result)
+        candidate = detach_squad_agent_result(result)
         if node.id in WHY_PHASES:
             self._normalize_why_result_quality_scores(candidate)
         enrichment = self._controller_enrichment(
@@ -2824,11 +2823,13 @@ class SquadController:
         return prepare_phase_result(
             node,
             candidate,
-            controller_updates=dict(enrichment.updates),
+            controller_updates=enrichment.updates,
             routing_override=enrichment.routing_override,
             controller_owns_result_updates=(
                 enrichment.controller_owns_result_updates
             ),
+            state_removals=enrichment.state_removals,
+            control_updates=enrichment.control_updates,
         )
 
     def _prepare_phase_result_or_block(
@@ -2866,24 +2867,14 @@ class SquadController:
     def _advance_prepared_result_or_block(
         self,
         node: PhaseNode,
-        from_phase: str,
-        to_phase: str,
-        prepared: PreparedPhaseResult,
-        *,
-        increment_iteration: bool = False,
-        manual_phase_run: bool = False,
-        conditional_skip: bool = False,
+        decision: PreparedRoutingDecision,
     ) -> AdvanceReceipt | None:
-        """Commit one prepared result or persist a separate redacted failure."""
-        before_state = deepcopy(self._state_store.load())
+        """Commit one sealed route or persist a separate redacted failure."""
         try:
             receipt = self._state_store.advance(
-                from_phase,
-                to_phase,
-                prepared,
-                increment_iteration=increment_iteration,
-                manual_phase_run=manual_phase_run,
-                conditional_skip=conditional_skip,
+                decision.from_phase,
+                decision.to_phase,
+                decision,
             )
             if not isinstance(receipt, AdvanceReceipt):
                 raise StateAdvanceError(
@@ -2891,159 +2882,15 @@ class SquadController:
                     json_path="$.advance_receipt",
                     validator="receipt",
                 )
-            self._validate_advance_receipt(
-                receipt,
-                from_phase=from_phase,
-                to_phase=to_phase,
-                prepared=prepared,
-                before_state=before_state,
-                manual_phase_run=manual_phase_run,
-                conditional_skip=conditional_skip,
-            )
             return receipt
         except StateAdvanceError as exc:
             self._block_after_state_advance_failure(
                 node,
-                from_phase,
+                decision.from_phase,
                 exc,
-                before_state=before_state,
+                decision=decision,
             )
             return None
-
-    def _validate_advance_receipt(
-        self,
-        receipt: AdvanceReceipt,
-        *,
-        from_phase: str,
-        to_phase: str,
-        prepared: PreparedPhaseResult,
-        before_state: dict,
-        manual_phase_run: bool,
-        conditional_skip: bool,
-    ) -> None:
-        """Prove that a typed receipt identifies the requested persisted commit."""
-
-        def reject(message: str, json_path: str) -> None:
-            raise StateAdvanceError(
-                message,
-                json_path=json_path,
-                validator="receipt",
-            )
-
-        persisted = deepcopy(self._state_store.load())
-        last_dispatch = persisted.get("last_dispatch")
-        if not isinstance(last_dispatch, dict):
-            reject(
-                "state advance receipt has no persisted dispatch",
-                "$.last_dispatch",
-            )
-        if last_dispatch == before_state.get("last_dispatch"):
-            reject(
-                "state advance receipt identifies a stale dispatch",
-                "$.last_dispatch",
-            )
-        if receipt.from_phase != from_phase:
-            reject(
-                "state advance receipt has the wrong source phase",
-                "$.advance_receipt.from_phase",
-            )
-        if receipt.to_phase != to_phase:
-            reject(
-                "state advance receipt has the wrong destination phase",
-                "$.advance_receipt.to_phase",
-            )
-        if receipt.controller_contract != prepared.controller_contract_name:
-            reject(
-                "state advance receipt has the wrong controller contract",
-                "$.advance_receipt.controller_contract",
-            )
-        if (
-            receipt.controller_contract_sha256
-            != prepared.controller_contract_sha256
-        ):
-            reject(
-                "state advance receipt has the wrong contract digest",
-                "$.advance_receipt.controller_contract_sha256",
-            )
-        if (
-            not isinstance(receipt.completed_at, str)
-            or not receipt.completed_at.strip()
-        ):
-            reject(
-                "state advance receipt has no completion identity",
-                "$.advance_receipt.completed_at",
-            )
-        if receipt.conditional_skip is not conditional_skip:
-            reject(
-                "state advance receipt has the wrong conditional-skip identity",
-                "$.advance_receipt.conditional_skip",
-            )
-        if persisted.get("phase") != to_phase:
-            reject(
-                "persisted state does not match receipt destination",
-                "$.phase",
-            )
-        expected_dispatch = {
-            "phase_id": from_phase,
-            "verdict": prepared.verdict,
-            "completed_at": receipt.completed_at,
-            "controller_contract": prepared.controller_contract_name,
-            "controller_contract_sha256": (
-                prepared.controller_contract_sha256
-            ),
-            "controller_normalized": bool(prepared.normalized_paths),
-        }
-        for key, expected in expected_dispatch.items():
-            if last_dispatch.get(key) != expected:
-                reject(
-                    "persisted dispatch does not match advance receipt",
-                    f"$.last_dispatch.{key}",
-                )
-        persisted_conditional_skip = last_dispatch.get(
-            "conditional_skip"
-        )
-        if (
-            type(persisted_conditional_skip) is not bool
-            or persisted_conditional_skip is not conditional_skip
-        ):
-            reject(
-                "persisted dispatch has the wrong conditional-skip identity",
-                "$.last_dispatch.conditional_skip",
-            )
-        if bool(last_dispatch.get("manual_phase_run")) != manual_phase_run:
-            reject(
-                "persisted dispatch has the wrong manual-run identity",
-                "$.last_dispatch.manual_phase_run",
-            )
-        completed = persisted.get("completed_phases")
-        if not isinstance(completed, list) or from_phase not in completed:
-            reject(
-                "persisted state has no phase completion",
-                "$.completed_phases",
-            )
-        if "controller_contract_error" in persisted:
-            reject(
-                "persisted state retained a prior contract diagnostic",
-                "$.controller_contract_error",
-            )
-        if manual_phase_run:
-            manual_runs = persisted.get("manual_phase_runs")
-            if not isinstance(manual_runs, list) or not manual_runs:
-                reject(
-                    "persisted state has no manual-run receipt",
-                    "$.manual_phase_runs",
-                )
-            expected_manual = {
-                "phase_id": from_phase,
-                "next_phase": to_phase,
-                "verdict": prepared.verdict,
-                "completed_at": receipt.completed_at,
-            }
-            if manual_runs[-1] != expected_manual:
-                reject(
-                    "persisted manual-run receipt does not match advance receipt",
-                    "$.manual_phase_runs",
-                )
 
     def _block_after_state_advance_failure(
         self,
@@ -3051,14 +2898,9 @@ class SquadController:
         from_phase: str,
         error: StateAdvanceError,
         *,
-        before_state: dict | None = None,
+        decision: PreparedRoutingDecision | None = None,
     ) -> None:
         """Persist a stable diagnostic without treating failure as an advance."""
-        state = (
-            deepcopy(before_state)
-            if isinstance(before_state, dict)
-            else self._state_store.load()
-        )
         contract = node.controller_state_contract
         json_path = (
             error.json_path
@@ -3072,30 +2914,42 @@ class SquadController:
             and re.fullmatch(r"[a-zA-Z0-9_.-]+", error.validator)
             else "state_advance"
         )
-        state["phase"] = from_phase
-        state["status"] = "blocked"
-        state["blocked_reason"] = (
-            "controller_state_contract_validation_failed"
+        persisted = self._state_store.merge_advance_failure_diagnostic(
+            from_phase=from_phase,
+            expected_previous_dispatch_sha256=(
+                decision.expected_previous_dispatch_sha256
+                if decision is not None
+                else None
+            ),
+            updates={
+                "status": "blocked",
+                "blocked_reason": (
+                    "controller_state_contract_validation_failed"
+                ),
+                "controller_contract_error": {
+                    "phase_id": from_phase,
+                    "contract": (
+                        contract.name
+                        if contract is not None
+                        else "routing_decision"
+                    ),
+                    "contract_sha256": (
+                        contract.sha256 if contract is not None else None
+                    ),
+                    "json_path": json_path,
+                    "validator": validator,
+                    "message": (
+                        "state advance failed at "
+                        f"{json_path} ({validator})"
+                    ),
+                },
+            },
         )
-        state["controller_contract_error"] = {
-            "phase_id": from_phase,
-            "contract": (
-                contract.name if contract is not None else "prepared_result"
-            ),
-            "contract_sha256": (
-                contract.sha256 if contract is not None else None
-            ),
-            "json_path": json_path,
-            "validator": validator,
-            "message": (
-                f"state advance failed at {json_path} ({validator})"
-            ),
-        }
-        self._state_store.save(state)
-        self._record_blocker_event(
-            from_phase,
-            "controller_state_contract_validation_failed",
-        )
+        if persisted:
+            self._record_blocker_event(
+                from_phase,
+                "controller_state_contract_validation_failed",
+            )
 
     @staticmethod
     def _with_why_verdict_quality_fallback(
@@ -3175,10 +3029,10 @@ class SquadController:
         self,
         node: PhaseNode,
         prepared: PreparedPhaseResult,
-    ) -> str | None:
-        """Apply WHY fail tracking before invoking the read-only evaluator."""
+    ) -> tuple[str | None, dict[str, object]]:
+        """Return WHY routing and state effects without persisting them."""
         if node.id not in WHY_PHASES:
-            return None
+            return None, {}
 
         result, state, eval_state = self._transition_evaluation_inputs(
             node,
@@ -3186,15 +3040,10 @@ class SquadController:
         )
         escalation_q = prepared.state_updates.get("escalation_question")
         if escalation_q:
-            current = self._state_store.load()
-            current["escalation_question"] = escalation_q
-            current["blocked_reason"] = prepared.state_updates.get(
-                "blocked_reason",
-                "WHY phase: agent escalation",
-            )
-            current["status"] = "blocked"
-            self._state_store.save(current)
-            return node.id
+            updates: dict[str, object] = {"status": "blocked"}
+            if "blocked_reason" not in prepared.state_updates:
+                updates["blocked_reason"] = "WHY phase: agent escalation"
+            return node.id, updates
 
         verdict_upper = (result.verdict or "").upper()
         is_fail = (
@@ -3207,126 +3056,171 @@ class SquadController:
             or verdict_upper in ("FAIL", "BLOCKED")
         )
         if not is_fail:
-            self._state_store.reset_why_fail_count()
-            return None
+            return None, {"why_fail_count": 0}
 
-        fail_count = self._state_store.increment_why_fail_count()
+        try:
+            fail_count = int(state.get("why_fail_count") or 0) + 1
+        except (TypeError, ValueError):
+            fail_count = 1
+        updates = {"why_fail_count": fail_count}
         if fail_count < 2 or state.get("escalation_question"):
-            return None
+            return None, updates
         last_ts = (state.get("last_dispatch") or {}).get("completed_at")
         if self._phase_artifacts_changed_since(last_ts):
-            return None
+            return None, updates
 
         print(
             f"[squad] ✗ consecutive-fail guard: {fail_count} {node.id} "
             "FAILs with no artifact progress — forcing escalation",
             flush=True,
         )
-        current = self._state_store.load()
-        current["escalation_question"] = (
+        updates["escalation_question"] = (
             f"Auto-detected: {fail_count} consecutive {node.id} FAILs "
             "with no artifact progress. User input or banzai COMMANDER "
             "judgment required before continuing."
         )
-        current["blocked_reason"] = "consecutive_why_fails"
-        current["status"] = "blocked"
-        self._state_store.save(current)
-        self._record_blocker_event(node.id, "consecutive_why_fails")
-        return PHASE_TERMINAL_BLOCKED
-
-    def _persist_controller_routing_override(
-        self,
-        node: PhaseNode,
-        prepared: PreparedPhaseResult,
-    ) -> None:
-        """Persist terminal controller state outside enrichment/evaluation."""
-        if prepared.routing_override != PHASE_TERMINAL_BLOCKED:
-            return
-        state = self._state_store.load()
-        state["phase"] = PHASE_TERMINAL_BLOCKED
-        state["status"] = "blocked"
-        governance_artifact = prepared.state_updates.get(
-            "governance_gate_exhausted"
-        )
-        if governance_artifact:
-            state["blocked_reason"] = "governance_gate_exhausted"
-            state["governance_gate_exhausted"] = governance_artifact
-        elif node.id == "phase1-lexicon":
-            state["blocked_reason"] = "lexicon_gate_exhausted"
-            state["lexicon_gate_exhausted"] = True
-        self._state_store.save(state)
+        updates["blocked_reason"] = "consecutive_why_fails"
+        updates["status"] = "blocked"
+        return PHASE_TERMINAL_BLOCKED, updates
 
     def _coordinate_transition_routing(
         self,
         node: PhaseNode,
         prepared: PreparedPhaseResult,
-    ) -> str:
-        """Coordinate stateful routing policy around the read-only evaluator."""
+        *,
+        additional_state_updates: Mapping[str, object] | None = None,
+        manual_phase_run: bool = False,
+        conditional_skip: bool = False,
+    ) -> PreparedRoutingDecision:
+        """Select and seal one route without mutating live success state."""
         self._matched_transition = None
+        queued_updates = dict(additional_state_updates or {})
+        judgment_payloads: list[dict[str, object]] = []
+        source = "transition"
+        transition_index: int | None = None
         if prepared.routing_override:
             next_phase = self._evaluate_transitions(node, prepared)
-            self._persist_controller_routing_override(node, prepared)
-            return next_phase
+            source = "controller_override"
+        else:
+            why_override, why_updates = (
+                self._coordinate_why_transition_state(node, prepared)
+            )
+            queued_updates.update(why_updates)
+            if why_override:
+                next_phase = why_override
+                source = "why_policy"
+            else:
+                start_index = 0
+                while True:
+                    try:
+                        if start_index == 0:
+                            next_phase = self._evaluate_transitions(
+                                node,
+                                prepared,
+                            )
+                        else:
+                            next_phase = (
+                                self._evaluate_transition_conditions(
+                                    node,
+                                    prepared,
+                                    start_index=start_index,
+                                )
+                            )
+                        break
+                    except _TransitionJudgmentRequired as unresolved:
+                        transition_index = unresolved.transition_index
+                        source = "commander"
+                        result = prepared.as_squad_agent_result()
+                        try:
+                            judgment = self._judgment_dispatch(
+                                "Cannot evaluate condition "
+                                f"{unresolved.condition!r} in phase "
+                                f"{node.id!r}",
+                                node,
+                                result,
+                            )
+                        except ControllerStateContractViolation:
+                            queued_updates.update(
+                                {
+                                    "status": "blocked",
+                                    "blocked_reason": (
+                                        "judgment_state_updates_"
+                                        "validation_failed"
+                                    ),
+                                }
+                            )
+                            next_phase = PHASE_TERMINAL_BLOCKED
+                            break
+                        judgment_payload = judgment.echelon_result
+                        if isinstance(judgment_payload, dict):
+                            judgment_payloads.append(judgment_payload)
+                        requested_phase = (
+                            judgment.state_updates.get("next_phase")
+                            or judgment.state_updates.get("phase")
+                        )
+                        valid_phases = self._graph.all_phase_ids()
+                        if (
+                            requested_phase
+                            and requested_phase not in valid_phases
+                        ):
+                            print(
+                                "[squad] ✗ judgment returned invalid phase "
+                                f"{requested_phase!r} — not in phase graph. "
+                                "Blocking.",
+                                flush=True,
+                            )
+                            queued_updates.update(
+                                {
+                                    "status": "blocked",
+                                    "blocked_reason": (
+                                        "judgment_invalid_next_phase"
+                                    ),
+                                }
+                            )
+                            next_phase = PHASE_TERMINAL_BLOCKED
+                            break
+                        routing_keys = {"next_phase", "phase"}
+                        extra = {
+                            key: value
+                            for key, value in judgment.state_updates.items()
+                            if key not in routing_keys
+                        }
+                        queued_updates.update(extra)
+                        if extra.get("status") == "blocked":
+                            next_phase = node.id
+                            break
+                        if requested_phase:
+                            next_phase = str(requested_phase)
+                            break
+                        start_index = unresolved.transition_index + 1
 
-        why_override = self._coordinate_why_transition_state(node, prepared)
-        if why_override:
-            return why_override
-
-        start_index = 0
-        while True:
-            try:
-                if start_index == 0:
-                    return self._evaluate_transitions(node, prepared)
-                return self._evaluate_transition_conditions(
-                    node,
-                    prepared,
-                    start_index=start_index,
-                )
-            except _TransitionJudgmentRequired as unresolved:
-                result = prepared.as_squad_agent_result()
-                judgment = self._judgment_dispatch(
-                    f"Cannot evaluate condition {unresolved.condition!r} "
-                    f"in phase {node.id!r}",
-                    node,
-                    result,
-                )
-                if not self._ensure_judgment_state_updates_allowed(
-                    judgment,
-                    node.id,
-                ):
-                    return PHASE_TERMINAL_BLOCKED
-                next_phase = (
-                    judgment.state_updates.get("next_phase")
-                    or judgment.state_updates.get("phase")
-                )
-                valid_phases = self._graph.all_phase_ids()
-                if next_phase and next_phase not in valid_phases:
-                    print(
-                        f"[squad] ✗ judgment returned invalid phase "
-                        f"{next_phase!r} — not in phase graph. Blocking.",
-                        flush=True,
-                    )
-                    self._state_store.set_blocked(
-                        f"judgment returned invalid next_phase {next_phase!r}"
-                    )
-                    return PHASE_TERMINAL_BLOCKED
-                routing_keys = {"next_phase", "phase"}
-                extra = {
-                    key: value
-                    for key, value in judgment.state_updates.items()
-                    if key not in routing_keys
-                }
-                if extra and not self._apply_judgment_state_updates(
-                    judgment,
-                    node.id,
-                    exclude_keys=routing_keys,
-                ):
-                    return PHASE_TERMINAL_BLOCKED
-                if self._state_store.load().get("status") == "blocked":
-                    return node.id
-                if next_phase:
-                    return str(next_phase)
-                start_index = unresolved.transition_index + 1
+        matched = getattr(self, "_matched_transition", None)
+        if (
+            isinstance(matched, tuple)
+            and len(matched) == 2
+            and matched[0] == node.id
+            and isinstance(matched[1], int)
+        ):
+            transition_index = matched[1]
+        for key in set(queued_updates) & set(prepared.state_updates):
+            if queued_updates[key] == prepared.state_updates[key]:
+                queued_updates.pop(key)
+        increment_iteration = self._transition_increments_iteration(
+            node,
+            next_phase,
+        )
+        return self._state_store.prepare_routing_decision(
+            prepared,
+            from_phase=node.id,
+            to_phase=next_phase,
+            queued_state_updates=queued_updates,
+            judgment_payloads=judgment_payloads,
+            source=source,
+            transition_index=transition_index,
+            increment_iteration=increment_iteration,
+            manual_phase_run=manual_phase_run,
+            conditional_skip=conditional_skip,
+        )
 
     def _transition_increments_iteration(
         self,
@@ -3389,8 +3283,11 @@ class SquadController:
         with self._telemetry_provider.dispatch(
             DispatchContext(node.id, "COMMANDER", "judgment", 1)
         ):
-            judgment = self._telemetry_provider.exec_agent(str(self._project_root), context)
-        self._ensure_judgment_state_updates_allowed(judgment, node.id)
+            raw_judgment = self._telemetry_provider.exec_agent(
+                str(self._project_root),
+                context,
+            )
+        judgment = self._canonicalize_judgment_result(raw_judgment)
         # COMMANDER writes most journal entries directly via journal-append.sh
         # during LLM execution.  This catches any entries it returns in
         # echelon_result.journal_entries[] that it didn't write itself.
@@ -3457,50 +3354,126 @@ class SquadController:
         with self._telemetry_provider.dispatch(
             DispatchContext(blocked_phase, "COMMANDER", "escalation", 1)
         ):
-            result = self._telemetry_provider.exec_agent(str(self._project_root), context)
-        if not self._ensure_judgment_state_updates_allowed(result, blocked_phase):
-            return result
+            raw_result = self._telemetry_provider.exec_agent(
+                str(self._project_root),
+                context,
+            )
+
+        validation_reason = ""
+        try:
+            result = self._canonicalize_judgment_result(raw_result)
+        except ControllerStateContractViolation:
+            validation_reason = "contract"
+            result = SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "JUDGMENT_RESOLVED",
+                    "state_updates": {},
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+        if result.quarantined_state_updates:
+            validation_reason = sorted(
+                result.quarantined_state_updates
+            )[0]
+
+        current = self._state_store.load()
+        from_phase = str(current.get("phase") or blocked_phase)
         requested_phase = str(
             result.state_updates.get("next_phase")
             or result.state_updates.get("phase")
             or ""
         ).strip()
-        if requested_phase and requested_phase not in self._graph.all_phase_ids():
-            self._block_after_judgment_validation_failure(
-                blocked_phase,
-                f"judgment returned invalid next_phase {requested_phase!r}",
-            )
-            return result
-        if not self._apply_judgment_state_updates(
-            result,
-            blocked_phase,
-            exclude_keys={"next_phase", "phase"},
-            delete_null=True,
+        if (
+            requested_phase
+            and requested_phase not in self._graph.all_phase_ids()
         ):
-            return result
-        if reset_why_fail_count:
-            self._state_store.reset_why_fail_count()
-        if capped_phase:
-            self._state_store.reset_phase_dispatch_count(capped_phase)
-            recovered = self._state_store.load()
-            recovered["phase_dispatch_limit_recovery"] = {
-                "phase": capped_phase,
-                "resolver": "COMMANDER-banzai",
-            }
-            self._state_store.save(recovered)
-        if requested_phase:
-            recovered = self._state_store.load()
-            recovered["phase"] = requested_phase
-            recovered.pop("next_phase", None)
-            self._state_store.save(recovered)
-        elif blocked_phase and blocked_phase != PHASE_TERMINAL_BLOCKED:
-            # A judgment that only answers the question resumes the phase that
-            # raised it; it must not leave the controller on terminal-blocked.
-            recovered = self._state_store.load()
-            recovered["phase"] = blocked_phase
-            self._state_store.save(recovered)
-        self._write_journal_entries(result, blocked_phase)
+            validation_reason = "next_phase"
 
+        queued_updates: dict[str, object] = {}
+        removals: set[str] = set()
+        target_phase = requested_phase or from_phase
+        source = "commander_recovery"
+        if validation_reason:
+            target_phase = PHASE_TERMINAL_BLOCKED
+            queued_updates.update(
+                {
+                    "status": "blocked",
+                    "blocked_reason": (
+                        "judgment state_updates validation failed: "
+                        f"{validation_reason}"
+                    ),
+                }
+            )
+            source = "commander_recovery_rejected"
+        else:
+            for key, value in result.state_updates.items():
+                if key in {"next_phase", "phase"}:
+                    continue
+                if value is None:
+                    removals.add(key)
+                else:
+                    queued_updates[key] = value
+            queued_updates.setdefault("status", "running")
+            queued_updates.setdefault("escalation_resolved", True)
+            if reset_why_fail_count:
+                queued_updates["why_fail_count"] = 0
+            if capped_phase:
+                counts = current.get("phase_dispatch_counts")
+                next_counts = (
+                    dict(counts) if isinstance(counts, dict) else {}
+                )
+                next_counts.pop(capped_phase, None)
+                queued_updates["phase_dispatch_counts"] = next_counts
+                queued_updates["phase_dispatch_limit_recovery"] = {
+                    "phase": capped_phase,
+                    "resolver": "COMMANDER-banzai",
+                }
+            if (
+                not requested_phase
+                and from_phase == PHASE_TERMINAL_BLOCKED
+                and blocked_phase
+                and blocked_phase != PHASE_TERMINAL_BLOCKED
+            ):
+                target_phase = blocked_phase
+
+        payload = deepcopy(result.echelon_result or {})
+        payload["state_updates"] = {}
+        synthetic_result = detach_squad_agent_result(result)
+        synthetic_result.echelon_result = payload
+        prepared = prepare_phase_result(
+            PhaseNode(
+                id=from_phase,
+                type="commander_recovery",
+                allowed_state_updates=[],
+            ),
+            synthetic_result,
+            controller_updates={},
+            routing_override=target_phase,
+            state_removals=removals,
+        )
+        decision = self._state_store.prepare_routing_decision(
+            prepared,
+            from_phase=from_phase,
+            to_phase=target_phase,
+            queued_state_updates=queued_updates,
+            judgment_payloads=(
+                [result.echelon_result]
+                if not validation_reason
+                and isinstance(result.echelon_result, dict)
+                else []
+            ),
+            source=source,
+            record_completion=False,
+        )
+        self._state_store.advance(
+            from_phase,
+            target_phase,
+            decision,
+        )
+        self._write_journal_entries(result, blocked_phase)
         return result
 
     def _write_journal_entries(self, result: SquadAgentResult, phase_id: str) -> None:

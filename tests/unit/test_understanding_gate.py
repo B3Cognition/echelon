@@ -478,10 +478,15 @@ def test_legacy_model_scored_resume_adds_certified_evidence(
     node = graph.get(gate_phase)
     result = controller._executors["deterministic_understanding"].execute(node, store)
     prepared = controller._prepare_phase_result(node, result)
+    decision = store.prepare_routing_decision(
+        prepared,
+        from_phase=gate_phase,
+        to_phase=target_phase,
+    )
     store.advance(
         gate_phase,
         target_phase,
-        prepared,
+        decision,
     )
 
     migrated = store.load()

@@ -1,14 +1,19 @@
 """SquadStateStore — atomic reads/writes for squad/<run-id>/state.json."""
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import logging
 import os
+import secrets
 import tempfile
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Iterator
 
 from harness.blocked_decision import ensure_blocked_decision
 from harness.echelon_result_schema import (
@@ -18,7 +23,9 @@ from harness.echelon_result_schema import (
 from harness.prepared_phase_result import (
     PreparedPhaseResult,
     PreparedPhaseResultAttestationError,
-    verify_prepared_phase_result_attestation,
+    PreparedRoutingDecision,
+    prepare_routing_decision as seal_routing_decision,
+    verify_prepared_routing_decision_attestation,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,6 +75,9 @@ class AdvanceReceipt:
     controller_contract: str | None
     controller_contract_sha256: str | None
     conditional_skip: bool
+    dispatch_id: str = ""
+    state_revision: int = 0
+    routing_decision_sha256: str = ""
 
 
 def _prepared_result_error(
@@ -83,30 +93,32 @@ def _prepared_result_error(
     )
 
 
-def _validate_prepared_result(
-    prepared: PreparedPhaseResult,
+def _validate_routing_decision(
+    decision: PreparedRoutingDecision,
     *,
     from_phase: str,
     to_phase: str,
-) -> dict:
+) -> tuple[dict[str, Any], dict[str, Any], PreparedPhaseResult]:
     """Validate the immutable payload and its ownership receipt together."""
-    if type(prepared) is not PreparedPhaseResult:
+    if type(decision) is not PreparedRoutingDecision:
         raise _prepared_result_error(
-            "advance requires a PreparedPhaseResult",
-            validator="prepared_result",
+            "advance requires a PreparedRoutingDecision",
+            validator="routing_decision",
         )
     try:
-        attested_payload = verify_prepared_phase_result_attestation(
-            prepared,
+        verified = verify_prepared_routing_decision_attestation(
+            decision,
             from_phase=from_phase,
             to_phase=to_phase,
         )
     except PreparedPhaseResultAttestationError as exc:
         raise _prepared_result_error(
-            "prepared result attestation validation failed",
-            json_path="$.prepared_result.attestation",
+            "routing decision attestation validation failed",
+            json_path="$.routing_decision.attestation",
             validator="attestation",
         ) from exc
+    prepared = decision.prepared_result
+    attested_payload = verified.prepared_payload
 
     provider_keys = prepared.provider_update_keys
     controller_keys = prepared.controller_update_keys
@@ -213,13 +225,24 @@ def _validate_prepared_result(
             "prepared state update ownership does not match payload",
             json_path="$.prepared_result.ownership",
         )
-    return result
+    return result, verified.queued_state_updates, prepared
+
+
+def _last_dispatch_sha256(state: dict[str, Any]) -> str:
+    payload = json.dumps(
+        state.get("last_dispatch"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 class SquadStateStore:
     def __init__(self, squad_dir: Path) -> None:
         self._squad_dir = squad_dir
         self._path = squad_dir / "state.json"
+        self._lock_path = squad_dir / "state.lock"
         self._staging_dir = squad_dir / "staging"
         self._squad_dir.mkdir(parents=True, exist_ok=True)
         self._staging_dir.mkdir(parents=True, exist_ok=True)
@@ -232,12 +255,28 @@ class SquadStateStore:
     def staging_dir(self) -> Path:
         return self._staging_dir
 
-    def load(self) -> dict:
+    @contextmanager
+    def _lock(self, *, exclusive: bool) -> Iterator[None]:
+        with self._lock_path.open("a+b") as lock_file:
+            operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+            fcntl.flock(lock_file.fileno(), operation)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _load_unlocked(self) -> dict:
         if not self._path.exists():
             return {}
         return json.loads(self._path.read_text())
 
-    def save(self, state: dict) -> None:
+    def load(self) -> dict:
+        with self._lock(exclusive=False):
+            return self._load_unlocked()
+
+    def _save_unlocked(self, state: dict) -> dict:
+        next_state = deepcopy(state)
+        previous_revision = 0
         if self._path.exists():
             old_text = self._path.read_text()
             bak = self._path.with_suffix(".json.bak")
@@ -246,15 +285,23 @@ class SquadStateStore:
             except OSError:
                 logger.warning("Could not write .bak file: %s", bak)
             try:
-                self._check_monotonics(json.loads(old_text), state)
+                old_state = json.loads(old_text)
+                self._check_monotonics(old_state, next_state)
+                old_revision = old_state.get("state_revision", 0)
+                if type(old_revision) is int and old_revision >= 0:
+                    previous_revision = old_revision
             except json.JSONDecodeError:
                 pass
 
-        ensure_blocked_decision(state)
-        if state.get("status") == "blocked" and state.get("escalation_question"):
-            state["escalation_resolved"] = False
-        state["updated_at"] = datetime.now(timezone.utc).isoformat()
-        content = json.dumps(state, indent=2)
+        next_state["state_revision"] = previous_revision + 1
+        ensure_blocked_decision(next_state)
+        if (
+            next_state.get("status") == "blocked"
+            and next_state.get("escalation_question")
+        ):
+            next_state["escalation_resolved"] = False
+        next_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        content = json.dumps(next_state, indent=2)
         fd, tmp = tempfile.mkstemp(
             dir=str(self._squad_dir),
             prefix=".state-",
@@ -272,6 +319,11 @@ class SquadStateStore:
             except OSError:
                 pass
             raise
+        return next_state
+
+    def save(self, state: dict) -> None:
+        with self._lock(exclusive=True):
+            self._save_unlocked(state)
 
     def initialize(
         self,
@@ -346,27 +398,83 @@ class SquadStateStore:
     def current_phase(self) -> str:
         return self.load().get("phase", "init")
 
+    def prepare_routing_decision(
+        self,
+        prepared: PreparedPhaseResult,
+        *,
+        from_phase: str,
+        to_phase: str,
+        queued_state_updates: dict[str, Any] | None = None,
+        judgment_payloads: object = (),
+        source: str = "transition",
+        transition_index: int | None = None,
+        increment_iteration: bool = False,
+        manual_phase_run: bool = False,
+        conditional_skip: bool = False,
+        record_completion: bool = True,
+    ) -> PreparedRoutingDecision:
+        """Bind a prepared result to the currently persisted routing identity."""
+        for name, value in (
+            ("increment_iteration", increment_iteration),
+            ("manual_phase_run", manual_phase_run),
+            ("conditional_skip", conditional_skip),
+            ("record_completion", record_completion),
+        ):
+            if type(value) is not bool:
+                raise StateAdvanceError(
+                    f"{name.replace('_', ' ')} identity must be a Boolean",
+                    json_path=f"$.{name}",
+                    validator="type",
+                )
+        with self._lock(exclusive=False):
+            state = self._load_unlocked()
+        if state.get("phase") != from_phase:
+            raise StateAdvanceError(
+                "persisted phase does not match routing source",
+                json_path="$.phase",
+                validator="stale_state",
+            )
+        revision = state.get("state_revision", 0)
+        if type(revision) is not int or revision < 0:
+            raise StateAdvanceError(
+                "persisted state revision is invalid",
+                json_path="$.state_revision",
+                validator="type",
+            )
+        try:
+            return seal_routing_decision(
+                prepared,
+                from_phase=from_phase,
+                to_phase=to_phase,
+                expected_state_revision=revision,
+                expected_previous_dispatch_sha256=(
+                    _last_dispatch_sha256(state)
+                ),
+                queued_state_updates=queued_state_updates,
+                judgment_payloads=judgment_payloads,
+                source=source,
+                transition_index=transition_index,
+                increment_iteration=increment_iteration,
+                manual_phase_run=manual_phase_run,
+                conditional_skip=conditional_skip,
+                record_completion=record_completion,
+            )
+        except PreparedPhaseResultAttestationError as exc:
+            raise StateAdvanceError(
+                "routing decision preparation failed",
+                json_path="$.routing_decision",
+                validator="attestation",
+            ) from exc
+
     def advance(
         self,
         from_phase: str,
         to_phase: str,
-        prepared: PreparedPhaseResult,
-        *,
-        increment_iteration: bool = False,
-        manual_phase_run: bool = False,
-        conditional_skip: bool = False,
+        decision: PreparedRoutingDecision,
     ) -> AdvanceReceipt:
-        if type(conditional_skip) is not bool:
-            raise StateAdvanceError(
-                "conditional skip identity must be a Boolean",
-                json_path="$.conditional_skip",
-                validator="type",
-            )
-        state = self.load()
-        next_state = deepcopy(state)
         try:
-            result = _validate_prepared_result(
-                prepared,
+            result, queued_updates, prepared = _validate_routing_decision(
+                decision,
                 from_phase=from_phase,
                 to_phase=to_phase,
             )
@@ -378,101 +486,198 @@ class SquadStateStore:
                 validator="prepared_result",
             ) from exc
 
-        logger.debug(
-            "squad advance %s → %s verdict=%s run_id=%s",
-            from_phase,
-            to_phase,
-            result["verdict"],
-            state.get("run_id", "?"),
-        )
-        completed_at = datetime.now(timezone.utc).isoformat()
-        next_state["phase"] = to_phase
-        next_state["last_dispatch"] = {
-            "phase_id": from_phase,
-            "verdict": result["verdict"],
-            "completed_at": completed_at,
-            "controller_contract": prepared.controller_contract_name,
-            "controller_contract_sha256": prepared.controller_contract_sha256,
-            "controller_normalized": bool(prepared.normalized_paths),
-            "conditional_skip": conditional_skip,
-        }
-        if manual_phase_run:
-            next_state["last_dispatch"]["manual_phase_run"] = True
-            manual_runs = next_state.get("manual_phase_runs")
-            if not isinstance(manual_runs, list):
-                manual_runs = []
-            else:
-                manual_runs = list(manual_runs)
-            manual_runs.append(
-                {
-                    "phase_id": from_phase,
-                    "next_phase": to_phase,
-                    "verdict": result["verdict"],
-                    "completed_at": completed_at,
-                }
-            )
-            next_state["manual_phase_runs"] = manual_runs
-        completed = next_state.get("completed_phases")
-        if not isinstance(completed, list):
-            completed = []
-        else:
-            completed = list(completed)
-        if from_phase not in completed:
-            completed.append(from_phase)
-        next_state["completed_phases"] = completed
-        identity_is_bootstrapped = bool(next_state.get("feature_branch"))
-        try:
-            for key, value in result["state_updates"].items():
-                if identity_is_bootstrapped and key in PHASE_A_IDENTITY_KEYS:
-                    if next_state.get(key) != value:
-                        logger.warning(
-                            "Ignoring agent attempt to change controller-owned "
-                            "Phase A identity %s: %r -> %r (run_id=%s)",
-                            key,
-                            next_state.get(key),
-                            value,
-                            next_state.get("run_id", "?"),
-                        )
-                    continue
-                if key == "status":
-                    self._transition_status(next_state, value)
-                else:
-                    next_state[key] = value
-        except Exception as exc:
-            raise StateAdvanceError(
-                "prepared state updates could not be applied",
-                json_path="$.state_updates",
-                validator="state_advance",
-            ) from exc
-        if increment_iteration and "iteration" not in result["state_updates"]:
-            try:
-                next_state["iteration"] = int(
-                    next_state.get("iteration") or 0
-                ) + 1
-            except (TypeError, ValueError) as exc:
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            revision = state.get("state_revision", 0)
+            if state.get("phase") != from_phase:
                 raise StateAdvanceError(
-                    "workflow iteration is not an integer",
-                    json_path="$.iteration",
-                    validator="type",
-                ) from exc
-        next_state.pop("controller_contract_error", None)
+                    "persisted phase changed before state advance",
+                    json_path="$.phase",
+                    validator="stale_state",
+                )
+            if (
+                type(revision) is not int
+                or revision != decision.expected_state_revision
+            ):
+                raise StateAdvanceError(
+                    "persisted state revision changed before state advance",
+                    json_path="$.state_revision",
+                    validator="stale_state",
+                )
+            if (
+                _last_dispatch_sha256(state)
+                != decision.expected_previous_dispatch_sha256
+            ):
+                raise StateAdvanceError(
+                    "persisted dispatch identity changed before state advance",
+                    json_path="$.last_dispatch",
+                    validator="stale_state",
+                )
 
-        try:
-            self.save(next_state)
-        except Exception as exc:
-            raise StateAdvanceError(
-                "atomic state save failed",
-                json_path="$.state",
-                validator="save",
-            ) from exc
+            next_state = deepcopy(state)
+            logger.debug(
+                "squad advance %s → %s verdict=%s run_id=%s",
+                from_phase,
+                to_phase,
+                result["verdict"],
+                state.get("run_id", "?"),
+            )
+            completed_at = datetime.now(timezone.utc).isoformat()
+            dispatch_id = secrets.token_hex(16)
+            committed_revision = revision + 1
+            next_state["phase"] = to_phase
+            next_state["last_dispatch"] = {
+                "dispatch_id": dispatch_id,
+                "phase_id": from_phase,
+                "next_phase": to_phase,
+                "verdict": result["verdict"],
+                "completed_at": completed_at,
+                "state_revision": committed_revision,
+                "previous_dispatch_sha256": (
+                    decision.expected_previous_dispatch_sha256
+                ),
+                "preparation_sha256": prepared.preparation_sha256,
+                "routing_decision_sha256": decision.routing_sha256,
+                "routing_source": decision.source,
+                "transition_index": decision.transition_index,
+                "judgment_payload_sha256": list(
+                    decision.judgment_payload_sha256
+                ),
+                "controller_contract": prepared.controller_contract_name,
+                "controller_contract_sha256": (
+                    prepared.controller_contract_sha256
+                ),
+                "controller_normalized": bool(prepared.normalized_paths),
+                "controller_normalized_paths": list(
+                    prepared.normalized_paths
+                ),
+                "conditional_skip": decision.conditional_skip,
+                "record_completion": decision.record_completion,
+            }
+            if decision.manual_phase_run:
+                next_state["last_dispatch"]["manual_phase_run"] = True
+                manual_runs = next_state.get("manual_phase_runs")
+                if not isinstance(manual_runs, list):
+                    manual_runs = []
+                else:
+                    manual_runs = list(manual_runs)
+                manual_runs.append(
+                    {
+                        "phase_id": from_phase,
+                        "next_phase": to_phase,
+                        "verdict": result["verdict"],
+                        "completed_at": completed_at,
+                    }
+                )
+                next_state["manual_phase_runs"] = manual_runs
+            if decision.record_completion:
+                completed = next_state.get("completed_phases")
+                if not isinstance(completed, list):
+                    completed = []
+                else:
+                    completed = list(completed)
+                if from_phase not in completed:
+                    completed.append(from_phase)
+                next_state["completed_phases"] = completed
+            for key in prepared.state_removals:
+                next_state.pop(key, None)
+            identity_is_bootstrapped = bool(
+                next_state.get("feature_branch")
+            )
+            combined_updates = {
+                **result["state_updates"],
+                **queued_updates,
+            }
+            try:
+                for key, value in combined_updates.items():
+                    if (
+                        identity_is_bootstrapped
+                        and key in PHASE_A_IDENTITY_KEYS
+                    ):
+                        if next_state.get(key) != value:
+                            logger.warning(
+                                "Ignoring agent attempt to change "
+                                "controller-owned Phase A identity %s: "
+                                "%r -> %r (run_id=%s)",
+                                key,
+                                next_state.get(key),
+                                value,
+                                next_state.get("run_id", "?"),
+                            )
+                        continue
+                    if key == "status":
+                        self._transition_status(next_state, value)
+                    else:
+                        next_state[key] = value
+                for key, value in prepared.control_updates.items():
+                    if key == "status":
+                        self._transition_status(next_state, value)
+                    else:
+                        next_state[key] = value
+            except Exception as exc:
+                raise StateAdvanceError(
+                    "prepared state updates could not be applied",
+                    json_path="$.state_updates",
+                    validator="state_advance",
+                ) from exc
+            if (
+                decision.increment_iteration
+                and "iteration" not in combined_updates
+            ):
+                try:
+                    next_state["iteration"] = int(
+                        next_state.get("iteration") or 0
+                    ) + 1
+                except (TypeError, ValueError) as exc:
+                    raise StateAdvanceError(
+                        "workflow iteration is not an integer",
+                        json_path="$.iteration",
+                        validator="type",
+                    ) from exc
+            next_state.pop("controller_contract_error", None)
+
+            try:
+                saved_state = self._save_unlocked(next_state)
+            except Exception as exc:
+                raise StateAdvanceError(
+                    "atomic state save failed",
+                    json_path="$.state",
+                    validator="save",
+                ) from exc
         return AdvanceReceipt(
             from_phase=from_phase,
             to_phase=to_phase,
             completed_at=completed_at,
             controller_contract=prepared.controller_contract_name,
             controller_contract_sha256=prepared.controller_contract_sha256,
-            conditional_skip=conditional_skip,
+            conditional_skip=decision.conditional_skip,
+            dispatch_id=dispatch_id,
+            state_revision=saved_state["state_revision"],
+            routing_decision_sha256=decision.routing_sha256,
         )
+
+    def merge_advance_failure_diagnostic(
+        self,
+        *,
+        from_phase: str,
+        expected_previous_dispatch_sha256: str | None,
+        updates: dict[str, Any],
+    ) -> bool:
+        """Merge a failure only if no phase/dispatch publication won the race."""
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            if state.get("phase") != from_phase:
+                return False
+            if (
+                expected_previous_dispatch_sha256 is not None
+                and _last_dispatch_sha256(state)
+                != expected_previous_dispatch_sha256
+            ):
+                return False
+            next_state = deepcopy(state)
+            next_state.update(deepcopy(updates))
+            self._save_unlocked(next_state)
+            return True
 
     def set_blocked(self, reason: str) -> None:
         state = self.load()

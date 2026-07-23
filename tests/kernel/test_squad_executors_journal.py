@@ -10,7 +10,7 @@ import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
@@ -27,6 +27,7 @@ from harness.squad_executors import (
 )
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
+from harness.spec_lexicon_gate import SpecLexiconGateResult
 from harness.tasks_lexicon_gate import TasksLexiconGateResult
 
 
@@ -358,7 +359,7 @@ def test_judgment_dispatch_continues_id_sequence_after_executor_writes(tmp_path)
     assert entries[1]["id"] == 2
 
 
-def test_commander_judgment_quarantines_invented_reporting_state(tmp_path):
+def test_commander_judgment_canonicalization_is_read_only(tmp_path):
     ctrl, _provider = _squad_controller(tmp_path)
     result = SquadAgentResult(
         exit_code=0,
@@ -375,12 +376,13 @@ def test_commander_judgment_quarantines_invented_reporting_state(tmp_path):
         timed_out=False,
     )
 
-    applied = ctrl._apply_judgment_state_updates(result, "phase1-discover")
-    ctrl._write_journal_entries(result, "phase1-discover")
+    before = ctrl._state_store.load()
+    canonical = ctrl._canonicalize_judgment_result(result)
+    ctrl._write_journal_entries(canonical, "phase1-discover")
 
     state = ctrl._state_store.load()
-    assert applied is True
-    assert state["next_phase"] == "phase1-discover"
+    assert state == before
+    assert canonical.state_updates == {"next_phase": "phase1-discover"}
     assert "total_tasks" not in state
     entries = _read_journal(tmp_path, squad_dir=tmp_path / "squad" / "run-test")
     assert entries[0]["type"] == "state_contract_warning"
@@ -2163,6 +2165,61 @@ def test_deterministic_tasks_lexicon_executor_dispatches_provider_free_service(
     assert observed["previous_attempts"] == 1
     assert observed["workflow_iteration"] == 2
     assert observed["max_workflow_iterations"] == 5
+
+
+def test_deterministic_spec_lexicon_executor_is_read_only_before_advance(
+    tmp_path,
+    monkeypatch,
+):
+    squad_dir = tmp_path / "runs" / "run-test"
+    store = SquadStateStore(squad_dir)
+    store.initialize("run-test", "brownfield", "demo", 0, "phase1-lexicon")
+    state = store.load()
+    state.update(
+        {
+            "lexicon_warning_waiver": True,
+            "lexicon_pass": True,
+            "lexicon_findings": 0,
+            "lexicon_report": "stale-report.json",
+        }
+    )
+    store.save(state)
+    monkeypatch.setattr(
+        "harness.squad_executors.run_spec_lexicon_gate",
+        lambda **_kwargs: SpecLexiconGateResult(
+            evaluation="pending",
+            passed=None,
+            attempts=0,
+            detail="disabled",
+        ),
+    )
+    monkeypatch.setattr(
+        "harness.config.get_full_resolved_config",
+        lambda *_args, **_kwargs: {"lexicon_gate": {"enabled": False}},
+    )
+    executor = DeterministicLexiconExecutor(
+        MagicMock(spec=PhaseGraph),
+        tmp_path / "extension",
+        tmp_path,
+        squad_dir,
+    )
+    node = PhaseNode(
+        id="phase1-lexicon",
+        type="deterministic_lexicon",
+        lexicon_artifact="spec",
+        allowed_state_updates=[],
+    )
+    before = store.load()
+
+    with patch.object(store, "save", wraps=store.save) as save:
+        result = executor.execute(node, store)
+
+    assert result.state_updates == {
+        "lexicon_evaluation": "pending",
+        "lexicon_attempts": 0,
+    }
+    assert save.call_count == 0
+    assert store.load() == before
 
 
 def test_deterministic_lexicon_executor_blocks_unsupported_artifact(tmp_path):

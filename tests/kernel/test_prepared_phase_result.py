@@ -13,7 +13,14 @@ from harness.controller_state_contracts import (
     load_controller_state_contracts,
 )
 from harness.phase_graph import PhaseNode
-from harness.prepared_phase_result import PreparedPhaseResult, prepare_phase_result
+from harness.prepared_phase_result import (
+    PreparedPhaseResult,
+    PreparedPhaseResultAttestationError,
+    PreparedRoutingDecision,
+    prepare_phase_result,
+    prepare_routing_decision,
+    verify_prepared_routing_decision_attestation,
+)
 from harness.squad_provider import SquadAgentResult
 
 
@@ -49,6 +56,11 @@ class _ExplodingRepr:
         return self
 
     def __repr__(self):
+        raise RuntimeError(_RAW_ATTESTATION_SECRET)
+
+
+class _ExplodingDeepcopy:
+    def __deepcopy__(self, _memo):
         raise RuntimeError(_RAW_ATTESTATION_SECRET)
 
 
@@ -257,6 +269,45 @@ def test_controller_owned_raw_updates_join_and_normalize_controller_bundle(
     )
 
 
+def test_prepare_bounds_controller_depth_before_any_recursive_copy(
+    contract: CompiledControllerStateContract,
+) -> None:
+    value: object = "leaf"
+    for _ in range(1_200):
+        value = {"nested": value}
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            _node(contract),
+            _result({"evidence": value}),
+            controller_updates={},
+            controller_owns_result_updates=True,
+        )
+
+    assert raised.value.contract == "normalization"
+    assert raised.value.validator == "normalization_limit"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+
+
+def test_prepare_rejects_copy_protocol_before_invoking_it(
+    contract: CompiledControllerStateContract,
+) -> None:
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            _node(contract),
+            _result({"evidence": _ExplodingDeepcopy()}),
+            controller_updates={},
+            controller_owns_result_updates=True,
+        )
+
+    assert str(raised.value) == "unsupported controller value type"
+    assert raised.value.validator == "type"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert _RAW_ATTESTATION_SECRET not in repr(raised.value)
+
+
 def test_controller_owned_result_rejects_duplicate_enrichment_key(
     contract: CompiledControllerStateContract,
 ) -> None:
@@ -390,7 +441,7 @@ def test_invalid_base_result_is_reported_as_contract_violation() -> None:
     assert raised.value.validator == "echelon_result"
 
 
-def test_prepare_reports_unattestable_provider_cycle_as_contract_violation() -> None:
+def test_prepare_rejects_provider_cycle_before_recursive_copy() -> None:
     node = PhaseNode(
         id="provider",
         type="agent",
@@ -407,7 +458,7 @@ def test_prepare_reports_unattestable_provider_cycle_as_contract_violation() -> 
         )
 
     assert raised.value.contract == "preparation"
-    assert raised.value.validator == "attestation"
+    assert raised.value.validator == "cycle"
 
 
 @pytest.mark.parametrize(
@@ -415,7 +466,7 @@ def test_prepare_reports_unattestable_provider_cycle_as_contract_violation() -> 
     [_ExplodingPath, _ExplodingMapping, _ExplodingRepr],
     ids=["pathlike", "mapping-iteration", "repr"],
 )
-def test_prepare_redacts_attestation_protocol_exceptions(
+def test_prepare_rejects_protocol_objects_before_attestation(
     probe_factory,
 ) -> None:
     node = PhaseNode(id="provider", type="agent", allowed_state_updates=[])
@@ -426,10 +477,10 @@ def test_prepare_redacts_attestation_protocol_exceptions(
     with pytest.raises(ControllerStateContractViolation) as raised:
         prepare_phase_result(node, result, controller_updates={})
 
-    assert str(raised.value) == "prepared result attestation failed"
+    assert str(raised.value) == "untrusted result detachment failed"
     assert raised.value.contract == "preparation"
-    assert raised.value.json_path == "$.echelon_result"
-    assert raised.value.validator == "attestation"
+    assert raised.value.json_path == "$.echelon_result.attestation_probe"
+    assert raised.value.validator == "detachment"
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
     diagnostic = {
@@ -594,3 +645,91 @@ def test_prepared_result_metadata_is_frozen(
     with pytest.raises(FrozenInstanceError):
         prepared.routing_override = "other"  # type: ignore[misc]
     assert isinstance(prepared, PreparedPhaseResult)
+
+
+def test_routing_decision_seals_transition_identity_and_judgment_updates() -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+    queued = {"iteration": 2}
+    judgment = {
+        "verdict": "DONE",
+        "state_updates": {"iteration": 2},
+    }
+
+    decision = prepare_routing_decision(
+        prepared,
+        from_phase="provider",
+        to_phase="next",
+        expected_state_revision=7,
+        expected_previous_dispatch_sha256="0" * 64,
+        queued_state_updates=queued,
+        judgment_payloads=[judgment],
+        source="commander",
+        transition_index=1,
+        increment_iteration=True,
+    )
+    queued["iteration"] = 99
+    judgment["state_updates"]["iteration"] = 99
+
+    verified = verify_prepared_routing_decision_attestation(
+        decision,
+        from_phase="provider",
+        to_phase="next",
+    )
+    assert isinstance(decision, PreparedRoutingDecision)
+    assert decision.queued_state_updates == {"iteration": 2}
+    assert verified.queued_state_updates == {"iteration": 2}
+    assert decision.expected_state_revision == 7
+    assert len(decision.judgment_payload_sha256) == 1
+    assert decision.increment_iteration is True
+
+
+def test_routing_decision_tampering_breaks_attestation() -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+    decision = prepare_routing_decision(
+        prepared,
+        from_phase="provider",
+        to_phase="next",
+        expected_state_revision=1,
+        expected_previous_dispatch_sha256="0" * 64,
+    )
+
+    object.__setattr__(decision, "to_phase", "forged")
+
+    with pytest.raises(
+        PreparedPhaseResultAttestationError,
+        match="routing decision attestation mismatch",
+    ):
+        verify_prepared_routing_decision_attestation(
+            decision,
+            from_phase="provider",
+            to_phase="forged",
+        )
+
+
+def test_routing_decision_rejects_untrusted_judgment_protocols() -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_routing_decision(
+            prepared,
+            from_phase="provider",
+            to_phase="next",
+            expected_state_revision=1,
+            expected_previous_dispatch_sha256="0" * 64,
+            judgment_payloads=[{"probe": _ExplodingDeepcopy()}],
+        )
+
+    assert raised.value.validator == "detachment"
+    assert _RAW_ATTESTATION_SECRET not in str(raised.value)

@@ -55,7 +55,7 @@ class ControllerContractError:
     message: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class CompiledControllerStateContract:
     name: str
     schema: Mapping[str, Any]
