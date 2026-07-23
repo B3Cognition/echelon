@@ -4,6 +4,7 @@ The most important test: test_consensus_cannot_be_skipped.
 A mock agent always returns DONE. SquadController must still dispatch
 WHY3 + ASSESS2 (stage 1) before PLAN2 (stage 2) and before checkpoint-plan.
 """
+from collections.abc import Mapping
 import sys
 import json
 import hashlib
@@ -41,6 +42,41 @@ from echelon.telemetry.spec_adapter import analyze_spec_run
 
 DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
 EXT_YML = EXT_ROOT / "extension/extension.yml"
+
+
+_RAW_ATTESTATION_SECRET = "raw-attestation-secret"
+
+
+class _ExplodingPath:
+    def __deepcopy__(self, _memo):
+        return self
+
+    def __fspath__(self):
+        raise RuntimeError(_RAW_ATTESTATION_SECRET)
+
+
+class _ExplodingMapping(Mapping):
+    def __deepcopy__(self, _memo):
+        return self
+
+    def __getitem__(self, _key):
+        raise KeyError
+
+    def __iter__(self):
+        raise RuntimeError(_RAW_ATTESTATION_SECRET)
+
+    def __len__(self):
+        return 1
+
+
+class _ExplodingRepr:
+    __slots__ = ()
+
+    def __deepcopy__(self, _memo):
+        return self
+
+    def __repr__(self):
+        raise RuntimeError(_RAW_ATTESTATION_SECRET)
 
 
 def _mock_provider(verdict: str = "DONE") -> MagicMock:
@@ -2225,9 +2261,26 @@ Modified principles:
 
         assert _constitution_artifact_is_real(tmp_path) is False
 
-    def test_greenfield_modeler_phase_is_skipped_before_dispatch(self, tmp_path):
+    def test_greenfield_modeler_phase_is_skipped_before_dispatch(
+        self,
+        tmp_path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
+        checkpoint_dispatches: list[dict] = []
+
+        def observe_checkpoint(*_args):
+            checkpoint_dispatches.append(
+                deepcopy(store.load()["last_dispatch"])
+            )
+            return True
+
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            observe_checkpoint,
+        )
 
         result = ctrl.run_single_phase("phase1-modeler", "msg", "banzai")
         state = store.load()
@@ -2235,7 +2288,10 @@ Modified principles:
         assert result.status == "running"
         assert state["phase"] == "phase1-tracker"
         assert state["last_dispatch"]["phase_id"] == "phase1-modeler"
+        assert state["last_dispatch"]["conditional_skip"] is True
+        assert state["last_dispatch"]["manual_phase_run"] is True
         assert "phase1-modeler" in state["completed_phases"]
+        assert checkpoint_dispatches == [state["last_dispatch"]]
         provider.exec_agent.assert_not_called()
 
     def test_completed_constitution_with_missing_artifact_blocks(self, tmp_path):
@@ -3051,6 +3107,56 @@ class TestFailClosedControllerPreparation:
         assert "rejected-value-one" not in serialized
         assert "rejected-value-two" not in serialized
 
+    @pytest.mark.parametrize(
+        "probe_factory",
+        [_ExplodingPath, _ExplodingMapping, _ExplodingRepr],
+        ids=["pathlike", "mapping-iteration", "repr"],
+    )
+    def test_attestation_protocol_failure_blocks_before_success_effects(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        probe_factory,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        self._patch_run_guards(ctrl, monkeypatch)
+        executor = MagicMock()
+        malicious = self._tasks_result(True)
+        assert malicious.echelon_result is not None
+        malicious.echelon_result["attestation_probe"] = probe_factory()
+        executor.execute.return_value = malicious
+        ctrl._executors["deterministic_lexicon"] = executor
+        calls = self._patch_success_steps(ctrl, store, monkeypatch)
+
+        result = ctrl.run_single_phase(
+            "phase3-tasks-lexicon",
+            "validate",
+            "banzai",
+        )
+
+        assert result.status == "blocked"
+        assert result.phase == "phase3-tasks-lexicon"
+        assert calls == []
+        blocked = store.load()
+        assert blocked["completed_phases"] == []
+        assert blocked["last_dispatch"] is None
+        assert blocked["controller_contract_error"] == {
+            "phase_id": "phase3-tasks-lexicon",
+            "contract": "tasks_lexicon",
+            "contract_sha256": (
+                ctrl._graph.get(
+                    "phase3-tasks-lexicon"
+                ).controller_state_contract.sha256
+            ),
+            "json_path": "$.echelon_result",
+            "validator": "attestation",
+            "message": (
+                "controller result preparation failed at "
+                "$.echelon_result (attestation)"
+            ),
+        }
+        assert _RAW_ATTESTATION_SECRET not in json.dumps(blocked)
+
     def test_fresh_normal_mixed_governance_blocks_before_all_success_steps(
         self,
         tmp_path: Path,
@@ -3518,6 +3624,7 @@ class TestFailClosedControllerPreparation:
                 receipt,
                 completed_at="2026-07-23T00:00:00+00:00",
             ),
+            lambda receipt: replace(receipt, conditional_skip=True),
         ],
         ids=[
             "from-phase",
@@ -3525,6 +3632,7 @@ class TestFailClosedControllerPreparation:
             "contract",
             "contract-digest",
             "completion-identity",
+            "conditional-skip",
         ],
     )
     def test_forged_typed_receipt_restores_pre_advance_state_and_blocks(
@@ -3575,6 +3683,55 @@ class TestFailClosedControllerPreparation:
         assert blocked["controller_contract_error"]["validator"] == "receipt"
         assert calls == []
 
+    @pytest.mark.parametrize(
+        "forge_skip_identity",
+        ["receipt", "persisted-marker"],
+    )
+    def test_conditional_skip_identity_forgery_blocks_before_success_effects(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        forge_skip_identity: str,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        original_advance = store.advance
+        calls: list[str] = []
+
+        def forge_conditional_skip(*args, **kwargs):
+            receipt = original_advance(*args, **kwargs)
+            if forge_skip_identity == "receipt":
+                return replace(receipt, conditional_skip=False)
+            state = store.load()
+            state["last_dispatch"].pop("conditional_skip", None)
+            store.save(state)
+            return receipt
+
+        monkeypatch.setattr(store, "advance", forge_conditional_skip)
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_declared_phase_timing_transition",
+            lambda *_: calls.append("timing"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            lambda *_: calls.append("checkpoint"),
+        )
+
+        result = ctrl.run_single_phase(
+            "phase1-modeler",
+            "msg",
+            "banzai",
+        )
+        blocked = store.load()
+
+        assert result.status == "blocked"
+        assert blocked["phase"] == "phase1-modeler"
+        assert blocked["completed_phases"] == []
+        assert blocked["last_dispatch"] is None
+        assert blocked["controller_contract_error"]["validator"] == "receipt"
+        assert calls == []
+
     def test_typed_receipt_without_persisted_dispatch_is_rejected(
         self,
         tmp_path: Path,
@@ -3604,6 +3761,7 @@ class TestFailClosedControllerPreparation:
                 controller_contract_sha256=(
                     prepared.controller_contract_sha256
                 ),
+                conditional_skip=False,
             ),
         )
 
@@ -3654,6 +3812,7 @@ class TestFailClosedControllerPreparation:
             completed_at=completed_at,
             controller_contract=prepared.controller_contract_name,
             controller_contract_sha256=prepared.controller_contract_sha256,
+            conditional_skip=False,
         )
         state = store.load()
         state["last_dispatch"] = {
@@ -3665,6 +3824,7 @@ class TestFailClosedControllerPreparation:
                 prepared.controller_contract_sha256
             ),
             "controller_normalized": bool(prepared.normalized_paths),
+            "conditional_skip": False,
         }
         store.save(state)
         prior_dispatch = deepcopy(store.load()["last_dispatch"])
@@ -3729,6 +3889,7 @@ class TestFailClosedControllerPreparation:
         assert calls == ["advance", "timing", "checkpoint"]
         assert result.phase == "phase3-understanding"
         assert store.load()["last_dispatch"]["manual_phase_run"] is True
+        assert store.load()["last_dispatch"]["conditional_skip"] is False
 
     def test_valid_blocked_understanding_is_prepared_before_executor_block(
         self,

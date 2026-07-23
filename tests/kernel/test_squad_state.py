@@ -411,6 +411,46 @@ class TestSquadStateStore:
 
         assert store.load()["iteration"] == 7
 
+    def test_conditional_skip_identity_is_committed_with_receipt(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase1-modeler")
+
+        with patch.object(store, "save", wraps=store.save) as save:
+            receipt = store.advance(
+                "phase1-modeler",
+                "phase1-tracker",
+                _result("DONE", phase_id="phase1-modeler"),
+                conditional_skip=True,
+            )
+
+        state = store.load()
+        assert save.call_count == 1
+        assert state["last_dispatch"]["conditional_skip"] is True
+        assert "manual_phase_run" not in state["last_dispatch"]
+        assert receipt.conditional_skip is True
+
+    def test_conditional_skip_identity_requires_a_boolean(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase1-modeler")
+        before = store.load()
+
+        with patch.object(store, "save", wraps=store.save) as save:
+            with pytest.raises(StateAdvanceError) as raised:
+                store.advance(
+                    "phase1-modeler",
+                    "phase1-tracker",
+                    _result("DONE", phase_id="phase1-modeler"),
+                    conditional_skip=1,
+                )
+
+        assert raised.value.validator == "type"
+        assert raised.value.json_path == "$.conditional_skip"
+        assert save.call_count == 0
+        assert store.load() == before
+
     def test_self_loop_manual_advance_records_one_successful_receipt(self, tmp_path):
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "phase2-decide")
@@ -426,6 +466,8 @@ class TestSquadStateStore:
         assert state["phase"] == "phase2-decide"
         assert state["completed_phases"] == ["phase2-decide"]
         assert state["last_dispatch"]["manual_phase_run"] is True
+        assert state["last_dispatch"]["conditional_skip"] is False
+        assert receipt.conditional_skip is False
         assert state["manual_phase_runs"] == [
             {
                 "phase_id": "phase2-decide",

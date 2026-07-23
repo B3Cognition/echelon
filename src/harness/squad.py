@@ -1491,6 +1491,7 @@ class SquadController:
                 prepared,
                 increment_iteration=increment_iteration,
                 manual_phase_run=manual_phase_run,
+                conditional_skip=True,
             )
             if receipt is None:
                 return True
@@ -2871,6 +2872,7 @@ class SquadController:
         *,
         increment_iteration: bool = False,
         manual_phase_run: bool = False,
+        conditional_skip: bool = False,
     ) -> AdvanceReceipt | None:
         """Commit one prepared result or persist a separate redacted failure."""
         before_state = deepcopy(self._state_store.load())
@@ -2881,6 +2883,7 @@ class SquadController:
                 prepared,
                 increment_iteration=increment_iteration,
                 manual_phase_run=manual_phase_run,
+                conditional_skip=conditional_skip,
             )
             if not isinstance(receipt, AdvanceReceipt):
                 raise StateAdvanceError(
@@ -2895,6 +2898,7 @@ class SquadController:
                 prepared=prepared,
                 before_state=before_state,
                 manual_phase_run=manual_phase_run,
+                conditional_skip=conditional_skip,
             )
             return receipt
         except StateAdvanceError as exc:
@@ -2915,6 +2919,7 @@ class SquadController:
         prepared: PreparedPhaseResult,
         before_state: dict,
         manual_phase_run: bool,
+        conditional_skip: bool,
     ) -> None:
         """Prove that a typed receipt identifies the requested persisted commit."""
 
@@ -2968,6 +2973,11 @@ class SquadController:
                 "state advance receipt has no completion identity",
                 "$.advance_receipt.completed_at",
             )
+        if receipt.conditional_skip is not conditional_skip:
+            reject(
+                "state advance receipt has the wrong conditional-skip identity",
+                "$.advance_receipt.conditional_skip",
+            )
         if persisted.get("phase") != to_phase:
             reject(
                 "persisted state does not match receipt destination",
@@ -2989,6 +2999,17 @@ class SquadController:
                     "persisted dispatch does not match advance receipt",
                     f"$.last_dispatch.{key}",
                 )
+        persisted_conditional_skip = last_dispatch.get(
+            "conditional_skip"
+        )
+        if (
+            type(persisted_conditional_skip) is not bool
+            or persisted_conditional_skip is not conditional_skip
+        ):
+            reject(
+                "persisted dispatch has the wrong conditional-skip identity",
+                "$.last_dispatch.conditional_skip",
+            )
         if bool(last_dispatch.get("manual_phase_run")) != manual_phase_run:
             reject(
                 "persisted dispatch has the wrong manual-run identity",

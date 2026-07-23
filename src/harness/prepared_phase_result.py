@@ -568,13 +568,15 @@ def prepare_phase_result(
             routing_override=routing_override,
             controller_owns_result_updates=controller_owns_result_updates,
         )
-    except PreparedPhaseResultAttestationError as exc:
+    except ControllerStateContractViolation:
+        raise
+    except Exception:
         raise ControllerStateContractViolation(
             "prepared result attestation failed",
             contract=_contract_label(contract),
             json_path="$.echelon_result",
             validator="attestation",
-        ) from exc
+        ) from None
     return PreparedPhaseResult(
         _result=sealed_result,
         provider_update_keys=provider_update_keys,

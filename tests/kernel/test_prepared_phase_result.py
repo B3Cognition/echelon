@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
 from pathlib import Path, PurePath
 
 import pytest
 
+import harness.prepared_phase_result as prepared_phase_result_module
 from harness.controller_state_contracts import (
     CompiledControllerStateContract,
     ControllerStateContractViolation,
@@ -13,6 +15,41 @@ from harness.controller_state_contracts import (
 from harness.phase_graph import PhaseNode
 from harness.prepared_phase_result import PreparedPhaseResult, prepare_phase_result
 from harness.squad_provider import SquadAgentResult
+
+
+_RAW_ATTESTATION_SECRET = "raw-attestation-secret"
+
+
+class _ExplodingPath:
+    def __deepcopy__(self, _memo):
+        return self
+
+    def __fspath__(self):
+        raise RuntimeError(_RAW_ATTESTATION_SECRET)
+
+
+class _ExplodingMapping(Mapping):
+    def __deepcopy__(self, _memo):
+        return self
+
+    def __getitem__(self, _key):
+        raise KeyError
+
+    def __iter__(self):
+        raise RuntimeError(_RAW_ATTESTATION_SECRET)
+
+    def __len__(self):
+        return 1
+
+
+class _ExplodingRepr:
+    __slots__ = ()
+
+    def __deepcopy__(self, _memo):
+        return self
+
+    def __repr__(self):
+        raise RuntimeError(_RAW_ATTESTATION_SECRET)
 
 
 def _result(
@@ -349,6 +386,85 @@ def test_prepare_reports_unattestable_provider_cycle_as_contract_violation() -> 
 
     assert raised.value.contract == "preparation"
     assert raised.value.validator == "attestation"
+
+
+@pytest.mark.parametrize(
+    "probe_factory",
+    [_ExplodingPath, _ExplodingMapping, _ExplodingRepr],
+    ids=["pathlike", "mapping-iteration", "repr"],
+)
+def test_prepare_redacts_attestation_protocol_exceptions(
+    probe_factory,
+) -> None:
+    node = PhaseNode(id="provider", type="agent", allowed_state_updates=[])
+    result = _result({})
+    assert result.echelon_result is not None
+    result.echelon_result["attestation_probe"] = probe_factory()
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(node, result, controller_updates={})
+
+    assert str(raised.value) == "prepared result attestation failed"
+    assert raised.value.contract == "preparation"
+    assert raised.value.json_path == "$.echelon_result"
+    assert raised.value.validator == "attestation"
+    assert raised.value.__cause__ is None
+    diagnostic = {
+        "message": str(raised.value),
+        "contract": raised.value.contract,
+        "json_path": raised.value.json_path,
+        "validator": raised.value.validator,
+    }
+    assert _RAW_ATTESTATION_SECRET not in repr(diagnostic)
+
+
+def test_attestation_boundary_preserves_typed_contract_violation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    typed = ControllerStateContractViolation(
+        "already redacted",
+        contract="typed",
+        json_path="$.typed",
+        validator="typed",
+    )
+
+    def reject(**_kwargs):
+        raise typed
+
+    monkeypatch.setattr(
+        prepared_phase_result_module,
+        "_create_preparation_attestation",
+        reject,
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+            _result({}),
+            controller_updates={},
+        )
+
+    assert raised.value is typed
+
+
+def test_attestation_boundary_does_not_catch_base_exception_controls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def interrupt(**_kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        prepared_phase_result_module,
+        "_create_preparation_attestation",
+        interrupt,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        prepare_phase_result(
+            PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+            _result({}),
+            controller_updates={},
+        )
 
 
 @pytest.mark.parametrize("routing_override", ["", "  ", 42])

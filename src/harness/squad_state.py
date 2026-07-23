@@ -67,6 +67,7 @@ class AdvanceReceipt:
     completed_at: str
     controller_contract: str | None
     controller_contract_sha256: str | None
+    conditional_skip: bool
 
 
 def _prepared_result_error(
@@ -353,7 +354,14 @@ class SquadStateStore:
         *,
         increment_iteration: bool = False,
         manual_phase_run: bool = False,
+        conditional_skip: bool = False,
     ) -> AdvanceReceipt:
+        if type(conditional_skip) is not bool:
+            raise StateAdvanceError(
+                "conditional skip identity must be a Boolean",
+                json_path="$.conditional_skip",
+                validator="type",
+            )
         state = self.load()
         next_state = deepcopy(state)
         try:
@@ -386,6 +394,7 @@ class SquadStateStore:
             "controller_contract": prepared.controller_contract_name,
             "controller_contract_sha256": prepared.controller_contract_sha256,
             "controller_normalized": bool(prepared.normalized_paths),
+            "conditional_skip": conditional_skip,
         }
         if manual_phase_run:
             next_state["last_dispatch"]["manual_phase_run"] = True
@@ -462,6 +471,7 @@ class SquadStateStore:
             completed_at=completed_at,
             controller_contract=prepared.controller_contract_name,
             controller_contract_sha256=prepared.controller_contract_sha256,
+            conditional_skip=conditional_skip,
         )
 
     def set_blocked(self, reason: str) -> None:
