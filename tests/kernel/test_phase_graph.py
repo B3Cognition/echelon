@@ -470,6 +470,21 @@ def test_shared_controller_contracts_are_compiled_once() -> None:
         "blocked_reason",
     }
 
+    understanding_first = graph.get(
+        "phase1-understanding"
+    ).controller_state_contract
+    understanding_second = graph.get(
+        "phase3-understanding"
+    ).controller_state_contract
+    assert understanding_first is understanding_second
+    assert understanding_first is graph.controller_contract("understanding")
+    assert understanding_first.name == "understanding"
+    assert understanding_first.state_update_keys == {
+        "quality_scores",
+        "understanding_evidence",
+        "blocked_reason",
+    }
+
 
 def test_production_contracts_own_exact_existing_controller_field_inventory() -> None:
     graph = PhaseGraph(DEFINITION, EXT_YML)

@@ -472,6 +472,33 @@ def test_workflow_validator_rejects_null_allowlist_for_controller_contract(
     )
 
 
+def test_workflow_validator_reports_malformed_top_level_allowlist_with_contract(
+    tmp_path: Path,
+) -> None:
+    registry = _write_controller_registry(tmp_path)
+    definition = _write_definition(
+        tmp_path,
+        [{
+            "id": "start",
+            "type": "agent",
+            "allowed_state_updates": 1,
+            "controller_state_contract": "sample",
+            "transitions": [{"to": "done", "condition": "always"}],
+        }, {"id": "done", "type": "terminal"}],
+        controller_state_contracts_file=registry.name,
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert any(
+        "allowed_state_updates must be a list" in issue.message
+        for issue in report.issues
+    )
+
+
 def test_workflow_validator_rejects_controller_provider_overlap(
     tmp_path: Path,
 ) -> None:

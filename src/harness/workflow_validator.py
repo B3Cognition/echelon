@@ -620,7 +620,12 @@ def _validate_transition(
 
 
 def _phase_condition_fields(phase: PhaseNode) -> set[str]:
-    fields = set(str(key) for key in phase.allowed_state_updates or [])
+    allowed = phase.allowed_state_updates
+    fields = (
+        set(str(key) for key in allowed)
+        if isinstance(allowed, list)
+        else set()
+    )
     fields.update(phase.controller_state_update_keys)
     fields.update(_output_fields(phase.outputs or []))
     fields.update(_nested_agent_output_fields(phase))
