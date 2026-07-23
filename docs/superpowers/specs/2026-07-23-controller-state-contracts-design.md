@@ -297,6 +297,15 @@ factory. It contains:
 - normalized field paths;
 - any validated controller routing directive.
 
+The factory also attaches an internal, process-local attestation over the
+canonical payload and its preparation provenance, including phase identity,
+ownership sets, contract identity, normalized paths, and routing override.
+State advancement verifies that attestation before persistence. Ordinary
+attestation-protocol failures during preparation become one generic,
+value-redacted `ControllerStateContractViolation` with no chained cause or
+context; already typed contract violations and process-control exceptions
+retain their existing semantics.
+
 `_evaluate_transitions()` accepts `PreparedPhaseResult`, not raw
 `SquadAgentResult`. State advancement also accepts the prepared form. This
 forces production and test call sites through the same boundary.
@@ -372,6 +381,10 @@ types.
 
 - evaluation is one of `pending`, `passed`, or `failed`.
 - `pending` does not claim a pass or certified report.
+- When the global gate or spec artifact subgate is disabled, the existing
+  unexecuted branch persists only `pending` evaluation and attempt count,
+  removes stale pass, findings, and report evidence, and routes onward using
+  the derived effective `lexicon_gate.spec_enabled` value.
 - `passed` requires pass true, zero findings, and a report.
 - `failed` requires pass false, at least one finding, and a report.
 - attempts and findings are non-negative.
@@ -412,6 +425,10 @@ It MUST:
 6. add completion history and contract receipt;
 7. perform the existing atomic file replacement;
 8. return an `AdvanceReceipt`.
+
+The controller accepts that receipt only after loading the newly persisted
+state and proving that `last_dispatch` is new and matches the requested phase
+advance, completion identity, prepared contract provenance, and receipt.
 
 It MUST NOT catch a validation error, mutate state to blocked, and return
 normally.
@@ -496,6 +513,12 @@ post-commit timing telemetry
         ↓
 phase checkpoint
 ```
+
+Every newly persisted dispatch and `AdvanceReceipt` carries an exact Boolean
+`conditional_skip` identity. `false` identifies an executed phase and `true`
+identifies the explicit condition-false skip path. This identity is verified
+independently from `manual_phase_run`: a manual invocation can execute normally
+or perform a conditional skip, so neither marker substitutes for the other.
 
 If state advance fails, checkpointing is not attempted. If checkpointing
 fails, existing checkpoint failure handling remains responsible for blocking

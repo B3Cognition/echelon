@@ -318,6 +318,28 @@ def test_blocked_result_is_prepared_and_controller_validated(
     assert prepared.normalized_paths == ("$.state_updates.blocked_reason",)
 
 
+def test_blocked_result_does_not_bypass_controller_schema_validation(
+    contract: CompiledControllerStateContract,
+) -> None:
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            _node(contract),
+            _result(
+                {
+                    "blocked_reason": "executor failed",
+                    "tasks_lexicon_pass": "yes",
+                },
+                verdict="BLOCKED",
+            ),
+            controller_updates={},
+            controller_owns_result_updates=True,
+        )
+
+    assert raised.value.contract == "sample"
+    assert raised.value.json_path == "$.state_updates.tasks_lexicon_pass"
+    assert raised.value.validator == "type"
+
+
 def test_blocked_result_does_not_bypass_mixed_node_ownership(
     contract: CompiledControllerStateContract,
 ) -> None:
