@@ -465,6 +465,36 @@ def test_recovered_route_success_work_requires_durable_marker_clearance(
     controller._refresh_run_context.assert_not_called()
 
 
+def test_recovered_route_success_does_not_repeat_phase_a_mining() -> None:
+    controller = object.__new__(SquadController)
+    controller._state_store = MagicMock()
+    controller._state_store.load.return_value = {}
+    controller._pending_judgment_results = {}
+    controller._graph = MagicMock()
+    controller._apply_declared_phase_timing_transition = MagicMock()
+    controller._checkpoint_successful_phase = MagicMock(return_value=True)
+    controller._refresh_run_context = MagicMock()
+    controller._mine_published_context_after_publication = MagicMock()
+    controller._phase_a_published_this_run = True
+    recovery_state = {
+        "status": "running",
+        "last_dispatch": {
+            "phase_id": "phase4-document",
+            "next_phase": "DONE",
+            "routing_decision_sha256": "c" * 64,
+        },
+    }
+
+    assert controller._complete_recovered_route_success(
+        recovery_state
+    ) is True
+    controller._mine_published_context_after_publication.assert_not_called()
+    controller._checkpoint_successful_phase.assert_called_once_with(
+        "phase4-document",
+        "DONE",
+    )
+
+
 def test_squad_terminal_phase4_checkpoint_includes_accepted_kb_targets(
     monkeypatch,
     tmp_path: Path,

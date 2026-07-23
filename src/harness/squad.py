@@ -801,9 +801,6 @@ class SquadController:
         routing_sha = str(
             last_dispatch.get("routing_decision_sha256") or ""
         )
-        if phase == "phase4-document":
-            self._phase_a_published_this_run = True
-            self._mine_published_context_after_publication()
         if resume_status == "done" or not phase or not next_phase:
             return True
         pending_judgments = self._pending_judgment_results.pop(
