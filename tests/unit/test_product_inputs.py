@@ -447,6 +447,61 @@ def test_controller_ignores_empty_exclusions_for_context_only_catalog_units(tmp_
     }]
 
 
+def test_discover_ignores_reference_traceability_updates(tmp_path: Path) -> None:
+    """Discovery may use references as evidence but cannot mutate the requirement ledger."""
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from harness.squad import SquadController
+    from harness.squad_provider import SquadAgentResult
+    from harness.squad_state import SquadStateStore
+
+    project = tmp_path / "workspace"
+    source = project / "sources" / "docs.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("https://api.example.test/openapi.json\n", encoding="utf-8")
+    run_dir = project / "runs" / "run-1"
+    resolution = resolve_product_inputs(
+        project,
+        run_dir,
+        [parse_input_declaration("reference:sources/docs.md")],
+    )
+    reference_id = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))["units"][0]["id"]
+    store = SquadStateStore(run_dir)
+    store.initialize(
+        "run-1",
+        "greenfield",
+        "demo",
+        0,
+        "phase1-discover",
+        product_inputs=resolution.state_payload(project),
+    )
+    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    result = SquadAgentResult(
+        exit_code=0,
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+        echelon_result={
+            "product_input_updates": [{
+                "input_unit_id": reference_id,
+                "disposition": "included",
+                "rationale": "Used as API documentation evidence during discovery.",
+                "spec_ids": [],
+                "task_ids": [],
+                "targets": [],
+            }],
+        },
+    )
+
+    assert controller._apply_product_input_updates(result, "phase1-discover") is None
+    ledger = json.loads(resolution.traceability_path.read_text(encoding="utf-8"))
+    assert ledger["requirements"] == []
+    assert ledger["references"] == [{
+        "input_unit_id": reference_id,
+        "state": "reviewed_unused",
+        "rationale": "Awaiting analysis.",
+    }]
+
+
 def test_plan_updates_reject_contextual_task_ids_without_mutating_ledger(tmp_path: Path) -> None:
     from echelon.product_inputs import (
         ProductInputError,

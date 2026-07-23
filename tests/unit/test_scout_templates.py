@@ -92,6 +92,7 @@ class TestScoutTemplates:
         assert "extension/templates/assumptions-template.md" in text
         assert "extension/templates/unknowns-template.md" in text
         assert "extension/templates/reference-architectures-template.md" in text
+        assert "Never return `product_input_updates` from DISCOVER." in text
 
     def test_workflow_definition_lists_discovery_outputs_without_placeholders(
         self,

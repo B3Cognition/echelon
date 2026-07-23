@@ -39,6 +39,7 @@ Use the Agent tool to dispatch a subagent with:
   <instructions>
   You are SCOUT. Read agents/exploration/scout.md for your complete protocol.
   Your mode is `{greenfield|brownfield}`. Produce all outputs in `${STAGING_DIR}/` using the provided templates. Return journal entries in `echelon_result.journal_entries` for every significant insight, assumption, or decision.
+  Product inputs are discovery evidence only in this phase. Never return `product_input_updates` from DISCOVER.
   </instructions>
   ```
 

@@ -1793,6 +1793,12 @@ class SquadController:
         """Validate and persist agent proposals through the controller-owned ledger."""
         payload = result.echelon_result or {}
         updates = payload.get("product_input_updates")
+        # DISCOVER consumes requirement and reference material as evidence, but
+        # it does not own specification or task traceability.  Ignore an
+        # over-eager agent's ledger proposal here so an informative IN-REF-* ID
+        # cannot be misclassified as a requirement and terminate the run.
+        if phase == "phase1-discover":
+            return None
         state = self._state_store.load()
         metadata = state.get("product_inputs")
         if not isinstance(metadata, dict) or not metadata:
