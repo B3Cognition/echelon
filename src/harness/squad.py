@@ -1681,6 +1681,70 @@ class SquadController:
         except FileNotFoundError:
             return None
 
+    def _read_project_regular_file(self, path: Path) -> bytes | None:
+        """Read an optional controller source without following symlinks."""
+        absolute = Path(os.path.abspath(path))
+        self._project_relative_target(absolute)
+        try:
+            resolved = absolute.resolve(strict=False)
+        except (OSError, RuntimeError) as exc:
+            raise OSError(
+                "controller publication source path cannot be resolved"
+            ) from exc
+        if resolved != absolute:
+            raise OSError(
+                "controller publication source has a symbolic-link ancestor"
+            )
+        metadata = self._lstat_or_none(absolute)
+        if metadata is None:
+            return None
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+        ):
+            raise OSError(
+                "controller publication source is not a regular file"
+            )
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(absolute, flags)
+        except OSError as exc:
+            raise OSError(
+                "controller publication source cannot be opened safely"
+            ) from exc
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or (opened.st_dev, opened.st_ino)
+                != (metadata.st_dev, metadata.st_ino)
+            ):
+                raise OSError(
+                    "controller publication source changed during validation"
+                )
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks)
+        finally:
+            os.close(descriptor)
+
+    @staticmethod
+    def _safe_run_id(value: object) -> str:
+        run_id = str(value or "unknown")
+        candidate = Path(run_id)
+        if (
+            candidate.is_absolute()
+            or candidate.name != run_id
+            or candidate.parts != (run_id,)
+            or run_id in {".", ".."}
+        ):
+            raise OSError("run ID is not a safe path component")
+        return run_id
+
     def _controller_tree_files(
         self,
         root: Path,
@@ -2455,34 +2519,33 @@ class SquadController:
         try:
             from echelon.kb_proposals import publish_kb_reports
 
+            run_id = self._safe_run_id(run_id)
+            run_dir = self._project_root / "runs" / run_id
+            expected_reports = (
+                (
+                    run_dir / "kb-apply-report.yaml",
+                    published_spec_dir / "kb/kb-apply-report.yaml",
+                ),
+                (
+                    run_dir / "kb-usage.yaml",
+                    published_spec_dir / "kb/kb-usage-summary.yaml",
+                ),
+            )
+            expected_contents = {
+                target: content
+                for source, target in expected_reports
+                if (content := self._read_project_regular_file(source))
+                is not None
+            }
             publish_kb_reports(self._project_root, run_id, published_spec_dir)
             if strict:
-                run_dir = self._project_root / "runs" / run_id
-                expected_reports = (
-                    (
-                        run_dir / "kb-apply-report.yaml",
-                        published_spec_dir / "kb/kb-apply-report.yaml",
-                    ),
-                    (
-                        run_dir / "kb-usage.yaml",
-                        published_spec_dir / "kb/kb-usage-summary.yaml",
-                    ),
-                )
-                for source, target in expected_reports:
-                    source_metadata = self._lstat_or_none(source)
-                    if source_metadata is None:
-                        continue
-                    if (
-                        stat.S_ISLNK(source_metadata.st_mode)
-                        or not stat.S_ISREG(source_metadata.st_mode)
-                    ):
-                        raise OSError("KB publication source is not a regular file")
+                for target, expected_content in expected_contents.items():
                     target_metadata = self._lstat_or_none(target)
                     if (
                         target_metadata is None
                         or stat.S_ISLNK(target_metadata.st_mode)
                         or not stat.S_ISREG(target_metadata.st_mode)
-                        or target.read_bytes() != source.read_bytes()
+                        or target.read_bytes() != expected_content
                     ):
                         raise OSError(
                             "KB publication did not produce its exact staged output"
@@ -2546,11 +2609,9 @@ class SquadController:
         """Copy the project constitution into the published spec build inputs."""
         source = self._project_root / ".specify" / "memory" / "constitution.md"
         target = published_spec_dir / "constitution.md"
-        if source.exists():
-            target.write_text(
-                source.read_text(encoding="utf-8", errors="replace"),
-                encoding="utf-8",
-            )
+        content = self._read_project_regular_file(source)
+        if content is not None:
+            target.write_bytes(content)
 
     def _refresh_published_context_metadata(
         self,

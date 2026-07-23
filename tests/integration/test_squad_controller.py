@@ -1047,6 +1047,65 @@ class TestAgentResultIntegrity:
         assert self._visible_tree_bytes(published) == before
         assert "pending_external_publication" not in store.load()
 
+    def test_phase_a_publication_staging_rejects_symlinked_constitution_source(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from harness.squad import _PhaseAReadinessCommitError
+
+        ctrl, store, result, _, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        before = self._visible_tree_bytes(published)
+        constitution = (
+            tmp_path / ".specify" / "memory" / "constitution.md"
+        )
+        outside = tmp_path.parent / f"{tmp_path.name}-constitution.md"
+        outside.write_text("# External constitution\n", encoding="utf-8")
+        constitution.unlink()
+        constitution.symlink_to(outside)
+
+        with pytest.raises(_PhaseAReadinessCommitError):
+            ctrl._prepare_external_phase_effects(
+                result,
+                "phase4-document",
+                store.load(),
+                manual_phase_run=False,
+            )
+
+        assert self._visible_tree_bytes(published) == before
+        assert "pending_external_publication" not in store.load()
+
+    def test_phase_a_publication_staging_rejects_absolute_run_id_kb_source(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from harness.squad import _PhaseAReadinessCommitError
+
+        ctrl, store, result, _, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        before = self._visible_tree_bytes(published)
+        outside_run = tmp_path.parent / f"{tmp_path.name}-external-run"
+        outside_run.mkdir()
+        (outside_run / "kb-apply-report.yaml").write_text(
+            "status: external\n",
+            encoding="utf-8",
+        )
+        state = store.load()
+        state["run_id"] = str(outside_run)
+
+        with pytest.raises(_PhaseAReadinessCommitError):
+            ctrl._prepare_external_phase_effects(
+                result,
+                "phase4-document",
+                state,
+                manual_phase_run=False,
+            )
+
+        assert self._visible_tree_bytes(published) == before
+        assert "pending_external_publication" not in store.load()
+
     def test_phase_a_publication_staging_manifest_is_exact_and_preserves_note(
         self,
         tmp_path: Path,
