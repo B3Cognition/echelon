@@ -46,6 +46,7 @@ KNOWN_CONDITION_FIELDS = frozenset({
     "governance.max_repair_attempts",
     "lexicon_gate.enabled",
     "lexicon_gate.max_repair_attempts",
+    "lexicon_gate.spec_enabled",
     # Build-task-loop progress predicates.
     "all_phase_groups_complete",
     "all_tasks_complete",

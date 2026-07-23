@@ -280,6 +280,66 @@ def test_workflow_validator_rejects_unresolvable_condition_field(tmp_path: Path)
     )
 
 
+def test_workflow_validator_accepts_derived_spec_lexicon_condition_field(
+    tmp_path: Path,
+) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "start",
+                "type": "agent",
+                "transitions": [
+                    {
+                        "to": "done",
+                        "condition": "lexicon_gate.spec_enabled",
+                    }
+                ],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert report.ok, report.format()
+
+
+def test_workflow_validator_rejects_unknown_nested_lexicon_condition_field(
+    tmp_path: Path,
+) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "start",
+                "type": "agent",
+                "transitions": [
+                    {
+                        "to": "done",
+                        "condition": "lexicon_gate.unknown",
+                    }
+                ],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    assert any(
+        "unresolvable condition field 'lexicon_gate.unknown'" in issue.message
+        for issue in report.issues
+    )
+
+
 def test_workflow_validator_accepts_declared_state_update_condition_field(
     tmp_path: Path,
 ) -> None:
