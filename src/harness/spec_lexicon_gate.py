@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+
+from harness.lexicon_gate_io import write_json_atomic
 
 
 @dataclass(frozen=True)
@@ -163,7 +163,7 @@ def run_spec_lexicon_gate(
         report_path = spec_dir / str(
             spec_gate.get("report") or "spec-lexicon-report.json"
         ).strip()
-        _write_json_atomic(report_path, report)
+        write_json_atomic(report_path, report)
     except Exception as exc:
         return _pending(f"spec Lexicon validation could not execute: {exc}")
 
@@ -257,24 +257,3 @@ def _load_glossary_terms(glossary_path: Path) -> set[str]:
         terms = re.findall(r"\*\*([^*]+)\*\*", line)
         glossary.update(term.strip() for term in terms or [line])
     return glossary
-
-
-def _write_json_atomic(path: Path, payload: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(
-        dir=str(path.parent),
-        prefix=f".{path.name}-",
-        suffix=".tmp",
-    )
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        Path(temporary).replace(path)
-    except Exception:
-        try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
-        raise
