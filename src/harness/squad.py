@@ -2531,22 +2531,30 @@ class SquadController:
                     published_spec_dir / "kb/kb-usage-summary.yaml",
                 ),
             )
-            expected_contents = {
-                target: content
+            expected_states = tuple(
+                (
+                    source,
+                    target,
+                    self._read_project_regular_file(source),
+                    self._read_project_regular_file(target),
+                )
                 for source, target in expected_reports
-                if (content := self._read_project_regular_file(source))
-                is not None
-            }
+            )
             publish_kb_reports(self._project_root, run_id, published_spec_dir)
             if strict:
-                for target, expected_content in expected_contents.items():
-                    target_metadata = self._lstat_or_none(target)
-                    if (
-                        target_metadata is None
-                        or stat.S_ISLNK(target_metadata.st_mode)
-                        or not stat.S_ISREG(target_metadata.st_mode)
-                        or target.read_bytes() != expected_content
-                    ):
+                for source, target, source_before, target_before in expected_states:
+                    source_after = self._read_project_regular_file(source)
+                    if source_after != source_before:
+                        raise OSError(
+                            "KB publication source changed during staging"
+                        )
+                    target_after = self._read_project_regular_file(target)
+                    expected_target = (
+                        source_before
+                        if source_before is not None
+                        else target_before
+                    )
+                    if target_after != expected_target:
                         raise OSError(
                             "KB publication did not produce its exact staged output"
                         )
