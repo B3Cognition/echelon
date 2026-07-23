@@ -27,24 +27,16 @@ from harness.prepared_phase_result import (
     prepare_routing_decision as seal_routing_decision,
     verify_prepared_routing_decision_attestation,
 )
+from harness.state_transaction_namespace import (
+    PHASE_A_IDENTITY_KEYS,
+    PROVIDER_CONTROL_INTENT_KEYS,
+    store_owned_update_keys,
+)
 
 logger = logging.getLogger(__name__)
 
 AUTONOMY_MODES = {"guided", "semi", "banzai"}
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
-PHASE_A_IDENTITY_KEYS = frozenset(
-    {
-        "spec_id",
-        "spec_number",
-        "spec_dir",
-        "published_spec_dir",
-        "feature_branch",
-        "phase_a_default_branch",
-        "phase_a_base_commit",
-        "specify_feature_directory",
-    }
-)
-
 VALID_SQUAD_TRANSITIONS: dict[str, set[str]] = {
     "running": {"blocked", "done"},
     "blocked": {"running"},
@@ -80,6 +72,27 @@ class AdvanceReceipt:
     routing_decision_sha256: str = ""
 
 
+@dataclass(frozen=True)
+class RoutingStateSnapshot:
+    """Immutable state and CAS identity used for one routing evaluation."""
+
+    phase: str
+    state_revision: int
+    previous_dispatch_sha256: str
+    _state_json: str
+
+    @property
+    def state(self) -> dict[str, Any]:
+        value = json.loads(self._state_json)
+        if type(value) is not dict:
+            raise StateAdvanceError(
+                "routing snapshot state is invalid",
+                json_path="$.routing_snapshot.state",
+                validator="type",
+            )
+        return value
+
+
 def _prepared_result_error(
     message: str,
     *,
@@ -98,7 +111,13 @@ def _validate_routing_decision(
     *,
     from_phase: str,
     to_phase: str,
-) -> tuple[dict[str, Any], dict[str, Any], PreparedPhaseResult]:
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+    frozenset[str],
+    PreparedPhaseResult,
+]:
     """Validate the immutable payload and its ownership receipt together."""
     if type(decision) is not PreparedRoutingDecision:
         raise _prepared_result_error(
@@ -206,10 +225,36 @@ def _validate_routing_decision(
             validator="receipt",
         )
 
+    payload_updates = attested_payload.get("state_updates")
+    if type(payload_updates) is not dict:
+        raise _prepared_result_error(
+            "prepared echelon_result state updates are invalid",
+            json_path="$.echelon_result.state_updates",
+            validator="echelon_result",
+        )
+    promoted_control_keys = (
+        frozenset(payload_updates)
+        & frozenset(prepared.control_updates)
+        & PROVIDER_CONTROL_INTENT_KEYS
+    )
+    for key in promoted_control_keys:
+        if (
+            type(payload_updates[key]) is not str
+            or payload_updates[key] != prepared.control_updates[key]
+        ):
+            raise _prepared_result_error(
+                "prepared control intent does not match promoted effect",
+                json_path=f"$.state_updates.{key}",
+                validator="ownership",
+            )
     try:
         result = validate_echelon_result(
             attested_payload,
-            allowed_state_update_keys=provider_keys | controller_keys,
+            allowed_state_update_keys=(
+                provider_keys
+                | controller_keys
+                | promoted_control_keys
+            ),
         )
     except EchelonResultValidationError as exc:
         raise _prepared_result_error(
@@ -220,12 +265,33 @@ def _validate_routing_decision(
 
     result_keys = frozenset(result["state_updates"])
     owned_keys = provider_keys | controller_keys
-    if result_keys != owned_keys:
+    if result_keys != owned_keys | promoted_control_keys:
         raise _prepared_result_error(
             "prepared state update ownership does not match payload",
             json_path="$.prepared_result.ownership",
         )
-    return result, verified.queued_state_updates, prepared
+    reserved_updates = store_owned_update_keys(
+        (result_keys - promoted_control_keys)
+        | frozenset(verified.queued_state_updates)
+    )
+    if reserved_updates:
+        key = sorted(reserved_updates)[0]
+        raise _prepared_result_error(
+            f"prepared state update contains transaction-owned key {key!r}",
+            json_path=f"$.state_updates.{key}",
+        )
+    result["state_updates"] = {
+        key: value
+        for key, value in result["state_updates"].items()
+        if key not in promoted_control_keys
+    }
+    return (
+        result,
+        verified.queued_state_updates,
+        verified.transaction_state_updates,
+        verified.transaction_state_removals,
+        prepared,
+    )
 
 
 def _last_dispatch_sha256(state: dict[str, Any]) -> str:
@@ -429,10 +495,96 @@ class SquadStateStore:
     def current_phase(self) -> str:
         return self.load().get("phase", "init")
 
+    def capture_routing_snapshot(
+        self,
+        *,
+        expected_phase: str | None = None,
+    ) -> RoutingStateSnapshot:
+        """Capture one detached routing state and CAS identity under lock."""
+        if expected_phase is not None and (
+            type(expected_phase) is not str or not expected_phase
+        ):
+            raise StateAdvanceError(
+                "routing snapshot phase is invalid",
+                json_path="$.phase",
+                validator="type",
+            )
+        with self._lock(exclusive=False):
+            state = self._load_unlocked()
+        phase = state.get("phase")
+        if type(phase) is not str or not phase:
+            raise StateAdvanceError(
+                "persisted routing phase is invalid",
+                json_path="$.phase",
+                validator="type",
+            )
+        if expected_phase is not None and phase != expected_phase:
+            raise StateAdvanceError(
+                "persisted phase does not match routing source",
+                json_path="$.phase",
+                validator="stale_state",
+            )
+        revision = state.get("state_revision", 0)
+        if type(revision) is not int or revision < 0:
+            raise StateAdvanceError(
+                "persisted state revision is invalid",
+                json_path="$.state_revision",
+                validator="type",
+            )
+        return RoutingStateSnapshot(
+            phase=phase,
+            state_revision=revision,
+            previous_dispatch_sha256=_last_dispatch_sha256(state),
+            _state_json=json.dumps(
+                state,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ),
+        )
+
+    def commit_routing_snapshot_state(
+        self,
+        snapshot: RoutingStateSnapshot,
+        next_state: dict[str, Any],
+    ) -> bool:
+        """Publish a snapshot-derived failure state only while identity matches."""
+        if type(snapshot) is not RoutingStateSnapshot:
+            raise StateAdvanceError(
+                "routing snapshot is invalid",
+                json_path="$.routing_snapshot",
+                validator="type",
+            )
+        if type(next_state) is not dict:
+            raise StateAdvanceError(
+                "snapshot state update must be an object",
+                json_path="$.state",
+                validator="type",
+            )
+        if next_state.get("state_revision") != snapshot.state_revision:
+            raise StateAdvanceError(
+                "snapshot state revision was modified",
+                json_path="$.state_revision",
+                validator="stale_state",
+            )
+        with self._lock(exclusive=True):
+            current = self._load_unlocked()
+            if (
+                current.get("phase") != snapshot.phase
+                or current.get("state_revision", 0)
+                != snapshot.state_revision
+                or _last_dispatch_sha256(current)
+                != snapshot.previous_dispatch_sha256
+            ):
+                return False
+            self._save_unlocked(next_state)
+            return True
+
     def prepare_routing_decision(
         self,
         prepared: PreparedPhaseResult,
         *,
+        snapshot: RoutingStateSnapshot,
         from_phase: str,
         to_phase: str,
         queued_state_updates: dict[str, Any] | None = None,
@@ -443,6 +595,9 @@ class SquadStateStore:
         manual_phase_run: bool = False,
         conditional_skip: bool = False,
         record_completion: bool = True,
+        token_usage_delta: int = 0,
+        transaction_state_updates: dict[str, Any] | None = None,
+        transaction_state_removals: object = (),
     ) -> PreparedRoutingDecision:
         """Bind a prepared result to the currently persisted routing identity."""
         for name, value in (
@@ -457,29 +612,40 @@ class SquadStateStore:
                     json_path=f"$.{name}",
                     validator="type",
                 )
-        with self._lock(exclusive=False):
-            state = self._load_unlocked()
-        if state.get("phase") != from_phase:
+        if type(snapshot) is not RoutingStateSnapshot:
             raise StateAdvanceError(
-                "persisted phase does not match routing source",
+                "routing decision requires a store snapshot",
+                json_path="$.routing_snapshot",
+                validator="type",
+            )
+        if snapshot.phase != from_phase:
+            raise StateAdvanceError(
+                "routing snapshot phase does not match routing source",
                 json_path="$.phase",
                 validator="stale_state",
             )
-        revision = state.get("state_revision", 0)
-        if type(revision) is not int or revision < 0:
+        with self._lock(exclusive=False):
+            current = self._load_unlocked()
+        if (
+            current.get("phase") != snapshot.phase
+            or current.get("state_revision", 0)
+            != snapshot.state_revision
+            or _last_dispatch_sha256(current)
+            != snapshot.previous_dispatch_sha256
+        ):
             raise StateAdvanceError(
-                "persisted state revision is invalid",
+                "persisted state changed before routing decision sealing",
                 json_path="$.state_revision",
-                validator="type",
+                validator="stale_state",
             )
         try:
             return seal_routing_decision(
                 prepared,
                 from_phase=from_phase,
                 to_phase=to_phase,
-                expected_state_revision=revision,
+                expected_state_revision=snapshot.state_revision,
                 expected_previous_dispatch_sha256=(
-                    _last_dispatch_sha256(state)
+                    snapshot.previous_dispatch_sha256
                 ),
                 queued_state_updates=queued_state_updates,
                 judgment_payloads=judgment_payloads,
@@ -489,6 +655,9 @@ class SquadStateStore:
                 manual_phase_run=manual_phase_run,
                 conditional_skip=conditional_skip,
                 record_completion=record_completion,
+                token_usage_delta=token_usage_delta,
+                transaction_state_updates=transaction_state_updates,
+                transaction_state_removals=transaction_state_removals,
             )
         except PreparedPhaseResultAttestationError as exc:
             raise StateAdvanceError(
@@ -502,9 +671,17 @@ class SquadStateStore:
         from_phase: str,
         to_phase: str,
         decision: PreparedRoutingDecision,
+        *,
+        before_commit: Callable[[], None] | None = None,
     ) -> AdvanceReceipt:
         try:
-            result, queued_updates, prepared = _validate_routing_decision(
+            (
+                result,
+                queued_updates,
+                transaction_updates,
+                transaction_removals,
+                prepared,
+            ) = _validate_routing_decision(
                 decision,
                 from_phase=from_phase,
                 to_phase=to_phase,
@@ -612,6 +789,8 @@ class SquadStateStore:
                 next_state["completed_phases"] = completed
             for key in prepared.state_removals:
                 next_state.pop(key, None)
+            for key in transaction_removals:
+                next_state.pop(key, None)
             identity_is_bootstrapped = bool(
                 next_state.get("feature_branch")
             )
@@ -645,6 +824,11 @@ class SquadStateStore:
                         self._transition_status(next_state, value)
                     else:
                         next_state[key] = value
+                for key, value in transaction_updates.items():
+                    if key == "status":
+                        self._transition_status(next_state, value)
+                    else:
+                        next_state[key] = value
             except Exception as exc:
                 raise StateAdvanceError(
                     "prepared state updates could not be applied",
@@ -654,6 +838,7 @@ class SquadStateStore:
             if (
                 decision.increment_iteration
                 and "iteration" not in combined_updates
+                and "iteration" not in transaction_updates
             ):
                 try:
                     next_state["iteration"] = int(
@@ -665,7 +850,17 @@ class SquadStateStore:
                         json_path="$.iteration",
                         validator="type",
                     ) from exc
+            next_state["token_usage"] = (
+                int(next_state.get("token_usage") or 0)
+                + decision.token_usage_delta
+            )
             next_state.pop("controller_contract_error", None)
+
+            # External controller-owned publication is guarded by the same
+            # exclusive CAS window. A stale decision is rejected above before
+            # this callback can produce any side effect.
+            if before_commit is not None:
+                before_commit()
 
             try:
                 saved_state = self._save_unlocked(next_state)
@@ -691,13 +886,20 @@ class SquadStateStore:
         self,
         *,
         from_phase: str,
+        expected_state_revision: int,
         expected_previous_dispatch_sha256: str | None,
         updates: dict[str, Any],
+        token_usage_delta: int = 0,
     ) -> bool:
         """Merge a failure only if no phase/dispatch publication won the race."""
         with self._lock(exclusive=True):
             state = self._load_unlocked()
             if state.get("phase") != from_phase:
+                return False
+            if (
+                state.get("state_revision", 0)
+                != expected_state_revision
+            ):
                 return False
             if (
                 expected_previous_dispatch_sha256 is not None
@@ -707,6 +909,10 @@ class SquadStateStore:
                 return False
             next_state = deepcopy(state)
             next_state.update(deepcopy(updates))
+            next_state["token_usage"] = (
+                int(next_state.get("token_usage") or 0)
+                + token_usage_delta
+            )
             self._save_unlocked(next_state)
             return True
 

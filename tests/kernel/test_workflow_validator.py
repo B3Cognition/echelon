@@ -421,6 +421,75 @@ def test_workflow_validator_rejects_required_state_update_outside_allowlist(
     assert any("required_state_updates must be a subset" in issue.message for issue in report.issues)
 
 
+@pytest.mark.parametrize(
+    "provider_location",
+    ["phase", "nested_agent", "pre_dispatch"],
+)
+def test_workflow_validator_rejects_transaction_owned_provider_allowlist(
+    tmp_path: Path,
+    provider_location: str,
+) -> None:
+    phase = {
+        "id": "start",
+        "type": "agent",
+        "allowed_state_updates": [],
+        "transitions": [{"to": "done", "condition": "always"}],
+    }
+    if provider_location == "phase":
+        phase["allowed_state_updates"] = ["manual_phase_runs"]
+    elif provider_location == "nested_agent":
+        phase["type"] = "conditional_sequential"
+        phase["agents"] = [{
+            "id": "nested",
+            "allowed_state_updates": ["manual_phase_runs"],
+        }]
+    else:
+        phase["pre_dispatch"] = [{
+            "id": "guard",
+            "agent": "nested",
+            "allowed_state_updates": ["manual_phase_runs"],
+        }]
+    definition = _write_definition(
+        tmp_path,
+        [phase, {"id": "done", "type": "terminal"}],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    assert any(
+        "transaction-owned key 'manual_phase_runs'" in issue.message
+        for issue in report.issues
+    )
+
+
+def test_workflow_validator_allows_provider_block_control_syntax(
+    tmp_path: Path,
+) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "start",
+                "type": "agent",
+                "allowed_state_updates": ["status", "blocked_reason"],
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert report.ok, report.format()
+
+
 def test_workflow_validator_rejects_legacy_controller_state_updates(
     tmp_path: Path,
 ) -> None:

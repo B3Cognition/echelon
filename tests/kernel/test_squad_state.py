@@ -88,14 +88,22 @@ def _advance(
     increment_iteration: bool = False,
     manual_phase_run: bool = False,
     conditional_skip: bool = False,
+    token_usage_delta: int = 0,
+    transaction_state_updates: dict[str, object] | None = None,
+    transaction_state_removals: object = (),
 ):
+    snapshot = store.capture_routing_snapshot(expected_phase=from_phase)
     decision = store.prepare_routing_decision(
         prepared,
+        snapshot=snapshot,
         from_phase=from_phase,
         to_phase=to_phase,
         increment_iteration=increment_iteration,
         manual_phase_run=manual_phase_run,
         conditional_skip=conditional_skip,
+        token_usage_delta=token_usage_delta,
+        transaction_state_updates=transaction_state_updates,
+        transaction_state_removals=transaction_state_removals,
     )
     return store.advance(from_phase, to_phase, decision)
 
@@ -137,6 +145,101 @@ class TestSquadStateStore:
 
     def test_current_phase_returns_init_when_no_state(self, tmp_path):
         assert _store(tmp_path).current_phase() == "init"
+
+    def test_routing_snapshot_is_immutable_and_rejects_same_phase_revision_change(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "repair")
+        snapshot = store.capture_routing_snapshot(expected_phase="repair")
+        detached = snapshot.state
+        detached["route_flag"] = "tampered-copy"
+
+        changed = store.load()
+        changed["route_flag"] = "new-live-value"
+        store.save(changed)
+        before = store.load()
+
+        assert "route_flag" not in snapshot.state
+        with pytest.raises(StateAdvanceError) as raised:
+            store.prepare_routing_decision(
+                _result("DONE", phase_id="repair"),
+                snapshot=snapshot,
+                from_phase="repair",
+                to_phase="next",
+            )
+
+        assert raised.value.validator == "stale_state"
+        assert store.load() == before
+
+    def test_unchanged_routing_snapshot_still_allows_valid_self_loop(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "repair")
+        snapshot = store.capture_routing_snapshot(expected_phase="repair")
+        decision = store.prepare_routing_decision(
+            _result("DONE", phase_id="repair"),
+            snapshot=snapshot,
+            from_phase="repair",
+            to_phase="repair",
+        )
+
+        receipt = store.advance("repair", "repair", decision)
+
+        assert receipt.from_phase == receipt.to_phase == "repair"
+        assert store.load()["phase"] == "repair"
+
+    def test_snapshot_bound_failure_diagnostic_rejects_same_phase_new_revision(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "repair")
+        snapshot = store.capture_routing_snapshot(expected_phase="repair")
+
+        concurrent = store.load()
+        concurrent["concurrent_marker"] = "published"
+        store.save(concurrent)
+        before = store.load()
+
+        persisted = store.merge_advance_failure_diagnostic(
+            from_phase="repair",
+            expected_state_revision=snapshot.state_revision,
+            expected_previous_dispatch_sha256=(
+                snapshot.previous_dispatch_sha256
+            ),
+            updates={
+                "status": "blocked",
+                "controller_contract_error": {"forged": False},
+            },
+        )
+
+        assert persisted is False
+        assert store.load() == before
+        assert "controller_contract_error" not in store.load()
+
+    def test_sealed_token_usage_delta_commits_with_successful_advance(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        state = store.load()
+        state["token_usage"] = 4
+        store.save(state)
+
+        _advance(
+            store,
+            "init",
+            "next",
+            _result("DONE"),
+            token_usage_delta=13,
+        )
+
+        assert store.load()["token_usage"] == 17
 
     def test_advance_updates_phase(self, tmp_path):
         store = _store(tmp_path)
@@ -200,8 +303,10 @@ class TestSquadStateStore:
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "init")
         original = _result("DONE", phase_id="init")
+        snapshot = store.capture_routing_snapshot(expected_phase="init")
         original_decision = store.prepare_routing_decision(
             original,
+            snapshot=snapshot,
             from_phase="init",
             to_phase="phase1-discover",
         )
@@ -224,6 +329,64 @@ class TestSquadStateStore:
         assert raised.value.validator == "stale_state"
         assert store.load() == before_replay
 
+    def test_stale_advance_never_runs_before_commit_side_effect(
+        self,
+        tmp_path,
+    ) -> None:
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "repair")
+        snapshot = store.capture_routing_snapshot(expected_phase="repair")
+        decision = store.prepare_routing_decision(
+            _result("DONE", phase_id="repair"),
+            snapshot=snapshot,
+            from_phase="repair",
+            to_phase="next",
+        )
+        concurrent = store.load()
+        concurrent["winner_marker"] = True
+        store.save(concurrent)
+        side_effects: list[str] = []
+
+        with pytest.raises(StateAdvanceError) as raised:
+            store.advance(
+                "repair",
+                "next",
+                decision,
+                before_commit=lambda: side_effects.append("published"),
+            )
+
+        assert raised.value.validator == "stale_state"
+        assert side_effects == []
+        assert store.load()["winner_marker"] is True
+
+    def test_before_commit_failure_does_not_persist_routing_state(
+        self,
+        tmp_path,
+    ) -> None:
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "repair")
+        snapshot = store.capture_routing_snapshot(expected_phase="repair")
+        decision = store.prepare_routing_decision(
+            _result("DONE", phase_id="repair"),
+            snapshot=snapshot,
+            from_phase="repair",
+            to_phase="next",
+        )
+        before = store.load()
+
+        def reject_publication() -> None:
+            raise RuntimeError("publication rejected")
+
+        with pytest.raises(RuntimeError, match="publication rejected"):
+            store.advance(
+                "repair",
+                "next",
+                decision,
+                before_commit=reject_publication,
+            )
+
+        assert store.load() == before
+
     def test_self_loop_replay_is_rejected_but_new_current_result_advances(
         self,
         tmp_path,
@@ -231,8 +394,10 @@ class TestSquadStateStore:
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "repair")
         original = _result("DONE", phase_id="repair")
+        snapshot = store.capture_routing_snapshot(expected_phase="repair")
         original_decision = store.prepare_routing_decision(
             original,
+            snapshot=snapshot,
             from_phase="repair",
             to_phase="repair",
         )
@@ -288,8 +453,8 @@ class TestSquadStateStore:
         )
         assert store.load()["coverage_pct"] == 72
 
-    def test_advance_preserves_bootstrapped_full_spec_identity(self, tmp_path):
-        """An agent may report a short spec number but cannot fork Phase A paths."""
+    def test_provider_cannot_report_bootstrapped_full_spec_identity(self, tmp_path):
+        """Phase A identity can be changed only through trusted store effects."""
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "phase1-what")
         state = store.load()
@@ -304,21 +469,14 @@ class TestSquadStateStore:
         )
         store.save(state)
 
-        _advance(
-            store,
-            "phase1-what",
-            "phase1-why2",
+        before = store.load()
+        with pytest.raises(ControllerStateContractViolation):
             _result(
                 "DONE",
                 {"spec_id": "005", "spec_dir": "specs/005-opta-search-shows-stats"},
                 phase_id="phase1-what",
-            ),
-        )
-
-        state = store.load()
-        assert state["spec_id"] == "005-opta-search-shows-stats"
-        assert state["spec_dir"] == "runs/r/specs/005-opta-search-shows-stats"
-        assert state["published_spec_dir"] == "specs/005-opta-search-shows-stats"
+            )
+        assert store.load() == before
 
     def test_invalid_advance_raises_without_success_state_mutation(self, tmp_path):
         store = _store(tmp_path)
@@ -620,8 +778,9 @@ class TestSquadStateStore:
             store,
             "phase3-plan",
             "phase3-tasks-lexicon",
-            _result("DONE", {"iteration": 7}, phase_id="phase3-plan"),
+            _result("DONE", {}, phase_id="phase3-plan"),
             increment_iteration=True,
+            transaction_state_updates={"iteration": 7},
         )
 
         assert store.load()["iteration"] == 7
@@ -723,18 +882,22 @@ class TestSquadStateStore:
             _raw_result("JUDGMENT_RESOLVED", {}),
             controller_updates={},
             state_removals={
-                "blocked_reason",
                 "escalation_question",
             },
         )
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="blocked-phase"
+        )
         decision = store.prepare_routing_decision(
             prepared,
+            snapshot=snapshot,
             from_phase="blocked-phase",
             to_phase="resumed-phase",
-            queued_state_updates={
+            transaction_state_updates={
                 "status": "running",
                 "escalation_resolved": True,
             },
+            transaction_state_removals={"blocked_reason"},
             source="commander_recovery",
             record_completion=False,
         )
@@ -777,14 +940,8 @@ class TestSquadStateStore:
                 store,
                 "phase1-what",
                 "phase1-why2",
-                _result(
-                    "DONE",
-                    {
-                        "status": "blocked",
-                        "spec_id": "999-tampered",
-                    },
-                    phase_id="phase1-what",
-                ),
+                _result("DONE", {}, phase_id="phase1-what"),
+                transaction_state_updates={"status": "blocked"},
             )
 
         advanced = store.load()
@@ -796,7 +953,7 @@ class TestSquadStateStore:
         store = _store(tmp_path)
         store.initialize("r", "greenfield", "msg", 0, "init")
         before = store.load()
-        prepared = _result("DONE", {"status": []})
+        prepared = _result("DONE", {})
 
         with patch.object(store, "save", wraps=store.save) as save:
             with pytest.raises(RuntimeError) as raised:
@@ -805,6 +962,7 @@ class TestSquadStateStore:
                     "init",
                     "phase1-discover",
                     prepared,
+                    transaction_state_updates={"status": []},
                 )
 
         assert raised.type.__name__ == "StateAdvanceError"
@@ -1085,13 +1243,19 @@ class TestStatusTransitions:
         assert "Invalid squad status transition" in caplog.text
         assert state["status"] == "blocked"
 
-    def test_state_updates_status_routes_through_guard(self, tmp_path, caplog):
+    def test_trusted_status_effect_routes_through_guard(self, tmp_path, caplog):
         import logging
         store = SquadStateStore(tmp_path / "squad/run-test")
         store.initialize("r1", "semi", "msg", 0, "init")
-        result = _result("DONE", {"status": "done"})
+        result = _result("DONE", {})
         with caplog.at_level(logging.WARNING, logger="harness.squad_state"):
-            _advance(store, "init", "phase1-discover", result)
+            _advance(
+                store,
+                "init",
+                "phase1-discover",
+                result,
+                transaction_state_updates={"status": "done"},
+            )
         # running → done is valid, no warning
         assert "Invalid squad status transition" not in caplog.text
         assert store.load()["status"] == "done"
@@ -1135,15 +1299,16 @@ class TestTokenMonotonicity:
         store.save(state)
         assert store.token_usage() == 100
 
-    def test_state_updates_token_decrease_warns(self, tmp_path, caplog):
-        import logging
+    def test_provider_state_updates_cannot_set_token_usage(self, tmp_path):
         store = SquadStateStore(tmp_path / "squad/run-test")
         store.initialize("r1", "semi", "msg", 0, "init")
         store.increment_token_usage(1_000)
-        result = _result("DONE", {"token_usage": 10})
-        with caplog.at_level(logging.WARNING, logger="harness.squad_state"):
-            _advance(store, "init", "phase1-discover", result)
-        assert "token_usage decreased" in caplog.text
+        before = store.load()
+
+        with pytest.raises(ControllerStateContractViolation):
+            _result("DONE", {"token_usage": 10})
+
+        assert store.load() == before
 
 
 # ── Step 5: updated_at on every write ────────────────────────────────────────

@@ -432,7 +432,11 @@ def test_controller_ignores_empty_exclusions_for_context_only_catalog_units(tmp_
         },
     )
 
-    assert controller._apply_product_input_updates(result, "phase1-what") is None
+    assert controller._apply_product_input_updates(
+        result,
+        "phase1-what",
+        store.load(),
+    ) is None
     refreshed_context = resolution.requirement_context_path.read_text(encoding="utf-8")
     assert context_only_id not in refreshed_context
     assert requirement_id in refreshed_context
@@ -542,7 +546,11 @@ def test_phase_plan_controller_rejects_bad_traceability_before_consensus(tmp_pat
         },
     )
 
-    error = controller._apply_product_input_updates(result, "phase3-plan")
+    error = controller._apply_product_input_updates(
+        result,
+        "phase3-plan",
+        store.load(),
+    )
 
     assert error == f"invalid product input updates: {unit_id}: task T-S01 does not reference the mapped specification IDs"
     ledger = json.loads(resolution.traceability_path.read_text(encoding="utf-8"))
@@ -605,7 +613,11 @@ def test_consensus_controller_validates_run_local_traceability_without_requiring
         echelon_result={"verdict": "PASS"},
     )
 
-    assert controller._apply_product_input_updates(result, "phase3-consensus") is None
+    assert controller._apply_product_input_updates(
+        result,
+        "phase3-consensus",
+        store.load(),
+    ) is None
 
 
 def test_prompt_contract_uses_snapshot_paths_and_structured_updates() -> None:

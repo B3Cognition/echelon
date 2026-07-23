@@ -477,9 +477,11 @@ def test_legacy_model_scored_resume_adds_certified_evidence(
     assert controller._guard_understanding_evidence(target_phase) == gate_phase
     node = graph.get(gate_phase)
     result = controller._executors["deterministic_understanding"].execute(node, store)
-    prepared = controller._prepare_phase_result(node, result)
+    snapshot = store.capture_routing_snapshot(expected_phase=gate_phase)
+    prepared = controller._prepare_phase_result(node, result, snapshot)
     decision = store.prepare_routing_decision(
         prepared,
+        snapshot=snapshot,
         from_phase=gate_phase,
         to_phase=target_phase,
     )

@@ -14,6 +14,7 @@ import time
 import threading
 import uuid
 from collections.abc import Mapping
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -71,7 +72,16 @@ from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from echelon.telemetry.phase_timing import record_phase_finish, record_phase_start
 from echelon.telemetry.provider import DispatchContext, InstrumentedProvider
 from echelon.telemetry.store import TelemetryStore
-from harness.squad_state import AdvanceReceipt, StateAdvanceError, SquadStateStore
+from harness.squad_state import (
+    AdvanceReceipt,
+    RoutingStateSnapshot,
+    StateAdvanceError,
+    SquadStateStore,
+)
+from harness.state_transaction_namespace import (
+    STORE_OWNED_TRANSACTION_KEYS,
+    TRUSTED_ROUTING_EFFECT_KEYS,
+)
 from harness.prompt_markdown import read_prompt_markdown
 from harness.terminal import color_text
 from harness.understanding_gate import has_current_understanding_evidence
@@ -137,6 +147,7 @@ JUDGMENT_RESULT_CONTRACT = EchelonResultContract(
     state_update_enums={
         "status": frozenset({"running", "blocked", "done", "interrupted", "killed"}),
     },
+    allowed_verdicts=frozenset({"JUDGMENT_RESOLVED", "BLOCKED"}),
     unexpected_state_updates="quarantine",
 )
 
@@ -337,6 +348,22 @@ class _TransitionJudgmentRequired(RuntimeError):
         self.transition_index = transition_index
 
 
+class _ProductInputCommitError(RuntimeError):
+    """Product-input publication failed inside the state CAS window."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__("product input commit failed")
+        self.reason = reason
+
+
+class _PhaseAReadinessCommitError(RuntimeError):
+    """Phase A publication was not build-ready inside the state CAS window."""
+
+    def __init__(self, readiness: PhaseAReadinessResult) -> None:
+        super().__init__("Phase A publication is not ready")
+        self.readiness = readiness
+
+
 class SquadController:
     """Drives the squad run phase graph deterministically.
 
@@ -381,6 +408,7 @@ class SquadController:
         )
         self._telemetry_store = telemetry_store
         self._telemetry_usage_lock = threading.Lock()
+        self._deferred_provider_usage: dict[str, int] | None = None
         self._provider = provider
         self._telemetry_provider = InstrumentedProvider(
             provider,
@@ -400,6 +428,9 @@ class SquadController:
         self._evaluator = ConditionEvaluator()
         self._gate_config_cache: Optional[dict] = None
         self._gov_config_cache: Optional[dict] = None
+        self._pending_judgment_results: dict[
+            str, tuple[SquadAgentResult, ...]
+        ] = {}
         self._executors: dict[str, PhaseExecutor] = {
             "agent": AgentExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "commander_internal": CommanderInternalExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
@@ -539,21 +570,34 @@ class SquadController:
             )
 
     def _record_provider_usage(self, result: object) -> None:
-        raw = getattr(result, "token_usage", 0)
-        details = getattr(result, "token_usage_details", None)
-        known = (
-            isinstance(raw, (int, float))
-            and not isinstance(raw, bool)
-            and int(raw) > 0
-        ) or (isinstance(details, dict) and bool(details))
-        if not known:
+        if type(result) is not SquadAgentResult:
+            return
+        raw = result.token_usage
+        if type(raw) is not int or raw <= 0:
             return
         with self._telemetry_usage_lock:
+            if self._deferred_provider_usage is not None:
+                self._deferred_provider_usage["tokens"] += raw
+                return
             state = self._state_store.load()
-            state["token_usage"] = int(state.get("token_usage") or 0) + max(
-                0, int(raw or 0)
+            existing = state.get("token_usage")
+            existing = (
+                existing
+                if type(existing) is int and existing >= 0
+                else 0
             )
+            state["token_usage"] = existing + raw
             self._state_store.save(state)
+
+    @contextmanager
+    def _defer_routing_provider_usage(self):
+        previous = self._deferred_provider_usage
+        accumulator = {"tokens": 0}
+        self._deferred_provider_usage = accumulator
+        try:
+            yield accumulator
+        finally:
+            self._deferred_provider_usage = previous
 
     def _project_config_path(self) -> Path:
         canonical = self._project_root / ".echelon" / "config.yml"
@@ -1050,77 +1094,109 @@ class SquadController:
             )
 
             executor = self._executors.get(node.type)
-            if executor is None:
-                result = self._judgment_dispatch(
-                    f"Unknown phase type {node.type!r} for phase {phase!r}",
-                    node,
-                )
-            else:
-                with self._telemetry_provider.dispatch(
-                    DispatchContext(
-                        phase=phase,
-                        agent=str(node.agent or node.type),
-                        kind="repair" if dispatch_count > 1 else "phase",
-                        attempt=dispatch_count,
-                        reason=self._dispatch_reason(phase, dispatch_count),
+            try:
+                if executor is None:
+                    result = self._judgment_dispatch(
+                        f"Unknown phase type {node.type!r} for phase {phase!r}",
+                        node,
                     )
-                ):
-                    result = executor.execute(node, self._state_store)
+                else:
+                    with self._telemetry_provider.dispatch(
+                        DispatchContext(
+                            phase=phase,
+                            agent=str(node.agent or node.type),
+                            kind=(
+                                "repair"
+                                if dispatch_count > 1
+                                else "phase"
+                            ),
+                            attempt=dispatch_count,
+                            reason=self._dispatch_reason(
+                                phase,
+                                dispatch_count,
+                            ),
+                        )
+                    ):
+                        result = executor.execute(
+                            node,
+                            self._state_store,
+                        )
+            except ControllerStateContractViolation as exc:
+                self._block_after_executor_contract_failure(node, exc)
+                return SquadResult.from_state(self._state_store.load())
 
-            prepared = self._prepare_phase_result_or_block(node, result)
+            snapshot = self._state_store.capture_routing_snapshot(
+                expected_phase=node.id
+            )
+            prepared = self._prepare_phase_result_or_block(
+                node,
+                result,
+                snapshot,
+            )
             if prepared is None:
                 return SquadResult.from_state(self._state_store.load())
             prepared_result = prepared.as_squad_agent_result()
 
-            blocked_result = self._blocked_executor_reason(prepared_result)
+            blocked_result = self._blocked_executor_reason(
+                prepared_result,
+                prepared.control_updates,
+            )
             if blocked_result:
                 self._block_after_executor_failure(
                     phase,
                     blocked_result,
                     prepared_result,
+                    snapshot=snapshot,
                 )
                 return SquadResult.from_state(self._state_store.load())
-            product_input_error = self._apply_product_input_updates(
-                prepared_result,
+
+            routing_updates = self._planned_phase_a_publication_updates(
                 phase,
+                snapshot.state,
             )
-            if product_input_error:
+            decision = self._construct_routing_decision_or_block(
+                node,
+                prepared,
+                snapshot,
+                additional_state_updates=routing_updates,
+            )
+            if decision is None:
+                return SquadResult.from_state(self._state_store.load())
+            next_phase = decision.to_phase
+
+            try:
+                receipt = self._advance_prepared_result_or_block(
+                    node,
+                    decision,
+                    before_commit=lambda: self._commit_external_phase_effects(
+                        prepared_result,
+                        phase,
+                        snapshot.state,
+                        manual_phase_run=False,
+                    ),
+                )
+            except _ProductInputCommitError as exc:
+                product_input_error = exc.reason
                 if self._schedule_product_input_mapping_repair(
                     phase,
                     product_input_error,
                     prepared_result,
+                    snapshot=snapshot,
                 ):
                     continue
                 self._block_after_executor_failure(
                     phase,
                     product_input_error,
                     prepared_result,
+                    snapshot=snapshot,
                 )
                 return SquadResult.from_state(self._state_store.load())
-
-            routing_updates: dict[str, object] = {}
-            if phase == "phase4-document":
-                readiness = self._publish_phase_a_artifacts_for_build()
-                if not readiness.ready:
-                    self._block_after_phase_a_readiness_failure(readiness)
-                    return SquadResult.from_state(self._state_store.load())
-                if readiness.ready_spec_dir is not None:
-                    routing_updates["published_spec_dir"] = (
-                        self._repo_relative_or_absolute(
-                            readiness.ready_spec_dir
-                        )
-                    )
-            decision = self._coordinate_transition_routing(
-                node,
-                prepared,
-                additional_state_updates=routing_updates,
-            )
-            next_phase = decision.to_phase
-
-            receipt = self._advance_prepared_result_or_block(
-                node,
-                decision,
-            )
+            except _PhaseAReadinessCommitError as exc:
+                self._block_after_phase_a_readiness_failure(
+                    exc.readiness,
+                    snapshot=snapshot,
+                )
+                return SquadResult.from_state(self._state_store.load())
             if receipt is None:
                 return SquadResult.from_state(self._state_store.load())
             self._apply_declared_phase_timing_transition(node, next_phase)
@@ -1357,87 +1433,107 @@ class SquadController:
         )
 
         executor = self._executors.get(node.type)
-        if executor is None:
-            result = self._judgment_dispatch(
-                f"Unknown phase type {node.type!r} for phase {phase!r}",
-                node,
-            )
-        else:
-            state = self._state_store.load()
-            attempts = state.get("phase_dispatch_counts")
-            attempt = (
-                int(attempts.get(phase, 0)) + 1
-                if isinstance(attempts, dict)
-                else 1
-            )
-            with self._telemetry_provider.dispatch(
-                DispatchContext(
-                    phase=phase,
-                    agent=str(node.agent or node.type),
-                    kind="repair" if attempt > 1 else "phase",
-                    attempt=attempt,
-                    reason="manual_rerun",
+        try:
+            if executor is None:
+                result = self._judgment_dispatch(
+                    f"Unknown phase type {node.type!r} for phase {phase!r}",
+                    node,
                 )
-            ):
-                result = executor.execute(node, self._state_store)
+            else:
+                state = self._state_store.load()
+                attempts = state.get("phase_dispatch_counts")
+                attempt = (
+                    int(attempts.get(phase, 0)) + 1
+                    if isinstance(attempts, dict)
+                    else 1
+                )
+                with self._telemetry_provider.dispatch(
+                    DispatchContext(
+                        phase=phase,
+                        agent=str(node.agent or node.type),
+                        kind="repair" if attempt > 1 else "phase",
+                        attempt=attempt,
+                        reason="manual_rerun",
+                    )
+                ):
+                    result = executor.execute(node, self._state_store)
+        except ControllerStateContractViolation as exc:
+            self._block_after_executor_contract_failure(node, exc)
+            return SquadResult.from_state(self._state_store.load())
 
-        prepared = self._prepare_phase_result_or_block(node, result)
+        snapshot = self._state_store.capture_routing_snapshot(
+            expected_phase=node.id
+        )
+        prepared = self._prepare_phase_result_or_block(
+            node,
+            result,
+            snapshot,
+        )
         if prepared is None:
             return SquadResult.from_state(self._state_store.load())
         prepared_result = prepared.as_squad_agent_result()
 
-        blocked_result = self._blocked_executor_reason(prepared_result)
+        blocked_result = self._blocked_executor_reason(
+            prepared_result,
+            prepared.control_updates,
+        )
         if blocked_result:
             self._block_after_executor_failure(
                 phase,
                 blocked_result,
                 prepared_result,
+                snapshot=snapshot,
             )
             return SquadResult.from_state(self._state_store.load())
-        product_input_error = self._apply_product_input_updates(
-            prepared_result,
+
+        routing_updates = self._planned_phase_a_publication_updates(
             phase,
+            snapshot.state,
         )
-        if product_input_error:
+        decision = self._construct_routing_decision_or_block(
+            node,
+            prepared,
+            snapshot,
+            additional_state_updates=routing_updates,
+            manual_phase_run=True,
+        )
+        if decision is None:
+            return SquadResult.from_state(self._state_store.load())
+        next_phase = decision.to_phase
+
+        try:
+            receipt = self._advance_prepared_result_or_block(
+                node,
+                decision,
+                before_commit=lambda: self._commit_external_phase_effects(
+                    prepared_result,
+                    phase,
+                    snapshot.state,
+                    manual_phase_run=True,
+                ),
+            )
+        except _ProductInputCommitError as exc:
+            product_input_error = exc.reason
             if self._schedule_product_input_mapping_repair(
                 phase,
                 product_input_error,
                 prepared_result,
+                snapshot=snapshot,
             ):
                 return SquadResult.from_state(self._state_store.load())
             self._block_after_executor_failure(
                 phase,
                 product_input_error,
                 prepared_result,
+                snapshot=snapshot,
             )
             return SquadResult.from_state(self._state_store.load())
-
-        routing_updates: dict[str, object] = {}
-        if phase == "phase4-document":
-            readiness = self._publish_phase_a_artifacts_for_build()
-            if not readiness.ready:
-                self._block_after_phase_a_readiness_failure(readiness)
-                return SquadResult.from_state(self._state_store.load())
-            if readiness.ready_spec_dir is not None:
-                routing_updates["published_spec_dir"] = (
-                    self._repo_relative_or_absolute(
-                        readiness.ready_spec_dir
-                    )
-                )
-        else:
-            self._publish_manual_phase_artifacts()
-        decision = self._coordinate_transition_routing(
-            node,
-            prepared,
-            additional_state_updates=routing_updates,
-            manual_phase_run=True,
-        )
-        next_phase = decision.to_phase
-
-        receipt = self._advance_prepared_result_or_block(
-            node,
-            decision,
-        )
+        except _PhaseAReadinessCommitError as exc:
+            self._block_after_phase_a_readiness_failure(
+                exc.readiness,
+                snapshot=snapshot,
+            )
+            return SquadResult.from_state(self._state_store.load())
         if receipt is None:
             return SquadResult.from_state(self._state_store.load())
         self._apply_declared_phase_timing_transition(node, next_phase)
@@ -1458,7 +1554,10 @@ class SquadController:
         if not condition:
             return False
 
-        state = self._state_store.load()
+        snapshot = self._state_store.capture_routing_snapshot(
+            expected_phase=node.id
+        )
+        state = snapshot.state
         evaluation = self._evaluator.evaluate(condition, state)
         if evaluation is True:
             return False
@@ -1490,15 +1589,22 @@ class SquadController:
                 timed_out=False,
                 cost_usd=0.0,
             )
-            prepared = self._prepare_phase_result_or_block(node, result)
+            prepared = self._prepare_phase_result_or_block(
+                node,
+                result,
+                snapshot,
+            )
             if prepared is None:
                 return True
-            decision = self._coordinate_transition_routing(
+            decision = self._construct_routing_decision_or_block(
                 node,
                 prepared,
+                snapshot,
                 manual_phase_run=manual_phase_run,
                 conditional_skip=True,
             )
+            if decision is None:
+                return True
             next_phase = decision.to_phase
             receipt = self._advance_prepared_result_or_block(
                 node,
@@ -1527,9 +1633,16 @@ class SquadController:
         )
         return True
 
-    def _publish_manual_phase_artifacts(self) -> None:
+    def _publish_manual_phase_artifacts(
+        self,
+        state: Mapping[str, object] | None = None,
+    ) -> None:
         """Refresh project-visible spec metadata after a targeted phase run."""
-        state = self._state_store.load()
+        state = (
+            dict(state)
+            if state is not None
+            else self._state_store.load()
+        )
         spec_ref = str(state.get("published_spec_dir") or state.get("spec_dir") or "").strip()
         if not spec_ref:
             return
@@ -1543,6 +1656,28 @@ class SquadController:
             write_artifact_index(spec_dir)
         except OSError:
             logger.warning("Could not refresh artifact index for %s", spec_dir)
+
+    def _planned_phase_a_publication_updates(
+        self,
+        phase: str,
+        state: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Derive publication identity without performing publication writes."""
+        if phase != "phase4-document":
+            return {}
+        detached_state = dict(state)
+        active_spec_dir = self._active_phase_a_spec_dir(detached_state)
+        if active_spec_dir is None:
+            return {}
+        published_spec_dir = self._published_phase_a_spec_dir(
+            detached_state,
+            active_spec_dir,
+        )
+        return {
+            "published_spec_dir": self._repo_relative_or_absolute(
+                published_spec_dir
+            )
+        }
 
     def _publish_terminal_phase_a_artifacts_if_available(
         self,
@@ -1566,8 +1701,11 @@ class SquadController:
                 return validate_phase_a_readiness(state, [published_spec_dir])
         return self._publish_phase_a_artifacts_for_build()
 
-    def _phase_a_readiness_candidate_dirs(self) -> list[Path]:
-        state = self._state_store.load()
+    def _phase_a_readiness_candidate_dirs(
+        self,
+        state: Mapping[str, object] | None = None,
+    ) -> list[Path]:
+        state = dict(state) if state is not None else self._state_store.load()
         candidates: list[Path] = []
 
         def add(candidate: Path | None) -> None:
@@ -1596,14 +1734,17 @@ class SquadController:
 
         return candidates
 
-    def _publish_phase_a_artifacts_for_build(self) -> PhaseAReadinessResult:
-        self._materialize_implementation_targets()
-        state = self._state_store.load()
+    def _publish_phase_a_artifacts_for_build(
+        self,
+        state: Mapping[str, object] | None = None,
+    ) -> PhaseAReadinessResult:
+        state = dict(state) if state is not None else self._state_store.load()
+        self._materialize_implementation_targets(state)
         active_spec_dir = self._active_phase_a_spec_dir(state)
         if active_spec_dir is None or not active_spec_dir.exists():
             return validate_phase_a_readiness(
                 state,
-                self._phase_a_readiness_candidate_dirs(),
+                self._phase_a_readiness_candidate_dirs(state),
             )
 
         published_spec_dir = self._published_phase_a_spec_dir(state, active_spec_dir)
@@ -1875,9 +2016,12 @@ class SquadController:
             return False
         return True
 
-    def _materialize_implementation_targets(self) -> None:
+    def _materialize_implementation_targets(
+        self,
+        state: Mapping[str, object] | None = None,
+    ) -> None:
         """Write authoritative run targets once an active spec exists."""
-        state = self._state_store.load()
+        state = dict(state) if state is not None else self._state_store.load()
         targets = [
             str(value).strip()
             for value in (
@@ -1900,11 +2044,16 @@ class SquadController:
         except (OSError, ValueError) as exc:
             logger.warning("Could not materialize implementation targets: %s", exc)
 
-    def _apply_product_input_updates(self, result: SquadAgentResult, phase: str) -> str | None:
+    def _apply_product_input_updates(
+        self,
+        result: SquadAgentResult,
+        phase: str,
+        state: Mapping[str, object],
+    ) -> str | None:
         """Validate and persist agent proposals through the controller-owned ledger."""
         payload = result.echelon_result or {}
         updates = payload.get("product_input_updates")
-        state = self._state_store.load()
+        state = dict(state)
         metadata = state.get("product_inputs")
         if not isinstance(metadata, dict) or not metadata:
             return "product_input_updates received without declared product inputs" if updates else None
@@ -1976,11 +2125,36 @@ class SquadController:
             return f"invalid product input updates: {exc}"
         return None
 
+    def _commit_external_phase_effects(
+        self,
+        result: SquadAgentResult,
+        phase: str,
+        state: Mapping[str, object],
+        *,
+        manual_phase_run: bool,
+    ) -> None:
+        """Publish external effects only after the routing CAS is known current."""
+        product_input_error = self._apply_product_input_updates(
+            result,
+            phase,
+            state,
+        )
+        if product_input_error:
+            raise _ProductInputCommitError(product_input_error)
+        if phase == "phase4-document":
+            readiness = self._publish_phase_a_artifacts_for_build(state)
+            if not readiness.ready:
+                raise _PhaseAReadinessCommitError(readiness)
+        elif manual_phase_run:
+            self._publish_manual_phase_artifacts(state)
+
     def _schedule_product_input_mapping_repair(
         self,
         phase: str,
         error: str,
         result: SquadAgentResult | None = None,
+        *,
+        snapshot: RoutingStateSnapshot,
     ) -> bool:
         """Re-dispatch PLAN with exact unresolved product-input evidence.
 
@@ -1998,7 +2172,7 @@ class SquadController:
         if not error.startswith(prefixes):
             return False
 
-        state = self._state_store.load()
+        state = snapshot.state
         existing_repair = state.get("product_input_mapping_repair")
         protocol_version = (
             existing_repair.get("protocol_version")
@@ -2053,7 +2227,11 @@ class SquadController:
         state["phase"] = phase
         state["status"] = "running"
         state["blocked_reason"] = None
-        self._state_store.save(state)
+        if not self._state_store.commit_routing_snapshot_state(
+            snapshot,
+            state,
+        ):
+            return False
         print(
             f"[squad] ~ {phase} product-input mapping repair "
             f"({attempts + 1}/{MAX_PRODUCT_INPUT_MAPPING_REPAIRS})",
@@ -2124,23 +2302,42 @@ class SquadController:
             return str(path)
 
     def _block_after_phase_a_readiness_failure(
-        self, readiness: PhaseAReadinessResult
-    ) -> None:
-        state = self._state_store.load()
+        self,
+        readiness: PhaseAReadinessResult,
+        *,
+        snapshot: RoutingStateSnapshot | None = None,
+    ) -> bool:
+        state = (
+            snapshot.state
+            if snapshot is not None
+            else self._state_store.load()
+        )
         state["phase"] = PHASE_TERMINAL_BLOCKED
         state["status"] = "blocked"
         state["blocked_reason"] = "phase_a_readiness_failed"
         state["phase_a_readiness_blockers"] = readiness.blockers
-        self._state_store.save(state)
+        persisted = (
+            self._state_store.commit_routing_snapshot_state(
+                snapshot,
+                state,
+            )
+            if snapshot is not None
+            else (self._state_store.save(state) is None)
+        )
+        if not persisted:
+            return False
         self._record_blocker_event("phase4-document", "phase_a_readiness_failed")
         print(
             "[squad] ✗ phase4-document blocked: Phase A readiness failed "
             "(build-input artifacts incomplete)",
             flush=True,
         )
+        return True
 
     def _blocked_executor_reason(
-        self, result: SquadAgentResult
+        self,
+        result: SquadAgentResult,
+        control_updates: Mapping[str, object] | None = None,
     ) -> str | None:
         if result.provider_limit_message:
             return "provider_session_limit"
@@ -2151,18 +2348,26 @@ class SquadController:
         if result.exit_code != 0:
             return f"agent_exit_code_{result.exit_code}"
         if (result.verdict or "").upper() == "BLOCKED":
-            explicit_reason = (result.state_updates or {}).get("blocked_reason")
+            explicit_reason = (
+                (control_updates or {}).get("blocked_reason")
+                or (result.state_updates or {}).get("blocked_reason")
+            )
             if isinstance(explicit_reason, str) and explicit_reason.strip():
                 return explicit_reason.strip()
             return "agent_blocked"
         return None
 
     def _block_after_executor_failure(
-        self, phase: str, reason: str, result: SquadAgentResult
-    ) -> None:
+        self,
+        phase: str,
+        reason: str,
+        result: SquadAgentResult,
+        *,
+        snapshot: RoutingStateSnapshot,
+    ) -> bool:
         from datetime import datetime, timezone
 
-        state = self._state_store.load()
+        state = snapshot.state
         if phase == "phase1-what":
             self._preserve_cartographer_spec_context(state)
         retryable_analysis = self._is_deterministic_understanding_phase(phase)
@@ -2186,7 +2391,11 @@ class SquadController:
             "verdict": result.verdict,
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
-        self._state_store.save(state)
+        if not self._state_store.commit_routing_snapshot_state(
+            snapshot,
+            state,
+        ):
+            return False
         self._record_blocker_event(phase, reason)
         detail = (
             "retryable deterministic phase"
@@ -2196,6 +2405,7 @@ class SquadController:
         if reason == "provider_session_limit":
             detail = f"missing_echelon_result; provider: {result.provider_limit_message}"
         print(f"[squad] ✗ {phase} blocked: {reason} ({detail})", flush=True)
+        return True
 
     def _record_blocker_event(self, phase: str, reason: str) -> None:
         from datetime import datetime, timezone
@@ -2271,6 +2481,20 @@ class SquadController:
     ) -> SquadAgentResult:
         """Detach and validate COMMANDER output without mutating live state."""
         candidate = detach_squad_agent_result(result)
+        operational_error_path = ""
+        if candidate.exit_code != 0:
+            operational_error_path = "$.exit_code"
+        elif candidate.timed_out:
+            operational_error_path = "$.timed_out"
+        elif candidate.provider_limit_message:
+            operational_error_path = "$.provider_limit_message"
+        if operational_error_path:
+            raise ControllerStateContractViolation(
+                "COMMANDER judgment did not complete successfully",
+                contract="judgment",
+                json_path=operational_error_path,
+                validator="operational_success",
+            )
         try:
             outcome = validate_echelon_result_contract(
                 candidate.echelon_result,
@@ -2810,16 +3034,41 @@ class SquadController:
         self,
         node: PhaseNode,
         result: SquadAgentResult,
+        snapshot: RoutingStateSnapshot,
     ) -> PreparedPhaseResult:
         """Prepare one detached executor result for routing and persistence."""
         candidate = detach_squad_agent_result(result)
         if node.id in WHY_PHASES:
             self._normalize_why_result_quality_scores(candidate)
+        provider_control_intents: dict[str, object] = {}
+        payload = candidate.echelon_result
+        if type(payload) is dict:
+            updates = dict.get(payload, "state_updates")
+            if type(updates) is dict:
+                declared = frozenset(node.allowed_state_updates or ()) | (
+                    node.controller_state_update_keys
+                )
+                blocking_control_syntax = candidate.verdict in {
+                    "BLOCKED",
+                    "STOP_AND_ASK",
+                }
+                sanitized_updates = dict(updates)
+                for key in ("status", "blocked_reason"):
+                    if key in sanitized_updates and (
+                        key in declared or blocking_control_syntax
+                    ):
+                        provider_control_intents[key] = (
+                            sanitized_updates[key]
+                        )
         enrichment = self._controller_enrichment(
             node,
-            self._state_store.load(),
+            snapshot.state,
             candidate,
         )
+        control_updates = {
+            **provider_control_intents,
+            **dict(enrichment.control_updates),
+        }
         return prepare_phase_result(
             node,
             candidate,
@@ -2828,53 +3077,84 @@ class SquadController:
             controller_owns_result_updates=(
                 enrichment.controller_owns_result_updates
             ),
-            state_removals=enrichment.state_removals,
-            control_updates=enrichment.control_updates,
+            state_removals=frozenset(
+                enrichment.state_removals
+                - STORE_OWNED_TRANSACTION_KEYS
+            ),
+            trusted_transaction_state_removals=frozenset(
+                enrichment.state_removals
+                & STORE_OWNED_TRANSACTION_KEYS
+            ),
+            control_updates=control_updates,
+        )
+
+    def _block_after_executor_contract_failure(
+        self,
+        node: PhaseNode,
+        exc: ControllerStateContractViolation,
+    ) -> None:
+        """Record a detached, redacted failure from executor-side preparation."""
+        try:
+            snapshot = self._state_store.capture_routing_snapshot(
+                expected_phase=node.id,
+            )
+        except StateAdvanceError:
+            return
+        self._block_after_state_advance_failure(
+            node,
+            node.id,
+            StateAdvanceError(
+                "controller result preparation failed",
+                json_path=exc.json_path,
+                validator=exc.validator,
+            ),
+            snapshot=snapshot,
+            diagnostic_contract=exc.contract,
+            diagnostic_subject="controller result preparation",
         )
 
     def _prepare_phase_result_or_block(
         self,
         node: PhaseNode,
         result: SquadAgentResult,
+        snapshot: RoutingStateSnapshot,
     ) -> PreparedPhaseResult | None:
         """Prepare a result or persist one stable, redacted contract failure."""
         try:
-            return self._prepare_phase_result(node, result)
+            return self._prepare_phase_result(node, result, snapshot)
         except ControllerStateContractViolation as exc:
-            state = self._state_store.load()
-            contract = node.controller_state_contract
-            state["phase"] = node.id
-            state["status"] = "blocked"
-            state["blocked_reason"] = (
-                "controller_state_contract_validation_failed"
+            self._block_after_state_advance_failure(
+                node,
+                node.id,
+                StateAdvanceError(
+                    "controller result preparation failed",
+                    json_path=exc.json_path,
+                    validator=exc.validator,
+                ),
+                snapshot=snapshot,
+                diagnostic_contract=exc.contract,
+                diagnostic_subject="controller result preparation",
             )
-            state["controller_contract_error"] = {
-                "phase_id": node.id,
-                "contract": exc.contract,
-                "contract_sha256": (
-                    contract.sha256 if contract is not None else None
-                ),
-                "json_path": exc.json_path,
-                "validator": exc.validator,
-                "message": (
-                    "controller result preparation failed at "
-                    f"{exc.json_path} ({exc.validator})"
-                ),
-            }
-            self._state_store.save(state)
             return None
 
     def _advance_prepared_result_or_block(
         self,
         node: PhaseNode,
         decision: PreparedRoutingDecision,
+        *,
+        before_commit: Callable[[], None] | None = None,
     ) -> AdvanceReceipt | None:
         """Commit one sealed route or persist a separate redacted failure."""
+        pending_judgments = self._pending_judgment_results.pop(
+            decision.routing_sha256,
+            (),
+        )
         try:
             receipt = self._state_store.advance(
                 decision.from_phase,
                 decision.to_phase,
                 decision,
+                before_commit=before_commit,
             )
             if not isinstance(receipt, AdvanceReceipt):
                 raise StateAdvanceError(
@@ -2882,6 +3162,8 @@ class SquadController:
                     json_path="$.advance_receipt",
                     validator="receipt",
                 )
+            for judgment in pending_judgments:
+                self._write_journal_entries(judgment, decision.from_phase)
             return receipt
         except StateAdvanceError as exc:
             self._block_after_state_advance_failure(
@@ -2889,6 +3171,7 @@ class SquadController:
                 decision.from_phase,
                 exc,
                 decision=decision,
+                token_usage_delta=decision.token_usage_delta,
             )
             return None
 
@@ -2899,6 +3182,10 @@ class SquadController:
         error: StateAdvanceError,
         *,
         decision: PreparedRoutingDecision | None = None,
+        snapshot: RoutingStateSnapshot | None = None,
+        token_usage_delta: int = 0,
+        diagnostic_contract: str | None = None,
+        diagnostic_subject: str = "state advance",
     ) -> None:
         """Persist a stable diagnostic without treating failure as an advance."""
         contract = node.controller_state_contract
@@ -2916,9 +3203,18 @@ class SquadController:
         )
         persisted = self._state_store.merge_advance_failure_diagnostic(
             from_phase=from_phase,
+            expected_state_revision=(
+                decision.expected_state_revision
+                if decision is not None
+                else snapshot.state_revision
+                if snapshot is not None
+                else -1
+            ),
             expected_previous_dispatch_sha256=(
                 decision.expected_previous_dispatch_sha256
                 if decision is not None
+                else snapshot.previous_dispatch_sha256
+                if snapshot is not None
                 else None
             ),
             updates={
@@ -2929,9 +3225,12 @@ class SquadController:
                 "controller_contract_error": {
                     "phase_id": from_phase,
                     "contract": (
-                        contract.name
-                        if contract is not None
-                        else "routing_decision"
+                        diagnostic_contract
+                        or (
+                            contract.name
+                            if contract is not None
+                            else "routing_decision"
+                        )
                     ),
                     "contract_sha256": (
                         contract.sha256 if contract is not None else None
@@ -2939,12 +3238,15 @@ class SquadController:
                     "json_path": json_path,
                     "validator": validator,
                     "message": (
-                        "state advance failed at "
+                        f"{diagnostic_subject} failed at "
                         f"{json_path} ({validator})"
                     ),
                 },
             },
+            token_usage_delta=token_usage_delta,
         )
+        if not persisted and token_usage_delta:
+            self._state_store.increment_token_usage(token_usage_delta)
         if persisted:
             self._record_blocker_event(
                 from_phase,
@@ -2969,9 +3271,10 @@ class SquadController:
         self,
         node: PhaseNode,
         prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
     ) -> tuple[SquadAgentResult, dict, dict[str, object]]:
         result = prepared.as_squad_agent_result()
-        state = self._state_store.load()
+        state = snapshot.state
         # Merge order (lowest→highest precedence): controller config, persisted
         # state, then the prepared canonical updates.
         eval_state: dict[str, object] = {
@@ -2987,12 +3290,14 @@ class SquadController:
         self,
         node: PhaseNode,
         prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
         *,
         start_index: int = 0,
     ) -> str:
         result, _state, eval_state = self._transition_evaluation_inputs(
             node,
             prepared,
+            snapshot,
         )
         for index, transition in enumerate(
             node.transitions[start_index:],
@@ -3015,6 +3320,7 @@ class SquadController:
         self,
         node: PhaseNode,
         prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
     ) -> str:
         """Select a route without mutating the prepared payload or state."""
         if not isinstance(prepared, PreparedPhaseResult):
@@ -3023,12 +3329,17 @@ class SquadController:
             )
         if prepared.routing_override:
             return prepared.routing_override
-        return self._evaluate_transition_conditions(node, prepared)
+        return self._evaluate_transition_conditions(
+            node,
+            prepared,
+            snapshot,
+        )
 
     def _coordinate_why_transition_state(
         self,
         node: PhaseNode,
         prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
     ) -> tuple[str | None, dict[str, object]]:
         """Return WHY routing and state effects without persisting them."""
         if node.id not in WHY_PHASES:
@@ -3037,11 +3348,12 @@ class SquadController:
         result, state, eval_state = self._transition_evaluation_inputs(
             node,
             prepared,
+            snapshot,
         )
         escalation_q = prepared.state_updates.get("escalation_question")
         if escalation_q:
             updates: dict[str, object] = {"status": "blocked"}
-            if "blocked_reason" not in prepared.state_updates:
+            if "blocked_reason" not in prepared.control_updates:
                 updates["blocked_reason"] = "WHY phase: agent escalation"
             return node.id, updates
 
@@ -3066,7 +3378,7 @@ class SquadController:
         if fail_count < 2 or state.get("escalation_question"):
             return None, updates
         last_ts = (state.get("last_dispatch") or {}).get("completed_at")
-        if self._phase_artifacts_changed_since(last_ts):
+        if self._phase_artifacts_changed_since(last_ts, snapshot.state):
             return None, updates
 
         print(
@@ -3083,10 +3395,62 @@ class SquadController:
         updates["status"] = "blocked"
         return PHASE_TERMINAL_BLOCKED, updates
 
+    def _construct_routing_decision_or_block(
+        self,
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
+        *,
+        additional_state_updates: Mapping[str, object] | None = None,
+        manual_phase_run: bool = False,
+        conditional_skip: bool = False,
+    ) -> PreparedRoutingDecision | None:
+        """Construct one route or record a redacted snapshot-bound failure."""
+        with self._defer_routing_provider_usage() as usage:
+            try:
+                return self._coordinate_transition_routing(
+                    node,
+                    prepared,
+                    snapshot,
+                    additional_state_updates=additional_state_updates,
+                    manual_phase_run=manual_phase_run,
+                    conditional_skip=conditional_skip,
+                )
+            except (
+                ControllerStateContractViolation,
+                StateAdvanceError,
+            ) as exc:
+                if isinstance(exc, ControllerStateContractViolation):
+                    error = StateAdvanceError(
+                        "routing decision construction failed",
+                        json_path=exc.json_path,
+                        validator=exc.validator,
+                    )
+                else:
+                    error = exc
+                self._block_after_state_advance_failure(
+                    node,
+                    snapshot.phase,
+                    error,
+                    snapshot=snapshot,
+                    token_usage_delta=usage["tokens"],
+                    diagnostic_contract=(
+                        exc.contract
+                        if isinstance(
+                            exc,
+                            ControllerStateContractViolation,
+                        )
+                        else None
+                    ),
+                    diagnostic_subject="routing decision construction",
+                )
+                return None
+
     def _coordinate_transition_routing(
         self,
         node: PhaseNode,
         prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
         *,
         additional_state_updates: Mapping[str, object] | None = None,
         manual_phase_run: bool = False,
@@ -3094,18 +3458,93 @@ class SquadController:
     ) -> PreparedRoutingDecision:
         """Select and seal one route without mutating live success state."""
         self._matched_transition = None
-        queued_updates = dict(additional_state_updates or {})
+        queued_updates: dict[str, object] = {}
+        transaction_updates: dict[str, object] = {}
+        transaction_removals = set(
+            prepared.trusted_transaction_state_removals
+        )
+
+        def merge_effects(effects: Mapping[str, object]) -> None:
+            for key, value in effects.items():
+                if key in STORE_OWNED_TRANSACTION_KEYS:
+                    if key not in TRUSTED_ROUTING_EFFECT_KEYS:
+                        raise ControllerStateContractViolation(
+                            "routing effect contains a transaction identity",
+                            contract="routing",
+                            json_path=f"$.state_updates.{key}",
+                            validator="ownership",
+                        )
+                    transaction_updates[key] = value
+                else:
+                    queued_updates[key] = value
+
+        def merge_judgment_effects(
+            effects: Mapping[str, object],
+        ) -> None:
+            """Promote validated control syntax; reject judgment ownership."""
+            status = effects.get("status")
+            has_status = "status" in effects
+            blocked_reason = effects.get("blocked_reason")
+            has_blocked_reason = "blocked_reason" in effects
+            for key, value in effects.items():
+                if key in {"status", "blocked_reason"}:
+                    continue
+                if key in STORE_OWNED_TRANSACTION_KEYS:
+                    raise ControllerStateContractViolation(
+                        "judgment effect contains a transaction identity",
+                        contract="judgment",
+                        json_path=f"$.state_updates.{key}",
+                        validator="ownership",
+                    )
+                queued_updates[key] = value
+            if has_status and status != "blocked":
+                raise ControllerStateContractViolation(
+                    "judgment lifecycle intent is not controller-promotable",
+                    contract="judgment",
+                    json_path="$.state_updates.status",
+                    validator="ownership",
+                )
+            if has_blocked_reason and (
+                type(blocked_reason) is not str
+                or not blocked_reason.strip()
+                or status != "blocked"
+            ):
+                raise ControllerStateContractViolation(
+                    "judgment blocked reason is not a valid control intent",
+                    contract="judgment",
+                    json_path="$.state_updates.blocked_reason",
+                    validator="ownership",
+                )
+            if status == "blocked":
+                transaction_updates["status"] = "blocked"
+                transaction_updates["blocked_reason"] = (
+                    blocked_reason
+                    if type(blocked_reason) is str
+                    and blocked_reason.strip()
+                    else "judgment_blocked"
+                )
+
+        merge_effects(dict(additional_state_updates or {}))
         judgment_payloads: list[dict[str, object]] = []
+        judgment_results: list[SquadAgentResult] = []
         source = "transition"
         transition_index: int | None = None
         if prepared.routing_override:
-            next_phase = self._evaluate_transitions(node, prepared)
+            next_phase = self._evaluate_transitions(
+                node,
+                prepared,
+                snapshot,
+            )
             source = "controller_override"
         else:
             why_override, why_updates = (
-                self._coordinate_why_transition_state(node, prepared)
+                self._coordinate_why_transition_state(
+                    node,
+                    prepared,
+                    snapshot,
+                )
             )
-            queued_updates.update(why_updates)
+            merge_effects(why_updates)
             if why_override:
                 next_phase = why_override
                 source = "why_policy"
@@ -3117,12 +3556,14 @@ class SquadController:
                             next_phase = self._evaluate_transitions(
                                 node,
                                 prepared,
+                                snapshot,
                             )
                         else:
                             next_phase = (
                                 self._evaluate_transition_conditions(
                                     node,
                                     prepared,
+                                    snapshot,
                                     start_index=start_index,
                                 )
                             )
@@ -3131,29 +3572,18 @@ class SquadController:
                         transition_index = unresolved.transition_index
                         source = "commander"
                         result = prepared.as_squad_agent_result()
-                        try:
-                            judgment = self._judgment_dispatch(
-                                "Cannot evaluate condition "
-                                f"{unresolved.condition!r} in phase "
-                                f"{node.id!r}",
-                                node,
-                                result,
-                            )
-                        except ControllerStateContractViolation:
-                            queued_updates.update(
-                                {
-                                    "status": "blocked",
-                                    "blocked_reason": (
-                                        "judgment_state_updates_"
-                                        "validation_failed"
-                                    ),
-                                }
-                            )
-                            next_phase = PHASE_TERMINAL_BLOCKED
-                            break
+                        judgment = self._judgment_dispatch(
+                            "Cannot evaluate condition "
+                            f"{unresolved.condition!r} in phase "
+                            f"{node.id!r}",
+                            node,
+                            result,
+                            snapshot,
+                        )
                         judgment_payload = judgment.echelon_result
                         if isinstance(judgment_payload, dict):
                             judgment_payloads.append(judgment_payload)
+                            judgment_results.append(judgment)
                         requested_phase = (
                             judgment.state_updates.get("next_phase")
                             or judgment.state_updates.get("phase")
@@ -3169,7 +3599,7 @@ class SquadController:
                                 "Blocking.",
                                 flush=True,
                             )
-                            queued_updates.update(
+                            merge_effects(
                                 {
                                     "status": "blocked",
                                     "blocked_reason": (
@@ -3185,10 +3615,36 @@ class SquadController:
                             for key, value in judgment.state_updates.items()
                             if key not in routing_keys
                         }
-                        queued_updates.update(extra)
-                        if extra.get("status") == "blocked":
+                        if judgment.verdict == "BLOCKED":
+                            if requested_phase:
+                                raise ControllerStateContractViolation(
+                                    "blocked judgment cannot select a route",
+                                    contract="judgment",
+                                    json_path="$.state_updates.next_phase",
+                                    validator="blocked_intent",
+                                )
+                            if (
+                                extra.get("status") != "blocked"
+                                or type(extra.get("blocked_reason")) is not str
+                                or not extra["blocked_reason"].strip()
+                            ):
+                                raise ControllerStateContractViolation(
+                                    "blocked judgment requires an exact block intent",
+                                    contract="judgment",
+                                    json_path="$.state_updates",
+                                    validator="blocked_intent",
+                                )
+                            merge_judgment_effects(extra)
                             next_phase = node.id
                             break
+                        if "status" in extra or "blocked_reason" in extra:
+                            raise ControllerStateContractViolation(
+                                "resolved judgment cannot own lifecycle state",
+                                contract="judgment",
+                                json_path="$.state_updates",
+                                validator="resolved_intent",
+                            )
+                        merge_judgment_effects(extra)
                         if requested_phase:
                             next_phase = str(requested_phase)
                             break
@@ -3209,18 +3665,30 @@ class SquadController:
             node,
             next_phase,
         )
-        return self._state_store.prepare_routing_decision(
+        decision = self._state_store.prepare_routing_decision(
             prepared,
+            snapshot=snapshot,
             from_phase=node.id,
             to_phase=next_phase,
             queued_state_updates=queued_updates,
+            transaction_state_updates=transaction_updates,
+            transaction_state_removals=transaction_removals,
             judgment_payloads=judgment_payloads,
             source=source,
             transition_index=transition_index,
             increment_iteration=increment_iteration,
             manual_phase_run=manual_phase_run,
             conditional_skip=conditional_skip,
+            token_usage_delta=(
+                self._deferred_provider_usage or {"tokens": 0}
+            )["tokens"],
         )
+        if judgment_results:
+            self._pending_judgment_results[decision.routing_sha256] = tuple(
+                detach_squad_agent_result(result)
+                for result in judgment_results
+            )
+        return decision
 
     def _transition_increments_iteration(
         self,
@@ -3260,10 +3728,15 @@ class SquadController:
         reason: str,
         node: PhaseNode,
         result: Optional[SquadAgentResult] = None,
+        snapshot: RoutingStateSnapshot | None = None,
     ) -> SquadAgentResult:
         """Dispatch slimmed COMMANDER for judgment calls."""
         commander_path = self._ext_dir / "agents/control/commander.md"
-        state = self._state_store.load()
+        state = (
+            snapshot.state
+            if snapshot is not None
+            else self._state_store.load()
+        )
         valid_phases = self._graph.all_phase_ids()
         transitions_text = "\n".join(
             f"  - to: {t.get('to')}  (condition: {t.get('condition', 'always')})"
@@ -3288,10 +3761,6 @@ class SquadController:
                 context,
             )
         judgment = self._canonicalize_judgment_result(raw_judgment)
-        # COMMANDER writes most journal entries directly via journal-append.sh
-        # during LLM execution.  This catches any entries it returns in
-        # echelon_result.journal_entries[] that it didn't write itself.
-        self._write_journal_entries(judgment, node.id)
         return judgment
 
     def _judgment_dispatch_escalation(
@@ -3306,11 +3775,42 @@ class SquadController:
         answers and returns state_updates that clear the block.
         """
         commander_path = self._ext_dir / "agents/control/commander.md"
-        state = self._state_store.load()
-        blocked_reason = recovery_reason or str(state.get("blocked_reason") or "")
+        snapshot = self._state_store.capture_routing_snapshot()
+        state = snapshot.state
+        # Recovery arguments are observational hints from an earlier caller
+        # load.  The captured immutable snapshot is the only routing authority.
+        snapshot_question = str(state.get("escalation_question") or "")
+        blocked_reason = str(state.get("blocked_reason") or "")
+        if (
+            not blocked_reason
+            and str(state.get("phase_dispatch_limit_phase") or "").strip()
+        ):
+            blocked_reason = "phase_dispatch_limit"
+        snapshot_phase = snapshot.phase
+        last_dispatch = state.get("last_dispatch")
+        last_dispatch_phase = (
+            str(last_dispatch.get("phase_id") or "").strip()
+            if isinstance(last_dispatch, dict)
+            else ""
+        )
+        dispatch_limit_phase = _phase_dispatch_limit_phase(state)
+        blocked_origin_phase = snapshot_phase
+        if snapshot_phase == PHASE_TERMINAL_BLOCKED:
+            if (
+                dispatch_limit_phase
+                and dispatch_limit_phase in self._graph.all_phase_ids()
+                and dispatch_limit_phase not in TERMINAL_PHASES
+            ):
+                blocked_origin_phase = dispatch_limit_phase
+            elif (
+                last_dispatch_phase
+                and last_dispatch_phase in self._graph.all_phase_ids()
+                and last_dispatch_phase not in TERMINAL_PHASES
+            ):
+                blocked_origin_phase = last_dispatch_phase
         reset_why_fail_count = blocked_reason == "consecutive_why_fails"
         capped_phase = (
-            _phase_dispatch_limit_phase(state, blocked_phase)
+            _phase_dispatch_limit_phase(state)
             if blocked_reason == "phase_dispatch_limit"
             else ""
         )
@@ -3327,8 +3827,8 @@ class SquadController:
             f"# COMMANDER BANZAI ESCALATION JUDGMENT\n\n"
             f"**Mode:** banzai — produce best-judgment answers and continue. "
             f"Do NOT stop the run.\n\n"
-            f"**Phase blocked:** {blocked_phase}\n\n"
-            f"**Blocking questions:**\n{escalation_question}\n\n"
+            f"**Phase blocked:** {blocked_origin_phase}\n\n"
+            f"**Blocking questions:**\n{snapshot_question}\n\n"
             f"**Your task:**\n"
             f"1. For each blocking question, produce a best-judgment answer.\n"
             f"2. Write `{staging_dir}/user-clarifications.md` using the "
@@ -3351,13 +3851,19 @@ class SquadController:
                 flush=True,
             )
 
-        with self._telemetry_provider.dispatch(
-            DispatchContext(blocked_phase, "COMMANDER", "escalation", 1)
-        ):
-            raw_result = self._telemetry_provider.exec_agent(
-                str(self._project_root),
-                context,
-            )
+        with self._defer_routing_provider_usage() as usage:
+            with self._telemetry_provider.dispatch(
+                DispatchContext(
+                    blocked_origin_phase,
+                    "COMMANDER",
+                    "escalation",
+                    1,
+                )
+            ):
+                raw_result = self._telemetry_provider.exec_agent(
+                    str(self._project_root),
+                    context,
+                )
 
         validation_reason = ""
         try:
@@ -3378,9 +3884,24 @@ class SquadController:
             validation_reason = sorted(
                 result.quarantined_state_updates
             )[0]
+        if not validation_reason and result.verdict != "JUDGMENT_RESOLVED":
+            validation_reason = "verdict"
+        cleanup = result.state_updates
+        if not validation_reason and not (
+            "escalation_question" in cleanup
+            and cleanup["escalation_question"] is None
+            and cleanup.get("escalation_resolved") is True
+            and cleanup.get("escalation_resolver") == "COMMANDER-banzai"
+            and "blocked_reason" in cleanup
+            and cleanup["blocked_reason"] is None
+            and (
+                "status" not in cleanup
+                or cleanup.get("status") == "running"
+            )
+        ):
+            validation_reason = "cleanup_intent"
 
-        current = self._state_store.load()
-        from_phase = str(current.get("phase") or blocked_phase)
+        from_phase = snapshot.phase
         requested_phase = str(
             result.state_updates.get("next_phase")
             or result.state_updates.get("phase")
@@ -3394,11 +3915,13 @@ class SquadController:
 
         queued_updates: dict[str, object] = {}
         removals: set[str] = set()
+        transaction_updates: dict[str, object] = {}
+        transaction_removals: set[str] = set()
         target_phase = requested_phase or from_phase
         source = "commander_recovery"
         if validation_reason:
             target_phase = PHASE_TERMINAL_BLOCKED
-            queued_updates.update(
+            transaction_updates.update(
                 {
                     "status": "blocked",
                     "blocked_reason": (
@@ -3412,68 +3935,147 @@ class SquadController:
             for key, value in result.state_updates.items():
                 if key in {"next_phase", "phase"}:
                     continue
+                if key in STORE_OWNED_TRANSACTION_KEYS:
+                    valid_control_intent = (
+                        (key == "status" and value == "running")
+                        or (key == "blocked_reason" and value is None)
+                        or (
+                            key == "escalation_resolved"
+                            and value is True
+                        )
+                        or (
+                            key == "escalation_resolver"
+                            and value == "COMMANDER-banzai"
+                        )
+                    )
+                    if not valid_control_intent:
+                        validation_reason = "ownership"
+                        break
+                    continue
                 if value is None:
                     removals.add(key)
                 else:
                     queued_updates[key] = value
-            queued_updates.setdefault("status", "running")
-            queued_updates.setdefault("escalation_resolved", True)
-            if reset_why_fail_count:
-                queued_updates["why_fail_count"] = 0
-            if capped_phase:
-                counts = current.get("phase_dispatch_counts")
-                next_counts = (
-                    dict(counts) if isinstance(counts, dict) else {}
+            if validation_reason:
+                queued_updates.clear()
+                removals.clear()
+                transaction_updates.clear()
+                transaction_removals.clear()
+                target_phase = PHASE_TERMINAL_BLOCKED
+                transaction_updates.update(
+                    {
+                        "status": "blocked",
+                        "blocked_reason": (
+                            "judgment state_updates validation failed: "
+                            f"{validation_reason}"
+                        ),
+                    }
                 )
-                next_counts.pop(capped_phase, None)
-                queued_updates["phase_dispatch_counts"] = next_counts
-                queued_updates["phase_dispatch_limit_recovery"] = {
-                    "phase": capped_phase,
-                    "resolver": "COMMANDER-banzai",
-                }
-            if (
-                not requested_phase
-                and from_phase == PHASE_TERMINAL_BLOCKED
-                and blocked_phase
-                and blocked_phase != PHASE_TERMINAL_BLOCKED
-            ):
-                target_phase = blocked_phase
+                source = "commander_recovery_rejected"
+            else:
+                transaction_updates.update(
+                    {
+                        "status": "running",
+                        "escalation_resolved": True,
+                        "escalation_resolver": "COMMANDER-banzai",
+                    }
+                )
+                transaction_removals.add("blocked_reason")
+                removals.add("escalation_question")
+                if reset_why_fail_count:
+                    transaction_updates["why_fail_count"] = 0
+                if capped_phase:
+                    counts = state.get("phase_dispatch_counts")
+                    next_counts = (
+                        dict(counts) if isinstance(counts, dict) else {}
+                    )
+                    next_counts.pop(capped_phase, None)
+                    transaction_updates["phase_dispatch_counts"] = (
+                        next_counts
+                    )
+                    transaction_updates["phase_dispatch_limit_recovery"] = {
+                        "phase": capped_phase,
+                        "resolver": "COMMANDER-banzai",
+                    }
+                if (
+                    not requested_phase
+                    and from_phase == PHASE_TERMINAL_BLOCKED
+                    and blocked_origin_phase
+                    and blocked_origin_phase != PHASE_TERMINAL_BLOCKED
+                ):
+                    target_phase = blocked_origin_phase
 
         payload = deepcopy(result.echelon_result or {})
         payload["state_updates"] = {}
         synthetic_result = detach_squad_agent_result(result)
         synthetic_result.echelon_result = payload
-        prepared = prepare_phase_result(
-            PhaseNode(
-                id=from_phase,
-                type="commander_recovery",
-                allowed_state_updates=[],
-            ),
-            synthetic_result,
-            controller_updates={},
-            routing_override=target_phase,
-            state_removals=removals,
+        recovery_node = PhaseNode(
+            id=from_phase,
+            type="commander_recovery",
+            allowed_state_updates=[],
         )
-        decision = self._state_store.prepare_routing_decision(
-            prepared,
-            from_phase=from_phase,
-            to_phase=target_phase,
-            queued_state_updates=queued_updates,
-            judgment_payloads=(
-                [result.echelon_result]
-                if not validation_reason
-                and isinstance(result.echelon_result, dict)
-                else []
-            ),
-            source=source,
-            record_completion=False,
-        )
-        self._state_store.advance(
-            from_phase,
-            target_phase,
-            decision,
-        )
-        self._write_journal_entries(result, blocked_phase)
+        try:
+            prepared = prepare_phase_result(
+                recovery_node,
+                synthetic_result,
+                controller_updates={},
+                routing_override=target_phase,
+                state_removals=removals,
+            )
+            decision = self._state_store.prepare_routing_decision(
+                prepared,
+                snapshot=snapshot,
+                from_phase=from_phase,
+                to_phase=target_phase,
+                queued_state_updates=queued_updates,
+                transaction_state_updates=transaction_updates,
+                transaction_state_removals=transaction_removals,
+                token_usage_delta=usage["tokens"],
+                judgment_payloads=(
+                    [result.echelon_result]
+                    if not validation_reason
+                    and isinstance(result.echelon_result, dict)
+                    else []
+                ),
+                source=source,
+                record_completion=False,
+            )
+            self._state_store.advance(
+                from_phase,
+                target_phase,
+                decision,
+            )
+        except (
+            ControllerStateContractViolation,
+            StateAdvanceError,
+        ) as exc:
+            error = (
+                StateAdvanceError(
+                    "recovery routing decision construction failed",
+                    json_path=exc.json_path,
+                    validator=exc.validator,
+                )
+                if isinstance(exc, ControllerStateContractViolation)
+                else exc
+            )
+            self._block_after_state_advance_failure(
+                recovery_node,
+                from_phase,
+                error,
+                snapshot=snapshot,
+                token_usage_delta=usage["tokens"],
+                diagnostic_contract=(
+                    exc.contract
+                    if isinstance(
+                        exc,
+                        ControllerStateContractViolation,
+                    )
+                    else "commander_recovery"
+                ),
+                diagnostic_subject="recovery routing decision",
+            )
+            return result
+        self._write_journal_entries(result, blocked_origin_phase)
         return result
 
     def _write_journal_entries(self, result: SquadAgentResult, phase_id: str) -> None:
@@ -3523,7 +4125,11 @@ class SquadController:
             for entry in prepared_entries:
                 fh.write(_json.dumps(entry) + "\n")
 
-    def _phase_artifacts_changed_since(self, iso_timestamp: Optional[str]) -> bool:
+    def _phase_artifacts_changed_since(
+        self,
+        iso_timestamp: Optional[str],
+        state: Mapping[str, object],
+    ) -> bool:
         """Return True if a canonical phase artifact is newer than the cutoff.
 
         Before WHAT creates ``state.spec_dir``, discovery/WHY1 artifacts live in
@@ -3535,7 +4141,6 @@ class SquadController:
         try:
             from datetime import datetime, timezone
             cutoff = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
-            state = self._state_store.load()
             spec_dir_ref = str(state.get("spec_dir") or "").strip()
             if spec_dir_ref:
                 artifact_root = Path(spec_dir_ref)

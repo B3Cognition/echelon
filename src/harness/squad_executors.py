@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from harness.controller_state_contracts import ControllerStateContractViolation
 from harness.prompt_markdown import read_prompt_markdown
 from harness.quality_scores import (
     normalize_why_quality_scores,
@@ -17,6 +18,7 @@ from harness.quality_scores import (
     resolve_quality_gate_thresholds,
 )
 from harness.spec_lexicon_gate import run_spec_lexicon_gate
+from harness.state_transaction_namespace import store_owned_update_keys
 from harness.tasks_lexicon_gate import run_tasks_lexicon_gate
 from harness.understanding_gate import run_understanding_gate
 
@@ -24,6 +26,12 @@ if TYPE_CHECKING:
     from harness.phase_graph import PhaseGraph, PhaseNode
     from harness.squad_provider import SquadAgentResult, SquadCliProvider
     from harness.squad_state import SquadStateStore
+
+
+_STAGED_VERDICT_STATE_KEYS = {
+    "WHY3": "why3_verdict",
+    "ASSESS2": "assess2_verdict",
+}
 
 
 def _shared_agent_contract() -> str:
@@ -783,7 +791,14 @@ class PhaseExecutor(ABC):
             prompt_metadata and accepts_prompt_metadata
         ):
             kwargs["prompt_metadata"] = prompt_metadata or {}
-        return self._provider.exec_agent(str(self._project_root), prompt, **kwargs)
+        raw_result = self._provider.exec_agent(
+            str(self._project_root),
+            prompt,
+            **kwargs,
+        )
+        from harness.prepared_phase_result import detach_squad_agent_result
+
+        return detach_squad_agent_result(raw_result)
 
     def _project_config_path(self) -> Path:
         canonical = self._project_root / ".echelon" / "config.yml"
@@ -827,6 +842,8 @@ class PhaseExecutor(ABC):
         result: "SquadAgentResult",
         allowed_state_updates: object = None,
         result_contract=None,
+        *,
+        direct_state_write: bool = False,
     ) -> "SquadAgentResult":
         """Validate result state updates before executor-side direct state writes."""
         if result.echelon_result is None:
@@ -840,9 +857,22 @@ class PhaseExecutor(ABC):
         )
         from harness.squad_provider import SquadAgentResult
 
+        verdict = (result.verdict or "").upper()
+        blocking_verdict = verdict in {"BLOCKED", "STOP_AND_ASK"}
+        if direct_state_write and not blocking_verdict:
+            reserved_updates = store_owned_update_keys(result.state_updates)
+            if reserved_updates:
+                key = sorted(reserved_updates)[0]
+                raise ControllerStateContractViolation(
+                    "provider attempted a transaction-owned state update",
+                    contract="provider",
+                    json_path=f"$.state_updates.{key}",
+                    validator="ownership",
+                )
+
         try:
             self._normalize_why_result_quality_scores(node, result)
-            if (result.verdict or "").upper() == "BLOCKED":
+            if verdict == "BLOCKED" or (direct_state_write and blocking_verdict):
                 # BLOCKED results are consumed by the controller as harness-owned
                 # blocked-state metadata, not applied through phase state_updates.
                 result.echelon_result = validate_echelon_result(result.echelon_result)
@@ -1114,7 +1144,10 @@ class PhaseExecutor(ABC):
                         prompt_metadata,
                     )
                     result = self._validate_result_state_updates(
-                        node, result, result_contract=result_contract
+                        node,
+                        result,
+                        result_contract=result_contract,
+                        direct_state_write=True,
                     )
                     if result.blocked:
                         return result
@@ -1654,6 +1687,7 @@ class StagedParallelExecutor(PhaseExecutor):
                     node,
                     future.result(),
                     result_contract=result_contract,
+                    direct_state_write=True,
                 )
                 if result.blocked:
                     return result
@@ -1666,7 +1700,11 @@ class StagedParallelExecutor(PhaseExecutor):
             self._write_journal_entries(result, node.id)
             state_store.increment_cost(result.cost_usd)
             state = state_store.load()
-            state[f"{label.lower().replace(' ', '_')}_verdict"] = result.verdict
+            verdict_state_key = _STAGED_VERDICT_STATE_KEYS.get(
+                label.strip().upper()
+            )
+            if verdict_state_key is not None:
+                state[verdict_state_key] = result.verdict
             for k, v in result.state_updates.items():
                 state[k] = v
             state_store.save(state)
@@ -1721,6 +1759,7 @@ class StagedParallelExecutor(PhaseExecutor):
                 node,
                 stage2_result,
                 result_contract=result_contract,
+                direct_state_write=True,
             )
             if stage2_result.blocked:
                 return stage2_result
@@ -1793,6 +1832,7 @@ class ConditionalSequentialExecutor(PhaseExecutor):
                         node,
                         result,
                         result_contract=result_contract,
+                        direct_state_write=True,
                     )
                     if result.blocked:
                         return result

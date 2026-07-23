@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path, PurePath
 
 import pytest
@@ -22,6 +22,10 @@ from harness.prepared_phase_result import (
     verify_prepared_routing_decision_attestation,
 )
 from harness.squad_provider import SquadAgentResult
+from harness.state_transaction_namespace import (
+    STORE_OWNED_TRANSACTION_KEYS,
+    TRUSTED_ROUTING_EFFECT_KEYS,
+)
 
 
 _RAW_ATTESTATION_SECRET = "raw-attestation-secret"
@@ -61,6 +65,14 @@ class _ExplodingRepr:
 
 class _ExplodingDeepcopy:
     def __deepcopy__(self, _memo):
+        raise RuntimeError(_RAW_ATTESTATION_SECRET)
+
+
+class _HostileString(str):
+    def __deepcopy__(self, _memo):
+        raise RuntimeError(_RAW_ATTESTATION_SECRET)
+
+    def __repr__(self):
         raise RuntimeError(_RAW_ATTESTATION_SECRET)
 
 
@@ -133,20 +145,20 @@ def test_prepare_merges_disjoint_provider_and_controller_updates(
     node = PhaseNode(
         id="mixed",
         type="agent",
-        allowed_state_updates=["status"],
+        allowed_state_updates=["provider_note"],
         controller_state_contract=contract,
     )
     prepared = prepare_phase_result(
         node,
-        _result({"status": "running"}),
+        _result({"provider_note": "running"}),
         controller_updates={"tasks_lexicon_report": PurePath("report.json")},
     )
 
     assert prepared.state_updates == {
-        "status": "running",
+        "provider_note": "running",
         "tasks_lexicon_report": "report.json",
     }
-    assert prepared.provider_update_keys == frozenset({"status"})
+    assert prepared.provider_update_keys == frozenset({"provider_note"})
     assert prepared.controller_update_keys == frozenset({"tasks_lexicon_report"})
     assert prepared.controller_contract_name == "sample"
     assert prepared.controller_contract_sha256 == contract.sha256
@@ -170,6 +182,190 @@ def test_prepare_rejects_configured_provider_controller_overlap(
 
     assert raised.value.contract == "sample"
     assert raised.value.validator == "ownership"
+
+
+def test_store_owned_transaction_namespace_covers_every_identity_class() -> None:
+    assert {
+        "run_id",
+        "phase",
+        "state_revision",
+        "last_dispatch",
+        "completed_phases",
+        "record_completion",
+        "manual_phase_run",
+        "manual_phase_runs",
+        "conditional_skip",
+        "iteration",
+        "status",
+        "blocked_reason",
+        "controller_contract_error",
+        "blocked_decision",
+        "phase_dispatch_counts",
+        "phase_dispatch_limit",
+        "phase_dispatch_limit_phase",
+        "phase_dispatch_limit_recovery",
+        "product_input_mapping_repair",
+        "product_input_mapping_repair_attempts",
+        "convergence_detected",
+        "convergence_forced",
+        "interrupted_phase",
+        "provider_limit_message",
+        "blocked_context",
+        "phase_a_readiness_blockers",
+        "published_re_context",
+        "why3_verdict",
+        "assess2_verdict",
+        "user_request",
+    } <= STORE_OWNED_TRANSACTION_KEYS
+
+
+@pytest.mark.parametrize(
+    "reserved_key",
+    sorted(STORE_OWNED_TRANSACTION_KEYS),
+)
+def test_provider_cannot_own_any_store_transaction_key(
+    reserved_key: str,
+) -> None:
+    node = PhaseNode(
+        id="provider",
+        type="agent",
+        allowed_state_updates=[reserved_key],
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            node,
+            _result({reserved_key: "forged"}),
+            controller_updates={},
+        )
+
+    assert raised.value.validator == "ownership"
+    assert raised.value.json_path == f"$.state_updates.{reserved_key}"
+
+
+@pytest.mark.parametrize(
+    "reserved_key",
+    sorted(STORE_OWNED_TRANSACTION_KEYS),
+)
+def test_generic_removals_cannot_own_any_store_transaction_key(
+    reserved_key: str,
+) -> None:
+    node = PhaseNode(
+        id="provider",
+        type="agent",
+        allowed_state_updates=[],
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            node,
+            _result({}),
+            controller_updates={},
+            state_removals={reserved_key},
+        )
+
+    assert raised.value.validator == "state_effects"
+    assert raised.value.json_path == "$.state_removals"
+
+
+def test_controller_can_seal_explicit_trusted_transaction_removals() -> None:
+    node = PhaseNode(
+        id="controller",
+        type="agent",
+        allowed_state_updates=[],
+    )
+
+    prepared = prepare_phase_result(
+        node,
+        _result({}),
+        controller_updates={},
+        trusted_transaction_state_removals={
+            "product_input_mapping_repair",
+            "product_input_mapping_repair_attempts",
+        },
+    )
+
+    assert prepared.trusted_transaction_state_removals == {
+        "product_input_mapping_repair",
+        "product_input_mapping_repair_attempts",
+    }
+
+
+@pytest.mark.parametrize(
+    "invalid_key",
+    sorted(STORE_OWNED_TRANSACTION_KEYS - TRUSTED_ROUTING_EFFECT_KEYS)[:3]
+    + ["provider_owned"],
+)
+def test_trusted_transaction_removals_reject_untrusted_keys(
+    invalid_key: str,
+) -> None:
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            PhaseNode(
+                id="controller",
+                type="agent",
+                allowed_state_updates=[],
+            ),
+            _result({}),
+            controller_updates={},
+            trusted_transaction_state_removals={invalid_key},
+        )
+
+    assert raised.value.json_path == "$.trusted_transaction_state_removals"
+
+
+@pytest.mark.parametrize(
+    "reserved_key",
+    sorted(STORE_OWNED_TRANSACTION_KEYS),
+)
+def test_routing_queue_cannot_own_any_store_transaction_key(
+    reserved_key: str,
+) -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_routing_decision(
+            prepared,
+            from_phase="provider",
+            to_phase="next",
+            expected_state_revision=1,
+            expected_previous_dispatch_sha256="0" * 64,
+            queued_state_updates={reserved_key: "forged"},
+        )
+
+    assert raised.value.validator == "ownership"
+    assert (
+        raised.value.json_path
+        == f"$.queued_state_updates.{reserved_key}"
+    )
+
+
+@pytest.mark.parametrize(
+    "reserved_key",
+    sorted(STORE_OWNED_TRANSACTION_KEYS),
+)
+def test_controller_cannot_own_any_store_transaction_key(
+    contract: CompiledControllerStateContract,
+    reserved_key: str,
+) -> None:
+    reserved_contract = replace(
+        contract,
+        state_update_keys=frozenset({reserved_key}),
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            _node(reserved_contract),
+            _result({}),
+            controller_updates={reserved_key: "forged"},
+        )
+
+    assert raised.value.validator == "ownership"
+    assert raised.value.json_path == f"$.state_updates.{reserved_key}"
 
 
 def test_mixed_node_rejects_raw_controller_key_impersonation(
@@ -284,8 +480,8 @@ def test_prepare_bounds_controller_depth_before_any_recursive_copy(
             controller_owns_result_updates=True,
         )
 
-    assert raised.value.contract == "normalization"
-    assert raised.value.validator == "normalization_limit"
+    assert raised.value.contract == "preparation"
+    assert raised.value.validator == "detachment_limit"
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
 
@@ -301,8 +497,9 @@ def test_prepare_rejects_copy_protocol_before_invoking_it(
             controller_owns_result_updates=True,
         )
 
-    assert str(raised.value) == "unsupported controller value type"
-    assert raised.value.validator == "type"
+    assert str(raised.value) == "untrusted result detachment failed"
+    assert raised.value.contract == "preparation"
+    assert raised.value.validator == "detachment"
     assert raised.value.__cause__ is None
     assert raised.value.__context__ is None
     assert _RAW_ATTESTATION_SECRET not in repr(raised.value)
@@ -339,7 +536,11 @@ def test_no_contract_preserves_unbounded_provider_behavior() -> None:
 
 
 def test_no_contract_rejects_controller_updates() -> None:
-    node = PhaseNode(id="provider", type="agent", allowed_state_updates=["status"])
+    node = PhaseNode(
+        id="provider",
+        type="agent",
+        allowed_state_updates=["provider_value"],
+    )
 
     with pytest.raises(
         ControllerStateContractViolation,
@@ -347,7 +548,7 @@ def test_no_contract_rejects_controller_updates() -> None:
     ):
         prepare_phase_result(
             node,
-            _result({"status": "running"}),
+            _result({"provider_value": "running"}),
             controller_updates={"controller_value": True},
         )
 
@@ -357,16 +558,82 @@ def test_blocked_result_is_prepared_and_controller_validated(
 ) -> None:
     prepared = prepare_phase_result(
         _node(contract),
-        _result({"blocked_reason": PurePath("evidence/failure.txt")}, verdict="BLOCKED"),
+        _result({}, verdict="BLOCKED"),
         controller_updates={},
         routing_override="terminal-blocked",
         controller_owns_result_updates=True,
+        control_updates={
+            "status": "blocked",
+            "blocked_reason": "evidence/failure.txt",
+        },
     )
 
     assert prepared.verdict == "BLOCKED"
-    assert prepared.state_updates == {"blocked_reason": "evidence/failure.txt"}
+    assert prepared.state_updates == {}
+    assert prepared.control_updates == {
+        "status": "blocked",
+        "blocked_reason": "evidence/failure.txt",
+    }
     assert prepared.routing_override == "terminal-blocked"
-    assert prepared.normalized_paths == ("$.state_updates.blocked_reason",)
+    assert prepared.normalized_paths == ()
+
+def test_declared_provider_control_intents_are_promoted_not_provider_owned() -> None:
+    node = PhaseNode(
+        id="tracker",
+        type="agent",
+        allowed_state_updates=[
+            "status",
+            "blocked_reason",
+            "escalation_question",
+        ],
+    )
+    control_updates = {
+        "status": "blocked",
+        "blocked_reason": "user intent needs clarification",
+    }
+    prepared = prepare_phase_result(
+        node,
+        _result(
+            {
+                **control_updates,
+                "escalation_question": "Which target should Echelon use?",
+            },
+            verdict="STOP_AND_ASK",
+        ),
+        controller_updates={},
+        control_updates=control_updates,
+    )
+
+    assert prepared.provider_update_keys == frozenset(
+        {"escalation_question"}
+    )
+    assert prepared.control_updates == control_updates
+    assert prepared.state_updates == {
+        "escalation_question": "Which target should Echelon use?"
+    }
+    assert prepared.as_squad_agent_result().state_updates == {
+        **control_updates,
+        "escalation_question": "Which target should Echelon use?",
+    }
+
+
+def test_matching_control_payload_cannot_promote_undeclared_done_status() -> None:
+    node = PhaseNode(
+        id="provider",
+        type="agent",
+        allowed_state_updates=[],
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            node,
+            _result({"status": "done"}, verdict="DONE"),
+            controller_updates={},
+            control_updates={"status": "done"},
+        )
+
+    assert raised.value.validator == "ownership"
+    assert raised.value.json_path == "$.state_updates.status"
 
 
 def test_blocked_result_does_not_bypass_controller_schema_validation(
@@ -377,7 +644,6 @@ def test_blocked_result_does_not_bypass_controller_schema_validation(
             _node(contract),
             _result(
                 {
-                    "blocked_reason": "executor failed",
                     "tasks_lexicon_pass": "yes",
                 },
                 verdict="BLOCKED",
@@ -490,6 +756,132 @@ def test_prepare_rejects_protocol_objects_before_attestation(
         "validator": raised.value.validator,
     }
     assert _RAW_ATTESTATION_SECRET not in repr(diagnostic)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "hostile_value", "json_path"),
+    [
+        ("raw_output", _ExplodingDeepcopy(), "$.raw_output"),
+        ("raw_output", _HostileString("secret"), "$.raw_output"),
+        ("duration_ms", True, "$.duration_ms"),
+        ("timed_out", 1, "$.timed_out"),
+        ("exit_code", False, "$.exit_code"),
+        ("provider_name", _HostileString("provider"), "$.provider_name"),
+        (
+            "echelon_result_repair_duration_ms",
+            False,
+            "$.echelon_result_repair_duration_ms",
+        ),
+    ],
+    ids=[
+        "raw-object",
+        "raw-string-subclass",
+        "duration-bool",
+        "timed-out-integer",
+        "exit-code-bool",
+        "provider-name-subclass",
+        "repair-duration-bool",
+    ],
+)
+def test_prepare_rejects_hostile_non_payload_fields_before_routing(
+    field_name: str,
+    hostile_value: object,
+    json_path: str,
+) -> None:
+    node = PhaseNode(id="provider", type="agent", allowed_state_updates=[])
+    result = _result({})
+    setattr(result, field_name, hostile_value)
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(node, result, controller_updates={})
+
+    assert str(raised.value) == "untrusted result detachment failed"
+    assert raised.value.contract == "preparation"
+    assert raised.value.json_path == json_path
+    assert raised.value.validator == "type"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert _RAW_ATTESTATION_SECRET not in str(raised.value)
+
+
+def test_prepare_bounds_non_payload_strings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        prepared_phase_result_module,
+        "_MAX_DETACHMENT_STRING_LENGTH",
+        64,
+    )
+    result = _result({})
+    result.raw_output = "x" * 65
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+            result,
+            controller_updates={},
+        )
+
+    assert raised.value.json_path == "$.raw_output"
+    assert raised.value.validator == "detachment_limit"
+
+
+@pytest.mark.parametrize("cost", [float("nan"), float("inf")])
+def test_prepare_rejects_nonfinite_cost(cost: float) -> None:
+    result = _result({})
+    result.cost_usd = cost
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+            result,
+            controller_updates={},
+        )
+
+    assert raised.value.json_path == "$.cost_usd"
+    assert raised.value.validator == "finite"
+
+
+def test_prepare_bounds_payload_integers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        prepared_phase_result_module,
+        "_MAX_DETACHMENT_INTEGER_ABS",
+        10,
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            PhaseNode(
+                id="provider",
+                type="agent",
+                allowed_state_updates=["score"],
+            ),
+            _result({"score": 11}),
+            controller_updates={},
+        )
+
+    assert raised.value.json_path == "$.echelon_result.state_updates.score"
+    assert raised.value.validator == "detachment_limit"
+
+
+def test_prepare_redacts_missing_exact_result_field() -> None:
+    result = _result({})
+    del result.raw_output
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+            result,
+            controller_updates={},
+        )
+
+    assert str(raised.value) == "untrusted result detachment failed"
+    assert raised.value.json_path == "$.raw_output"
+    assert raised.value.validator == "type"
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
 
 
 def test_attestation_boundary_preserves_typed_contract_violation(
@@ -653,7 +1045,7 @@ def test_routing_decision_seals_transition_identity_and_judgment_updates() -> No
         _result({}),
         controller_updates={},
     )
-    queued = {"iteration": 2}
+    queued = {"judgment_note": "sealed"}
     judgment = {
         "verdict": "DONE",
         "state_updates": {"iteration": 2},
@@ -670,8 +1062,9 @@ def test_routing_decision_seals_transition_identity_and_judgment_updates() -> No
         source="commander",
         transition_index=1,
         increment_iteration=True,
+        token_usage_delta=17,
     )
-    queued["iteration"] = 99
+    queued["judgment_note"] = "changed"
     judgment["state_updates"]["iteration"] = 99
 
     verified = verify_prepared_routing_decision_attestation(
@@ -680,11 +1073,12 @@ def test_routing_decision_seals_transition_identity_and_judgment_updates() -> No
         to_phase="next",
     )
     assert isinstance(decision, PreparedRoutingDecision)
-    assert decision.queued_state_updates == {"iteration": 2}
-    assert verified.queued_state_updates == {"iteration": 2}
+    assert decision.queued_state_updates == {"judgment_note": "sealed"}
+    assert verified.queued_state_updates == {"judgment_note": "sealed"}
     assert decision.expected_state_revision == 7
     assert len(decision.judgment_payload_sha256) == 1
     assert decision.increment_iteration is True
+    assert decision.token_usage_delta == 17
 
 
 def test_routing_decision_tampering_breaks_attestation() -> None:
@@ -711,6 +1105,33 @@ def test_routing_decision_tampering_breaks_attestation() -> None:
             decision,
             from_phase="provider",
             to_phase="forged",
+        )
+
+def test_routing_token_usage_delta_tampering_breaks_attestation() -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+    decision = prepare_routing_decision(
+        prepared,
+        from_phase="provider",
+        to_phase="next",
+        expected_state_revision=1,
+        expected_previous_dispatch_sha256="0" * 64,
+        token_usage_delta=11,
+    )
+
+    object.__setattr__(decision, "token_usage_delta", 12)
+
+    with pytest.raises(
+        PreparedPhaseResultAttestationError,
+        match="routing decision attestation mismatch",
+    ):
+        verify_prepared_routing_decision_attestation(
+            decision,
+            from_phase="provider",
+            to_phase="next",
         )
 
 

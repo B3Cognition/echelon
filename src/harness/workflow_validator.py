@@ -14,6 +14,10 @@ from harness.controller_state_contract_requirements import (
 )
 from harness.echelon_result_schema import ALLOWED_VERDICTS, SUPPORTED_STATE_UPDATE_TYPES
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.state_transaction_namespace import (
+    PROVIDER_CONTROL_INTENT_KEYS,
+    STORE_OWNED_TRANSACTION_KEYS,
+)
 
 
 SUPPORTED_TRANSITION_KEYS = frozenset({
@@ -273,6 +277,40 @@ def validate_workflow_definition(
                     phase_id=phase_id,
                     path=f"{path} agents[{agent_index}]",
                 ))
+        for pre_dispatch_index, agent_entry in enumerate(
+            phase.get("pre_dispatch") or []
+        ):
+            if not isinstance(agent_entry, dict):
+                continue
+            effective = {
+                "allowed_state_updates": agent_entry.get(
+                    "allowed_state_updates", phase.get("allowed_state_updates")
+                ),
+                "required_state_updates": agent_entry.get(
+                    "required_state_updates",
+                    phase.get("required_state_updates", []),
+                ),
+                "state_update_types": agent_entry.get(
+                    "state_update_types", phase.get("state_update_types", {})
+                ),
+                "state_update_enums": agent_entry.get(
+                    "state_update_enums", phase.get("state_update_enums", {})
+                ),
+                "allowed_verdicts": agent_entry.get(
+                    "allowed_verdicts", phase.get("allowed_verdicts")
+                ),
+                "unexpected_state_updates": agent_entry.get(
+                    "unexpected_state_updates",
+                    phase.get("unexpected_state_updates", "quarantine"),
+                ),
+            }
+            issues.extend(
+                _validate_result_contract_definition(
+                    effective,
+                    phase_id=phase_id,
+                    path=f"{path} pre_dispatch[{pre_dispatch_index}]",
+                )
+            )
 
         phase_condition = phase.get("condition")
         if phase_condition is not None:
@@ -421,6 +459,18 @@ def _validate_result_contract_definition(
         allowed_set: set[str] | None = set()
     else:
         allowed_set = set(allowed) if allowed is not None else None
+        transaction_owned = (
+            (allowed_set or set())
+            & STORE_OWNED_TRANSACTION_KEYS
+            - PROVIDER_CONTROL_INTENT_KEYS
+        )
+        for key in sorted(transaction_owned):
+            issues.append(WorkflowValidationIssue(
+                "allowed_state_updates contains transaction-owned key "
+                f"{key!r}",
+                phase_id=phase_id,
+                path=path,
+            ))
 
     if not isinstance(required, list) or not all(
         isinstance(key, str) and key for key in required

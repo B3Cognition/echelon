@@ -12,10 +12,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
+from harness.controller_state_contracts import ControllerStateContractViolation
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.squad_executors import (
     AgentExecutor,
@@ -269,21 +272,61 @@ def _node(phase_id: str = "test-phase"):
     return PhaseNode(id=phase_id, type="agent")
 
 
-def test_judgment_dispatch_writes_returned_journal_entries(tmp_path):
-    """Journal entries in COMMANDER's echelon_result are written to disk."""
+def _commit_blocked_judgment(ctrl, phase_id: str) -> None:
+    """Seal and commit one ambiguous route so deferred journals may publish."""
+    node = PhaseNode(
+        id=phase_id,
+        type="agent",
+        transitions=[
+            {
+                "to": "phase1-discover",
+                "condition": "unknown.judgment",
+            }
+        ],
+    )
+    state = ctrl._state_store.load()
+    state["phase"] = phase_id
+    ctrl._state_store.save(state)
+    snapshot = ctrl._state_store.capture_routing_snapshot(
+        expected_phase=phase_id,
+    )
+    prepared = ctrl._prepare_phase_result(
+        node,
+        SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        ),
+        snapshot,
+    )
+    decision = ctrl._coordinate_transition_routing(
+        node,
+        prepared,
+        snapshot,
+    )
+    assert ctrl._advance_prepared_result_or_block(node, decision) is not None
+
+
+def test_judgment_journal_entries_publish_only_after_committed_route(tmp_path):
+    """Returned COMMANDER journals are deferred until routing commits."""
     ctrl, provider = _squad_controller(tmp_path)
     provider.exec_agent.return_value = SquadAgentResult(
         exit_code=0,
         echelon_result={
             "verdict": "BLOCKED",
-            "state_updates": {},
+            "state_updates": {
+                "status": "blocked",
+                "blocked_reason": "test judgment block",
+            },
             "journal_entries": [{"type": "escalation", "data": {"reason": "test"}}],
         },
         raw_output="",
         duration_ms=0,
         timed_out=False,
     )
-    ctrl._judgment_dispatch("test reason", _node("phase1-discover"))
+    _commit_blocked_judgment(ctrl, "phase1-discover")
     entries = _read_journal(tmp_path, squad_dir=tmp_path / "squad" / "run-test")
     assert len(entries) == 1
     assert entries[0]["type"] == "escalation"
@@ -297,7 +340,10 @@ def test_judgment_dispatch_replaces_null_journal_metadata(tmp_path):
         exit_code=0,
         echelon_result={
             "verdict": "BLOCKED",
-            "state_updates": {},
+            "state_updates": {
+                "status": "blocked",
+                "blocked_reason": "test judgment block",
+            },
             "journal_entries": [
                 {
                     "id": None,
@@ -311,7 +357,7 @@ def test_judgment_dispatch_replaces_null_journal_metadata(tmp_path):
         duration_ms=0,
         timed_out=False,
     )
-    ctrl._judgment_dispatch("test reason", _node("phase1-why2"))
+    _commit_blocked_judgment(ctrl, "phase1-why2")
     entries = _read_journal(tmp_path, squad_dir=tmp_path / "squad" / "run-test")
     assert entries[0]["id"] == 1
     assert entries[0]["timestamp"] is not None
@@ -323,7 +369,11 @@ def test_judgment_dispatch_empty_entries_writes_nothing(tmp_path):
     ctrl, provider = _squad_controller(tmp_path)
     provider.exec_agent.return_value = SquadAgentResult(
         exit_code=0,
-        echelon_result={"verdict": "DONE", "state_updates": {}, "journal_entries": []},
+        echelon_result={
+            "verdict": "JUDGMENT_RESOLVED",
+            "state_updates": {},
+            "journal_entries": [],
+        },
         raw_output="",
         duration_ms=0,
         timed_out=False,
@@ -345,14 +395,17 @@ def test_judgment_dispatch_continues_id_sequence_after_executor_writes(tmp_path)
         exit_code=0,
         echelon_result={
             "verdict": "BLOCKED",
-            "state_updates": {},
+            "state_updates": {
+                "status": "blocked",
+                "blocked_reason": "test judgment block",
+            },
             "journal_entries": [{"type": "escalation"}],
         },
         raw_output="",
         duration_ms=0,
         timed_out=False,
     )
-    ctrl._judgment_dispatch("reason", _node("phase1-b"))
+    _commit_blocked_judgment(ctrl, "phase1-b")
     entries = _read_journal(tmp_path, squad_dir=shared_squad_dir)
     assert len(entries) == 2
     assert entries[0]["id"] == 1
@@ -364,7 +417,7 @@ def test_commander_judgment_canonicalization_is_read_only(tmp_path):
     result = SquadAgentResult(
         exit_code=0,
         echelon_result={
-            "verdict": "DONE",
+            "verdict": "JUDGMENT_RESOLVED",
             "state_updates": {
                 "next_phase": "phase1-discover",
                 "total_tasks": 61,
@@ -1275,6 +1328,207 @@ def test_pre_dispatch_applies_allowed_state_updates(tmp_path):
     assert state_store.load()["allowed_key"] is True
 
 
+def test_pre_dispatch_rejects_allowlisted_transaction_owned_update_before_write(
+    tmp_path,
+):
+    squad_dir = tmp_path / "squad" / "run-test"
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "guardian.md").write_text("# GUARDIAN\nPre-dispatch agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase1-discover")
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"manual_phase_runs": ["forged"]},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/guardian.md"
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[{
+            "id": "guard",
+            "agent": "speckit-echelon-guardian",
+            "allowed_state_updates": ["manual_phase_runs"],
+        }],
+        allowed_state_updates=[],
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        executor._run_pre_dispatch(node, state_store.load(), state_store)
+
+    assert raised.value.contract == "provider"
+    assert raised.value.validator == "ownership"
+    assert raised.value.json_path == "$.state_updates.manual_phase_runs"
+    assert "manual_phase_runs" not in state_store.load()
+
+
+def test_pre_dispatch_stop_and_ask_short_circuits_without_state_write(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "guardian.md").write_text("# GUARDIAN\nPre-dispatch agent.")
+
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase1-discover")
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "STOP_AND_ASK",
+            "state_updates": {
+                "status": "blocked",
+                "blocked_reason": "clarification required",
+                "escalation_question": "Which target should be used?",
+            },
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/guardian.md"
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    node = PhaseNode(
+        id="phase1-discover",
+        type="agent",
+        pre_dispatch=[{
+            "id": "guard",
+            "agent": "speckit-echelon-guardian",
+            "allowed_state_updates": [
+                "status",
+                "blocked_reason",
+                "escalation_question",
+            ],
+        }],
+        allowed_state_updates=[],
+    )
+
+    result = executor._run_pre_dispatch(
+        node,
+        state_store.load(),
+        state_store,
+    )
+
+    assert result is not None
+    assert result.verdict == "STOP_AND_ASK"
+    state = state_store.load()
+    assert state["status"] == "running"
+    assert "blocked_reason" not in state
+    assert "escalation_question" not in state
+
+
+def test_conditional_nested_rejects_transaction_owned_update_before_write(
+    tmp_path,
+):
+    squad_dir = tmp_path / "squad" / "run-test"
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "guardian.md").write_text("# GUARDIAN\nNested agent.")
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase-test")
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DONE",
+            "state_updates": {"manual_phase_runs": ["forged"]},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/guardian.md"
+    graph.all_phase_ids.return_value = []
+    executor = ConditionalSequentialExecutor(
+        provider,
+        graph,
+        ext_dir,
+        tmp_path,
+        squad_dir,
+    )
+    node = SimpleNamespace(
+        id="phase-test",
+        agents=[{
+            "id": "speckit-echelon-guardian",
+            "condition": "always",
+            "allowed_state_updates": ["manual_phase_runs"],
+        }],
+        allowed_state_updates=[],
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        executor.execute(node, state_store)
+
+    assert raised.value.validator == "ownership"
+    assert raised.value.json_path == "$.state_updates.manual_phase_runs"
+    assert "manual_phase_runs" not in state_store.load()
+
+
+def test_staged_nested_rejects_transaction_owned_update_before_write(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "PASS",
+            "state_updates": {"manual_phase_runs": ["forged"]},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(
+        provider,
+        graph,
+        tmp_path / "ext",
+        tmp_path,
+        squad_dir,
+    )
+    node = SimpleNamespace(
+        id="phase3-consensus",
+        agents=[{
+            "id": "speckit-echelon-sage",
+            "mode": "WHY3",
+            "stage": 1,
+            "context_pack": [],
+            "allowed_state_updates": ["manual_phase_runs"],
+        }],
+        allowed_state_updates=[],
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        executor.execute(node, state_store)
+
+    assert raised.value.validator == "ownership"
+    assert raised.value.json_path == "$.state_updates.manual_phase_runs"
+    assert "manual_phase_runs" not in state_store.load()
+
+
 def test_staged_prompt_injects_shared_endocrine_contract(tmp_path):
     """Staged parallel prompts receive the same shared endocrine contract."""
     squad_dir = tmp_path / "squad" / "run-test"
@@ -1557,6 +1811,7 @@ def test_staged_parallel_quarantines_state_update_outside_allowlist(tmp_path):
     result = executor.execute(node, state_store)
 
     assert result.verdict == "PASS"
+    assert state_store.load()["why3_verdict"] == "PASS"
     assert "unexpected" not in state_store.load()
     entries = _read_journal(tmp_path, squad_dir=squad_dir)
     assert entries[0]["type"] == "state_contract_warning"

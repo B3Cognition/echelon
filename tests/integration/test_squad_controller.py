@@ -179,9 +179,16 @@ def _evaluate_prepared_result(
     node: PhaseNode,
     result: SquadAgentResult,
 ) -> str:
+    state = ctrl._state_store.load()
+    if not isinstance(state.get("phase"), str) or not state["phase"]:
+        state["phase"] = node.id
+        ctrl._state_store.save(state)
+    snapshot = ctrl._state_store.capture_routing_snapshot()
+    prepared = ctrl._prepare_phase_result(node, result, snapshot)
     return ctrl._evaluate_transitions(
         node,
-        ctrl._prepare_phase_result(node, result),
+        prepared,
+        snapshot,
     )
 
 
@@ -190,11 +197,15 @@ def _coordinate_prepared_result(
     node: PhaseNode,
     result: SquadAgentResult,
 ) -> str:
+    snapshot = ctrl._state_store.capture_routing_snapshot(
+        expected_phase=node.id
+    )
     decision = ctrl._coordinate_transition_routing(
         node,
-        ctrl._prepare_phase_result(node, result),
+        ctrl._prepare_phase_result(node, result, snapshot),
+        snapshot,
     )
-    ctrl._state_store.advance(node.id, decision.to_phase, decision)
+    assert ctrl._advance_prepared_result_or_block(node, decision) is not None
     return decision.to_phase
 
 
@@ -829,7 +840,16 @@ class TestSquadControllerBasics:
         _disable_lexicon_gate(tmp_path)
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
-        monkeypatch.setattr(ctrl, "_lexicon_gate_config", lambda: {"lexicon_gate": {"enabled": False}})
+        monkeypatch.setattr(
+            ctrl,
+            "_lexicon_gate_config",
+            lambda: {
+                "lexicon_gate": {
+                    "enabled": False,
+                    "spec_enabled": False,
+                }
+            },
+        )
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
@@ -876,7 +896,11 @@ class TestSquadControllerBasics:
         _disable_lexicon_gate(tmp_path)
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
-        monkeypatch.setattr(ctrl, "_lexicon_gate_config", lambda: {"lexicon_gate": {"enabled": False}})
+        monkeypatch.setattr(
+            ctrl,
+            "_lexicon_gate_config",
+            lambda: {"lexicon_gate": {"enabled": False, "spec_enabled": False}},
+        )
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
@@ -1209,8 +1233,13 @@ class TestSquadControllerBasics:
         )
         assert result.state_updates == {}
         assert "quality_scores" in result.quarantined_state_updates
-        prepared = ctrl._prepare_phase_result(node, result)
-        decision = ctrl._coordinate_transition_routing(node, prepared)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(node, result, snapshot)
+        decision = ctrl._coordinate_transition_routing(
+            node,
+            prepared,
+            snapshot,
+        )
         store.advance(
             "phase1-why2",
             decision.to_phase,
@@ -1275,10 +1304,14 @@ class TestSquadControllerBasics:
             timed_out=False,
         )
 
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase1-understanding"
+        )
         ctrl._block_after_executor_failure(
             "phase1-understanding",
             "Understanding analysis failed: temporary",
             result,
+            snapshot=snapshot,
         )
 
         blocked = store.load()
@@ -1467,21 +1500,19 @@ class TestSquadControllerBasics:
                     echelon_result={
                         "verdict": "DONE",
                         "state_updates": {
-                            "spec_id": "001-test",
-                            "spec_dir": "specs/001-test",
                             "spec_status": "planned",
-                            "lexicon_pass": True,
                         },
                     },
                     raw_output="", duration_ms=0, timed_out=False,
                 )
             if call_count["n"] == 6:
-                # WHY2 quality gate passes.
+                # WHY2 accepts the controller-certified score produced by the
+                # deterministic understanding phase.
                 return SquadAgentResult(
                     exit_code=0,
                     echelon_result={
                         "verdict": "DONE",
-                        "state_updates": {"quality_scores": [{"pass": True}]},
+                        "state_updates": {},
                     },
                     raw_output="", duration_ms=0, timed_out=False,
                 )
@@ -1499,7 +1530,11 @@ class TestSquadControllerBasics:
         provider = _mock_provider()
         provider.exec_agent.side_effect = side_effect
         ctrl, store = _controller(tmp_path, provider=provider)
-        monkeypatch.setattr(ctrl, "_lexicon_gate_config", lambda: {"lexicon_gate": {"enabled": False}})
+        monkeypatch.setattr(
+            ctrl,
+            "_lexicon_gate_config",
+            lambda: {"lexicon_gate": {"enabled": False, "spec_enabled": False}},
+        )
         # This fixture deliberately stops before producing Phase A build inputs.
         # Keep its assertion scoped to banzai escalation recovery rather than
         # finalization readiness, which is covered by dedicated readiness tests.
@@ -1596,7 +1631,7 @@ class TestSquadControllerBasics:
         provider.exec_agent.return_value = SquadAgentResult(
             exit_code=0,
             echelon_result={
-                "verdict": "JUDGMENT_RESOLVED",
+                "verdict": "BLOCKED",
                 "state_updates": {
                     "status": "blocked",
                     "blocked_reason": "checkpoint-assess human gate",
@@ -1858,6 +1893,17 @@ class TestBuildPhaseRouting:
         provider = _mock_provider()
 
         def _side_effect(*args, **kwargs):
+            if "COMMANDER JUDGMENT REQUEST" in str(args[1]):
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "JUDGMENT_RESOLVED",
+                        "state_updates": {},
+                    },
+                    raw_output="",
+                    duration_ms=0,
+                    timed_out=False,
+                )
             i = idx["n"]
             idx["n"] += 1
             verdict, updates = responses[i] if i < len(responses) else ("DONE", {})
@@ -2393,7 +2439,112 @@ class TestCommanderJudgmentStateUpdates:
         assert entries[0]["type"] == "state_contract_warning"
         assert entries[0]["data"]["dropped_keys"] == ["unauthorized_key"]
 
-    def test_valid_judgment_iteration_update_still_persists(self, tmp_path):
+    @pytest.mark.parametrize(
+        ("exit_code", "timed_out", "provider_limit_message", "verdict"),
+        [
+            (9, False, "", "JUDGMENT_RESOLVED"),
+            (0, True, "", "JUDGMENT_RESOLVED"),
+            (0, False, "provider quota exhausted", "JUDGMENT_RESOLVED"),
+            (0, False, "", "BLOCKED"),
+        ],
+    )
+    def test_recovery_rejects_unsuccessful_commander_result(
+        self,
+        tmp_path,
+        exit_code: int,
+        timed_out: bool,
+        provider_limit_message: str,
+        verdict: str,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=exit_code,
+            echelon_result={
+                "verdict": verdict,
+                "state_updates": {
+                    "escalation_question": None,
+                    "escalation_resolved": True,
+                    "escalation_resolver": "COMMANDER-banzai",
+                    "blocked_reason": None,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=timed_out,
+            provider_limit_message=provider_limit_message,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase1-why1",
+            max_iterations=5,
+        )
+        state = store.load()
+        state["status"] = "blocked"
+        state["escalation_question"] = "Q1?"
+        state["blocked_reason"] = "needs_judgment"
+        store.save(state)
+
+        ctrl._judgment_dispatch_escalation("Q1?", "phase1-why1")
+
+        rejected = store.load()
+        assert rejected["status"] == "blocked"
+        assert rejected["phase"] == "terminal-blocked"
+        assert rejected["escalation_question"] == "Q1?"
+        assert rejected.get("escalation_resolved") is False
+
+    def test_recovery_uses_snapshot_question_not_stale_caller_arguments(
+        self,
+        tmp_path,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "escalation_question": None,
+                    "escalation_resolved": True,
+                    "escalation_resolver": "COMMANDER-banzai",
+                    "blocked_reason": None,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase1-why1",
+            max_iterations=5,
+        )
+        winning = store.load()
+        winning["status"] = "blocked"
+        winning["escalation_question"] = "NEW question"
+        winning["blocked_reason"] = "NEW reason"
+        winning["winner_marker"] = True
+        store.save(winning)
+
+        ctrl._judgment_dispatch_escalation(
+            "OLD question",
+            "terminal-blocked",
+            recovery_reason="OLD reason",
+        )
+
+        prompt = provider.exec_agent.call_args.args[1]
+        assert "NEW question" in prompt
+        assert "OLD question" not in prompt
+        resumed = store.load()
+        assert resumed["winner_marker"] is True
+
+    def test_judgment_cannot_own_store_iteration(self, tmp_path):
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(
             exit_code=0,
@@ -2403,6 +2554,13 @@ class TestCommanderJudgmentStateUpdates:
                     "next_phase": "phase1-why1",
                     "iteration": 2,
                 },
+                "journal_entries": [
+                    {
+                        "type": "decision",
+                        "agent": "speckit-echelon-commander",
+                        "data": {"decision": "must-not-persist"},
+                    }
+                ],
             },
             raw_output="",
             duration_ms=0,
@@ -2417,19 +2575,208 @@ class TestCommanderJudgmentStateUpdates:
             0,
             node.id,
         )
-        prepared = ctrl._prepare_phase_result(node, self._phase_result())
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
+            node,
+            self._phase_result(),
+            snapshot,
+        )
         before = store.load()
 
-        decision = ctrl._coordinate_transition_routing(
+        with pytest.raises(ControllerStateContractViolation) as raised:
+            ctrl._coordinate_transition_routing(
+                node,
+                prepared,
+                snapshot,
+            )
+
+        assert raised.value.validator == "ownership"
+        assert raised.value.json_path == "$.state_updates.iteration"
+        assert store.load() == before
+        assert not (
+            tmp_path / "squad" / "run-test" / "reasoning-journal.jsonl"
+        ).exists()
+
+    @pytest.mark.parametrize(
+        ("exit_code", "timed_out", "provider_limit_message"),
+        [
+            (7, False, ""),
+            (0, True, ""),
+            (0, False, "provider quota exhausted"),
+        ],
+    )
+    def test_ordinary_judgment_operational_failure_hits_typed_boundary(
+        self,
+        tmp_path: Path,
+        exit_code: int,
+        timed_out: bool,
+        provider_limit_message: str,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=exit_code,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {"next_phase": "phase1-why1"},
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=timed_out,
+            provider_limit_message=provider_limit_message,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = self._ambiguous_node()
+        store.initialize("r", "greenfield", "msg", 0, node.id)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
             node,
-            prepared,
+            self._phase_result(),
+            snapshot,
         )
 
-        assert type(decision).__name__ == "PreparedRoutingDecision"
-        assert decision.to_phase == "phase1-why1"
-        assert store.load() == before
-        store.advance(node.id, decision.to_phase, decision)
-        assert store.load()["iteration"] == 2
+        decision = ctrl._construct_routing_decision_or_block(
+            node,
+            prepared,
+            snapshot,
+        )
+
+        assert decision is None
+        blocked = store.load()
+        assert blocked["phase"] == node.id
+        assert blocked["last_dispatch"] is None
+        assert blocked["controller_contract_error"]["contract"] == "judgment"
+        assert (
+            blocked["controller_contract_error"]["validator"]
+            == "operational_success"
+        )
+
+    def test_ordinary_blocked_judgment_cannot_select_next_phase(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "BLOCKED",
+                "state_updates": {
+                    "next_phase": "phase1-why1",
+                    "status": "blocked",
+                    "blocked_reason": "needs clarification",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = self._ambiguous_node()
+        store.initialize("r", "greenfield", "msg", 0, node.id)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
+            node,
+            self._phase_result(),
+            snapshot,
+        )
+
+        decision = ctrl._construct_routing_decision_or_block(
+            node,
+            prepared,
+            snapshot,
+        )
+
+        assert decision is None
+        blocked = store.load()
+        assert blocked["phase"] == node.id
+        assert blocked["last_dispatch"] is None
+        assert (
+            blocked["controller_contract_error"]["validator"]
+            == "blocked_intent"
+        )
+
+    def test_ordinary_blocked_judgment_commits_exact_self_loop_intent(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "BLOCKED",
+                "state_updates": {
+                    "status": "blocked",
+                    "blocked_reason": "needs clarification",
+                    "escalation_question": "Which target?",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = self._ambiguous_node()
+        store.initialize("r", "greenfield", "msg", 0, node.id)
+
+        next_phase = _coordinate_prepared_result(
+            ctrl,
+            node,
+            self._phase_result(),
+        )
+
+        blocked = store.load()
+        assert next_phase == node.id
+        assert blocked["phase"] == node.id
+        assert blocked["status"] == "blocked"
+        assert blocked["blocked_reason"] == "needs clarification"
+        assert blocked["escalation_question"] == "Which target?"
+
+    def test_recovery_judgment_cannot_own_store_iteration(
+        self,
+        tmp_path,
+    ):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "next_phase": "phase1-why2",
+                    "iteration": 99,
+                    "escalation_question": None,
+                    "escalation_resolved": True,
+                    "escalation_resolver": "COMMANDER-banzai",
+                    "blocked_reason": None,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase1-why1",
+            max_iterations=5,
+        )
+        state = store.load()
+        state["status"] = "blocked"
+        state["escalation_question"] = "Q1?"
+        state["blocked_reason"] = "needs_judgment"
+        store.save(state)
+
+        ctrl._judgment_dispatch_escalation("Q1?", "phase1-why1")
+
+        rejected = store.load()
+        assert rejected["phase"] == "terminal-blocked"
+        assert rejected["status"] == "blocked"
+        assert rejected["iteration"] == 0
+        assert (
+            rejected["blocked_reason"]
+            == "judgment state_updates validation failed: ownership"
+        )
 
     def test_banzai_escalation_cleanup_deletes_only_allowed_null_keys(self, tmp_path):
         provider = _mock_provider()
@@ -2463,6 +2810,192 @@ class TestCommanderJudgmentStateUpdates:
         assert "blocked_reason" not in state
         assert state["escalation_resolved"] is True
         assert state["escalation_resolver"] == "COMMANDER-banzai"
+
+    def test_recovery_commander_cannot_rebase_judgment_onto_concurrent_phase_progress(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase1-why1",
+            max_iterations=5,
+        )
+        initial = store.load()
+        initial["status"] = "blocked"
+        initial["escalation_question"] = "Q1?"
+        initial["blocked_reason"] = "WHY1: user-gated issues"
+        store.save(initial)
+
+        def publish_progress_while_commander_is_outstanding(*_args, **_kwargs):
+            concurrent = store.load()
+            concurrent["phase"] = "phase1-why2"
+            concurrent["status"] = "running"
+            concurrent["concurrent_marker"] = "published"
+            store.save(concurrent)
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "JUDGMENT_RESOLVED",
+                    "state_updates": {
+                        "escalation_question": None,
+                        "escalation_resolved": True,
+                        "escalation_resolver": "COMMANDER-banzai",
+                        "blocked_reason": None,
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+
+        provider.exec_agent.side_effect = (
+            publish_progress_while_commander_is_outstanding
+        )
+
+        ctrl._judgment_dispatch_escalation("Q1?", "phase1-why1")
+        state = store.load()
+
+        assert state["phase"] == "phase1-why2"
+        assert state["status"] == "running"
+        assert state["concurrent_marker"] == "published"
+        assert state["escalation_question"] == "Q1?"
+        assert state.get("escalation_resolved") is False
+        assert "escalation_resolver" not in state
+        assert "controller_contract_error" not in state
+        assert state["last_dispatch"] is None
+
+    def test_recovery_construction_ownership_failure_is_redacted_and_has_no_success_effects(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "escalation_question": None,
+                    "escalation_resolved": True,
+                    "escalation_resolver": "COMMANDER-banzai",
+                    "blocked_reason": None,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase1-why1",
+            max_iterations=5,
+        )
+        initial = store.load()
+        initial["status"] = "blocked"
+        initial["escalation_question"] = "Q1?"
+        initial["blocked_reason"] = "WHY1: user-gated issues"
+        store.save(initial)
+        success_effects: list[str] = []
+
+        def reject_construction(*_args, **_kwargs):
+            raise ControllerStateContractViolation(
+                "commander-secret-must-not-leak",
+                contract="routing",
+                json_path="$.queued_state_updates.manual_phase_runs",
+                validator="ownership",
+            )
+
+        monkeypatch.setattr(
+            store,
+            "prepare_routing_decision",
+            reject_construction,
+        )
+        monkeypatch.setattr(
+            store,
+            "advance",
+            lambda *_args, **_kwargs: success_effects.append("advance"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_write_journal_entries",
+            lambda *_: success_effects.append("journal"),
+        )
+
+        ctrl._judgment_dispatch_escalation("Q1?", "phase1-why1")
+        state = store.load()
+
+        assert state["phase"] == "phase1-why1"
+        assert state["status"] == "blocked"
+        assert state["last_dispatch"] is None
+        assert success_effects == []
+        assert state["controller_contract_error"] == {
+            "phase_id": "phase1-why1",
+            "contract": "routing",
+            "contract_sha256": None,
+            "json_path": "$.queued_state_updates.manual_phase_runs",
+            "validator": "ownership",
+            "message": (
+                "recovery routing decision failed at "
+                "$.queued_state_updates.manual_phase_runs (ownership)"
+            ),
+        }
+        assert "commander-secret-must-not-leak" not in json.dumps(state)
+
+    def test_successful_recovery_commits_deferred_commander_usage_atomically(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "escalation_question": None,
+                    "escalation_resolved": True,
+                    "escalation_resolver": "COMMANDER-banzai",
+                    "blocked_reason": None,
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+            token_usage=37,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase1-why1",
+            max_iterations=5,
+        )
+        initial = store.load()
+        initial["token_usage"] = 5
+        initial["status"] = "blocked"
+        initial["escalation_question"] = "Q1?"
+        initial["blocked_reason"] = "WHY1: user-gated issues"
+        store.save(initial)
+
+        ctrl._judgment_dispatch_escalation("Q1?", "phase1-why1")
+        state = store.load()
+
+        assert state["phase"] == "phase1-why1"
+        assert state["status"] == "running"
+        assert state["token_usage"] == 42
+        assert state["last_dispatch"]["routing_source"] == (
+            "commander_recovery"
+        )
 
     def test_banzai_consecutive_fail_recovery_resets_counter_controller_side(self, tmp_path):
         provider = _mock_provider()
@@ -2800,6 +3333,7 @@ class TestStructuralGuardDeterminism:
         (spec_dir / "feasibility.md").write_text("# Incomplete\n", encoding="utf-8")
         state = store.load()
         state.update({
+            "phase": node.id,
             "iteration": 0,
             "max_iterations": 5,
             "spec_dir": str(spec_dir.relative_to(tmp_path)),
@@ -2807,8 +3341,12 @@ class TestStructuralGuardDeterminism:
         store.save(state)
 
         result = self._result({})
-        prepared = ctrl._prepare_phase_result(node, result)
-        assert ctrl._evaluate_transitions(node, prepared) == "phase2-decide"
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(node, result, snapshot)
+        assert (
+            ctrl._evaluate_transitions(node, prepared, snapshot)
+            == "phase2-decide"
+        )
         assert result.state_updates == {}
         assert prepared.state_updates["feasibility_structural_pass"] is False
         report = json.loads(
@@ -2834,6 +3372,7 @@ class TestStructuralGuardDeterminism:
         )
         state = store.load()
         state.update({
+            "phase": node.id,
             "iteration": 0,
             "max_iterations": 5,
             "spec_dir": str(spec_dir.relative_to(tmp_path)),
@@ -2850,8 +3389,12 @@ class TestStructuralGuardDeterminism:
             duration_ms=0,
             timed_out=False,
         )
-        prepared = ctrl._prepare_phase_result(node, result)
-        assert ctrl._evaluate_transitions(node, prepared) == "phase2-strategic-overview"
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(node, result, snapshot)
+        assert (
+            ctrl._evaluate_transitions(node, prepared, snapshot)
+            == "phase2-strategic-overview"
+        )
         assert result.state_updates == {}
         assert prepared.state_updates["feasibility_structural_pass"] is True
 
@@ -2863,6 +3406,7 @@ class TestStructuralGuardDeterminism:
         (spec_dir / "feasibility.md").write_text("# Incomplete\n", encoding="utf-8")
         state = store.load()
         state.update({
+            "phase": node.id,
             "iteration": 3,
             "max_iterations": 5,
             "spec_dir": str(spec_dir.relative_to(tmp_path)),
@@ -2877,8 +3421,12 @@ class TestStructuralGuardDeterminism:
             duration_ms=0,
             timed_out=False,
         )
-        prepared = ctrl._prepare_phase_result(node, result)
-        assert ctrl._evaluate_transitions(node, prepared) == "phase2-strategic-overview"
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(node, result, snapshot)
+        assert (
+            ctrl._evaluate_transitions(node, prepared, snapshot)
+            == "phase2-strategic-overview"
+        )
         assert prepared.state_updates["governance_gate_exhausted"] == "feasibility"
         assert "governance_gate_exhausted" not in result.state_updates
 
@@ -3003,13 +3551,91 @@ class TestPreparedTransitionBoundary:
             duration_ms=0,
             timed_out=False,
         )
-        prepared = ctrl._prepare_phase_result(node, result)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(node, result, snapshot)
         before_state = store.load()
         before_payload = prepared.echelon_result
 
-        assert ctrl._evaluate_transitions(node, prepared) == "phase3-understanding"
+        assert (
+            ctrl._evaluate_transitions(node, prepared, snapshot)
+            == "phase3-understanding"
+        )
         assert store.load() == before_state
         assert prepared.echelon_result == before_payload
+
+    def test_state_mutation_after_evaluation_before_sealing_rejects_stale_route(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        TestFailClosedControllerPreparation._patch_run_guards(
+            ctrl,
+            monkeypatch,
+        )
+        executor = MagicMock()
+        executor.execute.return_value = (
+            TestFailClosedControllerPreparation._tasks_result(True)
+        )
+        ctrl._executors["deterministic_lexicon"] = executor
+        success_effects: list[str] = []
+        original_evaluate = ctrl._evaluate_transitions
+
+        def evaluate_then_publish_concurrent_state(
+            node: PhaseNode,
+            prepared,
+            snapshot,
+        ):
+            to_phase = original_evaluate(node, prepared, snapshot)
+            concurrent = store.load()
+            concurrent["concurrent_marker"] = "published"
+            store.save(concurrent)
+            return to_phase
+
+        monkeypatch.setattr(
+            ctrl,
+            "_evaluate_transitions",
+            evaluate_then_publish_concurrent_state,
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_product_input_updates",
+            lambda *_: success_effects.append("product"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_publish_manual_phase_artifacts",
+            lambda *_: success_effects.append("publication"),
+        )
+        monkeypatch.setattr(
+            store,
+            "advance",
+            lambda *_args, **_kwargs: success_effects.append("advance"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_declared_phase_timing_transition",
+            lambda *_: success_effects.append("timing"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            lambda *_: success_effects.append("checkpoint"),
+        )
+
+        result = ctrl.run_single_phase(
+            "phase3-tasks-lexicon",
+            "validate",
+            "banzai",
+        )
+        state = store.load()
+
+        assert result.phase == "phase3-tasks-lexicon"
+        assert result.status == "running"
+        assert state["concurrent_marker"] == "published"
+        assert "controller_contract_error" not in state
+        assert state["last_dispatch"] is None
+        assert success_effects == []
 
 
 class TestFailClosedControllerPreparation:
@@ -3110,20 +3736,28 @@ class TestFailClosedControllerPreparation:
         store.save(state)
         node = ctrl._graph.get("phase3-tasks-lexicon")
 
+        first_snapshot = store.capture_routing_snapshot(
+            expected_phase=node.id
+        )
         assert (
             ctrl._prepare_phase_result_or_block(
                 node,
                 self._tasks_result("rejected-value-one"),
+                first_snapshot,
             )
             is None
         )
         first = store.load()
         first_diagnostic = first["controller_contract_error"]
 
+        second_snapshot = store.capture_routing_snapshot(
+            expected_phase=node.id
+        )
         assert (
             ctrl._prepare_phase_result_or_block(
                 node,
                 self._tasks_result("rejected-value-two"),
+                second_snapshot,
             )
             is None
         )
@@ -3225,6 +3859,54 @@ class TestFailClosedControllerPreparation:
         }
         assert _RAW_ATTESTATION_SECRET not in json.dumps(blocked)
 
+    def test_real_executor_detaches_before_schema_copy_protocols(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        protocol_calls: list[str] = []
+
+        class ExplodingDeepcopy:
+            def __deepcopy__(self, _memo):
+                protocol_calls.append("__deepcopy__")
+                raise RuntimeError(_RAW_ATTESTATION_SECRET)
+
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {},
+                "attestation_probe": ExplodingDeepcopy(),
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        self._patch_run_guards(ctrl, monkeypatch)
+        calls = self._patch_success_steps(ctrl, store, monkeypatch)
+
+        result = ctrl.run_single_phase(
+            "phase2-decide",
+            "validate",
+            "banzai",
+        )
+
+        assert result.status == "blocked"
+        assert protocol_calls == []
+        assert calls == []
+        blocked = store.load()
+        assert (
+            blocked["controller_contract_error"]["json_path"]
+            == "$.echelon_result.attestation_probe"
+        )
+        assert (
+            blocked["controller_contract_error"]["validator"]
+            == "detachment"
+        )
+        assert _RAW_ATTESTATION_SECRET not in json.dumps(blocked)
+
     def test_fresh_normal_mixed_governance_blocks_before_all_success_steps(
         self,
         tmp_path: Path,
@@ -3291,6 +3973,87 @@ class TestFailClosedControllerPreparation:
         assert calls == []
         assert store.load()["completed_phases"] == []
 
+    def test_manual_routing_construction_failure_blocks_before_product_publication_or_success(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        self._patch_run_guards(ctrl, monkeypatch)
+        executor = MagicMock()
+        executor.execute.return_value = self._tasks_result(True)
+        ctrl._executors["deterministic_lexicon"] = executor
+        calls: list[str] = []
+
+        def reject_route(*_args, **_kwargs):
+            calls.append("routing")
+            raise ControllerStateContractViolation(
+                "provider-secret-must-not-leak",
+                contract="routing",
+                json_path="$.state_updates.manual_phase_runs",
+                validator="ownership",
+            )
+
+        monkeypatch.setattr(
+            ctrl,
+            "_coordinate_transition_routing",
+            reject_route,
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_product_input_updates",
+            lambda *_: calls.append("product"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_publish_manual_phase_artifacts",
+            lambda *_: calls.append("publication"),
+        )
+        monkeypatch.setattr(
+            store,
+            "advance",
+            lambda *_args, **_kwargs: calls.append("advance"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_declared_phase_timing_transition",
+            lambda *_: calls.append("timing"),
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_checkpoint_successful_phase",
+            lambda *_: calls.append("checkpoint"),
+        )
+
+        result = ctrl.run_single_phase(
+            "phase3-tasks-lexicon",
+            "validate",
+            "banzai",
+        )
+        blocked = store.load()
+
+        assert result.status == "blocked"
+        assert result.phase == "phase3-tasks-lexicon"
+        assert calls == ["routing"]
+        assert blocked["completed_phases"] == []
+        assert blocked["last_dispatch"] is None
+        assert blocked["controller_contract_error"] == {
+            "phase_id": "phase3-tasks-lexicon",
+            "contract": "routing",
+            "contract_sha256": (
+                ctrl._graph.get(
+                    "phase3-tasks-lexicon"
+                ).controller_state_contract.sha256
+            ),
+            "json_path": "$.state_updates.manual_phase_runs",
+            "validator": "ownership",
+            "message": (
+                "routing decision construction failed at "
+                "$.state_updates.manual_phase_runs (ownership)"
+            ),
+        }
+        assert "provider-secret-must-not-leak" not in json.dumps(blocked)
+
     def test_contract_failure_resume_retries_same_deterministic_phase_and_clears_after_advance(
         self,
         tmp_path: Path,
@@ -3329,8 +4092,9 @@ class TestFailClosedControllerPreparation:
             return original_prepare(*args)
 
         def record_advance(*args, **kwargs):
+            receipt = original_advance(*args, **kwargs)
             calls.append("advance")
-            return original_advance(*args, **kwargs)
+            return receipt
 
         def record_route(*args, **kwargs):
             calls.append("routing")
@@ -3365,8 +4129,8 @@ class TestFailClosedControllerPreparation:
         assert resumed.status == "running"
         assert calls == [
             "prepare",
-            "product",
             "routing",
+            "product",
             "advance",
             "timing",
             "checkpoint",
@@ -3427,9 +4191,10 @@ class TestFailClosedControllerPreparation:
         monkeypatch.setattr(
             ctrl,
             "_coordinate_transition_routing",
-            lambda node, prepared, **_kwargs: (
+            lambda node, prepared, snapshot, **_kwargs: (
                 store.prepare_routing_decision(
                     prepared,
+                    snapshot=snapshot,
                     from_phase=node.id,
                     to_phase=node.id,
                 )
@@ -3478,6 +4243,7 @@ class TestFailClosedControllerPreparation:
                 },
             ],
         )
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
         prepared = ctrl._prepare_phase_result(
             node,
             SquadAgentResult(
@@ -3490,9 +4256,14 @@ class TestFailClosedControllerPreparation:
                 duration_ms=0,
                 timed_out=False,
             ),
+            snapshot,
         )
 
-        decision = ctrl._coordinate_transition_routing(node, prepared)
+        decision = ctrl._coordinate_transition_routing(
+            node,
+            prepared,
+            snapshot,
+        )
         store.advance(
             node.id,
             decision.to_phase,
@@ -3536,8 +4307,9 @@ class TestFailClosedControllerPreparation:
             return original_route(*args, **kwargs)
 
         def record_advance(*args, **kwargs):
+            receipt = original_advance(*args, **kwargs)
             calls.append("advance")
-            return original_advance(*args, **kwargs)
+            return receipt
 
         def record_post_commit(step: str):
             state = store.load()
@@ -3572,8 +4344,8 @@ class TestFailClosedControllerPreparation:
 
         assert calls == [
             "prepare",
-            "product",
             "routing",
+            "product",
             "advance",
             "timing",
             "checkpoint",
@@ -3976,7 +4748,7 @@ class TestFailClosedControllerPreparation:
         monkeypatch.setattr(
             ctrl,
             "_publish_manual_phase_artifacts",
-            lambda: None,
+            lambda *_: None,
         )
         monkeypatch.setattr(
             ctrl,
@@ -4050,9 +4822,9 @@ class TestFailClosedControllerPreparation:
             calls.append("prepare")
             return original_prepare(*args)
 
-        def record_block(*args):
+        def record_block(*args, **kwargs):
             calls.append("block")
-            return original_block(*args)
+            return original_block(*args, **kwargs)
 
         monkeypatch.setattr(ctrl, "_prepare_phase_result_or_block", record_prepare)
         monkeypatch.setattr(ctrl, "_block_after_executor_failure", record_block)
@@ -4129,7 +4901,12 @@ class TestFailClosedControllerPreparation:
             ),
         )
 
-        prepared = ctrl._prepare_phase_result_or_block(node, result)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result_or_block(
+            node,
+            result,
+            snapshot,
+        )
         blocked = store.load()
 
         assert prepared is None
@@ -4153,9 +4930,9 @@ class TestFailClosedControllerPreparation:
         calls: list[str] = []
         original_prepare = ctrl._prepare_phase_result_or_block
 
-        def record_prepare(node, result):
+        def record_prepare(node, result, snapshot):
             calls.append(node.id)
-            return original_prepare(node, result)
+            return original_prepare(node, result, snapshot)
 
         monkeypatch.setattr(ctrl, "_prepare_phase_result_or_block", record_prepare)
 
@@ -4181,8 +4958,14 @@ class TestProductInputMappingRepair:
     def test_blocker_event_survives_mutable_state_rewrite(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase3-plan"
+        )
         ctrl._block_after_executor_failure(
-            "phase3-plan", "agent_exit_code_1", SquadAgentResult(1, None, "", 0, False)
+            "phase3-plan",
+            "agent_exit_code_1",
+            SquadAgentResult(1, None, "", 0, False),
+            snapshot=snapshot,
         )
         state = store.load()
         state["blocked_reason"] = "rewritten"
@@ -4191,12 +4974,64 @@ class TestProductInputMappingRepair:
         assert events[-1]["type"] == "blocker"
         assert events[-1]["reason"] == "agent_exit_code_1"
 
+    def test_stale_executor_failure_cannot_erase_winning_phase_or_dispatch(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase1-discover",
+            max_iterations=5,
+        )
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase1-discover"
+        )
+        winner = store.load()
+        winner["phase"] = "phase1-why1"
+        winner["last_dispatch"] = {
+            "dispatch_id": "winner",
+            "phase_id": "phase1-discover",
+        }
+        winner["winner_marker"] = True
+        store.save(winner)
+        before = store.load()
+
+        persisted = ctrl._block_after_executor_failure(
+            "phase1-discover",
+            "agent_exit_code_1",
+            SquadAgentResult(1, None, "", 0, False),
+            snapshot=snapshot,
+        )
+
+        assert persisted is False
+        assert store.load() == before
+
     def test_analyzer_uses_controller_blocker_history_not_state(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
         result = SquadAgentResult(1, None, "", 0, False)
-        ctrl._block_after_executor_failure("phase3-plan", "agent_exit_code_1", result)
-        ctrl._block_after_executor_failure("phase3-plan", "agent_exit_code_1", result)
+        first_snapshot = store.capture_routing_snapshot(
+            expected_phase="phase3-plan"
+        )
+        ctrl._block_after_executor_failure(
+            "phase3-plan",
+            "agent_exit_code_1",
+            result,
+            snapshot=first_snapshot,
+        )
+        second_snapshot = store.capture_routing_snapshot(
+            expected_phase="terminal-blocked"
+        )
+        ctrl._block_after_executor_failure(
+            "phase3-plan",
+            "agent_exit_code_1",
+            result,
+            snapshot=second_snapshot,
+        )
         state = store.load()
         state["blocked_reason_history"] = []
         store.save(state)
@@ -4208,11 +5043,15 @@ class TestProductInputMappingRepair:
     def test_plan_mapping_failure_is_requeued_with_controller_context(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase3-plan"
+        )
 
         repaired = ctrl._schedule_product_input_mapping_repair(
             "phase3-plan",
             "invalid product input task mappings: "
             "IN-REQ-1: unresolved disposition open_question",
+            snapshot=snapshot,
         )
 
         state = store.load()
@@ -4224,6 +5063,81 @@ class TestProductInputMappingRepair:
             "IN-REQ-1: unresolved disposition open_question"
         ]
 
+    def test_stale_product_repair_cannot_rebase_onto_winning_phase(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase3-plan",
+            max_iterations=5,
+        )
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase3-plan"
+        )
+        winner = store.load()
+        winner["phase"] = "phase3-consensus"
+        winner["last_dispatch"] = {
+            "dispatch_id": "winner",
+            "phase_id": "phase3-plan",
+        }
+        store.save(winner)
+        before = store.load()
+
+        repaired = ctrl._schedule_product_input_mapping_repair(
+            "phase3-plan",
+            "invalid product input task mappings: IN-REQ-1 unresolved",
+            snapshot=snapshot,
+        )
+
+        assert repaired is False
+        assert store.load() == before
+
+    def test_stale_phase_a_readiness_failure_cannot_erase_winner(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from harness.phase_a_readiness import PhaseAReadinessResult
+
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase4-document",
+            max_iterations=5,
+        )
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase4-document"
+        )
+        winner = store.load()
+        winner["phase"] = "done"
+        winner["status"] = "done"
+        winner["last_dispatch"] = {
+            "dispatch_id": "winner",
+            "phase_id": "phase4-document",
+        }
+        store.save(winner)
+        before = store.load()
+
+        persisted = ctrl._block_after_phase_a_readiness_failure(
+            PhaseAReadinessResult(
+                ready=False,
+                blockers=["stale failure"],
+                missing={},
+                ready_spec_dir=None,
+            ),
+            snapshot=snapshot,
+        )
+
+        assert persisted is False
+        assert store.load() == before
+
     def test_plan_mapping_repair_stops_after_bounded_attempts(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
@@ -4231,11 +5145,15 @@ class TestProductInputMappingRepair:
         state["product_input_mapping_repair_attempts"] = 2
         state["product_input_mapping_repair"] = {"protocol_version": 2}
         store.save(state)
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase3-plan"
+        )
 
         repaired = ctrl._schedule_product_input_mapping_repair(
             "phase3-plan",
             "invalid product input task mappings: "
             "IN-REQ-1: unresolved disposition open_question",
+            snapshot=snapshot,
         )
 
         assert repaired is False
@@ -4248,11 +5166,15 @@ class TestProductInputMappingRepair:
         state["product_input_mapping_repair"] = {"attempt": 2, "blockers": ["old"]}
         state["phase_dispatch_counts"] = {"phase3-plan": 4}
         store.save(state)
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase3-plan"
+        )
 
         repaired = ctrl._schedule_product_input_mapping_repair(
             "phase3-plan",
             "invalid product input task mappings: "
             "IN-REQ-1: unresolved disposition open_question",
+            snapshot=snapshot,
         )
 
         state = store.load()
@@ -4434,9 +5356,11 @@ THEN: The dashboard is visible
         state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
         store.save(state)
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
-        prepared = ctrl._prepare_phase_result(node, result)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(node, result, snapshot)
         decision = store.prepare_routing_decision(
             prepared,
+            snapshot=snapshot,
             from_phase=node.id,
             to_phase="phase1-understanding",
         )
@@ -4511,8 +5435,13 @@ THEN: The dashboard is visible
         node = ctrl._graph.get("phase1-lexicon")
 
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
-        prepared = ctrl._prepare_phase_result(node, result)
-        next_phase = ctrl._evaluate_transitions(node, prepared)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(node, result, snapshot)
+        next_phase = ctrl._evaluate_transitions(
+            node,
+            prepared,
+            snapshot,
+        )
 
         expected = {
             "lexicon_evaluation": "pending",
@@ -4524,6 +5453,7 @@ THEN: The dashboard is visible
 
         decision = store.prepare_routing_decision(
             prepared,
+            snapshot=snapshot,
             from_phase=node.id,
             to_phase=next_phase,
         )
@@ -4868,8 +5798,15 @@ THEN: The dashboard is visible
             "_judgment_dispatch",
             side_effect=AssertionError("missing artifact punted to COMMANDER"),
         ):
-            prepared = ctrl._prepare_phase_result(node, result)
-            nxt = ctrl._evaluate_transitions(node, prepared)
+            snapshot = store.capture_routing_snapshot(
+                expected_phase=node.id
+            )
+            prepared = ctrl._prepare_phase_result(
+                node,
+                result,
+                snapshot,
+            )
+            nxt = ctrl._evaluate_transitions(node, prepared, snapshot)
 
         assert nxt == "phase1-what"
         assert "lexicon_pass" not in result.state_updates
@@ -4879,6 +5816,7 @@ THEN: The dashboard is visible
 
         decision = store.prepare_routing_decision(
             prepared,
+            snapshot=snapshot,
             from_phase=node.id,
             to_phase=nxt,
         )
@@ -5056,9 +5994,14 @@ THEN: The dashboard is visible
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
 
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
-        prepared = ctrl._prepare_phase_result(node, result)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(node, result, snapshot)
         before_routing = store.load()
-        decision = ctrl._coordinate_transition_routing(node, prepared)
+        decision = ctrl._coordinate_transition_routing(
+            node,
+            prepared,
+            snapshot,
+        )
 
         assert type(decision).__name__ == "PreparedRoutingDecision"
         assert decision.to_phase == "terminal-blocked"
@@ -5096,13 +6039,14 @@ THEN: The dashboard is visible
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
 
-        prepared = ctrl._prepare_phase_result(node, result)
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(node, result, snapshot)
         with patch.object(
             ctrl,
             "_judgment_dispatch",
             side_effect=AssertionError("pending Lexicon state punted to COMMANDER"),
         ):
-            nxt = ctrl._evaluate_transitions(node, prepared)
+            nxt = ctrl._evaluate_transitions(node, prepared, snapshot)
 
         assert nxt == "phase1-understanding"
         assert result.state_updates["lexicon_evaluation"] == "pending"
@@ -5112,6 +6056,7 @@ THEN: The dashboard is visible
 
         decision = store.prepare_routing_decision(
             prepared,
+            snapshot=snapshot,
             from_phase=node.id,
             to_phase=nxt,
         )

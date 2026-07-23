@@ -102,7 +102,11 @@ class SquadAgentResult:
 
     @property
     def blocked(self) -> bool:
-        return self.verdict == "BLOCKED" or self.timed_out or self.exit_code != 0
+        return (
+            self.verdict in {"BLOCKED", "STOP_AND_ASK"}
+            or self.timed_out
+            or self.exit_code != 0
+        )
 
 
 def _provider_session_limit_message(*transcripts: str) -> str:

@@ -299,6 +299,18 @@ phases:
     (squad_dir / "staging").mkdir(exist_ok=True)
     graph = PhaseGraph(definition, extension_yml)
     store = SquadStateStore(squad_dir)
+    store.initialize(
+        "run-refresh",
+        "greenfield",
+        "refresh run-local context",
+        0,
+        "init",
+        autonomy_mode="banzai",
+    )
+    initial_state = store.load()
+    initial_state["spec_id"] = "001-demo"
+    initial_state["spec_dir"] = "runs/run-refresh/specs/001-demo"
+    store.save(initial_state)
 
     provider = MagicMock()
     run_local_spec_dir = squad_dir / "specs" / "001-demo"
@@ -322,10 +334,7 @@ phases:
                 exit_code=0,
                 echelon_result={
                     "verdict": "DONE",
-                    "state_updates": {
-                        "spec_id": "001-demo",
-                        "spec_dir": "runs/run-refresh/specs/001-demo",
-                    },
+                    "state_updates": {},
                 },
                 raw_output="",
                 duration_ms=50,

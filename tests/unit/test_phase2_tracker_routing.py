@@ -54,8 +54,9 @@ def _route_tracker_verdict(tmp_path: Path, phase_id: str, verdict: str) -> str:
         timed_out=False,
     )
     node = graph.get(phase_id)
-    prepared = ctrl._prepare_phase_result(node, result)
-    return ctrl._evaluate_transitions(node, prepared)
+    snapshot = store.capture_routing_snapshot(expected_phase=phase_id)
+    prepared = ctrl._prepare_phase_result(node, result, snapshot)
+    return ctrl._evaluate_transitions(node, prepared, snapshot)
 
 
 def _route_phase2_tracker_verdict(tmp_path: Path, verdict: str) -> str:
