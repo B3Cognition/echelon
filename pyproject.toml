@@ -17,6 +17,7 @@ authors = [
 dependencies = [
   # codegen
   "pyyaml>=6.0",
+  "jsonschema>=4.23,<5",
   "mempalace @ https://github.com/MemPalace/mempalace/archive/refs/tags/v3.3.0.tar.gz",
   # understanding
   "typer>=0.9.0",
