@@ -264,3 +264,13 @@ def test_context_metadata_publication_staging_defers_mining(
     assert not (tmp_path / "specs" / "001-photo-album").exists()
     mock_from_project.assert_not_called()
     mock_miner.mine_file.assert_not_called()
+
+    prepared.publish()
+
+    metadata = read_feature_metadata(
+        tmp_path / "specs" / "001-photo-album"
+    )
+    assert metadata is not None
+    assert metadata.requirements[0].artifact_path == (
+        "specs/001-photo-album/spec.md"
+    )

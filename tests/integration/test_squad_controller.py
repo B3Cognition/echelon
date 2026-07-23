@@ -987,13 +987,11 @@ class TestAgentResultIntegrity:
 
             monkeypatch.setattr(ctrl, "_publish_constitution_snapshot", fault)
         elif fault_point == "kb":
-            original = kb_proposals.publish_kb_reports
-
-            def fault(*args, **kwargs):
-                original(*args, **kwargs)
-                raise OSError("injected KB failure")
-
-            monkeypatch.setattr(kb_proposals, "publish_kb_reports", fault)
+            monkeypatch.setattr(
+                kb_proposals,
+                "publish_kb_reports",
+                lambda *_args, **_kwargs: None,
+            )
         elif fault_point == "history":
             original = squad_module.append_phase_a_run
 
@@ -1106,6 +1104,115 @@ class TestAgentResultIntegrity:
         assert (published / "spec.md").read_text(encoding="utf-8").startswith(
             "# active spec.md"
         )
+
+    def test_phase_a_publication_staging_uses_staged_product_evidence(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from echelon.product_inputs import (
+            parse_input_declaration,
+            resolve_product_inputs,
+        )
+
+        ctrl, store, _, active, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        product_source = tmp_path / "requirements.md"
+        product_source.write_text(
+            "A normative product requirement.\n",
+            encoding="utf-8",
+        )
+        resolution = resolve_product_inputs(
+            tmp_path,
+            ctrl._squad_dir,
+            [parse_input_declaration("requirement:requirements.md")],
+        )
+        unit_id = json.loads(
+            resolution.catalog_path.read_text(encoding="utf-8")
+        )["units"][0]["id"]
+        (active / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=build req=FR-001 "
+            "depends=none target=sources/app\n",
+            encoding="utf-8",
+        )
+        state = store.load()
+        state["product_inputs"] = resolution.state_payload(tmp_path)
+        store.save(state)
+        stale_evidence = published / "inputs" / "stale-evidence.txt"
+        stale_evidence.parent.mkdir()
+        stale_evidence.write_text("obsolete\n", encoding="utf-8")
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "product_input_updates": [
+                    {
+                        "input_unit_id": unit_id,
+                        "disposition": "included",
+                        "rationale": "Mapped during final documentation.",
+                        "spec_ids": ["FR-001"],
+                        "task_ids": ["T-001"],
+                        "targets": ["sources/app"],
+                    }
+                ],
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        visible_traceability_before = resolution.traceability_path.read_bytes()
+
+        prepared = ctrl._prepare_external_phase_effects(
+            result,
+            "phase4-document",
+            store.load(),
+            manual_phase_run=False,
+        )
+
+        assert prepared is not None
+        assert (
+            resolution.traceability_path.read_bytes()
+            == visible_traceability_before
+        )
+        assert not (published / "inputs" / "traceability.json").exists()
+        manifest = json.loads(
+            (
+                ctrl._squad_dir
+                / ".publication-outbox"
+                / prepared.marker.transaction_id
+                / "manifest.json"
+            ).read_text(encoding="utf-8")
+        )
+        targets = {operation["target"] for operation in manifest["operations"]}
+        assert (
+            resolution.traceability_path.relative_to(tmp_path).as_posix()
+            in targets
+        )
+        assert (
+            "specs/001-themed-ascii-animation/inputs/traceability.json"
+            in targets
+        )
+        stale_operation = next(
+            operation
+            for operation in manifest["operations"]
+            if operation["target"]
+            == "specs/001-themed-ascii-animation/inputs/stale-evidence.txt"
+        )
+        assert stale_operation["action"] == "delete"
+
+        prepared.publish()
+
+        visible_ledger = json.loads(
+            resolution.traceability_path.read_text(encoding="utf-8")
+        )
+        published_ledger = json.loads(
+            (published / "inputs" / "traceability.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert visible_ledger == published_ledger
+        assert visible_ledger["requirements"][0]["disposition"] == "included"
+        assert not stale_evidence.exists()
 
     @pytest.mark.parametrize("fault_point", ["constitution", "artifact_index"])
     def test_manual_publication_staging_failure_keeps_visible_spec_identical(

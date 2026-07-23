@@ -8,6 +8,7 @@ import os
 import re
 import signal
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -16,7 +17,7 @@ import uuid
 from collections.abc import Mapping
 from contextlib import contextmanager
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Callable, Optional
@@ -69,6 +70,10 @@ from harness.squad_executors import (
     StagedParallelExecutor,
 )
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
+from harness.squad_publication import (
+    PreparedSquadPublication,
+    SquadPublicationTransaction,
+)
 from echelon.telemetry.phase_timing import record_phase_finish, record_phase_start
 from echelon.telemetry.provider import DispatchContext, InstrumentedProvider
 from echelon.telemetry.store import TelemetryStore
@@ -116,6 +121,32 @@ MAX_PHASE_DISPATCHES = 5
 MAX_PRODUCT_INPUT_MAPPING_REPAIRS = 2
 PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION = 2
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
+_PHASE_A_GENERATED_FILES = frozenset(
+    {
+        Path("constitution.md"),
+        Path("targets.yml"),
+        Path("run-history.json"),
+        Path("squad-report.md"),
+        Path("ARTIFACTS.md"),
+        Path("feature-metadata.yml"),
+    }
+)
+_PHASE_A_KB_REPORT_FILES = frozenset(
+    {
+        Path("kb/kb-apply-report.yaml"),
+        Path("kb/kb-usage-summary.yaml"),
+    }
+)
+_PRODUCT_INPUT_PATH_KEYS = frozenset(
+    {
+        "manifest",
+        "catalog",
+        "input_context",
+        "requirement_context",
+        "reference_context",
+        "traceability",
+    }
+)
 JUDGMENT_STATE_UPDATE_KEYS = frozenset(
     {
         "next_phase",
@@ -1625,9 +1656,593 @@ class SquadController:
         )
         return True
 
+    def _absolute_project_path(self, value: str | Path) -> Path:
+        path = Path(value)
+        if not path.is_absolute():
+            path = self._project_root / path
+        return Path(os.path.abspath(path))
+
+    def _project_relative_target(self, path: Path) -> Path:
+        root = Path(os.path.abspath(self._project_root))
+        candidate = Path(os.path.abspath(path))
+        try:
+            relative = candidate.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("publication target is outside the project") from exc
+        if not relative.parts:
+            raise ValueError("publication target must be a file")
+        return relative
+
+    @staticmethod
+    def _lstat_or_none(path: Path) -> os.stat_result | None:
+        try:
+            return os.lstat(path)
+        except FileNotFoundError:
+            return None
+
+    def _controller_tree_files(
+        self,
+        root: Path,
+        *,
+        exclude_echelon: bool,
+    ) -> frozenset[Path]:
+        absolute_root = Path(os.path.abspath(root))
+        try:
+            resolved_root = root.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise OSError(
+                "controller publication source is not a real directory"
+            ) from exc
+        if resolved_root != absolute_root:
+            raise OSError(
+                "controller publication source has a symbolic-link ancestor"
+            )
+        metadata = self._lstat_or_none(root)
+        if (
+            metadata is None
+            or not stat.S_ISDIR(metadata.st_mode)
+            or stat.S_ISLNK(metadata.st_mode)
+        ):
+            raise OSError("controller publication source is not a directory")
+        files: set[Path] = set()
+        for current, directories, filenames in os.walk(
+            root,
+            topdown=True,
+            followlinks=False,
+        ):
+            current_path = Path(current)
+            retained_directories: list[str] = []
+            for name in sorted(directories):
+                if exclude_echelon and name == ".echelon":
+                    continue
+                child = current_path / name
+                child_metadata = os.lstat(child)
+                if (
+                    stat.S_ISLNK(child_metadata.st_mode)
+                    or not stat.S_ISDIR(child_metadata.st_mode)
+                ):
+                    raise OSError(
+                        "controller publication source contains an unsafe directory"
+                    )
+                retained_directories.append(name)
+            directories[:] = retained_directories
+            for name in sorted(filenames):
+                child = current_path / name
+                child_metadata = os.lstat(child)
+                if (
+                    stat.S_ISLNK(child_metadata.st_mode)
+                    or not stat.S_ISREG(child_metadata.st_mode)
+                ):
+                    raise OSError(
+                        "controller publication source contains an unsafe file"
+                    )
+                relative = child.relative_to(root)
+                if exclude_echelon and ".echelon" in relative.parts:
+                    continue
+                files.add(relative)
+        return frozenset(files)
+
+    def _copy_controller_tree(
+        self,
+        source: Path,
+        destination: Path,
+        *,
+        exclude_echelon: bool,
+    ) -> frozenset[Path]:
+        files = self._controller_tree_files(
+            source,
+            exclude_echelon=exclude_echelon,
+        )
+        destination.mkdir(parents=True, exist_ok=True)
+        directories_to_copy: list[Path] = []
+        for current, directories, _ in os.walk(
+            source,
+            topdown=True,
+            followlinks=False,
+        ):
+            current_path = Path(current)
+            current_relative = current_path.relative_to(source)
+            if exclude_echelon and ".echelon" in current_relative.parts:
+                directories[:] = []
+                continue
+            retained: list[str] = []
+            for name in sorted(directories):
+                relative = (current_path / name).relative_to(source)
+                if exclude_echelon and ".echelon" in relative.parts:
+                    continue
+                retained.append(name)
+                directories_to_copy.append(relative)
+            directories[:] = retained
+        for relative in sorted(
+            directories_to_copy,
+            key=lambda path: (len(path.parts), path.as_posix()),
+        ):
+            target = destination / relative
+            existing = self._lstat_or_none(target)
+            if existing is not None and not stat.S_ISDIR(existing.st_mode):
+                if stat.S_ISREG(existing.st_mode):
+                    target.unlink()
+                else:
+                    raise OSError(
+                        "virtual publication tree contains an unsafe directory"
+                    )
+            target.mkdir(parents=True, exist_ok=True)
+        for relative in sorted(files):
+            target = destination / relative
+            existing = self._lstat_or_none(target)
+            if existing is not None and stat.S_ISDIR(existing.st_mode):
+                shutil.rmtree(target)
+            elif existing is not None and (
+                stat.S_ISLNK(existing.st_mode)
+                or not stat.S_ISREG(existing.st_mode)
+            ):
+                raise OSError("virtual publication tree contains an unsafe file")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((source / relative).read_bytes())
+        return files
+
+    def _add_owned_file_diff(
+        self,
+        transaction: SquadPublicationTransaction,
+        *,
+        virtual_root: Path,
+        target_root: Path,
+        owned_relative_paths: set[Path] | frozenset[Path],
+    ) -> int:
+        owned_targets = {
+            self._project_relative_target(target_root / relative)
+            for relative in owned_relative_paths
+        }
+        operation_count = 0
+        for relative in sorted(owned_relative_paths):
+            staged = virtual_root / relative
+            target = target_root / relative
+            target_relative = self._project_relative_target(target)
+            staged_metadata = self._lstat_or_none(staged)
+            target_metadata = self._lstat_or_none(target)
+            if staged_metadata is not None:
+                if (
+                    stat.S_ISLNK(staged_metadata.st_mode)
+                    or not stat.S_ISREG(staged_metadata.st_mode)
+                ):
+                    raise OSError("staged publication output is not a regular file")
+                if (
+                    target_metadata is not None
+                    and stat.S_ISREG(target_metadata.st_mode)
+                    and not stat.S_ISLNK(target_metadata.st_mode)
+                    and target.read_bytes() == staged.read_bytes()
+                ):
+                    continue
+                transaction.add_write(
+                    target_relative,
+                    staged,
+                    owned_paths=owned_targets,
+                )
+                operation_count += 1
+                continue
+            if target_metadata is None:
+                continue
+            transaction.add_delete(
+                target_relative,
+                owned_paths=owned_targets,
+            )
+            operation_count += 1
+        return operation_count
+
+    @staticmethod
+    def _discard_uncommitted_publication(
+        transaction: SquadPublicationTransaction,
+    ) -> None:
+        try:
+            transaction.seal().discard()
+        except Exception:
+            # The stage has no state marker and therefore no publication
+            # authority. Recovery may clean an unreferenced stage later.
+            return
+
+    def _product_effects_requested(
+        self,
+        result: SquadAgentResult,
+        phase: str,
+        state: Mapping[str, object],
+    ) -> bool:
+        payload = result.echelon_result or {}
+        updates = (
+            payload.get("product_input_updates")
+            if isinstance(payload, Mapping)
+            else None
+        )
+        metadata = state.get("product_inputs")
+        return bool(updates) or (
+            isinstance(metadata, dict)
+            and bool(metadata)
+            and phase in {"phase3-plan", "phase3-consensus"}
+        )
+
+    def _stage_product_input_effects(
+        self,
+        transaction: SquadPublicationTransaction,
+        result: SquadAgentResult,
+        phase: str,
+        state: Mapping[str, object],
+    ) -> tuple[int, dict[str, object]]:
+        staged_state = dict(state)
+        metadata = staged_state.get("product_inputs")
+        if not isinstance(metadata, dict) or not metadata:
+            error = self._apply_product_input_updates(result, phase, staged_state)
+            if error:
+                raise _ProductInputCommitError(error)
+            return 0, staged_state
+
+        inputs_ref = str(metadata.get("inputs_dir") or "").strip()
+        if not inputs_ref:
+            raise _ProductInputCommitError(
+                "product input staging path is missing from run state"
+            )
+        source_inputs = self._absolute_project_path(inputs_ref)
+        virtual_inputs = transaction.build_path(
+            Path("work/product-inputs")
+        )
+        self._copy_controller_tree(
+            source_inputs,
+            virtual_inputs,
+            exclude_echelon=False,
+        )
+
+        staged_metadata = dict(metadata)
+        original_paths: dict[str, Path] = {}
+        staged_paths: dict[str, Path] = {}
+        for key in _PRODUCT_INPUT_PATH_KEYS:
+            ref = str(metadata.get(key) or "").strip()
+            if not ref:
+                continue
+            original = self._absolute_project_path(ref)
+            try:
+                relative = original.relative_to(source_inputs)
+            except ValueError as exc:
+                raise _ProductInputCommitError(
+                    "product input metadata path is outside its evidence directory"
+                ) from exc
+            staged = virtual_inputs / relative
+            original_paths[key] = original
+            staged_paths[key] = staged
+            staged_metadata[key] = str(staged)
+        staged_metadata["inputs_dir"] = str(virtual_inputs)
+        staged_state["product_inputs"] = staged_metadata
+
+        error = self._apply_product_input_updates(
+            result,
+            phase,
+            staged_state,
+            path_overrides=staged_paths,
+        )
+        if error:
+            raise _ProductInputCommitError(error)
+
+        traceability = original_paths.get("traceability")
+        if traceability is None:
+            raise _ProductInputCommitError(
+                "product input traceability path is missing from run state"
+            )
+        owned_relative = {
+            traceability.relative_to(source_inputs),
+            traceability.with_suffix(".md").relative_to(source_inputs),
+        }
+        requirement_context = original_paths.get("requirement_context")
+        if requirement_context is not None:
+            owned_relative.add(requirement_context.relative_to(source_inputs))
+        return (
+            self._add_owned_file_diff(
+                transaction,
+                virtual_root=virtual_inputs,
+                target_root=source_inputs,
+                owned_relative_paths=owned_relative,
+            ),
+            staged_state,
+        )
+
+    def _manual_publication_spec_dir(
+        self,
+        state: Mapping[str, object],
+    ) -> Path | None:
+        spec_ref = str(
+            state.get("published_spec_dir") or state.get("spec_dir") or ""
+        ).strip()
+        if not spec_ref:
+            return None
+        spec_dir = self._absolute_project_path(spec_ref)
+        metadata = self._lstat_or_none(spec_dir)
+        if metadata is None:
+            return None
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISDIR(metadata.st_mode)
+        ):
+            raise OSError("manual publication target is not a directory")
+        self._project_relative_target(spec_dir / "ARTIFACTS.md")
+        return spec_dir
+
+    def _stage_manual_phase_effects(
+        self,
+        transaction: SquadPublicationTransaction,
+        state: Mapping[str, object],
+    ) -> int:
+        target = self._manual_publication_spec_dir(state)
+        if target is None:
+            return 0
+        virtual = transaction.build_path(
+            Path("work/manual/specs") / target.name
+        )
+        self._copy_controller_tree(
+            target,
+            virtual,
+            exclude_echelon=True,
+        )
+        self._publish_manual_phase_artifacts(
+            state,
+            spec_dir_override=virtual,
+            strict=True,
+        )
+        return self._add_owned_file_diff(
+            transaction,
+            virtual_root=virtual,
+            target_root=target,
+            owned_relative_paths={
+                Path("constitution.md"),
+                Path("ARTIFACTS.md"),
+            },
+        )
+
+    def _phase_a_preparation_failure(
+        self,
+        blocker: str,
+    ) -> _PhaseAReadinessCommitError:
+        return _PhaseAReadinessCommitError(
+            PhaseAReadinessResult(
+                ready=False,
+                blockers=[blocker],
+                missing={},
+                ready_spec_dir=None,
+            )
+        )
+
+    def _stage_phase_a_effects(
+        self,
+        transaction: SquadPublicationTransaction,
+        state: Mapping[str, object],
+    ) -> tuple[int, PhaseAReadinessResult]:
+        detached_state = dict(state)
+        active_spec_dir = self._active_phase_a_spec_dir(detached_state)
+        if active_spec_dir is None or not active_spec_dir.exists():
+            return (
+                0,
+                validate_phase_a_readiness(
+                    detached_state,
+                    self._phase_a_readiness_candidate_dirs(detached_state),
+                ),
+            )
+        active_spec_dir = self._absolute_project_path(active_spec_dir)
+        self._project_relative_target(active_spec_dir / "spec.md")
+        published_spec_dir = self._absolute_project_path(
+            self._published_phase_a_spec_dir(
+                detached_state,
+                active_spec_dir,
+            )
+        )
+        self._project_relative_target(published_spec_dir / "spec.md")
+        virtual_spec_dir = transaction.build_path(
+            Path("work/phase-a/specs") / published_spec_dir.name
+        )
+        published_metadata = self._lstat_or_none(published_spec_dir)
+        if published_metadata is not None:
+            if (
+                stat.S_ISLNK(published_metadata.st_mode)
+                or not stat.S_ISDIR(published_metadata.st_mode)
+            ):
+                raise OSError("published Phase A target is not a directory")
+            self._copy_controller_tree(
+                published_spec_dir,
+                virtual_spec_dir,
+                exclude_echelon=True,
+            )
+        else:
+            virtual_spec_dir.mkdir(parents=True, exist_ok=True)
+
+        active_spec_files = self._controller_tree_files(
+            active_spec_dir,
+            exclude_echelon=True,
+        )
+        self._copy_spec_tree(active_spec_dir, virtual_spec_dir)
+        targets = [
+            str(value).strip()
+            for value in (
+                detached_state.get("implementation_targets")
+                or getattr(self, "_implementation_targets", [])
+            )
+            if str(value).strip()
+        ]
+        if targets:
+            write_targets(virtual_spec_dir, targets)
+
+        published_input_files: set[Path] = set()
+        metadata = detached_state.get("product_inputs")
+        if isinstance(metadata, dict) and metadata:
+            inputs_ref = str(metadata.get("inputs_dir") or "").strip()
+            if not inputs_ref:
+                return (
+                    0,
+                    PhaseAReadinessResult(
+                        ready=False,
+                        blockers=[
+                            "product input evidence path is missing from run state"
+                        ],
+                        missing={},
+                        ready_spec_dir=None,
+                    ),
+                )
+            source_inputs = self._absolute_project_path(inputs_ref)
+            source_input_files = self._controller_tree_files(
+                source_inputs,
+                exclude_echelon=False,
+            )
+            published_input_files.update(
+                Path("inputs") / path for path in source_input_files
+            )
+            visible_inputs = published_spec_dir / "inputs"
+            if visible_inputs.exists():
+                published_input_files.update(
+                    Path("inputs") / path
+                    for path in self._controller_tree_files(
+                        visible_inputs,
+                        exclude_echelon=False,
+                    )
+                )
+        input_blockers = self._publish_product_input_evidence(
+            virtual_spec_dir,
+            detached_state,
+        )
+        if input_blockers:
+            return (
+                0,
+                PhaseAReadinessResult(
+                    ready=False,
+                    blockers=input_blockers,
+                    missing={},
+                    ready_spec_dir=None,
+                ),
+            )
+        self._publish_constitution_snapshot(virtual_spec_dir)
+        self._write_phase_a_finalization_outputs(
+            virtual_spec_dir,
+            detached_state,
+            strict=True,
+        )
+        write_artifact_index(virtual_spec_dir)
+        self._write_published_context_metadata(
+            virtual_spec_dir,
+            str(detached_state.get("run_id") or "").strip(),
+            canonical_spec_file=published_spec_dir / "spec.md",
+        )
+
+        updated = deepcopy(detached_state)
+        updated["published_spec_dir"] = self._repo_relative_or_absolute(
+            published_spec_dir
+        )
+        readiness = validate_phase_a_readiness(
+            updated,
+            [virtual_spec_dir],
+        )
+        if not readiness.ready:
+            return 0, readiness
+        published_kb_files = {
+            path
+            for path in _PHASE_A_KB_REPORT_FILES
+            if (virtual_spec_dir / path).is_file()
+        }
+        owned_relative = (
+            set(active_spec_files)
+            | published_input_files
+            | set(_PHASE_A_GENERATED_FILES)
+            | published_kb_files
+        )
+        return (
+            self._add_owned_file_diff(
+                transaction,
+                virtual_root=virtual_spec_dir,
+                target_root=published_spec_dir,
+                owned_relative_paths=owned_relative,
+            ),
+            readiness,
+        )
+
+    def _prepare_external_phase_effects(
+        self,
+        result: SquadAgentResult,
+        phase: str,
+        state: Mapping[str, object],
+        *,
+        manual_phase_run: bool,
+    ) -> PreparedSquadPublication | None:
+        needs_product = self._product_effects_requested(result, phase, state)
+        needs_phase_a = phase == "phase4-document"
+        needs_manual = manual_phase_run and not needs_phase_a
+        if not (needs_product or needs_phase_a or needs_manual):
+            return None
+
+        transaction = SquadPublicationTransaction.begin(
+            self._project_root,
+            self._squad_dir,
+            uuid.uuid4().hex,
+        )
+        operation_count = 0
+        staged_state = dict(state)
+        try:
+            if needs_product:
+                product_operations, staged_state = (
+                    self._stage_product_input_effects(
+                        transaction,
+                        result,
+                        phase,
+                        staged_state,
+                    )
+                )
+                operation_count += product_operations
+            if needs_phase_a:
+                phase_a_operations, readiness = self._stage_phase_a_effects(
+                    transaction,
+                    staged_state,
+                )
+                if not readiness.ready:
+                    raise _PhaseAReadinessCommitError(readiness)
+                operation_count += phase_a_operations
+            elif needs_manual:
+                operation_count += self._stage_manual_phase_effects(
+                    transaction,
+                    staged_state,
+                )
+            if operation_count == 0:
+                self._discard_uncommitted_publication(transaction)
+                return None
+            return transaction.seal()
+        except (_ProductInputCommitError, _PhaseAReadinessCommitError):
+            self._discard_uncommitted_publication(transaction)
+            raise
+        except (Exception, SystemExit) as exc:
+            self._discard_uncommitted_publication(transaction)
+            if needs_phase_a or needs_manual:
+                raise self._phase_a_preparation_failure(
+                    "failed to stage controller-owned spec artifacts"
+                ) from exc
+            raise _ProductInputCommitError(
+                "invalid product input updates: staged preparation failed"
+            ) from exc
+
     def _publish_manual_phase_artifacts(
         self,
         state: Mapping[str, object] | None = None,
+        *,
+        spec_dir_override: Path | None = None,
+        strict: bool = False,
     ) -> None:
         """Refresh project-visible spec metadata after a targeted phase run."""
         state = (
@@ -1635,18 +2250,24 @@ class SquadController:
             if state is not None
             else self._state_store.load()
         )
-        spec_ref = str(state.get("published_spec_dir") or state.get("spec_dir") or "").strip()
-        if not spec_ref:
-            return
-        spec_dir = Path(spec_ref)
-        if not spec_dir.is_absolute():
-            spec_dir = self._project_root / spec_dir
+        spec_dir = spec_dir_override
+        if spec_dir is None:
+            spec_ref = str(
+                state.get("published_spec_dir") or state.get("spec_dir") or ""
+            ).strip()
+            if not spec_ref:
+                return
+            spec_dir = Path(spec_ref)
+            if not spec_dir.is_absolute():
+                spec_dir = self._project_root / spec_dir
         if not spec_dir.exists() or not spec_dir.is_dir():
             return
         self._publish_constitution_snapshot(spec_dir)
         try:
             write_artifact_index(spec_dir)
         except OSError:
+            if strict:
+                raise
             logger.warning("Could not refresh artifact index for %s", spec_dir)
 
     def _planned_phase_a_publication_updates(
@@ -1802,13 +2423,48 @@ class SquadController:
         self,
         published_spec_dir: Path,
         state: dict,
+        *,
+        strict: bool = False,
     ) -> None:
         run_id = str(state.get("run_id") or "unknown")
         try:
             from echelon.kb_proposals import publish_kb_reports
 
             publish_kb_reports(self._project_root, run_id, published_spec_dir)
+            if strict:
+                run_dir = self._project_root / "runs" / run_id
+                expected_reports = (
+                    (
+                        run_dir / "kb-apply-report.yaml",
+                        published_spec_dir / "kb/kb-apply-report.yaml",
+                    ),
+                    (
+                        run_dir / "kb-usage.yaml",
+                        published_spec_dir / "kb/kb-usage-summary.yaml",
+                    ),
+                )
+                for source, target in expected_reports:
+                    source_metadata = self._lstat_or_none(source)
+                    if source_metadata is None:
+                        continue
+                    if (
+                        stat.S_ISLNK(source_metadata.st_mode)
+                        or not stat.S_ISREG(source_metadata.st_mode)
+                    ):
+                        raise OSError("KB publication source is not a regular file")
+                    target_metadata = self._lstat_or_none(target)
+                    if (
+                        target_metadata is None
+                        or stat.S_ISLNK(target_metadata.st_mode)
+                        or not stat.S_ISREG(target_metadata.st_mode)
+                        or target.read_bytes() != source.read_bytes()
+                    ):
+                        raise OSError(
+                            "KB publication did not produce its exact staged output"
+                        )
         except Exception as exc:  # noqa: BLE001
+            if strict:
+                raise
             logger.warning("Could not publish KB provenance reports: %s", exc)
         spec_status = str(state.get("spec_status") or "planned")
         constitution_hash = self._constitution_hash(published_spec_dir / "constitution.md")
@@ -1876,9 +2532,29 @@ class SquadController:
         published_spec_dir: Path,
         run_id: str,
     ) -> None:
+        metadata = self._write_published_context_metadata(
+            published_spec_dir,
+            run_id,
+        )
+        if metadata is None:
+            return
+        self._mine_published_spec_best_effort(
+            published_spec_dir,
+            published_spec_dir / "spec.md",
+            run_id,
+            metadata,
+        )
+
+    def _write_published_context_metadata(
+        self,
+        published_spec_dir: Path,
+        run_id: str,
+        *,
+        canonical_spec_file: Path | None = None,
+    ) -> object | None:
         spec_file = published_spec_dir / "spec.md"
         if not spec_file.exists():
-            return
+            return None
 
         from echelon.context_metadata import FeatureMetadata, write_feature_metadata
 
@@ -1886,13 +2562,22 @@ class SquadController:
             published_spec_dir,
             run_id=run_id or None,
         )
+        if canonical_spec_file is not None:
+            canonical_artifact_path = self._repo_relative_or_absolute(
+                canonical_spec_file
+            )
+            metadata = replace(
+                metadata,
+                requirements=[
+                    replace(
+                        requirement,
+                        artifact_path=canonical_artifact_path,
+                    )
+                    for requirement in metadata.requirements
+                ],
+            )
         write_feature_metadata(published_spec_dir, metadata)
-        self._mine_published_spec_best_effort(
-            published_spec_dir,
-            spec_file,
-            run_id,
-            metadata,
-        )
+        return metadata
 
     def _mine_published_spec_best_effort(
         self,
@@ -2041,6 +2726,8 @@ class SquadController:
         result: SquadAgentResult,
         phase: str,
         state: Mapping[str, object],
+        *,
+        path_overrides: Mapping[str, Path] | None = None,
     ) -> str | None:
         """Validate and persist agent proposals through the controller-owned ledger."""
         payload = result.echelon_result or {}
@@ -2053,14 +2740,32 @@ class SquadController:
             phase in {"phase3-plan", "phase3-consensus"}
         ):
             return None
+        traceability_override = (
+            path_overrides.get("traceability")
+            if path_overrides is not None
+            else None
+        )
         traceability_ref = str(metadata.get("traceability") or "").strip()
-        if not traceability_ref:
+        if traceability_override is None and not traceability_ref:
             return "product input traceability path is missing from run state"
-        traceability_path = Path(traceability_ref)
+        traceability_path = (
+            Path(traceability_override)
+            if traceability_override is not None
+            else Path(traceability_ref)
+        )
         if not traceability_path.is_absolute():
             traceability_path = self._project_root / traceability_path
+        catalog_override = (
+            path_overrides.get("catalog")
+            if path_overrides is not None
+            else None
+        )
         catalog_ref = str(metadata.get("catalog") or "").strip()
-        catalog_path = Path(catalog_ref) if catalog_ref else None
+        catalog_path = (
+            Path(catalog_override)
+            if catalog_override is not None
+            else (Path(catalog_ref) if catalog_ref else None)
+        )
         if catalog_path is not None and not catalog_path.is_absolute():
             catalog_path = self._project_root / catalog_path
         active_spec_dir = self._active_phase_a_spec_dir(state)
@@ -2086,9 +2791,23 @@ class SquadController:
                     catalog_path,
                     apply=True,
                 )
-                requirement_context_ref = str(metadata.get("requirement_context") or "").strip()
-                if requirement_context_ref:
-                    requirement_context_path = Path(requirement_context_ref)
+                requirement_context_override = (
+                    path_overrides.get("requirement_context")
+                    if path_overrides is not None
+                    else None
+                )
+                requirement_context_ref = str(
+                    metadata.get("requirement_context") or ""
+                ).strip()
+                if (
+                    requirement_context_override is not None
+                    or requirement_context_ref
+                ):
+                    requirement_context_path = (
+                        Path(requirement_context_override)
+                        if requirement_context_override is not None
+                        else Path(requirement_context_ref)
+                    )
                     if not requirement_context_path.is_absolute():
                         requirement_context_path = self._project_root / requirement_context_path
                     refresh_requirement_context_from_catalog(catalog_path, requirement_context_path)
@@ -2274,18 +2993,11 @@ class SquadController:
             shutil.rmtree(runtime_metadata)
         elif runtime_metadata.exists():
             runtime_metadata.unlink()
-        for child in source.iterdir():
-            if child.name == ".echelon":
-                continue
-            target = destination / child.name
-            if child.is_dir():
-                if target.exists() and not target.is_dir():
-                    target.unlink()
-                shutil.copytree(child, target, dirs_exist_ok=True)
-            elif child.is_file():
-                if target.exists() and target.is_dir():
-                    shutil.rmtree(target)
-                shutil.copy2(child, target)
+        self._copy_controller_tree(
+            source,
+            destination,
+            exclude_echelon=True,
+        )
 
     def _repo_relative_or_absolute(self, path: Path) -> str:
         try:

@@ -1035,10 +1035,10 @@ def test_product_effect_staging_changes_only_sealed_copies_until_publish(
             ).glob("manifest.json")
         ).read_text(encoding="utf-8")
     )
-    assert [operation["target"] for operation in manifest["operations"]] == [
+    assert [operation["target"] for operation in manifest["operations"]] == sorted(
         str(path.relative_to(controller._project_root)).replace("\\", "/")
         for path in visible
-    ]
+    )
 
     prepared.publish()
 
