@@ -37,18 +37,29 @@ atomic operation.
 
 ## Chosen Architecture
 
-Use a controller-owned durable outbox transaction:
+Use two controller-owned durable outbox transactions:
 
 1. Prepare every external change in a hidden run-local staging directory.
-2. Fully validate and digest the staged result.
-3. Seal an exact pending-publication marker into the routing decision.
-4. Commit routing state and that marker through the existing state-store CAS.
-5. Publish exact manifest operations idempotently.
-6. Verify all postimages, then atomically clear the marker.
+2. Prepare the bounded post-dispatch completion intent in a separate hidden
+   run-local staging directory.
+3. Fully validate, digest, flush, sync, and reread both staged results.
+4. Seal the exact completion marker and any applicable publication marker into
+   the routing decision.
+5. Commit routing state and all applicable markers through one existing
+   state-store CAS.
+6. Publish exact manifest operations idempotently.
+7. Verify all postimages, then atomically clear the publication marker and
+   advance the completion marker to its first effect in one exact-CAS save.
+8. Replay each completion effect through an intrinsic idempotency receipt.
+9. Verify every applicable receipt, mark the dispatch complete, and atomically
+   clear the exact completion marker.
 
 The existing Phase A and spec-run execution locks remain the single-writer
 boundary. Recovery runs while both locks are held and before normal or manual
-phase/status handling.
+phase/status handling. A route without file publication still commits a
+completion marker in its routing CAS, starting at its first effect. Terminal
+reconciliation commits both markers through one exact state mutation and uses
+explicit terminal provenance rather than an older `last_dispatch`.
 
 This ordering is preferred to external-first rollback. External-first rollback
 would preserve the old phase on a publication failure, but it needs a
@@ -98,8 +109,106 @@ collisions, symlinks, overlapping operations, or a staged change outside the
 owned set fail preparation.
 
 MemPalace mining is not part of the file transaction. It is already best-effort
-and uses deterministic drawer identities. It moves after durable file
-publication and marker clearance so it can never precede routing state.
+and uses deterministic drawer identities. It is a bounded completion effect
+after durable file publication, so a restart records one deterministic outcome
+without leaving completion authority pending forever.
+
+### Completion transaction module
+
+A focused completion transaction module owns:
+
+- the exact completion-marker, intent, and receipt schemas;
+- bounded detachment and canonical JSON serialization;
+- durable intent and receipt writes beneath the run directory;
+- route, terminal, publication, and dispatch provenance verification;
+- monotonic effect-plan transitions;
+- journal batch identity and drift detection;
+- final receipt verification and safe stage cleanup.
+
+The transaction root is fixed at
+`.completion-outbox/<completion_id>/`. It contains canonical `intent.json` and
+canonical `receipts.json`; state never stores their path or provider text. The
+completion ID is a 32-character lowercase hexadecimal value. For routed work
+it is also the pre-generated, routing-attested `dispatch_id`. Terminal
+reconciliation uses a fresh completion ID and explicit terminal provenance.
+
+The intent is first detached with the same concrete-type, depth, node,
+collection, string, integer, finite-float, and cycle limits used by prepared
+results. Its canonical UTF-8 JSON representation must be at most 4,194,304
+bytes. `receipts.json` must be at most 1,048,576 bytes. Oversized values fail
+before either marker can commit. The intent contains no arbitrary path,
+provider raw output, stderr, or unbounded object. Its exact top-level schema is:
+
+```json
+{
+  "schema_version": 1,
+  "completion_id": "<32 lowercase hex>",
+  "origin": "routed | terminal",
+  "publication": {
+    "kind": "none | external",
+    "marker": "<required exact publication marker only for external>"
+  },
+  "route": {
+    "kind": "routed | terminal",
+    "from_phase": "<routed only>",
+    "to_phase": "<routed only>",
+    "manual_phase_run": "<Boolean, routed only>",
+    "record_completion": "<Boolean, routed only>",
+    "terminal_phase": "<terminal only>"
+  },
+  "effect_plan": [
+    "journal | timing | checkpoint | context | mining"
+  ],
+  "context_reason": "<bounded controller-generated string>",
+  "mine_phase_a": "<Boolean>",
+  "judgment_payload_sha256": ["<64 lowercase hex>"],
+  "judgments": [
+    {
+      "echelon_result": "<bounded detached object>",
+      "quarantined_state_updates": "<bounded detached object>"
+    }
+  ]
+}
+```
+
+The `publication` and `route` objects are exact tagged unions: `kind: none`
+has no `marker`; `kind: external` has exactly one valid marker; routed route
+fields and terminal route fields cannot overlap. Judgment payload digests must
+match both the canonical detached payloads in the intent and durable
+`last_dispatch`. `effect_plan` contains each applicable effect at most once in
+the fixed order shown. Terminal completion permits only `mining`. Commander
+recovery may use only `journal`; ordinary routed completion uses
+`journal`, `timing`, `checkpoint`, `context`, and optionally `mining`.
+The exact publication variants are `{"kind": "none"}` and
+`{"kind": "external", "marker": <exact publication marker>}`. The exact route
+variants are:
+
+```json
+{
+  "kind": "routed",
+  "from_phase": "<non-empty phase>",
+  "to_phase": "<non-empty phase>",
+  "manual_phase_run": false,
+  "record_completion": true
+}
+```
+
+and:
+
+```json
+{
+  "kind": "terminal",
+  "terminal_phase": "<exact terminal phase>"
+}
+```
+
+The routed Boolean values may each be either concrete Boolean; no field is
+optional within its selected variant. An empty effect plan begins at
+`complete`.
+
+Before marker commit, the canonical intent and empty receipt document are
+written through durable temporary files, file-synced, atomically replaced,
+directory-synced, reread, and rehashed.
 
 ### State store integration
 
@@ -117,20 +226,143 @@ trusted routing effect. Its exact schema is:
 Old state without the key remains valid. Unknown fields, wrong concrete types,
 unsafe identifiers, malformed digests, and non-exact markers are rejected.
 
-The sealed decision carries the marker as a transaction-owned update.
+`pending_controller_completion` is a separate controller-owned,
+provider-reserved trusted effect with this exact schema:
+
+```json
+{
+  "schema_version": 1,
+  "completion_id": "<32 lowercase hex>",
+  "intent_sha256": "<64 lowercase hex>",
+  "publication_binding_sha256": "<64 lowercase hex>",
+  "origin": "routed | terminal",
+  "step": "awaiting_publication | journal | timing | checkpoint | context | mining | complete"
+}
+```
+
+`publication_binding_sha256` is the digest of the exact tagged publication
+object in the intent, including the `kind: none` sentinel. Explicit nulls,
+unknown fields, and non-exact concrete types are malformed. Key membership,
+not `.get()` truthiness, distinguishes an absent marker from a malformed one.
+
+The sealed decision carries the completion marker and any applicable
+publication marker as transaction-owned updates and attests the pre-generated
+`dispatch_id`. `advance()` persists that exact ID in `last_dispatch`, sets
+`post_dispatch_complete` to false, and includes the completion payload digest
+in the routing attestation. For old `last_dispatch` records, an absent
+`post_dispatch_complete` means complete.
 `advance()` no longer invokes a mutating `before_commit` callback. Stale
-decisions and `_save_unlocked()` failures leave only an unreferenced hidden
-stage, which is discarded without touching targets.
+decisions and true pre-save failures leave only unreferenced hidden stages,
+which are discarded without touching targets. If a save writes durably and
+then raises, the controller reloads state and requires an exact match on phase,
+routing digest, attested dispatch ID, both expected markers, and token total
+before accepting that the commit won. It then resumes completion without a
+second advance, diagnostic merge, or token increment.
 
 The store also provides exact compare-and-swap operations to:
 
 - record a bounded `external_publication_failure` diagnostic while preserving
   the pre-diagnostic status and blocked reason;
-- clear the exact pending marker and failure diagnostic after publication,
-  restoring the preserved lifecycle fields when needed.
+- record a bounded `controller_completion_failure` diagnostic while preserving
+  the pre-diagnostic status and blocked reason;
+- clear the exact publication marker and failure diagnostic while advancing
+  the exact completion marker to the first bound effect in one save;
+- advance one exact completion step only to its next bound step;
+- after verified receipts, clear the exact completion marker, restore lifecycle
+  fields, set routed `last_dispatch.post_dispatch_complete` to true, persist
+  the final receipt digest and completed publication-binding digest, and set
+  terminal status to `done` in one save.
+
+Routed finalization adds these bounded fields to the exact matching
+`last_dispatch`: `completion_intent_sha256`,
+`completion_receipts_sha256`, `completed_publication_binding_sha256`, and
+`post_dispatch_complete: true`. Terminal finalization writes this separate
+controller-owned exact receipt while setting status:
+
+```json
+{
+  "last_terminal_completion": {
+    "schema_version": 1,
+    "completion_id": "<32 lowercase hex>",
+    "intent_sha256": "<64 lowercase hex>",
+    "receipts_sha256": "<64 lowercase hex>",
+    "publication_binding_sha256": "<64 lowercase hex>",
+    "terminal_phase": "<exact terminal phase>"
+  }
+}
+```
+
+Providers cannot set, replace, or remove these receipt fields.
 
 These operations load and save under the state lock. If marker-clear saving
-fails, the durable pending marker remains and recovery repeats safely.
+fails before its save, the exact old marker remains and recovery repeats. If it
+raises after its save, only an exact reload of the next marker or final durable
+receipt proves that the mutation won.
+Every post-save exception is resolved by reloading and accepting only the exact
+old or next marker identity. No provider result, queued update, routing update,
+or transaction removal can install, advance, or remove completion authority.
+Step APIs receive the validated typed intent, recompute its canonical digest,
+and permit only the immediate successor in its bound effect plan. Skips,
+repeats, regressions, origin changes, and transitions not named by that intent
+fail without state mutation.
+
+### Completion effects and receipts
+
+`receipts.json` has the exact top-level fields `schema_version`,
+`completion_id`, and `effects`. The `effects` object may contain only effects
+listed in the bound plan. Each effect writes and verifies its exact receipt
+before the state step can advance:
+
+- **Journal:** The controller reconstructs only the intent's detached judgment
+  entries and controller quarantine warnings. It overwrites any
+  provider-supplied completion stamp and stamps every emitted row with the
+  exact completion ID, zero-based entry index, and canonical content digest.
+  Under a dedicated journal lock shared by every harness journal writer, it
+  rereads and validates the complete journal, preserves all unrelated rows,
+  rejects malformed JSON, duplicate indexes, missing indexes, unexpected rows,
+  or same-ID content drift, then writes the preserved-plus-missing batch
+  through a durable temporary file, `fsync`, atomic replace, and parent
+  directory `fsync`. A replay either verifies the exact complete batch or
+  fails closed; it never appends a duplicate or overwrites an unrelated row.
+  The receipt records the ordered row digests.
+- **Timing:** The existing transition helper is replay-convergent:
+  an already-finished close is accepted and an already-started open is reused.
+  The receipt records the exact close/open phase and hashes of the observed
+  terminal timing events. A crash after telemetry write but before step CAS
+  revalidates those events and does not append duplicates.
+- **Checkpoint:** Automatic checkpoints carry the completion ID in both a Git
+  trailer and the ledger record. Replay first validates an exact ledger
+  receipt. If the commit happened before the ledger write, it performs a
+  bounded search of at most 256 commits reachable from repository refs,
+  requires the exact completion/run/spec/phase/next identity and unique commit,
+  and repairs only the ledger receipt. It never creates a second commit for the
+  same completion ID. The receipt records the verified commit and ledger
+  identity. A no-active-spec checkpoint has an exact `noop` receipt.
+- **Context:** Context generation overwrites only the existing fixed run-local
+  context files. Its receipt records their fixed-name content digests and the
+  controller-derived context directory identity. Replay rebuilds and rechecks
+  the fixed set; no arbitrary path is accepted. A failed build or state save
+  retains the step for retry with a bounded failure code.
+- **Mining:** The deterministic MemPalace drawer identity makes replay
+  convergent. The helper returns one bounded outcome:
+  `written`, `already_present`, `unavailable`, `failed`, or `not_applicable`,
+  plus only validated bounded drawer IDs and the canonical spec digest.
+  The outcome is durably receipted and the step advances even for best-effort
+  `unavailable` or `failed`, preventing an infinite pending completion.
+
+After the marker reaches `complete`, finalization reloads the intent and
+receipts, verifies an exact receipt for every applicable effect and no receipt
+for an inapplicable effect, revalidates external identities where applicable,
+and only then invokes the final exact-CAS removal. Routed finalization sets the
+same `last_dispatch.dispatch_id` to `post_dispatch_complete: true` and stores
+the receipt digest plus the exact completed publication-binding digest.
+Terminal finalization sets `status: done` in that same save. A latest completed
+Phase 4-to-terminal dispatch whose stored publication binding matches the
+published identity is durable proof for terminal readiness; a fresh controller
+validates that receipt instead of staging a second time-varying terminal
+publication. A final-save exception is success only when a reload proves the
+marker absent and the durable routed `last_dispatch` or
+`last_terminal_completion` receipt fields exact.
 
 ## Manifest and Ownership Contract
 
@@ -186,9 +418,12 @@ For each sorted operation:
 5. For a deletion, recheck the preimage, unlink only that exact owned file,
    sync the parent, and verify absence.
 
-After all operations, revalidate every postimage. Only then clear the exact
-state marker. Empty directories beneath known owned subtrees may be pruned
-after their file deletions; unrelated directories and files are untouched.
+After all operations, revalidate every postimage. Only then perform the atomic
+publication-to-completion handoff: clear the exact publication marker and its
+diagnostic, restore its lifecycle, and move the exact completion marker from
+`awaiting_publication` to the first bound effect in one save. Empty directories
+beneath known owned subtrees may be pruned after their file deletions;
+unrelated directories and files are untouched.
 
 If publication, digest verification, or marker clearing fails, the controller
 records only a fixed error code such as `target_drift`, `stage_missing`,
@@ -198,48 +433,74 @@ silently cleared.
 
 At the start of every normal or manual execution:
 
-1. Load and exact-validate the pending marker.
-2. Derive and load its stage and manifest.
-3. Fail closed with a bounded diagnostic if the stage is absent/corrupt or its
-   digest differs.
-4. Replay the idempotent algorithm.
-5. Atomically clear the marker and diagnostic.
-6. Remove the stage only after a fresh state load proves the marker is absent.
-7. Continue normal phase/status handling.
+1. Test marker presence by key membership and exact-validate the completion
+   marker plus any applicable publication marker.
+2. Derive and load both independent stages, their manifest/intent, and receipts.
+3. Cross-check intent provenance against the markers and durable dispatch.
+4. Fail closed before additional visible writes if either stage is
+   absent/corrupt or any digest differs.
+5. Replay file publication when its marker is present.
+6. Atomically hand off from publication to completion.
+7. Replay the current completion effect and verify/write its durable receipt.
+8. Advance only to the next effect permitted by the bound plan.
+9. Verify all receipts, atomically mark complete and clear completion authority.
+10. Remove each stage only after a fresh state load and provenance check proves
+    that neither state marker nor an incomplete bound `last_dispatch`
+    authorizes it.
+11. Continue normal phase/status handling. A recovered manual completion
+    returns without redispatching the manual phase.
 
 Unreferenced prepared stages have never had permission to publish. They may be
-removed after proving no state marker references them.
+removed only after the same fresh proof. A routed orphan intent is retained
+while a matching `last_dispatch.dispatch_id` has
+`post_dispatch_complete: false`, even if its state marker is corrupt or
+missing. Old state with neither completion marker nor the new dispatch sentinel
+continues normally.
 
 ## Controller Flow
 
 Normal and manual successful-result paths become:
 
 1. capture routing snapshot and prepare the detached result;
-2. stage and validate product/spec/manual effects;
-3. add the marker and planned Phase A identity to controller-owned routing
-   updates;
-4. construct and seal the routing decision;
-5. call state-store `advance()`;
-6. publish and durably clear the marker;
-7. write pending judgment journals;
-8. apply timing transition, checkpoint, and context refresh.
+2. stage and validate product/spec/manual effects when applicable;
+3. generate the future dispatch/completion ID and stage the exact completion
+   intent;
+4. add applicable publication and completion markers plus planned Phase A
+   identity to controller-owned routing updates;
+5. construct and seal the routing decision, including the dispatch ID;
+6. call state-store `advance()` once;
+7. publish and atomically hand off to completion when applicable;
+8. drain journal, timing, checkpoint, context, and mining effects through
+   monotonic receipt-backed steps;
+9. verify all receipts and atomically finalize the dispatch.
+
+Routes without publication begin at their first completion effect in the same
+routing save. Direct commander recovery uses the same durable completion path,
+with a journal-only plan when it has a judgment journal. No successful
+post-dispatch effect remains only in `_pending_judgment_results`.
 
 Product mapping or Phase A readiness failures occur during staging. The
 existing repair/block behavior runs against the unchanged routing snapshot and
 unchanged visible artifacts.
 
 Terminal Phase A reconciliation uses the same staged file transaction without a
-new routing transition. It first commits a pending marker through an exact
-state mutation, publishes, clears it, then completes terminal handling.
+new routing transition. It stages an explicit terminal completion intent,
+commits both markers in one exact state mutation, publishes, hands off to
+terminal mining, and sets terminal status to `done` only in the receipt-verified
+final completion CAS. It never derives completion work from stale
+`last_dispatch`. Conversely, a completed latest Phase 4 routed receipt with the
+same publication binding suppresses redundant terminal reconciliation after a
+process restart.
 
 ## Failure Semantics
 
 - **Staging/generation/validation failure:** visible targets and routing state
   are unchanged; hidden stage is discarded.
-- **Routing construction or CAS failure:** visible targets are unchanged;
-  hidden stage is discarded.
-- **Routing `_save_unlocked()` failure:** marker is not durable, publication is
-  not attempted, and visible targets remain unchanged.
+- **Routing construction or true pre-save CAS failure:** visible targets are
+  unchanged; hidden stages are discarded after fresh non-authority proof.
+- **Routing or terminal save-then-raise:** reload and prove the exact committed
+  markers/dispatch. A winning commit resumes without a second route or token
+  charge; a non-winning commit follows pre-save cleanup.
 - **First or later file-operation failure:** routing plus marker is durable;
   any completed operations match postimages and recovery resumes at the first
   preimage-matching operation.
@@ -247,11 +508,21 @@ state mutation, publishes, clears it, then completes terminal handling.
   bounded fail-closed diagnostic.
 - **Missing/corrupt stage or manifest mismatch:** do not touch targets or clear
   marker; record a bounded fail-closed diagnostic.
-- **Marker-clear save failure:** all targets already match postimages; recovery
-  skips them and retries the state clear.
-- **Crash at any point:** the state marker is the authority. No marker means no
-  publication permission; a marker means replay and verify before further
-  controller work.
+- **Publication-handoff save failure:** all targets already match postimages;
+  recovery skips them and exact-retries or accepts the handoff after reload.
+- **Missing/corrupt completion intent or receipts:** retain all authority, do
+  not run further effects, and record only a bounded completion code.
+- **Effect failure:** retain the exact current step and completion stage,
+  preserve resumable lifecycle in a bounded diagnostic, and retry before any
+  phase work.
+- **Crash after an effect but before step CAS:** verify or recreate the
+  effect-specific idempotency receipt, then advance exactly once.
+- **Final completion save failure:** reload; absence plus exact durable dispatch
+  or terminal receipt proves success, otherwise retain the stage and retry.
+- **Crash at any point:** publication authority controls visible file effects;
+  completion authority controls post-dispatch effects. Neither runner executes
+  until both authorities are absent and any matching dispatch sentinel is
+  complete.
 
 ## Token Accounting
 
@@ -274,11 +545,18 @@ production behavior is introduced through a red-green cycle.
 
 ### State and marker contract
 
-- provider and untrusted controller updates cannot set/remove the pending key;
-- valid markers are sealed and persisted;
-- malformed or extra marker fields are rejected;
-- old states without a marker load and advance unchanged;
-- exact marker CAS is required for failure recording and clearing.
+- provider and untrusted controller updates cannot set, advance, or remove
+  either pending key;
+- valid completion and applicable publication markers are sealed and persisted
+  together in one save;
+- malformed, explicit-null, extra-field, wrong-origin, and illegal-step
+  markers are rejected by key membership and exact schemas;
+- old states without either marker or the dispatch completion sentinel load and
+  advance unchanged;
+- exact marker and dispatch CAS is required for failure recording, handoff,
+  every monotonic step, and final clearing;
+- intent concrete-type/structure limits, the 4 MiB canonical size limit, exact
+  tagged unions, digest reread, and effect-plan transition table are covered.
 
 ### Staging visibility and validation
 
@@ -291,18 +569,38 @@ production behavior is introduced through a red-green cycle.
 
 ### Commit and recovery faults
 
-- injected routing `_save_unlocked()` failure publishes nothing and leaves old
+- injected true pre-save routing failure publishes nothing and leaves old
   routing state;
+- route and terminal save-then-raise faults prove the exact committed markers
+  resume without a second advance or token charge, including nonzero deferred
+  tokens;
 - failure before the first operation, between product files, between product
   and spec files, and at every later operation leaves a durable marker;
 - retry skips matching postimages and completes exactly once;
-- marker-clear `_save_unlocked()` failure retries without rewriting artifacts;
+- publication-handoff `_save_unlocked()` failure retries without rewriting
+  artifacts and cannot expose completion effects before the exact handoff;
 - target drift before initial publication and between retries fails closed;
 - missing stage, corrupt manifest, manifest digest mismatch, corrupt staged
   file, and unsafe target fail closed without clearing the marker;
 - normal and manual entry points recover before any phase/status mutation;
-- success journals, timing, and checkpoints occur only after durable marker
-  clearance.
+- success journals, timing, checkpoints, context, and mining occur only after
+  durable publication-marker clearance;
+- a completely new controller instance reconstructs intent and resumes after
+  route CAS with and without publication, after the publication handoff, after
+  every effect and before its step CAS, and after final completion clear;
+- journal replay preserves unrelated rows and rejects missing, duplicate,
+  malformed, spoofed, or digest-drifted completion identities;
+- timing, checkpoint commit/ledger repair, context, and mining each prove
+  crash-after-effect/before-step-CAS convergence and verified receipts;
+- every state transition injects pre-save and save-then-raise faults;
+- missing/corrupt intent or receipts retain authority and only bounded
+  diagnostics;
+- best-effort mining outcomes advance deterministically;
+- recovered manual work never redispatches, terminal provenance never replays
+  stale route effects, and a completed Phase 4 receipt prevents redundant
+  terminal publication after final-clear restart;
+- orphan intent cleanup requires fresh proof that neither state marker nor an
+  incomplete bound `last_dispatch` authorizes the stage.
 
 ### Token race
 
@@ -312,11 +610,13 @@ added exactly once through `increment_token_usage()`.
 
 ## Compatibility and Scope
 
-There is one behavior, not a switch. Existing runs without a pending marker use
-the normal path. Successful runs finish with the same externally visible
-artifacts and routing decisions; the internal marker commit/clear adds a state
-revision. Interrupted runs gain a recoverable state instead of partial,
-untracked publication.
+There is one behavior, not a switch. Existing runs without either pending
+marker use the normal path; old `last_dispatch` records without the completion
+sentinel are treated as complete. Successful runs finish with the same
+externally visible artifacts and routing decisions; internal marker/receipt
+transitions add state revisions and bounded dispatch receipt fields.
+Interrupted runs gain a recoverable state instead of partial, untracked
+publication or lost post-dispatch work.
 
 No general filesystem transaction framework, database transaction, new
 dependency, or unrelated publication path is introduced.
