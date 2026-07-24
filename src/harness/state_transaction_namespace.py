@@ -135,12 +135,22 @@ PHASE_A_IDENTITY_KEYS = frozenset(
     }
 )
 
+CONTROLLER_COMPLETION_RECEIPT_KEYS = frozenset(
+    {
+        "controller_completion_failure",
+        "last_terminal_completion",
+        "phase_a_active_source_sha256",
+        "phase_a_published_postimage_sha256",
+    }
+)
+
 STORE_OWNED_TRANSACTION_KEYS = frozenset().union(
     CAS_AND_RUN_IDENTITY_KEYS,
     ROUTING_AND_HISTORY_IDENTITY_KEYS,
     LIFECYCLE_AND_DIAGNOSTIC_KEYS,
     ATOMIC_STORE_CONTROL_KEYS,
     PHASE_A_IDENTITY_KEYS,
+    CONTROLLER_COMPLETION_RECEIPT_KEYS,
 )
 
 TRUSTED_ROUTING_EFFECT_KEYS = frozenset(

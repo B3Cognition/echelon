@@ -601,6 +601,7 @@ def test_pending_completion_marker_has_controller_only_routing_authority() -> No
         to_phase="next",
         expected_state_revision=1,
         expected_previous_dispatch_sha256="0" * 64,
+        dispatch_id=VALID_COMPLETION_MARKER["completion_id"],
         transaction_state_updates={
             PENDING_CONTROLLER_COMPLETION_KEY: VALID_COMPLETION_MARKER,
         },
@@ -609,6 +610,18 @@ def test_pending_completion_marker_has_controller_only_routing_authority() -> No
     assert decision.transaction_state_updates == {
         PENDING_CONTROLLER_COMPLETION_KEY: VALID_COMPLETION_MARKER,
     }
+
+
+def test_controller_completion_receipt_keys_are_store_owned_only() -> None:
+    keys = {
+        "controller_completion_failure",
+        "last_terminal_completion",
+        "phase_a_active_source_sha256",
+        "phase_a_published_postimage_sha256",
+    }
+
+    assert keys <= STORE_OWNED_TRANSACTION_KEYS
+    assert keys.isdisjoint(TRUSTED_ROUTING_EFFECT_KEYS)
 
 
 @pytest.mark.parametrize(
@@ -1433,6 +1446,146 @@ def test_routing_decision_seals_transition_identity_and_judgment_updates() -> No
     assert len(decision.judgment_payload_sha256) == 1
     assert decision.increment_iteration is True
     assert decision.token_usage_delta == 17
+
+
+def test_routing_decision_attests_supplied_dispatch_id() -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+
+    first = prepare_routing_decision(
+        prepared,
+        from_phase="provider",
+        to_phase="next",
+        expected_state_revision=7,
+        expected_previous_dispatch_sha256="0" * 64,
+        dispatch_id="1" * 32,
+    )
+    second = prepare_routing_decision(
+        prepared,
+        from_phase="provider",
+        to_phase="next",
+        expected_state_revision=7,
+        expected_previous_dispatch_sha256="0" * 64,
+        dispatch_id="2" * 32,
+    )
+
+    assert first.dispatch_id == "1" * 32
+    assert second.dispatch_id == "2" * 32
+    assert first.routing_sha256 != second.routing_sha256
+    verified = verify_prepared_routing_decision_attestation(
+        first,
+        from_phase="provider",
+        to_phase="next",
+    )
+    assert verified.transaction_state_updates == {}
+
+
+def test_routing_decision_dispatch_id_tampering_breaks_attestation() -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+    decision = prepare_routing_decision(
+        prepared,
+        from_phase="provider",
+        to_phase="next",
+        expected_state_revision=1,
+        expected_previous_dispatch_sha256="0" * 64,
+        dispatch_id="1" * 32,
+    )
+    tampered = replace(decision, dispatch_id="2" * 32)
+
+    with pytest.raises(PreparedPhaseResultAttestationError):
+        verify_prepared_routing_decision_attestation(
+            tampered,
+            from_phase="provider",
+            to_phase="next",
+        )
+
+
+@pytest.mark.parametrize(
+    "dispatch_id",
+    [
+        None,
+        "1" * 31,
+        "A" * 32,
+        "g" * 32,
+        True,
+    ],
+)
+def test_routing_decision_rejects_invalid_explicit_dispatch_id(
+    dispatch_id: object,
+) -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+
+    if dispatch_id is None:
+        decision = prepare_routing_decision(
+            prepared,
+            from_phase="provider",
+            to_phase="next",
+            expected_state_revision=1,
+            expected_previous_dispatch_sha256="0" * 64,
+        )
+        assert len(decision.dispatch_id) == 32
+        assert set(decision.dispatch_id) <= set("0123456789abcdef")
+        return
+
+    with pytest.raises(PreparedPhaseResultAttestationError):
+        prepare_routing_decision(
+            prepared,
+            from_phase="provider",
+            to_phase="next",
+            expected_state_revision=1,
+            expected_previous_dispatch_sha256="0" * 64,
+            dispatch_id=dispatch_id,
+        )
+
+
+def test_routing_decision_binds_completion_id_to_dispatch_id() -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(id="provider", type="agent", allowed_state_updates=[]),
+        _result({}),
+        controller_updates={},
+    )
+
+    decision = prepare_routing_decision(
+        prepared,
+        from_phase="provider",
+        to_phase="next",
+        expected_state_revision=1,
+        expected_previous_dispatch_sha256="0" * 64,
+        dispatch_id=VALID_COMPLETION_MARKER["completion_id"],
+        transaction_state_updates={
+            PENDING_CONTROLLER_COMPLETION_KEY: (
+                VALID_COMPLETION_MARKER
+            )
+        },
+    )
+    assert decision.dispatch_id == VALID_COMPLETION_MARKER["completion_id"]
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_routing_decision(
+            prepared,
+            from_phase="provider",
+            to_phase="next",
+            expected_state_revision=1,
+            expected_previous_dispatch_sha256="0" * 64,
+            dispatch_id="2" * 32,
+            transaction_state_updates={
+                PENDING_CONTROLLER_COMPLETION_KEY: (
+                    VALID_COMPLETION_MARKER
+                )
+            },
+        )
+    assert raised.value.validator == "completion_binding"
 
 
 def test_routing_decision_tampering_breaks_attestation() -> None:

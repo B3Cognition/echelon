@@ -531,6 +531,7 @@ class PreparedRoutingDecision:
     to_phase: str
     expected_state_revision: int
     expected_previous_dispatch_sha256: str
+    dispatch_id: str
     source: str
     transition_index: int | None
     increment_iteration: bool
@@ -880,6 +881,14 @@ def _valid_sha256(value: object) -> bool:
     )
 
 
+def _valid_dispatch_id(value: object) -> bool:
+    return (
+        type(value) is str
+        and len(value) == 32
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
 def _routing_attestation_facts(
     *,
     prepared: PreparedPhaseResult,
@@ -887,6 +896,7 @@ def _routing_attestation_facts(
     to_phase: object,
     expected_state_revision: object,
     expected_previous_dispatch_sha256: object,
+    dispatch_id: object,
     source: object,
     transition_index: object,
     increment_iteration: object,
@@ -918,6 +928,7 @@ def _routing_attestation_facts(
         "expected_previous_dispatch_sha256": _attestable_value(
             expected_previous_dispatch_sha256
         ),
+        "dispatch_id": _attestable_value(dispatch_id),
         "source": _attestable_value(source),
         "transition_index": _attestable_value(transition_index),
         "increment_iteration": _attestable_value(increment_iteration),
@@ -951,6 +962,7 @@ def _create_routing_attestation(
     to_phase: str,
     expected_state_revision: int,
     expected_previous_dispatch_sha256: str,
+    dispatch_id: str,
     source: str,
     transition_index: int | None,
     increment_iteration: bool,
@@ -971,6 +983,7 @@ def _create_routing_attestation(
         expected_previous_dispatch_sha256=(
             expected_previous_dispatch_sha256
         ),
+        dispatch_id=dispatch_id,
         source=source,
         transition_index=transition_index,
         increment_iteration=increment_iteration,
@@ -1011,6 +1024,7 @@ def prepare_routing_decision(
     to_phase: str,
     expected_state_revision: int,
     expected_previous_dispatch_sha256: str,
+    dispatch_id: str | None = None,
     queued_state_updates: Mapping[str, Any] | None = None,
     judgment_payloads: object = (),
     source: str = "transition",
@@ -1048,6 +1062,12 @@ def prepare_routing_decision(
     if not _valid_sha256(expected_previous_dispatch_sha256):
         raise PreparedPhaseResultAttestationError(
             "routing decision previous dispatch digest is invalid"
+        )
+    if dispatch_id is None:
+        dispatch_id = secrets.token_hex(16)
+    elif not _valid_dispatch_id(dispatch_id):
+        raise PreparedPhaseResultAttestationError(
+            "routing decision dispatch id is invalid"
         )
     if type(source) is not str or not source.strip():
         raise PreparedPhaseResultAttestationError(
@@ -1152,6 +1172,22 @@ def prepare_routing_decision(
                 ),
                 validator="type",
             ) from exc
+        completion_marker = detached_transaction_updates[
+            PENDING_CONTROLLER_COMPLETION_KEY
+        ]
+        if (
+            completion_marker["origin"] != "routed"
+            or completion_marker["completion_id"] != dispatch_id
+        ):
+            raise ControllerStateContractViolation(
+                "pending controller completion does not match dispatch",
+                contract="routing",
+                json_path=(
+                    "$.transaction_state_updates."
+                    f"{PENDING_CONTROLLER_COMPLETION_KEY}.completion_id"
+                ),
+                validator="completion_binding",
+            )
     try:
         detached_transaction_removals = frozenset(
             transaction_state_removals  # type: ignore[arg-type]
@@ -1216,6 +1252,7 @@ def prepare_routing_decision(
         expected_previous_dispatch_sha256=(
             expected_previous_dispatch_sha256
         ),
+        dispatch_id=dispatch_id,
         source=source,
         transition_index=transition_index,
         increment_iteration=increment_iteration,
@@ -1236,6 +1273,7 @@ def prepare_routing_decision(
         expected_previous_dispatch_sha256=(
             expected_previous_dispatch_sha256
         ),
+        dispatch_id=dispatch_id,
         source=source,
         transition_index=transition_index,
         increment_iteration=increment_iteration,
@@ -1275,6 +1313,7 @@ def verify_prepared_routing_decision_attestation(
         expected_previous_dispatch_sha256=(
             decision.expected_previous_dispatch_sha256
         ),
+        dispatch_id=decision.dispatch_id,
         source=decision.source,
         transition_index=decision.transition_index,
         increment_iteration=decision.increment_iteration,
