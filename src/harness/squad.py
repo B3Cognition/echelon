@@ -6286,6 +6286,15 @@ class SquadController:
             ControllerStateContractViolation,
             StateAdvanceError,
         ) as exc:
+            if (
+                isinstance(exc, StateAdvanceError)
+                and exc.validator == "checkpoint_prestate"
+            ):
+                if completion is not None:
+                    self._discard_controller_completion_without_authority(
+                        completion.marker.to_dict()
+                    )
+                return result
             error = (
                 StateAdvanceError(
                     "recovery routing decision construction failed",

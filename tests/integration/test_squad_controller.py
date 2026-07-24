@@ -820,6 +820,58 @@ def test_routed_checkpoint_prestate_failure_keeps_state_exact_and_discards_stage
     assert not (ctrl._squad_dir / ".completion-outbox").exists()
 
 
+def test_commander_checkpoint_prestate_failure_keeps_state_exact(
+    tmp_path: Path,
+) -> None:
+    provider = _mock_provider()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "JUDGMENT_RESOLVED",
+            "state_updates": {
+                "escalation_question": None,
+                "escalation_resolved": True,
+                "escalation_resolver": "COMMANDER-banzai",
+                "blocked_reason": None,
+            },
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    ctrl, store = _controller(tmp_path, provider=provider)
+    store.initialize(
+        "r",
+        "banzai",
+        "message",
+        0,
+        "phase1-why1",
+    )
+    state = store.load()
+    state["status"] = "blocked"
+    state["escalation_question"] = "Q1?"
+    state["blocked_reason"] = "needs_judgment"
+    store.save(state)
+    state = store.load()
+    before = store._path.read_bytes()
+
+    with patch(
+        "harness.squad.subprocess.run",
+        side_effect=subprocess.CalledProcessError(
+            128,
+            ["git", "rev-parse"],
+        ),
+    ):
+        ctrl._judgment_dispatch_escalation(
+            "Q1?",
+            "phase1-why1",
+        )
+
+    assert store._path.read_bytes() == before
+    assert store.load() == state
+    assert not (ctrl._squad_dir / ".completion-outbox").exists()
+
+
 def _evaluate_prepared_result(
     ctrl: SquadController,
     node: PhaseNode,
