@@ -16,10 +16,11 @@ EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
-from harness.phase_graph import PhaseGraph
+from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.squad_executors import (
     AgentExecutor,
     ConditionalSequentialExecutor,
+    DeterministicLexiconExecutor,
     StagedParallelExecutor,
     _MANDATORY_PHASE_OUTPUTS,
     _canonical_echelon_result_contract,
@@ -28,6 +29,7 @@ from harness.squad_executors import (
 )
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
+from harness.tasks_lexicon_gate import TasksLexiconGateResult
 
 
 def _executor(tmp_path: Path, squad_dir: Path = None) -> AgentExecutor:
@@ -2327,6 +2329,96 @@ def test_phase3_plan_blocks_when_required_outputs_missing(tmp_path):
         "risk-matrix.md",
         "dependencies.md",
     ]
+
+
+def test_deterministic_tasks_lexicon_executor_dispatches_provider_free_service(
+    tmp_path,
+    monkeypatch,
+):
+    squad_dir = tmp_path / "runs" / "run-test"
+    store = SquadStateStore(squad_dir)
+    store.initialize("run-test", "brownfield", "demo", 0, "phase3-tasks-lexicon")
+    state = store.load()
+    state.update(
+        {
+            "spec_dir": "specs/001-demo",
+            "iteration": 2,
+            "max_iterations": 5,
+            "tasks_lexicon_attempts": 1,
+        }
+    )
+    store.save(state)
+    observed = {}
+
+    def fake_gate(**kwargs):
+        observed.update(kwargs)
+        return TasksLexiconGateResult(
+            action="proceed",
+            passed=True,
+            attempts=0,
+            findings=0,
+            detail="tasks are valid",
+        )
+
+    monkeypatch.setattr(
+        "harness.squad_executors.run_tasks_lexicon_gate",
+        fake_gate,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "harness.config.get_full_resolved_config",
+        lambda *_args, **_kwargs: {"lexicon_gate": {"enabled": True}},
+    )
+    executor = DeterministicLexiconExecutor(
+        MagicMock(spec=PhaseGraph),
+        tmp_path / "extension",
+        tmp_path,
+        squad_dir,
+    )
+    node = PhaseNode(
+        id="phase3-tasks-lexicon",
+        type="deterministic_lexicon",
+        lexicon_artifact="tasks",
+        allowed_state_updates=[],
+    )
+
+    result = executor.execute(node, store)
+
+    assert result.verdict == "DONE"
+    assert result.state_updates == {
+        "tasks_lexicon_action": "proceed",
+        "tasks_lexicon_pass": True,
+        "tasks_lexicon_attempts": 0,
+        "tasks_lexicon_findings": 0,
+    }
+    assert observed["project_root"] == tmp_path
+    assert observed["spec_dir_ref"] == "specs/001-demo"
+    assert observed["previous_attempts"] == 1
+    assert observed["workflow_iteration"] == 2
+    assert observed["max_workflow_iterations"] == 5
+
+
+def test_deterministic_lexicon_executor_blocks_unsupported_artifact(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    store = SquadStateStore(squad_dir)
+    store.initialize("run-test", "brownfield", "demo", 0, "bad-gate")
+    executor = DeterministicLexiconExecutor(
+        MagicMock(spec=PhaseGraph),
+        tmp_path / "extension",
+        tmp_path,
+        squad_dir,
+    )
+    node = PhaseNode(
+        id="bad-gate",
+        type="deterministic_lexicon",
+        lexicon_artifact="unknown",
+        allowed_state_updates=[],
+    )
+
+    result = executor.execute(node, store)
+
+    assert result.verdict == "BLOCKED"
+    assert "unsupported artifact 'unknown'" in result.state_updates["blocked_reason"]
 
 
 def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(tmp_path):

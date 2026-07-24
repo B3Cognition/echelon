@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Explicit Tasks Lexicon workflow nodes** — Replaced hidden tasks-Lexicon
+  checks after planning and PLAN2 with two provider-free workflow nodes. Each
+  certification is now visible, resumable, deterministically routed, and
+  covered by the normal Phase A checkpoint ledger without changing TASKS
+  grammar or Lexicon configuration.
+
 - **Standard learning-artifact contracts** — Confidence, experiment, evolution,
   calibration, feedback, drift, and constitution-candidate outputs now have
   dedicated templates and producer wiring. `experiment-results.md` is now

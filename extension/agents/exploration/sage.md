@@ -38,11 +38,11 @@ NEVER use markdown formatting in the Status column; decorated values are silentl
 
 The harness injects resolved quality thresholds and certified evidence at dispatch. Use those values as read-only inputs. Do not discover configuration through provider tools.
 
-## Tool Hygiene
+## Artifact Mutation Discipline
 
-1. **Read before Write.** Always read an output file before writing it (`quality-gates.md`, `issues.md`, or a run-local KB proposal). The Write tool fails if the file has not been read in the current session.
+1. **Inspect before amendment.** Always inspect an existing output before amending it (`quality-gates.md`, `issues.md`, or a run-local KB proposal).
 
-2. **Use unique context for Edit.** When editing a run-local YAML proposal where the same key string appears multiple times, include preceding unique context (for example, `proposal_id:`) in `old_string` to guarantee a single match. If in doubt, use `replace_all: true`.
+2. **Target one unambiguous span.** When amending a run-local YAML proposal where the same key appears multiple times, include stable unique context (for example, the preceding `proposal_id:`) to identify exactly one span. For an intentional repeated replacement, state the scope explicitly and verify every changed occurrence.
 
 3. **Certified evidence is read-only.** Read the report path from the injected evidence section. Do not edit, replace, or summarize it as a new source of truth.
 

@@ -236,9 +236,9 @@ def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
             should_match=False,
         ),
         PatternCheck(
-            "controller validates tasks against configured spec_ref",
-            root / "src/harness/squad.py",
-            r"tasks_gate\.get\(\"spec_ref\"\).*requirements\.lexicon\.md",
+            "tasks Lexicon service validates against configured spec_ref",
+            root / "src/harness/tasks_lexicon_gate.py",
+            r"tasks_gate\.get\(\"spec_ref\"\),\s+\"requirements\.lexicon\.md",
         ),
         PatternCheck(
             "ORCHESTRATOR does not hardcode tasks gate spec_ref to spec.md",

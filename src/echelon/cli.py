@@ -56,7 +56,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.7.11"
+CLI_VERSION = "3.7.13"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -5266,7 +5266,12 @@ def _phase_run_requires_task_lexicon_config(phase_id: str) -> bool:
     repair. It must not block unrelated targeted repairs such as CHIEF
     constitution replay.
     """
-    return phase_id in {"phase3-plan", "phase3-consensus"}
+    return phase_id in {
+        "phase3-plan",
+        "phase3-tasks-lexicon",
+        "phase3-consensus",
+        "phase3-consensus-tasks-lexicon",
+    }
 
 
 _AUTONOMY_MODES = {"semi", "banzai", "guided"}
@@ -6226,7 +6231,8 @@ _FALLBACK_ROADMAP_PHASES = [
     "checkpoint-assess", "phase2-decide",
     "phase2-strategic-overview", "phase2-tracker-alignment",
     "phase3-specialists", "phase3-how", "phase3-sentinel", "phase3-plan",
-    "phase3-consensus", "checkpoint-plan", "phase4-document", "done",
+    "phase3-tasks-lexicon", "phase3-understanding", "phase3-consensus",
+    "phase3-consensus-tasks-lexicon", "checkpoint-plan", "phase4-document", "done",
 ]
 
 
@@ -6268,6 +6274,7 @@ def _derive_roadmap_phases(workflow_path: Path) -> list[str]:
                     candidate
                     and candidate != current
                     and candidate != "escalate"
+                    and candidate != "terminal-blocked"
                     and candidate not in seen
                 ):
                     next_phase = candidate

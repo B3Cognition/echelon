@@ -46,7 +46,7 @@ def test_controller_owns_declared_phase_timing_lifecycle(tmp_path: Path) -> None
         graph.get("phase3-specialists"), "phase3-how"
     )
     controller._apply_declared_phase_timing_transition(
-        graph.get("phase3-plan"), "phase3-understanding"
+        graph.get("phase3-plan"), "phase3-tasks-lexicon"
     )
     controller._apply_declared_phase_timing_transition(
         graph.get("phase4-document"), "done"
@@ -81,7 +81,7 @@ def test_controller_recovers_missing_prior_timing_start_on_resume(tmp_path: Path
 
     controller._ensure_telemetry_manifest()
     controller._apply_declared_phase_timing_transition(
-        controller._graph.get("phase3-plan"), "phase3-understanding"
+        controller._graph.get("phase3-plan"), "phase3-tasks-lexicon"
     )
 
     events, diagnostics = controller._telemetry_store.read_phase_timings()

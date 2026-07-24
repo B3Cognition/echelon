@@ -1,4 +1,4 @@
-"""phase3-consensus ownership-based re-dispatch routing (definition.yaml).
+"""Post-consensus deterministic Tasks Lexicon routing (definition.yaml).
 
 Regression guard for the 002-echelon-control-fe non-convergence loop: the
 consensus gate routed EVERY WHY3 FAIL to phase3-how (ARCHITECT). A WHY3 FAIL is
@@ -33,7 +33,11 @@ EXT_YML = ROOT / "extension/extension.yml"
 
 def _consensus_node():
     d = yaml.safe_load(DEFINITION.read_text())
-    return next(n for n in d["phases"] if n["id"] == "phase3-consensus")
+    return next(
+        n
+        for n in d["phases"]
+        if n["id"] == "phase3-consensus-tasks-lexicon"
+    )
 
 
 def _runtime_route(tmp_path, state_updates, *, iteration=0):
@@ -58,14 +62,20 @@ def _runtime_route(tmp_path, state_updates, *, iteration=0):
         token_budget=0,
         squad_dir=store.squad_dir,
     )
-    result = SquadAgentResult(
+    consensus_result = SquadAgentResult(
         exit_code=0,
         echelon_result={"verdict": "DONE", "state_updates": {}},
         raw_output="",
         duration_ms=0,
         timed_out=False,
     )
-    return ctrl._evaluate_transitions(graph.get("phase3-consensus"), result)
+    assert ctrl._evaluate_transitions(
+        graph.get("phase3-consensus"),
+        consensus_result,
+    ) == "phase3-consensus-tasks-lexicon"
+    gate = graph.get("phase3-consensus-tasks-lexicon")
+    gate_result = ctrl._executors["deterministic_lexicon"].execute(gate, store)
+    return ctrl._evaluate_transitions(gate, gate_result)
 
 
 @pytest.mark.unit

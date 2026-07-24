@@ -4,12 +4,48 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from harness.prompt_markdown import parse_prompt_markdown
+
 
 PROMPT_GLOBS = (
     "extension/agents/**/*.md",
     "extension/commands/appendices/*.md",
     "extension/commands/echelon.*.md",
     "extension/workflow/phases/**/*.md",
+)
+
+PHASE_A_AGENT_DIRS = (
+    "control",
+    "exploration",
+    "feasibility",
+    "learning",
+    "solution",
+    "specialists",
+)
+
+PHASE_A_PHASE_GLOBS = (
+    "phase1-*.md",
+    "phase2-*.md",
+    "phase3-*.md",
+    "phase4-*.md",
+    "phase-exp-*.md",
+)
+
+PROVIDER_NATIVE_TOOL_LANGUAGE_RE = re.compile(
+    r"\b(?:WebSearch|WebFetch|ToolSearch|Bash)\b|"
+    r"(?i:\b(?:agent|read|write|edit|glob|grep)\s+"
+    r"(?:tools?|interfaces?|calls?)\b)|"
+    r"\b(?:Agent|Read|Write|Edit|Glob|Grep)\(|"
+    r"\b(?:Use|Call|Invoke)\s+(?:the\s+)?"
+    r"(?:Agent|Read|Write|Edit|Glob|Grep)\b|"
+    r"(?i:\b(?:via|with|through|invokes?|dispatch(?:es|ed|ing)?|"
+    r"delegat(?:e|es|ed|ing))\s+(?:the\s+)?)"
+    r"(?:Agent|Read|Write|Edit|Glob|Grep)\b|"
+    r"\b(?:Read|Write|Edit|Glob|Grep)"
+    r"(?:\s*/\s*"
+    r"(?:Read|Write|Edit|Glob|Grep)){1,}\b|"
+    r"`(?:Read|Write|Edit|Bash|Agent|Glob|Grep|WebSearch|WebFetch|ToolSearch)`|"
+    r"\b(?:old_string|new_string|replace_all)\b"
 )
 
 EXECUTABLE_REFERENCE_RE = re.compile(
@@ -410,6 +446,42 @@ def _default_prompt_paths(root: Path) -> list[Path]:
     for pattern in PROMPT_GLOBS:
         paths.extend(root.glob(pattern))
     return sorted(path for path in paths if path.is_file())
+
+
+def _default_phase_a_prompt_paths(root: Path) -> list[Path]:
+    paths: list[Path] = []
+    for directory in PHASE_A_AGENT_DIRS:
+        paths.extend((root / "extension" / "agents" / directory).glob("**/*.md"))
+    phase_dir = root / "extension" / "workflow" / "phases"
+    for pattern in PHASE_A_PHASE_GLOBS:
+        paths.extend(phase_dir.glob(pattern))
+    return sorted(path for path in paths if path.is_file())
+
+
+def scan_phase_a_provider_native_language(
+    root: Path,
+    paths: list[Path] | None = None,
+) -> list[PromptToolContractFinding]:
+    """Find provider-native tool API language in canonical Phase A prompt bodies."""
+    findings: list[PromptToolContractFinding] = []
+    prompt_paths = paths if paths is not None else _default_phase_a_prompt_paths(root)
+    for path in prompt_paths:
+        content = path.read_text(encoding="utf-8")
+        body = parse_prompt_markdown(content, source=path).body
+        body_start = len(content) - len(body)
+        line_offset = content[:body_start].count("\n")
+        for index, line in enumerate(body.splitlines(), start=1):
+            if not PROVIDER_NATIVE_TOOL_LANGUAGE_RE.search(line):
+                continue
+            findings.append(
+                PromptToolContractFinding(
+                    path=path,
+                    line=line_offset + index,
+                    reason="provider_native_tool_language",
+                    text=line.strip(),
+                )
+            )
+    return findings
 
 
 def _window(lines: list[str], index: int, radius: int = 10) -> str:

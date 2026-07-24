@@ -77,10 +77,11 @@ Read `estimates.md` and compare to reality. **All three methods below are mandat
 2. **Correction factor**: Apply domain-specific correction from `calibration-profile.yaml`
    - Report: "Backend estimates historically off by 1.4x — adjusted estimate: Y days"
    - If no correction factor exists for this domain: always report "No calibration data for {domain}" (do not skip silently)
-3. **Outside view**: Use WebSearch to find published benchmarks on similar project types
-   - **You MUST invoke WebSearch** with at least 2 different query strategies before reporting "no external data found"
+3. **Outside view**: Use the public-web search capability exposed for this dispatch to find published benchmarks on similar project types
+   - When the capability is available, use at least 2 different query strategies before reporting "no external data found"
    - Report: "Industry data suggests projects of this scope take Z months"
-   - If WebSearch returns no results after 2+ attempts: report "No external benchmarks found (searched: {queries})"
+   - If the capability is unavailable, record the capability gap and do not invent external benchmark data
+   - If the search returns no results after 2+ attempts: report "No external benchmarks found (searched: {queries})"
 4. **Report adjusted estimates** alongside originals — do NOT overwrite originals
 
 ### Step 3: Architecture Reality Check

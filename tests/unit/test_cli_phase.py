@@ -48,6 +48,8 @@ def test_phase_list_prints_workflow_phases(tmp_path: Path, capsys) -> None:
     assert "PHASES" in out
     assert "phase1-constitution" in out
     assert "phase3-plan" in out
+    assert "phase3-tasks-lexicon" in out
+    assert "phase3-consensus-tasks-lexicon" in out
 
 
 def test_phase_list_does_not_require_dispatch_config_compatibility(
@@ -138,6 +140,55 @@ def test_phase_run_plan_enforces_task_lexicon_config(
         _cmd_phase(["run", "phase3-plan"], project_root=tmp_path, ext_dir=EXT_DIR)
 
     assert exc.value.code == 7
+
+
+@pytest.mark.parametrize(
+    "phase_id",
+    ["phase3-tasks-lexicon", "phase3-consensus-tasks-lexicon"],
+)
+def test_phase_run_tasks_lexicon_nodes_use_single_phase_controller(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    phase_id: str,
+) -> None:
+    run_dir = _initialize_active_run(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    state_path = run_dir / "state.json"
+    state_path.write_text(
+        json.dumps({
+            "run_id": "run-active",
+            "status": "running",
+            "phase": phase_id,
+            "spec_id": "001-demo",
+            "spec_dir": "specs/001-demo",
+            "user_message": "validate tasks",
+        }),
+        encoding="utf-8",
+    )
+    compatibility_checks: list[Path] = []
+    calls: list[tuple[str, str, str]] = []
+
+    monkeypatch.setattr(
+        "echelon.cli._enforce_project_config_compatibility",
+        lambda root: compatibility_checks.append(root),
+    )
+    monkeypatch.setattr(
+        "harness.squad.SquadController.run_single_phase",
+        lambda self, selected, user_message, mode, initial_state_updates: (
+            calls.append((selected, user_message, mode))
+            or type("Result", (), {"status": "running", "phase": selected})()
+        ),
+    )
+
+    _cmd_phase(
+        ["run", phase_id, "--spec", "001", "--mode", "banzai"],
+        project_root=tmp_path,
+        ext_dir=EXT_DIR,
+    )
+
+    assert compatibility_checks == [tmp_path]
+    assert calls == [(phase_id, "validate tasks", "banzai")]
 
 
 def test_phase_run_records_manual_replay_and_targets_spec_dir(

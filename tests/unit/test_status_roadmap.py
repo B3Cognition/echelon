@@ -35,6 +35,7 @@ def _workflow_primary_path() -> list[str]:
                 candidate
                 and candidate != current
                 and candidate != "escalate"
+                and candidate != "terminal-blocked"
                 and candidate not in seen
             ):
                 next_phase = candidate
@@ -100,6 +101,14 @@ def test_fallback_roadmap_keeps_visible_deterministic_spec_gates(tmp_path):
         "phase1-lexicon",
         "phase1-understanding",
         "phase1-why2",
+    ]
+    plan_index = phases.index("phase3-plan")
+    assert phases[plan_index : plan_index + 5] == [
+        "phase3-plan",
+        "phase3-tasks-lexicon",
+        "phase3-understanding",
+        "phase3-consensus",
+        "phase3-consensus-tasks-lexicon",
     ]
 
 

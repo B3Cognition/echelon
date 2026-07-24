@@ -50,6 +50,11 @@ and traverse relevant linked primary material before general research. Browser
 automation is a fallback after HTTP/content and linked-resource inspection, not
 the first response to a JavaScript-rendered portal.
 
+Use the public-web search and URL retrieval capabilities exposed for this
+dispatch when available. If either capability is unavailable, record the exact
+capability gap, rely only on context-pack evidence, and return `BLOCKED` when
+that evidence cannot support a defensible conclusion.
+
 For other investigation modes, use WebSearch and WebFetch to find relevant sources:
 
 - **Priority 1:** Peer-reviewed papers, ISO/IEEE standards

@@ -114,6 +114,22 @@ returns `BLOCKED` with `missing_consensus_prerequisite`; PLAN2 is not dispatched
 
 - **description:** "PLAN2: plan revision incorporating implementability feedback"
 
+### Deterministic Tasks Recertification
+
+After PLAN2 completes, `phase3-consensus` always transitions to
+`phase3-consensus-tasks-lexicon`. This provider-free deterministic node
+recertifies the on-disk planning artifacts because PLAN2 may have revised
+`tasks.md`.
+
+- `repair` routes to `phase3-plan` with `increment_iteration`.
+- `block` routes normally to `terminal-blocked`.
+- `proceed` and `proceed_with_warning` preserve the consensus verdict routing
+  below.
+
+The node writes `tasks-lexicon-report.json` and the controller-owned
+`tasks_lexicon_*` state. WHY3, ASSESS2, and PLAN2 do not calculate or report
+that state.
+
 ### Consensus Gate Check
 
 Read outputs from all three consensus agents:
@@ -132,4 +148,5 @@ CONSENSUS and FINALIZE, and closes after successful `phase4-document` execution.
 Timing stays in `telemetry/events.jsonl`; agents do not start, stop, or report
 phase timers.
 
-**Transition:** `phases[phase4-document]` — see `workflow/definition.yaml`
+**Transition:** `phases[phase3-consensus-tasks-lexicon]` — see
+`workflow/definition.yaml`

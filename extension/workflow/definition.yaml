@@ -937,18 +937,11 @@ phases:
       - critical-path.md
       - risk-matrix.md
       - dependencies.md
-      - tasks_lexicon_pass → state.json   # controller-owned: certified after validating tasks.md
     allowed_state_updates:
-      - tasks_lexicon_attempts
       - plan_status
       - blocked_reason
       - shadow_output_recovered
-    controller_state_updates:
-      - tasks_lexicon_pass
-      - tasks_lexicon_findings
-      - tasks_lexicon_report
     state_update_types:
-      tasks_lexicon_attempts: integer
       plan_status: string
     state_update_enums:
       plan_status: [blocked]
@@ -957,20 +950,38 @@ phases:
       open: phase4-build
       open_budget_seconds: 7200      # phase4-build budget (spans consensus + finalize)
     transitions:
-      # Tasks lexicon gate (INERT unless lexicon_gate.artifacts.tasks.enabled in echelon-config.yml).
-      # ORCHESTRATOR authors/repairs tasks.md. The controller validates the
-      # on-disk artifact after dispatch and writes tasks_lexicon_pass before
-      # evaluating this transition.
-      - to: phase3-plan
-        # Mirrors the proven phase1-what guard shape: references only keys the
-        # COMMANDER state evaluator resolves (lexicon_gate.enabled + the persisted
-        # tasks_lexicon_pass). The deeper config path lexicon_gate.artifacts.tasks.enabled
-        # is intentionally NOT in the condition — it is unresolvable as state and made
-        # the guard indeterminate; gate enablement is enforced by the controller.
-        condition: "lexicon_gate.enabled AND NOT tasks_lexicon_pass AND tasks_lexicon_attempts < lexicon_gate.max_repair_attempts AND iteration < max_iterations"
-        action: increment_iteration
-      - to: phase3-understanding
+      - to: phase3-tasks-lexicon
         condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase3-tasks-lexicon
+    label: "Deterministic Tasks Lexicon Gate"
+    type: deterministic_lexicon
+    lexicon_artifact: tasks
+    outputs:
+      - tasks-lexicon-report.json
+      - tasks_lexicon_action → state.json
+      - tasks_lexicon_pass → state.json
+      - tasks_lexicon_attempts → state.json
+      - tasks_lexicon_findings → state.json
+      - tasks_lexicon_report → state.json
+      - blocked_reason → state.json
+    allowed_state_updates: []
+    controller_state_updates:
+      - tasks_lexicon_action
+      - tasks_lexicon_pass
+      - tasks_lexicon_attempts
+      - tasks_lexicon_findings
+      - tasks_lexicon_report
+      - blocked_reason
+    transitions:
+      - to: phase3-plan
+        condition: "tasks_lexicon_action = repair"
+        action: increment_iteration
+      - to: terminal-blocked
+        condition: "tasks_lexicon_action = block"
+      - to: phase3-understanding
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning]"
 
   # --------------------------------------------------------------------------
   - id: phase3-understanding
@@ -1059,10 +1070,8 @@ phases:
         stage: 2                           # dispatched AFTER stage 1 completes
         depends_on: [speckit-echelon-gatekeeper-assess2]   # needs implementability-report.md
         tier: solution
-        allowed_state_updates:
-          - tasks_lexicon_attempts
-        state_update_types:
-          tasks_lexicon_attempts: integer
+        allowed_state_updates: []
+        state_update_types: {}
         state_update_enums: {}
         allowed_verdicts: [COMPLETE, DONE, BLOCKED]
         context_pack:
@@ -1088,35 +1097,58 @@ phases:
       - gate_decision
       - phase_recommendation
       - implementability_metrics
-      - tasks_lexicon_attempts
-    controller_state_updates:
-      - tasks_lexicon_pass
-      - tasks_lexicon_findings
-      - tasks_lexicon_report
     state_update_types:
       gate_decision: string
       phase_recommendation: string
       implementability_metrics: object
-      tasks_lexicon_attempts: integer
     state_update_enums:
       gate_decision: [PASS, REJECTED, accept_with_risk]
       phase_recommendation: [proceed-to-build, phase3-how, advance_past_consensus_to_delivery]
     unexpected_state_updates: quarantine
 
     transitions:
+      - to: phase3-consensus-tasks-lexicon
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase3-consensus-tasks-lexicon
+    label: "Deterministic Consensus Tasks Lexicon Gate"
+    type: deterministic_lexicon
+    lexicon_artifact: tasks
+    outputs:
+      - tasks-lexicon-report.json
+      - tasks_lexicon_action → state.json
+      - tasks_lexicon_pass → state.json
+      - tasks_lexicon_attempts → state.json
+      - tasks_lexicon_findings → state.json
+      - tasks_lexicon_report → state.json
+      - blocked_reason → state.json
+    allowed_state_updates: []
+    controller_state_updates:
+      - tasks_lexicon_action
+      - tasks_lexicon_pass
+      - tasks_lexicon_attempts
+      - tasks_lexicon_findings
+      - tasks_lexicon_report
+      - blocked_reason
+    transitions:
       - to: phase3-plan
-        condition: "lexicon_gate.enabled AND NOT tasks_lexicon_pass AND tasks_lexicon_attempts < lexicon_gate.max_repair_attempts AND iteration < max_iterations"
+        condition: "tasks_lexicon_action = repair"
+        action: increment_iteration
+      - to: terminal-blocked
+        condition: "tasks_lexicon_action = block"
+      - to: phase1-what
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND quality_gates.fail AND iteration < max_iterations"
         action: increment_iteration
       - to: phase1-what
-        condition: "quality_gates.fail AND iteration < max_iterations"
-        action: increment_iteration
-      - to: phase1-what
-        condition: "why3-verdict = FAIL AND iteration < max_iterations"
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND why3-verdict = FAIL AND iteration < max_iterations"
         action: increment_iteration
       - to: checkpoint-plan
-        condition: "why3-verdict = PASS AND assess2-verdict = PASS"
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND why3-verdict = PASS AND assess2-verdict = PASS"
       - to: checkpoint-plan
-        condition: "gate_decision = accept_with_risk OR phase_recommendation = advance_past_consensus_to_delivery"
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND gate_decision = accept_with_risk"
+      - to: checkpoint-plan
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND phase_recommendation = advance_past_consensus_to_delivery"
       # Ownership-based re-dispatch (phase3-consensus.md §Consensus Gate Check).
       # A WHY3 FAIL is a SPEC-quality failure (Structure gate / glossary /
       # atomicity / ambiguity) owned by CARTOGRAPHER — route to WHAT, not HOW.
@@ -1128,10 +1160,10 @@ phases:
       # upstream (spec) constraint first, then re-flows.
       # An ASSESS2 REJECTED is a FEASIBILITY failure owned by ARCHITECT → HOW.
       - to: phase3-how
-        condition: "assess2-verdict = REJECTED AND iteration < max_iterations"
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND assess2-verdict = REJECTED AND iteration < max_iterations"
         action: increment_iteration
       - to: checkpoint-plan
-        condition: "iteration >= max_iterations"
+        condition: "tasks_lexicon_action in [proceed, proceed_with_warning] AND iteration >= max_iterations"
         action: force_convergence_warning
 
   # --------------------------------------------------------------------------
@@ -1275,6 +1307,11 @@ phases:
   # --------------------------------------------------------------------------
   - id: done
     label: "Run Complete"
+    type: terminal
+
+  # --------------------------------------------------------------------------
+  - id: terminal-blocked
+    label: "Run Blocked"
     type: terminal
 
   # --------------------------------------------------------------------------
