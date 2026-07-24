@@ -15,9 +15,9 @@ Provide RE-ANALYZER with:
 ## Dispatch Prompt
 
 Instruct RE-ANALYZER to:
-1. Prefer `re-analysis-manifest.json`; use standalone discovery only when no planned manifest exists
-2. Analyze only the selected workspace sources with `--source-output-root {state.output_dir}/sources`
-3. Pass explicit resolved profile, depth, max-lines, and git-history values
+1. Prefer `re-analysis-manifest.json` as the controller-owned selection record
+2. Summarize only analysis artifacts already present under `{state.output_dir}`
+3. Report the explicit resolved profile, depth, max-lines, and git-history values recorded in `analysis.json`
 4. Treat an empty source selection as a successful no-op
 5. Summarize exact profile values and outputs, then return `echelon_result:`
 

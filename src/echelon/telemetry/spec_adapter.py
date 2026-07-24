@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 from echelon.telemetry.analyzer import RunAnalysis
-from echelon.telemetry.model import ExecutionSpan, TokenUsage
+from echelon.telemetry.model import ExecutionSpan, TokenUsage, aggregate_token_usage
 from echelon.telemetry.store import TelemetryStore
 
 
@@ -17,8 +17,9 @@ def analyze_spec_run(run_dir: Path) -> RunAnalysis:
     run = run_dir.resolve()
     state = _read_object(run / "state.json")
     manifest = _read_object(run / "telemetry/manifest.json")
-    trace_id = manifest.get("trace_id") or state.get("telemetry_trace_id")
+    trace_id = manifest.get("trace_id")
     spans: tuple[ExecutionSpan, ...] = ()
+    dispatch_events: tuple[dict[str, object], ...] = ()
     diagnostics: list[str] = []
     if isinstance(trace_id, str) and trace_id:
         store = TelemetryStore(
@@ -34,9 +35,17 @@ def analyze_spec_run(run_dir: Path) -> RunAnalysis:
         )
         spans, span_diagnostics = store.read_spans()
         diagnostics.extend(item.message for item in span_diagnostics)
+        dispatch_events = _dispatch_events(run / "telemetry/events.jsonl", trace_id)
     if not spans:
         diagnostics.append("telemetry spans are unavailable")
-    tokens, unknown = _tokens(state, spans)
+    tokens, known_dispatches, unknown_dispatches = _tokens(spans)
+    if not tokens.known:
+        diagnostics.append("provider token usage is unavailable")
+    elif unknown_dispatches:
+        diagnostics.append(
+            "provider token usage is partial: "
+            f"{unknown_dispatches} dispatches did not report usage"
+        )
     dimensions = {
         "by_phase": _dimension(spans, "echelon.workflow.phase"),
         "by_agent": _dimension(spans, "echelon.agent.name"),
@@ -44,14 +53,14 @@ def analyze_spec_run(run_dir: Path) -> RunAnalysis:
         "by_dispatch_kind": _dimension(spans, "echelon.dispatch.kind"),
     }
     blockers = Counter(
-        str(item)
-        for item in state.get("blocked_reason_history", [])
-        if isinstance(item, str) and item
+        str(event["reason"])
+        for event in _blocker_events(run / "telemetry/events.jsonl", trace_id)
+        if isinstance(event.get("reason"), str) and event["reason"]
     )
     loops = {
-        "why": _nonnegative(state.get("why_fail_count")),
-        "what": _nonnegative(state.get("what_repair_count")),
-        "plan": _nonnegative(state.get("plan_repair_count")),
+        "why": sum(str(event.get("phase", "")).startswith("phase1-why") for event in dispatch_events),
+        "what": sum(event.get("phase") == "phase1-what" for event in dispatch_events),
+        "plan": sum(event.get("phase") == "phase3-plan" for event in dispatch_events),
     }
     by_phase = dimensions["by_phase"]
     return RunAnalysis(
@@ -70,7 +79,8 @@ def analyze_spec_run(run_dir: Path) -> RunAnalysis:
         domain_repairs_by_source={},
         partial_debt_source_count=0,
         tokens=tokens,
-        unknown_token_dispatches=unknown,
+        known_token_dispatches=known_dispatches,
+        unknown_token_dispatches=unknown_dispatches,
         active_duration_ms=sum(span.duration_ms for span in spans) if spans else None,
         wall_clock_duration_ms=None,
         by_phase=by_phase,
@@ -78,11 +88,11 @@ def analyze_spec_run(run_dir: Path) -> RunAnalysis:
         workflow_metrics={
             "spec_id": str(state.get("spec_id") or ""),
             "repair_loops": loops,
-            "repair_dispatches": dimensions["by_dispatch_kind"].get("repair", {}).get("dispatches", 0),
+            "repair_dispatches": sum(event.get("reason") in {"semantic_repair", "deterministic_repair"} for event in dispatch_events),
             "repeated_blockers": dict(sorted((key, count) for key, count in blockers.items() if count > 1)),
         },
         provenance={
-            "tokens": "telemetry/spans.jsonl" if spans else "state.json",
+            "tokens": "telemetry/spans.jsonl" if spans else "unavailable",
             "quality": "state.json",
         },
         diagnostics=tuple(diagnostics),
@@ -125,27 +135,25 @@ def _dimension(
     result: dict[str, dict[str, int]] = {}
     for span in spans:
         key = str(span.attributes.get(attribute) or "unknown")
-        bucket = result.setdefault(
-            key, {"dispatches": 0, "duration_ms": 0, "tokens": 0}
-        )
+        bucket = result.setdefault(key, {"dispatches": 0, "duration_ms": 0, "tokens": 0, "known_token_dispatches": 0, "unknown_token_dispatches": 0})
         bucket["dispatches"] += 1
         bucket["duration_ms"] += span.duration_ms
         bucket["tokens"] += int(span.token_usage.total or 0)
+        bucket["known_token_dispatches" if span.token_usage.known else "unknown_token_dispatches"] += 1
     return dict(sorted(result.items()))
 
 
-def _tokens(
-    state: Mapping[str, object], spans: Iterable[ExecutionSpan]
-) -> tuple[TokenUsage, int]:
+def _tokens(spans: Iterable[ExecutionSpan]) -> tuple[TokenUsage, int, int]:
     span_list = tuple(spans)
     known = [span.token_usage.total for span in span_list if span.token_usage.known]
     unknown = sum(1 for span in span_list if not span.token_usage.known)
     if known:
-        return TokenUsage(reported_total_tokens=sum(int(value or 0) for value in known)), unknown
-    raw = state.get("token_usage")
-    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
-        return TokenUsage(reported_total_tokens=max(0, int(raw))), unknown
-    return TokenUsage.unknown(), unknown
+        return (
+            aggregate_token_usage(span.token_usage for span in span_list),
+            len(known),
+            unknown,
+        )
+    return TokenUsage.unknown(), 0, unknown
 
 
 def _read_object(path: Path) -> dict[str, object]:
@@ -154,6 +162,22 @@ def _read_object(path: Path) -> dict[str, object]:
     except (OSError, json.JSONDecodeError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _dispatch_events(path: Path, trace_id: str) -> tuple[dict[str, object], ...]:
+    try:
+        records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    except (OSError, json.JSONDecodeError):
+        return ()
+    return tuple(record for record in records if isinstance(record, dict) and record.get("type") == "dispatch" and record.get("trace_id") == trace_id)
+
+
+def _blocker_events(path: Path, trace_id: str) -> tuple[dict[str, object], ...]:
+    try:
+        records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    except (OSError, json.JSONDecodeError):
+        return ()
+    return tuple(record for record in records if isinstance(record, dict) and record.get("type") == "blocker" and record.get("trace_id") == trace_id)
 
 
 def _nonnegative(value: object) -> int:

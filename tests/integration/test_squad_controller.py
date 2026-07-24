@@ -28,6 +28,8 @@ from harness.squad import (
 from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
+from harness.understanding_gate import UnderstandingGateResult
+from echelon.telemetry.spec_adapter import analyze_spec_run
 
 DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
 EXT_YML = EXT_ROOT / "extension/extension.yml"
@@ -101,7 +103,148 @@ def _disable_lexicon_gate(tmp_path: Path) -> None:
     """Keep non-Lexicon controller tests focused on their declared behavior."""
     config_path = tmp_path / ".echelon" / "config.yml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text("lexicon_gate:\n  enabled: false\n", encoding="utf-8")
+    existing = (
+        config_path.read_text(encoding="utf-8").rstrip()
+        if config_path.exists()
+        else ""
+    )
+    prefix = f"{existing}\n" if existing else ""
+    config_path.write_text(
+        f"{prefix}lexicon_gate:\n  enabled: false\n", encoding="utf-8"
+    )
+
+
+def _disable_governance_gate(tmp_path: Path) -> None:
+    """Keep non-governance controller tests focused on their declared behavior."""
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = (
+        config_path.read_text(encoding="utf-8").rstrip()
+        if config_path.exists()
+        else ""
+    )
+    prefix = f"{existing}\n" if existing else ""
+    config_path.write_text(
+        f"{prefix}governance:\n  enabled: false\n", encoding="utf-8"
+    )
+
+
+def _valid_lexicon_spec() -> str:
+    return """ARTIFACT: SPEC
+TITLE: Dashboard
+
+REQ: FR-001
+GIVEN: data is available
+WHEN: the user opens the dashboard
+THEN: The system SHALL render the dashboard
+OUTPUT: The dashboard is visible
+DEPENDS: none
+EXAMPLE: AC-001
+
+AC: AC-001
+GIVEN: data is available
+WHEN: the user opens the dashboard
+THEN: The dashboard is visible
+"""
+
+
+def _valid_tasks() -> str:
+    return """# Tasks
+
+- [ ] T-001 complexity=standard phase=phase4-build req=FR-001 depends=none target=sources/app
+  **Title:** Render dashboard
+  **Description:** Render the dashboard from available data.
+  **Files:** `sources/app/dashboard.py`
+  **Test:** Open the dashboard with seeded data.
+  **Acceptance Criteria:**
+  - [ ] The dashboard is visible.
+"""
+
+
+def _write_valid_plan_artifacts(spec_dir: Path) -> None:
+    (spec_dir / "requirements.lexicon.md").write_text(
+        _valid_lexicon_spec(), encoding="utf-8"
+    )
+    (spec_dir / "tasks.md").write_text(_valid_tasks(), encoding="utf-8")
+    for name in ("critical-path.md", "risk-matrix.md", "dependencies.md"):
+        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+    (spec_dir / "targets.yml").write_text(
+        "schema_version: 1\n"
+        "targets:\n"
+        "  - id: app\n"
+        "    path: sources/app\n"
+        "    role: primary\n",
+        encoding="utf-8",
+    )
+
+
+def _install_passing_understanding(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep unrelated routing tests independent of metric-engine thresholds."""
+
+    def run_gate(**kwargs: object) -> UnderstandingGateResult:
+        project_root = Path(kwargs["project_root"])
+        squad_dir = Path(kwargs["squad_dir"])
+        spec_dir = Path(str(kwargs["spec_dir"]))
+        if not spec_dir.is_absolute():
+            spec_dir = project_root / spec_dir
+        spec_path = spec_dir / "spec.md"
+        spec_digest = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+        phase = str(kwargs["phase"])
+        iteration = int(kwargs["iteration"])
+        scores = {
+            "overall": 0.95,
+            "structure": 0.95,
+            "testability": 0.95,
+            "semantic": 0.95,
+            "cognitive": 0.95,
+            "readability": 0.95,
+            "depth": 0.95,
+            "behavioral": 0.95,
+        }
+        report = {
+            "schema_version": 1,
+            "status": "completed",
+            "phase": phase,
+            "iteration": iteration,
+            "spec": {"path": str(spec_path), "sha256": spec_digest},
+            "thresholds": {key: 0.5 for key in scores},
+            "scores": scores,
+            "gates": {
+                key: {"score": value, "threshold": 0.5, "pass": True}
+                for key, value in scores.items()
+            },
+            "pass": True,
+            "requirement_count": 1,
+            "per_requirement": [],
+            "entity_analysis": {},
+            "behavioral_analysis": {},
+            "diagrams": {"enabled": False, "status": "skipped", "outputs": []},
+            "findings": [],
+            "generated_at": "2026-07-22T00:00:00+00:00",
+        }
+        report_path = (
+            squad_dir
+            / "evidence"
+            / "understanding"
+            / f"{phase}-iter-{iteration}.json"
+        )
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        report_digest = hashlib.sha256(report_path.read_bytes()).hexdigest()
+        return UnderstandingGateResult(
+            completed=True,
+            passed=True,
+            phase=phase,
+            iteration=iteration,
+            report_path=report_path,
+            report_digest=report_digest,
+            report=report,
+        )
+
+    monkeypatch.setattr("harness.squad_executors.run_understanding_gate", run_gate)
 
 
 def _write_re_index_generation(
@@ -217,27 +360,28 @@ def test_cartographer_context_preservation_requires_spec_md(tmp_path: Path) -> N
 
 class TestConsensusCannotBeSkipped:
     """Regression: phase3-consensus was previously skipped via EVOI fabrication.
-    With the harness, phase3-plan → phase3-consensus is condition: always.
-    Python evaluates it; no code path exists that skips it.
+    The plan now routes through deterministic Tasks Lexicon and Understanding
+    nodes before consensus. Python evaluates every edge; no code path skips it.
     """
 
     def test_phase3_plan_transitions_to_consensus(self):
         graph = PhaseGraph(DEFINITION, EXT_YML)
         plan_node = graph.get("phase3-plan")
-        targets = [t["to"] for t in plan_node.transitions]
-        assert "phase3-consensus" in targets, (
-            f"phase3-plan must have a transition to phase3-consensus. Got: {targets}"
-        )
+        assert plan_node.transitions == [
+            {"to": "phase3-tasks-lexicon", "condition": "always"}
+        ]
+        assert graph.get("phase3-tasks-lexicon").transitions[-1] == {
+            "to": "phase3-understanding",
+            "condition": "tasks_lexicon_action in [proceed, proceed_with_warning]",
+        }
+        assert graph.get("phase3-understanding").transitions == [
+            {"to": "phase3-consensus", "condition": "always"}
+        ]
 
     def test_phase3_plan_to_consensus_condition_is_always(self):
         graph = PhaseGraph(DEFINITION, EXT_YML)
         plan_node = graph.get("phase3-plan")
-        for t in plan_node.transitions:
-            if t["to"] == "phase3-consensus":
-                assert t["condition"] == "always", (
-                    f"phase3-plan → phase3-consensus must be 'always', "
-                    f"got {t['condition']!r}"
-                )
+        assert plan_node.transitions[0]["condition"] == "always"
 
     def test_staged_parallel_has_stage1_and_stage2_agents(self):
         graph = PhaseGraph(DEFINITION, EXT_YML)
@@ -361,6 +505,7 @@ class TestAgentResultIntegrity:
     def test_phase4_document_blocks_when_phase_a_build_inputs_are_missing(
         self, tmp_path,
     ):
+        _disable_lexicon_gate(tmp_path)
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase4-document", max_iterations=5)
         _mark_constitution_complete(tmp_path, store)
@@ -384,6 +529,7 @@ class TestAgentResultIntegrity:
     def test_phase4_document_completes_when_phase_a_build_inputs_exist(
         self, tmp_path,
     ):
+        _disable_lexicon_gate(tmp_path)
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase4-document", max_iterations=5)
         _mark_constitution_complete(tmp_path, store)
@@ -431,6 +577,7 @@ class TestAgentResultIntegrity:
     def test_phase4_document_publishes_complete_artifacts_to_existing_slugged_spec(
         self, tmp_path,
     ):
+        _disable_lexicon_gate(tmp_path)
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase4-document", max_iterations=5)
         _mark_constitution_complete(tmp_path, store)
@@ -519,6 +666,7 @@ class TestAgentResultIntegrity:
         assert state["published_spec_dir"] == "specs/001-demo"
 
     def test_checkpoint_plan_auto_routes_without_commander_judgment(self, tmp_path):
+        _disable_lexicon_gate(tmp_path)
         provider = MagicMock()
         provider.exec_agent.side_effect = AssertionError(
             "checkpoint-plan should not dispatch COMMANDER judgment in banzai"
@@ -589,7 +737,16 @@ class TestSquadControllerBasics:
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
         state["re_generation"] = 1
+        state["spec_dir"] = "specs/001-test"
         store.save(state)
+        spec_dir = tmp_path / "specs" / "001-test"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(_valid_lexicon_spec(), encoding="utf-8")
+        (spec_dir / "00-overview.md").write_text("# Overview\n", encoding="utf-8")
+        _install_passing_understanding(monkeypatch)
+        monkeypatch.setattr(
+            ctrl, "_publish_terminal_phase_a_artifacts_if_available", lambda: None
+        )
         _write_re_index_generation(tmp_path, 2)
 
         result = ctrl.run("msg", "banzai")
@@ -627,7 +784,16 @@ class TestSquadControllerBasics:
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
         state["re_generation"] = 1
+        state["spec_dir"] = "specs/001-test"
         store.save(state)
+        spec_dir = tmp_path / "specs" / "001-test"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(_valid_lexicon_spec(), encoding="utf-8")
+        (spec_dir / "00-overview.md").write_text("# Overview\n", encoding="utf-8")
+        _install_passing_understanding(monkeypatch)
+        monkeypatch.setattr(
+            ctrl, "_publish_terminal_phase_a_artifacts_if_available", lambda: None
+        )
         _write_re_index_generation(
             tmp_path,
             2,
@@ -831,8 +997,10 @@ class TestSquadControllerBasics:
     def test_iterative_phase3_consensus_uses_max_iterations_not_generic_cap(
         self,
         tmp_path,
+        monkeypatch,
     ):
         """phase3-consensus can legitimately repeat up to max_iterations."""
+        _disable_lexicon_gate(tmp_path)
         provider = _mock_provider("PASS")
         default_result = provider.exec_agent.return_value
 
@@ -860,12 +1028,14 @@ class TestSquadControllerBasics:
         for name in (
             "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
             "test-strategy.md", "test-architecture.md", "coverage-map.md",
+            "implementability-report.md",
         ):
             (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
         state = store.load()
         state["spec_id"] = "001-demo"
         state["spec_dir"] = "runs/run-test/specs/001-demo"
         store.save(state)
+        _install_passing_understanding(monkeypatch)
 
         result = ctrl.run("msg", "semi")
 
@@ -891,8 +1061,8 @@ class TestSquadControllerBasics:
         # why_fail_count should have been incremented (≥1)
         assert store.load().get("why_fail_count", 0) >= 1
 
-    def test_why_fail_string_pass_value_routes_to_repair(self, tmp_path):
-        """Non-boolean quality_scores.pass must not make WHY failure pass."""
+    def test_sage_quality_scores_are_quarantined_and_cannot_override_certified_failure(self, tmp_path):
+        """WHY2 model output cannot replace controller-certified score history."""
         from harness.squad_provider import SquadAgentResult
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(
@@ -915,22 +1085,139 @@ class TestSquadControllerBasics:
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-why2", max_iterations=5)
         _mark_constitution_complete(tmp_path, store)
+        state = store.load()
+        state["quality_scores"] = [
+            {
+                "pass": False,
+                "pass_id": "WHY2-iter-0",
+                "source": "harness:understanding",
+            }
+        ]
+        store.save(state)
 
         node = ctrl._graph.get("phase1-why2")
-        result = provider.exec_agent.return_value
+        result = ctrl._executors["agent"]._validate_result_state_updates(
+            node,
+            provider.exec_agent.return_value,
+            result_contract=node.result_contract(),
+        )
+        assert result.state_updates == {}
+        assert "quality_scores" in result.quarantined_state_updates
         next_phase = ctrl._evaluate_transitions(node, result)
         store.advance(
             "phase1-why2",
             next_phase,
             result,
-            allowed_state_update_keys=node.allowed_state_updates,
+            allowed_state_update_keys=ctrl._advance_state_update_keys(node),
         )
 
         state = store.load()
         assert state["phase"] == "phase1-what"
         assert state["quality_scores"][-1]["pass"] is False
         assert state["quality_scores"][-1]["pass_id"] == "WHY2-iter-0"
+        assert state["quality_scores"][-1]["source"] == "harness:understanding"
         assert state.get("why_fail_count", 0) >= 1
+
+    def test_sage_qualitative_failure_overrides_certified_pass(self, tmp_path):
+        """WHY2 may make a certified pass stricter without replacing its score."""
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-why2", max_iterations=5)
+        state = store.load()
+        state["quality_scores"] = [
+            {
+                "pass": True,
+                "pass_id": "WHY2-iter-0",
+                "source": "harness:understanding",
+            }
+        ]
+        store.save(state)
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "FAIL", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        next_phase = ctrl._evaluate_transitions(
+            ctrl._graph.get("phase1-why2"),
+            result,
+        )
+
+        assert next_phase == "phase1-what"
+        assert store.load()["quality_scores"][-1]["pass"] is True
+        assert store.load().get("why_fail_count", 0) == 1
+
+    def test_understanding_operational_failure_remains_at_retryable_gate(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-understanding")
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "BLOCKED",
+                "state_updates": {
+                    "blocked_reason": "Understanding analysis failed: temporary",
+                    "understanding_evidence": {
+                        "phase": "phase1-why2",
+                        "status": "error",
+                        "path": "/tmp/understanding-error.json",
+                    },
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        ctrl._block_after_executor_failure(
+            "phase1-understanding",
+            "Understanding analysis failed: temporary",
+            result,
+        )
+
+        blocked = store.load()
+        assert blocked["status"] == "blocked"
+        assert blocked["phase"] == "phase1-understanding"
+        assert blocked["understanding_evidence"]["status"] == "error"
+
+    def test_blocked_understanding_gate_retries_without_reinitializing(self, tmp_path):
+        _disable_lexicon_gate(tmp_path)
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-understanding")
+        state = store.load()
+        state.update(
+            {
+                "status": "blocked",
+                "blocked_reason": "Understanding analysis failed: temporary",
+                "understanding_evidence": {
+                    "phase": "phase1-why2",
+                    "status": "error",
+                    "path": "/tmp/original-evidence.json",
+                },
+            }
+        )
+        store.save(state)
+        _mark_constitution_complete(tmp_path, store)
+        retry = MagicMock()
+        retry.execute.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "BLOCKED",
+                "state_updates": {"blocked_reason": "retry failed"},
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl._executors["deterministic_understanding"] = retry
+
+        with patch.object(ctrl._graph, "entry_phase", return_value="DONE"):
+            resumed = ctrl.run("msg", "banzai")
+
+        assert retry.execute.call_count == 1
+        assert resumed.status == "blocked"
+        assert store.load()["phase"] == "phase1-understanding"
+        assert store.load()["understanding_evidence"]["path"] == "/tmp/original-evidence.json"
 
     def test_why_fail_resets_on_pass(self, tmp_path):
         """why_fail_count resets when a WHY phase passes."""
@@ -1130,6 +1417,11 @@ class TestSquadControllerBasics:
         # staging directory so terminal publication is not falsely activated.
         state["spec_dir"] = "specs/001-test"
         store.save(state)
+        spec_dir = tmp_path / "specs" / "001-test"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(_valid_lexicon_spec(), encoding="utf-8")
+        (spec_dir / "00-overview.md").write_text("# Overview\n", encoding="utf-8")
+        _install_passing_understanding(monkeypatch)
         result = ctrl.run("msg", "banzai")
         # Provider called at least twice: once for WHY1, once for COMMANDER escalation
         assert provider.exec_agent.call_count >= 2
@@ -1193,6 +1485,7 @@ class TestSquadControllerBasics:
 
     def test_fresh_checkpoint_question_ignores_stale_escalation_resolved(self, tmp_path):
         """A prior resume must not suppress a later checkpoint human-gate question."""
+        _disable_lexicon_gate(tmp_path)
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(
             exit_code=0,
@@ -1330,6 +1623,8 @@ class TestHumanGate:
 
 class TestConvergenceRoutingGuard:
     def test_forced_convergence_skips_why2_dispatch(self, tmp_path):
+        _disable_governance_gate(tmp_path)
+        _disable_lexicon_gate(tmp_path)
         provider = _mock_provider("KILL")
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-why2", max_iterations=5)
@@ -1350,6 +1645,8 @@ class TestConvergenceRoutingGuard:
         assert provider.exec_agent.call_count == 1
 
     def test_blocked_empty_escalation_with_convergence_recovers_to_recommendation(self, tmp_path):
+        _disable_governance_gate(tmp_path)
+        _disable_lexicon_gate(tmp_path)
         provider = _mock_provider("KILL")
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "banzai", "msg", 0, "phase1-what", max_iterations=5)
@@ -1372,79 +1669,70 @@ class TestConvergenceRoutingGuard:
 
 
 class TestConsensusAcceptWithRiskRouting:
-    def test_accept_with_risk_consensus_advances_to_checkpoint_not_how(self, tmp_path):
-        provider = MagicMock()
-
-        def _side_effect(project_root: str, prompt: str, *args, **kwargs):
-            if "Operate in **WHY3** mode" in prompt:
-                return SquadAgentResult(
-                    exit_code=0,
-                    echelon_result={"verdict": "FAIL", "state_updates": {}},
-                    raw_output="",
-                    duration_ms=0,
-                    timed_out=False,
-                )
-            if "Operate in **ASSESS2** mode" in prompt:
-                return SquadAgentResult(
-                    exit_code=0,
-                    echelon_result={
-                        "verdict": "PASS",
-                        "state_updates": {
-                            "gate_decision": "accept_with_risk",
-                            "phase_recommendation": "advance_past_consensus_to_delivery",
-                        },
-                    },
-                    raw_output="",
-                    duration_ms=0,
-                    timed_out=False,
-                )
-            if "Operate in **PLAN2** mode" in prompt:
-                return SquadAgentResult(
-                    exit_code=0,
-                    echelon_result={
-                        "verdict": "COMPLETE",
-                        "state_updates": {},
-                    },
-                    raw_output="",
-                    duration_ms=0,
-                    timed_out=False,
-                )
-            if "COMMANDER JUDGMENT REQUEST" in prompt:
-                return SquadAgentResult(
-                    exit_code=0,
-                    echelon_result={
-                        "verdict": "DONE",
-                        "state_updates": {"next_phase": "phase4-document"},
-                    },
-                    raw_output="",
-                    duration_ms=0,
-                    timed_out=False,
-                )
-            raise AssertionError(f"unexpected agent prompt:\n{prompt[:400]}")
-
-        provider.exec_agent.side_effect = _side_effect
-        ctrl, store = _controller(tmp_path, provider=provider)
+    def test_accept_with_risk_cannot_override_sage_qualitative_failure(self, tmp_path):
+        _disable_lexicon_gate(tmp_path)
+        ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase3-consensus", max_iterations=10)
         state = store.load()
-        state.update({"iteration": 9, "spec_dir": "specs/071-rule-studio"})
+        state.update(
+            {
+                "iteration": 9,
+                "why3_verdict": "FAIL",
+                "assess2_verdict": "PASS",
+                "gate_decision": "accept_with_risk",
+                "phase_recommendation": "advance_past_consensus_to_delivery",
+                "quality_scores": [
+                    {"pass": True, "source": "harness:understanding"}
+                ],
+            }
+        )
         store.save(state)
-        _mark_constitution_complete(tmp_path, store)
-        spec_dir = tmp_path / "specs" / "071-rule-studio"
-        spec_dir.mkdir(parents=True)
-        for name in (
-            "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
-            "test-strategy.md", "test-architecture.md", "coverage-map.md",
-        ):
-            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
-        with patch.object(store, "advance", wraps=store.advance) as spy:
-            result = ctrl.run("msg", "banzai")
+        consensus_result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        assert ctrl._evaluate_transitions(
+            ctrl._graph.get("phase3-consensus"), consensus_result
+        ) == "phase3-consensus-tasks-lexicon"
+        gate = ctrl._graph.get("phase3-consensus-tasks-lexicon")
+        gate_result = ctrl._executors["deterministic_lexicon"].execute(gate, store)
+        assert ctrl._evaluate_transitions(gate, gate_result) == "phase1-what"
 
-        transitions = [(c.args[0], c.args[1]) for c in spy.call_args_list]
+    def test_accept_with_risk_can_override_feasibility_rejection_only(self, tmp_path):
+        _disable_lexicon_gate(tmp_path)
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase3-consensus", max_iterations=10)
+        state = store.load()
+        state.update(
+            {
+                "iteration": 9,
+                "why3_verdict": "PASS",
+                "assess2_verdict": "REJECTED",
+                "gate_decision": "accept_with_risk",
+                "quality_scores": [
+                    {"pass": True, "source": "harness:understanding"}
+                ],
+            }
+        )
+        store.save(state)
 
-        assert result.status == "done"
-        assert ("phase3-consensus", "checkpoint-plan") in transitions
-        assert ("phase3-consensus", "phase3-how") not in transitions
+        consensus_result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        assert ctrl._evaluate_transitions(
+            ctrl._graph.get("phase3-consensus"), consensus_result
+        ) == "phase3-consensus-tasks-lexicon"
+        gate = ctrl._graph.get("phase3-consensus-tasks-lexicon")
+        gate_result = ctrl._executors["deterministic_lexicon"].execute(gate, store)
+        assert ctrl._evaluate_transitions(gate, gate_result) == "checkpoint-plan"
 
 
 class TestBuildPhaseRouting:
@@ -2209,6 +2497,64 @@ class TestGovernanceConfigMerge:
         ctrl, _ = _controller(tmp_path)
         cfg = ctrl._governance_config()
         assert cfg.get("governance", {}).get("enabled") is True
+        assert cfg["feasibility_structural_pass"] is False
+        assert cfg["intent_alignment_check_structural_pass"] is False
+
+    def test_gate_config_uses_local_overrides_and_extension_defaults(self, tmp_path):
+        config_dir = tmp_path / ".echelon"
+        config_dir.mkdir()
+        (config_dir / "config.yml").write_text(
+            "lexicon_gate:\n"
+            "  enabled: true\n",
+            encoding="utf-8",
+        )
+        (config_dir / "local.yml").write_text(
+            "lexicon_gate:\n"
+            "  artifacts:\n"
+            "    tasks:\n"
+            "      enabled: false\n",
+            encoding="utf-8",
+        )
+
+        ctrl, _ = _controller(tmp_path)
+        gate = ctrl._lexicon_gate_config()["lexicon_gate"]
+
+        assert gate["enabled"] is True
+        assert gate["artifacts"]["spec"]["enabled"] is True
+        assert gate["artifacts"]["tasks"]["enabled"] is False
+
+    def test_disabled_tasks_subgate_is_routing_inert(self, tmp_path):
+        config_dir = tmp_path / ".echelon"
+        config_dir.mkdir()
+        (config_dir / "config.yml").write_text(
+            "lexicon_gate:\n"
+            "  enabled: true\n"
+            "  artifacts:\n"
+            "    tasks:\n"
+            "      enabled: false\n",
+            encoding="utf-8",
+        )
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase3-plan")
+        store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=3)
+
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        with patch.object(
+            ctrl,
+            "_judgment_dispatch",
+            side_effect=AssertionError("disabled tasks gate dispatched COMMANDER"),
+        ):
+            assert ctrl._evaluate_transitions(node, result) == "phase3-tasks-lexicon"
+            gate = ctrl._graph.get("phase3-tasks-lexicon")
+            gate_result = ctrl._executors["deterministic_lexicon"].execute(gate, store)
+            assert gate_result.state_updates["tasks_lexicon_action"] == "proceed"
+            assert ctrl._evaluate_transitions(gate, gate_result) == "phase3-understanding"
 
 
 class TestStructuralGuardDeterminism:
@@ -2252,8 +2598,207 @@ class TestStructuralGuardDeterminism:
             )
         assert nxt == "phase2-decide"
 
+    def test_omitted_feasibility_structural_result_does_not_fail_open(self, tmp_path):
+        from unittest.mock import patch
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase2-decide")
+        st = store.load()
+        st["iteration"] = 0
+        st["max_iterations"] = 3
+        store.save(st)
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "PASS", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        with patch.object(ctrl, "_judgment_dispatch",
+                          side_effect=AssertionError("guard punted to COMMANDER")):
+            nxt = ctrl._evaluate_transitions(node, result)
+
+        assert nxt == "phase2-decide"
+
+    def test_omitted_intent_alignment_structural_result_does_not_fail_open(self, tmp_path):
+        from unittest.mock import patch
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase2-tracker-alignment")
+        st = store.load()
+        st["iteration"] = 0
+        st["max_iterations"] = 3
+        store.save(st)
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "ALIGNED", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        with patch.object(ctrl, "_judgment_dispatch",
+                          side_effect=AssertionError("guard punted to COMMANDER")):
+            nxt = ctrl._evaluate_transitions(node, result)
+
+        assert nxt == "phase2-tracker-alignment"
+
+    def test_invalid_feasibility_artifact_overrides_stale_model_pass(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase2-decide")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "feasibility.md").write_text("# Incomplete\n", encoding="utf-8")
+        state = store.load()
+        state.update({
+            "iteration": 0,
+            "max_iterations": 5,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+        })
+        store.save(state)
+
+        result = self._result({"feasibility_structural_pass": True})
+        assert ctrl._evaluate_transitions(node, result) == "phase2-decide"
+        assert result.state_updates["feasibility_structural_pass"] is False
+        report = json.loads(
+            Path(result.state_updates["feasibility_structural_report"]).read_text(
+                encoding="utf-8"
+            )
+        )
+        assert report["ok"] is False
+        assert report["findings"]
+
+    def test_valid_feasibility_artifact_overrides_stale_model_failure(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase2-decide")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "feasibility.md").write_text(
+            "# Feasibility\n\n"
+            "## Metadata\nSpec: demo\n\n"
+            "## Feasibility Verdict\nTechnical, resource, and domain feasibility confirmed.\n\n"
+            "## Key Risks\nNo blocking risks.\n\n"
+            "## Kill / Defer / Pass Decision\nDecision: PASS\n",
+            encoding="utf-8",
+        )
+        state = store.load()
+        state.update({
+            "iteration": 0,
+            "max_iterations": 5,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+        })
+        store.save(state)
+
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "PASS",
+                "state_updates": {"feasibility_structural_pass": False},
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        assert ctrl._evaluate_transitions(node, result) == "phase2-strategic-overview"
+        assert result.state_updates["feasibility_structural_pass"] is True
+
+    def test_governance_warn_exhaustion_is_explicit(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase2-decide")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "feasibility.md").write_text("# Incomplete\n", encoding="utf-8")
+        state = store.load()
+        state.update({
+            "iteration": 3,
+            "max_iterations": 5,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+            "feasibility_structural_attempts": 3,
+        })
+        store.save(state)
+
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "PASS", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        assert ctrl._evaluate_transitions(node, result) == "phase2-strategic-overview"
+        assert result.state_updates["governance_gate_exhausted"] == "feasibility"
+
+    def test_governance_block_exhaustion_stops_pipeline(self, tmp_path):
+        config_dir = tmp_path / ".echelon"
+        config_dir.mkdir()
+        (config_dir / "config.yml").write_text(
+            "governance:\n"
+            "  enabled: true\n"
+            "  max_repair_attempts: 1\n"
+            "  on_exhausted: block\n",
+            encoding="utf-8",
+        )
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase2-decide")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "feasibility.md").write_text("# Incomplete\n", encoding="utf-8")
+        state = store.load()
+        state.update({
+            "iteration": 0,
+            "max_iterations": 5,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+        })
+        store.save(state)
+
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "PASS", "state_updates": {}},
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        assert ctrl._evaluate_transitions(node, result) == "terminal-blocked"
+        assert store.load()["blocked_reason"] == "governance_gate_exhausted"
+
 
 class TestProductInputMappingRepair:
+    def test_dispatch_reason_is_controller_owned(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+        assert ctrl._dispatch_reason("phase3-plan", 1) == "initial"
+        assert ctrl._dispatch_reason("phase3-plan", 2) == "planned_iteration"
+        assert ctrl._dispatch_reason("phase1-what", 2) == "semantic_repair"
+        state = store.load()
+        state["product_input_mapping_repair"] = {"protocol_version": 2}
+        store.save(state)
+        assert ctrl._dispatch_reason("phase3-plan", 2) == "deterministic_repair"
+
+    def test_blocker_event_survives_mutable_state_rewrite(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+        ctrl._block_after_executor_failure(
+            "phase3-plan", "agent_exit_code_1", SquadAgentResult(1, None, "", 0, False)
+        )
+        state = store.load()
+        state["blocked_reason"] = "rewritten"
+        store.save(state)
+        events = [json.loads(line) for line in ctrl._telemetry_store.events_path.read_text().splitlines()]
+        assert events[-1]["type"] == "blocker"
+        assert events[-1]["reason"] == "agent_exit_code_1"
+
+    def test_analyzer_uses_controller_blocker_history_not_state(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
+        result = SquadAgentResult(1, None, "", 0, False)
+        ctrl._block_after_executor_failure("phase3-plan", "agent_exit_code_1", result)
+        ctrl._block_after_executor_failure("phase3-plan", "agent_exit_code_1", result)
+        state = store.load()
+        state["blocked_reason_history"] = []
+        store.save(state)
+
+        report = analyze_spec_run(store.squad_dir)
+
+        assert report.workflow_metrics["repeated_blockers"] == {"agent_exit_code_1": 2}
+
     def test_plan_mapping_failure_is_requeued_with_controller_context(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "banzai", "msg", 0, "phase3-plan", max_iterations=5)
@@ -2272,6 +2817,38 @@ class TestProductInputMappingRepair:
         assert state["product_input_mapping_repair"]["blockers"] == [
             "IN-REQ-1: unresolved disposition open_question"
         ]
+
+    def test_what_phase_unknown_input_ids_are_requeued_with_canonical_ids(self, tmp_path):
+        from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+
+        ctrl, store = _controller(tmp_path)
+        source = tmp_path / "requirements.md"
+        source.write_text("A normative requirement.\n", encoding="utf-8")
+        resolution = resolve_product_inputs(
+            tmp_path,
+            store.squad_dir,
+            [parse_input_declaration("requirement:requirements.md")],
+        )
+        canonical_id = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))["units"][0]["id"]
+        store.initialize(
+            "r", "banzai", "msg", 0, "phase1-what", max_iterations=5,
+            product_inputs=resolution.state_payload(tmp_path),
+        )
+
+        repaired = ctrl._schedule_product_input_mapping_repair(
+            "phase1-what",
+            "invalid product input updates: product input update references unknown "
+            "requirement unit 'IN-REQ-FILTER-GROUPS'",
+        )
+
+        state = store.load()
+        assert repaired is True
+        assert state["phase"] == "phase1-what"
+        assert state["status"] == "running"
+        assert state["product_input_mapping_repair"]["invalid_input_unit_ids"] == [
+            "IN-REQ-FILTER-GROUPS"
+        ]
+        assert state["product_input_mapping_repair"]["valid_requirement_ids"] == [canonical_id]
 
     def test_plan_mapping_repair_stops_after_bounded_attempts(self, tmp_path):
         ctrl, store = _controller(tmp_path)
@@ -2329,6 +2906,210 @@ class TestLexiconGateGuardDeterminism:
             raw_output="", duration_ms=0, timed_out=False,
         )
 
+    def test_spec_lexicon_node_certifies_valid_artifact_without_provider(self, tmp_path):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = ctrl._graph.get("phase1-lexicon")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        source = """# Feature
+
+- **FR-001**: Render the dashboard.
+- **AC-001**: Given data, when rendering, then the dashboard is visible.
+"""
+        (spec_dir / "spec.md").write_text(source, encoding="utf-8")
+        (spec_dir / "glossary.md").write_text("", encoding="utf-8")
+        digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        (spec_dir / "requirements.lexicon.md").write_text(
+            f"""# SOURCE: spec.md
+# SOURCE_SHA256: {digest}
+ARTIFACT: SPEC
+TITLE: Dashboard
+
+REQ: FR-001
+GIVEN: data is available
+WHEN: the user opens the dashboard
+THEN: The system SHALL render the dashboard
+OUTPUT: The dashboard is visible
+DEPENDS: none
+EXAMPLE: AC-001
+
+AC: AC-001
+GIVEN: data is available
+WHEN: the user opens the dashboard
+THEN: The dashboard is visible
+""",
+            encoding="utf-8",
+        )
+        state = store.load()
+        state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
+        store.save(state)
+
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
+
+        provider.exec_agent.assert_not_called()
+        assert result.verdict == "DONE"
+        assert result.state_updates["lexicon_evaluation"] == "passed"
+        assert result.state_updates["lexicon_pass"] is True
+        assert result.state_updates["lexicon_attempts"] == 0
+        assert result.state_updates["lexicon_findings"] == 0
+        report_path = Path(result.state_updates["lexicon_report"])
+        assert report_path.is_file()
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert report["ok"] is True
+        assert report["artifact_sha256"] == hashlib.sha256(
+            (spec_dir / "requirements.lexicon.md").read_bytes()
+        ).hexdigest()
+        assert report["source_sha256"] == hashlib.sha256(
+            (spec_dir / "spec.md").read_bytes()
+        ).hexdigest()
+        assert report["glossary_sha256"] == hashlib.sha256(b"").hexdigest()
+
+    def test_legacy_understanding_resume_routes_through_visible_spec_gate(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        state = store.load()
+        state.update({
+            "phase": "phase1-understanding",
+            "spec_dir": "runs/run-test/specs/001-demo",
+        })
+        store.save(state)
+
+        guarded = ctrl._guard_spec_lexicon_evidence("phase1-understanding")
+
+        assert guarded == "phase1-lexicon"
+        assert store.load()["phase"] == "phase1-lexicon"
+
+    def test_later_phase_resume_without_current_evidence_reopens_spec_pipeline(
+        self, tmp_path
+    ):
+        ctrl, store = _controller(tmp_path)
+        state = store.load()
+        state.update({
+            "phase": "phase2-decide",
+            "iteration": 9,
+            "why_fail_count": 2,
+            "convergence_forced": True,
+            "convergence_detected": True,
+            "convergence_guard_fire_count": 3,
+            "phase_recommendation": "phase2-decide",
+            "spec_dir": "runs/run-test/specs/001-demo",
+            "completed_phases": [
+                "phase1-what",
+                "phase1-lexicon",
+                "phase1-understanding",
+                "phase1-why2",
+                "checkpoint-assess",
+            ],
+            "phase_dispatch_counts": {
+                "phase1-what": 1,
+                "phase1-lexicon": 1,
+                "phase1-understanding": 1,
+                "phase1-why2": 1,
+                "checkpoint-assess": 1,
+            },
+        })
+        store.save(state)
+
+        guarded = ctrl._guard_spec_lexicon_evidence("phase2-decide")
+
+        assert guarded == "phase1-lexicon"
+        persisted = store.load()
+        assert persisted["completed_phases"] == ["phase1-what"]
+        assert persisted["phase_dispatch_counts"] == {"phase1-what": 1}
+        assert persisted["iteration"] == 0
+        assert persisted["why_fail_count"] == 0
+        assert "phase_recommendation" not in persisted
+        assert persisted["convergence_forced"] is False
+        assert persisted["convergence_detected"] is False
+        assert persisted["convergence_guard_fire_count"] == 0
+
+    def test_current_spec_lexicon_evidence_allows_understanding(self, tmp_path):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = ctrl._graph.get("phase1-lexicon")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        source = """# Feature
+
+- **FR-001**: Render the dashboard.
+- **AC-001**: Given data, when rendering, then the dashboard is visible.
+"""
+        (spec_dir / "spec.md").write_text(source, encoding="utf-8")
+        digest = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        (spec_dir / "requirements.lexicon.md").write_text(
+            "# SOURCE: spec.md\n"
+            f"# SOURCE_SHA256: {digest}\n"
+            "ARTIFACT: SPEC\n"
+            "TITLE: Dashboard\n\n"
+            "REQ: FR-001\n"
+            "GIVEN: data is available\n"
+            "WHEN: the user opens the dashboard\n"
+            "THEN: The system SHALL render the dashboard\n"
+            "OUTPUT: The dashboard is visible\n"
+            "DEPENDS: none\n"
+            "EXAMPLE: AC-001\n\n"
+            "AC: AC-001\n"
+            "GIVEN: data is available\n"
+            "WHEN: the user opens the dashboard\n"
+            "THEN: The dashboard is visible\n",
+            encoding="utf-8",
+        )
+        state = store.load()
+        state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
+        store.save(state)
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
+        store.advance(
+            node.id,
+            "phase1-understanding",
+            result,
+            allowed_state_update_keys=ctrl._advance_state_update_keys(node),
+        )
+
+        guarded = ctrl._guard_spec_lexicon_evidence("phase1-understanding")
+
+        assert guarded == "phase1-understanding"
+
+        (spec_dir / "glossary.md").write_text("**Dashboard**\n", encoding="utf-8")
+        guarded = ctrl._guard_spec_lexicon_evidence("phase1-understanding")
+
+        assert guarded == "phase1-lexicon"
+
+    def test_disabled_spec_lexicon_gate_allows_understanding_without_evidence(
+        self, tmp_path
+    ):
+        _disable_lexicon_gate(tmp_path)
+        ctrl, store = _controller(tmp_path)
+        state = store.load()
+        state["phase"] = "phase1-understanding"
+        store.save(state)
+
+        assert (
+            ctrl._guard_spec_lexicon_evidence("phase1-understanding")
+            == "phase1-understanding"
+        )
+
+    def test_manual_spec_lexicon_node_is_visible_and_provider_free(
+        self, tmp_path, capsys
+    ):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "brownfield", "msg", 0, "phase1-lexicon")
+        _mark_constitution_complete(tmp_path, store)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        state = store.load()
+        state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
+        store.save(state)
+
+        result = ctrl.run_single_phase("phase1-lexicon", "validate", "banzai")
+
+        provider.exec_agent.assert_not_called()
+        assert result.phase == "phase1-what"
+        assert "phase1-lexicon" in store.load()["completed_phases"]
+        output = capsys.readouterr().out
+        assert "Deterministic Spec Lexicon Gate" in output
+        assert "spec Lexicon pending" in output
+
     def test_gate_config_loads_lexicon_gate_block(self, tmp_path):
         ctrl, _ = _controller(tmp_path)
         cfg = ctrl._lexicon_gate_config()
@@ -2336,31 +3117,227 @@ class TestLexiconGateGuardDeterminism:
         assert cfg["lexicon_gate"].get("enabled") is True
 
     def test_spec_lexicon_gate_uses_the_iteration_dispatch_budget(self):
-        """WHAT retries are governed by max_iterations, not the generic cap."""
+        """WHAT repairs and their visible gate use max_iterations, not the generic cap."""
         from harness.squad import ITERATIVE_PHASES
 
         assert "phase1-what" in ITERATIVE_PHASES
+        assert "phase1-lexicon" in ITERATIVE_PHASES
 
-    def test_tasks_gate_failure_redispatches_without_commander(self, tmp_path):
+    @pytest.mark.parametrize(
+        ("phase_id", "next_phase"),
+        [
+            ("phase3-tasks-lexicon", "phase3-understanding"),
+            ("phase3-consensus-tasks-lexicon", "checkpoint-plan"),
+        ],
+    )
+    def test_run_resumes_tasks_lexicon_nodes_without_provider(
+        self,
+        tmp_path,
+        phase_id,
+        next_phase,
+    ):
+        _disable_lexicon_gate(tmp_path)
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, phase_id, max_iterations=3)
+        _mark_constitution_complete(tmp_path, store)
+        state = store.load()
+        state.update({
+            "why3_verdict": "PASS",
+            "assess2_verdict": "PASS",
+            "quality_scores": [{"pass": True, "source": "harness:understanding"}],
+        })
+        store.save(state)
+        ctrl._checkpoint_successful_phase = MagicMock(return_value=False)
+
+        result = ctrl.run("msg", "banzai")
+
+        provider.exec_agent.assert_not_called()
+        assert result.phase == next_phase
+        assert phase_id in store.load()["completed_phases"]
+        ctrl._checkpoint_successful_phase.assert_called_once_with(
+            phase_id,
+            next_phase,
+        )
+
+    def test_plan_routes_to_visible_tasks_gate_without_hidden_certification(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase3-plan")
-        st = store.load(); st["iteration"] = 0; st["max_iterations"] = 3; store.save(st)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "requirements.lexicon.md").write_text(_valid_lexicon_spec(), encoding="utf-8")
+        (spec_dir / "tasks.md").write_text("not canonical tasks\n", encoding="utf-8")
+        st = store.load()
+        st.update({
+            "iteration": 0,
+            "max_iterations": 3,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+        })
+        store.save(st)
+        result = self._result({})
         with patch.object(ctrl, "_judgment_dispatch",
                           side_effect=AssertionError("guard punted to COMMANDER — not deterministic")):
-            nxt = ctrl._evaluate_transitions(node, self._result({"tasks_lexicon_pass": False}))
-        assert nxt == "phase3-plan"   # deterministic re-dispatch on gate failure
+            nxt = ctrl._evaluate_transitions(node, result)
 
-    def test_tasks_gate_pass_falls_through_to_consensus(self, tmp_path):
+        assert nxt == "phase3-tasks-lexicon"
+        assert result.state_updates == {}
+        assert not (spec_dir / "tasks-lexicon-report.json").exists()
+
+    def test_tasks_gate_failure_redispatches_without_provider_or_commander(self, tmp_path):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = ctrl._graph.get("phase3-tasks-lexicon")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "requirements.lexicon.md").write_text(
+            _valid_lexicon_spec(), encoding="utf-8"
+        )
+        (spec_dir / "tasks.md").write_text("not canonical tasks\n", encoding="utf-8")
+        st = store.load()
+        st.update({
+            "iteration": 0,
+            "max_iterations": 3,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+        })
+        store.save(st)
+
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
+        with patch.object(ctrl, "_judgment_dispatch",
+                          side_effect=AssertionError("gate punted to COMMANDER")):
+            nxt = ctrl._evaluate_transitions(node, result)
+
+        provider.exec_agent.assert_not_called()
+        assert nxt == "phase3-plan"
+        assert result.state_updates["tasks_lexicon_action"] == "repair"
+        assert result.state_updates["tasks_lexicon_pass"] is False
+        assert result.state_updates["tasks_lexicon_attempts"] == 1
+        report_path = Path(result.state_updates["tasks_lexicon_report"])
+        assert report_path.is_file()
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert report["ok"] is False
+        assert any(item["code"] == "parse-error" for item in report["findings"])
+
+    def test_tasks_gate_pass_falls_through_to_understanding(self, tmp_path):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        node = ctrl._graph.get("phase3-tasks-lexicon")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        _write_valid_plan_artifacts(spec_dir)
+        st = store.load()
+        st.update({
+            "iteration": 0,
+            "max_iterations": 3,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+            "tasks_lexicon_pass": False,
+            "tasks_lexicon_attempts": 3,
+        })
+        store.save(st)
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
+        with patch.object(ctrl, "_judgment_dispatch",
+                          side_effect=AssertionError("gate punted to COMMANDER")):
+            nxt = ctrl._evaluate_transitions(node, result)
+
+        provider.exec_agent.assert_not_called()
+        assert nxt == "phase3-understanding"
+        assert result.state_updates["tasks_lexicon_action"] == "proceed"
+        assert result.state_updates["tasks_lexicon_pass"] is True
+        assert result.state_updates["tasks_lexicon_attempts"] == 0
+
+    def test_consensus_revalidates_tasks_after_plan2(self, tmp_path):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider)
+        consensus = ctrl._graph.get("phase3-consensus")
+        node = ctrl._graph.get("phase3-consensus-tasks-lexicon")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        _write_valid_plan_artifacts(spec_dir)
+        (spec_dir / "tasks.md").write_text("PLAN2 broke the task grammar\n", encoding="utf-8")
+        state = store.load()
+        state.update({
+            "iteration": 0,
+            "max_iterations": 3,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+            "why3-verdict": "PASS",
+            "assess2-verdict": "PASS",
+            "tasks_lexicon_pass": True,
+        })
+        store.save(state)
+
+        consensus_result = self._result({})
+        assert (
+            ctrl._evaluate_transitions(consensus, consensus_result)
+            == "phase3-consensus-tasks-lexicon"
+        )
+        assert consensus_result.state_updates == {}
+
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
+        with patch.object(
+            ctrl,
+            "_judgment_dispatch",
+            side_effect=AssertionError("post-PLAN2 tasks gate punted to COMMANDER"),
+        ):
+            nxt = ctrl._evaluate_transitions(node, result)
+
+        provider.exec_agent.assert_not_called()
+        assert nxt == "phase3-plan"
+        assert result.state_updates["tasks_lexicon_pass"] is False
+
+    def test_tasks_gate_rejects_invalid_target_ownership(self, tmp_path):
         ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase3-plan")
-        st = store.load(); st["iteration"] = 0; st["max_iterations"] = 3; store.save(st)
-        with patch.object(ctrl, "_judgment_dispatch",
-                          side_effect=AssertionError("guard punted to COMMANDER — not deterministic")):
-            nxt = ctrl._evaluate_transitions(node, self._result({"tasks_lexicon_pass": True}))
-        assert nxt == "phase3-consensus"   # deterministic fall-through on gate pass
+        node = ctrl._graph.get("phase3-tasks-lexicon")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        _write_valid_plan_artifacts(spec_dir)
+        (spec_dir / "tasks.md").write_text(
+            _valid_tasks().replace("target=sources/app", "target=sources/other"),
+            encoding="utf-8",
+        )
+        state = store.load()
+        state.update({
+            "iteration": 0,
+            "max_iterations": 3,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+        })
+        store.save(state)
 
-    def test_spec_gate_missing_result_redispatches_without_commander(self, tmp_path):
-        """An omitted certificate cannot bypass an enabled spec Lexicon gate."""
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
+        assert ctrl._evaluate_transitions(node, result) == "phase3-plan"
+        report = json.loads(
+            Path(result.state_updates["tasks_lexicon_report"]).read_text(encoding="utf-8")
+        )
+        assert any(item["code"] == "undeclared-target" for item in report["findings"])
+
+    def test_tasks_gate_reports_missing_plan_outputs(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase3-consensus-tasks-lexicon")
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        _write_valid_plan_artifacts(spec_dir)
+        (spec_dir / "risk-matrix.md").unlink()
+        state = store.load()
+        state.update({
+            "iteration": 0,
+            "max_iterations": 3,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+            "why3-verdict": "PASS",
+            "assess2-verdict": "PASS",
+        })
+        store.save(state)
+
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
+        assert ctrl._evaluate_transitions(node, result) == "phase3-plan"
+        report = json.loads(
+            Path(result.state_updates["tasks_lexicon_report"]).read_text(encoding="utf-8")
+        )
+        assert {
+            item["artifact"]
+            for item in report["findings"]
+            if item["code"] == "missing-plan-output"
+        } == {"risk-matrix.md"}
+
+    def test_what_routes_to_visible_spec_gate_without_commander(self, tmp_path):
+        """WHAT cannot bypass the visible deterministic spec Lexicon node."""
         ctrl, store = _controller(tmp_path)
         node = ctrl._graph.get("phase1-what")
         st = store.load()
@@ -2379,12 +3356,12 @@ class TestLexiconGateGuardDeterminism:
         ):
             nxt = ctrl._evaluate_transitions(node, self._result({}))
 
-        assert nxt == "phase1-what"
+        assert nxt == "phase1-lexicon"
 
     def test_spec_gate_marks_missing_derived_artifact_pending_without_false_result(self, tmp_path):
         """No derived artifact means validation has not happened, not failed."""
         ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase1-what")
+        node = ctrl._graph.get("phase1-lexicon")
         st = store.load()
         st["iteration"] = 0
         st["max_iterations"] = 3
@@ -2393,7 +3370,13 @@ class TestLexiconGateGuardDeterminism:
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
-        result = self._result({"lexicon_pass": True})
+        stale_report = spec_dir / "spec-lexicon-report.json"
+        stale_report.write_text('{"ok": false}\n', encoding="utf-8")
+        state = store.load()
+        state["lexicon_report"] = str(stale_report)
+        state["lexicon_findings"] = 4
+        store.save(state)
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
 
         with patch.object(
             ctrl,
@@ -2405,6 +3388,7 @@ class TestLexiconGateGuardDeterminism:
         assert nxt == "phase1-what"
         assert "lexicon_pass" not in result.state_updates
         assert "lexicon_findings" not in result.state_updates
+        assert "lexicon_report" not in result.state_updates
         assert result.state_updates["lexicon_evaluation"] == "pending"
 
         store.advance(
@@ -2416,11 +3400,13 @@ class TestLexiconGateGuardDeterminism:
         persisted = store.load()
         assert persisted["lexicon_evaluation"] == "pending"
         assert "lexicon_pass" not in persisted
+        assert "lexicon_findings" not in persisted
+        assert "lexicon_report" not in persisted
 
     def test_spec_gate_uses_controller_validation_not_agent_stale_failure(self, tmp_path):
         """A valid artifact advances even if the agent reports stale failed state."""
         ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase1-what")
+        node = ctrl._graph.get("phase1-lexicon")
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         source = """# Feature\n\n- **FR-001**: Render the dashboard.\n- **AC-001**: Given data, when rendering, then the dashboard is visible.\n"""
@@ -2453,22 +3439,28 @@ THEN: The dashboard is visible
             "iteration": 0,
             "max_iterations": 10,
             "spec_dir": str(spec_dir.relative_to(tmp_path)),
+            "lexicon_pass": False,
+            "lexicon_attempts": 3,
+            "lexicon_findings": 55,
         })
         store.save(state)
-        result = self._result({"lexicon_pass": False, "lexicon_attempts": 3, "lexicon_findings": 55})
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
 
         nxt = ctrl._evaluate_transitions(node, result)
 
-        assert nxt == "phase1-why2"
+        assert nxt == "phase1-understanding"
         assert result.state_updates["lexicon_evaluation"] == "passed"
         assert result.state_updates["lexicon_pass"] is True
         assert result.state_updates["lexicon_attempts"] == 0
         assert result.state_updates["lexicon_findings"] == 0
+        report_path = Path(result.state_updates["lexicon_report"])
+        assert report_path.is_file()
+        assert json.loads(report_path.read_text(encoding="utf-8"))["ok"] is True
 
     def test_spec_gate_records_false_only_after_controller_validation(self, tmp_path):
         """An invalid derived artifact receives a real, controller-certified failure."""
         ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase1-what")
+        node = ctrl._graph.get("phase1-lexicon")
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
@@ -2478,14 +3470,73 @@ THEN: The dashboard is visible
             "iteration": 0,
             "max_iterations": 3,
             "spec_dir": str(spec_dir.relative_to(tmp_path)),
+            "lexicon_attempts": 1,
         })
         store.save(state)
-        result = self._result({"lexicon_pass": True, "lexicon_attempts": 1})
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
 
         assert ctrl._evaluate_transitions(node, result) == "phase1-what"
         assert result.state_updates["lexicon_evaluation"] == "failed"
         assert result.state_updates["lexicon_pass"] is False
         assert result.state_updates["lexicon_findings"] > 0
+        assert result.state_updates["lexicon_attempts"] == 2
+        report_path = Path(result.state_updates["lexicon_report"])
+        assert report_path.is_file()
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        assert report["schema_version"] == 1
+        assert report["artifact_type"] == "SPEC"
+        assert report["artifact_path"] == str(spec_dir / "requirements.lexicon.md")
+        assert report["source_path"] == str(spec_dir / "spec.md")
+        assert report["glossary_path"] == str(spec_dir / "glossary.md")
+        assert report["ok"] is False
+        assert report["findings"]
+        assert {"code", "message"}.issubset(report["findings"][0])
+
+    def test_spec_gate_uses_resolved_local_paths_in_report(self, tmp_path):
+        config_dir = tmp_path / ".echelon"
+        config_dir.mkdir(parents=True)
+        (config_dir / "config.yml").write_text(
+            "lexicon_gate:\n"
+            "  enabled: true\n"
+            "  artifacts:\n"
+            "    spec:\n"
+            "      enabled: true\n",
+            encoding="utf-8",
+        )
+        (config_dir / "local.yml").write_text(
+            "lexicon_gate:\n"
+            "  glossary_file: domain-glossary.md\n"
+            "  artifacts:\n"
+            "    spec:\n"
+            "      path: controlled-requirements.md\n"
+            "      source_ref: product-spec.md\n",
+            encoding="utf-8",
+        )
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-lexicon")
+        spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "product-spec.md").write_text("# Product spec\n", encoding="utf-8")
+        (spec_dir / "controlled-requirements.md").write_text(
+            "not Lexicon grammar\n", encoding="utf-8"
+        )
+        (spec_dir / "domain-glossary.md").write_text("", encoding="utf-8")
+        state = store.load()
+        state.update({
+            "iteration": 0,
+            "max_iterations": 3,
+            "spec_dir": str(spec_dir.relative_to(tmp_path)),
+        })
+        store.save(state)
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
+
+        assert ctrl._evaluate_transitions(node, result) == "phase1-what"
+        report = json.loads(
+            Path(result.state_updates["lexicon_report"]).read_text(encoding="utf-8")
+        )
+        assert report["artifact_path"] == str(spec_dir / "controlled-requirements.md")
+        assert report["source_path"] == str(spec_dir / "product-spec.md")
+        assert report["glossary_path"] == str(spec_dir / "domain-glossary.md")
 
     def test_spec_gate_blocks_on_exhaustion_when_configured_hard(self, tmp_path):
         """A hard Lexicon gate cannot fall through after its final repair pass."""
@@ -2501,7 +3552,7 @@ THEN: The dashboard is visible
             encoding="utf-8",
         )
         ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase1-what")
+        node = ctrl._graph.get("phase1-lexicon")
         st = store.load()
         st["iteration"] = 3
         st["max_iterations"] = 3
@@ -2511,7 +3562,8 @@ THEN: The dashboard is visible
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
 
-        nxt = ctrl._evaluate_transitions(node, self._result({}))
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
+        nxt = ctrl._evaluate_transitions(node, result)
 
         assert nxt == "terminal-blocked"
         state = store.load()
@@ -2532,7 +3584,7 @@ THEN: The dashboard is visible
             encoding="utf-8",
         )
         ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase1-what")
+        node = ctrl._graph.get("phase1-lexicon")
         state = store.load()
         state.update({
             "iteration": 3,
@@ -2543,7 +3595,7 @@ THEN: The dashboard is visible
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
-        result = self._result({})
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
 
         with patch.object(
             ctrl,
@@ -2552,12 +3604,21 @@ THEN: The dashboard is visible
         ):
             nxt = ctrl._evaluate_transitions(node, result)
 
-        assert nxt == "phase1-why2"
+        assert nxt == "phase1-understanding"
         assert result.state_updates["lexicon_evaluation"] == "pending"
         assert "lexicon_pass" not in result.state_updates
+        assert result.state_updates["lexicon_warning_waiver"] is True
 
-    def test_spec_gate_does_not_trust_claimed_failure_without_validation(self, tmp_path):
-        """An agent cannot exhaust a gate whose artifact was never validated."""
+        store.advance(
+            node.id,
+            nxt,
+            result,
+            allowed_state_update_keys=ctrl._advance_state_update_keys(node),
+        )
+        assert ctrl._guard_spec_lexicon_evidence(nxt) == "phase1-understanding"
+
+    def test_spec_gate_does_not_trust_stale_failure_without_validation(self, tmp_path):
+        """Stale failure state cannot exhaust a gate whose artifact was not validated."""
         (tmp_path / ".echelon").mkdir()
         (tmp_path / ".echelon" / "config.yml").write_text(
             "lexicon_gate:\n"
@@ -2571,17 +3632,19 @@ THEN: The dashboard is visible
             encoding="utf-8",
         )
         ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase1-what")
+        node = ctrl._graph.get("phase1-lexicon")
         st = store.load()
         st["iteration"] = 0
         st["max_iterations"] = 10
         st["spec_dir"] = "runs/run-test/specs/001-demo"
+        st["lexicon_pass"] = False
+        st["lexicon_attempts"] = 3
         store.save(st)
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
 
-        result = self._result({"lexicon_pass": False, "lexicon_attempts": 3})
+        result = ctrl._executors["deterministic_lexicon"].execute(node, store)
         nxt = ctrl._evaluate_transitions(node, result)
 
         assert nxt == "phase1-what"

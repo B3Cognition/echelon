@@ -30,10 +30,11 @@ for t in tests/unit/*.sh; do bash "$t"; done
 # Validate the extension wiring without running any agents
 bash scripts/bash/dry-run.sh
 
-# Reinstall the four CLIs (echelon / codegen / understanding / harness)
-# into ~/.echelon/venv after editing src/ — needed because the CLIs run from
-# an installed venv on PATH, not from this checkout.
+# Reinstall the core CLIs into ~/.echelon/venv after editing src/ — needed
+# because the CLIs run from an installed venv on PATH, not from this checkout.
 bash scripts/install.sh
+# Include the optional SOAR/codegen launcher when that pipeline is needed.
+bash scripts/install.sh --with-codegen
 ```
 
 There is no lint config — don't add one unless asked.

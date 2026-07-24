@@ -16,6 +16,9 @@ from harness.quality_scores import (
     render_quality_gate_context,
     resolve_quality_gate_thresholds,
 )
+from harness.spec_lexicon_gate import run_spec_lexicon_gate
+from harness.tasks_lexicon_gate import run_tasks_lexicon_gate
+from harness.understanding_gate import run_understanding_gate
 
 if TYPE_CHECKING:
     from harness.phase_graph import PhaseGraph, PhaseNode
@@ -296,16 +299,37 @@ def _render_product_input_context(state: dict) -> str:
     if isinstance(repair, dict):
         blockers = repair.get("blockers")
         if isinstance(blockers, list) and blockers:
+            is_phase_one_id_repair = repair.get("phase") == "phase1-what"
             lines.extend([
                 "",
                 "## Product Input Mapping Repair (Controller-Enforced)",
-                "The prior planning result did not resolve these ledger entries:",
+                "The prior result did not resolve these ledger entries:",
                 *[f"- {str(blocker)}" for blocker in blockers],
-                "Read PRODUCT_INPUT_TRACEABILITY before editing tasks.",
-                "Return one canonical product_input_updates entry for every unresolved unit, "
-                "with task_ids whose req= values intersect that unit's spec_ids.",
-                "Do not return COMPLETE while any listed unit remains open_question or conflict.",
             ])
+            if is_phase_one_id_repair:
+                invalid_ids = [
+                    str(value) for value in repair.get("invalid_input_unit_ids", [])
+                    if str(value).strip()
+                ]
+                valid_ids = [
+                    str(value) for value in repair.get("valid_requirement_ids", [])
+                    if str(value).strip()
+                ]
+                if invalid_ids:
+                    lines.append(f"Invalid IDs from the prior result: {', '.join(invalid_ids)}")
+                if valid_ids:
+                    lines.append(f"Only these canonical IDs may be used: {', '.join(valid_ids)}")
+                lines.extend([
+                    "Never derive an ID from a requirement label; copy it exactly from the allowlist above.",
+                    "Return only Phase 1 product_input_updates: use spec_ids for FR/AC mappings, with task_ids: [] and targets: [].",
+                ])
+            else:
+                lines.extend([
+                    "Read PRODUCT_INPUT_TRACEABILITY before editing tasks.",
+                    "Return one canonical product_input_updates entry for every unresolved unit, "
+                    "with task_ids whose req= values intersect that unit's spec_ids.",
+                    "Do not return COMPLETE while any listed unit remains open_question or conflict.",
+                ])
         candidates = repair.get("candidates")
         task_matrix = repair.get("task_requirement_matrix")
         if isinstance(candidates, list) or isinstance(task_matrix, list):
@@ -337,16 +361,146 @@ def _render_product_input_context(state: dict) -> str:
                 target = str(task.get("target") or "(none)")
                 lines.append(f"- {task_id}: req=[{requirements}]; target={target}")
     if state.get("tasks_lexicon_pass") is False:
+        report = str(
+            state.get("tasks_lexicon_report")
+            or "{spec_dir}/tasks-lexicon-report.json"
+        )
         lines.extend([
             "",
             "## Tasks Lexicon Repair (Controller-Enforced)",
             "The previous PLAN result failed the tasks hard gate.",
-            "Run the authoritative tasks validator, repair every finding in tasks.md or glossary.md, "
-            "then rerun it. Do not treat parse_pass or a soft score as success: the result must return ok=true.",
-            "Do not return COMPLETE with tasks_lexicon_pass: false.",
+            f"Read the controller finding report at `{report}` and repair every listed finding.",
+            "Repair tasks.md and glossary.md so the controller-owned tasks validator can certify the artifact after dispatch.",
+            "Do not report tasks_lexicon_pass yourself; the controller writes that verdict.",
         ])
     lines.append("")
     return "\n".join(lines)
+
+
+def _render_controller_repair_context(state: dict) -> str:
+    """Render controller-owned artifact findings for the next repair dispatch."""
+    gates = (
+        (
+            "feasibility_structural_pass",
+            "feasibility_structural_report",
+            "feasibility.md",
+        ),
+        (
+            "intent_alignment_check_structural_pass",
+            "intent_alignment_check_structural_report",
+            "intent-alignment-check.md",
+        ),
+    )
+    sections: list[str] = []
+    for pass_key, report_key, artifact in gates:
+        if state.get(pass_key) is not False:
+            continue
+        report = str(state.get(report_key) or "").strip()
+        if not report:
+            continue
+        sections.extend([
+            "## Controller Structural Repair",
+            f"The previous `{artifact}` failed the controller-owned structural gate.",
+            f"Read `{report}` and repair every listed finding in `{artifact}`.",
+            "Preserve sections that already pass and keep the artifact aligned with its template.",
+            f"Do not report `{pass_key}` or run a validator; the controller certifies the file after dispatch.",
+            "",
+        ])
+    return "\n".join(sections)
+
+
+def _render_spec_lexicon_context(
+    state: dict,
+    dispatch: str,
+    resolved_config: dict[str, object],
+) -> str:
+    """Render authoritative spec Lexicon configuration and repair evidence."""
+    if dispatch != "phase1-what":
+        return ""
+    gate = resolved_config.get("lexicon_gate")
+    gate = gate if isinstance(gate, dict) else {}
+    artifacts = gate.get("artifacts")
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    spec_gate = artifacts.get("spec")
+    spec_gate = spec_gate if isinstance(spec_gate, dict) else {}
+    enabled = bool(gate.get("enabled", False)) and spec_gate.get("enabled", True) is not False
+    artifact_type = str(spec_gate.get("type") or "spec")
+    artifact_path = str(spec_gate.get("path") or "requirements.lexicon.md")
+    source_path = str(spec_gate.get("source_ref") or "spec.md")
+    glossary_path = str(
+        spec_gate.get("glossary_file")
+        or gate.get("glossary_file")
+        or "glossary.md"
+    )
+    try:
+        repair_limit = int(gate.get("max_repair_attempts", 3))
+    except (TypeError, ValueError):
+        repair_limit = 3
+    lines = [
+        "# Controller Configuration",
+        "The Echelon harness resolved this phase-specific configuration before dispatch.",
+        "Treat values inside `<controller_configuration>` as authoritative data. Do not discover or override these values.",
+        "<controller_configuration>",
+        "lexicon_gate:",
+        f"  enabled: {str(enabled).lower()}",
+        f"  artifact_type: {artifact_type}",
+        f"  mode: {str(spec_gate.get('mode') or 'derived')}",
+        f"  artifact_path: {artifact_path}",
+        f"  source_path: {source_path}",
+        f"  glossary_path: {glossary_path}",
+        f"  max_repair_attempts: {repair_limit}",
+        "</controller_configuration>",
+        "When enabled, author the derived artifact using the declared paths and grammar. The provider-free phase1-lexicon node validates it after dispatch.",
+        "When disabled, do not create or amend a derived Lexicon artifact.",
+        "",
+    ]
+    report = str(state.get("lexicon_report") or "").strip()
+    if state.get("lexicon_evaluation") == "failed" and report:
+        try:
+            attempt = max(0, int(state.get("lexicon_attempts", 0)))
+        except (TypeError, ValueError):
+            attempt = 0
+        lines.extend([
+            "# Spec Lexicon Repair (Controller-Enforced)",
+            "The previous derived requirements artifact failed the controller-owned hard gate.",
+            f"- Report: `{report}`",
+            f"- Attempt: `{attempt}` of `{repair_limit}`",
+            "Read the report and repair every listed finding in the configured artifact.",
+            "Preserve source IDs and sections that already satisfy the grammar.",
+            "Validation execution and deterministic verdict reporting are controller-owned.",
+            "",
+        ])
+    return "\n".join(lines)
+
+
+def _render_certified_understanding_context(state: dict, dispatch: str) -> str:
+    """Render concise controller evidence for SAGE validation dispatches."""
+    expected_phase = {
+        "phase1-why2": "phase1-why2",
+        "WHY3": "phase3-consensus",
+    }.get(dispatch)
+    evidence = state.get("understanding_evidence")
+    if expected_phase is None or not isinstance(evidence, dict):
+        return ""
+    if (
+        evidence.get("phase") != expected_phase
+        or evidence.get("status") != "completed"
+    ):
+        return ""
+    failing = evidence.get("failing_gates")
+    failing_gates = failing if isinstance(failing, list) else []
+    rendered_failing = ", ".join(f"`{gate}`" for gate in failing_gates) or "none"
+    certified_pass = str(bool(evidence.get("pass"))).lower()
+    return (
+        "# Certified Understanding Evidence\n"
+        "The Echelon controller produced this report before provider dispatch. "
+        "Interpret it; do not recalculate or override its scores.\n"
+        f"- Report: `{evidence.get('path')}`\n"
+        f"- Digest: `{evidence.get('digest')}`\n"
+        f"- Iteration: `{evidence.get('iteration')}`\n"
+        f"- Certified pass: `{certified_pass}`\n"
+        f"- Failing gates: {rendered_failing}\n\n"
+    )
 
 
 def _render_published_re_context(state: dict) -> str:
@@ -384,6 +538,7 @@ def _render_published_re_context(state: dict) -> str:
 
 
 _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
+    "phase1-what": ("spec.md", "00-overview.md"),
     "phase3-how": ("plan.md", "research.md", "data-model.md", "contracts"),
     "phase3-sentinel": ("test-strategy.md", "test-architecture.md", "coverage-map.md"),
     "phase3-plan": ("tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md"),
@@ -422,19 +577,59 @@ def _spec_search_bases(spec_dir_ref: str, project_root: Path, staging_dir: str) 
     return bases
 
 
+def _render_active_spec_roots_context(
+    spec_dir_ref: str,
+    state: dict,
+    project_root: Path,
+) -> str:
+    """Render the authoritative active and published spec artifact roots."""
+    if not spec_dir_ref:
+        return ""
+
+    spec_dir_path = Path(spec_dir_ref)
+    if not spec_dir_path.is_absolute():
+        spec_dir_path = project_root / spec_dir_path
+    spec_dir_path = spec_dir_path.resolve()
+
+    published_ref = str(state.get("published_spec_dir") or "").strip()
+    if not published_ref:
+        published_ref = f"specs/{spec_dir_path.name}" if spec_dir_path.name else ""
+    if not published_ref:
+        return ""
+
+    published_path = Path(published_ref)
+    if not published_path.is_absolute():
+        published_path = project_root / published_path
+    published_path = published_path.resolve()
+
+    return (
+        "## Active Spec Artifact Roots\n"
+        f"ACTIVE_SPEC_DIR={spec_dir_path}\n"
+        f"PUBLISHED_SPEC_DIR={published_path}\n"
+        "- ALWAYS read and write squad phase artifacts under ACTIVE_SPEC_DIR / `{spec_dir}`.\n"
+        "- NEVER switch to PUBLISHED_SPEC_DIR during squad phase execution unless a phase explicitly asks for publication.\n"
+        "- PUBLISHED_SPEC_DIR is the final project target used by build/harness after publication.\n"
+        "- Every injected artifact heading below is the resolved filesystem path that was read.\n\n"
+    )
+
+
 def _render_context_candidate(file_ref: str, candidate: Path) -> str:
     """Render a context-pack file or directory into deterministic prompt text."""
+    resolved_candidate = candidate.resolve()
     if candidate.is_dir():
-        chunks = [f"\n---\n# {file_ref.rstrip('/')}/"]
+        chunks = [f"\n---\n# {resolved_candidate.as_posix().rstrip('/')}/"]
         for path in sorted(p for p in candidate.rglob("*") if p.is_file()):
             rel = path.relative_to(candidate)
-            display = f"{file_ref.rstrip('/')}/{rel.as_posix()}"
+            display = f"{resolved_candidate.as_posix().rstrip('/')}/{rel.as_posix()}"
             chunks.append(
                 f"\n## {display}\n"
                 f"{path.read_text(encoding='utf-8', errors='replace')}"
             )
         return "\n".join(chunks)
-    return f"\n---\n# {file_ref}\n{candidate.read_text(encoding='utf-8', errors='replace')}"
+    return (
+        f"\n---\n# {resolved_candidate.as_posix()}\n"
+        f"{candidate.read_text(encoding='utf-8', errors='replace')}"
+    )
 
 
 def _routing_contract(node: "PhaseNode") -> str:
@@ -483,11 +678,12 @@ def _routing_contract(node: "PhaseNode") -> str:
     if re.search(r"\blexicon_(?:pass|evaluation)\b", condition_text):
         if node.id != "phase1-what":
             fields.append(("lexicon_pass", "true | false  # required when the spec Lexicon gate is enabled"))
-        fields.append(("lexicon_attempts", "<integer>"))
-        fields.append(("lexicon_findings", "<integer>"))
+            fields.append(("lexicon_attempts", "<integer>"))
+            fields.append(("lexicon_findings", "<integer>"))
 
     if "tasks_lexicon_pass" in condition_text:
-        fields.append(("tasks_lexicon_pass", "true | false  # required when the tasks Lexicon gate is enabled"))
+        if node.id != "phase3-plan":
+            fields.append(("tasks_lexicon_pass", "true | false  # required when the tasks Lexicon gate is enabled"))
         fields.append(("tasks_lexicon_attempts", "<integer>"))
 
     if not fields:
@@ -618,6 +814,14 @@ class PhaseExecutor(ABC):
 
     def _quality_gate_thresholds(self) -> dict:
         return resolve_quality_gate_thresholds(
+            self._project_root,
+            fallback_config_path=self._ext_dir / "echelon-config.yml",
+        )
+
+    def _resolved_config(self) -> dict[str, object]:
+        from harness.config import get_full_resolved_config
+
+        return get_full_resolved_config(
             self._project_root,
             fallback_config_path=self._ext_dir / "echelon-config.yml",
         )
@@ -844,30 +1048,14 @@ class PhaseExecutor(ABC):
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_product_input_context(state)}"
+            f"{_render_controller_repair_context(state)}"
+            f"{_render_spec_lexicon_context(state, node.id, self._resolved_config())}"
             f"{_render_published_re_context(state)}"
+            f"{_render_certified_understanding_context(state, node.id)}"
+            f"{_render_active_spec_roots_context(spec_dir_ref, state, self._project_root)}"
             f"{self._extension_path_context()}"
             f"{render_quality_gate_context(self._quality_gate_thresholds())}"
         )
-        if spec_dir_ref:
-            spec_dir_path = Path(spec_dir_ref)
-            if not spec_dir_path.is_absolute():
-                spec_dir_path = self._project_root / spec_dir_path
-            published_ref = str(state.get("published_spec_dir") or "").strip()
-            if not published_ref:
-                spec_id = spec_dir_path.name
-                published_ref = f"specs/{spec_id}" if spec_id else ""
-            if published_ref:
-                published_path = Path(published_ref)
-                if not published_path.is_absolute():
-                    published_path = self._project_root / published_path
-                context_preamble += (
-                    "## Active Spec Artifact Roots\n"
-                    f"ACTIVE_SPEC_DIR={spec_dir_path}\n"
-                    f"PUBLISHED_SPEC_DIR={published_path}\n"
-                    "- ALWAYS read and write squad phase artifacts under ACTIVE_SPEC_DIR / `{spec_dir}`.\n"
-                    "- NEVER switch to PUBLISHED_SPEC_DIR during squad phase execution unless a phase explicitly asks for publication.\n"
-                    "- PUBLISHED_SPEC_DIR is the final project target used by build/harness after publication.\n\n"
-                )
         resumable_spec = False
         if node.id == "phase1-what" and state.get("cartographer_resume_existing_spec"):
             candidate = Path(str(state.get("spec_dir") or ""))
@@ -988,6 +1176,7 @@ class PhaseExecutor(ABC):
             + _workspace_source_roots_context(self._project_root)
             + _render_implementation_target_context(state)
             + _render_product_input_context(state)
+            + _render_controller_repair_context(state)
             + _render_published_re_context(state)
             + self._extension_path_context()
             + _allowed_state_updates_contract(
@@ -1175,6 +1364,177 @@ class CommanderInternalExecutor(PhaseExecutor):
         )
 
 
+class DeterministicUnderstandingExecutor(PhaseExecutor):
+    """Certify Understanding evidence without invoking an AI provider."""
+
+    def __init__(
+        self,
+        phase_graph: "PhaseGraph",
+        ext_dir: Path,
+        project_root: Path,
+        squad_dir: Optional[Path] = None,
+    ) -> None:
+        self._graph = phase_graph
+        self._ext_dir = ext_dir
+        self._project_root = project_root
+        from harness.paths import runs_dir as _runs_dir
+
+        self._squad_dir = squad_dir if squad_dir is not None else _runs_dir(project_root)
+
+    def execute(
+        self, node: "PhaseNode", state_store: "SquadStateStore"
+    ) -> "SquadAgentResult":
+        from harness.config import get_full_resolved_config
+        from harness.squad_provider import SquadAgentResult
+
+        state = state_store.load()
+        target = str(getattr(node, "understanding_target", "") or "").strip()
+        if not target:
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {
+                        "blocked_reason": (
+                            f"deterministic Understanding node {node.id!r} has no target"
+                        )
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+
+        gate = run_understanding_gate(
+            project_root=self._project_root,
+            squad_dir=state_store.squad_dir,
+            phase=target,
+            iteration=int(state.get("iteration") or 0),
+            spec_dir=str(state.get("spec_dir") or ""),
+            config=get_full_resolved_config(self._project_root),
+        )
+        updates = gate.state_updates(state.get("quality_scores"))
+        if gate.operational_error:
+            updates["blocked_reason"] = gate.operational_error
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={"verdict": "BLOCKED", "state_updates": updates},
+                raw_output=str(gate.report_path or ""),
+                duration_ms=0,
+                timed_out=False,
+            )
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": updates},
+            raw_output=str(gate.report_path or ""),
+            duration_ms=0,
+            timed_out=False,
+        )
+
+
+class DeterministicLexiconExecutor(PhaseExecutor):
+    """Certify a Lexicon artifact without invoking an AI provider."""
+
+    def __init__(
+        self,
+        phase_graph: "PhaseGraph",
+        ext_dir: Path,
+        project_root: Path,
+        squad_dir: Optional[Path] = None,
+    ) -> None:
+        self._graph = phase_graph
+        self._ext_dir = ext_dir
+        self._project_root = project_root
+        from harness.paths import runs_dir as _runs_dir
+
+        self._squad_dir = squad_dir if squad_dir is not None else _runs_dir(project_root)
+
+    def execute(
+        self, node: "PhaseNode", state_store: "SquadStateStore"
+    ) -> "SquadAgentResult":
+        from harness.config import get_full_resolved_config
+        from harness.squad_provider import SquadAgentResult
+
+        artifact = str(getattr(node, "lexicon_artifact", "") or "")
+        if artifact not in {"spec", "tasks"}:
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {
+                        "blocked_reason": (
+                            f"deterministic Lexicon node {node.id!r} has "
+                            f"unsupported artifact {artifact!r}"
+                        )
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+
+        state = state_store.load()
+        config = get_full_resolved_config(
+            self._project_root,
+            fallback_config_path=self._ext_dir / "echelon-config.yml",
+        )
+        if artifact == "spec":
+            if "lexicon_warning_waiver" in state:
+                state.pop("lexicon_warning_waiver")
+                state_store.save(state)
+            gate = run_spec_lexicon_gate(
+                project_root=self._project_root,
+                spec_dir_ref=str(state.get("spec_dir") or ""),
+                config=config,
+                previous_attempts=state.get("lexicon_attempts", 0),
+            )
+            if gate.evaluation == "pending":
+                stale = state_store.load()
+                changed = False
+                for key in ("lexicon_pass", "lexicon_findings", "lexicon_report"):
+                    if key in stale:
+                        stale.pop(key)
+                        changed = True
+                if changed:
+                    state_store.save(stale)
+            updates = gate.state_updates()
+            marker = (
+                "✓" if gate.passed is True else "~" if gate.passed is None else "✗"
+            )
+            label = f"spec Lexicon {gate.evaluation}: {gate.detail}"
+            raw_output = str(gate.report_path or gate.detail)
+        else:
+            gate = run_tasks_lexicon_gate(
+                project_root=self._project_root,
+                spec_dir_ref=str(state.get("spec_dir") or ""),
+                config=config,
+                previous_attempts=state.get("tasks_lexicon_attempts", 0),
+                workflow_iteration=state.get("iteration", 0),
+                max_workflow_iterations=state.get("max_iterations", 0),
+            )
+            updates = gate.state_updates()
+            marker = (
+                "✓"
+                if gate.action == "proceed"
+                else "~"
+                if gate.action in {"repair", "proceed_with_warning"}
+                else "✗"
+            )
+            label = f"tasks Lexicon {gate.action}: {gate.detail}"
+            raw_output = str(gate.report_path or gate.detail)
+        print(
+            f"[squad] {marker} {label}",
+            flush=True,
+        )
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": "DONE", "state_updates": updates},
+            raw_output=raw_output,
+            duration_ms=0,
+            timed_out=False,
+        )
+
+
 class StagedParallelExecutor(PhaseExecutor):
     """Handles type: staged_parallel — phase3-consensus (WHY3+ASSESS2 then PLAN2).
 
@@ -1262,11 +1622,15 @@ class StagedParallelExecutor(PhaseExecutor):
             f"{_workspace_source_roots_context(self._project_root)}"
             f"{_render_implementation_target_context(state)}"
             f"{_render_product_input_context(state)}"
+            f"{_render_controller_repair_context(state)}"
+            f"{_render_certified_understanding_context(state, mode_label)}"
+            f"{_render_active_spec_roots_context(spec_dir_ref, state, self._project_root)}"
             f"{render_quality_gate_context(self._quality_gate_thresholds())}"
             f"Operate in **{mode_label}** mode.\n\n"
         )
 
         prompt = "\n\n".join(static_parts + [preamble] + dynamic_parts)
+        prompt = prompt.replace("{spec_dir}", spec_dir_ref)
         prompt = prompt.replace("{context_dir}", context_dir_str)
         prompt = prompt.replace("{staging_dir}", staging_dir_str)
         return (
@@ -1340,21 +1704,37 @@ class StagedParallelExecutor(PhaseExecutor):
                 state[k] = v
             state_store.save(state)
 
-        # Stage 2: PLAN2 — requires implementability-report.md from ASSESS2
+        # Stage 2: PLAN2 requires the exact run-local ASSESS2 report.
         impl_report_path: Optional[Path] = None
-        report_bases: list[Path] = []
         spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
         if spec_dir_ref:
             spec_dir = Path(spec_dir_ref)
             if not spec_dir.is_absolute():
                 spec_dir = self._project_root / spec_dir
-            report_bases.append(spec_dir)
-        report_bases.extend([self._squad_dir / "staging", self._project_root])
-        for base in report_bases:
-            candidate = base / "implementability-report.md"
-            if candidate.exists():
-                impl_report_path = candidate
-                break
+            impl_report_path = spec_dir / "implementability-report.md"
+
+        if stage2_agents and (
+            impl_report_path is None or not impl_report_path.is_file()
+        ):
+            expected = (
+                impl_report_path
+                if impl_report_path is not None
+                else Path(spec_dir_ref or "{spec_dir}") / "implementability-report.md"
+            )
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "BLOCKED",
+                    "state_updates": {
+                        "blocked_reason": "missing_consensus_prerequisite",
+                        "missing_outputs": [str(expected)],
+                    },
+                    "journal_entries": [],
+                },
+                raw_output=f"required PLAN2 input is missing: {expected}",
+                duration_ms=0,
+                timed_out=False,
+            )
 
         state = state_store.load()
         for agent_entry in stage2_agents:
@@ -1362,7 +1742,7 @@ class StagedParallelExecutor(PhaseExecutor):
             prompt = self._build_agent_prompt(
                 agent_entry,
                 state,
-                extra_files=[impl_report_path] if impl_report_path else [],
+                extra_files=[impl_report_path],
                 allowed_state_updates=result_contract.allowed_state_update_keys,
                 required_state_updates=result_contract.required_state_update_keys,
                 state_update_types=result_contract.state_update_types,
@@ -1429,6 +1809,7 @@ class ConditionalSequentialExecutor(PhaseExecutor):
                         _shared_agent_contract()
                         + path.read_text()
                         + _render_product_input_context(state)
+                        + _render_controller_repair_context(state)
                         + _allowed_state_updates_contract(
                             result_contract.allowed_state_update_keys,
                             required_state_updates=result_contract.required_state_update_keys,

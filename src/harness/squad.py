@@ -46,20 +46,25 @@ from harness.quality_scores import (
 from harness.published_re_context import attach_published_re_context
 from harness.run_history import append_phase_a_run
 from harness.spec_frontmatter import find_spec_dir, write_targets
+from harness.spec_lexicon_gate import has_current_spec_lexicon_evidence
 from harness.squad_executors import (
     AgentExecutor,
     CommanderInternalExecutor,
     ConditionalSequentialExecutor,
+    DeterministicLexiconExecutor,
+    DeterministicUnderstandingExecutor,
     HumanGateExecutor,
     PhaseExecutor,
     StagedParallelExecutor,
 )
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
+from echelon.telemetry.phase_timing import record_phase_finish, record_phase_start
 from echelon.telemetry.provider import DispatchContext, InstrumentedProvider
 from echelon.telemetry.store import TelemetryStore
 from harness.squad_state import SquadStateStore
 from harness.prompt_markdown import read_prompt_markdown
 from harness.terminal import color_text
+from harness.understanding_gate import has_current_understanding_evidence
 
 
 PHASE_TERMINAL_BLOCKED = "terminal-blocked"
@@ -68,10 +73,13 @@ WHY_PHASES = frozenset({"phase1-why1", "phase1-why2"})
 ITERATIVE_PHASES = WHY_PHASES | frozenset(
     {
         "phase1-what",
+        "phase1-lexicon",
         "phase3-how",
         "phase3-sentinel",
         "phase3-plan",
+        "phase3-tasks-lexicon",
         "phase3-consensus",
+        "phase3-consensus-tasks-lexicon",
     }
 )
 
@@ -82,9 +90,10 @@ MAX_CONVERGENCE_GUARD_FIRES = 3
 # Max dispatches of any single phase per run before forcing escalation.
 # WHY phases are governed separately by why_fail_count; this cap applies to all others.
 MAX_PHASE_DISPATCHES = 5
-# A planning agent gets the original pass plus two controller-directed repairs
-# to resolve its own product-input mapping omissions.  This is intentionally
-# bounded: the controller may demand evidence, but must never invent mappings.
+# An authoring or planning agent gets the original pass plus two
+# controller-directed repairs to resolve its own product-input mapping errors.
+# This is intentionally bounded: the controller may demand evidence, but must
+# never invent mappings.
 MAX_PRODUCT_INPUT_MAPPING_REPAIRS = 2
 PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION = 2
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
@@ -304,13 +313,19 @@ class SquadController:
         product_inputs: object | None = None,
     ) -> None:
         existing_state = state_store.load()
-        trace_id = existing_state.get("telemetry_trace_id")
-        if not isinstance(trace_id, str) or len(trace_id) != 32:
-            trace_id = uuid.uuid4().hex
-            if existing_state:
-                existing_state["telemetry_trace_id"] = trace_id
-                state_store.save(existing_state)
         resolved_squad_dir = squad_dir or state_store.squad_dir
+        manifest = resolved_squad_dir / "telemetry" / "manifest.json"
+        try:
+            manifest_trace_id = json.loads(manifest.read_text(encoding="utf-8")).get(
+                "trace_id"
+            )
+        except (OSError, json.JSONDecodeError):
+            manifest_trace_id = None
+        trace_id = (
+            manifest_trace_id
+            if isinstance(manifest_trace_id, str) and len(manifest_trace_id) == 32
+            else uuid.uuid4().hex
+        )
         telemetry_store = TelemetryStore(
             resolved_squad_dir,
             workflow="spec",
@@ -318,7 +333,7 @@ class SquadController:
             profile={"name": str(existing_state.get("autonomy_mode") or "default")},
             trace_id=trace_id,
         )
-        self._telemetry_trace_id = trace_id
+        self._telemetry_store = telemetry_store
         self._telemetry_usage_lock = threading.Lock()
         self._provider = provider
         self._telemetry_provider = InstrumentedProvider(
@@ -342,6 +357,8 @@ class SquadController:
         self._executors: dict[str, PhaseExecutor] = {
             "agent": AgentExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "commander_internal": CommanderInternalExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
+            "deterministic_lexicon": DeterministicLexiconExecutor(phase_graph, ext_dir, project_root, self._squad_dir),
+            "deterministic_understanding": DeterministicUnderstandingExecutor(phase_graph, ext_dir, project_root, self._squad_dir),
             "staged_parallel": StagedParallelExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "conditional_sequential": ConditionalSequentialExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "human_gate": HumanGateExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
@@ -349,6 +366,131 @@ class SquadController:
         self._cancelled = False
         self._phase_a_published_this_run = False
         signal.signal(signal.SIGINT, self._handle_sigint)
+
+    def _ensure_telemetry_manifest(self) -> None:
+        """Make a run's telemetry identity available before agents invoke shims."""
+        state = self._state_store.load()
+        if not self._telemetry_store.manifest_path.exists():
+            self._telemetry_store.run_id = str(
+                state.get("run_id") or self._squad_dir.name
+            )
+            self._telemetry_store.profile = {
+                "name": str(state.get("autonomy_mode") or "default")
+            }
+        try:
+            self._telemetry_store.ensure_manifest()
+        except Exception:
+            logger.warning(
+                "Could not initialize telemetry manifest for run_id=%s",
+                state.get("run_id") or self._squad_dir.name,
+                exc_info=True,
+            )
+
+    def _start_declared_phase_timing(self, node: PhaseNode) -> None:
+        """Open a workflow-declared timing window before phase dispatch."""
+        phase = str(node.timing_window_start or "").strip()
+        budget = node.budget_seconds
+        if not phase or budget is None:
+            return
+        try:
+            record_phase_start(
+                self._telemetry_store,
+                phase=phase,
+                budget_seconds=float(budget),
+            )
+        except Exception:
+            logger.warning(
+                "Could not start declared phase timing for %s",
+                phase,
+                exc_info=True,
+            )
+
+    def _declared_phase_timing_budget(self, phase: str) -> float | None:
+        """Resolve a timing budget from start or transition declarations."""
+        for phase_id in self._graph.all_phase_ids():
+            candidate = self._graph.get(phase_id)
+            if (
+                candidate.timing_window_start == phase
+                and candidate.budget_seconds is not None
+            ):
+                return float(candidate.budget_seconds)
+            transition = candidate.timing_window_transition
+            if (
+                isinstance(transition, dict)
+                and str(transition.get("open") or "").strip() == phase
+                and transition.get("open_budget_seconds") is not None
+            ):
+                return float(transition["open_budget_seconds"])
+        return None
+
+    def _apply_declared_phase_timing_transition(
+        self,
+        node: PhaseNode,
+        next_phase: str,
+    ) -> None:
+        """Apply timing close/open metadata after a successful phase advance."""
+        if next_phase == node.id:
+            return
+        transition = node.timing_window_transition
+        if not isinstance(transition, dict) or not transition:
+            return
+
+        close_phase = str(transition.get("close") or "").strip()
+        open_phase = str(transition.get("open") or "").strip()
+        open_budget = transition.get("open_budget_seconds")
+        try:
+            if close_phase:
+                events, diagnostics = self._telemetry_store.read_phase_timings()
+                if diagnostics:
+                    raise ValueError("invalid phase timing telemetry")
+                latest = next(
+                    (
+                        event
+                        for event in reversed(events)
+                        if event.phase == close_phase
+                    ),
+                    None,
+                )
+                if latest is None:
+                    close_budget = self._declared_phase_timing_budget(close_phase)
+                    if close_budget is None:
+                        raise ValueError(
+                            f"no timing budget declared for {close_phase!r}"
+                        )
+                    record_phase_start(
+                        self._telemetry_store,
+                        phase=close_phase,
+                        budget_seconds=close_budget,
+                    )
+                    latest = next(
+                        event
+                        for event in reversed(
+                            self._telemetry_store.read_phase_timings()[0]
+                        )
+                        if event.phase == close_phase
+                    )
+                if latest.event == "started":
+                    record_phase_finish(
+                        self._telemetry_store,
+                        phase=close_phase,
+                    )
+
+            if open_phase:
+                if open_budget is None:
+                    raise ValueError(
+                        f"no timing budget declared for {open_phase!r}"
+                    )
+                record_phase_start(
+                    self._telemetry_store,
+                    phase=open_phase,
+                    budget_seconds=float(open_budget),
+                )
+        except Exception:
+            logger.warning(
+                "Could not apply declared phase timing transition for %s",
+                node.id,
+                exc_info=True,
+            )
 
     def _record_provider_usage(self, result: object) -> None:
         raw = getattr(result, "token_usage", 0)
@@ -358,16 +500,13 @@ class SquadController:
             and not isinstance(raw, bool)
             and int(raw) > 0
         ) or (isinstance(details, dict) and bool(details))
+        if not known:
+            return
         with self._telemetry_usage_lock:
             state = self._state_store.load()
-            if known:
-                state["token_usage"] = int(state.get("token_usage") or 0) + max(
-                    0, int(raw or 0)
-                )
-            else:
-                state["unknown_token_dispatches"] = int(
-                    state.get("unknown_token_dispatches") or 0
-                ) + 1
+            state["token_usage"] = int(state.get("token_usage") or 0) + max(
+                0, int(raw or 0)
+            )
             self._state_store.save(state)
 
     def _project_config_path(self) -> Path:
@@ -599,6 +738,27 @@ class SquadController:
                     run_id=existing.get("run_id", ""),
                 )
 
+        # Deterministic analysis failures are retryable at the same node. Keep
+        # their immutable evidence pointer and run identity instead of treating
+        # them like an incomplete provider dispatch that must be reinitialized.
+        elif (
+            existing_status == "blocked"
+            and self._is_deterministic_understanding_phase(
+                str(existing.get("phase") or "")
+            )
+        ):
+            state = self._state_store.load()
+            state["status"] = "running"
+            state["blocked_reason"] = None
+            self._state_store.save(state)
+            existing_status = "running"
+            force_resume = True
+            print(
+                f"[squad] deterministic analysis recovery → retrying "
+                f"{state.get('phase')!r}",
+                flush=True,
+            )
+
         # ── Escalation block ──────────────────────────────────────────────
         elif existing_status == "blocked" and existing.get("escalation_question"):
             q = existing.get("escalation_question", "")
@@ -711,13 +871,11 @@ class SquadController:
                     else None
                 ),
             )
-            initialized = self._state_store.load()
-            initialized["telemetry_trace_id"] = self._telemetry_trace_id
-            self._state_store.save(initialized)
             if prepared_identity:
                 initialized = self._state_store.load()
                 initialized.update(prepared_identity)
                 self._state_store.save(initialized)
+            self._ensure_telemetry_manifest()
             self._attach_published_re_context()
             if self._state_store.load().get("status") == "blocked":
                 return SquadResult.from_state(self._state_store.load())
@@ -728,9 +886,12 @@ class SquadController:
             if state.get("cancel_requested"):
                 state["cancel_requested"] = False
                 self._state_store.save(state)
+            self._ensure_telemetry_manifest()
 
         while True:
             phase = self._state_store.current_phase()
+            phase = self._guard_spec_lexicon_evidence(phase)
+            phase = self._guard_understanding_evidence(phase)
             guarded_phase = self._apply_phase_recommendation_guard(phase)
             if guarded_phase != phase:
                 phase = guarded_phase
@@ -774,6 +935,7 @@ class SquadController:
 
             if self._budget_exhausted():
                 self._state_store.set_blocked("token_budget_exhausted")
+                self._record_blocker_event(phase, "token_budget_exhausted")
                 return SquadResult(
                     status="budget_exhausted",
                     phase=phase,
@@ -784,6 +946,8 @@ class SquadController:
 
             if self._skip_phase_if_condition_false(node):
                 continue
+
+            self._start_declared_phase_timing(node)
 
             # Per-phase dispatch cap — prevents runaway loops on any phase.
             # WHY phases use max_iterations as their cap (they legitimately iterate).
@@ -807,6 +971,7 @@ class SquadController:
                 s["phase_dispatch_limit"] = phase_limit
                 s["status"] = "blocked"
                 self._state_store.save(s)
+                self._record_blocker_event(phase, "phase_dispatch_limit")
                 print(
                     f"[squad] ✗ phase dispatch limit: {phase!r} dispatched "
                     f"{dispatch_count}× (limit {phase_limit}) — forcing escalation",
@@ -835,6 +1000,7 @@ class SquadController:
                         agent=str(node.agent or node.type),
                         kind="repair" if dispatch_count > 1 else "phase",
                         attempt=dispatch_count,
+                        reason=self._dispatch_reason(phase, dispatch_count),
                     )
                 ):
                     result = executor.execute(node, self._state_store)
@@ -856,6 +1022,8 @@ class SquadController:
                 if not readiness.ready:
                     self._block_after_phase_a_readiness_failure(readiness)
                     return SquadResult.from_state(self._state_store.load())
+
+            self._apply_declared_phase_timing_transition(node, next_phase)
 
             self._state_store.advance(
                 phase,
@@ -929,6 +1097,85 @@ class SquadController:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
                 continue
 
+    def _guard_understanding_evidence(self, phase: str) -> str:
+        """Route legacy or stale SAGE dispatches through deterministic analysis."""
+        gate_by_target = {
+            "phase1-why2": "phase1-understanding",
+            "phase3-consensus": "phase3-understanding",
+        }
+        gate = gate_by_target.get(phase)
+        if gate is None:
+            return phase
+        state = self._state_store.load()
+        if has_current_understanding_evidence(
+            state,
+            project_root=self._project_root,
+            phase=phase,
+        ):
+            return phase
+        state["phase"] = gate
+        self._state_store.save(state)
+        print(
+            f"[squad] {phase}: certified Understanding evidence missing or stale; "
+            f"routing through {gate}",
+            flush=True,
+        )
+        return gate
+
+    def _guard_spec_lexicon_evidence(self, phase: str) -> str:
+        """Route legacy downstream resumes through visible spec certification."""
+        phase_ids = list(self._graph.all_phase_ids())
+        try:
+            gate_index = phase_ids.index("phase1-lexicon")
+            done_index = phase_ids.index("done")
+        except ValueError:
+            return phase
+        downstream = set(phase_ids[gate_index + 1 : done_index + 1])
+        if phase not in downstream:
+            return phase
+        state = self._state_store.load()
+        if has_current_spec_lexicon_evidence(
+            state,
+            project_root=self._project_root,
+            config=self._lexicon_gate_config(),
+        ):
+            return phase
+        invalidated = downstream | {"phase1-lexicon"}
+        completed = state.get("completed_phases")
+        if isinstance(completed, list):
+            state["completed_phases"] = [
+                item for item in completed if item not in invalidated
+            ]
+        counts = state.get("phase_dispatch_counts")
+        if isinstance(counts, dict):
+            state["phase_dispatch_counts"] = {
+                item: count
+                for item, count in counts.items()
+                if item not in invalidated
+            }
+        state["iteration"] = 0
+        state["why_fail_count"] = 0
+        state["convergence_forced"] = False
+        state["convergence_detected"] = False
+        state["convergence_guard_fire_count"] = 0
+        state.pop("phase_recommendation", None)
+        state["phase"] = "phase1-lexicon"
+        self._state_store.save(state)
+        print(
+            f"[squad] {phase}: spec Lexicon evidence missing or stale; "
+            "routing through phase1-lexicon",
+            flush=True,
+        )
+        return "phase1-lexicon"
+
+    def _is_deterministic_understanding_phase(self, phase: str) -> bool:
+        if not phase:
+            return False
+        try:
+            return self._graph.get(phase).type == "deterministic_understanding"
+        except KeyError:
+            return False
+
     def _attach_published_re_context(self) -> None:
         """Snapshot the latest durable RE publication for this spec run."""
         state = self._state_store.load()
@@ -995,13 +1242,11 @@ class SquadController:
                 max_iterations=self._max_iterations,
                 autonomy_mode=mode,
             )
-            initialized = self._state_store.load()
-            initialized["telemetry_trace_id"] = self._telemetry_trace_id
-            self._state_store.save(initialized)
             if initial_state_updates:
                 state = self._state_store.load()
                 state.update(initial_state_updates)
                 self._state_store.save(state)
+            self._ensure_telemetry_manifest()
             self._refresh_run_context("manual phase initialization")
         else:
             state = self._state_store.load()
@@ -1015,6 +1260,7 @@ class SquadController:
             if initial_state_updates:
                 state.update(initial_state_updates)
             self._state_store.save(state)
+            self._ensure_telemetry_manifest()
             self._refresh_run_context(f"manual phase replay {phase_id}")
 
         phase = phase_id
@@ -1022,11 +1268,14 @@ class SquadController:
         if guarded_phase in TERMINAL_PHASES:
             return SquadResult.from_state(self._state_store.load())
         phase = guarded_phase
+        phase = self._guard_spec_lexicon_evidence(phase)
+        phase = self._guard_understanding_evidence(phase)
 
         node = self._graph.get(phase)
         label = node.label or node.id
         if self._skip_phase_if_condition_false(node, manual_phase_run=True):
             return SquadResult.from_state(self._state_store.load())
+        self._start_declared_phase_timing(node)
         print(
             _format_phase_dispatch_line(
                 node,
@@ -1057,6 +1306,7 @@ class SquadController:
                     agent=str(node.agent or node.type),
                     kind="repair" if attempt > 1 else "phase",
                     attempt=attempt,
+                    reason="manual_rerun",
                 )
             ):
                 result = executor.execute(node, self._state_store)
@@ -1080,6 +1330,8 @@ class SquadController:
                 return SquadResult.from_state(self._state_store.load())
         else:
             self._publish_manual_phase_artifacts()
+
+        self._apply_declared_phase_timing_transition(node, next_phase)
 
         self._state_store.advance(
             phase,
@@ -1543,6 +1795,12 @@ class SquadController:
         """Validate and persist agent proposals through the controller-owned ledger."""
         payload = result.echelon_result or {}
         updates = payload.get("product_input_updates")
+        # DISCOVER consumes requirement and reference material as evidence, but
+        # it does not own specification or task traceability.  Ignore an
+        # over-eager agent's ledger proposal here so an informative IN-REF-* ID
+        # cannot be misclassified as a requirement and terminate the run.
+        if phase == "phase1-discover":
+            return None
         state = self._state_store.load()
         metadata = state.get("product_inputs")
         if not isinstance(metadata, dict) or not metadata:
@@ -1626,14 +1884,14 @@ class SquadController:
         error: str,
         result: SquadAgentResult | None = None,
     ) -> bool:
-        """Re-dispatch PLAN with exact unresolved product-input evidence.
+        """Re-dispatch a phase with exact unresolved product-input evidence.
 
-        Product-input mappings are authored by ORCHESTRATOR, not inferred by the
-        controller.  A missing/invalid update therefore gets a bounded repair
-        pass with the ledger blockers injected into its prompt; only exhaustion
-        becomes a terminal block.
+        Product-input mappings are authored by agents, not inferred by the
+        controller. A missing or invalid update therefore gets a bounded repair
+        pass with controller-derived evidence; only exhaustion becomes a
+        terminal block.
         """
-        if phase not in {"phase3-plan", "phase3-consensus"}:
+        if phase not in {"phase1-what", "phase3-plan", "phase3-consensus"}:
             return False
         prefixes = (
             "invalid product input task mappings:",
@@ -1672,7 +1930,36 @@ class SquadController:
         payload = result.echelon_result if result is not None else None
         updates = payload.get("product_input_updates") if isinstance(payload, dict) else None
         active_spec_dir = self._active_phase_a_spec_dir(state)
-        if isinstance(updates, list) and active_spec_dir is not None:
+        if phase == "phase1-what":
+            metadata = state.get("product_inputs")
+            traceability_ref = (
+                str(metadata.get("traceability") or "").strip()
+                if isinstance(metadata, dict)
+                else ""
+            )
+            if traceability_ref:
+                traceability_path = Path(traceability_ref)
+                if not traceability_path.is_absolute():
+                    traceability_path = self._project_root / traceability_path
+                try:
+                    ledger = json.loads(traceability_path.read_text(encoding="utf-8"))
+                    requirements = ledger.get("requirements") if isinstance(ledger, dict) else []
+                    valid_ids = [
+                        str(entry.get("input_unit_id"))
+                        for entry in requirements
+                        if isinstance(entry, dict) and str(entry.get("input_unit_id") or "").strip()
+                    ]
+                    invalid_ids = re.findall(
+                        r"unknown requirement unit ['\"]([^'\"]+)['\"]",
+                        error,
+                    )
+                    hints = {
+                        "invalid_input_unit_ids": invalid_ids,
+                        "valid_requirement_ids": valid_ids,
+                    }
+                except (OSError, json.JSONDecodeError) as exc:
+                    logger.warning("Could not construct phase-one product-input ID repair hints: %s", exc)
+        elif isinstance(updates, list) and active_spec_dir is not None:
             try:
                 from echelon.product_inputs import build_product_input_mapping_repair_hints
 
@@ -1691,6 +1978,7 @@ class SquadController:
         state["product_input_mapping_repair"] = {
             "attempt": attempts + 1,
             "blockers": blockers,
+            "phase": phase,
             "protocol_version": PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION,
             **hints,
         }
@@ -1776,6 +2064,7 @@ class SquadController:
         state["blocked_reason"] = "phase_a_readiness_failed"
         state["phase_a_readiness_blockers"] = readiness.blockers
         self._state_store.save(state)
+        self._record_blocker_event("phase4-document", "phase_a_readiness_failed")
         print(
             "[squad] ✗ phase4-document blocked: Phase A readiness failed "
             "(build-input artifacts incomplete)",
@@ -1808,9 +2097,15 @@ class SquadController:
         state = self._state_store.load()
         if phase == "phase1-what":
             self._preserve_cartographer_spec_context(state)
-        state["phase"] = PHASE_TERMINAL_BLOCKED
+        retryable_analysis = self._is_deterministic_understanding_phase(phase)
+        state["phase"] = phase if retryable_analysis else PHASE_TERMINAL_BLOCKED
         state["status"] = "blocked"
         state["blocked_reason"] = reason
+        if retryable_analysis:
+            node = self._graph.get(phase)
+            for key in node.controller_state_updates:
+                if key in (result.state_updates or {}) and key != "blocked_reason":
+                    state[key] = result.state_updates[key]
         if reason == "provider_session_limit":
             state["provider_limit_message"] = result.provider_limit_message
             if result.echelon_result is None:
@@ -1824,10 +2119,32 @@ class SquadController:
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
         self._state_store.save(state)
-        detail = "phase not marked complete"
+        self._record_blocker_event(phase, reason)
+        detail = (
+            "retryable deterministic phase"
+            if retryable_analysis
+            else "phase not marked complete"
+        )
         if reason == "provider_session_limit":
             detail = f"missing_echelon_result; provider: {result.provider_limit_message}"
         print(f"[squad] ✗ {phase} blocked: {reason} ({detail})", flush=True)
+
+    def _record_blocker_event(self, phase: str, reason: str) -> None:
+        from datetime import datetime, timezone
+
+        try:
+            self._telemetry_store.append_event(
+                {
+                    "schema_version": 1,
+                    "type": "blocker",
+                    "trace_id": self._telemetry_store.trace_id,
+                    "phase": phase,
+                    "reason": reason,
+                    "event_time": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        except Exception:
+            logger.warning("Could not persist blocker lifecycle event", exc_info=True)
 
     def _preserve_cartographer_spec_context(self, state: dict) -> None:
         """Record an existing CARTOGRAPHER spec before blocking a failed dispatch."""
@@ -2050,20 +2367,22 @@ class SquadController:
     def _lexicon_gate_config(self) -> dict:
         """Load the `lexicon_gate` config block once for transition evaluation.
 
-        Self-loop guard conditions (phase1-what, phase3-plan) reference the
-        config-namespace key `lexicon_gate.enabled`, which does not live in
-        state.json. Merging this block into the eval state lets those guards
-        resolve deterministically instead of returning None and punting the
-        re-dispatch decision to COMMANDER. Only `lexicon_gate` is merged (not
-        the whole config) to keep the blast radius to the gate transitions.
+        The spec Lexicon repair guard references the config-namespace key
+        `lexicon_gate.enabled`, which does not live in state.json. Merging this
+        block into the eval state lets that guard resolve deterministically.
+        Only `lexicon_gate` is merged to keep the blast radius constrained.
         Returns {} when the file is absent or unparseable.
         """
         if self._gate_config_cache is not None:
             return self._gate_config_cache
         cfg: dict = {}
         try:
-            import yaml
-            data = yaml.safe_load(self._project_config_path().read_text()) or {}
+            from harness.config import get_full_resolved_config
+
+            data = get_full_resolved_config(
+                self._project_root,
+                fallback_config_path=self._ext_dir / "echelon-config.yml",
+            )
             block = data.get("lexicon_gate")
             if isinstance(block, dict):
                 cfg = {"lexicon_gate": block}
@@ -2074,127 +2393,17 @@ class SquadController:
         # reported repairs", never an indeterminate condition that falls
         # through to a later phase.
         cfg.setdefault("lexicon_attempts", 0)
-        cfg.setdefault("tasks_lexicon_attempts", 0)
         self._gate_config_cache = cfg
         return cfg
-
-    def _enforce_spec_lexicon_gate_result(
-        self,
-        node: PhaseNode,
-        state: dict,
-        result: SquadAgentResult,
-    ) -> None:
-        """Certify an enabled derived-spec Lexicon gate at the controller boundary.
-
-        CARTOGRAPHER owns generation and repair.  The controller owns the
-        validation verdict: an absent artifact or a validator execution error
-        means validation is *pending*, never that it failed.  This keeps a
-        missing file from being persisted as ``lexicon_pass: false`` while
-        retaining the bounded re-dispatch path that prevents a WHY phase from
-        bypassing the hard gate.
-        """
-
-        if node.id != "phase1-what":
-            return
-        gate = self._lexicon_gate_config().get("lexicon_gate", {})
-        if not isinstance(gate, dict) or not gate.get("enabled", False):
-            return
-        artifacts = gate.get("artifacts", {})
-        spec_gate = artifacts.get("spec", {}) if isinstance(artifacts, dict) else {}
-        if not isinstance(spec_gate, dict) or not spec_gate.get("enabled", False):
-            return
-
-        updates = result.state_updates
-        spec_dir_ref = str(updates.get("spec_dir") or state.get("spec_dir") or "").strip()
-        if not spec_dir_ref:
-            self._mark_spec_lexicon_pending(updates)
-            return
-        spec_dir = Path(spec_dir_ref)
-        if not spec_dir.is_absolute():
-            spec_dir = self._project_root / spec_dir
-        derived_name = str(spec_gate.get("path") or "requirements.lexicon.md").strip()
-        derived_path = spec_dir / derived_name
-        source_name = str(spec_gate.get("source_ref") or "spec.md").strip()
-        glossary_name = str(spec_gate.get("glossary_file") or "glossary.md").strip()
-        source_path = spec_dir / source_name
-        glossary_path = spec_dir / glossary_name
-
-        # The result block is an agent-produced API response, not validation
-        # evidence.  Verify the exact on-disk artifact at the controller
-        # boundary so a stale narrative (or an omitted validator invocation)
-        # cannot turn a valid artifact into a terminal block, or an invalid one
-        # into a pass.
-        if derived_path.is_file() and source_path.is_file():
-            try:
-                from lexicon.source_contract import source_contract_findings
-                from lexicon.validity import validate as validate_lexicon
-
-                glossary: set[str] = set()
-                if glossary_path.is_file():
-                    import re
-
-                    for raw in glossary_path.read_text(encoding="utf-8").splitlines():
-                        line = raw.strip()
-                        if not line or line.startswith("#"):
-                            continue
-                        terms = re.findall(r"\*\*([^*]+)\*\*", line)
-                        glossary.update(term.strip() for term in terms or [line])
-
-                report = validate_lexicon(
-                    derived_path.read_text(encoding="utf-8"),
-                    glossary=glossary,
-                    artifact_type="SPEC",
-                )
-                findings = [*report.findings, *source_contract_findings(
-                    derived_path.read_text(encoding="utf-8"), source_path
-                )]
-                updates["lexicon_evaluation"] = "passed" if not findings else "failed"
-                updates["lexicon_pass"] = not findings
-                updates["lexicon_findings"] = len(findings)
-                # A controller-certified pass ends the repair loop regardless
-                # of an agent's stale attempt counter.
-                if not findings:
-                    updates["lexicon_attempts"] = 0
-                return
-            except Exception:
-                # An execution error is operationally distinct from an invalid
-                # artifact.  Do not manufacture a failed validation result.
-                self._mark_spec_lexicon_pending(updates)
-                return
-
-        self._mark_spec_lexicon_pending(updates)
-
-    def _mark_spec_lexicon_pending(self, updates: dict) -> None:
-        """Record an unevaluated spec Lexicon gate without a Boolean verdict."""
-        updates.pop("lexicon_pass", None)
-        updates.pop("lexicon_findings", None)
-        # A declared repair count without a produced artifact is unverified;
-        # it must not consume the hard gate's repair budget.
-        updates["lexicon_attempts"] = 0
-        updates["lexicon_evaluation"] = "pending"
-
-        # ``advance()`` only merges state updates, so explicitly remove a
-        # previous Boolean verdict before the pending transition is persisted.
-        # Otherwise an old false value remains in state.json despite the new
-        # evaluation having never run.
-        persisted = self._state_store.load()
-        changed = False
-        for key in ("lexicon_pass", "lexicon_findings"):
-            if key in persisted:
-                persisted.pop(key)
-                changed = True
-        if changed:
-            self._state_store.save(persisted)
 
     @staticmethod
     def _advance_state_update_keys(node: PhaseNode) -> list[str] | None:
         """Allow controller-owned state only after agent-result validation.
 
         AgentExecutor validates the original agent result against
-        ``node.allowed_state_updates``.  Phase 1 WHAT then adds the two
-        Lexicon verdict fields after deterministic controller validation.  The
-        state-store boundary must accept those controller-owned additions
-        without granting agents permission to report them.
+        ``node.allowed_state_updates``. Provider-free deterministic nodes return
+        controller-owned evidence fields. The state-store boundary must accept
+        those additions without granting agents permission to report them.
         """
         if node.allowed_state_updates is None:
             return None
@@ -2215,15 +2424,14 @@ class SquadController:
         repair attempt there is no valid transition to a later authoring phase.
         """
         gate_artifacts = {
-            "phase1-what": ("spec", "lexicon_pass", "lexicon_attempts"),
-            "phase3-plan": ("tasks", "tasks_lexicon_pass", "tasks_lexicon_attempts"),
+            "phase1-lexicon": ("spec", "lexicon_pass", "lexicon_attempts"),
         }
         gate_fields = gate_artifacts.get(node.id)
         if gate_fields is None:
             return False
         artifact_name, pass_key, attempts_key = gate_fields
         gate = self._lexicon_gate_config().get("lexicon_gate", {})
-        if not isinstance(gate, dict) or str(gate.get("on_exhausted", "block")).lower() != "block":
+        if not isinstance(gate, dict) or not gate.get("enabled", False):
             return False
         artifacts = gate.get("artifacts", {})
         artifact_gate = artifacts.get(artifact_name, {}) if isinstance(artifacts, dict) else {}
@@ -2247,6 +2455,11 @@ class SquadController:
         if result.state_updates.get(pass_key) is True:
             return False
 
+        if str(gate.get("on_exhausted", "block")).lower() == "warn":
+            if node.id == "phase1-lexicon":
+                result.state_updates["lexicon_warning_waiver"] = True
+            return False
+
         exhausted = self._state_store.load()
         exhausted["phase"] = PHASE_TERMINAL_BLOCKED
         exhausted["status"] = "blocked"
@@ -2263,50 +2476,248 @@ class SquadController:
         of returning None and punting the routing decision to COMMANDER.
         Returns {} when the file is absent or unparseable.
 
-        Also injects default `True` for the structural-gate pass flags
+        Also injects defaults for the structural-gate pass flags
         (feasibility_structural_pass, intent_alignment_check_structural_pass).
-        This is FAIL-OPEN by design — deliberate trade-off recorded here:
-
-        (a) Fail-open is consistent with `governance.on_exhausted: warn`: when
-            the gate exhausts its repair iterations the run proceeds with a
-            warning rather than blocking.  Defaulting absent flags to True
-            extends that same "warn and continue" philosophy to the case where
-            the agent simply did not emit the flag at all.
-
-        (b) The alternative — absent flag → COMMANDER judgment dispatch — would
-            make phase2-decide and phase2-tracker-alignment non-deterministic.
-            The lexicon gate (phase1-what, phase3-plan) lives with that
-        indeterminacy because their controller-certified verdicts drive
-        explicit deterministic transitions; for the structural gates the flag
-        is conditional on the repair loop running, so a missing flag is the
-        common case (gate disabled or agent pre-empted). Defaulting to True
-        avoids that COMMANDER punt entirely.
-
-        (c) A real gate failure (agent emits flag=False) is still honoured: the
-            re-dispatch condition `governance.enabled AND NOT <flag>` evaluates
-            to True, triggering a re-dispatch.  result.state_updates merges at
-            higher precedence than these defaults in eval_state (see
-            _evaluate_transitions), so an explicit False always wins.
+        Configured structural gates default to False so an omitted model field
+        cannot fail open. Disabled or absent gates default to True so the guard
+        remains inert when governance is not active for that artifact.
         """
         if self._gov_config_cache is not None:
             return self._gov_config_cache
         cfg: dict = {}
         try:
-            import yaml
-            data = yaml.safe_load(self._project_config_path().read_text()) or {}
+            from harness.config import get_full_resolved_config
+
+            data = get_full_resolved_config(
+                self._project_root,
+                fallback_config_path=self._ext_dir / "echelon-config.yml",
+            )
             block = data.get("governance")
             if isinstance(block, dict):
                 cfg = {"governance": block}
         except Exception:
             cfg = {}
-        # Structural gate pass flags default to True (= "not triggered" / "already
-        # passed"). GATEKEEPER and TRACKER override via state_updates when the gate
-        # is active. Without these defaults, absent flags produce NOT None = None,
-        # which triggers an unwanted COMMANDER judgment dispatch.
-        cfg.setdefault("feasibility_structural_pass", True)
-        cfg.setdefault("intent_alignment_check_structural_pass", True)
+        governance = cfg.get("governance", {})
+        governance_enabled = isinstance(governance, dict) and governance.get("enabled", False)
+        artifacts = governance.get("artifacts", {}) if isinstance(governance, dict) else {}
+
+        def _structural_gate_enabled(key: str) -> bool:
+            entry = artifacts.get(key, {}) if isinstance(artifacts, dict) else {}
+            if not isinstance(entry, dict):
+                return False
+            if entry.get("enabled", True) is False:
+                return False
+            return governance_enabled and str(entry.get("tier") or "").lower() == "structural"
+
+        cfg.setdefault("feasibility_structural_pass", not _structural_gate_enabled("feasibility"))
+        cfg.setdefault(
+            "intent_alignment_check_structural_pass",
+            not _structural_gate_enabled("intent-alignment-check"),
+        )
         self._gov_config_cache = cfg
         return cfg
+
+    def _enforce_governance_structural_gate_result(
+        self,
+        node: PhaseNode,
+        state: dict,
+        result: SquadAgentResult,
+    ) -> None:
+        """Validate governance artifacts after dispatch and own their gate state."""
+        gates = {
+            "phase2-decide": (
+                "feasibility",
+                "feasibility.md",
+                "feasibility_structural_pass",
+                "feasibility_structural_attempts",
+                "feasibility_structural_findings",
+                "feasibility_structural_report",
+            ),
+            "phase2-tracker-alignment": (
+                "intent-alignment-check",
+                "intent-alignment-check.md",
+                "intent_alignment_check_structural_pass",
+                "intent_alignment_check_structural_attempts",
+                "intent_alignment_check_structural_findings",
+                "intent_alignment_check_structural_report",
+            ),
+        }
+        gate_fields = gates.get(node.id)
+        if gate_fields is None:
+            return
+
+        artifact_key, default_name, pass_key, attempts_key, findings_key, report_key = gate_fields
+        governance = self._governance_config().get("governance", {})
+        artifacts = governance.get("artifacts", {}) if isinstance(governance, dict) else {}
+        entry = artifacts.get(artifact_key, {}) if isinstance(artifacts, dict) else {}
+        gate_enabled = (
+            isinstance(governance, dict)
+            and governance.get("enabled", False)
+            and isinstance(entry, dict)
+            and entry.get("enabled", True) is not False
+            and str(entry.get("tier") or "").lower() == "structural"
+        )
+        updates = result.state_updates
+        # These keys are controller-owned. Discard any model-supplied value
+        # before writing the deterministic result below.
+        for key in (pass_key, attempts_key, findings_key, report_key):
+            updates.pop(key, None)
+        if not gate_enabled:
+            updates[pass_key] = True
+            updates[attempts_key] = 0
+            return
+
+        spec_dir_ref = str(updates.get("spec_dir") or state.get("spec_dir") or "").strip()
+        if spec_dir_ref:
+            spec_dir = Path(spec_dir_ref)
+            if not spec_dir.is_absolute():
+                spec_dir = self._project_root / spec_dir
+        else:
+            spec_dir = self._project_root / "runs" / str(state.get("run_id") or "unknown") / "specs"
+
+        artifact_name = str(entry.get("path") or default_name).strip()
+        artifact_path = spec_dir / artifact_name
+        report = self._validate_governance_structural_artifact(
+            artifact_key=artifact_key,
+            artifact_path=artifact_path,
+            spec_dir=spec_dir,
+            entry=entry,
+        )
+        report_path = spec_dir / str(
+            entry.get("report") or f"{artifact_key}-structural-report.json"
+        ).strip()
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        updates[report_key] = str(report_path)
+        updates[findings_key] = len(report["findings"])
+        updates[pass_key] = bool(report["ok"])
+        if report["ok"]:
+            updates[attempts_key] = 0
+            return
+
+        try:
+            previous_attempts = int(state.get(attempts_key, 0))
+        except (TypeError, ValueError):
+            previous_attempts = 0
+        updates[attempts_key] = max(0, previous_attempts) + 1
+
+    def _validate_governance_structural_artifact(
+        self,
+        *,
+        artifact_key: str,
+        artifact_path: Path,
+        spec_dir: Path,
+        entry: dict,
+    ) -> dict[str, object]:
+        findings: list[dict[str, object]] = []
+        if not artifact_path.is_file():
+            findings.append({
+                "code": "missing-structural-artifact",
+                "message": f"required governance artifact is missing: {artifact_path.name}",
+                "artifact": artifact_path.name,
+            })
+        else:
+            spec_chunks: list[str] = []
+            for cross_ref in entry.get("cross_refs") or []:
+                against = str(cross_ref.get("against") or "").strip()
+                if not against:
+                    continue
+                spec_path = spec_dir / against
+                if spec_path.is_file():
+                    spec_chunks.append(spec_path.read_text(encoding="utf-8", errors="replace"))
+                else:
+                    findings.append({
+                        "code": "missing-cross-reference",
+                        "message": f"structural reference artifact is missing: {against}",
+                        "artifact": against,
+                    })
+            try:
+                from lexicon.structural import structural_validate
+
+                validation_entry = dict(entry)
+                template = str(validation_entry.get("template") or "").strip()
+                if template:
+                    validation_entry["template"] = self._ext_dir / "templates" / template
+                validation = structural_validate(
+                    artifact_path.read_text(encoding="utf-8", errors="replace"),
+                    validation_entry,
+                    spec_text="\n\n".join(spec_chunks),
+                )
+                findings.extend(
+                    {
+                        "code": str(item.code),
+                        "message": str(item.message),
+                        "line": int(item.line),
+                        "span": str(item.span),
+                    }
+                    for item in validation.findings
+                )
+            except Exception as exc:
+                findings.append({
+                    "code": "structural-validator-error",
+                    "message": f"structural validator failed: {exc}",
+                })
+
+        return {
+            "schema_version": 1,
+            "artifact": artifact_key,
+            "path": str(artifact_path),
+            "ok": not findings,
+            "findings": findings,
+        }
+
+    def _governance_gate_must_stop_on_exhaustion(
+        self,
+        node: PhaseNode,
+        state: dict,
+        result: SquadAgentResult,
+    ) -> bool:
+        gate_fields = {
+            "phase2-decide": (
+                "feasibility",
+                "feasibility_structural_pass",
+                "feasibility_structural_attempts",
+            ),
+            "phase2-tracker-alignment": (
+                "intent-alignment-check",
+                "intent_alignment_check_structural_pass",
+                "intent_alignment_check_structural_attempts",
+            ),
+        }.get(node.id)
+        if gate_fields is None:
+            return False
+        artifact_key, pass_key, attempts_key = gate_fields
+        governance = self._governance_config().get("governance", {})
+        if not isinstance(governance, dict) or result.state_updates.get(pass_key) is True:
+            return False
+        try:
+            repair_cap = int(governance.get("max_repair_attempts", 3))
+        except (TypeError, ValueError):
+            repair_cap = 3
+        try:
+            attempts = int(result.state_updates.get(attempts_key, state.get(attempts_key, 0)))
+        except (TypeError, ValueError):
+            attempts = 0
+        iterations_exhausted = int(state.get("iteration") or 0) >= int(
+            state.get("max_iterations") or self._max_iterations
+        )
+        if not ((repair_cap > 0 and attempts >= repair_cap) or iterations_exhausted):
+            return False
+
+        result.state_updates["governance_gate_exhausted"] = artifact_key
+        if str(governance.get("on_exhausted") or "warn").lower() != "block":
+            return False
+
+        exhausted = self._state_store.load()
+        exhausted["phase"] = PHASE_TERMINAL_BLOCKED
+        exhausted["status"] = "blocked"
+        exhausted["blocked_reason"] = "governance_gate_exhausted"
+        exhausted["governance_gate_exhausted"] = artifact_key
+        self._state_store.save(exhausted)
+        return True
 
     def _evaluate_transitions(
         self, node: PhaseNode, result: SquadAgentResult
@@ -2314,12 +2725,14 @@ class SquadController:
         state = self._state_store.load()
         if node.id in WHY_PHASES:
             self._normalize_why_result_quality_scores(result)
-        self._enforce_spec_lexicon_gate_result(node, state, result)
+        self._enforce_governance_structural_gate_result(node, state, result)
         if self._lexicon_gate_must_block_on_exhaustion(node, state, result):
+            return PHASE_TERMINAL_BLOCKED
+        if self._governance_gate_must_stop_on_exhaustion(node, state, result):
             return PHASE_TERMINAL_BLOCKED
         # Merge order (lowest→highest precedence): lexicon_gate config, governance
         # config, then state, then result.state_updates — so freshly-written values
-        # (quality_scores, tasks_lexicon_pass, etc.) win, while config-namespace
+        # (quality_scores, lexicon_pass, etc.) win, while config-namespace
         # keys (lexicon_gate.*, governance.*) the self-loop guards reference resolve.
         eval_state = {**self._lexicon_gate_config(), **self._governance_config(), **state, **(result.state_updates or {})}
 
@@ -2351,7 +2764,12 @@ class SquadController:
                 elif verdict_upper in ("DONE", "COMPLETE", "PASS"):
                     eval_state["quality_scores"] = [{"pass": True}]
 
-            is_fail = self._evaluator.evaluate("quality_gates.fail", eval_state, result) is True
+            verdict_upper = (result.verdict or "").upper()
+            is_fail = (
+                self._evaluator.evaluate("quality_gates.fail", eval_state, result)
+                is True
+                or verdict_upper in ("FAIL", "BLOCKED")
+            )
             if is_fail:
                 fail_count = self._state_store.increment_why_fail_count()
                 if fail_count >= 2 and not state.get("escalation_question"):
@@ -2371,6 +2789,7 @@ class SquadController:
                         s["blocked_reason"] = "consecutive_why_fails"
                         s["status"] = "blocked"
                         self._state_store.save(s)
+                        self._record_blocker_event(node.id, "consecutive_why_fails")
                         return PHASE_TERMINAL_BLOCKED
             else:
                 self._state_store.reset_why_fail_count()
@@ -2431,6 +2850,17 @@ class SquadController:
                 if next_phase:
                     return next_phase
         return "DONE"
+
+    def _dispatch_reason(self, phase: str, attempt: int) -> str:
+        """Choose telemetry reason from controller state, never model output."""
+        state = self._state_store.load()
+        if phase == "phase1-what" and state.get("cartographer_resume_existing_spec"):
+            return "resume"
+        if state.get("product_input_mapping_repair"):
+            return "deterministic_repair"
+        if phase == "phase1-what" and attempt > 1:
+            return "semantic_repair"
+        return "planned_iteration" if attempt > 1 else "initial"
 
     def _judgment_dispatch(
         self,

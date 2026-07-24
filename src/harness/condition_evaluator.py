@@ -32,9 +32,11 @@ class ConditionEvaluator:
         if re.search(r"\bAND\b", condition):
             parts = re.split(r"\bAND\b", condition)
             sub = [self.evaluate(p.strip(), state, result) for p in parts]
+            if any(value is False for value in sub):
+                return False
             if None in sub:
                 return None
-            return all(sub)
+            return True
 
         if re.search(r"\bOR\b", condition):
             parts = re.split(r"\bOR\b", condition)

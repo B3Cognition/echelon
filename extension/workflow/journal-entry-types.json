@@ -60,7 +60,7 @@
       ]
     },
     "quality_check": {
-      "description": "Quality gate scores produced by WHY agent",
+      "description": "Controller-certified quality gate scores interpreted by WHY agent",
       "agents": [
         "speckit-echelon-sage"
       ],

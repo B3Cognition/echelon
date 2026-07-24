@@ -10,10 +10,50 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_readme_documents_polyrepo_target_preflight() -> None:
     text = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "echelon delivery run 001 mode=semi" in text
-    assert "echelon delivery run 001 mode=banzai" in text
+    assert "echelon delivery run 001 --mode semi" in text
+    assert "echelon delivery run 001 --mode banzai" in text
     assert "source root" in text
     assert "lands the target repo branch" in text
+
+
+@pytest.mark.unit
+def test_readme_documents_the_first_spec_path() -> None:
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "### First spec in a new or existing workspace" in text
+    assert "specify init --here --integration claude --offline" in text
+    assert "specify extension add --force --dev ~/echelon/extension" in text
+    assert "echelon workspace init" in text
+    assert "echelon workspace sources sync --write" in text
+    assert 'echelon spec run "Create a sample Hello World program in Python"' in text
+
+
+@pytest.mark.unit
+def test_readme_advises_workspace_commands_for_source_configuration() -> None:
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "Rather than editing `sources:` by hand" in text
+    assert "echelon workspace sources sync" in text
+    assert "echelon workspace sources sync --write" in text
+    assert "echelon workspace doctor" in text
+    assert "echelon workspace migrate --write" in text
+
+
+@pytest.mark.unit
+def test_readme_installation_and_configuration_docs_use_current_contract() -> None:
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    installation = (ROOT / "INSTALLATION.md").read_text(encoding="utf-8")
+
+    assert "Node.js with npm is\noptional" in text
+    assert "echelon delivery run 001 --strategy codegen" in text
+    assert "`.echelon/config.yml`" in text
+    assert "`echelon-config.yml`" not in text
+    assert "config-template.yml" not in text
+    assert "run spec 001-photo-album" not in text
+    assert "Node.js with npm is optional" in installation
+    assert "specify extension add --force --dev ~/echelon/extension" in installation
+    assert "specify extension update --dev" not in installation
+    assert "`echelon-config.yml`" not in installation
 
 
 @pytest.mark.unit

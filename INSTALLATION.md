@@ -2,12 +2,20 @@
 
 ## Prerequisites
 
-**uv** is required. **Node.js with npm** is required for Context7, CodeGraph,
-and PerlGraph. Install uv if you don't have it:
+**uv** is required. Git and Spec Kit are required to create and initialize a
+workspace. Install the AI coding CLI you plan to use before agent-backed
+commands. Node.js with npm is optional: without it, the core CLI works but
+Context7, CodeGraph, and PerlGraph evidence integrations are unavailable.
+Docker or Podman is needed only for the default Phase B delivery sandbox.
+
+Install uv if you don't have it:
 
 ```bash
 brew install uv          # macOS
 curl -LsSf https://astral.sh/uv/install.sh | sh  # other
+
+# Install Spec Kit once.
+uv tool install specify-cli --force --from "git+git@github.com:mbachorik/spec-kit.git"
 ```
 
 ---
@@ -21,14 +29,22 @@ git clone https://github.com/B3Cognition/echelon.git ~/echelon
 bash ~/echelon/scripts/install.sh
 ```
 
-The installer does six things automatically:
+The default installer:
 
-1. Downloads `SoarSuite_9.6.4-Multiplatform.zip` from GitHub and extracts the SOAR binary for your platform into `~/.echelon/soar/bin/`
-2. Adds `~/.echelon/soar/bin` to your PATH
-3. Creates a venv at `~/.echelon/venv/` and installs all four CLIs (`echelon`, `harness`, `codegen`, `understanding`) into it
-4. Installs the pinned Context7, CodeGraph, and PerlGraph runtimes under `~/.echelon/node/`
-5. Adds `~/.echelon/venv/bin` to your PATH
-6. Creates `~/.echelon/memory/` and caches the AI embedding model (~80MB, one time)
+1. Creates a venv at `~/.echelon/venv/` and installs the core Echelon and understanding CLIs, including delivery/harness subcommands
+2. When Node.js and npm are available, installs the pinned Context7, CodeGraph, and PerlGraph runtimes under `~/.echelon/node/`
+3. Adds `~/.echelon/venv/bin` to your PATH
+4. Creates `~/.echelon/memory/` and caches the MemPalace embedding model (~80MB, one time)
+
+Install the optional SOAR-backed codegen pipeline with:
+
+```bash
+bash ~/echelon/scripts/install.sh --with-codegen
+```
+
+That mode also downloads SOAR 9.6.4 into `~/.echelon/soar/bin/`, adds it to
+PATH, and creates the standalone `codegen` launcher. MemPalace is installed and
+warmed in both modes because non-SOAR pipelines use it too.
 
 Set `ECHELON_HOME` before installation to relocate the shared Node runtimes. A
 complete project-deployed runtime takes precedence when present; otherwise
@@ -38,24 +54,29 @@ directly.
 
 ---
 
-## Register the spec-kit extension
+## Register the spec-kit extension in a workspace
 
 ```bash
-specify extension add --dev ~/echelon/extension
+cd ~/work/my-project
+specify init --here --integration claude --offline
+specify extension add --force --dev ~/echelon/extension
 ```
+
+Use the integration you installed in place of `claude`. The extension is
+installed into the workspace, not into the Echelon checkout.
 
 ---
 
 ## Verify Installation
 
 ```bash
-# Check CLIs are on PATH (may need a terminal restart after install)
+# Check core CLIs are on PATH (may need a terminal restart after install)
 echelon --help
 echelon delivery --help
-codegen --help
 understanding version
 
-# Check SOAR is on PATH
+# After installing with --with-codegen, check the optional pipeline
+codegen --help
 soar --version
 
 # Check memory stores
@@ -82,12 +103,12 @@ echelon workspace init
 Wing name for MemPalace memory [my-project]: ▌
 ```
 
-Press Enter to accept the auto-suggestion (derived from your git remote URL, e.g. `my-app` from `github.com/org/my-app`) or type a custom name. The wing is written to `echelon-config.yml` under `mempalace.wing` and committed with your project.
+Press Enter to accept the auto-suggestion (derived from your git remote URL, e.g. `my-app` from `github.com/org/my-app`) or type a custom name. The wing is written to `.echelon/config.yml` under `mempalace.wing` and committed with your project.
 
 **Wing rules:**
 
 - Set it once, never change it for a given repo
-- All clones of the same repo should use the same wing (they inherit it automatically via `echelon-config.yml`)
+- All clones of the same repo should use the same wing (they inherit it automatically via `.echelon/config.yml`)
 - Two different repos must use different wings — `echelon workspace init` warns you if a collision is detected
 
 Re-running `echelon workspace init` on an already-configured project is safe — if the wing is already set, the step is skipped.
@@ -128,7 +149,7 @@ codegen requirements clean --from-wing my-app --project-dir .
 ```bash
 cd ~/echelon && git pull
 bash ~/echelon/scripts/install.sh   # re-runs installer; SOAR skipped if already present, venv rebuilt
-specify extension update --dev ~/echelon/extension
+specify extension add --force --dev ~/echelon/extension
 ```
 
 To force a fresh SOAR download:
@@ -145,7 +166,8 @@ To upgrade the MemPalace or understanding model versions, update the relevant UR
 ## Uninstall
 
 ```bash
-# Remove all echelon runtime data (SOAR, venv, memory, config) and PATH entries
+# Remove the Echelon venv, SOAR, shared Node runtimes, and PATH entries.
+# Memory is preserved unless explicitly purged.
 bash ~/echelon/scripts/uninstall.sh
 
 # To also delete memory stores (~/.echelon/memory/ and ~/.mempalace/)
@@ -191,14 +213,14 @@ shared runtimes and refreshes them from the pinned lockfiles.
 
 ### Re-run the installer
 
-The installer is safe to re-run. SOAR is skipped if already present; the venv is rebuilt; `memory-config.yml` is left untouched if it exists.
+The installer is safe to re-run. SOAR is skipped if already present, the venv is
+rebuilt, and the MemPalace store is preserved.
 
 ---
 
 ## System Requirements
 
 - **Python**: 3.11 or higher
-- **Node.js with npm**: required for Context7, CodeGraph, and PerlGraph
-- **OS**: macOS (ARM64, x86-64), Linux (x86-64)
-- **Disk**: ~500MB for SOAR + ~80MB for embedding model + ~2GB for understanding (torch + spaCy + transformers)
-- **spec-kit**: >= 0.4.2
+- **Node.js with npm**: optional; enables Context7, CodeGraph, and PerlGraph
+- **Docker or Podman**: needed for default delivery sandbox verification
+- **SOAR**: installed only with `--with-codegen`

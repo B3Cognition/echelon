@@ -144,11 +144,13 @@ def test_readiness_candidates_exclude_stale_short_spec_alias_when_slug_is_known(
     assert tmp_path / "specs" / "004" not in candidates
 
 
-def test_continue_recovers_terminal_lexicon_block_after_independent_validation(
+@pytest.mark.parametrize("last_dispatch_phase", ["phase1-what", "phase1-lexicon"])
+def test_continue_routes_terminal_lexicon_block_to_visible_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    last_dispatch_phase: str,
 ) -> None:
-    """A repaired, valid derived contract resumes at WHY2 without another WHAT run."""
+    """Hard-gate recovery is certified by the visible node, not the CLI."""
     _write_real_constitution(tmp_path)
     run_dir = _write_run_state(
         tmp_path,
@@ -159,7 +161,7 @@ def test_continue_recovers_terminal_lexicon_block_after_independent_validation(
             "spec_id": "001-demo",
             "spec_dir": "runs/spec-test/specs/001-demo",
             "completed_phases": ["phase1-constitution", "phase1-what"],
-            "last_dispatch": {"phase_id": "phase1-what"},
+            "last_dispatch": {"phase_id": last_dispatch_phase},
             "user_message": "build the dashboard",
             "autonomy_mode": "semi",
         },
@@ -197,10 +199,10 @@ THEN: The dashboard is visible
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["phase"] == "phase1-why2"
+    assert state["phase"] == "phase1-lexicon"
     assert state["status"] == "running"
-    assert state["lexicon_pass"] is True
-    assert state["lexicon_findings"] == 0
+    assert "lexicon_pass" not in state
+    assert "lexicon_findings" not in state
     assert calls == [["build the dashboard", "--mode", "semi"]]
 
 

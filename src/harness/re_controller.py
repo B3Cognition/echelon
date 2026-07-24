@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import shutil
 import tempfile
 import hashlib
@@ -49,10 +48,11 @@ from echelon.telemetry.model import ExecutionSpan, TokenUsage
 from echelon.telemetry.store import TelemetryStore
 from harness.re_budget import evaluate_re_budget
 from harness.re_repair_packet import ReRepairFinding, ReRepairPacket
+from harness.squad_executors import _canonical_echelon_result_contract
 
 
 class ReAgentProvider(Protocol):
-    def exec_agent(self, project_root: str, prompt: str): ...
+    def exec_agent(self, project_root: str, prompt: str, **kwargs: object): ...
 
 
 @dataclass(frozen=True)
@@ -96,6 +96,52 @@ _ARCHITECTURE_OVERLAY_OUTPUTS = frozenset(
 _TARGET_QUALITY_PROTOCOL_VERSION = 1
 _SEMANTIC_QUALITY_REVIEW_PROTOCOL_VERSION = 2
 _SEMANTIC_DOMAIN_AUDIT_PROTOCOL_VERSION = 1
+_RETARGET_MARKER = "[REQUIRES INPUT]"
+_RETARGET_STRATEGY_FILES = (
+    "constitution.md",
+    "migration-strategy.md",
+    "risk-matrix.md",
+    "gap-analysis.md",
+)
+
+
+def discover_retarget_markers(re_root: Path) -> dict[str, object]:
+    """Return a deterministic inventory of unresolved strategy decisions."""
+    root = re_root.resolve()
+    strategy_root = root / "workspace" / "strategy"
+    paths = [strategy_root / name for name in _RETARGET_STRATEGY_FILES]
+    adrs_root = strategy_root / "adrs"
+    if adrs_root.is_dir() and not adrs_root.is_symlink():
+        paths.extend(
+            path
+            for path in adrs_root.rglob("*.md")
+            if path.is_file() and not path.is_symlink()
+        )
+
+    markers: list[dict[str, object]] = []
+    for path in sorted(set(paths)):
+        if not path.is_file() or path.is_symlink():
+            continue
+        try:
+            relative = path.resolve().relative_to(root).as_posix()
+        except ValueError:
+            continue
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(),
+            start=1,
+        ):
+            for occurrence in range(line.count(_RETARGET_MARKER)):
+                markers.append({
+                    "path": relative,
+                    "line": line_number,
+                    "occurrence": occurrence + 1,
+                    "context": line.strip(),
+                })
+    return {
+        "schema_version": 1,
+        "count": len(markers),
+        "markers": markers,
+    }
 
 
 class ReExtractionController:
@@ -274,6 +320,15 @@ class ReExtractionController:
                 payload = self._analysis_result()
             else:
                 dispatch_started = datetime.now(timezone.utc)
+                dispatch_kwargs: dict[str, object] = {}
+                if getattr(self._provider, "supports_result_contract", False):
+                    dispatch_kwargs["result_contract"] = self._result_contract_for_phase(
+                        phase
+                    )
+                if getattr(self._provider, "supports_prompt_metadata", False):
+                    prompt_metadata = self._prompt_metadata_for_target(plan, target)
+                    if prompt_metadata:
+                        dispatch_kwargs["prompt_metadata"] = prompt_metadata
                 result = self._provider.exec_agent(
                     str(self._project_root),
                     self._prompt_for(
@@ -283,6 +338,7 @@ class ReExtractionController:
                         target,
                         semantic_target=semantic_target,
                     ),
+                    **dispatch_kwargs,
                 )
                 dispatch_ended = datetime.now(timezone.utc)
                 self._account_provider_usage(state, result)
@@ -344,7 +400,7 @@ class ReExtractionController:
                         )
                         if snapshot_reason is not None:
                             return self._block(state, snapshot_reason)
-                    target_result = self._evaluate_specification_target(
+                    target_result = self._run_specification_target_post_dispatch(
                         state,
                         plan,
                         target,
@@ -364,12 +420,20 @@ class ReExtractionController:
                 return self._block(state, "re_agent_result_invalid")
             try:
                 state = complete_dispatch(
-                    state, self._agent_result_without_controller_keys(payload, target)
+                    state,
+                    self._agent_result_without_controller_keys(
+                        payload, target, phase=phase
+                    ),
                 )
             except (KeyError, ValueError) as exc:
                 state["re_agent_result_detail"] = str(exc)
                 return self._block(state, "re_agent_result_invalid")
             state.pop("re_agent_result_detail", None)
+            if phase == "re-extract-3-verify":
+                coverage_error = self._refresh_controller_coverage(state, plan)
+                if coverage_error is not None:
+                    state["re_agent_result_detail"] = coverage_error
+                    return self._block(state, "re_coverage_measurement_failed")
             if phase == "re-extract-2-specify":
                 for snapshot_key in (
                     "re_quality_repair_snapshot",
@@ -381,7 +445,11 @@ class ReExtractionController:
                     if snapshot_reason is not None:
                         return self._block(state, snapshot_reason)
             if phase == "re-extract-2-specify" and target is not None:
-                target_result = self._evaluate_specification_target(state, plan, target)
+                target_result = self._run_specification_target_post_dispatch(
+                    state,
+                    plan,
+                    target,
+                )
                 if target_result is not None:
                     return target_result
                 self._save_state(state)
@@ -515,6 +583,38 @@ class ReExtractionController:
             self._save_state(state)
             return ReControllerResult(completed=True)
         self._save_state(state)
+        return None
+
+    def _refresh_controller_coverage(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+    ) -> str | None:
+        """Measure aggregate source coverage without trusting model state."""
+        reports: list[ReSourceQualityReport] = []
+        try:
+            for source in plan.refresh_sources:
+                report = measure_source_quality(
+                    self._run_re_dir,
+                    plan,
+                    source.id,
+                    coverage_threshold=self._metric(state, "coverage_threshold"),
+                )
+                write_re_source_quality_report(self._run_re_dir, report)
+                reports.append(report)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            return str(exc)
+
+        eligible = sum(report.eligible_file_count for report in reports)
+        covered = sum(report.covered_file_count for report in reports)
+        state["coverage_pct"] = (
+            100 if eligible == 0 else int(round((covered / eligible) * 100))
+        )
+        state["re_coverage_measurement"] = {
+            "eligible_file_count": eligible,
+            "covered_file_count": covered,
+            "source_count": len(reports),
+        }
         return None
 
     @staticmethod
@@ -1511,6 +1611,54 @@ class ReExtractionController:
         ]
         return {"schema_version": 1, "domains": domains}
 
+    @staticmethod
+    def _result_contract_for_phase(phase: str):
+        from harness.echelon_result_schema import EchelonResultContract
+
+        file_only_state_phases = {
+            "re-extract-2-specify",
+            "re-extract-3-verify",
+            "re-extract-4-expand",
+            "re-extract-5-validate",
+            "re-extract-6-checklist",
+            "re-extract-7-constitute",
+        }
+        return EchelonResultContract(
+            allowed_state_update_keys=(
+                frozenset() if phase in file_only_state_phases else None
+            ),
+            allowed_verdicts=frozenset({"DONE", "BLOCKED"}),
+            unexpected_state_updates="reject",
+        )
+
+    @staticmethod
+    def _phase_result_contract_prompt(phase: str) -> str:
+        lines = [
+            "\n\n## RE Result Contract",
+            "Return exactly one final, unfenced YAML block starting with `echelon_result:`.",
+            "Do not add prose after the final block.",
+            f"Set `phase_id: {phase}`.",
+            "Allowed verdicts for this RE dispatch are `DONE` and `BLOCKED`.",
+        ]
+        if phase in {
+            "re-extract-2-specify",
+            "re-extract-3-verify",
+            "re-extract-4-expand",
+            "re-extract-5-validate",
+            "re-extract-6-checklist",
+            "re-extract-7-constitute",
+        }:
+            lines.append(
+                "Return `state_updates: {}`; controller-owned routing and quality "
+                "state are applied after dispatch."
+            )
+        if phase == "re-extract-5-validate":
+            lines.append(
+                "Include exactly one `semantic_quality_review` object for the "
+                "requested domain; the controller validates it before routing."
+            )
+        return "\n".join(lines) + "\n"
+
     def _prompt_for(
         self,
         phase: str,
@@ -1564,7 +1712,11 @@ class ReExtractionController:
                 "Use this answer only to resolve the blocker that requested it; "
                 "preserve all deterministic RE boundaries and validation rules.\n"
             )
-        return prompt
+        return (
+            prompt
+            + self._phase_result_contract_prompt(phase)
+            + _canonical_echelon_result_contract(self._extension_root)
+        )
 
     @staticmethod
     def _semantic_domain_inventory_prompt(target: dict[str, str]) -> str:
@@ -1767,6 +1919,60 @@ class ReExtractionController:
         if target.get("kind") == "workspace-synthesis":
             state["re_workspace_synthesis_complete"] = True
 
+    def _prompt_metadata_for_target(
+        self,
+        plan: ReExecutionPlan,
+        target: dict[str, object] | None,
+    ) -> dict[str, object]:
+        """Restrict API-provider tools to controller-owned target boundaries."""
+        if not isinstance(target, dict):
+            return {}
+        kind = target.get("kind")
+        source_id = target.get("source_id")
+        if kind not in {"source-domain", "source-support"} or not isinstance(
+            source_id, str
+        ):
+            return {}
+        source = next((item for item in plan.sources if item.id == source_id), None)
+        if source is None:
+            raise ValueError(f"unknown controller specification source: {source_id}")
+        source_root = Path(source.absolute_path).resolve()
+        read_roots = [str(self._run_re_dir.resolve())]
+        if kind == "source-domain":
+            root = target.get("root")
+            domain_id = target.get("domain_id")
+            if not isinstance(root, str) or not root or not isinstance(domain_id, str):
+                raise ValueError("invalid controller source-domain tool scope")
+            read_roots.append(str((source_root / root).resolve()))
+            write_paths = [
+                str(
+                    (
+                        self._run_re_dir
+                        / "sources"
+                        / source_id
+                        / "specs"
+                        / domain_id
+                        / "spec.md"
+                    ).resolve()
+                )
+            ]
+        else:
+            read_roots.append(str(source_root))
+            write_paths = [
+                str(
+                    (
+                        self._run_re_dir
+                        / "sources"
+                        / source_id
+                        / "supporting-artifacts.md"
+                    ).resolve()
+                )
+            ]
+        return {
+            "tool_read_roots": read_roots,
+            "tool_write_paths": write_paths,
+        }
+
     def _evaluate_specification_target(
         self,
         state: dict,
@@ -1777,11 +1983,10 @@ class ReExtractionController:
     ) -> ReControllerResult | None:
         """Route one specification target from deterministic evidence, not verdict alone.
 
-        A specifier can report BLOCKED after its own check-domain command fails.
-        The controller owns that gate and must turn the observed incomplete
-        artifact into the same bounded repair work as a DONE response with an
-        incomplete artifact. A BLOCKED response with a passing target remains
-        an explicit agent blocker instead of being silently accepted.
+        The controller owns the source-domain quality gate and must turn the
+        observed incomplete artifact into bounded repair work. A BLOCKED
+        response with a passing target remains an explicit agent blocker
+        instead of being silently accepted.
         """
         if (
             target.get("kind") == "workspace-synthesis"
@@ -1805,7 +2010,11 @@ class ReExtractionController:
                 source_id,
                 domain_id,
                 attempts,
-                self._metric(state, "max_verify_expand_iterations"),
+                (
+                    self._source_budget(state, "max_domain_repairs")
+                    if self._source_convergence_enabled(state)
+                    else self._metric(state, "max_verify_expand_iterations")
+                ),
                 agent_block_detail,
             )
             if self._source_convergence_enabled(state):
@@ -1834,6 +2043,22 @@ class ReExtractionController:
             return self._block(state, self._agent_blocked_reason(agent_block_detail))
         self._complete_specification_target(state, target)
         return None
+
+    def _run_specification_target_post_dispatch(
+        self,
+        state: dict,
+        plan: ReExecutionPlan,
+        target: dict[str, object],
+        *,
+        agent_block_detail: str | None = None,
+    ) -> ReControllerResult | None:
+        """Run controller-owned post-dispatch gates for one RE specification target."""
+        return self._evaluate_specification_target(
+            state,
+            plan,
+            target,
+            agent_block_detail=agent_block_detail,
+        )
 
     @staticmethod
     def _dispatch_failure_detail(
@@ -1876,9 +2101,14 @@ class ReExtractionController:
         budget: int,
         agent_block_detail: str | None,
     ) -> None:
+        repair_status = (
+            f"repair attempt {attempts}/{budget}"
+            if attempts <= budget
+            else f"repair budget exhausted ({budget}/{budget})"
+        )
         message = (
             "[re] target quality failed: "
-            f"{source_id}/{domain_id}; repair attempt {attempts}/{budget}"
+            f"{source_id}/{domain_id}; {repair_status}"
         )
         if agent_block_detail is not None:
             message += "; agent result routed into deterministic repair"
@@ -1943,6 +2173,84 @@ class ReExtractionController:
             except OSError:
                 pass
 
+    @staticmethod
+    def _target_quality_failure_guidance(report_path: Path) -> str:
+        """Render the exact deterministic findings into a compact repair checklist."""
+        if not report_path.is_file():
+            return ""
+        try:
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return ""
+        failures = payload.get("failures") if isinstance(payload, dict) else None
+        if not isinstance(failures, list):
+            return ""
+        findings: list[str] = []
+        list_fields = (
+            ("missing_sections", "Missing sections"),
+            ("invalid_source_evidence", "Invalid source evidence"),
+            ("scenarios_without_acceptance", "Scenarios without acceptance cases"),
+            ("scenarios_without_evidence", "Scenarios without evidence"),
+            (
+                "functional_requirements_without_evidence",
+                "Functional requirements without evidence",
+            ),
+            (
+                "non_functional_requirements_without_evidence",
+                "Non-functional requirements without evidence",
+            ),
+            ("semantic_findings", "Semantic findings"),
+        )
+        count_fields = (
+            ("scenario_count", "expected_scenario_count", "Scenario count"),
+            (
+                "functional_requirement_count",
+                "expected_functional_requirement_count",
+                "Functional requirement count",
+            ),
+            (
+                "non_functional_requirement_count",
+                "expected_non_functional_requirement_count",
+                "Non-functional requirement count",
+            ),
+        )
+        for failure in failures:
+            if not isinstance(failure, dict):
+                continue
+            for key, label in list_fields:
+                values = failure.get(key)
+                if isinstance(values, list) and values:
+                    rendered = ", ".join(str(value) for value in values)
+                    findings.append(f"- {label}: {rendered}")
+            for actual_key, expected_key, label in count_fields:
+                actual = failure.get(actual_key)
+                expected = failure.get(expected_key)
+                if (
+                    isinstance(actual, int)
+                    and isinstance(expected, int)
+                    and actual < expected
+                ):
+                    findings.append(f"- {label}: {actual}; required: {expected}")
+            semantic = failure.get("semantic_preflight_findings")
+            if isinstance(semantic, list):
+                for item in semantic:
+                    if isinstance(item, dict):
+                        message = item.get("message")
+                        code = item.get("code")
+                        if isinstance(message, str) and message:
+                            prefix = f" [{code}]" if isinstance(code, str) and code else ""
+                            findings.append(f"- Semantic preflight{prefix}: {message}")
+                    elif isinstance(item, str) and item:
+                        findings.append(f"- Semantic preflight: {item}")
+        if not findings:
+            return ""
+        return (
+            "\n## Authoritative Deterministic Repair Findings\n"
+            + "\n".join(findings)
+            + "\nFix every listed finding. Do not substitute evidence from outside the "
+            "absolute owned domain root. The controller report remains authoritative.\n"
+        )
+
     def _specification_target_prompt(self, target: dict[str, object]) -> str:
         kind = target.get("kind")
         if kind == "workspace-synthesis":
@@ -1995,6 +2303,13 @@ class ReExtractionController:
             self._run_re_dir / "quality" / "targets" / source_id / f"{domain_id}.json"
         )
         source_report = self._run_re_dir / "quality" / "sources" / f"{source_id}.json"
+        plan = self._load_plan()
+        source = next((item for item in plan.sources if item.id == source_id), None)
+        if source is None:
+            raise ValueError(f"unknown controller specification source: {source_id}")
+        source_root = Path(source.absolute_path).resolve()
+        absolute_domain_root = (source_root / root).resolve()
+        quality_failure_guidance = self._target_quality_failure_guidance(target_report)
         orphan_paths = target.get("orphan_paths")
         coverage_repair = ""
         if isinstance(orphan_paths, list) and orphan_paths:
@@ -2058,23 +2373,34 @@ class ReExtractionController:
             f"Source ID: `{source_id}`\n"
             f"Domain ID: `{domain_id}`\n"
             f"Owned source root: `{root}`\n"
+            f"Source repository root: `{source_root}`\n"
+            f"Absolute owned domain root: `{absolute_domain_root}`\n"
+            f"RE output directory: `{self._run_re_dir.resolve()}`\n"
             f"Domain manifest: `{manifest}`\n"
-            "Read only this source's owned root and its staged extraction artifacts. "
+            "Do not look for source code below the RE output directory; it contains "
+            "artifacts and analysis, not a staged repository copy. When the provider "
+            "offers `read_domain_pack`, use it first with the RE output directory, source "
+            "ID, and domain ID above. Read source code only from the absolute owned domain "
+            "root. You may read staged extraction artifacts from the RE output directory, "
+            "but they are context rather than source citations. "
             "Every source citation must be a backticked `path/to/file:line` reference "
             "using either the source-root path or a path relative to the owned domain "
             "root; it must resolve within that domain. Never use Markdown-link citations. "
+            "Never search outside the owned domain root for tests. If no tests exist "
+            "inside it, record the canonical `tests` Behavior Coverage row as "
+            "`not-observed`. A rejected out-of-scope read is authoritative and final; "
+            "do not retry it or broaden the requested path. "
             "Include at least five distinct valid citations. Do not write another domain spec, "
             "source overview, or workspace synthesis. Write only this target's `spec.md`; "
             "never create backup, temporary, alternate, or scratch files beside it.\n"
             + coverage_repair
             + semantic_repair
-            + "Before returning DONE, run this exact deterministic check from the "
-            "workspace root; it exits non-zero and prints the authoritative failures "
-            "when the spec is not acceptable:\n"
-            f"`cd {shlex.quote(str(self._project_root))} && echelon re check-domain "
-            f"{self._run_dir.name} {source_id} {domain_id}`\n"
-            "Do not claim that a citation is valid because its path exists: its line "
-            "range must also exist. Correct every printed failure before returning DONE.\n"
+            + quality_failure_guidance
+            + "Before returning DONE, make the spec satisfy the deterministic "
+            "source-domain quality gate. The controller runs that gate after "
+            "dispatch and records the authoritative target-quality report when "
+            "the spec is not acceptable. Do not claim that a citation is valid "
+            "because its path exists: its line range must also exist.\n"
             + quality_contract
             + architecture_contract
             + (
@@ -2083,6 +2409,9 @@ class ReExtractionController:
                 if target_report.is_file()
                 else ""
             )
+            + "`echelon_result` is a final YAML response block, not a callable tool. "
+            "Do not invoke a function named `echelon_result` and do not call more tools "
+            "after the target artifact is complete.\n"
         )
 
     def _ensure_architecture_overlay(
@@ -2303,6 +2632,16 @@ class ReExtractionController:
                         self._run_re_dir / "codegraph-summary.json"
                     )
                     if (self._run_re_dir / "codegraph-summary.json").is_file()
+                    else None,
+                    "perlgraph_analysis": str(
+                        self._run_re_dir / "perlgraph-analysis.json"
+                    )
+                    if (self._run_re_dir / "perlgraph-analysis.json").is_file()
+                    else None,
+                    "perlgraph_summary": str(
+                        self._run_re_dir / "perlgraph-summary.json"
+                    )
+                    if (self._run_re_dir / "perlgraph-summary.json").is_file()
                     else None,
                 },
             },
@@ -2760,7 +3099,10 @@ class ReExtractionController:
 
     @staticmethod
     def _agent_result_without_controller_keys(
-        payload: dict, target: dict[str, object] | None = None
+        payload: dict,
+        target: dict[str, object] | None = None,
+        *,
+        phase: str = "",
     ) -> dict:
         updates = payload.get("state_updates")
         if not isinstance(updates, dict):
@@ -2774,6 +3116,15 @@ class ReExtractionController:
             # transitions are controller-owned. Providers sometimes report
             # descriptive inventory or completion metadata, but none of it may
             # mutate RE routing state.
+            return {**payload, "state_updates": {}}
+        if phase in {
+            "re-extract-2-specify",
+            "re-extract-3-verify",
+            "re-extract-4-expand",
+            "re-extract-5-validate",
+            "re-extract-6-checklist",
+            "re-extract-7-constitute",
+        }:
             return {**payload, "state_updates": {}}
         controlled = {
             "max_validate_iterations",

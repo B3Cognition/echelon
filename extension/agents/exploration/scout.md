@@ -123,7 +123,7 @@ No code exists. You must build equivalent understanding by researching the domai
 
 ### Step 1: Reference Architecture Search
 
-Use WebSearch to find established architectures for the described domain:
+Use the public-web search capability exposed for this dispatch to find established architectures for the described domain. If that capability is unavailable, record the gap in `unknowns.md`, use only supplied or directly inspectable evidence, and never invent external sources:
 
 - Search for: `"<domain> reference architecture"`, `"<domain> system design"`, `"<domain> open source"`
 - Find 3-5 similar open-source projects or well-documented systems

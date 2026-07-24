@@ -1,166 +1,104 @@
 # Phase: phase1-why2
-# Source: echelon.run.md §5 — WHY2 Phase (Spec Validation)
-# Agent: speckit-echelon-sage (SAGE) (mode: WHY2)
-# Read by: speckit-echelon-commander (COMMANDER) before dispatching speckit-echelon-sage (SAGE) WHY2
+# Agent: speckit-echelon-sage (SAGE), mode WHY2
 
-## 5. WHY2 Phase (Spec Validation)
+## Purpose
 
-### Preflight: Understanding Extension Availability (HARD STOP)
+Interpret controller-certified Understanding evidence and perform the first
+qualitative adversarial review of the specification. Deterministic analysis has
+already completed in `phase1-understanding` before this provider dispatch.
 
-Before dispatching speckit-echelon-sage (SAGE) for WHY2 (and WHY3), speckit-echelon-commander (COMMANDER) MUST verify Understanding is available. speckit-echelon-sage (SAGE) invokes Understanding via the Skill tool (`speckit.echelon.understanding-validate`), not as a CLI binary.
+## Certified Precondition
 
-If the `speckit.echelon.understanding-validate` skill invocation fails (Understanding extension unavailable):
+The harness injects a **Certified Understanding Evidence** section containing
+the immutable report path, digest, iteration, aggregate pass value, and failing
+gates. SAGE must read that report and must not run validators, discover quality
+configuration, recalculate scores, or return controller-owned `quality_scores`.
+The report's **Resolved Quality Gates** are the thresholds from resolved project
+configuration; the report values and verdicts are authoritative.
 
-1. Return the blocked status in `echelon_result.state_updates`:
+If the injected section or report is missing, return `BLOCKED` with the exact
+missing path. A report with failed gates is valid evidence, not an operational
+error: continue the qualitative review and explain concrete repairs.
 
-   ```yaml
-   status: blocked
-   blocked_reason: "Understanding extension unavailable — required for WHY2/WHY3 spec validation"
-   dependency_checks:
-     understanding:
-       status: unavailable
-       checked_at: "<ISO-8601>"
-       version: null
-   ```
+## Dispatch Contract
 
-2. Print to terminal:
+<context>
 
-```
-============================================
-  SQUAD BLOCKED — UNDERSTANDING REQUIRED
-============================================
-
-Phase: WHY2 (spec-validation)
-Required: Understanding extension (speckit.echelon.understanding-validate)
-
-Heuristic fallback is NOT permitted.
-Prior run (PAT-006) proved heuristic scoring is 15-29% overconfident,
-producing misleading quality gates that corrupt calibration data.
-
-Install: specify extension add understanding
-============================================
-```
-
-3. **STOP execution.** Always stop at the BLOCKED banner. Do not dispatch speckit-echelon-sage (SAGE). Do not proceed.
-
-**MANDATORY — return the Understanding availability check result in `echelon_result.state_updates` before dispatching speckit-echelon-sage (SAGE):**
-
-```yaml
-dependency_checks:
-  understanding:
-    status: available
-    checked_at: "<ISO-8601>"
-    version: "<version string from skill output if available, else null>"
-```
-
-If other dependency checks already exist, include the full existing `dependency_checks` object plus the updated `understanding` entry because harness state updates are shallow top-level merges.
-
-If the skill is unavailable, always return `dependency_checks.understanding.status: unavailable` and HARD STOP per the BLOCKED banner above — do not skip this state update and continue.
-
-### Context Pack Assembly
-
-Read and include in the subagent prompt:
-
-- All current artifacts in `{spec_dir}/`
-- Understanding access (via `speckit.echelon.understanding-validate` Skill tool)
+- Authoritative active artifact root: `{spec_dir}` (`ACTIVE_SPEC_DIR` in the
+  harness-injected Squad Run Context).
+- `{spec_dir}/spec.md`
+- `.specify/memory/constitution.md`
+- `{spec_dir}/assumptions.md`
+- prior/current/stale run context files at their harness-injected resolved paths
+- reasoning journal summary from `phase1-what`
+- harness-injected Certified Understanding Evidence at its exact report path
 - `agents/exploration/templates/sage-quality-gates-template.md`
 - `agents/exploration/templates/sage-issues-template.md`
-- `calibration-profile.yaml`
-- `reasoning-journal.jsonl`
 
-### Dispatch
+</context>
 
-Use the Agent tool to dispatch a subagent with:
+<instructions>
 
-- **prompt:**
+Treat `{spec_dir}` / `ACTIVE_SPEC_DIR` as authoritative. Do not search for,
+discover, or select another specification directory. Every context artifact is
+identified by the resolved filesystem path in its injected heading.
 
-  ```xml
-  <context>
-  [include all current artifacts in {spec_dir}/, sage WHY2 output templates, calibration-profile.yaml, reasoning-journal.jsonl]
-  </context>
+Operate in WHY2 spec-validation mode using `agents/exploration/sage.md`. Audit
+ambiguity, completeness, consistency, testability, assumptions, error cases,
+and unknown unknowns. Interpret every failed certified gate and relevant
+per-requirement finding. Copy certified values exactly into `quality-gates.md`;
+do not create substitute values. Create both artifacts using the provided templates
+as their schemas.
 
-  <instructions>
-  You are SAGE. Read agents/exploration/sage.md for your complete protocol. Operate in **spec-validation mode** (WHY2 — post-WHAT).
-  When Product Input Contract paths are present, audit every `IN-REQ-*` mapping in the current traceability ledger against `spec.md`. Return corrective `product_input_updates` for any unsupported included mapping, unresolved question, or conflict; preserve the canonical fields `input_unit_id`, `disposition`, `rationale`, `spec_ids`, `task_ids`, and `targets` exactly, and do not directly edit the ledger.
-  Execute `understanding {spec_dir}/spec.md --validate --json --output /tmp/u_validate.json` to get deterministic quality scores, following the complete invocation and parsing protocol in `agents/exploration/sage.md`. After validation, also run per-requirement analysis with `--per-req --json --enhanced` and include the per-requirement failure list in issues.md for speckit-echelon-cartographer (CARTOGRAPHER) consumption. Challenge requirements for ambiguity, incompleteness, untestability. Use the **Resolved Quality Gates** block injected by the harness; it is the authoritative runtime contract. Never substitute numeric thresholds copied from this phase document, an agent protocol, or a belief register. Produce outputs in `{spec_dir}/` using the provided templates. Return journal entries in `echelon_result.journal_entries`.
-  </instructions>
-  ```
+When Product Input Contract paths are present, audit every `IN-REQ-*` mapping
+against `{spec_dir}/spec.md`. Return corrective `product_input_updates` for
+unsupported included mappings, unresolved questions, or conflicts, preserving
+canonical fields exactly. Do not edit the controller-owned ledger.
 
-- **description:** "speckit-echelon-sage (SAGE) (WHY2): spec validation with Understanding quality gates + per-requirement analysis"
+Return journal entries in `echelon_result.journal_entries` and a qualitative
+`PASS`, `FAIL`, or `BLOCKED` verdict. Do not include `quality_scores` in state
+updates or in `echelon_result.state_updates`.
 
-### Expected Outputs
+</instructions>
 
-- `issues.md` (scored findings: CRITICAL / HIGH / MEDIUM / LOW)
-- `quality-gates.md` (Understanding metric results)
+<outputs>
 
-### Gate Check + Convergence
+Produce in `{spec_dir}/`:
 
-Read WHY2 outputs:
+- `{spec_dir}/issues.md` with CRITICAL, HIGH, MEDIUM, and LOW findings;
+- `{spec_dir}/quality-gates.md` containing the certified metrics and SAGE
+  interpretation;
+- one final fenced `echelon_result` YAML block matching the harness-injected
+  result contract.
 
-1. **Quality gates pass AND no CRITICAL issues AND no required amendments remain** → proceed to ASSESS
-2. **Quality gates fail OR CRITICAL issues found OR required amendments remain** → route back to WHAT with specific amendment demands. Required amendments include `mandatory amendments`, HIGH issues marked required/blocking, or any SAGE recommendation to `route to CARTOGRAPHER` / `route to ARCHITECT` before proceeding. Include the per-requirement failure list from issues.md "Per-Requirement Failures" section in speckit-echelon-cartographer (CARTOGRAPHER)'s context pack so speckit-echelon-cartographer (CARTOGRAPHER) knows which specific requirements to amend and which categories are failing. Increment iteration. Check limits.
-3. **Track quality scores — MANDATORY return on every WHY2 pass (pass or fail):** include the full updated `quality_scores` list in `echelon_result.state_updates`, appending an object with **every** field below. Missing a field breaks the convergence delta check in step 4.
+</outputs>
 
-   ```yaml
-   quality_scores:
-     - pass: <true|false>
-       pass_id: "WHY2-iter-{N}"
-       overall: <float|null>
-       structure: <float|null>
-       readability: <float|null>
-       cognitive: <float|null>
-       semantic: <float|null>
-       testability: <float|null>
-       behavioral: <float|null>
-       depth: <float|null>
-   ```
+## Gate and Convergence
 
-   All score values come from Understanding output (quality-gates.md). Use `null` only when Understanding genuinely did not return that category (e.g., spec has zero requirements). Always include the prior series plus the new entry, even on FAIL — do not skip it because convergence depends on the full series and harness state updates are shallow top-level merges.
-4. **Convergence check:** If this is iteration >= 2, compare quality scores across ALL 7 categories: compute the absolute delta for EACH category between the last two WHY passes. Convergence is met when MAX(abs(delta)) across all 7 categories is < `convergence_delta` (per `echelon-config.yml convergence:`) for 2 consecutive passes. This prevents false convergence where overall is stable but individual categories oscillate.
-   - Same issue appears 3x → defer or escalate (see Section 15)
+The controller combines SAGE's qualitative result with its certified score:
 
-### WHY2 iteration stop conditions
+1. Certified gates pass, no CRITICAL issues, and no required amendments remain:
+   proceed to the assessment checkpoint.
+2. Certified gates fail, a CRITICAL issue exists, or a required amendment
+   remains: route to WHAT with the concrete amendment list while below the
+   iteration limit.
+3. At the iteration cap, use the workflow's explicit force-convergence warning.
 
-COMMANDER evaluates these in priority order after each WHY2 pass. Execute the **first matching condition** and stop evaluating further.
+SAGE may make a certified pass stricter through a qualitative FAIL. SAGE may
+never make a certified failure pass. Score history, deltas, and iteration
+routing are controller-owned. Required amendments are mandatory amendments:
+even without a CRITICAL issue, HIGH issues marked required keep the verdict at
+`FAIL` until repaired.
 
-| Priority | Condition | Transition | State updates to return |
-|---|---|---|---|
-| 1 | `iteration >= max_squad_iterations` (from `echelon-config.yml convergence:`) | → phase2-decide | `convergence_forced: true`, `convergence_reason: "max_iterations_reached"` |
-| 2 | `token_usage >= token_budget_k * 1000` (from `echelon-config.yml budget:`) | → phase2-decide | `convergence_forced: true`, `convergence_reason: "token_budget_exhausted"` |
-| 3 | `iteration >= 4` AND cumulative improvement in `overall` score (iteration 1 → now) < `0.05` | → phase2-decide | `convergence_forced: true`, `convergence_reason: "hard_plateau"` |
-| 4 | MAX(abs(delta)) across all 7 score categories < `convergence_delta` for 2 consecutive passes | → phase2-decide | `convergence_detected: true`, `convergence_reason: "delta_converged"` |
-| 5 | Quality gates pass AND no CRITICAL issues AND no required amendments remain | → phase2-decide | `convergence_detected: true` |
-| 6 | All other cases (gates fail, CRITICAL issues present, or required amendments remain) | → phase1-what (increment iteration) | — |
+## User-Gated Critical Issues
 
-When transitioning on conditions 1–3 (`convergence_forced: true`), write a quality report noting what was not completed and why, and flag artifacts as "forced convergence."
+Set `escalation_question`, `blocked_reason`, and `status: blocked` only when all
+of these are true:
 
-**Transition:** `phases[phase2-decide]` — see `workflow/definition.yaml`
+1. No squad agent can resolve the issue.
+2. The answer requires information only the user holds.
+3. Proceeding would require an arbitrary decision that binds downstream work.
 
-### User-gated CRITICAL issues
+Route squad-solvable issues back to WHAT without user escalation.
 
-When CRITICAL issues are **user-gated** — they require information only the user holds
-(legal rights, product positioning decisions, audience policy, cost envelope) and cannot
-be resolved by any squad agent — include in `echelon_result.state_updates`:
-
-```yaml
-escalation_question: |
-  Q1: <compact blocking question — one line, state the stakes>
-  Q2: <compact blocking question>
-blocked_reason: |
-  WHY2: CRITICAL user-gated issues — squad-internal iteration cannot substitute for user input
-```
-
-**Criteria — ALL must be true to set escalation_question:**
-
-1. Cannot be resolved by any squad agent (DISCOVER, SYNTHESIZER, MODELER, TRACKER, INVESTIGATOR)
-2. Requires information only the user holds (legal rights, positioning decisions, audience policy)
-3. Proceeding without it requires an arbitrary coin-flip that binds all downstream phases
-
-**Always route squad-solvable CRITICAL issues back to DISCOVER. Do NOT set escalation_question for them** (missing boundaries,
-glossary gaps, unread manual pages, contradictions resolvable by ORACLE/INVESTIGATOR).
-Those keep routing to DISCOVER as normal.
-
-The harness reads `escalation_question` and either:
-
-- **banzai mode** → dispatches COMMANDER for best-judgment answers, run continues
-- **semi/guided mode** → stops the run; user answers via `echelon spec resume "<answers>"`
+**Transition:** `phases[phase1-why2]` in `workflow/definition.yaml`.

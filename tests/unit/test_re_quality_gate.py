@@ -112,6 +112,21 @@ def test_gate_accepts_domain_relative_source_evidence(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_gate_ignores_backticked_host_port_literals(tmp_path: Path) -> None:
+    run_dir = write_valid_re_run(tmp_path, ("api",))
+    spec = run_dir / "re" / "sources" / "api" / "specs" / "001-re-domain" / "spec.md"
+    spec.write_text(
+        spec.read_text(encoding="utf-8")
+        + "\nThe service listens on `localhost:2746` during local development.\n",
+        encoding="utf-8",
+    )
+
+    report = validate_staged_re_quality(run_dir / "re", _plan(run_dir))
+
+    assert report.passed
+
+
+@pytest.mark.unit
 def test_source_measurement_counts_only_visible_cited_source_files(tmp_path: Path) -> None:
     run_dir = write_valid_re_run(tmp_path, ("api",))
     source_root = tmp_path / "sources" / "api"

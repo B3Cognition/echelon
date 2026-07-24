@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -55,10 +56,41 @@ def test_successful_dispatch_emits_one_content_free_span(tmp_path: Path) -> None
     assert span.attributes["echelon.workflow.phase"] == "phase1-what"
     assert span.attributes["echelon.agent.name"] == "specifier"
     assert span.attributes["echelon.dispatch.kind"] == "phase"
+    assert span.attributes["echelon.dispatch.reason"] == "initial"
     assert span.attributes["gen_ai.response.model"] == "gpt-test"
     raw = (tmp_path / "telemetry/spans.jsonl").read_text(encoding="utf-8")
     assert "secret prompt" not in raw
     assert "secret response" not in raw
+    event = (tmp_path / "telemetry/events.jsonl").read_text(encoding="utf-8")
+    assert '"reason":"initial"' in event
+
+
+def test_dispatch_context_rejects_unbounded_reason() -> None:
+    with pytest.raises(ValueError, match="invalid dispatch reason"):
+        DispatchContext("phase", "agent", "phase", 1, reason="llm_invented")
+
+
+def test_provider_records_result_repair_as_separate_retry_event(tmp_path: Path) -> None:
+    class RepairingProvider(_Provider):
+        def exec_agent(self, project_root: str, prompt: str, **kwargs: object) -> SquadAgentResult:
+            result = super().exec_agent(project_root, prompt, **kwargs)
+            result.echelon_result_repair_attempted = True
+            result.echelon_result_repair_duration_ms = 25
+            result.echelon_result_repair_model_name = "gpt-repair"
+            result.echelon_result_repair_outcome = "OK"
+            result.echelon_result_repair_started_at = "2026-07-20T00:00:01Z"
+            result.echelon_result_repair_ended_at = "2026-07-20T00:00:02Z"
+            return result
+
+    provider, _ = _instrumented(tmp_path, RepairingProvider())
+    provider.exec_agent(str(tmp_path), "prompt")
+
+    events = [json.loads(line) for line in (tmp_path / "telemetry/events.jsonl").read_text().splitlines()]
+    retry = events[-1]
+    assert retry["reason"] == "provider_retry"
+    assert retry["duration_ms"] == 25
+    assert retry["model"] == "gpt-repair"
+    assert retry["started_at"] == "2026-07-20T00:00:01Z"
 
 
 def test_provider_exception_emits_error_span_and_propagates(tmp_path: Path) -> None:
@@ -72,6 +104,37 @@ def test_provider_exception_emits_error_span_and_propagates(tmp_path: Path) -> N
     assert len(spans) == 1
     assert spans[0].status == "ERROR"
     assert spans[0].token_usage.known is False
+
+
+def test_telemetry_append_failure_does_not_mask_provider_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider, store = _instrumented(tmp_path, _Provider(fail=True))
+
+    def fail_append(*_args: object, **_kwargs: object) -> None:
+        raise OSError("telemetry storage failed")
+
+    monkeypatch.setattr(store, "append_span", fail_append)
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        provider.exec_agent(str(tmp_path), "secret prompt")
+
+
+def test_telemetry_append_failure_does_not_fail_successful_provider_call(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider, store = _instrumented(tmp_path, _Provider())
+
+    def fail_append(*_args: object, **_kwargs: object) -> None:
+        raise OSError("telemetry storage failed")
+
+    monkeypatch.setattr(store, "append_span", fail_append)
+
+    result = provider.exec_agent(str(tmp_path), "secret prompt")
+
+    assert result.exit_code == 0
 
 
 def test_successful_dispatch_reports_usage_once(tmp_path: Path) -> None:

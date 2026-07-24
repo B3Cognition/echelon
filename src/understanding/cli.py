@@ -8,6 +8,13 @@ from typing import Optional
 
 from .semantic_metrics import classify_ears_pattern, SemanticAnalyzer
 from .constraint_metrics import ConstraintAnalyzer
+from .service import (
+    DEFAULT_QUALITY_GATES as SERVICE_DEFAULT_QUALITY_GATES,
+    analyze_spec as service_analyze_spec,
+    analyze_text as service_analyze_text,
+    evaluate_quality_gates,
+    parse_requirements as service_parse_requirements,
+)
 
 import typer
 from rich.console import Console
@@ -49,16 +56,7 @@ console = Console()
 # These are CLI-standalone defaults. When run under an echelon project,
 # echelon-config.yml quality_gates section overrides these values — it is
 # the single source of truth. Keep these in sync with extension/echelon-config.yml.
-DEFAULT_QUALITY_GATES = {
-    "overall": 0.75,        # Minimum acceptable quality (ISO 29148:2018)
-    "structure": 0.75,      # ISO 29148 §5.2.5 - Atomicity & Completeness
-    "testability": 0.75,    # ISO 29148 - Verifiability (mandatory)
-    "semantic": 0.65,       # Lucassen 2017 - Actor-Action-Object
-    "cognitive": 0.65,      # Sweller 1988 - Cognitive Load
-    "readability": 0.55,    # Flesch 1948 - Understanding (lower for technical)
-    "depth": 0.40,          # B3 Benchmark v0.1 - Cross-reference density (Understanding v3.6+)
-    "behavioral": 0.55,     # Harel 2003/2005 - Observable outcomes
-}
+DEFAULT_QUALITY_GATES = dict(SERVICE_DEFAULT_QUALITY_GATES)
 QUALITY_GATES = dict(DEFAULT_QUALITY_GATES)
 
 
@@ -359,19 +357,8 @@ def _check_quality_gates(metrics: dict) -> bool:
     Returns:
         True if all gates pass, False otherwise
     """
-    overall = metrics["overall_weighted_average"]
-    categories = metrics["category_averages"]
-
-    # Check all gates
-    gates_pass = []
-    gates_pass.append(overall >= QUALITY_GATES["overall"])
-    gates_pass.append(categories.get("structure", 0) >= QUALITY_GATES["structure"])
-    gates_pass.append(categories.get("testability", 0) >= QUALITY_GATES["testability"])
-    gates_pass.append(categories.get("semantic", 0) >= QUALITY_GATES["semantic"])
-    gates_pass.append(categories.get("cognitive", 0) >= QUALITY_GATES["cognitive"])
-    gates_pass.append(categories.get("readability", 0) >= QUALITY_GATES["readability"])
-
-    return all(gates_pass)
+    _scores, _gates, passed = evaluate_quality_gates(metrics, QUALITY_GATES)
+    return passed
 
 
 def _print_test_result(result: dict, per_requirement: bool = False):
@@ -482,6 +469,8 @@ def _print_test_result(result: dict, per_requirement: bool = False):
     testability = categories.get("testability", 0)
     cognitive = categories.get("cognitive", 0)
     readability = categories.get("readability", 0)
+    depth = categories.get("depth", 0)
+    behavioral = categories.get("behavioral", 0)
 
     # Overall gate
     overall_pass = overall >= QUALITY_GATES["overall"]
@@ -543,6 +532,24 @@ def _print_test_result(result: dict, per_requirement: bool = False):
         "Flesch 1948+"
     )
 
+    depth_pass = depth >= QUALITY_GATES["depth"]
+    table.add_row(
+        "Depth",
+        f"≥{QUALITY_GATES['depth']:.0%}",
+        f"{depth:.2%}",
+        "✓" if depth_pass else "✗",
+        "Cross-reference density",
+    )
+
+    behavioral_pass = behavioral >= QUALITY_GATES["behavioral"]
+    table.add_row(
+        "Behavioral",
+        f"≥{QUALITY_GATES['behavioral']:.0%}",
+        f"{behavioral:.2%}",
+        "✓" if behavioral_pass else "✗",
+        "Observable outcomes",
+    )
+
     console.print(table)
 
     # Overall result
@@ -564,6 +571,10 @@ def _print_test_result(result: dict, per_requirement: bool = False):
             failures.append(f"Cognitive: {cognitive:.2%} < {QUALITY_GATES['cognitive']:.0%}")
         if not readability_pass:
             failures.append(f"Readability: {readability:.2%} < {QUALITY_GATES['readability']:.0%}")
+        if not depth_pass:
+            failures.append(f"Depth: {depth:.2%} < {QUALITY_GATES['depth']:.0%}")
+        if not behavioral_pass:
+            failures.append(f"Behavioral: {behavioral:.2%} < {QUALITY_GATES['behavioral']:.0%}")
 
         for failure in failures:
             console.print(f"  • {failure}")
@@ -587,40 +598,7 @@ def _parse_requirements(spec_text: str) -> dict:
         - "requirements": list of dicts with "id" and "text"
         - "full_spec": original full text
     """
-    import re
-
-    from .markdown_parser import extract_lexicon_requirements, is_lexicon_spec
-
-    # Lexicon controlled-grammar specs have no `- **FR-001**:` bullets; extract
-    # each REQ block's THEN clause keyed by its id instead.
-    if is_lexicon_spec(spec_text):
-        reqs = [
-            {"id": rid, "text": then}
-            for rid, then in extract_lexicon_requirements(spec_text)
-        ]
-        return {"requirements": reqs, "full_spec": spec_text, "count": len(reqs)}
-
-    requirements = []
-
-    # Pattern to match requirements like:
-    # - **FR-001**: Some requirement text
-    # - **SC-001**: Some success criteria
-    # - **NFR-001**: Non-functional requirement
-    req_pattern = r"^- \*\*([A-Z]{1,5}-\d{3,4})\*\*:(.+)$"
-
-    lines = spec_text.split("\n")
-    for line in lines:
-        match = re.match(req_pattern, line.strip())
-        if match:
-            req_id = match.group(1)
-            req_text = match.group(2).strip()
-            requirements.append({"id": req_id, "text": req_text})
-
-    return {
-        "requirements": requirements,
-        "full_spec": spec_text,
-        "count": len(requirements),
-    }
+    return service_parse_requirements(spec_text)
 
 
 def _find_spec() -> Optional[Path]:
@@ -660,111 +638,24 @@ def _find_spec() -> Optional[Path]:
 
 def _analyze_text(text: str, enhanced: bool = True, use_nlp: bool = False, extract_entities: bool = False, use_energy: bool = False) -> dict:
     """Analyze text and return results."""
-    if enhanced:
-        from .enhanced_metrics import analyze_with_enhanced_metrics
-
-        result = analyze_with_enhanced_metrics(text, use_spacy=use_nlp)
-        metrics = result["enhanced_metrics"]
-        metric_count = result.get("metric_count", {})
-    else:
-        from .normalized_metrics import analyze_with_normalized_metrics
-
-        result = analyze_with_normalized_metrics(text)
-        metrics = result["normalized_metrics"]
-        metric_count = {"total": len(metrics["scores"])}
-
-    result_dict = {
-        "enhanced": enhanced,
-        "metrics": metrics,
-        "metric_count": metric_count,
-    }
-
-    # Surface behavioral transitions and depth dependency graph (enhanced JSON only)
-    if enhanced:
-        result_dict["behavioral_analysis"] = {
-            "transitions": result.get("behavioral_transitions", []),
-        }
-        result_dict["depth_analysis"] = {
-            "dependency_graph": result.get("dependency_graph", {}),
-        }
-
-    # Energy metrics (optional)
-    if use_energy:
-        from .energy_metrics import analyze_energy
-        energy_result = analyze_energy(text)
-        result_dict["energy"] = energy_result.to_dict()
-
-    # Extract entities if requested
-    if extract_entities:
-        try:
-            from .semantic_metrics import SemanticAnalyzer
-            import re
-
-            # Split text into requirements (simple sentence splitting)
-            sentences = re.split(r'[.!?]+', text)
-            requirements = [s.strip() for s in sentences if len(s.strip()) > 10]
-
-            analyzer = SemanticAnalyzer(use_spacy=use_nlp)
-            entity_result = analyzer.extract_entities_detailed(requirements, use_nlp=use_nlp)
-
-            # Convert Entity and Relationship objects to dicts for JSON serialization
-            result_dict["entity_analysis"] = {
-                "entities": [
-                    {
-                        "text": e.text,
-                        "type": e.type.value,
-                        "normalized": e.normalized,
-                        "requirement_id": e.requirement_id,
-                        "confidence": e.confidence,
-                    }
-                    for e in entity_result.entities
-                ],
-                "relationships": [
-                    {
-                        "source": {
-                            "text": r.source.text,
-                            "type": r.source.type.value,
-                            "normalized": r.source.normalized,
-                        },
-                        "relation": r.relation,
-                        "target": {
-                            "text": r.target.text,
-                            "type": r.target.type.value,
-                            "normalized": r.target.normalized,
-                        },
-                        "requirement_id": r.requirement_id,
-                    }
-                    for r in entity_result.relationships
-                ],
-                "summary": {
-                    "total_entities": len(entity_result.entities),
-                    "unique_actors": len(entity_result.unique_actors),
-                    "unique_actions": len(entity_result.unique_actions),
-                    "unique_objects": len(entity_result.unique_objects),
-                    "entity_counts": {k.value: v for k, v in entity_result.entity_counts.items()},
-                },
-            }
-        except (ImportError, AttributeError):
-            pass  # entity_metrics module not available, skip silently
-
-    return result_dict
+    return service_analyze_text(
+        text,
+        enhanced=enhanced,
+        use_nlp=use_nlp,
+        extract_entities=extract_entities,
+        use_energy=use_energy,
+    )
 
 
 def _analyze_spec(spec_path: Path, enhanced: bool = True, use_nlp: bool = False, extract_entities: bool = False, use_energy: bool = False) -> dict:
     """Analyze a spec file and return results."""
-    # Read spec
-    spec_text = spec_path.read_text(encoding="utf-8")
-
-    # Analyze
-    result = _analyze_text(spec_text, enhanced=enhanced, use_nlp=use_nlp, extract_entities=extract_entities, use_energy=use_energy)
-    result["spec_path"] = str(spec_path)
-    # Use parent directory name if filename is generic (spec.md, requirements.md, etc.)
-    if spec_path.stem.lower() in ("spec", "requirements", "req"):
-        result["spec_name"] = spec_path.parent.name
-    else:
-        result["spec_name"] = spec_path.stem
-
-    return result
+    return service_analyze_spec(
+        spec_path,
+        enhanced=enhanced,
+        use_nlp=use_nlp,
+        extract_entities=extract_entities,
+        use_energy=use_energy,
+    )
 
 
 def _print_result(result: dict):
@@ -848,13 +739,18 @@ def _print_result(result: dict):
 
         gates_pass = _check_quality_gates(metrics)
 
-        console.print(f"\n[bold]Quality Gates (6 gates):[/bold]")
+        depth = categories.get("depth", 0)
+        behavioral = categories.get("behavioral", 0)
+
+        console.print(f"\n[bold]Quality Gates (8 gates):[/bold]")
         console.print(f"  Overall ≥{QUALITY_GATES['overall']:.0%}:      {overall:.2%} {'✓' if overall >= QUALITY_GATES['overall'] else '✗'}")
         console.print(f"  Structure ≥{QUALITY_GATES['structure']:.0%}:    {structure:.2%} {'✓' if structure >= QUALITY_GATES['structure'] else '✗'}")
         console.print(f"  Testability ≥{QUALITY_GATES['testability']:.0%}:  {testability:.2%} {'✓' if testability >= QUALITY_GATES['testability'] else '✗'}")
         console.print(f"  Semantic ≥{QUALITY_GATES['semantic']:.0%}:     {semantic:.2%} {'✓' if semantic >= QUALITY_GATES['semantic'] else '✗'}")
         console.print(f"  Cognitive ≥{QUALITY_GATES['cognitive']:.0%}:    {cognitive:.2%} {'✓' if cognitive >= QUALITY_GATES['cognitive'] else '✗'}")
         console.print(f"  Readability ≥{QUALITY_GATES['readability']:.0%}:  {readability:.2%} {'✓' if readability >= QUALITY_GATES['readability'] else '✗'}")
+        console.print(f"  Depth ≥{QUALITY_GATES['depth']:.0%}:        {depth:.2%} {'✓' if depth >= QUALITY_GATES['depth'] else '✗'}")
+        console.print(f"  Behavioral ≥{QUALITY_GATES['behavioral']:.0%}:   {behavioral:.2%} {'✓' if behavioral >= QUALITY_GATES['behavioral'] else '✗'}")
 
         if gates_pass:
             console.print("\n[green bold]✓ Status: ALL GATES PASSED[/green bold]\n")

@@ -24,6 +24,7 @@ from harness.land import (
     resolve_land_repo,
 )
 from harness.deferred_scope import apply_defer
+from harness.errors import GitOpsError
 
 
 def _write_state(state_dir: Path, spec_id: str, strategy: str, pr_url: str | None) -> None:
@@ -128,6 +129,27 @@ class TestResolveLandRepo:
 
 @pytest.mark.unit
 class TestLand:
+    def test_blocks_when_feature_branch_resolution_fails(
+        self, tmp_path: Path
+    ) -> None:
+        gitops = _make_gitops()
+        gitops.find_feature_branch.side_effect = GitOpsError(
+            "mirror fetch failed",
+            command="git fetch --all --prune",
+        )
+
+        with (
+            patch("harness.land._banner") as banner,
+            patch("harness.land._cleanup_worktrees") as cleanup,
+            patch("harness.land._delete_harness_branches") as delete_branches,
+        ):
+            result = land("042", project_dir=tmp_path, gitops=gitops)
+
+        assert result is False
+        cleanup.assert_not_called()
+        delete_branches.assert_not_called()
+        assert banner.call_args.args[0] == "LAND — BRANCH RESOLUTION BLOCKED"
+
     def test_fulfillment_warning_reports_missing_gap(self, tmp_path: Path) -> None:
         spec_dir = tmp_path / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)

@@ -19,6 +19,9 @@ EXT_YML = ROOT / "extension" / "extension.yml"
 
 
 def _route_tracker_verdict(tmp_path: Path, phase_id: str, verdict: str) -> str:
+    config_path = tmp_path / ".echelon" / "config.yml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("governance:\n  enabled: false\n", encoding="utf-8")
     graph = PhaseGraph(DEFINITION, EXT_YML)
     store = SquadStateStore(tmp_path / "squad" / "run-test")
     store.initialize("r", "semi", "msg", 0, phase_id, max_iterations=5)

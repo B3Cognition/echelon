@@ -110,6 +110,28 @@ def test_analyzer_aggregates_telemetry_by_phase(tmp_path: Path) -> None:
     assert report.by_phase["re-extract-5-validate"]["duration_ms"] == 1000
 
 
+def test_re_analysis_does_not_treat_controller_counters_as_telemetry(
+    tmp_path: Path,
+) -> None:
+    run = _legacy_run(tmp_path)
+    outer_path = run / "state.json"
+    outer = json.loads(outer_path.read_text(encoding="utf-8"))
+    outer["token_usage"] = 500
+    outer_path.write_text(json.dumps(outer), encoding="utf-8")
+    inner_path = run / "re/state.json"
+    inner = json.loads(inner_path.read_text(encoding="utf-8"))
+    inner["re_token_usage"] = 700
+    inner["re_unknown_token_dispatches"] = 3
+    inner_path.write_text(json.dumps(inner), encoding="utf-8")
+
+    report = analyze_re_run(run)
+
+    assert report.tokens.total is None
+    assert report.known_token_dispatches == 0
+    assert report.unknown_token_dispatches == 0
+    assert report.to_json_dict()["tokens"]["status"] == "unavailable"
+
+
 def test_text_and_json_renderers_are_stable_and_expose_limitations(tmp_path: Path) -> None:
     report = analyze_re_run(_legacy_run(tmp_path))
 
@@ -118,5 +140,5 @@ def test_text_and_json_renderers_are_stable_and_expose_limitations(tmp_path: Pat
 
     assert payload["schema_version"] == 1
     assert payload["run_id"] == "re-legacy"
-    assert "Token usage: unknown" in text
+    assert "Token usage: unavailable" in text
     assert "Active duration: unknown" in text

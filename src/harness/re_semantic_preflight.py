@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from harness.re_source_evidence import contains_source_reference, source_references
+
 
 BEHAVIOR_COVERAGE_CATEGORIES = (
     "public operations",
@@ -18,7 +20,6 @@ BEHAVIOR_COVERAGE_CATEGORIES = (
     "evidence scope",
 )
 
-_CITATION = re.compile(r"`[^`\n:]+:\d+(?:-\d+)?`")
 _UNIVERSAL = re.compile(r"\b(all|always|every|never)\b", re.I)
 _REQUIREMENT = re.compile(
     r"^###\s+(?P<title>(?:FR|NFR)-\d+[^\n]*)\n(?P<body>.*?)(?=^###\s+|^##\s+|\Z)",
@@ -62,7 +63,7 @@ def check_semantic_preflight(
         invalid = tuple(
             category
             for category, (status, evidence) in coverage.items()
-            if status == "observed" and not _CITATION.search(evidence)
+            if status == "observed" and not contains_source_reference(evidence)
         )
         if invalid:
             findings.append(
@@ -77,13 +78,13 @@ def check_semantic_preflight(
     for match in _REQUIREMENT.finditer(without_fences):
         body = match.group("body")
         if _UNIVERSAL.search(body) and not (
-            "Evidence Scope: exhaustive" in body and _CITATION.search(body)
+            "Evidence Scope: exhaustive" in body and contains_source_reference(body)
         ):
             findings.append(
                 SemanticPreflightFinding(
                     "unscoped_universal_claim",
                     f"{match.group('title').strip()} uses a universal claim without exhaustive evidence scope",
-                    tuple(_CITATION.findall(body)),
+                    source_references(body),
                 )
             )
 

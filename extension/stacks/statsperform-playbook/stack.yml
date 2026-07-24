@@ -63,10 +63,14 @@ tools:
         args: ["patterns", "show"]
         output: markdown
         gate: false
+      availability:
+        args: ["--version"]
+        output: text
+        gate: true
       compliance_scan:
         args: ["compliance", "scan"]
         output: text
-        gate: true
+        gate: false
 context:
   files:
     - context.md

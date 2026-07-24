@@ -323,7 +323,7 @@ Dispatched by speckit-echelon-commander (COMMANDER) after build completes. Uses 
 ### Step 2: Architecture Decision Assessment
 
 1. Read `plan.md` / `research.md` — extract each ADR and tech decision
-2. Read the actual implemented code structure (use Glob/Grep to check if planned patterns exist in code)
+2. Read the actual implemented code structure using the workspace file-discovery and content-search capabilities exposed for this dispatch to check whether planned patterns exist in code
 3. Read `reasoning-journal.jsonl` — search for entries with `type: "decision"` or `type: "pivot"` during build
 4. For each planned decision: classify as `held` (code matches plan), `partially` (code diverges but intent preserved), or `no` (decision abandoned)
 5. Any `no` classification is severity HIGH; `partially` is MEDIUM

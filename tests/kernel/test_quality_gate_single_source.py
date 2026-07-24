@@ -21,6 +21,8 @@ def test_sage_workflow_uses_runtime_resolved_quality_gates() -> None:
     assert "Quality gates: overall >= 0.70" not in init
     assert "| Overall | >= 0.70" not in command
     assert "Resolved Quality Gates" in why2
+    assert "thresholds from resolved project" in why2
+    assert "values and verdicts are authoritative" in why2
     assert "resolved project configuration" in command
 
 

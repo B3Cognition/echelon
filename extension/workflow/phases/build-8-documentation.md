@@ -27,7 +27,7 @@ Use the Agent tool:
 
   <instructions>
   You are TECH WRITER. Read agents/build/tech-writer.md for your complete protocol.
-  Decide whether documentation updates are required. If docs-verification-report.md contains structured repair findings, address every blocking finding before returning DONE. If required, update repo-root README.md and CHANGELOG.md. Treat README.md as a first-run manual for a first-time local user: include install, minimal configuration, first dry run, first real run, expected output, troubleshooting, and development commands when evidence supports them. Always write {spec_dir}/documentation-impact-report.md with machine-readable frontmatter. Return journal entries in echelon_result.journal_entries.
+  Decide whether documentation updates are required. Give every Ralph-supplied delivery_change_id a version-2 documented_changes disposition backed by repository evidence. If docs-verification-report.md contains structured repair findings, address every blocking finding before returning DONE. If required, update repo-root README.md and CHANGELOG.md. Treat README.md as a first-run manual for a first-time local user: include install, minimal configuration, first dry run, first real run, expected output, troubleshooting, and development commands when evidence supports them. Always write {spec_dir}/documentation-impact-report.md with machine-readable frontmatter. Return journal entries in echelon_result.journal_entries.
   </instructions>
   ```
 

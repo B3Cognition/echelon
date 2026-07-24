@@ -12,9 +12,7 @@ def analysis_to_json(analysis: RunAnalysis) -> str:
 
 
 def render_analysis_text(analysis: RunAnalysis) -> str:
-    token_text = (
-        f"{analysis.tokens.total:,}" if analysis.tokens.total is not None else "unknown"
-    )
+    token_text = _token_text(analysis)
     active_text = (
         _duration(analysis.active_duration_ms)
         if analysis.active_duration_ms is not None
@@ -71,7 +69,7 @@ def render_analysis_text(analysis: RunAnalysis) -> str:
         lines.append("Phase cost:")
         lines.extend(
             f"  {phase}: {values['dispatches']} dispatches, "
-            f"{values['tokens']:,} tokens, {_duration(values['duration_ms'])}"
+            f"{_bucket_token_text(values)}, {_duration(values['duration_ms'])}"
             for phase, values in analysis.by_phase.items()
         )
     if analysis.diagnostics:
@@ -85,3 +83,24 @@ def _duration(milliseconds: int) -> str:
     if seconds < 60:
         return f"{seconds:.1f}s"
     return f"{seconds / 60:.1f}m"
+
+
+def _token_text(analysis: RunAnalysis) -> str:
+    if analysis.tokens.total is None:
+        return "unavailable"
+    total = f"{analysis.tokens.total:,}"
+    if analysis.token_status != "partial":
+        return total
+    dispatches = analysis.known_token_dispatches + analysis.unknown_token_dispatches
+    return (
+        f"{total} observed (partial; {analysis.known_token_dispatches}/"
+        f"{dispatches} dispatches reported)"
+    )
+
+
+def _bucket_token_text(values: dict[str, int]) -> str:
+    total = f"{values['tokens']:,} tokens"
+    unknown = values.get("unknown_token_dispatches", 0)
+    if not unknown:
+        return total
+    return f"{total} observed (partial; {values.get('known_token_dispatches', 0)}/{values['dispatches']} dispatches reported)"

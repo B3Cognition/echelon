@@ -413,22 +413,29 @@ def test_rewind_reconstructs_primary_predecessors_for_the_roadmap() -> None:
     assert rewound["iteration"] == 0
 
 
-def test_rewind_to_what_resets_spec_lexicon_repair_state() -> None:
+@pytest.mark.parametrize("target_phase", ["phase1-what", "phase1-lexicon"])
+def test_rewind_to_spec_authoring_or_gate_resets_spec_lexicon_repair_state(
+    target_phase: str,
+) -> None:
     rewound = _reset_rewind_state(
         {
             "lexicon_evaluation": "failed",
             "lexicon_pass": False,
             "lexicon_attempts": 3,
             "lexicon_findings": 55,
+            "lexicon_report": "runs/spec-1/specs/001-demo/lexicon-validation.json",
+            "lexicon_warning_waiver": True,
             "lexicon_gate_exhausted": True,
         },
-        "phase1-what",
+        target_phase,
         "runs/spec-1/specs/001-demo",
     )
 
     assert "lexicon_pass" not in rewound
     assert rewound["lexicon_attempts"] == 0
     assert "lexicon_findings" not in rewound
+    assert "lexicon_report" not in rewound
+    assert "lexicon_warning_waiver" not in rewound
     assert rewound["lexicon_evaluation"] == "pending"
     assert "lexicon_gate_exhausted" not in rewound
 

@@ -37,6 +37,97 @@ class TestPhaseGraph:
         assert node.type == "staged_parallel"
         assert len(node.agents) >= 2
 
+    def test_understanding_runs_in_provider_free_nodes_before_sage(self):
+        why2_gate = self.graph.get("phase1-understanding")
+        why3_gate = self.graph.get("phase3-understanding")
+
+        assert why2_gate.type == "deterministic_understanding"
+        assert why2_gate.understanding_target == "phase1-why2"
+        assert why3_gate.type == "deterministic_understanding"
+        assert why3_gate.understanding_target == "phase3-consensus"
+        assert self.graph.get("phase1-lexicon").transitions[-1]["to"] == why2_gate.id
+        assert why2_gate.transitions == [{"to": "phase1-why2", "condition": "always"}]
+        tasks_gate = self.graph.get("phase3-tasks-lexicon")
+        assert self.graph.get("phase3-plan").transitions[-1]["to"] == tasks_gate.id
+        assert tasks_gate.transitions[-1]["to"] == why3_gate.id
+        assert why3_gate.transitions == [{"to": "phase3-consensus", "condition": "always"}]
+
+    def test_spec_lexicon_runs_in_visible_provider_free_node(self):
+        what = self.graph.get("phase1-what")
+        lexicon = self.graph.get("phase1-lexicon")
+
+        assert what.transitions == [{"to": "phase1-lexicon", "condition": "always"}]
+        assert lexicon.type == "deterministic_lexicon"
+        assert lexicon.lexicon_artifact == "spec"
+        assert lexicon.allowed_state_updates == []
+        assert set(lexicon.controller_state_updates) == {
+            "lexicon_evaluation",
+            "lexicon_pass",
+            "lexicon_attempts",
+            "lexicon_findings",
+            "lexicon_report",
+            "lexicon_warning_waiver",
+        }
+        assert lexicon.transitions == [
+            {
+                "to": "phase1-what",
+                "condition": (
+                    "lexicon_gate.enabled AND lexicon_evaluation = pending "
+                    "AND iteration < max_iterations"
+                ),
+                "action": "increment_iteration",
+            },
+            {
+                "to": "phase1-what",
+                "condition": (
+                    "lexicon_gate.enabled AND lexicon_evaluation = failed "
+                    "AND lexicon_attempts < lexicon_gate.max_repair_attempts "
+                    "AND iteration < max_iterations"
+                ),
+                "action": "increment_iteration",
+            },
+            {"to": "phase1-understanding", "condition": "always"},
+        ]
+
+    def test_phase_timing_windows_are_controller_metadata(self):
+        decide = self.graph.get("phase2-decide")
+        specialists = self.graph.get("phase3-specialists")
+        plan = self.graph.get("phase3-plan")
+        finalize = self.graph.get("phase4-document")
+
+        assert decide.timing_window_start == "phase2-decide"
+        assert decide.budget_seconds == 1800
+        assert specialists.timing_window_transition == {
+            "close": "phase2-decide",
+            "open": "phase3-solution",
+            "open_budget_seconds": 2400,
+        }
+        assert plan.timing_window_transition == {
+            "close": "phase3-solution",
+            "open": "phase4-build",
+            "open_budget_seconds": 7200,
+        }
+        assert finalize.timing_window_transition == {"close": "phase4-build"}
+
+    def test_sage_cannot_write_controller_certified_quality_scores(self):
+        why2 = self.graph.get("phase1-why2")
+        consensus = self.graph.get("phase3-consensus")
+        why3 = next(agent for agent in consensus.agents if agent.get("mode") == "WHY3")
+
+        assert "quality_scores" not in (why2.allowed_state_updates or [])
+        assert "quality_scores" not in why3.get("allowed_state_updates", [])
+        assert "quality_scores" not in (consensus.allowed_state_updates or [])
+
+    def test_why2_context_pack_uses_authoritative_artifact_paths(self):
+        context_pack = set(self.graph.get("phase1-why2").context_pack)
+
+        assert "{spec_dir}/spec.md" in context_pack
+        assert "{spec_dir}/assumptions.md" in context_pack
+        assert ".specify/memory/constitution.md" in context_pack
+        assert "spec.md" not in context_pack
+        assert "constitution.md" not in context_pack
+        assert "assumptions.md" not in context_pack
+
     def test_phase3_consensus_context_packs_cover_spec_plan_and_tasks(self):
         """Consensus agents must receive enough artifacts to validate plan/tasks."""
         node = self.graph.get("phase3-consensus")
@@ -47,46 +138,46 @@ class TestPhaseGraph:
         plan2_pack = set(agents["PLAN2"]["context_pack"])
 
         assert {
-            "spec.md",
-            "plan.md",
-            "research.md",
-            "data-model.md",
-            "contracts/",
-            "tasks.md",
-            "test-strategy.md",
-            "coverage-map.md",
+            "{spec_dir}/spec.md",
+            "{spec_dir}/plan.md",
+            "{spec_dir}/research.md",
+            "{spec_dir}/data-model.md",
+            "{spec_dir}/contracts/",
+            "{spec_dir}/tasks.md",
+            "{spec_dir}/test-strategy.md",
+            "{spec_dir}/coverage-map.md",
         }.issubset(why3_pack)
 
         assert {
-            "spec.md",
-            "plan.md",
-            "research.md",
-            "data-model.md",
-            "contracts/",
-            "tasks.md",
-            "test-strategy.md",
-            "coverage-map.md",
-            "estimates.md",
-            "mvp-scope.md",
-            "constitution.md",
+            "{spec_dir}/spec.md",
+            "{spec_dir}/plan.md",
+            "{spec_dir}/research.md",
+            "{spec_dir}/data-model.md",
+            "{spec_dir}/contracts/",
+            "{spec_dir}/tasks.md",
+            "{spec_dir}/test-strategy.md",
+            "{spec_dir}/coverage-map.md",
+            "{spec_dir}/estimates.md",
+            "{spec_dir}/mvp-scope.md",
+            ".specify/memory/constitution.md",
             "extension/templates/estimates-template.md",
         }.issubset(assess2_pack)
 
         assert {
-            "spec.md",
-            "plan.md",
-            "research.md",
-            "data-model.md",
-            "contracts/",
-            "tasks.md",
-            "test-strategy.md",
-            "coverage-map.md",
-            "critical-path.md",
-            "risk-matrix.md",
-            "dependencies.md",
-            "implementability-report.md",
-            "quality-gates.md",
-            "issues.md",
+            "{spec_dir}/spec.md",
+            "{spec_dir}/plan.md",
+            "{spec_dir}/research.md",
+            "{spec_dir}/data-model.md",
+            "{spec_dir}/contracts/",
+            "{spec_dir}/tasks.md",
+            "{spec_dir}/test-strategy.md",
+            "{spec_dir}/coverage-map.md",
+            "{spec_dir}/critical-path.md",
+            "{spec_dir}/risk-matrix.md",
+            "{spec_dir}/dependencies.md",
+            "{spec_dir}/implementability-report.md",
+            "{spec_dir}/quality-gates.md",
+            "{spec_dir}/issues.md",
         }.issubset(plan2_pack)
 
     def test_phase3_sentinel_receives_all_required_how_and_quality_inputs(self):
@@ -288,31 +379,94 @@ def test_phase3_consensus_declares_per_agent_result_contracts():
     node = graph.get("phase3-consensus")
     contracts = {entry["mode"]: entry for entry in node.agents}
 
-    assert contracts["WHY3"]["allowed_state_updates"] == ["quality_scores"]
+    assert contracts["WHY3"]["allowed_state_updates"] == []
     assert contracts["WHY3"].get("required_state_updates", []) == []
     assert contracts["ASSESS2"]["allowed_state_updates"] == [
         "gate_decision",
         "phase_recommendation",
         "implementability_metrics",
-        "feasibility_structural_pass",
-        "feasibility_structural_attempts",
     ]
-    assert contracts["PLAN2"]["allowed_state_updates"] == [
-        "tasks_lexicon_pass",
-        "tasks_lexicon_attempts",
-    ]
+    assert contracts["PLAN2"]["allowed_state_updates"] == []
     assert "total_tasks" not in contracts["PLAN2"]["allowed_state_updates"]
 
 
-def test_phase1_what_reserves_lexicon_verdict_fields_for_the_controller():
+def test_phase2_governance_verdicts_are_controller_owned():
     graph = PhaseGraph(DEFINITION, EXT_YML)
-    node = graph.get("phase1-what")
+    gates = {
+        "phase2-decide": "feasibility_structural_pass",
+        "phase2-tracker-alignment": "intent_alignment_check_structural_pass",
+    }
 
-    assert "lexicon_attempts" in node.allowed_state_updates
-    assert "lexicon_findings" in node.allowed_state_updates
-    assert "lexicon_pass" not in node.allowed_state_updates
-    assert "lexicon_evaluation" not in node.allowed_state_updates
-    assert node.controller_state_updates == ["lexicon_evaluation", "lexicon_pass"]
+    for phase_id, pass_key in gates.items():
+        node = graph.get(phase_id)
+        assert pass_key not in (node.allowed_state_updates or [])
+        assert pass_key in node.controller_state_updates
+        assert "governance_gate_exhausted" in node.controller_state_updates
+
+
+def test_phase1_lexicon_reserves_verdict_fields_for_the_controller():
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+    node = graph.get("phase1-lexicon")
+
+    controller_fields = {
+        "lexicon_evaluation",
+        "lexicon_pass",
+        "lexicon_attempts",
+        "lexicon_findings",
+        "lexicon_report",
+        "lexicon_warning_waiver",
+    }
+    assert controller_fields.isdisjoint(node.allowed_state_updates or [])
+    assert set(node.controller_state_updates) == controller_fields
+
+
+def test_tasks_lexicon_runs_in_two_visible_provider_free_nodes():
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+    first = graph.get("phase3-tasks-lexicon")
+    second = graph.get("phase3-consensus-tasks-lexicon")
+
+    assert graph.get("phase3-plan").transitions == [
+        {"to": first.id, "condition": "always"}
+    ]
+    assert graph.get("phase3-consensus").transitions == [
+        {"to": second.id, "condition": "always"}
+    ]
+    controller_fields = {
+        "tasks_lexicon_action",
+        "tasks_lexicon_pass",
+        "tasks_lexicon_attempts",
+        "tasks_lexicon_findings",
+        "tasks_lexicon_report",
+        "blocked_reason",
+    }
+    for node in (first, second):
+        assert node.type == "deterministic_lexicon"
+        assert node.lexicon_artifact == "tasks"
+        assert node.allowed_state_updates == []
+        assert set(node.controller_state_updates) == controller_fields
+
+
+def test_provider_nodes_do_not_own_tasks_lexicon_state():
+    graph = PhaseGraph(DEFINITION, EXT_YML)
+    plan = graph.get("phase3-plan")
+    consensus = graph.get("phase3-consensus")
+
+    assert not {
+        key
+        for key in (plan.allowed_state_updates or [])
+        if key.startswith("tasks_lexicon_")
+    }
+    assert not {
+        key
+        for key in consensus.controller_state_updates
+        if key.startswith("tasks_lexicon_")
+    }
+    plan2 = next(entry for entry in consensus.agents if entry["mode"] == "PLAN2")
+    assert not {
+        key
+        for key in plan2["allowed_state_updates"]
+        if key.startswith("tasks_lexicon_")
+    }
 
 
 def test_experimental_artifact_quality_phases_are_registered():

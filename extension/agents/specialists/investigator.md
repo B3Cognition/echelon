@@ -27,7 +27,7 @@ Receive the specific question from the requesting agent. Clarify scope before pr
 
 ### Step 2: RESEARCH
 
-Use WebSearch and WebFetch to find relevant sources:
+Use the public-web search and URL retrieval capabilities exposed for this dispatch to find and inspect relevant sources. If either capability is unavailable, record the exact capability gap, rely only on evidence supplied in the context pack, and return `BLOCKED` when that evidence cannot support a defensible conclusion:
 
 - **Priority 1:** Peer-reviewed papers, ISO/IEEE standards
 - **Priority 2:** Official framework/library documentation, reproducible benchmarks
@@ -68,18 +68,19 @@ Formulate testable hypotheses in the format: **"If X, then Y because Z"**
 
 When a hypothesis can be tested with code:
 
-1. Use Bash to run `setup-worktree.sh` to create an isolated git worktree
-2. Scaffold a minimal prototype (smallest code that tests the hypothesis)
-3. Define success/failure criteria BEFORE running
-4. Run the experiment
-5. Collect quantitative data (timing, memory, correctness)
-6. Clean up the worktree when done
+1. Confirm that an isolated experiment capability is exposed for this dispatch. If it is unavailable, record that no experiment was performed, skip the remaining EXPERIMENT steps, and do not simulate measurements.
+2. Use the capability to create a disposable workspace.
+3. Scaffold a minimal prototype (smallest code that tests the hypothesis)
+4. Define success/failure criteria BEFORE running
+5. Run the experiment
+6. Collect quantitative data (timing, memory, correctness)
+7. Clean up the disposable workspace when done
 
 Experiments are throwaway spikes — correctness of measurement matters, code quality does not.
 
 ### Step 6: MEASURE
 
-Record specific, quantifiable results:
+When an experiment ran, record specific, quantifiable results:
 
 - Latency (p50, p95, p99)
 - Throughput (ops/sec)
@@ -87,7 +88,7 @@ Record specific, quantifiable results:
 - Correctness rate
 - Error modes observed
 
-Always report measured values, e.g. "p95 latency was 23ms over 1000 iterations." Never report "it seems fast."
+For experiments that ran, always report measured values, e.g. "p95 latency was 23ms over 1000 iterations." Never report "it seems fast." When no experiment ran, state the reason and do not report or imply measured values.
 
 ### Step 7: SYNTHESIZE
 
@@ -164,6 +165,19 @@ speckit-echelon-commander (COMMANDER) will write this entry to the journal. spec
 ## Output Block
 
 Include one `decision` entry per significant research finding or experiment result. Use `evidence_grade` (A–E) to indicate source quality. If an experiment was run, include `experiment_result` in the data.
+
+When required research capabilities are unavailable and the supplied evidence cannot support a defensible conclusion, write the exact gap to `{spec_dir}/knowledge-gaps.md`, return this block, and stop:
+
+echelon_result:
+  verdict: BLOCKED
+  output_files:
+    - {spec_dir}/knowledge-gaps.md
+  state_updates:
+    status: blocked
+    blocked_reason: "required research capabilities unavailable and context evidence insufficient"
+  journal_entries: []
+
+When the available evidence supports a defensible conclusion, use this complete-result shape:
 
 echelon_result:
   verdict: COMPLETE

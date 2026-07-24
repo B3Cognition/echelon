@@ -71,10 +71,63 @@ def test_include_runs_renders_analysis_without_raw_spans(tmp_path: Path) -> None
     spec_page = result.output_dir / "Operations/Spec Runs/spec-1.md"
     assert spec_page.is_file()
     assert "Repair loops" in spec_page.read_text(encoding="utf-8")
+    assert "Token usage: unavailable (no provider usage telemetry)" in spec_page.read_text(
+        encoding="utf-8"
+    )
     assert "local and ephemeral" in page.read_text(encoding="utf-8").lower()
     assert (result.output_dir / "Views/Performance.md").is_file()
     assert (result.output_dir / "Views/Spec Repair Loops.md").is_file()
     assert not any(result.output_dir.rglob("spans.jsonl"))
+
+
+def test_include_runs_marks_partial_token_coverage(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    telemetry = root / "runs/spec-1/telemetry"
+    telemetry.mkdir()
+    (telemetry / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "workflow": "spec",
+                "run_id": "spec-1",
+                "trace_id": "a" * 32,
+                "profile": {"name": "balanced"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    spans = [
+        {
+            "schema_version": 1,
+            "trace_id": "a" * 32,
+            "span_id": f"{index + 1:016x}",
+            "parent_span_id": None,
+            "name": "phase1-what",
+            "start_time": "2026-07-20T00:00:00Z",
+            "end_time": "2026-07-20T00:00:01Z",
+            "duration_ms": 1000,
+            "status": "OK",
+            "attributes": {},
+            "token_usage": usage,
+        }
+        for index, usage in enumerate(
+            ({"total_tokens": 10}, {"total_tokens": None})
+        )
+    ]
+    (telemetry / "spans.jsonl").write_text(
+        "".join(json.dumps(span) + "\n" for span in spans), encoding="utf-8"
+    )
+
+    result = build_wiki(root, include_runs=True)
+
+    page = (result.output_dir / "Operations/Spec Runs/spec-1.md").read_text(
+        encoding="utf-8"
+    )
+    token_view = (result.output_dir / "Views/Token Usage.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Token usage: 10 observed (partial; 1/2 dispatches reported)" in page
+    assert "50% (1/2) | partial" in token_view
 
 
 def test_config_enables_runs_and_explicit_false_overrides_it(tmp_path: Path) -> None:

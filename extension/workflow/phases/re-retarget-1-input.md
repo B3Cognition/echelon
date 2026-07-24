@@ -2,17 +2,12 @@
 # Read by: speckit-echelon-commander (COMMANDER)
 # Type: commander_internal — COMMANDER prompts the user directly, no agent dispatch
 
-> **Bash Command Guidelines**: Always use Glob, Read, and Grep tools for ad hoc file exploration; when a Bash tool call is needed, keep it single-line and chain operations with `&&`. Do NOT use multi-line Bash or Bash `ls`, `find`, `cat`, `echo`, or `grep` for ad hoc exploration. This restriction does not apply to running project scripts, generated shell scripts, or literal workflow snippets whose purpose is shell script content.
-
 Guided walkthrough to fill in `[REQUIRES INPUT]` sections in strategic artifacts.
 
 ## Step 1: Scan for [REQUIRES INPUT] markers
 
-Count markers across all strategic artifacts:
-
-```bash
-grep -r "\[REQUIRES INPUT\]" re/workspace/strategy/constitution.md re/workspace/strategy/migration-strategy.md re/workspace/strategy/risk-matrix.md re/workspace/strategy/gap-analysis.md re/workspace/strategy/adrs/ 2>/dev/null | wc -l
-```
+Use the controller-provided retarget marker inventory. Do not scan or discover
+files through provider-native tools.
 
 Report to user: "Found {count} sections requiring your input."
 
@@ -122,11 +117,9 @@ Read each `re/workspace/strategy/adrs/*.md` file. For each `[REQUIRES INPUT]`, p
 
 ## Step 9: Completion summary
 
-After processing all questions (or when user says "done"):
-
-```bash
-REMAINING=$(grep -r "\[REQUIRES INPUT\]" re/workspace/strategy/constitution.md re/workspace/strategy/migration-strategy.md re/workspace/strategy/risk-matrix.md re/workspace/strategy/gap-analysis.md re/workspace/strategy/adrs/ 2>/dev/null | wc -l)
-```
+After processing all questions (or when the user says "done"), the controller
+rebuilds the marker inventory from the canonical strategy paths. Use its count
+as `REMAINING`; do not infer completion from the conversation.
 
 Report:
 ```

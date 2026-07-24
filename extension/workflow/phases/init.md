@@ -96,7 +96,6 @@ Create `${SQUAD_DIR}/state.json`:
   "blocked_reason": null,
   "escalation_question": null,
   "dispatch_counters": {},
-  "split_metrics": { "fallback_count": 0, "qa_coverage": 0.0, "rework_count": 0 },
   "fallback_mode": false,
   "published_re_context": null
 }

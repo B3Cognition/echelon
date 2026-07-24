@@ -87,12 +87,20 @@ class TestSageTemplates:
         assert "route to CARTOGRAPHER" in text
         assert "If any issue requires CARTOGRAPHER" in text
 
-    def test_sage_understanding_contract_uses_documented_temp_outputs(self) -> None:
+    def test_sage_understanding_contract_uses_certified_evidence(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
 
-        assert "--output /tmp/u_validate.json" in text
-        assert "--output /tmp/u_perreq.json" in text
-        assert "Never check for `/tmp/understanding_output.json`" in text
+        assert "harness-injected **Certified Evidence** report" in text
+        assert "NEVER invoke validators" in text
+        assert "--output /tmp/u_validate.json" not in text
+        assert "/tmp/understanding_output.json" not in text
+
+    def test_sage_output_contract_allows_blocked_when_evidence_is_missing(self) -> None:
+        text = AGENT.read_text(encoding="utf-8")
+
+        assert "Verdict: <PASS | FAIL | BLOCKED>" in text
+        assert "verdict: <PASS | FAIL | BLOCKED>" in text
+        assert "heuristic equivalents" not in text
 
     def test_why1_dispatch_includes_sage_templates(self) -> None:
         text = WHY1_PHASE.read_text(encoding="utf-8")
@@ -108,7 +116,23 @@ class TestSageTemplates:
         assert "agents/exploration/templates/sage-issues-template.md" in text
         assert "using the provided templates" in text
         assert "Produce outputs in `specs/{NNN}-{feature}/`" not in text
-        assert "Produce outputs in `{spec_dir}/`" in text
+        assert "Produce in `{spec_dir}/`" in text
+
+    def test_why2_dispatch_retains_strict_prompt_boundaries_and_paths(self) -> None:
+        text = WHY2_PHASE.read_text(encoding="utf-8")
+
+        assert "<context>" in text
+        assert "</context>" in text
+        assert "<instructions>" in text
+        assert "</instructions>" in text
+        assert "<outputs>" in text
+        assert "</outputs>" in text
+        assert text.index("<context>") < text.index("<instructions>")
+        assert text.index("<instructions>") < text.index("<outputs>")
+        assert "`{spec_dir}/spec.md`" in text
+        assert "`{spec_dir}/assumptions.md`" in text
+        assert "`.specify/memory/constitution.md`" in text
+        assert "Treat `{spec_dir}` / `ACTIVE_SPEC_DIR` as authoritative" in text
 
     def test_why2_dispatch_blocks_required_amendments_even_without_critical(self) -> None:
         text = WHY2_PHASE.read_text(encoding="utf-8")
@@ -117,7 +141,7 @@ class TestSageTemplates:
         assert "mandatory amendments" in text
         assert "HIGH issues marked required" in text
         assert "Quality gates pass AND no CRITICAL issues**" not in text
-        assert "Quality gates pass AND no CRITICAL issues AND no required amendments remain" in text
+        assert "Certified gates pass, no CRITICAL issues, and no required amendments remain" in text
 
     def test_why3_dispatch_includes_sage_templates(self) -> None:
         text = WHY3_PHASE.read_text(encoding="utf-8")

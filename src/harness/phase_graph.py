@@ -15,6 +15,11 @@ class PhaseNode:
     label: str = ""
     spec_file: Optional[str] = None
     agent: Optional[str] = None        # dash-notation dispatch id
+    understanding_target: Optional[str] = None
+    lexicon_artifact: Optional[str] = None
+    timing_window_start: Optional[str] = None
+    budget_seconds: Optional[float] = None
+    timing_window_transition: dict = field(default_factory=dict)
     agents: list = field(default_factory=list)
     context_pack: list = field(default_factory=list)
     pre_dispatch: list = field(default_factory=list)
@@ -83,6 +88,11 @@ class PhaseGraph:
                 label=p.get("label", ""),
                 spec_file=p.get("spec_file"),
                 agent=p.get("agent"),
+                understanding_target=p.get("understanding_target"),
+                lexicon_artifact=p.get("lexicon_artifact"),
+                timing_window_start=p.get("timing_window_start"),
+                budget_seconds=p.get("budget_seconds"),
+                timing_window_transition=p.get("timing_window_transition", {}),
                 agents=p.get("agents", []),
                 context_pack=p.get("context_pack", []),
                 pre_dispatch=p.get("pre_dispatch", []),

@@ -108,13 +108,19 @@ def test_run_analysis_writes_perlgraph_artifacts() -> None:
     assert "write_polyrepo_perlgraph_summary()" in run_analysis
 
 
-def test_re_preflight_tracks_perlgraph_artifacts() -> None:
-    preflight = (
-        EXT_ROOT / "extension" / "workflow" / "phases" / "re-extract-0-preflight.md"
-    ).read_text()
+def test_re_controller_tracks_perlgraph_artifacts(tmp_path) -> None:
+    from harness.re_controller import ReExtractionController
 
-    assert "'perlgraph_analysis': f'{output_dir}/perlgraph-analysis.json'" in preflight
-    assert "'perlgraph_summary': f'{output_dir}/perlgraph-summary.json'" in preflight
+    controller = object.__new__(ReExtractionController)
+    controller._run_re_dir = tmp_path / "re"
+    controller._run_re_dir.mkdir()
+    for name in ("perlgraph-analysis.json", "perlgraph-summary.json"):
+        (controller._run_re_dir / name).write_text("{}\n", encoding="utf-8")
+
+    artifacts = controller._analysis_result()["state_updates"]["artifacts"]
+
+    assert artifacts["perlgraph_analysis"].endswith("/perlgraph-analysis.json")
+    assert artifacts["perlgraph_summary"].endswith("/perlgraph-summary.json")
 
 
 def test_re_analyze_contract_mentions_perlgraph_outputs() -> None:

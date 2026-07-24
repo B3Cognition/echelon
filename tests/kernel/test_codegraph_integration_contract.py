@@ -145,16 +145,22 @@ def test_run_analysis_polyrepo_writes_per_repo_codegraph_artifacts():
     assert '"mode": "polyrepo"' in run_analysis
 
 
-def test_re_preflight_prefers_active_run_output_dir_and_tracks_codegraph_artifacts():
-    preflight = (
-        EXT_ROOT / "extension" / "workflow" / "phases" / "re-extract-0-preflight.md"
-    ).read_text()
+def test_re_controller_tracks_codegraph_artifacts(tmp_path):
+    from harness.re_controller import ReExtractionController
 
-    assert "runs/.current" in preflight
-    assert "runs/{run_id}/re" in preflight
-    assert "state_path = Path(output_dir) / 'state.json'" in preflight
-    assert "'codegraph_analysis': f'{output_dir}/codegraph-analysis.json'" in preflight
-    assert "'codegraph_summary': f'{output_dir}/codegraph-summary.json'" in preflight
+    controller = object.__new__(ReExtractionController)
+    controller._run_re_dir = tmp_path / "runs" / "run-1" / "re"
+    controller._run_dir = tmp_path / "runs" / "run-1"
+    controller._run_re_dir.mkdir(parents=True)
+    for name in ("codegraph-analysis.json", "codegraph-summary.json"):
+        (controller._run_re_dir / name).write_text("{}\n", encoding="utf-8")
+
+    state = controller._initialize_state()
+    artifacts = controller._analysis_result()["state_updates"]["artifacts"]
+
+    assert state["output_dir"] == "runs/run-1/re"
+    assert artifacts["codegraph_analysis"].endswith("/codegraph-analysis.json")
+    assert artifacts["codegraph_summary"].endswith("/codegraph-summary.json")
 
 
 def test_re_analyzer_uses_state_output_dir_instead_of_hardcoded_re_path():
@@ -162,19 +168,14 @@ def test_re_analyzer_uses_state_output_dir_instead_of_hardcoded_re_path():
 
     assert "workspace-manifest.json" in analyzer
     assert "RE_OUTPUT_DIR" in analyzer
-    assert '"$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" \\' in analyzer
-    assert "ALWAYS invoke `run-analysis.sh`" in analyzer
-    assert "NEVER derive or invoke CodeGraph or PerlGraph runtime paths" in analyzer
+    assert "controller-owned analysis step" in analyzer
+    assert "NEVER invoke repository discovery" in analyzer
+    assert "NEVER derive, invoke, or repair CodeGraph or PerlGraph runtimes" in analyzer
     assert "scripts/node/codegraph/codegraph-bridge.js" not in analyzer
     assert "dist/cli/perlgraph.js" not in analyzer
-    assert '--output "$RE_OUTPUT_DIR"' in analyzer
-    assert '--manifest "$RE_ANALYSIS_MANIFEST"' in analyzer
-    assert '--source-output-root "$RE_OUTPUT_DIR/sources"' in analyzer
-    assert '--profile "$RE_PROFILE"' in analyzer
-    assert '"$EXTENSION_PATH/scripts/bash/re/discover-repos.sh" "$RE_OUTPUT_DIR/repos-manifest.json"' in analyzer
     assert "Prefer `$RE_OUTPUT_DIR/re-analysis-manifest.json`" in analyzer
     assert "repos-manifest.json" in analyzer
-    assert '"$EXTENSION_PATH/scripts/bash/re/run-analysis.sh" ".specify/echelon/re"' not in analyzer
+    assert "run-analysis.sh" not in analyzer
 
 
 def test_re_prompts_prefer_workspace_manifest_with_repos_fallback():

@@ -18,7 +18,7 @@ Context pack:
 - `extension/templates/benchmark-data-template.md`
 - `reasoning-journal.jsonl`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -46,7 +46,7 @@ Context pack:
 - `knowledge-base/patterns.yaml` + `knowledge-base/pitfalls.yaml`
 - `extension/templates/knowledge-transfer-assessment-template.md`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -80,7 +80,7 @@ Context pack:
 - `extension/templates/bias-check-template.md`
 - `extension/templates/prompt-recommendation-template.md`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -129,7 +129,7 @@ Context pack:
 - `extension/templates/calibration-analytics-template.md`
 - `extension/templates/feedback-report-template.md`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -233,7 +233,7 @@ Context pack:
 - speckit-echelon-mirror (MIRROR), speckit-echelon-adaptive (ADAPTIVE), and speckit-echelon-auditor (AUDITOR) outputs from this FINALIZE run
 - `extension/templates/schema-consolidation-template.md`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 

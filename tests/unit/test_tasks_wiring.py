@@ -1,33 +1,79 @@
 import pytest, yaml, pathlib
 
 @pytest.mark.unit
-def test_orchestrator_has_tasks_gate_mode():
+def test_orchestrator_only_owns_tasks_lexicon_authoring():
     txt = pathlib.Path("extension/agents/solution/orchestrator.md").read_text()
-    assert "Tasks Gate Mode" in txt
-    assert "lexicon validate" in txt and "--type tasks" in txt
-    assert "tasks_lexicon_pass" in txt
-    assert "--spec-ref" in txt
+    assert "Tasks Lexicon Authoring Contract" in txt
+    assert "canonical row format" in txt
+    assert "deterministic node validates" in txt
+    assert "lexicon validate" not in txt
+    assert "Do not report `tasks_lexicon_pass`" in txt
+    assert "Do not report `tasks_lexicon_attempts`" in txt
 
 @pytest.mark.unit
 def test_phase3_plan_redispatch_transition():
     d = yaml.safe_load(pathlib.Path("extension/workflow/definition.yaml").read_text())
-    node = next(n for n in d["phases"] if n["id"] == "phase3-plan")
-    conds = " ".join(t.get("condition","") for t in node["transitions"])
-    assert "tasks_lexicon_pass" in conds and "NOT tasks_lexicon_pass" in conds
-    # Condition aligned to the proven phase1-what shape: the re-dispatch guard
-    # references only resolvable keys. The redundant config-namespace conjunct
-    # `lexicon_gate.artifacts.tasks.enabled` (which COMMANDER's state evaluator
-    # cannot resolve, making the guard indeterminate) must be dropped.
-    assert "lexicon_gate.enabled AND NOT tasks_lexicon_pass" in conds
-    assert "artifacts.tasks.enabled" not in conds
+    nodes = {node["id"]: node for node in d["phases"]}
+    assert nodes["phase3-plan"]["transitions"] == [
+        {"to": "phase3-tasks-lexicon", "condition": "always"}
+    ]
+    gate = nodes["phase3-tasks-lexicon"]
+    assert gate["type"] == "deterministic_lexicon"
+    assert gate["lexicon_artifact"] == "tasks"
+    assert gate["transitions"] == [
+        {
+            "to": "phase3-plan",
+            "condition": "tasks_lexicon_action = repair",
+            "action": "increment_iteration",
+        },
+        {
+            "to": "terminal-blocked",
+            "condition": "tasks_lexicon_action = block",
+        },
+        {
+            "to": "phase3-understanding",
+            "condition": (
+                "tasks_lexicon_action in [proceed, proceed_with_warning]"
+            ),
+        },
+    ]
 
 @pytest.mark.unit
-def test_phase3_plan_doc_registers_tasks_lexicon_pass():
-    # The phase spec must register `tasks_lexicon_pass` as authoritative state the
-    # same way phase1-what.md registers `lexicon_pass`: an explicit controlled-outcome
-    # routing instruction to read `state.json.tasks_lexicon_pass`, plus the
-    # state_updates contract (tasks_lexicon_pass + tasks_lexicon_attempts).
+def test_phase3_plan_doc_declares_controller_owned_tasks_gate():
     txt = pathlib.Path("extension/workflow/phases/phase3-plan.md").read_text()
     assert "state.json.tasks_lexicon_pass" in txt
     assert "tasks_lexicon_attempts" in txt
-    assert "Controlled-outcome routing" in txt
+    assert "`phase3-tasks-lexicon`" in txt
+    assert "deterministic node validates" in txt
+    assert "lexicon validate" not in txt
+    assert "tasks-lexicon-report.json" in txt
+    assert "python -m harness" not in txt
+
+
+@pytest.mark.unit
+def test_phase3_consensus_recertifies_plan2_tasks():
+    d = yaml.safe_load(pathlib.Path("extension/workflow/definition.yaml").read_text())
+    nodes = {node["id"]: node for node in d["phases"]}
+    assert nodes["phase3-consensus"]["transitions"] == [
+        {
+            "to": "phase3-consensus-tasks-lexicon",
+            "condition": "always",
+        }
+    ]
+    gate = nodes["phase3-consensus-tasks-lexicon"]
+    assert gate["type"] == "deterministic_lexicon"
+    assert gate["lexicon_artifact"] == "tasks"
+    conds = " ".join(t.get("condition", "") for t in gate["transitions"])
+    assert "tasks_lexicon_action = repair" in conds
+    assert "tasks_lexicon_action = block" in conds
+    assert "why3-verdict = FAIL" in conds
+    assert "assess2-verdict = REJECTED" in conds
+
+
+@pytest.mark.unit
+def test_tasks_gate_has_no_hidden_post_dispatch_controller_hook():
+    txt = pathlib.Path("src/harness/squad.py").read_text()
+    assert "_enforce_tasks_lexicon_gate_result" not in txt
+    assert "_validate_tasks_gate_artifacts" not in txt
+    assert "_mark_tasks_lexicon_uncertified" not in txt
+    assert "_load_lexicon_glossary_terms" not in txt

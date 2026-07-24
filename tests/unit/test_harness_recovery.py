@@ -584,6 +584,61 @@ def test_recover_blocked_run_prefers_checkpoint_commit_over_salvage(
 
 
 @pytest.mark.unit
+def test_recover_blocked_run_prefers_documentation_head_over_task_checkpoint(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    _init_repo(project)
+    _commit_file(project, "README.md", "base\n", "base")
+    _git(project, "checkout", "-b", "001-feature")
+    _commit_file(project, "spec.md", "spec\n", "spec scaffold")
+
+    mirror = project / "runs" / "mirror.git"
+    mirror.parent.mkdir()
+    _git(project, "clone", "--mirror", str(project), str(mirror))
+
+    worktree = project / "runs" / "build-test" / "worktrees" / "default" / "iter-0"
+    _git(tmp_path, "clone", str(project), str(worktree))
+    _git(worktree, "config", "user.email", "test@example.com")
+    _git(worktree, "config", "user.name", "Test User")
+    _git(worktree, "checkout", "001-feature")
+    checkpoint = _commit_file(
+        worktree,
+        "src/feature.txt",
+        "feature\n",
+        "harness-checkpoint: 001-feature/default iter-0 build T-001",
+    )
+    docs_head = _commit_file(
+        worktree,
+        "README.md",
+        "base\n\nDocumented feature.\n",
+        "document feature",
+    )
+
+    _git(project, "checkout", "001-feature")
+    result = recover_blocked_run(
+        project_dir=project,
+        spec_id="001-feature",
+        strategy_id="default",
+        state={
+            "termination_reason": "blocker_escalation",
+            "checkpoint_commits": [{"commit": checkpoint, "task_ids": ["T-001"]}],
+            "documentation_evidence": {
+                "head": docs_head,
+                "changed_files": ["README.md"],
+            },
+        },
+        gitops=_make_gitops(project),
+        build_id="build-test",
+    )
+
+    assert result.commit == docs_head
+    assert (project / "README.md").read_text(encoding="utf-8").endswith(
+        "Documented feature.\n"
+    )
+
+
+@pytest.mark.unit
 def test_recover_blocked_run_skips_dirty_checkout_when_checkpoint_already_on_target_branch(
     tmp_path: Path,
 ) -> None:

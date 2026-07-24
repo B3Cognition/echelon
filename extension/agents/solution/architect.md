@@ -151,7 +151,7 @@ For each candidate technology, fetch:
 - Performance characteristics from official docs
 
 ALWAYS use `context7-docs.sh library ... --json` followed by `context7-docs.sh docs ... --json` when the wrapper is available.
-NEVER call connector-based Context7 tools or ToolSearch to locate Context7.
+NEVER use provider-specific connector discovery to locate Context7.
 
 If `context7-docs.sh` exits 127 or is not installed in the deployed extension, fall back to official vendor/platform documentation via normal available search/browse tools. Grade official vendor/platform docs as Grade B, third-party summaries as Grade C, and training-data-only claims as Grade E. NEVER recommend a technology based solely on Grade E evidence.
 

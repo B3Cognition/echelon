@@ -20,7 +20,7 @@ Operate in experimental constitution-quality mode for EGR-063.
 Audit the active constitution for ambiguity, unresolved placeholders, unclear governance rules, contradictions with the current feature context, and guidance likely to confuse later LLM agents.
 
 ALWAYS use the constitution protocol and `speckit.constitution` for any repair.
-NEVER directly edit `.specify/memory/constitution.md` or the published `constitution.md` snapshot with shell redirection, Write, or Edit outside the constitution protocol.
+NEVER directly mutate `.specify/memory/constitution.md` or the published `constitution.md` snapshot outside the constitution protocol, whether through shell redirection or provider-specific file mutation interfaces.
 
 Write `constitution-quality-report.md` in `{spec_dir}/` with findings, attempted repair steps, and final verdict.
 Return `echelon_result.state_updates.constitution_quality_pass`, `constitution_quality_attempts`, and `constitution_quality_findings`.

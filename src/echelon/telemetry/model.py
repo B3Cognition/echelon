@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Iterable, Mapping
 
 
 _TOKEN_KEYS = (
@@ -62,14 +62,36 @@ class TokenUsage:
     def total(self) -> int | None:
         if not self.known:
             return None
-        if self.reported_total_tokens is not None:
+        component_total = sum(int(getattr(self, name) or 0) for name in _TOKEN_KEYS)
+        # Some providers emit a zero aggregate while still supplying usable
+        # per-category counts. Preserve the more informative observation.
+        if self.reported_total_tokens is not None and not (
+            self.reported_total_tokens == 0 and component_total > 0
+        ):
             return self.reported_total_tokens
-        return sum(int(getattr(self, name) or 0) for name in _TOKEN_KEYS)
+        return component_total
 
     def to_json_dict(self) -> dict[str, int | None]:
         result = {name: getattr(self, name) for name in _TOKEN_KEYS}
         result["total_tokens"] = self.total
         return result
+
+
+def aggregate_token_usage(usages: Iterable[TokenUsage]) -> TokenUsage:
+    """Combine observed dispatch usage without inventing missing components."""
+    known = tuple(usage for usage in usages if usage.known)
+    if not known:
+        return TokenUsage.unknown()
+
+    def component(name: str) -> int | None:
+        values = [getattr(usage, name) for usage in known]
+        observed = [value for value in values if value is not None]
+        return sum(observed) if observed else None
+
+    return TokenUsage(
+        **{name: component(name) for name in _TOKEN_KEYS},
+        reported_total_tokens=sum(int(usage.total or 0) for usage in known),
+    )
 
 
 @dataclass(frozen=True)
@@ -126,6 +148,106 @@ class ExecutionSpan:
             token_usage=TokenUsage.from_mapping(
                 value.get("token_usage") if isinstance(value.get("token_usage"), Mapping) else None
             ),
+        )
+
+
+@dataclass(frozen=True)
+class PhaseTimingEvent:
+    """An immutable phase lifecycle observation kept outside controller state."""
+
+    trace_id: str
+    phase: str
+    event: str
+    event_time: str
+    budget_seconds: float
+    elapsed_seconds: float | None = None
+    over_budget: bool | None = None
+
+    @classmethod
+    def started(
+        cls,
+        *,
+        trace_id: str,
+        phase: str,
+        budget_seconds: float,
+        event_time: str,
+    ) -> "PhaseTimingEvent":
+        return cls(
+            trace_id=trace_id,
+            phase=phase,
+            event="started",
+            event_time=event_time,
+            budget_seconds=budget_seconds,
+        )
+
+    @classmethod
+    def finished(
+        cls,
+        *,
+        trace_id: str,
+        phase: str,
+        budget_seconds: float,
+        elapsed_seconds: float,
+        event_time: str,
+    ) -> "PhaseTimingEvent":
+        return cls(
+            trace_id=trace_id,
+            phase=phase,
+            event="finished",
+            event_time=event_time,
+            budget_seconds=budget_seconds,
+            elapsed_seconds=elapsed_seconds,
+            over_budget=elapsed_seconds > budget_seconds * 1.2 if budget_seconds > 0 else False,
+        )
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "type": "phase_timing",
+            "trace_id": self.trace_id,
+            "phase": self.phase,
+            "event": self.event,
+            "event_time": self.event_time,
+            "budget_seconds": self.budget_seconds,
+            "elapsed_seconds": self.elapsed_seconds,
+            "over_budget": self.over_budget,
+        }
+
+    @classmethod
+    def from_json_dict(cls, value: Mapping[str, object]) -> "PhaseTimingEvent":
+        if value.get("schema_version") != 1 or value.get("type") != "phase_timing":
+            raise ValueError("invalid phase timing event")
+        if value.get("event") not in {"started", "finished"}:
+            raise ValueError("invalid phase timing event kind")
+        trace_id = value.get("trace_id")
+        phase = value.get("phase")
+        event_time = value.get("event_time")
+        budget = value.get("budget_seconds")
+        if (
+            not isinstance(trace_id, str)
+            or not trace_id
+            or not isinstance(phase, str)
+            or not phase
+            or not isinstance(event_time, str)
+            or not event_time
+            or isinstance(budget, bool)
+            or not isinstance(budget, (int, float))
+        ):
+            raise ValueError("invalid phase timing event fields")
+        elapsed = value.get("elapsed_seconds")
+        if elapsed is not None and (isinstance(elapsed, bool) or not isinstance(elapsed, (int, float))):
+            raise ValueError("invalid phase timing elapsed seconds")
+        over_budget = value.get("over_budget")
+        if over_budget is not None and not isinstance(over_budget, bool):
+            raise ValueError("invalid phase timing over-budget value")
+        return cls(
+            trace_id=trace_id,
+            phase=phase,
+            event=str(value["event"]),
+            event_time=event_time,
+            budget_seconds=float(budget),
+            elapsed_seconds=float(elapsed) if elapsed is not None else None,
+            over_budget=over_budget,
         )
 
 

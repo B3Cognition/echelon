@@ -207,6 +207,10 @@ def test_write_docs_verification_report_passes_first_run_docs(
     assert result.blocking_findings == 0
     assert result.report_path == spec_dir / "docs-verification-report.md"
     metadata = _frontmatter(result.report_path)
+    assert metadata["schema_version"] == 2
+    assert metadata["reviewed_change_ids"] == []
+    assert metadata["uncovered_change_ids"] == []
+    assert metadata["unsupported_claims"] == []
     assert metadata["verdict"] == "PASS"
     assert metadata["readme_first_run_manual"] is True
     assert metadata["changelog_valid"] is True

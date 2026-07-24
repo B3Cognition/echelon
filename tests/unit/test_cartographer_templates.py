@@ -77,14 +77,28 @@ class TestCartographerTemplates:
         assert "agents/exploration/templates/cartographer-overview-template.md" in text
         assert "using the provided templates" in text
 
-    def test_understanding_scan_output_shape_is_documented(self) -> None:
+    def test_validation_execution_is_controller_owned(self) -> None:
         agent_text = AGENT.read_text(encoding="utf-8")
         phase_text = PHASE.read_text(encoding="utf-8")
 
         for text in (agent_text, phase_text):
-            assert "list" in text
-            assert "payload[0] if isinstance(payload, list) and payload else payload" in text
-            assert "Do not call `.keys()`" in text or "NEVER call `.keys()`" in text
+            assert "understanding scan" not in text
+            assert "lexicon validate" not in text
+            assert "python3 -c" not in text
+            assert "```bash" not in text
+            assert "/tmp/cartographer-understanding.json" not in text
+            assert "controller-owned" in text.lower()
+
+    def test_prompt_consumes_injected_configuration_and_findings(self) -> None:
+        agent_text = AGENT.read_text(encoding="utf-8")
+        phase_text = PHASE.read_text(encoding="utf-8")
+
+        for text in (agent_text, phase_text):
+            assert "Controller Configuration" in text
+            assert "Spec Lexicon Repair" in text
+            assert "Do not discover" in text
+        assert "after the final source write" in agent_text
+        assert "Never estimate" in agent_text
 
     def test_workflow_definition_lists_cartographer_outputs(self) -> None:
         text = DEFINITION.read_text(encoding="utf-8")

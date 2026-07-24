@@ -87,6 +87,12 @@ def _mark_constitution_complete(project_root: Path, store: SquadStateStore) -> N
     store.save(state)
 
 
+def _disable_lexicon_gate(project_root: Path) -> None:
+    config_path = project_root / ".echelon" / "config.yml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text("lexicon_gate:\n  enabled: false\n", encoding="utf-8")
+
+
 def test_finalize_published_spec_metadata_can_be_generated(tmp_path: Path) -> None:
     spec_dir = tmp_path / "specs" / "001-photo-album"
     spec_dir.mkdir(parents=True)
@@ -106,6 +112,7 @@ def test_finalize_published_spec_metadata_can_be_generated(tmp_path: Path) -> No
 
 
 def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_path: Path) -> None:
+    _disable_lexicon_gate(tmp_path)
     provider = _mock_provider()
     ctrl, store = _controller(tmp_path, provider=provider)
     store.initialize("run-test", "banzai", "msg", 0, "phase4-document", max_iterations=5)
@@ -159,6 +166,7 @@ def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_
 
 
 def test_phase4_publish_keeps_readiness_when_mempalace_setup_fails(tmp_path: Path) -> None:
+    _disable_lexicon_gate(tmp_path)
     provider = _mock_provider()
     ctrl, store = _controller(tmp_path, provider=provider)
     store.initialize("run-test", "banzai", "msg", 0, "phase4-document", max_iterations=5)

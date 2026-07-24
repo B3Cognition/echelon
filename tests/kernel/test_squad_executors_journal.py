@@ -16,16 +16,18 @@ EXT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(EXT_ROOT) not in sys.path:
     sys.path.insert(0, str(EXT_ROOT))
 
-from harness.phase_graph import PhaseGraph
+from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.squad_executors import (
     AgentExecutor,
     ConditionalSequentialExecutor,
+    DeterministicLexiconExecutor,
     StagedParallelExecutor,
     _canonical_echelon_result_contract,
     _allowed_state_updates_contract,
 )
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
+from harness.tasks_lexicon_gate import TasksLexiconGateResult
 
 
 def _executor(tmp_path: Path, squad_dir: Path = None) -> AgentExecutor:
@@ -535,7 +537,7 @@ def test_why2_routing_contract_uses_full_quality_score_shape():
 
 
 def test_spec_lexicon_routing_contract_requires_certificate_fields():
-    """WHAT agents report repair evidence; the controller certifies a verdict."""
+    """WHAT agents do not report fields owned by controller validation."""
     from harness.phase_graph import PhaseNode
     from harness.squad_executors import _routing_contract
 
@@ -551,11 +553,152 @@ def test_spec_lexicon_routing_contract_requires_certificate_fields():
     contract = _routing_contract(node)
 
     assert "lexicon_pass:" not in contract
-    assert "lexicon_attempts:" in contract
-    assert "lexicon_findings:" in contract
+    assert "lexicon_attempts:" not in contract
+    assert "lexicon_findings:" not in contract
 
     phase_text = (Path(__file__).resolve().parents[2] / "extension/workflow/phases/phase1-what.md").read_text()
-    assert "a missing artifact is pending, never `lexicon_pass: false`" in phase_text
+    assert "a missing artifact is pending, never `lexicon_pass: false`" in phase_text.lower()
+
+
+def test_phase1_what_prompt_injects_resolved_spec_lexicon_configuration(tmp_path):
+    config_dir = tmp_path / ".echelon"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.yml").write_text(
+        "lexicon_gate:\n"
+        "  enabled: true\n"
+        "  artifacts:\n"
+        "    spec:\n"
+        "      enabled: true\n"
+        "      type: spec\n"
+        "      mode: derived\n",
+        encoding="utf-8",
+    )
+    (config_dir / "local.yml").write_text(
+        "lexicon_gate:\n"
+        "  glossary_file: domain-glossary.md\n"
+        "  max_repair_attempts: 7\n"
+        "  artifacts:\n"
+        "    spec:\n"
+        "      path: controlled-requirements.md\n"
+        "      source_ref: product-spec.md\n",
+        encoding="utf-8",
+    )
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-what", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "spec_dir": "runs/run-test/specs/001-demo",
+        },
+    )
+
+    assert prompt.count("# Controller Configuration") == 1
+    assert "<controller_configuration>" in prompt
+    assert "enabled: true" in prompt
+    assert "artifact_type: spec" in prompt
+    assert "mode: derived" in prompt
+    assert "artifact_path: controlled-requirements.md" in prompt
+    assert "source_path: product-spec.md" in prompt
+    assert "glossary_path: domain-glossary.md" in prompt
+    assert "max_repair_attempts: 7" in prompt
+    assert "Do not discover or override these values" in prompt
+
+
+def test_phase1_what_prompt_marks_disabled_spec_lexicon_subgate(tmp_path):
+    config_dir = tmp_path / ".echelon"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.yml").write_text(
+        "lexicon_gate:\n"
+        "  enabled: true\n"
+        "  artifacts:\n"
+        "    spec:\n"
+        "      enabled: false\n",
+        encoding="utf-8",
+    )
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-what", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "spec_dir": "runs/run-test/specs/001-demo",
+        },
+    )
+
+    assert "enabled: false" in prompt
+    assert "When disabled, do not create or amend a derived Lexicon artifact." in prompt
+
+
+def test_phase1_what_prompt_injects_controller_spec_lexicon_repair_report(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    report = tmp_path / "runs/run-test/specs/001-demo/spec-lexicon-report.json"
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-what", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "spec_dir": "runs/run-test/specs/001-demo",
+            "lexicon_evaluation": "failed",
+            "lexicon_pass": False,
+            "lexicon_attempts": 2,
+            "lexicon_report": str(report),
+        },
+    )
+
+    assert prompt.count("# Spec Lexicon Repair (Controller-Enforced)") == 1
+    assert prompt.count(str(report)) == 1
+    assert "Attempt: `2`" in prompt
+    assert "Validation execution and deterministic verdict reporting are controller-owned." in prompt
+
+
+def test_unrelated_phase_does_not_receive_spec_lexicon_configuration(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase2-how", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "lexicon_evaluation": "failed",
+            "lexicon_pass": False,
+            "lexicon_report": "/evidence/spec-lexicon-report.json",
+        },
+    )
+
+    assert "# Controller Configuration" not in prompt
+    assert "# Spec Lexicon Repair (Controller-Enforced)" not in prompt
+
+
+def test_phase1_what_outputs_are_checked_by_the_executor(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    state = {"spec_dir": str(spec_dir.relative_to(tmp_path))}
+    node = PhaseNode(id="phase1-what", type="agent")
+
+    assert ex._required_phase_outputs_missing(node, state) == [
+        "spec.md",
+        "00-overview.md",
+    ]
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    (spec_dir / "00-overview.md").write_text("# Overview\n", encoding="utf-8")
+    assert ex._required_phase_outputs_missing(node, state) == []
 
 
 def test_allowed_state_updates_contract_renders_empty_allowlist():
@@ -629,6 +772,57 @@ def test_assemble_prompt_injects_resolved_project_quality_gates(tmp_path):
     assert "testability: >= 0.83" in prompt
     assert "semantic: >= 0.64" in prompt
     assert "Never substitute thresholds copied from agent or phase files" in prompt
+
+
+def test_why2_prompt_injects_certified_understanding_evidence_once(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    report = squad_dir / "evidence" / "understanding" / "phase1-why2-iter-2.json"
+    state = {
+        "squad_dir": str(squad_dir),
+        "understanding_evidence": {
+            "phase": "phase1-why2",
+            "iteration": 2,
+            "status": "completed",
+            "path": str(report),
+            "digest": "abc123",
+            "pass": False,
+            "failing_gates": ["testability", "behavioral"],
+            "error": None,
+        },
+    }
+
+    prompt = ex._assemble_prompt(PhaseNode(id="phase1-why2", type="agent"), state)
+
+    assert prompt.count("# Certified Understanding Evidence") == 1
+    assert prompt.count(str(report)) == 1
+    assert "Digest: `abc123`" in prompt
+    assert "Certified pass: `false`" in prompt
+    assert "Failing gates: `testability`, `behavioral`" in prompt
+
+
+def test_why1_prompt_does_not_receive_understanding_evidence(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-why1", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "understanding_evidence": {
+                "phase": "phase1-why2",
+                "status": "completed",
+                "path": "/evidence/report.json",
+            },
+        },
+    )
+
+    assert "# Certified Understanding Evidence" not in prompt
 
 
 def test_assemble_prompt_injects_extension_path_resolution(tmp_path):
@@ -1172,6 +1366,39 @@ def test_staged_prompt_includes_allowed_state_updates(tmp_path):
     assert "- `quality_scores`" in prompt
 
 
+def test_why3_staged_prompt_injects_certified_understanding_evidence(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    (ext_dir / "agents").mkdir(parents=True)
+    (ext_dir / "agents" / "why3.md").write_text("# WHY3\n", encoding="utf-8")
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/why3.md"
+    ex = StagedParallelExecutor(MagicMock(), graph, ext_dir, tmp_path, squad_dir)
+    report = squad_dir / "evidence" / "understanding" / "phase3-consensus-iter-1.json"
+
+    prompt = ex._build_agent_prompt(
+        {"id": "speckit-echelon-sage", "mode": "WHY3"},
+        {
+            "squad_dir": str(squad_dir),
+            "understanding_evidence": {
+                "phase": "phase3-consensus",
+                "iteration": 1,
+                "status": "completed",
+                "path": str(report),
+                "digest": "def456",
+                "pass": True,
+                "failing_gates": [],
+                "error": None,
+            },
+        },
+    )
+
+    assert prompt.count("# Certified Understanding Evidence") == 1
+    assert prompt.count(str(report)) == 1
+    assert "Certified pass: `true`" in prompt
+
+
 def test_blocked_validation_result_preserves_original_error(tmp_path):
     """Provider-created BLOCKED wrappers are harness-owned, not phase state writes."""
     ex = _executor(tmp_path)
@@ -1334,16 +1561,72 @@ def test_staged_parallel_quarantines_state_update_outside_allowlist(tmp_path):
     assert entries[0]["data"]["dropped_keys"] == ["unexpected"]
 
 
+def test_staged_parallel_blocks_plan2_when_implementability_report_is_missing(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    state_store = SquadStateStore(squad_dir)
+    state_store.initialize("r", "greenfield", "msg", 0, "phase3-consensus")
+    spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    state = state_store.load()
+    state["spec_dir"] = str(spec_dir)
+    state_store.save(state)
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "PASS",
+            "state_updates": {},
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = None
+    graph.all_phase_ids.return_value = []
+    executor = StagedParallelExecutor(
+        provider, graph, tmp_path / "ext", tmp_path, squad_dir
+    )
+    node = SimpleNamespace(
+        id="phase3-consensus",
+        agents=[
+            {
+                "id": "speckit-echelon-gatekeeper",
+                "mode": "ASSESS2",
+                "stage": 1,
+                "context_pack": [],
+                "allowed_verdicts": ["PASS", "REJECTED", "BLOCKED"],
+            },
+            {
+                "id": "speckit-echelon-orchestrator",
+                "mode": "PLAN2",
+                "stage": 2,
+                "context_pack": [],
+                "allowed_verdicts": ["COMPLETE", "DONE", "BLOCKED"],
+            },
+        ],
+        allowed_state_updates=[],
+    )
+
+    result = executor.execute(node, state_store)
+
+    assert result.verdict == "BLOCKED"
+    assert result.state_updates["blocked_reason"] == "missing_consensus_prerequisite"
+    assert result.state_updates["missing_outputs"] == [
+        str(spec_dir / "implementability-report.md")
+    ]
+    assert provider.exec_agent.call_count == 1
+
+
 def test_plan2_reporting_state_is_quarantined_without_blocking(tmp_path):
     ex = _executor(tmp_path)
     node = SimpleNamespace(
         id="phase3-consensus",
-        allowed_state_updates=["tasks_lexicon_pass", "tasks_lexicon_attempts"],
+        allowed_state_updates=["tasks_lexicon_attempts"],
         required_state_updates=[],
-        state_update_types={
-            "tasks_lexicon_pass": "boolean",
-            "tasks_lexicon_attempts": "integer",
-        },
+        state_update_types={"tasks_lexicon_attempts": "integer"},
         allowed_verdicts=["COMPLETE", "BLOCKED"],
     )
     result = SquadAgentResult(
@@ -1412,12 +1695,9 @@ def test_staged_prompt_uses_agent_specific_state_contract(tmp_path):
     entry = {
         "id": "speckit-echelon-orchestrator",
         "mode": "PLAN2",
-        "allowed_state_updates": ["tasks_lexicon_pass", "tasks_lexicon_attempts"],
+        "allowed_state_updates": ["tasks_lexicon_attempts"],
         "required_state_updates": [],
-        "state_update_types": {
-            "tasks_lexicon_pass": "boolean",
-            "tasks_lexicon_attempts": "integer",
-        },
+        "state_update_types": {"tasks_lexicon_attempts": "integer"},
         "allowed_verdicts": ["COMPLETE", "BLOCKED"],
     }
 
@@ -1430,7 +1710,7 @@ def test_staged_prompt_uses_agent_specific_state_contract(tmp_path):
         allowed_verdicts=entry["allowed_verdicts"],
     )
 
-    assert "- `tasks_lexicon_pass` (boolean)" in prompt
+    assert "- `tasks_lexicon_pass` (boolean)" not in prompt
     assert "- `tasks_lexicon_attempts` (integer)" in prompt
     assert "Allowed verdicts: `COMPLETE`, `BLOCKED`" in prompt
     assert "quality_scores" not in prompt
@@ -1466,8 +1746,8 @@ def test_staged_prompt_includes_directory_context_pack_contents(tmp_path):
         },
     )
 
-    assert "# contracts/" in prompt
-    assert "## contracts/internal-interfaces.md" in prompt
+    assert f"# {contracts.resolve()}/" in prompt
+    assert f"## {contracts.resolve()}/internal-interfaces.md" in prompt
     assert "CONTRACT CONTENT" in prompt
 
 
@@ -1556,8 +1836,9 @@ def test_assemble_prompt_preserves_active_run_spec_dir(tmp_path):
 
     assert "ACTIVE RUN SPEC" in prompt
     assert "REAL SPEC" not in prompt
-    assert "ACTIVE_SPEC_DIR=" in prompt
+    assert f"ACTIVE_SPEC_DIR={active_spec.resolve()}" in prompt
     assert "PUBLISHED_SPEC_DIR=" in prompt
+    assert f"# {active_spec.resolve() / 'spec.md'}" in prompt
 
 
 def test_assemble_prompt_reads_fresh_clarifications_from_run_staging(tmp_path):
@@ -1629,6 +1910,9 @@ def test_staged_prompt_preserves_active_run_spec_dir(tmp_path):
 
     assert "ACTIVE RUN SPEC" in prompt
     assert "REAL SPEC" not in prompt
+    assert f"ACTIVE_SPEC_DIR={active_spec.resolve()}" in prompt
+    assert f"# {active_spec.resolve() / 'spec.md'}" in prompt
+    assert "{spec_dir}" not in prompt
 
 
 def test_agent_prompt_declares_subagent_without_global_skill_tool_ban(tmp_path):
@@ -1812,6 +2096,96 @@ def test_phase3_plan_blocks_when_required_outputs_missing(tmp_path):
         "risk-matrix.md",
         "dependencies.md",
     ]
+
+
+def test_deterministic_tasks_lexicon_executor_dispatches_provider_free_service(
+    tmp_path,
+    monkeypatch,
+):
+    squad_dir = tmp_path / "runs" / "run-test"
+    store = SquadStateStore(squad_dir)
+    store.initialize("run-test", "brownfield", "demo", 0, "phase3-tasks-lexicon")
+    state = store.load()
+    state.update(
+        {
+            "spec_dir": "specs/001-demo",
+            "iteration": 2,
+            "max_iterations": 5,
+            "tasks_lexicon_attempts": 1,
+        }
+    )
+    store.save(state)
+    observed = {}
+
+    def fake_gate(**kwargs):
+        observed.update(kwargs)
+        return TasksLexiconGateResult(
+            action="proceed",
+            passed=True,
+            attempts=0,
+            findings=0,
+            detail="tasks are valid",
+        )
+
+    monkeypatch.setattr(
+        "harness.squad_executors.run_tasks_lexicon_gate",
+        fake_gate,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "harness.config.get_full_resolved_config",
+        lambda *_args, **_kwargs: {"lexicon_gate": {"enabled": True}},
+    )
+    executor = DeterministicLexiconExecutor(
+        MagicMock(spec=PhaseGraph),
+        tmp_path / "extension",
+        tmp_path,
+        squad_dir,
+    )
+    node = PhaseNode(
+        id="phase3-tasks-lexicon",
+        type="deterministic_lexicon",
+        lexicon_artifact="tasks",
+        allowed_state_updates=[],
+    )
+
+    result = executor.execute(node, store)
+
+    assert result.verdict == "DONE"
+    assert result.state_updates == {
+        "tasks_lexicon_action": "proceed",
+        "tasks_lexicon_pass": True,
+        "tasks_lexicon_attempts": 0,
+        "tasks_lexicon_findings": 0,
+    }
+    assert observed["project_root"] == tmp_path
+    assert observed["spec_dir_ref"] == "specs/001-demo"
+    assert observed["previous_attempts"] == 1
+    assert observed["workflow_iteration"] == 2
+    assert observed["max_workflow_iterations"] == 5
+
+
+def test_deterministic_lexicon_executor_blocks_unsupported_artifact(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    store = SquadStateStore(squad_dir)
+    store.initialize("run-test", "brownfield", "demo", 0, "bad-gate")
+    executor = DeterministicLexiconExecutor(
+        MagicMock(spec=PhaseGraph),
+        tmp_path / "extension",
+        tmp_path,
+        squad_dir,
+    )
+    node = PhaseNode(
+        id="bad-gate",
+        type="deterministic_lexicon",
+        lexicon_artifact="unknown",
+        allowed_state_updates=[],
+    )
+
+    result = executor.execute(node, store)
+
+    assert result.verdict == "BLOCKED"
+    assert "unsupported artifact 'unknown'" in result.state_updates["blocked_reason"]
 
 
 def test_phase3_sentinel_recovers_outputs_from_run_local_shadow_spec_dir(tmp_path):

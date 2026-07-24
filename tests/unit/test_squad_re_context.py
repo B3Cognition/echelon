@@ -122,6 +122,7 @@ def test_squad_initialization_attaches_published_re_snapshot(tmp_path: Path) -> 
 
     assert result.status == "done"
     state = store.load()
+    assert "telemetry_trace_id" not in state
     context = state["published_re_context"]
     assert context["status"] == "attached"
     assert context["generation"] == 1

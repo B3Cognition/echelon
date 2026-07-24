@@ -24,7 +24,7 @@ operator-visible behavior, tests, and evidence scope. Use universal terms only
 with `Evidence Scope: exhaustive` and evidence covering the invariant;
 otherwise state the bounded observed behavior.
 
-If `echelon re check-domain` still fails after an honest repair attempt, return `verdict: BLOCKED` with the concise command failure in top-level `blocked_reason` and leave the canonical `spec.md` in place. The controller will independently measure that artifact, record the target-quality report, and route a bounded repair attempt. Do not report `DONE` for a failed gate and do not replace the reason with a generic dispatch error.
+The controller runs the deterministic source-domain quality gate after each source-domain dispatch. If the gate fails, the controller records the target-quality report and routes bounded repair. Return `verdict: BLOCKED` only for a source/artifact blocker that prevents you from inspecting or updating the requested target; leave the canonical `spec.md` in place. Do not replace a deterministic quality concern with a generic dispatch error.
 
 ## Expected Outputs
 

@@ -20,7 +20,7 @@ Instruct RE-CONSTITUTER to synthesize evidence-backed strategy from the complete
 
 If a strategy output already exists from a previous blocked or interrupted
 attempt, RE-CONSTITUTER must read it before updating it. This phase is
-rerunnable: never create backup, temporary, alternate, or shell-generated
+rerunnable: never create backup, temporary, alternate, or non-canonical
 strategy files to bypass write guards.
 
 ## Expected Outputs

@@ -50,7 +50,7 @@ Context pack:
 - `extension/templates/experiment-results-template.md`
 - `reasoning-journal.jsonl`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -84,7 +84,7 @@ Context pack:
 - `extension/templates/security-findings-template.md`
 - `reasoning-journal.jsonl`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -112,7 +112,7 @@ Context pack:
 - `extension/templates/terminology-corrections-template.md`
 - `reasoning-journal.jsonl`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -139,7 +139,7 @@ Context pack:
 - `extension/templates/performance-amendments-template.md`
 - `reasoning-journal.jsonl`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -166,7 +166,7 @@ Context pack:
 - `extension/templates/ux-amendments-template.md`
 - `reasoning-journal.jsonl`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -194,7 +194,7 @@ Context pack:
 - `extension/templates/challenge-assumptions-template.md`
 - `reasoning-journal.jsonl`
 
-Use the Agent tool:
+The active runtime dispatches this role with the following request:
 
 - **prompt:**
 
@@ -220,16 +220,9 @@ active_specialists:
   - "<specialist-name>"
 ```
 
-**MANDATORY — run before transitioning to phase3-how:**
-
-```bash
-# Budgets: definition.yaml phases[phase3-specialists].timing_window_transition
-#   close: phase2-decide (budget_seconds=1800)
-#   open:  phase3-solution (open_budget_seconds=2400)
-bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" end_phase phase2-decide
-bash "${ECHELON_EXT}/scripts/bash/phase-timing.sh" start_phase phase3-solution 2400
-```
-
-If `end_phase` detects over-budget (>120%), it appends a `timing_anomaly` journal entry automatically. Persist state updates before routing to phase3-how.
+The controller applies the timing transition declared in
+`workflow/definition.yaml`: it closes `phase2-decide`, records any over-budget
+outcome, and opens `phase3-solution` before routing to `phase3-how`. Agents do
+not start, stop, or write phase timing state.
 
 **Transition:** `phases[phase3-how]` — see `workflow/definition.yaml`

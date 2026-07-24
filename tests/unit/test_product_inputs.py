@@ -447,6 +447,61 @@ def test_controller_ignores_empty_exclusions_for_context_only_catalog_units(tmp_
     }]
 
 
+def test_discover_ignores_reference_traceability_updates(tmp_path: Path) -> None:
+    """Discovery may use references as evidence but cannot mutate the requirement ledger."""
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from harness.squad import SquadController
+    from harness.squad_provider import SquadAgentResult
+    from harness.squad_state import SquadStateStore
+
+    project = tmp_path / "workspace"
+    source = project / "sources" / "docs.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("https://api.example.test/openapi.json\n", encoding="utf-8")
+    run_dir = project / "runs" / "run-1"
+    resolution = resolve_product_inputs(
+        project,
+        run_dir,
+        [parse_input_declaration("reference:sources/docs.md")],
+    )
+    reference_id = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))["units"][0]["id"]
+    store = SquadStateStore(run_dir)
+    store.initialize(
+        "run-1",
+        "greenfield",
+        "demo",
+        0,
+        "phase1-discover",
+        product_inputs=resolution.state_payload(project),
+    )
+    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    result = SquadAgentResult(
+        exit_code=0,
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+        echelon_result={
+            "product_input_updates": [{
+                "input_unit_id": reference_id,
+                "disposition": "included",
+                "rationale": "Used as API documentation evidence during discovery.",
+                "spec_ids": [],
+                "task_ids": [],
+                "targets": [],
+            }],
+        },
+    )
+
+    assert controller._apply_product_input_updates(result, "phase1-discover") is None
+    ledger = json.loads(resolution.traceability_path.read_text(encoding="utf-8"))
+    assert ledger["requirements"] == []
+    assert ledger["references"] == [{
+        "input_unit_id": reference_id,
+        "state": "reviewed_unused",
+        "rationale": "Awaiting analysis.",
+    }]
+
+
 def test_plan_updates_reject_contextual_task_ids_without_mutating_ledger(tmp_path: Path) -> None:
     from echelon.product_inputs import (
         ProductInputError,
@@ -655,6 +710,31 @@ def test_product_input_context_includes_controller_mapping_repair() -> None:
     assert "Do not return COMPLETE" in prompt
 
 
+def test_product_input_context_makes_phase_one_id_repair_allowlist_explicit() -> None:
+    from harness.squad_executors import _render_product_input_context
+
+    prompt = _render_product_input_context({
+        "product_inputs": {
+            "manifest": "runs/one/inputs/manifest.json",
+            "catalog": "runs/one/inputs/catalog.json",
+            "traceability": "runs/one/inputs/traceability.json",
+            "requirement_context": "runs/one/inputs/requirement-context.md",
+            "reference_context": "runs/one/inputs/reference-context.md",
+        },
+        "product_input_mapping_repair": {
+            "attempt": 1,
+            "phase": "phase1-what",
+            "blockers": ["product input update references unknown requirement unit 'IN-REQ-FILTER-GROUPS'"],
+            "invalid_input_unit_ids": ["IN-REQ-FILTER-GROUPS"],
+            "valid_requirement_ids": ["IN-REQ-CANONICAL"],
+        },
+    })
+
+    assert "Invalid IDs from the prior result: IN-REQ-FILTER-GROUPS" in prompt
+    assert "Only these canonical IDs may be used: IN-REQ-CANONICAL" in prompt
+    assert "Never derive an ID from a requirement label" in prompt
+
+
 def test_product_input_context_exposes_deterministic_mapping_worksheet() -> None:
     from harness.squad_executors import _render_product_input_context
 
@@ -737,7 +817,9 @@ def test_product_input_context_requires_tasks_lexicon_repair_before_completion()
     })
 
     assert "Tasks Lexicon Repair" in prompt
-    assert "must return ok=true" in prompt
+    assert "controller-owned tasks validator" in prompt
+    assert "Do not report tasks_lexicon_pass yourself" in prompt
+    assert "tasks-lexicon-report.json" in prompt
 
 
 def test_plan_phase_requires_direct_product_input_task_mappings() -> None:

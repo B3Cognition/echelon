@@ -754,7 +754,11 @@ def load_config(
     return _parse_config(data, squad_only=squad_only)
 
 
-def get_full_resolved_config(project_root: Optional[Path] = None) -> Dict[str, Any]:
+def get_full_resolved_config(
+    project_root: Optional[Path] = None,
+    *,
+    fallback_config_path: Optional[Path] = None,
+) -> Dict[str, Any]:
     """Return the full resolved config dict for all sections (not just harness:).
 
     Use this when you need access to non-harness sections such as ``analysis:``
@@ -764,4 +768,7 @@ def get_full_resolved_config(project_root: Optional[Path] = None) -> Dict[str, A
     if project_root is None:
         project_root = Path.cwd()
 
-    return _get_full_merged_config(project_root)
+    resolved: Dict[str, Any] = {}
+    if fallback_config_path is not None:
+        resolved = _merge(resolved, _load_yaml_file(fallback_config_path))
+    return _merge(resolved, _get_full_merged_config(project_root))
