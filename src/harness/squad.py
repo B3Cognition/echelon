@@ -736,43 +736,20 @@ class SquadController:
                     run_id=existing.get("run_id", ""),
                 )
 
-        # ── Recovery: invalid judgment phase (--next-phase manual override) ─
-        elif existing_status == "blocked" and "invalid next_phase" in blocked_reason:
+        # ── Recovery: explicit manual phase override ───────────────────────
+        elif (
+            existing_status == "blocked"
+            and next_phase_override
+            and not existing.get("escalation_question")
+        ):
             valid_phases = self._graph.all_phase_ids()
             from echelon.ui import banner as _banner
-            if next_phase_override:
-                if next_phase_override not in valid_phases:
-                    _banner(
-                        "SQUAD — INVALID PHASE ID",
-                        [
-                            ("given", next_phase_override),
-                            ("valid phase IDs", "\n".join(f"  {p}" for p in valid_phases)),
-                        ],
-                    )
-                    return SquadResult(
-                        status="blocked",
-                        phase=existing.get("phase", "unknown"),
-                        run_id=existing.get("run_id", ""),
-                    )
-                state = self._state_store.load()
-                state["status"] = "running"
-                state["blocked_reason"] = None
-                state["phase"] = next_phase_override
-                self._state_store.save(state)
-                existing_status = "running"
-                force_resume = True
-                print(
-                    f"[squad] manual recovery → advancing to {next_phase_override!r}",
-                    flush=True,
-                )
-            else:
+            if next_phase_override not in valid_phases:
                 _banner(
-                    "SQUAD — BLOCKED",
+                    "SQUAD — INVALID PHASE ID",
                     [
-                        ("reason", blocked_reason),
-                        ("recover", "echelon spec run --next-phase <phase-id>"),
+                        ("given", next_phase_override),
                         ("valid phase IDs", "\n".join(f"  {p}" for p in valid_phases)),
-                        ("discard", "echelon spec run --reset"),
                     ],
                 )
                 return SquadResult(
@@ -780,6 +757,36 @@ class SquadController:
                     phase=existing.get("phase", "unknown"),
                     run_id=existing.get("run_id", ""),
                 )
+            state = self._state_store.load()
+            state["status"] = "running"
+            state["blocked_reason"] = None
+            state["phase"] = next_phase_override
+            self._state_store.save(state)
+            existing_status = "running"
+            force_resume = True
+            print(
+                f"[squad] manual recovery → advancing to {next_phase_override!r}",
+                flush=True,
+            )
+
+        # ── Recovery: invalid judgment phase without a manual override ─────
+        elif existing_status == "blocked" and "invalid next_phase" in blocked_reason:
+            valid_phases = self._graph.all_phase_ids()
+            from echelon.ui import banner as _banner
+            _banner(
+                "SQUAD — BLOCKED",
+                [
+                    ("reason", blocked_reason),
+                    ("recover", "echelon spec run --next-phase <phase-id>"),
+                    ("valid phase IDs", "\n".join(f"  {p}" for p in valid_phases)),
+                    ("discard", "echelon spec run --reset"),
+                ],
+            )
+            return SquadResult(
+                status="blocked",
+                phase=existing.get("phase", "unknown"),
+                run_id=existing.get("run_id", ""),
+            )
 
         # Deterministic analysis failures are retryable at the same node. Keep
         # their immutable evidence pointer and run identity instead of treating

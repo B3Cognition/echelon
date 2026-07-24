@@ -604,6 +604,36 @@ class TestAgentResultIntegrity:
         assert ctrl._evaluate_transitions(ctrl._graph.get("phase1-what"), result) == "terminal-blocked"
         assert store.load()["blocked_reason"] == "evidence_resolution_no_new_evidence"
 
+    def test_manual_next_phase_recovers_blocked_run_without_reinitializing_state(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "BLOCKED",
+                "state_updates": {"blocked_reason": "test stop"},
+            },
+            raw_output="",
+            duration_ms=100,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "terminal-blocked", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+        state = store.load()
+        state.update({
+            "status": "blocked",
+            "blocked_reason": "evidence route was not emitted",
+            "evidence_requests": {"requests": [{"id": "ER-001"}]},
+        })
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai", next_phase_override="phase1-investigate")
+
+        recovered = store.load()
+        assert result.status == "blocked"
+        assert recovered["evidence_requests"] == {"requests": [{"id": "ER-001"}]}
+        assert recovered["last_dispatch"]["phase_id"] == "phase1-investigate"
+
     def test_phase1_what_missing_result_preserves_existing_spec_context(self, tmp_path):
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(
