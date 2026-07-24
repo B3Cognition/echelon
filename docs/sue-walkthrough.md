@@ -148,46 +148,24 @@ cases), **REVISE** (repair a broken understanding).
 ### The nine lenses (each is a real Plato dialogue)
 
 A *lens* is just which move to start with and how to react to each answer —
-named after the dialogue whose style it imitates. Pick the lens by the *kind*
-of defect you're chasing.
+named after the dialogue whose style it imitates. Pick by the *kind* of defect
+you're chasing. In one line each:
 
-- **euthyphro** — *In the dialogue,* Socrates asks Euthyphro "what is holiness?"
-  and Euthyphro keeps offering examples ("what I'm doing right now") and circles
-  ("what the gods love"), never an essence. *SUE move:* demand a real definition,
-  reject examples-as-definition. *Reach for it when:* a term is undefined or
-  defined in a circle. (Leaderboard: is "highest score" ever actually defined?)
-- **meno** — *Meno can't say what virtue is, raising the paradox: how would you
-  even recognize the answer if you found it?* *SUE move:* demand the criterion by
-  which you'd verify the thing. *When:* a requirement can't be tested — QA
-  couldn't tell pass from fail.
-- **parmenides** — *The dialogue drills a claim by working out the consequences
-  of it AND of its negation ("if the one is… if the one is not…").* *SUE move:*
-  follow what the claim commits the text to, then test the opposite. *When:* you
-  suspect two rules quietly clash.
-- **cratylus** — *A debate about names: are words stable, or does meaning drift?*
-  *SUE move:* check that one name means one thing throughout. *When:* the same
-  idea is called two names, or one name covers two ideas.
-- **theaetetus** — *"What is knowledge?" — tested as "true belief plus an
-  account." A claim without a justification isn't knowledge.* *SUE move:* ask
-  whether the text can actually justify a stated claim. *When:* a rule asserts
-  something the spec never grounds. (This is the lens that drilled the Opta
-  accuracy metric to APORIA_UNDEFINED.)
-- **sophist** — *Socrates hunts the sophist by "division" — repeatedly splitting
-  a category to separate the look-alike from the real thing.* *SUE move:* divide
-  into cases and test the supposedly-excluded one. *When:* a boundary or
-  exception is missing.
-- **gorgias** — *Gorgias the rhetorician can persuade about anything without
-  knowing it; Socrates calls rhetoric flattery, not an art.* *SUE move:* if a
-  confident-sounding claim commits the text to nothing checkable, it's rhetoric,
-  not a requirement — never "resolved." *When:* the text sounds authoritative but
-  says nothing you could implement.
-- **republic** — *Justice is "each part doing its own proper work" — the right
-  role in the right place.* *SUE move:* check who is permitted to do what. *When:*
-  a permission or actor rule is fuzzy (the FR-001-style "who may do X").
-- **philebus** — *The good life needs "limit" imposed on "the unlimited" — measure
-  over the boundless.* *SUE move:* demand the numeric bound. *When:* a constraint
-  says "fast" / "large" / "soon" with no number. (Leaderboard NFR-001 says "within
-  2 seconds" — good; a rule that just said "fast" would fail here.)
+| Lens | Dialogue's move | Drills |
+|---|---|---|
+| **euthyphro** | examples aren't a definition | undefined / circular terms |
+| **meno** | how would you recognize the answer? | untestable requirements |
+| **parmenides** | work out the claim *and* its negation | contradictions |
+| **cratylus** | are names stable? | inconsistent naming |
+| **theaetetus** | knowledge needs a justification | ungrounded claims |
+| **sophist** | divide to separate look-alikes | missing boundaries |
+| **gorgias** | persuasion isn't substance | confident-but-empty text |
+| **republic** | each part its proper role | fuzzy permissions |
+| **philebus** | measure over the unlimited | unquantified constraints |
+
+**→ Full account** — the real Platonic background for each, the exact question
+templates SUE uses, and how to read a transcript — is in
+**`docs/sue-socratic-lenses.md`**.
 
 ### How a dialogue ends (the terminal states)
 
