@@ -5304,10 +5304,10 @@ class SquadController:
         return result
 
     def _write_journal_entries(self, result: SquadAgentResult, phase_id: str) -> None:
-        """Mirror of PhaseExecutor._write_journal_entries for SquadController use."""
-        import json as _json
-        from datetime import datetime, timezone
-        from harness.journal_entry_validator import prepare_journal_entries_for_append
+        """Mirror executor journal writes through the shared durable store."""
+        from harness.journal_entry_validator import (
+            append_reasoning_journal_entries,
+        )
 
         entries = list((result.echelon_result or {}).get("journal_entries", []))
         if result.quarantined_state_updates:
@@ -5328,27 +5328,13 @@ class SquadController:
             )
         if not entries:
             return
-
-        journal_path = self._squad_dir / "reasoning-journal.jsonl"
-        journal_path.parent.mkdir(parents=True, exist_ok=True)
-
-        next_id = 1
-        if journal_path.exists():
-            lines = [ln for ln in journal_path.read_text().splitlines() if ln.strip()]
-            next_id = len(lines) + 1
-
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        prepared_entries = prepare_journal_entries_for_append(
+        append_reasoning_journal_entries(
+            self._squad_dir,
             entries,
             phase_id=phase_id,
-            next_id=next_id,
-            timestamp=ts,
             schema_path=self._ext_dir / "workflow/journal-entry-types.yaml",
             invalid_registered_policy="quarantine",
         )
-        with journal_path.open("a") as fh:
-            for entry in prepared_entries:
-                fh.write(_json.dumps(entry) + "\n")
 
     def _phase_artifacts_changed_since(
         self,

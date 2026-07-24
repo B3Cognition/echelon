@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -1992,3 +1993,309 @@ def test_prepare_second_document_write_rejects_transaction_root_swap(
     assert original_root is not None
     assert (original_root / "intent.json").is_file()
     assert not (original_root / "receipts.json").exists()
+
+
+def _prepare_journal_completion(
+    tmp_path: Path,
+    entries: list[object],
+    *,
+    quarantined: dict[str, object] | None = None,
+):
+    echelon_result = {
+        "verdict": "DONE",
+        "state_updates": {},
+        "journal_entries": entries,
+    }
+    return _prepare_minimal(
+        tmp_path,
+        effect_plan=("journal",),
+        judgment_payload_sha256=(
+            _payload_digest(echelon_result),
+        ),
+        judgments=(
+            {
+                "echelon_result": echelon_result,
+                "quarantined_state_updates": quarantined or {},
+            },
+        ),
+    )
+
+
+def _read_completion_journal(path: Path) -> list[dict[str, object]]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_completion_journal_strips_spoofed_metadata_and_attests_content(
+    tmp_path: Path,
+) -> None:
+    _, squad_dir, prepared = _prepare_journal_completion(
+        tmp_path,
+        [
+            {
+                "id": 999,
+                "timestamp": "forged",
+                "phase": "forged",
+                "completion_id": "forged",
+                "entry_index": 77,
+                "content_sha256": "0" * 64,
+                "controller_completion": {
+                    "completion_id": "f" * 32,
+                    "entry_index": 77,
+                    "content_sha256": "0" * 64,
+                },
+                "type": "future_signal",
+                "agent": "provider",
+                "data": {"fact": "sealed"},
+            }
+        ],
+    )
+    journal = squad_dir / "reasoning-journal.jsonl"
+
+    plan = completion_module.prepare_completion_journal_plan(
+        prepared.intent,
+        journal,
+    )
+    receipt = completion_module.apply_or_verify_completion_journal(plan)
+
+    rows = _read_completion_journal(journal)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["id"] == 1
+    assert row["timestamp"] != "forged"
+    datetime.strptime(row["timestamp"], "%Y-%m-%dT%H:%M:%SZ")
+    assert row["phase"] == ROUTED_ROUTE["from_phase"]
+    assert "completion_id" not in row
+    assert "entry_index" not in row
+    assert "content_sha256" not in row
+    stamp = row["controller_completion"]
+    assert stamp == {
+        "completion_id": COMPLETION_ID,
+        "entry_index": 0,
+        "content_sha256": plan.content_sha256[0],
+    }
+    content = dict(row)
+    content.pop("id")
+    content.pop("timestamp")
+    content.pop("controller_completion")
+    assert hashlib.sha256(
+        json.dumps(
+            content,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest() == plan.content_sha256[0]
+    assert receipt == {
+        "schema_version": 1,
+        "completion_id": COMPLETION_ID,
+        "phase": ROUTED_ROUTE["from_phase"],
+        "entry_ids": [1],
+        "timestamp": row["timestamp"],
+        "content_sha256": list(plan.content_sha256),
+    }
+
+
+def test_completion_journal_preserves_unrelated_serialized_rows(
+    tmp_path: Path,
+) -> None:
+    _, squad_dir, prepared = _prepare_journal_completion(
+        tmp_path,
+        [{"type": "future_signal", "data": {"new": True}}],
+    )
+    journal = squad_dir / "reasoning-journal.jsonl"
+    original = b' { "type" : "legacy", "data" : {"keep": true} }\n'
+    journal.write_bytes(original)
+    plan = completion_module.prepare_completion_journal_plan(
+        prepared.intent,
+        journal,
+    )
+
+    completion_module.apply_or_verify_completion_journal(plan)
+
+    assert journal.read_bytes().startswith(original)
+    assert _read_completion_journal(journal)[0] == {
+        "type": "legacy",
+        "data": {"keep": True},
+    }
+
+
+def test_completion_journal_replay_adopts_exact_atomic_batch(
+    tmp_path: Path,
+) -> None:
+    _, squad_dir, prepared = _prepare_journal_completion(
+        tmp_path,
+        [
+            {"type": "future_signal", "data": {"ordinal": 0}},
+            {"type": "future_signal", "data": {"ordinal": 1}},
+        ],
+    )
+    journal = squad_dir / "reasoning-journal.jsonl"
+    plan = completion_module.prepare_completion_journal_plan(
+        prepared.intent,
+        journal,
+    )
+    first_receipt = completion_module.apply_or_verify_completion_journal(
+        plan
+    )
+    first_bytes = journal.read_bytes()
+
+    recovered_plan = completion_module.prepare_completion_journal_plan(
+        prepared.intent,
+        journal,
+    )
+    recovered_receipt = (
+        completion_module.apply_or_verify_completion_journal(
+            recovered_plan
+        )
+    )
+
+    assert recovered_receipt == first_receipt
+    assert journal.read_bytes() == first_bytes
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "partial",
+        "duplicate_ordinal",
+        "missing_ordinal",
+        "unexpected_row",
+        "same_id_content_drift",
+        "physical_reorder",
+        "interleaved_unrelated",
+    ],
+)
+def test_completion_journal_rejects_partial_duplicate_missing_or_drift(
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    _, squad_dir, prepared = _prepare_journal_completion(
+        tmp_path,
+        [
+            {"type": "future_signal", "data": {"ordinal": 0}},
+            {"type": "future_signal", "data": {"ordinal": 1}},
+        ],
+    )
+    journal = squad_dir / "reasoning-journal.jsonl"
+    plan = completion_module.prepare_completion_journal_plan(
+        prepared.intent,
+        journal,
+    )
+    completion_module.apply_or_verify_completion_journal(plan)
+    rows = _read_completion_journal(journal)
+    if mutation == "partial":
+        rows.pop()
+    elif mutation == "duplicate_ordinal":
+        rows[1]["controller_completion"]["entry_index"] = 0
+    elif mutation == "missing_ordinal":
+        rows[1]["controller_completion"]["entry_index"] = 2
+    elif mutation == "unexpected_row":
+        extra = json.loads(json.dumps(rows[1]))
+        extra["id"] = 3
+        extra["controller_completion"]["entry_index"] = 2
+        rows.append(extra)
+    elif mutation == "physical_reorder":
+        rows.reverse()
+    elif mutation == "interleaved_unrelated":
+        rows.insert(1, {"type": "unrelated", "data": {"keep": True}})
+    else:
+        rows[0]["data"]["ordinal"] = "drifted"
+    journal.write_text(
+        "".join(
+            json.dumps(row, sort_keys=True) + "\n"
+            for row in rows
+        ),
+        encoding="utf-8",
+    )
+    before = journal.read_bytes()
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.apply_or_verify_completion_journal(
+            plan
+        ),
+    )
+
+    assert journal.read_bytes() == before
+
+
+def test_completion_journal_rejects_malformed_unrelated_json_without_write(
+    tmp_path: Path,
+) -> None:
+    _, squad_dir, prepared = _prepare_journal_completion(
+        tmp_path,
+        [{"type": "future_signal", "data": {}}],
+    )
+    journal = squad_dir / "reasoning-journal.jsonl"
+    journal.write_bytes(b'{"valid":true}\nnot-json\n')
+    plan = completion_module.prepare_completion_journal_plan(
+        prepared.intent,
+        journal,
+    )
+    before = journal.read_bytes()
+
+    _assert_completion_error(
+        "receipts_invalid",
+        lambda: completion_module.apply_or_verify_completion_journal(
+            plan
+        ),
+    )
+
+    assert journal.read_bytes() == before
+
+
+def test_completion_journal_durable_replace_syncs_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, squad_dir, prepared = _prepare_journal_completion(
+        tmp_path,
+        [{"type": "future_signal", "data": {}}],
+    )
+    journal = squad_dir / "reasoning-journal.jsonl"
+    plan = completion_module.prepare_completion_journal_plan(
+        prepared.intent,
+        journal,
+    )
+    synced: list[Path] = []
+    real_sync = completion_module._fsync_directory
+
+    def track_sync(path: Path) -> None:
+        synced.append(path)
+        real_sync(path)
+
+    monkeypatch.setattr(
+        completion_module,
+        "_fsync_directory",
+        track_sync,
+    )
+
+    completion_module.apply_or_verify_completion_journal(plan)
+
+    assert journal.parent in synced
+
+
+def test_completion_journal_includes_controller_quarantine_warning(
+    tmp_path: Path,
+) -> None:
+    _, squad_dir, prepared = _prepare_journal_completion(
+        tmp_path,
+        [],
+        quarantined={"status": "done", "total_tasks": 99},
+    )
+    journal = squad_dir / "reasoning-journal.jsonl"
+    plan = completion_module.prepare_completion_journal_plan(
+        prepared.intent,
+        journal,
+    )
+
+    completion_module.apply_or_verify_completion_journal(plan)
+
+    row = _read_completion_journal(journal)[0]
+    assert row["type"] == "state_contract_warning"
+    assert row["phase"] == ROUTED_ROUTE["from_phase"]
+    assert row["data"]["dropped_keys"] == ["status", "total_tasks"]

@@ -20,6 +20,7 @@ set -euo pipefail
 
 HOOK_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 HOOK_REPO_ROOT="$(CDPATH='' cd "$HOOK_DIR/../.." && pwd)"
+. "$HOOK_REPO_ROOT/extension/scripts/bash/python-detect.sh"
 
 # --- arg parsing ---
 AGENT=""; DISPATCH_ID=""; RESULT_FILE=""
@@ -71,15 +72,19 @@ if [[ ! -f "$ENDOCRINE_SH" ]]; then
   exit 2
 fi
 
-# --- read current last_entry_id from journal index for sequential RJ-NNN ids ---
 JOURNAL_INDEX="$SQUAD_DIR/reasoning-journal-index.json"
-NEXT_RJ_NUM=1
-if [[ -f "$JOURNAL_INDEX" ]] && command -v jq >/dev/null 2>&1; then
-  last_id=$(jq -r '.last_entry_id // ""' "$JOURNAL_INDEX" 2>/dev/null)
-  if [[ "$last_id" =~ ^RJ-([0-9]+)$ ]]; then
-    NEXT_RJ_NUM=$((10#${BASH_REMATCH[1]} + 1))
+JOURNAL="$SQUAD_DIR/reasoning-journal.jsonl"
+
+mark_dispatch_applied() {
+  if [[ -f "$STATE_FILE" ]] && command -v jq >/dev/null 2>&1; then
+    local tmp
+    tmp=$(mktemp)
+    jq --arg did "$DISPATCH_ID" \
+       '.endocrine_state.applied_dispatches = ((.endocrine_state.applied_dispatches // []) + [$did])' \
+       "$STATE_FILE" > "$tmp"
+    mv "$tmp" "$STATE_FILE"
   fi
-fi
+}
 
 # --- graceful skip when endocrine disabled ---
 ENABLED=$(bash "$ROOT/extension/scripts/bash/echelon-config-get.sh" endocrine.enabled 2>/dev/null || echo "true")
@@ -94,6 +99,23 @@ if [[ -f "$STATE_FILE" ]] && command -v jq >/dev/null 2>&1; then
     # Already applied — exit 0
     exit 0
   fi
+fi
+
+# A visible exact batch proves hormone actions completed before a prior crash.
+set +e
+"$PYTHON" -m harness.journal_entry_validator recover \
+  --journal-path "$JOURNAL" \
+  --rj-index "$JOURNAL_INDEX" \
+  --batch-id "$DISPATCH_ID" >/dev/null 2>&1
+RECOVERY_RC=$?
+set -e
+if [[ "$RECOVERY_RC" -eq 0 ]]; then
+  mark_dispatch_applied
+  echo "post-dispatch-hormone-update: recovered $DISPATCH_ID ($AGENT)"
+  exit 0
+elif [[ "$RECOVERY_RC" -ne 3 ]]; then
+  echo "post-dispatch-hormone-update: journal recovery failed" >&2
+  exit 1
 fi
 
 # --- capture BEFORE hormone snapshot for B-3 hormone_history trajectory tracking ---
@@ -117,7 +139,7 @@ hormone_index() {
 }
 
 # --- invoke hormone-calc compute, capture triggers ---
-TRIGGERS=$(PYTHONPATH="$HOOK_REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m hormone_calc.cli compute \
+TRIGGERS=$("$PYTHON" -m hormone_calc.cli compute \
   --agent "$AGENT" --dispatch-id "$DISPATCH_ID" \
   --result-file "$RESULT_FILE" \
   --state "$STATE_FILE" \
@@ -126,12 +148,12 @@ TRIGGERS=$(PYTHONPATH="$HOOK_REPO_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" python3 -
   exit 1
 }
 
-JOURNAL="$SQUAD_DIR/reasoning-journal.jsonl"
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 PHASE=$(jq -r '.phase // "unknown"' "$STATE_FILE" 2>/dev/null || echo "unknown")
 
 applied_count=0
 FIRED_VERBS=()
+JOURNAL_ROWS=()
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
   read -r verb arg1 arg2 arg3 <<< "$line"
@@ -179,11 +201,26 @@ while IFS= read -r line; do
       ;;
   esac
 
-  # Append per-trigger journal entry
-  rj_id=$(printf "RJ-%03d" "$NEXT_RJ_NUM")
-  NEXT_RJ_NUM=$((NEXT_RJ_NUM + 1))
-  printf '{"id":"%s","type":"endocrine_event","agent":"COMMANDER","phase":"%s","timestamp":"%s","data":{"trigger":"%s","target":"%s","dispatch_id":"%s","source_event":"%s"}}\n' \
-    "$rj_id" "$PHASE" "$NOW" "$verb" "$target" "$DISPATCH_ID" "$source_event" >> "$JOURNAL"
+  # Queue the whole journal batch; the shared Python store owns IDs and I/O.
+  JOURNAL_ROWS+=("$(jq -cn \
+    --arg phase "$PHASE" \
+    --arg ts "$NOW" \
+    --arg trigger "$verb" \
+    --arg target "$target" \
+    --arg did "$DISPATCH_ID" \
+    --arg source_event "$source_event" \
+    '{
+      type: "endocrine_event",
+      agent: "COMMANDER",
+      phase: $phase,
+      timestamp: $ts,
+      data: {
+        trigger: $trigger,
+        target: $target,
+        dispatch_id: $did,
+        source_event: $source_event
+      }
+    }')")
   applied_count=$((applied_count + 1))
   FIRED_VERBS+=("$verb")
 done <<< "$TRIGGERS"
@@ -216,22 +253,23 @@ if [[ -f "$STATE_FILE" ]] && [[ "$applied_count" -gt 0 ]] && command -v jq >/dev
   mv "$TMP" "$STATE_FILE"
 fi
 
-# --- update journal index with the new last_entry_id (only if we emitted entries) ---
-if [[ -f "$JOURNAL_INDEX" ]] && [[ "$applied_count" -gt 0 ]] && command -v jq >/dev/null 2>&1; then
-  last_rj=$(printf "RJ-%03d" "$((NEXT_RJ_NUM - 1))")
-  TMP=$(mktemp)
-  jq --arg lid "$last_rj" '.last_entry_id = $lid' "$JOURNAL_INDEX" > "$TMP"
-  mv "$TMP" "$JOURNAL_INDEX"
+# The visible batch commits completed hormone and history mutations. Its
+# index is repaired or adopted under the same shared fcntl lock on retry.
+if [[ "$applied_count" -gt 0 ]]; then
+  if ! printf '%s\n' "${JOURNAL_ROWS[@]}" | \
+    "$PYTHON" -m harness.journal_entry_validator append \
+      --journal-path "$JOURNAL" \
+      --phase "$PHASE" \
+      --input-format jsonl \
+      --rj-index "$JOURNAL_INDEX" \
+      --batch-id "$DISPATCH_ID" 2>/dev/null; then
+    echo "post-dispatch-hormone-update: journal append failed" >&2
+    exit 1
+  fi
 fi
 
 # --- mark dispatch as applied (atomic state.json write) ---
-if [[ -f "$STATE_FILE" ]] && command -v jq >/dev/null 2>&1; then
-  TMP=$(mktemp)
-  jq --arg did "$DISPATCH_ID" \
-     '.endocrine_state.applied_dispatches = ((.endocrine_state.applied_dispatches // []) + [$did])' \
-     "$STATE_FILE" > "$TMP"
-  mv "$TMP" "$STATE_FILE"
-fi
+mark_dispatch_applied
 
 echo "post-dispatch-hormone-update: applied $applied_count triggers for $DISPATCH_ID ($AGENT)"
 exit 0

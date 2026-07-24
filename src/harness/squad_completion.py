@@ -8,13 +8,22 @@ import os
 import re
 import secrets
 import stat
+from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from harness.prepared_phase_result import (
     _bounded_detach_untrusted,
     _canonical_payload_sha256,
+)
+from harness.reasoning_journal_store import (
+    JournalStoreError,
+    REASONING_JOURNAL_LOCK_RANK,
+    durably_replace_file as _store_durably_replace_file,
+    read_reasoning_journal as _store_read_reasoning_journal,
+    reasoning_journal_lock as _store_reasoning_journal_lock,
 )
 from harness.state_transaction_namespace import (
     validate_pending_controller_completion,
@@ -46,6 +55,9 @@ _ERROR_CODES = frozenset(
         "stage_missing",
         "stage_io",
     }
+)
+_COMPLETION_STAMP_KEYS = frozenset(
+    {"completion_id", "entry_index", "content_sha256"}
 )
 
 
@@ -162,6 +174,24 @@ class PreparedControllerCompletion:
             self._transaction_identity,
             missing_ok=True,
         )
+
+
+@dataclass(frozen=True)
+class JournalPlan:
+    """Immutable controller-owned content for one completion journal batch."""
+
+    completion_id: str
+    phase: str
+    journal: Path
+    content_sha256: tuple[str, ...]
+    _rows_json: bytes = field(repr=False)
+
+    @property
+    def rows(self) -> tuple[dict[str, object], ...]:
+        value = _decode_snapshot(self._rows_json)
+        if type(value) is not list:
+            raise AssertionError("invalid internal journal plan snapshot")
+        return tuple(value)
 
 
 def _raise(code: str) -> None:
@@ -1269,3 +1299,313 @@ def load_prepared_controller_completion(
         _transaction_identity=transaction_identity,
         _receipts_json=_canonical_json(receipts, newline=False),
     )
+
+
+@contextmanager
+def reasoning_journal_lock(squad_dir: Path) -> Iterator[None]:
+    """Hold the repository-wide rank-5 journal lock for one transaction."""
+    if not isinstance(squad_dir, Path):
+        _raise("stage_corrupt")
+    directory = _require_real_directory(
+        squad_dir,
+        missing_code="stage_missing",
+    )
+    try:
+        with _store_reasoning_journal_lock(directory):
+            yield
+    except JournalStoreError as error:
+        _raise(
+            "stage_io"
+            if error.code == "journal_io"
+            else "stage_corrupt"
+        )
+
+
+def _read_reasoning_journal(
+    journal: Path,
+    *,
+    code: str,
+) -> tuple[bytes, list[dict[str, object]]]:
+    """Read and validate a complete JSONL journal without changing its bytes."""
+    try:
+        return _store_read_reasoning_journal(journal)
+    except JournalStoreError:
+        _raise(code)
+
+
+def _durably_replace_file(path: Path, content: bytes) -> None:
+    """Replace one regular file from a sibling fsynced temporary file."""
+    try:
+        _store_durably_replace_file(
+            path,
+            content,
+            directory_sync=_fsync_directory,
+        )
+    except JournalStoreError as error:
+        _raise(
+            "stage_io"
+            if error.code == "journal_io"
+            else "stage_corrupt"
+        )
+
+
+def _journal_timestamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _valid_journal_timestamp(value: object) -> bool:
+    if type(value) is not str:
+        return False
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return False
+    return True
+
+
+def prepare_completion_journal_plan(
+    intent: CompletionIntent,
+    journal: Path,
+) -> JournalPlan:
+    """Reconstruct immutable journal content only from a sealed intent."""
+    if type(intent) is not CompletionIntent or "journal" not in intent.effect_plan:
+        _raise("intent_invalid")
+    if not isinstance(journal, Path):
+        _raise("intent_invalid")
+    route = intent.route
+    if route.get("kind") != "routed":
+        _raise("intent_invalid")
+    phase = route.get("from_phase")
+    if type(phase) is not str:
+        _raise("intent_invalid")
+    parent = _require_real_directory(
+        journal.parent,
+        missing_code="stage_missing",
+    )
+    if parent != journal.parent.absolute():
+        _raise("stage_corrupt")
+
+    raw_entries: list[object] = []
+    for judgment in intent.judgments:
+        result = judgment.get("echelon_result")
+        quarantined = judgment.get("quarantined_state_updates")
+        if type(result) is not dict or type(quarantined) is not dict:
+            _raise("intent_invalid")
+        if quarantined:
+            raw_entries.append(
+                {
+                    "type": "state_contract_warning",
+                    "agent": "speckit-echelon-commander",
+                    "data": {
+                        "dropped_keys": sorted(quarantined),
+                        "action": "quarantined",
+                        "reason": (
+                            "undeclared reporting fields were excluded "
+                            "from the state mutation control plane"
+                        ),
+                    },
+                }
+            )
+        entries = result.get("journal_entries", [])
+        if type(entries) is not list:
+            _raise("intent_invalid")
+        raw_entries.extend(entries)
+
+    try:
+        from harness.journal_entry_validator import (
+            prepare_completion_journal_contents,
+        )
+
+        rows = prepare_completion_journal_contents(
+            raw_entries,
+            phase_id=phase,
+        )
+    except CompletionError:
+        raise
+    except Exception:
+        _raise("intent_invalid")
+    digests = tuple(
+        hashlib.sha256(
+            _canonical_json(row, newline=False)
+        ).hexdigest()
+        for row in rows
+    )
+    return JournalPlan(
+        completion_id=intent.completion_id,
+        phase=phase,
+        journal=journal,
+        content_sha256=digests,
+        _rows_json=_canonical_json(rows, newline=False),
+    )
+
+
+def _completion_journal_receipt(
+    plan: JournalPlan,
+    *,
+    entry_ids: list[int],
+    timestamp: str | None,
+) -> dict[str, object]:
+    return {
+        "schema_version": _SCHEMA_VERSION,
+        "completion_id": plan.completion_id,
+        "phase": plan.phase,
+        "entry_ids": entry_ids,
+        "timestamp": timestamp,
+        "content_sha256": list(plan.content_sha256),
+    }
+
+
+def apply_or_verify_completion_journal(
+    plan: JournalPlan,
+) -> dict[str, object]:
+    """Atomically append or exactly adopt one completion-owned row batch."""
+    if type(plan) is not JournalPlan:
+        _raise("intent_invalid")
+    expected_rows = plan.rows
+    if len(expected_rows) != len(plan.content_sha256):
+        _raise("intent_invalid")
+
+    with reasoning_journal_lock(plan.journal.parent):
+        original, existing_rows = _read_reasoning_journal(
+            plan.journal,
+            code="receipts_invalid",
+        )
+        candidates: list[dict[str, object]] = []
+        candidate_positions: list[int] = []
+        for position, row in enumerate(existing_rows):
+            stamp = row.get("controller_completion")
+            if (
+                type(stamp) is dict
+                and stamp.get("completion_id") == plan.completion_id
+            ):
+                candidates.append(row)
+                candidate_positions.append(position)
+
+        if candidates:
+            if len(candidates) != len(expected_rows):
+                _raise("receipts_mismatch")
+            if candidate_positions != list(
+                range(
+                    candidate_positions[0],
+                    candidate_positions[0] + len(candidates),
+                )
+            ):
+                _raise("receipts_mismatch")
+            by_index: dict[int, dict[str, object]] = {}
+            physical_indexes: list[int] = []
+            for row in candidates:
+                stamp = row.get("controller_completion")
+                if (
+                    type(stamp) is not dict
+                    or frozenset(stamp) != _COMPLETION_STAMP_KEYS
+                ):
+                    _raise("receipts_mismatch")
+                index = stamp.get("entry_index")
+                if (
+                    type(index) is not int
+                    or index < 0
+                    or index >= len(expected_rows)
+                    or index in by_index
+                ):
+                    _raise("receipts_mismatch")
+                if (
+                    stamp.get("content_sha256")
+                    != plan.content_sha256[index]
+                ):
+                    _raise("receipts_mismatch")
+                by_index[index] = row
+                physical_indexes.append(index)
+            if sorted(by_index) != list(range(len(expected_rows))):
+                _raise("receipts_mismatch")
+            if physical_indexes != list(range(len(expected_rows))):
+                _raise("receipts_mismatch")
+
+            entry_ids: list[int] = []
+            timestamps: list[str] = []
+            for index, expected in enumerate(expected_rows):
+                row = by_index[index]
+                entry_id = row.get("id")
+                timestamp = row.get("timestamp")
+                if type(entry_id) is not int or entry_id < 0:
+                    _raise("receipts_mismatch")
+                if not _valid_journal_timestamp(timestamp):
+                    _raise("receipts_mismatch")
+                content = dict(row)
+                content.pop("id", None)
+                content.pop("timestamp", None)
+                content.pop("controller_completion", None)
+                digest = hashlib.sha256(
+                    _canonical_json(content, newline=False)
+                ).hexdigest()
+                if (
+                    content != expected
+                    or digest != plan.content_sha256[index]
+                    or row.get("phase") != plan.phase
+                ):
+                    _raise("receipts_mismatch")
+                entry_ids.append(entry_id)
+                timestamps.append(str(timestamp))
+            if (
+                len(set(entry_ids)) != len(entry_ids)
+                or (
+                    entry_ids
+                    and entry_ids
+                    != list(
+                        range(entry_ids[0], entry_ids[0] + len(entry_ids))
+                    )
+                )
+                or len(set(timestamps)) != 1
+            ):
+                _raise("receipts_mismatch")
+            for entry_id in entry_ids:
+                if sum(
+                    row.get("id") == entry_id
+                    and type(row.get("id")) is int
+                    for row in existing_rows
+                ) != 1:
+                    _raise("receipts_mismatch")
+            return _completion_journal_receipt(
+                plan,
+                entry_ids=entry_ids,
+                timestamp=timestamps[0] if timestamps else None,
+            )
+
+        if not expected_rows:
+            return _completion_journal_receipt(
+                plan,
+                entry_ids=[],
+                timestamp=None,
+            )
+
+        numeric_ids = [
+            row["id"]
+            for row in existing_rows
+            if type(row.get("id")) is int
+        ]
+        next_id = max([0, *numeric_ids]) + 1
+        timestamp = _journal_timestamp()
+        appended: list[bytes] = []
+        entry_ids = []
+        for index, (content, digest) in enumerate(
+            zip(expected_rows, plan.content_sha256, strict=True)
+        ):
+            row = dict(content)
+            row["id"] = next_id + index
+            row["timestamp"] = timestamp
+            row["controller_completion"] = {
+                "completion_id": plan.completion_id,
+                "entry_index": index,
+                "content_sha256": digest,
+            }
+            entry_ids.append(next_id + index)
+            appended.append(_canonical_json(row))
+        separator = b"\n" if original and not original.endswith(b"\n") else b""
+        _durably_replace_file(
+            plan.journal,
+            original + separator + b"".join(appended),
+        )
+        return _completion_journal_receipt(
+            plan,
+            entry_ids=entry_ids,
+            timestamp=timestamp,
+        )
