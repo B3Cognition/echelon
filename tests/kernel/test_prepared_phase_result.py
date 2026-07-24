@@ -917,7 +917,7 @@ def test_contract_runtime_rejects_null_provider_allowlist(
 
     with pytest.raises(
         ControllerStateContractViolation,
-        match="provider allowlist",
+        match="requires an explicit provider allowlist",
     ):
         prepare_phase_result(
             node,

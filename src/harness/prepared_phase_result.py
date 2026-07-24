@@ -1552,8 +1552,8 @@ def prepare_phase_result(
     contract = node.controller_state_contract
     if contract is not None and type(node.allowed_state_updates) is not list:
         raise _ownership_violation(
-            "controller state contract requires an explicitly empty "
-            "provider allowlist",
+            "controller state contract requires an explicit provider "
+            "allowlist",
             contract,
             json_path="$.allowed_state_updates",
         )
