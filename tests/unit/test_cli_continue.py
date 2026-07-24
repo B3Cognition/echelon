@@ -1216,6 +1216,40 @@ def test_continue_manual_block_does_not_claim_human_resume(
     assert 'echelon spec resume "<your answer>"' not in captured.out
 
 
+def test_continue_displays_executable_escalation_options(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "checkpoint-assess",
+            "blocked_reason": "checkpoint-assess human gate",
+            "escalation_question": "Proceed to DECIDE or return to WHAT?",
+            "escalation_options": [
+                {
+                    "id": "proceed_to_decide",
+                    "label": "Proceed to DECIDE",
+                    "next_phase": "phase2-decide",
+                },
+                {
+                    "id": "route_back_to_what",
+                    "label": "Return to WHAT",
+                    "next_phase": "phase1-what",
+                },
+            ],
+        },
+    )
+
+    _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
+
+    captured = capsys.readouterr()
+    assert "A: Proceed to DECIDE" in captured.out
+    assert "B: Return to WHAT" in captured.out
+    assert "Answer with A/B, the option id, or the option label." in captured.out
+
+
 def test_continue_traceability_readiness_failure_offers_traceability_repair(tmp_path: Path, capsys) -> None:
     _write_run_state(
         tmp_path,
