@@ -786,10 +786,17 @@ def test_prepare_rejects_unknown_controller_key_deterministically(
         )
 
 
-@pytest.mark.parametrize("allowed", [None, ["status"]])
+@pytest.mark.parametrize(
+    ("allowed", "message"),
+    [
+        (None, "requires an explicit provider allowlist"),
+        (["status"], "explicitly empty"),
+    ],
+)
 def test_controller_owned_result_requires_explicitly_empty_provider_allowlist(
     contract: CompiledControllerStateContract,
     allowed: list[str] | None,
+    message: str,
 ) -> None:
     node = PhaseNode(
         id="controller",
@@ -800,7 +807,7 @@ def test_controller_owned_result_requires_explicitly_empty_provider_allowlist(
 
     with pytest.raises(
         ControllerStateContractViolation,
-        match="explicitly empty",
+        match=message,
     ):
         prepare_phase_result(
             node,
