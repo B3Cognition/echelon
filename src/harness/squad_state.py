@@ -1,11 +1,13 @@
 """SquadStateStore — atomic reads/writes for squad/<run-id>/state.json."""
 from __future__ import annotations
 
+import errno
 import fcntl
 import hashlib
 import json
 import logging
 import os
+import stat
 import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
@@ -102,6 +104,7 @@ _COMPLETION_EFFECT_ORDER = (
 _SHA256_CHARACTERS = frozenset("0123456789abcdef")
 _MAX_COMPLETION_DOCUMENT_BYTES = 4_194_304
 _MAX_COMPLETION_RECEIPTS_BYTES = 1_048_576
+_MAX_STATE_BYTES = 16_777_216
 
 
 class StateAdvanceError(RuntimeError):
@@ -117,6 +120,251 @@ class StateAdvanceError(RuntimeError):
         super().__init__(message)
         self.json_path = json_path
         self.validator = validator
+
+
+class StateDurabilityError(StateAdvanceError):
+    """A bounded failure to prove one state filesystem postimage durable."""
+
+    _STAGES = frozenset(
+        {
+            "directory_create",
+            "pre_replace",
+            "post_replace",
+            "confirm",
+        }
+    )
+
+    def __init__(self, message: str, *, stage: str) -> None:
+        bounded_stage = stage if stage in self._STAGES else "confirm"
+        super().__init__(
+            message,
+            json_path="$.state",
+            validator="durability",
+        )
+        self.stage = bounded_stage
+
+
+def _identity(metadata: os.stat_result) -> tuple[int, int]:
+    return metadata.st_dev, metadata.st_ino
+
+
+def _fsync_retry(descriptor: int) -> None:
+    while True:
+        try:
+            os.fsync(descriptor)
+            return
+        except OSError as exc:
+            if exc.errno != errno.EINTR:
+                raise
+
+
+def _open_real_directory(
+    path: Path,
+    *,
+    stage: str,
+) -> int:
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        named = os.lstat(path)
+    except OSError as exc:
+        if "descriptor" in locals():
+            os.close(descriptor)
+        raise StateDurabilityError(
+            "state directory is unavailable",
+            stage=stage,
+        ) from exc
+    if (
+        not stat.S_ISDIR(opened.st_mode)
+        or stat.S_ISLNK(named.st_mode)
+        or not stat.S_ISDIR(named.st_mode)
+        or _identity(opened) != _identity(named)
+    ):
+        os.close(descriptor)
+        raise StateDurabilityError(
+            "state directory identity changed",
+            stage=stage,
+        )
+    return descriptor
+
+
+def _ensure_directory_durable(path: Path) -> None:
+    """Create missing path components and sync each child into its parent."""
+
+    absolute = path.absolute()
+    missing: list[Path] = []
+    cursor = absolute
+    while True:
+        try:
+            metadata = os.lstat(cursor)
+        except FileNotFoundError:
+            if cursor.parent == cursor:
+                raise StateDurabilityError(
+                    "state directory has no existing ancestor",
+                    stage="directory_create",
+                )
+            missing.append(cursor)
+            cursor = cursor.parent
+            continue
+        except OSError as exc:
+            raise StateDurabilityError(
+                "state directory could not be inspected",
+                stage="directory_create",
+            ) from exc
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(
+            metadata.st_mode
+        ):
+            raise StateDurabilityError(
+                "state directory must be a real directory",
+                stage="directory_create",
+            )
+        break
+
+    for directory in reversed(missing):
+        parent = directory.parent
+        parent_fd = _open_real_directory(
+            parent,
+            stage="directory_create",
+        )
+        child_fd = -1
+        try:
+            try:
+                os.mkdir(directory.name, 0o700, dir_fd=parent_fd)
+            except FileExistsError:
+                pass
+            flags = os.O_RDONLY
+            flags |= getattr(os, "O_DIRECTORY", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            child_fd = os.open(
+                directory.name,
+                flags,
+                dir_fd=parent_fd,
+            )
+            opened = os.fstat(child_fd)
+            named = os.stat(
+                directory.name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISDIR(opened.st_mode)
+                or stat.S_ISLNK(named.st_mode)
+                or not stat.S_ISDIR(named.st_mode)
+                or _identity(opened) != _identity(named)
+            ):
+                raise StateDurabilityError(
+                    "created state directory identity changed",
+                    stage="directory_create",
+                )
+            _fsync_retry(child_fd)
+            _fsync_retry(parent_fd)
+            current = os.stat(
+                directory.name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISDIR(current.st_mode)
+                or _identity(current) != _identity(opened)
+            ):
+                raise StateDurabilityError(
+                    "created state directory identity changed",
+                    stage="directory_create",
+                )
+        except StateDurabilityError:
+            raise
+        except OSError as exc:
+            raise StateDurabilityError(
+                "state directory could not be created durably",
+                stage="directory_create",
+            ) from exc
+        finally:
+            if child_fd >= 0:
+                os.close(child_fd)
+            os.close(parent_fd)
+
+    parent_fd = _open_real_directory(
+        absolute.parent,
+        stage="directory_create",
+    )
+    directory_fd = -1
+    try:
+        flags = os.O_RDONLY
+        flags |= getattr(os, "O_DIRECTORY", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        directory_fd = os.open(
+            absolute.name,
+            flags,
+            dir_fd=parent_fd,
+        )
+        opened = os.fstat(directory_fd)
+        named = os.stat(
+            absolute.name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or stat.S_ISLNK(named.st_mode)
+            or not stat.S_ISDIR(named.st_mode)
+            or _identity(opened) != _identity(named)
+        ):
+            raise StateDurabilityError(
+                "state directory identity changed",
+                stage="directory_create",
+            )
+        _fsync_retry(directory_fd)
+        _fsync_retry(parent_fd)
+        final_named = os.stat(
+            absolute.name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISDIR(final_named.st_mode)
+            or _identity(final_named) != _identity(opened)
+        ):
+            raise StateDurabilityError(
+                "state directory identity changed",
+                stage="directory_create",
+            )
+    except StateDurabilityError:
+        raise
+    except OSError as exc:
+        raise StateDurabilityError(
+            "state directory durability confirmation failed",
+            stage="directory_create",
+        ) from exc
+    finally:
+        if directory_fd >= 0:
+            os.close(directory_fd)
+        os.close(parent_fd)
+
+
+def _read_regular_descriptor(
+    descriptor: int,
+    *,
+    maximum: int,
+) -> bytes:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    remaining = maximum + 1
+    while remaining:
+        chunk = os.read(descriptor, min(1_048_576, remaining))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    content = b"".join(chunks)
+    if len(content) > maximum:
+        raise StateDurabilityError(
+            "state file exceeds the durability bound",
+            stage="confirm",
+        )
+    return content
 
 
 @dataclass(frozen=True)
@@ -755,8 +1003,8 @@ class SquadStateStore:
         self._path = squad_dir / "state.json"
         self._lock_path = squad_dir / "state.lock"
         self._staging_dir = squad_dir / "staging"
-        self._squad_dir.mkdir(parents=True, exist_ok=True)
-        self._staging_dir.mkdir(parents=True, exist_ok=True)
+        _ensure_directory_durable(self._squad_dir)
+        _ensure_directory_durable(self._staging_dir)
 
     @property
     def squad_dir(self) -> Path:
@@ -788,6 +1036,126 @@ class SquadStateStore:
     def load(self) -> dict:
         with self._lock(exclusive=False):
             return self._load_unlocked()
+
+    def _confirm_durable_state_unlocked(
+        self,
+        expected: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Prove one exact state file and directory entry durable."""
+
+        if type(expected) is not dict:
+            raise StateDurabilityError(
+                "expected state must be an object",
+                stage="confirm",
+            )
+        expected_state = deepcopy(expected)
+        flags = os.O_RDONLY
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_NONBLOCK", 0)
+        state_fd = -1
+        directory_fd = -1
+        try:
+            state_fd = os.open(self._path, flags)
+            opened = os.fstat(state_fd)
+            named = os.lstat(self._path)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or stat.S_ISLNK(named.st_mode)
+                or not stat.S_ISREG(named.st_mode)
+                or _identity(opened) != _identity(named)
+                or opened.st_size > _MAX_STATE_BYTES
+            ):
+                raise StateDurabilityError(
+                    "state file identity changed",
+                    stage="confirm",
+                )
+            content = _read_regular_descriptor(
+                state_fd,
+                maximum=_MAX_STATE_BYTES,
+            )
+            after_read = os.fstat(state_fd)
+            if (
+                _identity(after_read) != _identity(opened)
+                or after_read.st_size != opened.st_size
+            ):
+                raise StateDurabilityError(
+                    "state file changed while read",
+                    stage="confirm",
+                )
+            try:
+                observed = json.loads(content.decode("utf-8"))
+            except (
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+                RecursionError,
+            ) as exc:
+                raise StateDurabilityError(
+                    "state file is not valid JSON",
+                    stage="confirm",
+                ) from exc
+            if type(observed) is not dict or observed != expected_state:
+                raise StateDurabilityError(
+                    "state postimage does not match",
+                    stage="confirm",
+                )
+
+            _fsync_retry(state_fd)
+            directory_fd = _open_real_directory(
+                self._squad_dir,
+                stage="confirm",
+            )
+            directory_before = os.fstat(directory_fd)
+            _fsync_retry(directory_fd)
+
+            final_opened = os.fstat(state_fd)
+            final_named = os.lstat(self._path)
+            directory_after = os.fstat(directory_fd)
+            directory_named = os.lstat(self._squad_dir)
+            if (
+                not stat.S_ISREG(final_named.st_mode)
+                or _identity(final_opened) != _identity(opened)
+                or _identity(final_named) != _identity(opened)
+                or final_opened.st_size != opened.st_size
+                or _identity(directory_after)
+                != _identity(directory_before)
+                or not stat.S_ISDIR(directory_named.st_mode)
+                or stat.S_ISLNK(directory_named.st_mode)
+                or _identity(directory_named)
+                != _identity(directory_after)
+            ):
+                raise StateDurabilityError(
+                    "state durability identity changed",
+                    stage="confirm",
+                )
+            final_content = _read_regular_descriptor(
+                state_fd,
+                maximum=_MAX_STATE_BYTES,
+            )
+            if final_content != content:
+                raise StateDurabilityError(
+                    "state file changed after synchronization",
+                    stage="confirm",
+                )
+            return deepcopy(observed)
+        except StateDurabilityError:
+            raise
+        except (OSError, ValueError) as exc:
+            raise StateDurabilityError(
+                "state durability confirmation failed",
+                stage="confirm",
+            ) from exc
+        finally:
+            if directory_fd >= 0:
+                os.close(directory_fd)
+            if state_fd >= 0:
+                os.close(state_fd)
+
+    def confirm_durable_state(
+        self,
+        expected: dict[str, Any],
+    ) -> dict[str, Any]:
+        with self._lock(exclusive=True):
+            return self._confirm_durable_state_unlocked(expected)
 
     def _save_unlocked(self, state: dict) -> dict:
         next_state = deepcopy(state)
@@ -822,17 +1190,33 @@ class SquadStateStore:
             prefix=".state-",
             suffix=".tmp",
         )
+        replaced = False
         try:
             with os.fdopen(fd, "w") as f:
                 f.write(content)
                 f.flush()
-                os.fsync(f.fileno())
-            Path(tmp).replace(self._path)
-        except Exception:
+                _fsync_retry(f.fileno())
+            os.replace(tmp, self._path)
+            replaced = True
+            directory_fd = _open_real_directory(
+                self._squad_dir,
+                stage="post_replace",
+            )
             try:
-                os.unlink(tmp)
-            except OSError:
-                pass
+                _fsync_retry(directory_fd)
+            except OSError as exc:
+                raise StateDurabilityError(
+                    "state parent directory sync failed",
+                    stage="post_replace",
+                ) from exc
+            finally:
+                os.close(directory_fd)
+        except Exception:
+            if not replaced:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
             raise
         return next_state
 
@@ -1317,6 +1701,24 @@ class SquadStateStore:
 
             try:
                 saved_state = self._save_unlocked(next_state)
+            except StateDurabilityError as exc:
+                if exc.stage == "post_replace":
+                    raise
+                observed = self._load_unlocked()
+                if _state_matches_exact_save(
+                    state,
+                    next_state,
+                    observed,
+                ):
+                    saved_state = (
+                        self._confirm_durable_state_unlocked(observed)
+                    )
+                else:
+                    raise StateAdvanceError(
+                        "atomic state save failed",
+                        json_path="$.state",
+                        validator="save",
+                    ) from exc
             except Exception as exc:
                 observed = self._load_unlocked()
                 if _state_matches_exact_save(
@@ -1324,7 +1726,9 @@ class SquadStateStore:
                     next_state,
                     observed,
                 ):
-                    saved_state = observed
+                    saved_state = (
+                        self._confirm_durable_state_unlocked(observed)
+                    )
                 else:
                     raise StateAdvanceError(
                         "atomic state save failed",
@@ -1436,6 +1840,8 @@ class SquadStateStore:
             next_state[PENDING_EXTERNAL_PUBLICATION_KEY] = expected_marker
             try:
                 self._save_unlocked(next_state)
+            except StateDurabilityError:
+                raise
             except Exception as exc:
                 raise StateAdvanceError(
                     "atomic external publication marker save failed",
@@ -1777,10 +2183,21 @@ class SquadStateStore:
     ) -> dict[str, Any]:
         try:
             return self._save_unlocked(desired)
+        except StateDurabilityError as exc:
+            if exc.stage == "post_replace":
+                raise
+            observed = self._load_unlocked()
+            if _state_matches_exact_save(before, desired, observed):
+                return self._confirm_durable_state_unlocked(observed)
+            raise StateAdvanceError(
+                "atomic controller completion state save failed",
+                json_path=json_path,
+                validator="save",
+            ) from exc
         except Exception as exc:
             observed = self._load_unlocked()
             if _state_matches_exact_save(before, desired, observed):
-                return observed
+                return self._confirm_durable_state_unlocked(observed)
             raise StateAdvanceError(
                 "atomic controller completion state save failed",
                 json_path=json_path,

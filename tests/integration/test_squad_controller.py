@@ -52,6 +52,7 @@ from harness.squad_completion import (
 from harness.squad_state import (
     AdvanceReceipt,
     StateAdvanceError,
+    StateDurabilityError,
     SquadStateStore,
 )
 from harness.state_transaction_namespace import (
@@ -8455,6 +8456,295 @@ class TestControllerCompletionOrchestration:
         def verify_canonical_bytes(self, *_args, **_kwargs):
             self.verify_calls += 1
             return self.verify_ok and self.write_count == 1
+
+    def test_fresh_completion_authority_requires_durable_state(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase1-what",
+        )
+        prepared = _install_empty_routed_completion(ctrl, store)
+        state_path = ctrl._squad_dir / "state.json"
+        before = state_path.read_bytes()
+        stage = prepared._transaction_root
+        confirm = MagicMock(
+            side_effect=StateDurabilityError(
+                "injected confirmation failure",
+                stage="confirm",
+            )
+        )
+        monkeypatch.setattr(
+            store,
+            "confirm_durable_state",
+            confirm,
+        )
+
+        first = ctrl._drain_pending_controller_completion()
+        second = ctrl._drain_pending_controller_completion()
+
+        assert first.recovered is False
+        assert second.recovered is False
+        assert confirm.call_count == 2
+        assert state_path.read_bytes() == before
+        assert stage.is_dir()
+
+    def test_fresh_publication_authority_requires_durable_state(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase1-what",
+        )
+        prepared, targets = _sealed_publication_fixture(ctrl)
+        _install_publication_marker(store, prepared)
+        state_path = ctrl._squad_dir / "state.json"
+        before = state_path.read_bytes()
+        stage = (
+            ctrl._squad_dir
+            / ".publication-outbox"
+            / prepared.marker.transaction_id
+        )
+        confirm = MagicMock(
+            side_effect=StateDurabilityError(
+                "injected confirmation failure",
+                stage="confirm",
+            )
+        )
+        monkeypatch.setattr(
+            store,
+            "confirm_durable_state",
+            confirm,
+        )
+
+        assert ctrl._recover_pending_external_publication() is False
+        assert ctrl._recover_pending_external_publication() is False
+
+        assert confirm.call_count == 2
+        assert state_path.read_bytes() == before
+        assert stage.is_dir()
+        assert targets["replace"].read_text(encoding="utf-8") == (
+            "old replace\n"
+        )
+        assert not targets["create"].exists()
+        assert targets["delete"].read_text(encoding="utf-8") == (
+            "old delete\n"
+        )
+
+    def test_publication_final_clear_retains_stage_when_confirmation_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase1-what",
+        )
+        prepared, targets = _sealed_publication_fixture(ctrl)
+        marker = _install_publication_marker(store, prepared)
+        transaction_root = (
+            ctrl._squad_dir
+            / ".publication-outbox"
+            / prepared.marker.transaction_id
+        )
+        monkeypatch.setattr(
+            store,
+            "confirm_durable_state",
+            MagicMock(
+                side_effect=StateDurabilityError(
+                    "injected clear confirmation failure",
+                    stage="confirm",
+                )
+            ),
+        )
+
+        assert ctrl._publish_and_finalize(prepared, marker) is False
+
+        cleared = store.load()
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in cleared
+        assert "external_publication_failure" not in cleared
+        assert transaction_root.is_dir()
+        assert targets["replace"].read_text(encoding="utf-8") == (
+            "new replace\n"
+        )
+        assert targets["create"].read_text(encoding="utf-8") == (
+            "new create\n"
+        )
+        assert not targets["delete"].exists()
+
+    def test_final_clear_retains_stage_without_durable_confirmation(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase1-what",
+        )
+        prepared = _install_empty_routed_completion(ctrl, store)
+        store.complete_controller_completion(prepared)
+        cleared = store.load()
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in cleared
+        assert prepared._transaction_root.is_dir()
+        monkeypatch.setattr(
+            store,
+            "confirm_durable_state",
+            MagicMock(
+                side_effect=StateDurabilityError(
+                    "injected confirmation failure",
+                    stage="confirm",
+                )
+            ),
+        )
+
+        ctrl._discard_completed_controller_stage(prepared)
+
+        assert prepared._transaction_root.is_dir()
+
+    def test_orphan_cleanup_requires_durable_state(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase1-what",
+        )
+        orphan = prepare_controller_completion(
+            tmp_path,
+            ctrl._squad_dir,
+            completion_id=uuid.uuid4().hex,
+            origin="routed",
+            publication={"kind": "none"},
+            route={
+                "kind": "routed",
+                "from_phase": "phase1-what",
+                "to_phase": "phase1-why1",
+                "manual_phase_run": False,
+                "record_completion": True,
+            },
+            effect_plan=(),
+            checkpoint_prestate={"kind": "none"},
+            context_reason="power-loss old-state orphan",
+            mine_phase_a=False,
+            judgment_payload_sha256=(),
+            judgments=(),
+        )
+        before = (ctrl._squad_dir / "state.json").read_bytes()
+        monkeypatch.setattr(
+            store,
+            "confirm_durable_state",
+            MagicMock(
+                side_effect=StateDurabilityError(
+                    "injected confirmation failure",
+                    stage="confirm",
+                )
+            ),
+        )
+
+        assert ctrl._cleanup_controller_completion_orphans() is False
+        assert (ctrl._squad_dir / "state.json").read_bytes() == before
+        assert orphan._transaction_root.is_dir()
+
+    def test_power_loss_old_state_has_no_effect_and_safe_orphan(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase1-what",
+        )
+        orphan = prepare_controller_completion(
+            tmp_path,
+            ctrl._squad_dir,
+            completion_id=uuid.uuid4().hex,
+            origin="routed",
+            publication={"kind": "none"},
+            route={
+                "kind": "routed",
+                "from_phase": "phase1-what",
+                "to_phase": "phase1-why1",
+                "manual_phase_run": False,
+                "record_completion": True,
+            },
+            effect_plan=(),
+            checkpoint_prestate={"kind": "none"},
+            context_reason="old state survives marker replacement",
+            mine_phase_a=False,
+            judgment_payload_sha256=(),
+            judgments=(),
+        )
+        effect = MagicMock(
+            side_effect=AssertionError(
+                "old state without marker authorized an effect"
+            )
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_controller_completion_effect",
+            effect,
+        )
+
+        outcome = ctrl._drain_pending_controller_completion()
+
+        assert outcome.recovered is False
+        effect.assert_not_called()
+        assert orphan._transaction_root.is_dir()
+        assert ctrl._cleanup_controller_completion_orphans() is True
+        assert not orphan._transaction_root.exists()
+
+    def test_power_loss_new_state_keeps_stage_and_recovers(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "phase1-what",
+        )
+        prepared = _install_empty_routed_completion(ctrl, store)
+        assert prepared._transaction_root.is_dir()
+        assert PENDING_CONTROLLER_COMPLETION_KEY in store.load()
+        del ctrl
+        fresh, fresh_store = _controller(tmp_path)
+
+        outcome = fresh._drain_pending_controller_completion()
+
+        assert outcome.recovered is True
+        assert PENDING_CONTROLLER_COMPLETION_KEY not in fresh_store.load()
+        assert not prepared._transaction_root.exists()
 
     @pytest.mark.parametrize("with_publication", [False, True])
     def test_fresh_controller_starts_from_exact_route_cas(

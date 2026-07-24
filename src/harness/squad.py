@@ -100,6 +100,7 @@ from harness.squad_state import (
     AdvanceReceipt,
     RoutingStateSnapshot,
     StateAdvanceError,
+    StateDurabilityError,
     SquadStateStore,
 )
 from harness.state_transaction_namespace import (
@@ -1190,6 +1191,10 @@ class SquadController:
             return
         if PENDING_CONTROLLER_COMPLETION_KEY in state:
             return
+        try:
+            state = self._state_store.confirm_durable_state(state)
+        except StateDurabilityError:
+            return
         marker = prepared.marker
         if marker.origin == "routed":
             dispatch = state.get("last_dispatch")
@@ -1264,6 +1269,10 @@ class SquadController:
         ):
             return False
         try:
+            state = self._state_store.confirm_durable_state(state)
+        except StateDurabilityError:
+            return False
+        try:
             with os.scandir(outbox) as iterator:
                 entries = tuple(iterator)
         except OSError:
@@ -1291,6 +1300,14 @@ class SquadController:
     ) -> CompletionRecoveryOutcome:
         """Validate, replay, and finalize one exact durable completion."""
         state = self._state_store.load()
+        if (
+            PENDING_CONTROLLER_COMPLETION_KEY in state
+            or PENDING_EXTERNAL_PUBLICATION_KEY in state
+        ):
+            try:
+                state = self._state_store.confirm_durable_state(state)
+            except StateDurabilityError:
+                return CompletionRecoveryOutcome(False)
         if PENDING_CONTROLLER_COMPLETION_KEY not in state:
             if PENDING_EXTERNAL_PUBLICATION_KEY in state:
                 self._record_controller_completion_failure_best_effort(
@@ -1373,6 +1390,8 @@ class SquadController:
                             expected_publication,
                             prepared,
                         )
+                    except StateDurabilityError:
+                        return outcome
                     except StateAdvanceError:
                         self._record_external_publication_failure_best_effort(
                             expected_publication,
@@ -1395,6 +1414,10 @@ class SquadController:
                         != prepared.marker.completion_id
                         or next_marker.get("step") != expected_next
                     ):
+                        return outcome
+                    try:
+                        self._state_store.confirm_durable_state(handed)
+                    except StateDurabilityError:
                         return outcome
                     try:
                         staged_publication.discard()
@@ -1484,6 +1507,8 @@ class SquadController:
                 ),
                 exc.code,
             )
+            return outcome
+        except StateDurabilityError:
             return outcome
         except StateAdvanceError:
             self._record_controller_completion_failure_best_effort(
@@ -1614,24 +1639,32 @@ class SquadController:
 
         try:
             self._state_store.complete_external_publication(expected_marker)
-            if (
-                PENDING_EXTERNAL_PUBLICATION_KEY
-                in self._state_store.load()
-            ):
+            cleared = self._state_store.load()
+            if PENDING_EXTERNAL_PUBLICATION_KEY in cleared:
                 raise StateAdvanceError(
                     "external publication marker was not cleared",
                     json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
                     validator="state_finalize",
                 )
+            try:
+                self._state_store.confirm_durable_state(cleared)
+            except StateDurabilityError:
+                return False
+        except StateDurabilityError:
+            return False
         except Exception:
             try:
+                cleared = self._state_store.load()
                 completion_won = (
-                    PENDING_EXTERNAL_PUBLICATION_KEY
-                    not in self._state_store.load()
+                    PENDING_EXTERNAL_PUBLICATION_KEY not in cleared
                 )
             except Exception:
                 completion_won = False
             if completion_won:
+                try:
+                    self._state_store.confirm_durable_state(cleared)
+                except StateDurabilityError:
+                    return False
                 try:
                     prepared.discard()
                 except PublicationError:
@@ -1660,6 +1693,10 @@ class SquadController:
         state = self._state_store.load()
         if PENDING_EXTERNAL_PUBLICATION_KEY not in state:
             return True
+        try:
+            state = self._state_store.confirm_durable_state(state)
+        except StateDurabilityError:
+            return False
         marker_value = state[PENDING_EXTERNAL_PUBLICATION_KEY]
         try:
             marker = validate_pending_external_publication(marker_value)

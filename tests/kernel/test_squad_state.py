@@ -1,7 +1,11 @@
 """Tests for SquadStateStore."""
+import errno
 import hashlib
 import json
+import os
+import stat
 import sys
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from pathlib import PurePath
@@ -23,7 +27,11 @@ from harness.squad_completion import (
     load_prepared_controller_completion,
     prepare_controller_completion,
 )
-from harness.squad_state import StateAdvanceError, SquadStateStore
+from harness.squad_state import (
+    StateAdvanceError,
+    StateDurabilityError,
+    SquadStateStore,
+)
 from harness.squad_provider import SquadAgentResult
 from harness.state_transaction_namespace import (
     PENDING_CONTROLLER_COMPLETION_KEY,
@@ -2620,9 +2628,396 @@ class TestFsync:
     def test_fsync_called_on_save(self, tmp_path):
         store = SquadStateStore(tmp_path / "squad/run-test")
         store.initialize("r1", "semi", "msg", 0, "init")
-        with patch("harness.squad_state.os.fsync") as mock_fsync:
+        real_fsync = os.fsync
+        synchronized_types = []
+
+        def observed_fsync(descriptor):
+            synchronized_types.append(os.fstat(descriptor).st_mode)
+            real_fsync(descriptor)
+
+        with patch(
+            "harness.squad_state.os.fsync",
+            side_effect=observed_fsync,
+        ):
             store.save(store.load())
-        mock_fsync.assert_called_once()
+        assert any(stat.S_ISREG(mode) for mode in synchronized_types)
+        assert any(stat.S_ISDIR(mode) for mode in synchronized_types)
+
+    def test_state_save_fsyncs_file_then_replaces_then_fsyncs_parent(
+        self,
+        tmp_path,
+    ):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        calls = []
+        real_fsync = os.fsync
+        real_replace = os.replace
+
+        def observed_fsync(descriptor):
+            mode = os.fstat(descriptor).st_mode
+            calls.append(
+                "dir_fsync" if stat.S_ISDIR(mode) else "file_fsync"
+            )
+            real_fsync(descriptor)
+
+        def observed_replace(source, target, *args, **kwargs):
+            calls.append("replace")
+            return real_replace(source, target, *args, **kwargs)
+
+        with (
+            patch(
+                "harness.squad_state.os.fsync",
+                side_effect=observed_fsync,
+            ),
+            patch(
+                "harness.squad_state.os.replace",
+                side_effect=observed_replace,
+            ),
+        ):
+            store.save(store.load())
+
+        assert calls[-3:] == ["file_fsync", "replace", "dir_fsync"]
+
+    def test_initial_state_create_fsyncs_file_and_parent(
+        self,
+        tmp_path,
+    ):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        synchronized_types = []
+        real_fsync = os.fsync
+
+        def observed_fsync(descriptor):
+            synchronized_types.append(os.fstat(descriptor).st_mode)
+            real_fsync(descriptor)
+
+        with patch(
+            "harness.squad_state.os.fsync",
+            side_effect=observed_fsync,
+        ):
+            store.initialize("r1", "semi", "msg", 0, "init")
+
+        assert stat.S_ISREG(synchronized_types[-2])
+        assert stat.S_ISDIR(synchronized_types[-1])
+
+    def test_directory_creation_is_durable(self, tmp_path):
+        synchronized = []
+        real_fsync = os.fsync
+
+        def observed_fsync(descriptor):
+            metadata = os.fstat(descriptor)
+            if stat.S_ISDIR(metadata.st_mode):
+                synchronized.append((metadata.st_dev, metadata.st_ino))
+            real_fsync(descriptor)
+
+        squad_dir = tmp_path / "runs" / "spec-1" / "squad"
+        with patch(
+            "harness.squad_state.os.fsync",
+            side_effect=observed_fsync,
+        ):
+            SquadStateStore(squad_dir)
+
+        squad_identity = squad_dir.stat()
+        staging_identity = (squad_dir / "staging").stat()
+        assert (
+            squad_identity.st_dev,
+            squad_identity.st_ino,
+        ) in synchronized
+        assert (
+            staging_identity.st_dev,
+            staging_identity.st_ino,
+        ) in synchronized
+
+    def test_fsync_retries_eintr(self, tmp_path):
+        store = SquadStateStore(tmp_path / "squad/run-test")
+        store.initialize("r1", "semi", "msg", 0, "init")
+        real_fsync = os.fsync
+        attempts = 0
+
+        def interrupted_once(descriptor):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError(errno.EINTR, "interrupted")
+            real_fsync(descriptor)
+
+        with patch(
+            "harness.squad_state.os.fsync",
+            side_effect=interrupted_once,
+        ):
+            store.save(store.load())
+
+        assert attempts >= 3
+
+    def test_directory_creation_parent_failure_is_reconfirmed_on_retry(
+        self,
+        tmp_path,
+    ):
+        squad_dir = tmp_path / "runs" / "spec-1" / "squad"
+        failed = False
+        real_fsync = os.fsync
+
+        def fail_squad_parent_once(descriptor):
+            nonlocal failed
+            metadata = os.fstat(descriptor)
+            if (
+                not failed
+                and stat.S_ISDIR(metadata.st_mode)
+                and squad_dir.is_dir()
+                and squad_dir.parent.is_dir()
+            ):
+                parent = squad_dir.parent.stat()
+                if (
+                    metadata.st_dev,
+                    metadata.st_ino,
+                ) == (parent.st_dev, parent.st_ino):
+                    failed = True
+                    raise OSError(
+                        errno.EIO,
+                        "injected directory parent sync failure",
+                    )
+            real_fsync(descriptor)
+
+        with (
+            patch(
+                "harness.squad_state.os.fsync",
+                side_effect=fail_squad_parent_once,
+            ),
+            pytest.raises(StateDurabilityError) as raised,
+        ):
+            SquadStateStore(squad_dir)
+
+        assert raised.value.stage == "directory_create"
+        assert squad_dir.is_dir()
+
+        synchronized = []
+
+        def observed_fsync(descriptor):
+            metadata = os.fstat(descriptor)
+            if stat.S_ISDIR(metadata.st_mode):
+                synchronized.append((metadata.st_dev, metadata.st_ino))
+            real_fsync(descriptor)
+
+        with patch(
+            "harness.squad_state.os.fsync",
+            side_effect=observed_fsync,
+        ):
+            store = SquadStateStore(squad_dir)
+            store.initialize("r1", "greenfield", "msg", 0, "init")
+
+        parent = squad_dir.parent.stat()
+        assert (parent.st_dev, parent.st_ino) in synchronized
+
+
+class TestDurableStateAuthority:
+    def test_confirm_durable_state_requires_exact_revision_and_marker(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        expected = store.load()
+
+        assert store.confirm_durable_state(expected) == expected
+
+        drifted = deepcopy(expected)
+        drifted["state_revision"] += 1
+        with pytest.raises(StateDurabilityError) as raised:
+            store.confirm_durable_state(drifted)
+        assert raised.value.stage == "confirm"
+
+    def test_confirm_durable_state_fsyncs_file_then_parent(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        calls = []
+        real_fsync = os.fsync
+
+        def observed_fsync(descriptor):
+            mode = os.fstat(descriptor).st_mode
+            calls.append(
+                "dir_fsync" if stat.S_ISDIR(mode) else "file_fsync"
+            )
+            real_fsync(descriptor)
+
+        with patch(
+            "harness.squad_state.os.fsync",
+            side_effect=observed_fsync,
+        ):
+            store.confirm_durable_state(store.load())
+
+        assert calls == ["file_fsync", "dir_fsync"]
+
+    def test_post_replace_parent_sync_failure_is_not_adopted(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "DONE")
+        prepared = _prepare_completion(
+            tmp_path,
+            store,
+            origin="terminal",
+            external_publication=True,
+            effect_plan=(),
+            from_phase="DONE",
+        )
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="DONE",
+        )
+        real_fsync = os.fsync
+
+        def fail_parent_sync(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                raise OSError(errno.EIO, "injected parent sync failure")
+            real_fsync(descriptor)
+
+        with (
+            patch(
+                "harness.squad_state.os.fsync",
+                side_effect=fail_parent_sync,
+            ),
+            pytest.raises(StateDurabilityError) as raised,
+        ):
+            store.begin_terminal_controller_completion(
+                prepared,
+                snapshot=snapshot,
+            )
+
+        assert raised.value.stage == "post_replace"
+        assert prepared._transaction_root.is_dir()
+
+    def test_external_marker_post_replace_failure_stays_distinct(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize(
+            "r1",
+            "greenfield",
+            "msg",
+            0,
+            "phase1-what",
+        )
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase1-what",
+        )
+        real_fsync = os.fsync
+
+        def fail_parent_sync(descriptor):
+            if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+                raise OSError(errno.EIO, "injected parent sync failure")
+            real_fsync(descriptor)
+
+        with (
+            patch(
+                "harness.squad_state.os.fsync",
+                side_effect=fail_parent_sync,
+            ),
+            pytest.raises(StateDurabilityError) as raised,
+        ):
+            store.begin_external_publication(
+                VALID_MARKER,
+                snapshot=snapshot,
+            )
+
+        assert raised.value.stage == "post_replace"
+
+    def test_confirm_durable_state_rejects_symlink(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        expected = store.load()
+        state_path = store.squad_dir / "state.json"
+        redirected = tmp_path / "redirected-state.json"
+        redirected.write_bytes(state_path.read_bytes())
+        state_path.unlink()
+        state_path.symlink_to(redirected)
+
+        with pytest.raises(StateDurabilityError) as raised:
+            store.confirm_durable_state(expected)
+
+        assert raised.value.stage == "confirm"
+
+    def test_confirm_durable_state_rechecks_file_identity(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        expected = store.load()
+        state_path = store.squad_dir / "state.json"
+        replaced = False
+        real_fsync = os.fsync
+
+        def replace_after_file_sync(descriptor):
+            nonlocal replaced
+            if (
+                not replaced
+                and stat.S_ISREG(os.fstat(descriptor).st_mode)
+            ):
+                replaced = True
+                temporary = store.squad_dir / ".identity-replacement"
+                temporary.write_bytes(state_path.read_bytes())
+                os.replace(temporary, state_path)
+            real_fsync(descriptor)
+
+        with (
+            patch(
+                "harness.squad_state.os.fsync",
+                side_effect=replace_after_file_sync,
+            ),
+            pytest.raises(StateDurabilityError) as raised,
+        ):
+            store.confirm_durable_state(expected)
+
+        assert raised.value.stage == "confirm"
+
+    def test_true_save_then_raise_adoption_uses_exact_confirmation(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "DONE")
+        prepared = _prepare_completion(
+            tmp_path,
+            store,
+            origin="terminal",
+            external_publication=True,
+            effect_plan=(),
+            from_phase="DONE",
+        )
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="DONE",
+        )
+        original_save = store._save_unlocked
+        original_confirm = store._confirm_durable_state_unlocked
+
+        def save_then_raise(state):
+            original_save(state)
+            raise OSError("injected outer ambiguity")
+
+        with (
+            patch.object(
+                store,
+                "_save_unlocked",
+                side_effect=save_then_raise,
+            ),
+            patch.object(
+                store,
+                "_confirm_durable_state_unlocked",
+                wraps=original_confirm,
+            ) as confirm,
+        ):
+            store.begin_terminal_controller_completion(
+                prepared,
+                snapshot=snapshot,
+            )
+
+        assert confirm.call_count == 1
+        assert store.load()[PENDING_CONTROLLER_COMPLETION_KEY] == (
+            prepared.marker.to_dict()
+        )
 
     def test_no_stale_tmp_file_after_save(self, tmp_path):
         store = SquadStateStore(tmp_path / "squad/run-test")
