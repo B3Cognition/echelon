@@ -3482,7 +3482,7 @@ def _current_issues_recap(
             continue
 
         issue_blocks = re.findall(
-            r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### |\Z)",
+            r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### ISS-\d+:|\Z)",
             issues_md,
             re.MULTILINE | re.DOTALL,
         )
@@ -3524,7 +3524,7 @@ def _issue_resolution_requests(project_root: Path, squad_dir: Path, state: dict)
         return []
     requests: list[dict[str, str]] = []
     for title, body in re.findall(
-        r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### |\Z)",
+        r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### ISS-\d+:|\Z)",
         issues_md,
         re.MULTILINE | re.DOTALL,
     ):
@@ -3541,6 +3541,15 @@ def _issue_resolution_requests(project_root: Path, squad_dir: Path, state: dict)
         amendment = re.search(r"\*\*Required Amendment\*\*:\s*(.+)", body)
         recommendation = re.search(r"\*\*Recommendation:\*\s*(.+)", body)
         severity = re.search(r"\*\*Severity(?::)?\*\*\s*:?\s*(\w+)", body)
+        resolution_guidance = re.search(
+            r"### Resolution Guidance\n(.*?)(?=^### |\Z)", body, re.DOTALL
+        )
+        guidance_text = resolution_guidance.group(1) if resolution_guidance else ""
+        def guidance_field(name: str) -> str:
+            match = re.search(
+                rf"- \*\*{re.escape(name)}:\*\*\s*(.+)", guidance_text
+            )
+            return match.group(1).strip() if match else ""
         guidance = (
             action.group(1).strip()
             if action
@@ -3552,14 +3561,22 @@ def _issue_resolution_requests(project_root: Path, squad_dir: Path, state: dict)
         )
         if guidance.lower().startswith("none"):
             continue
-        requests.append(
-            {
-                "issue_id": issue_id_match.group(1),
-                "title": issue_id_match.group(2),
-                "severity": severity.group(1).upper() if severity else "ISSUE",
-                "guidance": guidance,
-            }
-        )
+        request = {
+            "issue_id": issue_id_match.group(1),
+            "title": issue_id_match.group(2),
+            "severity": severity.group(1).upper() if severity else "ISSUE",
+            "guidance": guidance,
+        }
+        for key, label in (
+            ("suggested_option", "Suggested option"),
+            ("evidence_basis", "Evidence basis"),
+            ("values_not_inferable", "Values not inferable"),
+            ("banzai_eligible", "Banzai eligible"),
+        ):
+            value = guidance_field(label)
+            if value:
+                request[key] = value.lower() if key == "banzai_eligible" else value
+        requests.append(request)
     return requests
 
 
@@ -3578,6 +3595,49 @@ def _issue_resolution_guidance_recap(
             f"- {request['issue_id']} [{request['severity']}]: {request['guidance']}"
         )
     return "\n".join(lines)
+
+
+def _issue_resolution_screen_guidance(
+    project_root: Path, squad_dir: Path, state: dict
+) -> list[tuple[str, str]]:
+    """Return all actionable issue details for CLI banners without hidden files."""
+    recap = _current_issues_recap(project_root, squad_dir, state)
+    if recap is None:
+        return []
+    _summary, issues_path_text = recap
+    issues_path = Path(issues_path_text)
+    ledger = state.get("issue_resolution_ledger")
+    ledger = ledger if isinstance(ledger, dict) else {}
+    fields: list[tuple[str, str]] = [
+        ("issues file", str(issues_path)),
+        ("open issues", issues_path.as_uri()),
+    ]
+    for request in _issue_resolution_requests(project_root, squad_dir, state):
+        entry = ledger.get(request["issue_id"])
+        if isinstance(entry, dict) and entry.get("status") == "validated":
+            continue
+        lines = [
+            f"{request['title']} [{request['severity']}]",
+            f"action: {request['guidance']}",
+        ]
+        suggested = request.get("suggested_option", "")
+        if suggested and suggested.lower() != "none":
+            lines.append(f"suggested: {suggested}")
+            lines.append(
+                f"accept: echelon spec resolve {request['issue_id']} {shlex.quote(suggested)}"
+            )
+        else:
+            lines.append(
+                f"resolve: echelon spec resolve {request['issue_id']} '<decision>'"
+            )
+        evidence = request.get("evidence_basis", "")
+        if evidence and evidence.lower() != "none":
+            lines.append(f"evidence: {evidence}")
+        unknown = request.get("values_not_inferable", "")
+        if unknown and unknown.lower() != "none":
+            lines.append(f"user decides: {unknown}")
+        fields.append((request["issue_id"], "\n".join(lines)))
+    return fields
 
 
 def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> None:
@@ -3738,10 +3798,12 @@ def _print_squad_summary(
             if issues_recap:
                 recap, issues_path = issues_recap
                 fields.append(("issues", recap))
-                fields.append(("issues file", issues_path))
                 guidance = _issue_resolution_guidance_recap(project_root, squad_dir, state)
                 if guidance:
                     fields.append(("decisions", guidance))
+                fields.extend(
+                    _issue_resolution_screen_guidance(project_root, squad_dir, state)
+                )
     fields.append(("result", _phase_a_result_line(status, state)))
     _banner("SQUAD SUMMARY", fields, subtitle=f"{icon} {status_text}")
 
@@ -4464,6 +4526,10 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
                 ("next", action.command),
                 ("note", action.note),
             ]
+            if run_dir is not None:
+                fields.extend(
+                    _issue_resolution_screen_guidance(project_root, run_dir, current_state)
+                )
             _banner(
                 "NEXT STEP",
                 fields,
@@ -6744,13 +6810,15 @@ def _cmd_continue(
         )
         return
     if action.kind == "manual_recovery":
+        fields = [
+            ("blocked by", action.reason),
+            ("next", action.command),
+            ("note", action.note),
+        ]
+        fields.extend(_issue_resolution_screen_guidance(project_root, squad_dir, state))
         _banner(
             "CHECKPOINT",
-            [
-                ("blocked by", action.reason),
-                ("next", action.command),
-                ("note", action.note),
-            ],
+            fields,
             subtitle="Run paused. Manual recovery required.",
         )
         return
