@@ -46,7 +46,7 @@
 
 - [ ] **Step 1: Write exact marker/namespace RED tests**
 
-Add tests covering the exact seven marker fields, concrete `int` schema version, 32-hex completion ID, four 64-hex digests, origin enum, step enum, explicit null, extra fields, provider set/remove rejection, and trusted routing acceptance:
+Add tests covering the exact seven marker fields, concrete `int` schema version, 32-hex completion ID, three 64-hex digests, origin enum, step enum, explicit null, extra fields, provider set/remove rejection, and trusted routing acceptance:
 
 ```python
 VALID_COMPLETION_MARKER = {
@@ -116,7 +116,7 @@ Add the key to store-owned/provider-reserved/trusted-routing effect sets, but no
 
 - [ ] **Step 4: Write durable intent RED tests**
 
-Cover exact tagged unions, fixed effect order, duplicate/future effect rejection, detached-value depth/node/string/integer/finite-float limits, 4 MiB serialized limit, canonical digest reread, missing/corrupt intent, one completion directory only, initial exact empty receipts, symlink/type/path attacks, and discard idempotency.
+Cover exact tagged unions, fixed effect order, duplicate/future effect rejection, detached-value depth/node/string/integer/finite-float limits, 4 MiB serialized limit, canonical digest reread, missing/corrupt intent, one completion directory only, initial exact empty receipts, symlink/type/path attacks, and discard idempotency. Require the exact checkpoint-prestate union: `{"kind": "none"}` when no checkpoint is planned, or `{"kind": "git_head", "head": <captured 40- or 64-hex object ID>}` when it is.
 
 Use both exact variants:
 
@@ -157,6 +157,7 @@ class CompletionIntent:
     publication: dict[str, object]
     route: dict[str, object]
     effect_plan: tuple[str, ...]
+    checkpoint_prestate: dict[str, object]
     context_reason: str
     mine_phase_a: bool
     judgment_payload_sha256: tuple[str, ...]
@@ -330,7 +331,8 @@ git commit -m "feat: persist controller completion state"
 - Modify: `scripts/bash/post-dispatch-hormone-update.sh`
 - Test: `tests/unit/test_squad_completion.py`
 - Test: `tests/unit/test_journal_entry_validator.py`
-- Test: `tests/unit/test-phase-timing.sh`
+- Create: `tests/integration/test_controller_journal_shell_locking.py`
+- Test: `tests/integration/test_post_dispatch_hook.sh`
 
 **Interfaces:**
 - Produces:
@@ -341,7 +343,7 @@ git commit -m "feat: persist controller completion state"
 
 - [ ] **Step 1: Write journal replay RED tests**
 
-Cover unrelated-row preservation, provider spoofing of `id`/`timestamp`/`phase`/completion fields, exact content digest calculation excluding generated metadata, durable replace, crash after replace before receipt, exact-row adoption, partial/missing/duplicate ordinal, same-ID drift, malformed unrelated JSON, concurrent shell append under the shared lock, and parent-directory fsync.
+Cover unrelated-row preservation, provider spoofing of `id`/`timestamp`/`phase`/completion fields, exact content digest calculation excluding generated metadata, durable replace, crash after replace before receipt, exact-row adoption, partial/missing/duplicate ordinal, same-ID drift, malformed unrelated JSON, concurrent shell append under the shared lock, and parent-directory fsync. The cross-language concurrency test must invoke the repository `scripts/bash/phase-timing.sh` and `scripts/bash/post-dispatch-hormone-update.sh` writers, not the distinct extension timing hook.
 
 - [ ] **Step 2: Run journal tests to verify RED**
 
@@ -382,7 +384,8 @@ Run:
 .venv/bin/pytest -q \
   tests/unit/test_squad_completion.py \
   tests/unit/test_journal_entry_validator.py \
-  tests/unit/test-phase-timing.sh
+  tests/integration/test_controller_journal_shell_locking.py
+bash tests/integration/test_post_dispatch_hook.sh
 ```
 
 Expected: PASS.
@@ -397,7 +400,8 @@ git add src/harness/squad_completion.py \
   scripts/bash/post-dispatch-hormone-update.sh \
   tests/unit/test_squad_completion.py \
   tests/unit/test_journal_entry_validator.py \
-  tests/unit/test-phase-timing.sh
+  tests/integration/test_controller_journal_shell_locking.py \
+  tests/integration/test_post_dispatch_hook.sh
 git commit -m "feat: make completion journals replay safe"
 ```
 
@@ -412,7 +416,7 @@ git commit -m "feat: make completion journals replay safe"
 - Modify: `src/echelon/commit_messages.py`
 - Modify: `src/harness/phase_checkpoints.py`
 - Modify: `src/harness/squad_completion.py`
-- Test: `tests/unit/test_phase_timing.py`
+- Modify: `tests/unit/test_phase_timing_telemetry.py`
 - Test: `tests/unit/test_phase_checkpoints.py`
 - Test: `tests/unit/test_squad_completion.py`
 
@@ -432,7 +436,7 @@ Inject a crash after tagged close, after tagged open, and before receipt update.
 Run:
 
 ```bash
-.venv/bin/pytest -q tests/unit/test_phase_timing.py \
+.venv/bin/pytest -q tests/unit/test_phase_timing_telemetry.py \
   tests/unit/test_squad_completion.py -k "completion_timing"
 ```
 
@@ -465,7 +469,7 @@ Expected: FAIL because commits and ledger entries lack completion identity.
 
 - [ ] **Step 6: Implement checkpoint receipts**
 
-Add `completion_id` to commit metadata/trailer and checkpoint ledger records. Before committing, validate the exact ledger receipt or search at most 256 `--all` commits for one unique exact trailer identity. Use `no_change` only when current HEAD equals the intent-captured HEAD.
+Add `completion_id` to commit metadata/trailer and checkpoint ledger records. Before committing, validate the exact ledger receipt or search at most 256 `--all` commits for one unique exact trailer identity. Write ledger updates through lock + sibling temp + file `fsync` + atomic replace + parent-directory `fsync`. If a bound checkpoint receipt remains but the ledger is missing/truncated, repair it only from that receipt plus one uniquely matching bounded-history commit; all other prior-prefix postimage loss fails closed. Use `no_change` only when current HEAD equals `intent.checkpoint_prestate.head`.
 
 - [ ] **Step 7: Run Task 4 GREEN**
 
@@ -473,7 +477,7 @@ Run:
 
 ```bash
 .venv/bin/pytest -q \
-  tests/unit/test_phase_timing.py \
+  tests/unit/test_phase_timing_telemetry.py \
   tests/unit/test_phase_checkpoints.py \
   tests/unit/test_squad_completion.py
 ```
@@ -489,7 +493,7 @@ git add src/echelon/telemetry/model.py \
   src/echelon/commit_messages.py \
   src/harness/phase_checkpoints.py \
   src/harness/squad_completion.py \
-  tests/unit/test_phase_timing.py \
+  tests/unit/test_phase_timing_telemetry.py \
   tests/unit/test_phase_checkpoints.py \
   tests/unit/test_squad_completion.py
 git commit -m "feat: receipt timing and checkpoint completion"
@@ -769,12 +773,22 @@ git commit -m "test: prove controller completion crash recovery"
   tests/unit/test_controller_lock_order.py \
   tests/kernel/test_prepared_phase_result.py \
   tests/kernel/test_squad_state.py \
-  tests/unit/test_phase_timing.py \
+  tests/unit/test_phase_timing_telemetry.py \
+  tests/unit/test_journal_entry_validator.py \
+  tests/integration/test_controller_journal_shell_locking.py \
   tests/unit/test_phase_checkpoints.py \
   tests/unit/test_context_builder.py \
   tests/integration/test_squad_context_memory.py \
   tests/integration/test_squad_controller.py \
   tests/unit/test_squad_phase_checkpoints.py
+```
+
+Expected: PASS.
+
+Run the existing shell hook regression separately:
+
+```bash
+bash tests/integration/test_post_dispatch_hook.sh
 ```
 
 Expected: PASS.

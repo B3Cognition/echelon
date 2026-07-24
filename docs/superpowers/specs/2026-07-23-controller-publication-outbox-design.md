@@ -159,6 +159,10 @@ provider raw output, stderr, or unbounded object. Its exact top-level schema is:
   "effect_plan": [
     "journal | timing | checkpoint | context | mining"
   ],
+  "checkpoint_prestate": {
+    "kind": "none | git_head",
+    "head": "<40- or 64-character lowercase hex; git_head only>"
+  },
   "context_reason": "<bounded controller-generated string>",
   "mine_phase_a": "<Boolean>",
   "judgment_payload_sha256": ["<64 lowercase hex>"],
@@ -176,7 +180,12 @@ has no `marker`; `kind: external` has exactly one valid marker; routed route
 fields and terminal route fields cannot overlap. Judgment payload digests must
 match both the canonical detached payloads in the intent and durable
 `last_dispatch`. `effect_plan` contains each applicable effect at most once in
-the fixed order shown. Terminal completion permits only `mining`. Commander
+the fixed order shown. `checkpoint_prestate` is also an exact tagged union:
+`{"kind": "none"}` is required when `checkpoint` is absent from the effect
+plan, while a planned checkpoint requires
+`{"kind": "git_head", "head": <captured object ID>}`. The object ID is captured
+before the completion marker can commit and is the only authority for a later
+`no_change` receipt. Terminal completion permits only `mining`. Commander
 recovery uses `journal` followed by `checkpoint`; ordinary routed completion
 uses `journal`, `timing`, `checkpoint`, `context`, and optionally `mining`.
 The existing caller-side commander-recovery checkpoint is removed so top-of-run
@@ -373,8 +382,14 @@ before the state step can advance:
   receipt. If the commit happened before the ledger write, it performs a
   bounded search of at most 256 commits reachable from repository refs,
   requires the exact completion/run/spec/phase/next identity and unique commit,
-  and repairs only the ledger receipt. It never creates a second commit for the
-  same completion ID. The receipt records the verified commit and ledger
+  and repairs only the ledger receipt. Ledger mutation is serialized by its
+  lock and uses a sibling temporary file, file `fsync`, atomic replace, and
+  parent-directory `fsync` before its receipt can advance state. If a bound
+  checkpoint receipt survives but the ledger is missing or truncated, recovery
+  may repair that ledger only after the receipt and the one unique bounded
+  commit prove the exact same identity; other prior-effect postimage loss or
+  drift remains a fail-closed condition. It never creates a second commit for
+  the same completion ID. The receipt records the verified commit and ledger
   identity. When no owned change exists, the intent-captured HEAD must still be
   current and an exact `no_change` receipt records it; no trailer-bearing commit
   is claimed or created. A no-active-spec checkpoint has a distinct exact
