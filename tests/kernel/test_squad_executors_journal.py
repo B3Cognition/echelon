@@ -24,6 +24,7 @@ from harness.squad_executors import (
     _MANDATORY_PHASE_OUTPUTS,
     _canonical_echelon_result_contract,
     _allowed_state_updates_contract,
+    _validate_evidence_inventory,
 )
 from harness.squad_provider import SquadAgentResult
 from harness.squad_state import SquadStateStore
@@ -64,7 +65,231 @@ def test_phase1_investigate_requires_evidence_artifacts() -> None:
     assert _MANDATORY_PHASE_OUTPUTS["phase1-investigate"] == (
         "evidence-resolution.md",
         "evidence-grades.md",
+        "evidence-inventory.json",
     )
+
+
+def test_evidence_inventory_requires_source_dispositions_and_a_frontier(tmp_path) -> None:
+    valid = tmp_path / "evidence-inventory.json"
+    valid.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "sources": [
+                    {
+                        "id": "SRC-001",
+                        "locator": "https://example.test/docs",
+                        "kind": "documentation_portal",
+                        "status": "expanded",
+                        "disposition": "included",
+                        "discovered_from": "declared_input",
+                        "discovery_method": "manifest",
+                    }
+                ],
+                "frontier": {
+                    "disposition": "complete",
+                    "expanded_seed_locators": ["https://example.test/docs"],
+                    "unvisited_relevant_sources": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    invalid = tmp_path / "invalid-evidence-inventory.json"
+    invalid.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "sources": [
+                    {
+                        "id": "SRC-001",
+                        "locator": "https://example.test/docs",
+                        "kind": "documentation_portal",
+                        "status": "expanded",
+                        "disposition": "included",
+                        "discovered_from": "declared_input",
+                        "discovery_method": "manifest",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _validate_evidence_inventory(valid) is None
+    assert _validate_evidence_inventory(invalid) == "missing required object: frontier"
+
+
+def test_evidence_inventory_requires_every_declared_url_seed(tmp_path) -> None:
+    inventory = tmp_path / "evidence-inventory.json"
+    inventory.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "sources": [
+                    {
+                        "id": "SRC-001",
+                        "locator": "https://example.test/linked-schema.json",
+                        "kind": "api_schema",
+                        "status": "retrieved",
+                        "disposition": "included",
+                        "discovered_from": "SRC-000",
+                        "discovery_method": "link",
+                    }
+                ],
+                "frontier": {
+                    "disposition": "complete",
+                    "expanded_seed_locators": [
+                        "https://example.test/linked-schema.json"
+                    ],
+                    "unvisited_relevant_sources": [],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _validate_evidence_inventory(
+        inventory, required_seed_locators=("https://example.test/portal",)
+    ) == "missing declared source seed(s): https://example.test/portal"
+
+
+def test_invalid_inventory_is_quarantined_before_investigator_retry(tmp_path) -> None:
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    inventory = spec_dir / "evidence-inventory.json"
+    inventory.write_text('{"stale": true}\n', encoding="utf-8")
+    executor = _executor(tmp_path, squad_dir=squad_dir)
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-investigate")
+    state = store.load()
+    state.update(
+        {
+            "spec_dir": "specs/001-demo",
+            "phase_output_recovery": {
+                "phase": "phase1-investigate",
+                "invalid_outputs": [{
+                    "path": "evidence-inventory.json",
+                    "reason": "missing declared source seed",
+                }],
+            },
+        }
+    )
+    store.save(state)
+
+    from harness.phase_graph import PhaseNode
+
+    executor._quarantine_invalid_recovery_outputs(
+        PhaseNode(id="phase1-investigate", type="agent"), store.load(), store
+    )
+
+    assert not inventory.exists()
+    assert (spec_dir / "evidence-inventory.invalid.json").exists()
+    assert store.load()["phase_output_recovery"]["quarantined_invalid_outputs"] == [
+        "evidence-inventory.invalid.json"
+    ]
+
+
+def test_invalid_inventory_repair_excludes_stale_investigation_context(tmp_path) -> None:
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    investigation_dir = spec_dir / "investigation"
+    investigation_dir.mkdir(parents=True)
+    (spec_dir / "evidence-resolution.md").write_text("STALE EVIDENCE\n", encoding="utf-8")
+    (investigation_dir / "old.md").write_text("STALE INVESTIGATION\n", encoding="utf-8")
+    (spec_dir / "evidence-inventory.json").write_text("{\"stale\": true}\n", encoding="utf-8")
+    executor = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    node = PhaseNode(
+        id="phase1-investigate",
+        type="agent",
+        context_pack=[
+            "{spec_dir}/evidence-resolution.md",
+            "{spec_dir}/investigation/",
+            "{spec_dir}/evidence-inventory.json",
+            ".specify/squad/reasoning-journal.jsonl [phase=phase1-why2]",
+        ],
+    )
+    prompt = executor._assemble_prompt(
+        node,
+        {
+            "squad_dir": str(squad_dir),
+            "staging_dir": str(squad_dir / "staging"),
+            "spec_dir": "specs/001-demo",
+            "phase_output_recovery": {
+                "phase": "phase1-investigate",
+                "invalid_outputs": [{
+                    "path": "evidence-inventory.json",
+                    "reason": "missing declared seed",
+                }],
+            },
+        },
+    )
+
+    assert "STALE EVIDENCE" not in prompt
+    assert "STALE INVESTIGATION" not in prompt
+    assert "Use tools to inspect the declared inputs" in prompt
+
+
+def test_phase1_investigate_preserves_valid_evidence_result_when_grade_artifact_is_missing(tmp_path):
+    squad_dir = tmp_path / "runs" / "spec-20260724-123456"
+    squad_dir.mkdir(parents=True)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "evidence-resolution.md").write_text("# Evidence\n", encoding="utf-8")
+
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "investigator.md").write_text("# Investigator\n", encoding="utf-8")
+    provider = MagicMock()
+    provider.exec_agent.return_value = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "COMPLETE",
+            "state_updates": {"evidence_resolution_status": "conflicting"},
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/investigator.md"
+    graph.all_phase_ids.return_value = []
+    executor = AgentExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+    store = SquadStateStore(squad_dir)
+    store.initialize("r", "greenfield", "msg", 0, "phase1-investigate")
+    state = store.load()
+    state["spec_dir"] = "specs/001-demo"
+    store.save(state)
+
+    from harness.phase_graph import PhaseNode
+
+    node = PhaseNode(
+        id="phase1-investigate",
+        type="agent",
+        agent="INVESTIGATOR",
+        allowed_state_updates=["evidence_resolution_status"],
+        required_state_updates=["evidence_resolution_status"],
+        state_update_types={"evidence_resolution_status": "string"},
+        state_update_enums={"evidence_resolution_status": ["conflicting"]},
+        allowed_verdicts=["COMPLETE"],
+    )
+
+    result = executor.execute(node, store)
+
+    assert result.verdict == "BLOCKED"
+    assert result.state_updates["missing_outputs"] == [
+        "evidence-grades.md",
+        "evidence-inventory.json",
+    ]
+    assert result.state_updates["recovery_state_updates"] == {
+        "evidence_resolution_status": "conflicting"
+    }
 
 
 def _journal_entry(entry_type: str = "insight", **overrides) -> dict:

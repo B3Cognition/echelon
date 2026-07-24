@@ -301,6 +301,24 @@ Must follow the structure in `agents/exploration/templates/sage-quality-gates-te
 
 Must follow the structure in `agents/exploration/templates/sage-issues-template.md` exactly.
 
+For every issue, include `Action Required` and a `Resolution Guidance` subsection.
+This is a controller contract, not optional explanatory prose:
+
+- State the one next action or decision that can advance this issue. Never write
+  "retry" as an action.
+- State one suggested option only if it is grounded in cited project evidence.
+- Mark `Banzai eligible: yes` only when that suggested option is fully supported
+  by the cited evidence and selecting it cannot set product policy, alter scope,
+  weaken a quality gate, or waive a critical requirement. Otherwise mark `no`.
+- Mark `Decision required: No user decision — agent repair` for a repair the
+  responsible agent can perform. Do not escalate that issue to a human.
+- Record values that cannot be inferred from the declared sources. They require
+  an explicit user decision and must be `Banzai eligible: no`.
+
+Never mark a suggestion Banzai eligible merely because it is conventional,
+plausible, or convenient. Banzai may copy only an explicitly eligible option;
+it cannot invent, combine, or reinterpret one.
+
 ---
 
 ## Severity Definitions

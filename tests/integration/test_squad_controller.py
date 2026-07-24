@@ -623,7 +623,9 @@ class TestAgentResultIntegrity:
         state.update({
             "status": "blocked",
             "blocked_reason": "evidence route was not emitted",
+            "escalation_question": "A stale escalation must not block an explicit phase retry.",
             "evidence_requests": {"requests": [{"id": "ER-001"}]},
+            "phase_dispatch_counts": {"phase1-investigate": 5},
         })
         store.save(state)
 
@@ -633,6 +635,102 @@ class TestAgentResultIntegrity:
         assert result.status == "blocked"
         assert recovered["evidence_requests"] == {"requests": [{"id": "ER-001"}]}
         assert recovered["last_dispatch"]["phase_id"] == "phase1-investigate"
+        assert recovered.get("escalation_question") is None
+        assert recovered["phase_dispatch_counts"]["phase1-investigate"] == 1
+        assert recovered["manual_phase_recovery"] == {
+            "phase": "phase1-investigate",
+            "reset_dispatch_count": True,
+        }
+
+    def test_issue_resolution_consumes_declared_why2_repair_edge(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "BLOCKED",
+                "state_updates": {"blocked_reason": "test stop"},
+            },
+            raw_output="",
+            duration_ms=100,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "semi", "msg", 0, "terminal-blocked", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+        state = store.load()
+        state.update({
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_dispatch_limit",
+            "phase_dispatch_limit_phase": "phase1-what",
+            "phase_dispatch_counts": {"phase1-what": 12},
+            "selected_issue_resolution": "ISS-002",
+            "issue_resolution_ledger": {"ISS-002": {"status": "selected"}},
+            "issue_resolution_recovery": {
+                "issue_id": "ISS-002",
+                "from_phase": "phase1-why2",
+                "to_phase": "phase1-what",
+                "reason": "issue_resolution",
+            },
+        })
+        store.save(state)
+
+        result = ctrl.run("msg", "semi")
+
+        recovered = store.load()
+        assert result.status == "blocked"
+        assert recovered["last_dispatch"]["phase_id"] == "phase1-what"
+        assert recovered["phase_dispatch_counts"]["phase1-what"] == 1
+        assert recovered["issue_resolution_recovery"]["status"] == "consumed"
+        assert recovered["phase_dispatch_limit_recovery"] == {
+            "phase": "phase1-what",
+            "resolver": "issue_resolution_workflow_edge",
+            "issue_id": "ISS-002",
+            "workflow_edge": "phase1-why2 -> phase1-what",
+        }
+
+    def test_selected_issue_repair_cannot_advance_without_spec_change(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        spec_path = spec_dir / "spec.md"
+        spec_path.write_text("before", encoding="utf-8")
+        store.initialize("r", "semi", "msg", 0, "phase1-what", max_iterations=5)
+        state = store.load()
+        state["spec_dir"] = str(spec_dir)
+        baseline_digest = ctrl._selected_issue_spec_digest(state)
+        state.update({
+            "selected_issue_resolution": "ISS-002",
+            "issue_resolution_ledger": {"ISS-002": {"status": "selected"}},
+            "issue_resolution_repair_baseline": {
+                "issue_id": "ISS-002",
+                "repair_phase": "phase1-what",
+                "spec_digest": baseline_digest,
+            },
+            "phase_dispatch_counts": {
+                "phase1-lexicon": 12,
+                "phase1-understanding": 5,
+                "phase1-why2": 5,
+            },
+        })
+        store.save(state)
+
+        assert ctrl._selected_issue_repair_requires_artifact_progress("phase1-what") is True
+        blocked = store.load()
+        assert blocked["blocked_reason"] == "selected_issue_repair_no_artifact_progress"
+        assert blocked["phase"] == "terminal-blocked"
+
+        spec_path.write_text("after", encoding="utf-8")
+        blocked["status"] = "running"
+        blocked["phase"] = "phase1-what"
+        store.save(blocked)
+        assert ctrl._selected_issue_repair_requires_artifact_progress("phase1-what") is False
+        progressed = store.load()
+        assert progressed["phase_dispatch_counts"] == {
+            "phase1-lexicon": 0,
+            "phase1-understanding": 0,
+            "phase1-why2": 0,
+        }
 
     def test_phase1_what_missing_result_preserves_existing_spec_context(self, tmp_path):
         provider = _mock_provider()
@@ -1472,6 +1570,129 @@ class TestSquadControllerBasics:
         assert blocked["phase"] == "phase1-understanding"
         assert blocked["understanding_evidence"]["status"] == "error"
 
+    def test_missing_phase_output_preserves_recovery_context(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-investigate")
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "BLOCKED",
+                "state_updates": {
+                    "blocked_reason": "missing_phase_outputs",
+                    "missing_outputs": ["evidence-grades.md"],
+                    "recovery_state_updates": {
+                        "evidence_resolution_status": "conflicting",
+                    },
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        ctrl._block_after_executor_failure(
+            "phase1-investigate", "missing_phase_outputs", result,
+        )
+
+        blocked = store.load()
+        assert blocked["missing_outputs"] == ["evidence-grades.md"]
+        assert blocked["phase_output_recovery"] == {
+            "phase": "phase1-investigate",
+            "missing_outputs": ["evidence-grades.md"],
+            "prior_state_updates": {
+                "evidence_resolution_status": "conflicting",
+            },
+        }
+
+    def test_missing_phase_output_recovery_is_rehydrated_for_older_runs(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-investigate")
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "evidence-resolution.md").write_text("# Evidence\n", encoding="utf-8")
+        state = store.load()
+        state.update(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "missing_phase_outputs",
+                "spec_dir": "specs/001-demo",
+                "last_dispatch": {"phase_id": "phase1-investigate"},
+            }
+        )
+        store.save(state)
+
+        assert ctrl._restore_missing_phase_output_recovery("phase1-investigate") is True
+
+        recovered = store.load()
+        assert recovered["missing_outputs"] == [
+            "evidence-grades.md",
+            "evidence-inventory.json",
+        ]
+        assert recovered["phase_output_recovery"] == {
+            "phase": "phase1-investigate",
+            "missing_outputs": [
+                "evidence-grades.md",
+                "evidence-inventory.json",
+            ],
+            "prior_state_updates": {},
+        }
+
+    def test_invalid_inventory_recovery_is_rehydrated_for_older_runs(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-investigate")
+        state = store.load()
+        state.update(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": (
+                    "invalid_evidence_inventory: sources[0].discovered_from "
+                    "must be a non-empty string"
+                ),
+            }
+        )
+        store.save(state)
+
+        assert ctrl._restore_missing_phase_output_recovery("phase1-investigate") is True
+
+        assert store.load()["phase_output_recovery"] == {
+            "phase": "phase1-investigate",
+            "invalid_outputs": [{
+                "path": "evidence-inventory.json",
+                "reason": (
+                    "inventory failed validation in a prior Echelon version; "
+                    "rebuild it from declared source seeds"
+                ),
+            }],
+            "prior_state_updates": {},
+        }
+
+    def test_missing_inventory_recovery_restores_quarantined_invalid_context(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-investigate")
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "evidence-inventory.invalid.json").write_text(
+            "{}\n", encoding="utf-8"
+        )
+        state = store.load()
+        state.update(
+            {
+                "spec_dir": "specs/001-demo",
+                "phase_output_recovery": {
+                    "phase": "phase1-investigate",
+                    "missing_outputs": ["evidence-inventory.json"],
+                    "prior_state_updates": {},
+                },
+            }
+        )
+        store.save(state)
+
+        assert ctrl._restore_missing_phase_output_recovery("phase1-investigate") is True
+        invalid = store.load()["phase_output_recovery"]["invalid_outputs"]
+        assert invalid[0]["path"] == "evidence-inventory.json"
+
     def test_blocked_understanding_gate_retries_without_reinitializing(self, tmp_path):
         _disable_lexicon_gate(tmp_path)
         ctrl, store = _controller(tmp_path)
@@ -1550,13 +1771,17 @@ class TestSquadControllerBasics:
         # _staging_changed_since does not return True (no staging .md files)
         state = store.load()
         state["last_dispatch"] = {"completed_at": "2020-01-01T00:00:00Z"}
+        state["why_failure_baseline"] = {
+            "phase_id": "phase1-why1",
+            "recorded_at": "2020-01-01T00:00:00Z",
+        }
         store.save(state)
         result = ctrl.run("msg", "semi")
         # Should be blocked by consecutive-fail guard
         assert result.status == "blocked"
         state = store.load()
         assert state.get("escalation_question") is not None
-        assert "consecutive" in state.get("escalation_question", "").lower()
+        assert "choose one actionable direction" in state.get("escalation_question", "")
 
     def test_consecutive_why2_fail_with_active_spec_progress_routes_to_repair(self, tmp_path):
         """Fresh WHY2 artifacts in state.spec_dir count as progress."""
@@ -1581,6 +1806,10 @@ class TestSquadControllerBasics:
         state = store.load()
         state["spec_dir"] = "runs/run-test/specs/001-demo"
         state["last_dispatch"] = {"completed_at": "2020-01-01T00:00:00Z"}
+        state["why_failure_baseline"] = {
+            "phase_id": "phase1-why2",
+            "recorded_at": "2020-01-01T00:00:00Z",
+        }
         store.save(state)
 
         node = ctrl._graph.get("phase1-why2")
@@ -1588,6 +1817,86 @@ class TestSquadControllerBasics:
 
         assert next_phase == "phase1-what"
         assert store.load().get("escalation_question") is None
+
+    def test_what_artifact_repair_starts_a_fresh_why_failure_cycle(self, tmp_path):
+        """A repaired spec must not inherit a WHY failure from its prior version."""
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-what", max_iterations=5)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Repaired specification\n", encoding="utf-8")
+        state = store.load()
+        state.update(
+            {
+                "spec_dir": "runs/run-test/specs/001-demo",
+                "why_fail_count": 1,
+                "why2_metric_stagnation_count": 1,
+                "why_failure_baseline": {
+                    "phase_id": "phase1-why2",
+                    "recorded_at": "2020-01-01T00:00:00+00:00",
+                },
+            }
+        )
+        store.save(state)
+
+        what_result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {"evidence_resolution_status": "not_required"},
+            },
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+        ctrl._evaluate_transitions(ctrl._graph.get("phase1-what"), what_result)
+
+        refreshed = store.load()
+        assert refreshed["why_fail_count"] == 0
+        assert refreshed["why2_metric_stagnation_count"] == 0
+        assert "why_failure_baseline" not in refreshed
+
+        why2_result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {"quality_scores": [{"pass": False}]},
+            },
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+        assert ctrl._evaluate_transitions(ctrl._graph.get("phase1-why2"), why2_result) == "phase1-what"
+        assert store.load()["why_fail_count"] == 1
+        assert store.load().get("escalation_question") is None
+
+    def test_consecutive_why_escalation_gives_an_actionable_question(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "issues.md").write_text("# Findings\n", encoding="utf-8")
+        state = store.load()
+        state.update(
+            {
+                "spec_dir": "runs/run-test/specs/001-demo",
+                "why_fail_count": 1,
+                "why_failure_baseline": {
+                    "phase_id": "phase1-why2",
+                    "recorded_at": "2999-01-01T00:00:00+00:00",
+                },
+            }
+        )
+        store.save(state)
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {"quality_scores": [{"pass": False}]},
+            },
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+
+        assert ctrl._evaluate_transitions(ctrl._graph.get("phase1-why2"), result) == "terminal-blocked"
+        question = store.load()["escalation_question"]
+        assert "choose one actionable direction" in question
+        assert str(spec_dir / "issues.md") in question
 
     def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path, monkeypatch):
         """Banzai: WHY1 returns escalation_question in state_updates → inline COMMANDER, not routing judge."""

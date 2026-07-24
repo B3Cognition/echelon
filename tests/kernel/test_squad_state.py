@@ -91,6 +91,34 @@ class TestSquadStateStore:
                       _result("DONE", {"coverage_pct": 72}))
         assert store.load()["coverage_pct"] == 72
 
+    def test_advance_clears_completed_phase_output_recovery(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "phase1-investigate")
+        state = store.load()
+        state.update(
+            {
+                "missing_outputs": ["evidence-grades.md"],
+                "phase_output_recovery": {
+                    "phase": "phase1-investigate",
+                    "missing_outputs": ["evidence-grades.md"],
+                    "prior_state_updates": {
+                        "evidence_resolution_status": "conflicting",
+                    },
+                },
+            }
+        )
+        store.save(state)
+
+        store.advance(
+            "phase1-investigate",
+            "phase1-what",
+            _result("COMPLETE", {"evidence_resolution_status": "conflicting"}),
+        )
+
+        advanced = store.load()
+        assert "missing_outputs" not in advanced
+        assert "phase_output_recovery" not in advanced
+
     def test_advance_preserves_bootstrapped_full_spec_identity(self, tmp_path):
         """An agent may report a short spec number but cannot fork Phase A paths."""
         store = _store(tmp_path)

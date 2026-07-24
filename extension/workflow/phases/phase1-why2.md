@@ -138,6 +138,15 @@ echelon_result:
           rationale: "A declared primary reference must establish the fact."
 ```
 
+For every finding, write `Action Required` and a `### Resolution Guidance`
+subsection inside that issue's `issues.md` block. It must state the exact next
+action or project decision, one evidence-backed suggested option if one exists,
+and which values cannot be inferred. Never suggest a retry as the resolution.
+Mark `Banzai eligible: yes` only for a fully evidence-backed option that does
+not decide product policy, scope, requirements, security posture, or a quality
+waiver. Banzai COMMANDER may select only that exact option; all other choices
+remain human decisions.
+
 If any finding has `route: evidence_resolution`,
 `evidence_resolution_status` MUST be `pending` and a complete
 `evidence_requests` object is required. If none do, status MUST be

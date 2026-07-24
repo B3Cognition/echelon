@@ -232,6 +232,13 @@ class SquadStateStore:
         if from_phase not in completed:
             completed.append(from_phase)
         state["completed_phases"] = completed
+        output_recovery = state.get("phase_output_recovery")
+        if (
+            isinstance(output_recovery, dict)
+            and output_recovery.get("phase") == from_phase
+        ):
+            state.pop("missing_outputs", None)
+            state.pop("phase_output_recovery", None)
         identity_is_bootstrapped = bool(state.get("feature_branch"))
         for key, value in result.state_updates.items():
             if identity_is_bootstrapped and key in PHASE_A_IDENTITY_KEYS:

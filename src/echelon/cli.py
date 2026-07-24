@@ -292,6 +292,7 @@ def _workspace_git_preflight_for_squad_run(
     command_name: str,
     user_message: str,
     reset: bool,
+    manual_recovery: bool = False,
 ) -> None:
     if _workspace_git_present(project_root):
         return
@@ -308,6 +309,19 @@ def _workspace_git_preflight_for_squad_run(
         state = _json.loads((existing_dir / "state.json").read_text(encoding="utf-8"))
     except Exception:
         _workspace_git_preflight(project_root, command_name=command_name)
+
+    # A controller-owned issue recovery, like an explicit phase, must reuse the
+    # existing run before new-spec branch/slug machinery sees its empty description.
+    recovery = state.get("issue_resolution_recovery")
+    manual_recovery = manual_recovery or (
+        isinstance(recovery, dict) and recovery.get("status") != "consumed"
+    )
+    # An explicit phase is an intentional recovery command.  It must reuse the
+    # existing run before any new-spec branch/slug machinery sees its empty
+    # description, including when the run is waiting on a human escalation.
+    if manual_recovery:
+        _print_legacy_branchless_recovery_notice(command_name)
+        return
 
     if state.get("status") in ("running", "in_progress") and (
         not user_message or user_message == state.get("user_message", "")
@@ -3222,24 +3236,49 @@ def _classify_run_recovery(
     if status != "blocked":
         return _RunRecoveryAction("advance")
 
+    recovery = run_state.get("issue_resolution_recovery")
+    if (
+        isinstance(recovery, dict)
+        and recovery.get("status") != "consumed"
+        and str(recovery.get("issue_id") or "").strip()
+    ):
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="issue_resolution",
+            phase=str(recovery.get("to_phase") or "").strip(),
+            command="echelon spec continue",
+            note="will validate and consume the declared issue-repair workflow edge",
+        )
+
+    if reason == "selected_issue_repair_no_artifact_progress":
+        baseline = run_state.get("issue_resolution_repair_baseline")
+        repair_phase = (
+            str(baseline.get("repair_phase") or "").strip()
+            if isinstance(baseline, dict)
+            else ""
+        )
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason=reason,
+            phase=repair_phase or "phase1-what",
+            command="echelon spec continue",
+            note="will retry the selected repair; it may not advance without spec.md progress",
+        )
+
     if run_state.get("escalation_question"):
         if reason == "phase_dispatch_limit":
             phase = _phase_dispatch_limit_phase(run_state)
             if phase:
-                answer = (
-                    f"Authorize one targeted retry of {phase} using the latest "
-                    "issues.md findings."
-                )
                 return _RunRecoveryAction(
-                    "human_resume",
+                    "manual_recovery",
                     reason=reason,
                     phase=phase,
-                    command=f'echelon spec resume "{answer}"',
+                    command='echelon spec resolve ISS-<n> "<project decision>"',
                     note=(
                         f"{run_state.get('escalation_question', '').strip()}\n\n"
-                        f"Unblock: review the latest issues.md findings, then authorize "
-                        f"one targeted retry of {phase}. Echelon will reset that phase's "
-                        "dispatch counter before retrying it."
+                        "No retry has been authorized. Resolve the first unresolved issue "
+                        "with a project decision; Echelon will run only that issue's "
+                        "targeted repair and retain the remaining issue ledger."
                     ),
                 )
         return _RunRecoveryAction(
@@ -3442,31 +3481,170 @@ def _current_issues_recap(
         except OSError:
             continue
 
-        counts: list[str] = []
-        for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
-            match = re.search(rf"\*\*{severity}:\*\*\s*(\d+)", issues_md)
-            if match and int(match.group(1)):
-                counts.append(f"{severity} {match.group(1)}")
-
         issue_blocks = re.findall(
             r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### |\Z)",
             issues_md,
             re.MULTILINE | re.DOTALL,
         )
         issues: list[str] = []
-        for title, body in issue_blocks[:5]:
-            severity = re.search(r"\*\*Severity:\*\*\s*(\w+)", body)
+        severity_counts: dict[str, int] = {}
+        for title, body in issue_blocks:
+            if (
+                "RESOLVED" in title.upper()
+                or re.search(r"\*\*Status:\*\*\s*[^\n]*\bRESOLVED\b", body, re.IGNORECASE)
+                or re.search(r"\bNo action required\b", body, re.IGNORECASE)
+            ):
+                continue
+            severity = re.search(r"\*\*Severity(?::)?\*\*\s*:?\s*(\w+)", body)
             label = severity.group(1).upper() if severity else "ISSUE"
             short_title = re.sub(r"^ISS-\d+:\s*", "", title).strip()
             issues.append(f"[{label}] {short_title}")
-        if len(issue_blocks) > len(issues):
-            issues.append(f"… and {len(issue_blocks) - len(issues)} more")
-
+            severity_counts[label] = severity_counts.get(label, 0) + 1
+        counts = [
+            f"{severity} {severity_counts[severity]}"
+            for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+            if severity_counts.get(severity)
+        ]
         recap = " · ".join(counts) if counts else "Issues recorded"
         if issues:
             recap += "\n" + "\n".join(f"- {issue}" for issue in issues)
         return recap, str(issues_path)
     return None
+
+
+def _issue_resolution_requests(project_root: Path, squad_dir: Path, state: dict) -> list[dict[str, str]]:
+    """Extract user-decidable issue guidance from the canonical SAGE report."""
+    recap = _current_issues_recap(project_root, squad_dir, state)
+    if recap is None:
+        return []
+    _summary, issues_path_text = recap
+    try:
+        issues_md = Path(issues_path_text).read_text(errors="replace")
+    except OSError:
+        return []
+    requests: list[dict[str, str]] = []
+    for title, body in re.findall(
+        r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### |\Z)",
+        issues_md,
+        re.MULTILINE | re.DOTALL,
+    ):
+        issue_id_match = re.match(r"^(ISS-\d+):\s*(.+)$", title.strip())
+        if not issue_id_match:
+            continue
+        if (
+            "RESOLVED" in title.upper()
+            or re.search(r"\*\*Status:\*\*\s*[^\n]*\bRESOLVED\b", body, re.IGNORECASE)
+            or re.search(r"\bNo action required\b", body, re.IGNORECASE)
+        ):
+            continue
+        action = re.search(r"\*\*Action Required:\*\*\s*(.+)", body)
+        amendment = re.search(r"\*\*Required Amendment\*\*:\s*(.+)", body)
+        recommendation = re.search(r"\*\*Recommendation:\*\s*(.+)", body)
+        severity = re.search(r"\*\*Severity(?::)?\*\*\s*:?\s*(\w+)", body)
+        guidance = (
+            action.group(1).strip()
+            if action
+            else amendment.group(1).strip()
+            if amendment
+            else recommendation.group(1).strip()
+            if recommendation
+            else "Provide a project-specific decision for this issue."
+        )
+        if guidance.lower().startswith("none"):
+            continue
+        requests.append(
+            {
+                "issue_id": issue_id_match.group(1),
+                "title": issue_id_match.group(2),
+                "severity": severity.group(1).upper() if severity else "ISSUE",
+                "guidance": guidance,
+            }
+        )
+    return requests
+
+
+def _issue_resolution_guidance_recap(
+    project_root: Path, squad_dir: Path, state: dict
+) -> str:
+    """Render every unresolved issue's next decision without truncation."""
+    ledger = state.get("issue_resolution_ledger")
+    ledger = ledger if isinstance(ledger, dict) else {}
+    lines: list[str] = []
+    for request in _issue_resolution_requests(project_root, squad_dir, state):
+        entry = ledger.get(request["issue_id"])
+        if isinstance(entry, dict) and entry.get("status") == "validated":
+            continue
+        lines.append(
+            f"- {request['issue_id']} [{request['severity']}]: {request['guidance']}"
+        )
+    return "\n".join(lines)
+
+
+def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> None:
+    """Record one issue decision, then run its targeted Phase 1 repair."""
+    if len(args) < 2:
+        print(
+            'Usage: echelon spec resolve ISS-<n> "<project decision>"\n'
+            "Resolve issues one at a time; use `echelon spec status` to see guidance.",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    issue_id = args[0].strip().upper()
+    decision = " ".join(args[1:]).strip()
+    if not re.fullmatch(r"ISS-\d+", issue_id) or not decision:
+        print("✗ resolve requires an ISS-<n> id and a non-empty decision", file=sys.stderr)
+        raise SystemExit(2)
+    squad_dir = _find_current_run_dir(project_root)
+    if squad_dir is None:
+        print("✗ No active squad run found.", file=sys.stderr)
+        raise SystemExit(1)
+    from harness.squad_state import SquadStateStore
+
+    store = SquadStateStore(squad_dir)
+    state = store.load()
+    requests = _issue_resolution_requests(project_root, squad_dir, state)
+    matching = next((item for item in requests if item["issue_id"] == issue_id), None)
+    if matching is None:
+        print(f"✗ {issue_id} is not an unresolved issue in the active run.", file=sys.stderr)
+        raise SystemExit(1)
+    ledger = state.get("issue_resolution_ledger")
+    if not isinstance(ledger, dict):
+        ledger = {}
+    unresolved_before = [
+        item["issue_id"]
+        for item in requests
+        if ledger.get(item["issue_id"], {}).get("status") != "validated"
+    ]
+    if unresolved_before and unresolved_before[0] != issue_id:
+        print(
+            f"✗ Resolve {unresolved_before[0]} before {issue_id}; issues are handled in SAGE order.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    ledger[issue_id] = {
+        **matching,
+        "status": "selected",
+        "decision": decision,
+        "repair_phase": "phase1-what",
+    }
+    state["issue_resolution_ledger"] = ledger
+    state["selected_issue_resolution"] = issue_id
+    # This is a controller-owned recovery edge, not an agent instruction and
+    # not a free-form phase override. It is consumed only after the controller
+    # verifies that WHY2 declares the repair transition in definition.yaml.
+    state["issue_resolution_recovery"] = {
+        "issue_id": issue_id,
+        "from_phase": "phase1-why2",
+        "to_phase": "phase1-what",
+        "reason": "issue_resolution",
+    }
+    store.save(state)
+    print(
+        f"[squad] recorded resolution for {issue_id}; the controller will validate "
+        "and consume the declared WHY2 → WHAT recovery edge.\n"
+        "[squad] next: echelon spec continue",
+        flush=True,
+    )
 
 
 def _print_squad_summary(
@@ -3553,12 +3731,17 @@ def _print_squad_summary(
             fields.append((label, command))
         if action.note:
             fields.append(("note", action.note))
-        if status == "blocked" and "issues.md" in action.note.lower():
+        if status == "blocked" and (
+            "issues.md" in action.note.lower() or action.kind == "manual_recovery"
+        ):
             issues_recap = _current_issues_recap(project_root, squad_dir, state)
             if issues_recap:
                 recap, issues_path = issues_recap
                 fields.append(("issues", recap))
                 fields.append(("issues file", issues_path))
+                guidance = _issue_resolution_guidance_recap(project_root, squad_dir, state)
+                if guidance:
+                    fields.append(("decisions", guidance))
     fields.append(("result", _phase_a_result_line(status, state)))
     _banner("SQUAD SUMMARY", fields, subtitle=f"{icon} {status_text}")
 
@@ -4891,7 +5074,11 @@ def _select_squad_dir(
         return existing_dir, True
 
     status = state.get("status")
-    if manual_recovery and status == "blocked" and not state.get("escalation_question"):
+    recovery = state.get("issue_resolution_recovery")
+    manual_recovery = manual_recovery or (
+        isinstance(recovery, dict) and recovery.get("status") != "consumed"
+    )
+    if manual_recovery and status == "blocked":
         return existing_dir, False
     if status not in ("running", "in_progress"):
         return start_fresh()
@@ -5299,6 +5486,7 @@ def _cmd_run(
         command_name=_command_display("echelon spec run", args),
         user_message=message,
         reset=reset,
+        manual_recovery=bool(next_phase),
     )
 
     config = load_config(project_root, squad_only=True)
@@ -6273,7 +6461,22 @@ def _cmd_status(project_root: Path) -> None:
         if run_status in ("running", "in_progress"):
             fields.append(("Next", "echelon spec continue"))
         elif run_status == "blocked":
-            fields.append(("Next", 'echelon spec resume "<your answer>"'))
+            if str(state.get("blocked_reason") or "") == "phase_dispatch_limit":
+                requests = _issue_resolution_requests(project_root, run_dir, state)
+                first = requests[0] if requests else None
+                fields.append(
+                    (
+                        "Next",
+                        f'echelon spec resolve {first["issue_id"]} "<decision>"'
+                        if first
+                        else 'echelon spec resolve ISS-<n> "<decision>"',
+                    )
+                )
+                guidance = _issue_resolution_guidance_recap(project_root, run_dir, state)
+                if guidance:
+                    fields.append(("Issue guidance", guidance))
+            else:
+                fields.append(("Next", 'echelon spec resume "<your answer>"'))
 
         _banner("RUN STATE", fields)
 
@@ -6424,6 +6627,20 @@ def _cmd_continue(
             flush=True,
         )
         _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
+
+    issue_recovery = state.get("issue_resolution_recovery")
+    if (
+        isinstance(issue_recovery, dict)
+        and issue_recovery.get("status") != "consumed"
+        and str(issue_recovery.get("issue_id") or "").strip()
+    ):
+        print(
+            "[squad] continuing via controller-owned issue-repair workflow edge; "
+            "the controller will validate it before dispatch.",
+            flush=True,
+        )
+        _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
+        return
 
     lexicon_recovery = _lexicon_gate_recovery_phase(state)
     if lexicon_recovery is not None:
@@ -7291,6 +7508,18 @@ def _cmd_resume(
         print("  Nothing to resume.", file=sys.stderr)
         sys.exit(1)
 
+    # A cap is not an ordinary clarification gate.  Do not record a free-text
+    # answer as though it authorised progress: a concrete issue decision must
+    # become controller-owned state first.
+    if str(state.get("blocked_reason") or "") == "phase_dispatch_limit" and _phase_dispatch_limit_phase(state):
+        print(
+            "✗ A phase-dispatch cap cannot be cleared by a free-text resume answer.\n"
+            "  Resolve the first unresolved issue instead:\n"
+            '  echelon spec resolve ISS-<n> "<project decision>"',
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     escalation_q = state.get("escalation_question")
     if not escalation_q:
         print(
@@ -7361,22 +7590,6 @@ def _cmd_resume(
         option_id = str(selected_option.get("id") or selected_option.get("label") or "").strip()
         if option_id:
             state["escalation_selected_option"] = option_id
-
-    if blocked_reason == "phase_dispatch_limit" and capped_phase:
-        counts = state.get("phase_dispatch_counts") or {}
-        if isinstance(counts, dict):
-            previous_count = counts.pop(capped_phase, None)
-            state["phase_dispatch_counts"] = counts
-            state["phase_dispatch_limit_recovery"] = {
-                "phase": capped_phase,
-                "previous_dispatch_count": previous_count,
-                "answer": answer,
-            }
-        # A dispatch-cap block is a targeted retry, not a generic terminal
-        # escalation.  Resume at the phase that exhausted its retry window so
-        # `spec continue` cannot infer a later phase from existing artifacts.
-        state["phase"] = capped_phase
-        state.pop("next_phase", None)
 
     resumed_phase = str(state.get("phase", "")).strip()
     mark_blocked_decision_resolved(
@@ -8362,6 +8575,7 @@ def _cmd_spec(args: list[str]) -> None:
             "  continue [--mode semi|banzai|guided]\n"
             "                                      Run the next no-input Phase A recovery action\n"
             "  resume <answers>                    Answer escalation questions from a blocked run\n"
+            "  resolve ISS-<n> <decision>          Record one issue decision and run its targeted repair\n"
             "  rewind <phase-id>                   Rewind the active squad run to a checkpoint\n"
             "  repair-traceability [--confirm]     Remove safely-prunable contextual task references\n"
             "  switch <spec-or-run-id> [--stash | --discard --confirm]\n"
@@ -8389,6 +8603,12 @@ def _cmd_spec(args: list[str]) -> None:
         _cmd_spec_continue(args[1:])
     elif subcmd == "resume":
         _cmd_spec_resume(args[1:])
+    elif subcmd == "resolve":
+        project_root = Path.cwd()
+        ext_dir = _installed_extension_or_exit(project_root)
+        _require_provider_capability("echelon spec resolve", ProviderCapability.ARTIFACT, project_dir=project_root)
+        _require_phase_a_git_ownership(project_root, command_name="echelon spec resolve")
+        _cmd_spec_resolve(args[1:], project_root=project_root, ext_dir=ext_dir)
     elif subcmd == "rewind":
         _require_phase_a_git_ownership(Path.cwd(), command_name="echelon spec rewind")
         _cmd_rewind(args[1:], project_root=Path.cwd())

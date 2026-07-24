@@ -301,7 +301,7 @@ def test_resume_terminal_block_delegates_to_continue(
     assert calls == [([], tmp_path, Path.cwd() / "extension")]
 
 
-def test_resume_phase_dispatch_limit_resets_the_capped_phase(
+def test_resume_phase_dispatch_limit_requires_issue_resolution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -331,15 +331,141 @@ def test_resume_phase_dispatch_limit_resets_the_capped_phase(
     _patch_resume_dependencies(monkeypatch)
     monkeypatch.setattr("echelon.cli._cmd_continue", lambda *args, **kwargs: None)
 
-    _cmd_resume(
-        ["Authorize one targeted retry of phase1-what using the latest issues.md findings."],
+    with pytest.raises(SystemExit) as exc:
+        _cmd_resume(
+            ["Authorize one targeted retry of phase1-what using the latest issues.md findings."],
+            project_root=tmp_path,
+            ext_dir=Path.cwd() / "extension",
+        )
+
+    resumed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert exc.value.code == 1
+    assert resumed["phase"] == "terminal-blocked"
+    assert resumed["phase_dispatch_counts"]["phase1-what"] == 6
+
+
+def test_resolve_records_one_issue_and_starts_targeted_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_spec_resolve
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """# Issues
+
+### ISS-001: Advisory wording
+- **Severity:** LOW
+- **Action Required:** None
+
+### ISS-002: Retry policy needs a product decision
+- **Severity:** CRITICAL
+- **Action Required:** Choose whether retries are disabled or use exponential backoff.
+- **Recommendation:** Document the selected retry behavior.
+
+### ISS-003: Timeout needs a product decision
+- **Severity:** HIGH
+- **Action Required:** Choose the client timeout.
+""",
+        encoding="utf-8",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "phase": "terminal-blocked",
+            "blocked_reason": "phase_dispatch_limit",
+            "spec_dir": str(spec_dir),
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    _cmd_spec_resolve(
+        ["ISS-002", "Use exponential backoff with a documented cap."],
         project_root=tmp_path,
         ext_dir=Path.cwd() / "extension",
     )
 
-    resumed = json.loads(state_path.read_text(encoding="utf-8"))
-    assert resumed["phase"] == "phase1-what"
-    assert "phase1-what" not in resumed["phase_dispatch_counts"]
-    assert resumed["phase_dispatch_counts"] == {"phase1-why2": 3}
-    assert resumed["phase_dispatch_limit_recovery"]["phase"] == "phase1-what"
-    assert resumed["resume_metadata"]["resumed_phase"] == "phase1-what"
+    resolved = json.loads(state_path.read_text(encoding="utf-8"))
+    assert resolved["selected_issue_resolution"] == "ISS-002"
+    assert resolved["issue_resolution_ledger"]["ISS-002"] == {
+        "issue_id": "ISS-002",
+        "title": "Retry policy needs a product decision",
+        "severity": "CRITICAL",
+        "guidance": "Choose whether retries are disabled or use exponential backoff.",
+        "status": "selected",
+        "decision": "Use exponential backoff with a documented cap.",
+        "repair_phase": "phase1-what",
+    }
+    assert resolved["issue_resolution_recovery"] == {
+        "issue_id": "ISS-002",
+        "from_phase": "phase1-why2",
+        "to_phase": "phase1-what",
+        "reason": "issue_resolution",
+    }
+
+
+def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from echelon.cli import _cmd_spec_resolve
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: First decision
+- **Severity:** CRITICAL
+- **Action Required:** Choose the first value.
+
+### ISS-002: Second decision
+- **Severity:** HIGH
+- **Action Required:** Choose the second value.
+""",
+        encoding="utf-8",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["spec_dir"] = str(spec_dir)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr("echelon.cli._cmd_run", lambda *args, **kwargs: None)
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_spec_resolve(
+            ["ISS-002", "Second value"],
+            project_root=tmp_path,
+            ext_dir=Path.cwd() / "extension",
+        )
+
+    assert exc.value.code == 1
+    unchanged = json.loads(state_path.read_text(encoding="utf-8"))
+    assert "issue_resolution_ledger" not in unchanged
+
+
+def test_issue_requests_skip_resolved_issues_and_read_required_amendment(tmp_path: Path) -> None:
+    from echelon.cli import _issue_resolution_requests
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: Already fixed ✓ RESOLVED
+**Status**: ✓ RESOLVED
+No action required.
+
+### ISS-002: State machine incomplete
+**Severity**: CRITICAL
+**Required Amendment**: Complete every transition with explicit outcomes.
+""",
+        encoding="utf-8",
+    )
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    state["spec_dir"] = str(spec_dir)
+
+    assert _issue_resolution_requests(tmp_path, run_dir, state) == [
+        {
+            "issue_id": "ISS-002",
+            "title": "State machine incomplete",
+            "severity": "CRITICAL",
+            "guidance": "Complete every transition with explicit outcomes.",
+        }
+    ]

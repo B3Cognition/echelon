@@ -56,6 +56,7 @@ from harness.squad_executors import (
     HumanGateExecutor,
     PhaseExecutor,
     StagedParallelExecutor,
+    _MANDATORY_PHASE_OUTPUTS,
 )
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from echelon.telemetry.phase_timing import record_phase_finish, record_phase_start
@@ -154,6 +155,7 @@ JUDGMENT_STATE_UPDATE_KEYS = frozenset(
         "escalation_risk_level",
         "escalation_recommended_answer",
         "escalation_default_answer",
+        "issue_resolution_selection",
         "risk_level",
         "fallback_mode",
         "execution_mode",
@@ -167,6 +169,7 @@ JUDGMENT_RESULT_CONTRACT = EchelonResultContract(
         "iteration": "integer",
         "status": "string",
         "escalation_resolved": "boolean",
+        "issue_resolution_selection": "object",
     },
     state_update_enums={
         "status": frozenset({"running", "blocked", "done", "interrupted", "killed"}),
@@ -736,11 +739,89 @@ class SquadController:
                     run_id=existing.get("run_id", ""),
                 )
 
+        # ── Recovery: controller-owned issue-resolution edge ───────────────
+        elif (
+            existing_status == "blocked"
+            and isinstance(existing.get("issue_resolution_recovery"), dict)
+            and existing["issue_resolution_recovery"].get("status") != "consumed"
+        ):
+            recovery = existing["issue_resolution_recovery"]
+            source = str(recovery.get("from_phase") or "").strip()
+            target = str(recovery.get("to_phase") or "").strip()
+            issue_id = str(recovery.get("issue_id") or "").strip()
+            ledger = existing.get("issue_resolution_ledger")
+            selected = ledger.get(issue_id) if isinstance(ledger, dict) else None
+            try:
+                source_node = self._graph.get(source)
+                declared_edge = any(
+                    transition.get("to") == target
+                    for transition in source_node.transitions
+                )
+            except KeyError:
+                declared_edge = False
+            if (
+                not declared_edge
+                or target not in self._graph.all_phase_ids()
+                or existing.get("selected_issue_resolution") != issue_id
+                or not isinstance(selected, dict)
+                or selected.get("status") != "selected"
+            ):
+                state = self._state_store.load()
+                state["status"] = "blocked"
+                state["phase"] = PHASE_TERMINAL_BLOCKED
+                state["blocked_reason"] = "invalid_issue_resolution_recovery"
+                state["escalation_question"] = (
+                    "The recorded issue-resolution recovery is not a declared workflow edge. "
+                    "Review the issue ledger and workflow definition before retrying."
+                )
+                self._state_store.save(state)
+                return SquadResult(
+                    status="blocked",
+                    phase=PHASE_TERMINAL_BLOCKED,
+                    run_id=existing.get("run_id", ""),
+                )
+            self._restore_missing_phase_output_recovery(target)
+            capped_phase = _phase_dispatch_limit_phase(existing)
+            if capped_phase:
+                self._state_store.reset_phase_dispatch_count(capped_phase)
+            if target != capped_phase:
+                self._state_store.reset_phase_dispatch_count(target)
+            state = self._state_store.load()
+            state["status"] = "running"
+            state["phase"] = target
+            state["blocked_reason"] = None
+            state["escalation_question"] = None
+            state["escalation_options"] = None
+            state["escalation_resolved"] = True
+            state["escalation_resolver"] = "issue_resolution_workflow_edge"
+            state["issue_resolution_recovery"] = {
+                **recovery,
+                "status": "consumed",
+            }
+            state["issue_resolution_repair_baseline"] = {
+                "issue_id": issue_id,
+                "repair_phase": target,
+                "spec_digest": self._selected_issue_spec_digest(state),
+            }
+            state["phase_dispatch_limit_recovery"] = {
+                "phase": capped_phase or target,
+                "resolver": "issue_resolution_workflow_edge",
+                "issue_id": issue_id,
+                "workflow_edge": f"{source} -> {target}",
+            }
+            self._state_store.save(state)
+            existing_status = "running"
+            force_resume = True
+            print(
+                f"[squad] issue resolution → consuming declared workflow edge "
+                f"{source!r} -> {target!r} for {issue_id}",
+                flush=True,
+            )
+
         # ── Recovery: explicit manual phase override ───────────────────────
         elif (
             existing_status == "blocked"
             and next_phase_override
-            and not existing.get("escalation_question")
         ):
             valid_phases = self._graph.all_phase_ids()
             from echelon.ui import banner as _banner
@@ -757,9 +838,23 @@ class SquadController:
                     phase=existing.get("phase", "unknown"),
                     run_id=existing.get("run_id", ""),
                 )
+            self._restore_missing_phase_output_recovery(next_phase_override)
+            # An explicit phase override is a deliberate, user-directed retry.
+            # Its prior attempts must not consume the fresh retry before the
+            # requested phase is even dispatched.
+            self._state_store.reset_phase_dispatch_count(next_phase_override)
             state = self._state_store.load()
             state["status"] = "running"
             state["blocked_reason"] = None
+            state["escalation_question"] = None
+            state["escalation_options"] = None
+            state["escalation_resolved"] = True
+            state["escalation_resolver"] = "manual_phase_override"
+            state["manual_phase_recovery"] = {
+                "phase": next_phase_override,
+                "reset_dispatch_count": True,
+            }
+            state.pop("blocked_decision", None)
             state["phase"] = next_phase_override
             self._state_store.save(state)
             existing_status = "running"
@@ -1064,6 +1159,9 @@ class SquadController:
                 if self._schedule_product_input_mapping_repair(phase, product_input_error, result):
                     continue
                 self._block_after_executor_failure(phase, product_input_error, result)
+                return SquadResult.from_state(self._state_store.load())
+
+            if self._selected_issue_repair_requires_artifact_progress(phase):
                 return SquadResult.from_state(self._state_store.load())
 
             next_phase = self._evaluate_transitions(node, result)
@@ -2157,6 +2255,49 @@ class SquadController:
         state["phase"] = phase if retryable_analysis else PHASE_TERMINAL_BLOCKED
         state["status"] = "blocked"
         state["blocked_reason"] = reason
+        if reason in {"missing_phase_outputs", "invalid_evidence_inventory"}:
+            updates = result.state_updates or {}
+            missing_outputs = updates.get("missing_outputs")
+            invalid_outputs = updates.get("invalid_outputs")
+            recovery_updates = updates.get("recovery_state_updates")
+            has_missing = (
+                isinstance(missing_outputs, list)
+                and all(isinstance(item, str) and item for item in missing_outputs)
+            )
+            has_invalid = (
+                isinstance(invalid_outputs, list)
+                and all(
+                    isinstance(item, dict)
+                    and isinstance(item.get("path"), str)
+                    and item["path"].strip()
+                    and isinstance(item.get("reason"), str)
+                    and item["reason"].strip()
+                    for item in invalid_outputs
+                )
+            )
+            if has_missing or has_invalid:
+                if has_missing:
+                    state["missing_outputs"] = list(missing_outputs)
+                recovery = {
+                    "phase": phase,
+                    "prior_state_updates": (
+                        dict(recovery_updates)
+                        if isinstance(recovery_updates, dict)
+                        else {}
+                    ),
+                }
+                if has_missing:
+                    recovery["missing_outputs"] = list(missing_outputs)
+                if has_invalid:
+                    recovery["invalid_outputs"] = list(invalid_outputs)
+                prior_recovery = state.get("phase_output_recovery")
+                if isinstance(prior_recovery, dict) and prior_recovery.get(
+                    "quarantined_invalid_outputs"
+                ):
+                    recovery["quarantined_invalid_outputs"] = list(
+                        prior_recovery["quarantined_invalid_outputs"]
+                    )
+                state["phase_output_recovery"] = recovery
         if retryable_analysis:
             node = self._graph.get(phase)
             for key in node.controller_state_updates:
@@ -2184,6 +2325,75 @@ class SquadController:
         if reason == "provider_session_limit":
             detail = f"missing_echelon_result; provider: {result.provider_limit_message}"
         print(f"[squad] ✗ {phase} blocked: {reason} ({detail})", flush=True)
+
+    def _restore_missing_phase_output_recovery(self, phase: str) -> bool:
+        """Recreate artifact-repair context for runs blocked before it was persisted."""
+        state = self._state_store.load()
+        recovery = state.get("phase_output_recovery")
+        if isinstance(recovery, dict) and recovery.get("phase") == phase:
+            spec_dir_ref = str(state.get("spec_dir") or "").strip()
+            spec_dir = Path(spec_dir_ref)
+            if spec_dir_ref and not spec_dir.is_absolute():
+                spec_dir = self._project_root / spec_dir
+            has_quarantined_inventory = bool(
+                spec_dir_ref
+                and spec_dir.is_dir()
+                and any(spec_dir.glob("evidence-inventory.invalid*.json"))
+            )
+            if (
+                phase == "phase1-investigate"
+                and (
+                    recovery.get("quarantined_invalid_outputs")
+                    or has_quarantined_inventory
+                )
+                and not recovery.get("invalid_outputs")
+            ):
+                recovery["invalid_outputs"] = [{
+                    "path": "evidence-inventory.json",
+                    "reason": "a prior invalid inventory was quarantined; rebuild the replacement from declared source seeds",
+                }]
+                state["phase_output_recovery"] = recovery
+                self._state_store.save(state)
+            return True
+        reason = str(state.get("blocked_reason") or "")
+        if reason.startswith("invalid_evidence_inventory") and phase == "phase1-investigate":
+            state["phase_output_recovery"] = {
+                "phase": phase,
+                "invalid_outputs": [{
+                    "path": "evidence-inventory.json",
+                    "reason": "inventory failed validation in a prior Echelon version; rebuild it from declared source seeds",
+                }],
+                "prior_state_updates": {},
+            }
+            self._state_store.save(state)
+            return True
+        if reason != "missing_phase_outputs":
+            return False
+        last_dispatch = state.get("last_dispatch")
+        if not isinstance(last_dispatch, dict) or last_dispatch.get("phase_id") != phase:
+            return False
+        required = _MANDATORY_PHASE_OUTPUTS.get(phase, ())
+        spec_dir_ref = str(state.get("spec_dir") or "").strip()
+        if not required or not spec_dir_ref:
+            return False
+        spec_dir = Path(spec_dir_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        missing = [
+            output
+            for output in required
+            if not (spec_dir / output).exists()
+        ]
+        if not missing:
+            return False
+        state["missing_outputs"] = missing
+        state["phase_output_recovery"] = {
+            "phase": phase,
+            "missing_outputs": missing,
+            "prior_state_updates": {},
+        }
+        self._state_store.save(state)
+        return True
 
     def _record_blocker_event(self, phase: str, reason: str) -> None:
         from datetime import datetime, timezone
@@ -2997,9 +3207,173 @@ class SquadController:
         self._state_store.save(pending)
         return False
 
+    def _selected_issue_spec_digest(self, state: dict) -> str:
+        """Return the current spec.md digest for a selected WHAT repair."""
+        spec_ref = str(state.get("published_spec_dir") or state.get("spec_dir") or "").strip()
+        if not spec_ref:
+            return ""
+        spec_dir = Path(spec_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        try:
+            return hashlib.sha256((spec_dir / "spec.md").read_bytes()).hexdigest()
+        except OSError:
+            return ""
+
+    def _selected_issue_repair_requires_artifact_progress(self, phase: str) -> bool:
+        """Prevent a selected repair from being waived by an agent narrative.
+
+        A resolution authorizes one precise repair; it does not authorize an
+        agent to reclassify the issue as advisory or route around quality gates.
+        The repair must alter the canonical specification before normal graph
+        transitions are considered.
+        """
+        state = self._state_store.load()
+        selected = str(state.get("selected_issue_resolution") or "").strip()
+        baseline = state.get("issue_resolution_repair_baseline")
+        ledger = state.get("issue_resolution_ledger")
+        if (
+            not selected
+            or not isinstance(baseline, dict)
+            or baseline.get("issue_id") != selected
+            or baseline.get("repair_phase") != phase
+            or not isinstance(ledger, dict)
+            or not isinstance(ledger.get(selected), dict)
+            or ledger[selected].get("status") != "selected"
+        ):
+            return False
+        before = str(baseline.get("spec_digest") or "")
+        after = self._selected_issue_spec_digest(state)
+        if before and after and before != after:
+            # Deterministic certification of the old spec must not consume the
+            # retry window for the amended one. These gates evaluate a new
+            # artifact epoch, so restart their counters before normal routing.
+            counts = state.get("phase_dispatch_counts")
+            if isinstance(counts, dict):
+                for downstream in ("phase1-lexicon", "phase1-understanding", "phase1-why2"):
+                    counts[downstream] = 0
+            state["issue_resolution_repair_baseline"] = {
+                **baseline,
+                "spec_digest": after,
+                "progress_detected": True,
+            }
+            self._state_store.save(state)
+            return False
+        state["status"] = "blocked"
+        state["phase"] = PHASE_TERMINAL_BLOCKED
+        state["blocked_reason"] = "selected_issue_repair_no_artifact_progress"
+        state["escalation_question"] = (
+            f"Selected {selected} was dispatched to {phase}, but spec.md did not change. "
+            "The repair cannot advance or be deferred by agent assertion. Retry the "
+            "selected repair with its SAGE guidance, or replace the recorded decision."
+        )
+        self._state_store.save(state)
+        self._record_blocker_event(phase, "selected_issue_repair_no_artifact_progress")
+        print(
+            f"[squad] ✗ {phase} made no spec artifact progress for selected {selected}; blocking.",
+            flush=True,
+        )
+        return True
+
+    def _reconcile_selected_issue_resolution(
+        self, node: PhaseNode, result: SquadAgentResult, state: dict
+    ) -> None:
+        """Close or reopen the one ledger issue after its SAGE revalidation."""
+        if node.id != "phase1-why2":
+            return
+        selected = str(state.get("selected_issue_resolution") or "").strip()
+        ledger = state.get("issue_resolution_ledger")
+        if not selected or not isinstance(ledger, dict) or not isinstance(ledger.get(selected), dict):
+            return
+        routes = (result.state_updates or {}).get("finding_routes")
+        findings = routes.get("findings") if isinstance(routes, dict) else []
+        reported_ids = {
+            str(item.get("issue_id") or "").strip()
+            for item in findings
+            if isinstance(item, dict)
+        }
+        refreshed = self._state_store.load()
+        refreshed_ledger = refreshed.get("issue_resolution_ledger")
+        if not isinstance(refreshed_ledger, dict) or not isinstance(refreshed_ledger.get(selected), dict):
+            return
+        entry = dict(refreshed_ledger[selected])
+        entry["status"] = "reopened" if selected in reported_ids else "validated"
+        refreshed_ledger[selected] = entry
+        refreshed["issue_resolution_ledger"] = refreshed_ledger
+        if entry["status"] == "validated":
+            refreshed.pop("selected_issue_resolution", None)
+        self._state_store.save(refreshed)
+
+    def _reset_why_failure_cycle_after_repair(
+        self, node: PhaseNode, state: dict,
+    ) -> None:
+        """Start a fresh WHY cycle when WHAT actually changed its artifacts.
+
+        A WHY failure is intentionally routed through CARTOGRAPHER.  Counting a
+        later WHY result as consecutive when that repair produced a new spec is
+        both misleading and unsafe: the two results evaluated different input.
+        """
+        if node.id != "phase1-what" or not int(state.get("why_fail_count") or 0):
+            return
+        baseline = state.get("why_failure_baseline")
+        baseline_ts = (
+            baseline.get("recorded_at") if isinstance(baseline, dict) else None
+        )
+        if not baseline_ts or not self._phase_artifacts_changed_since(baseline_ts):
+            return
+        refreshed = self._state_store.load()
+        refreshed["why_fail_count"] = 0
+        refreshed["why2_metric_stagnation_count"] = 0
+        refreshed.pop("why_failure_baseline", None)
+        self._state_store.save(refreshed)
+
+    def _record_why_failure(self, phase_id: str) -> int:
+        """Record a WHY failure against a stable artifact baseline.
+
+        Older runs have a count but no baseline.  They cannot safely be treated
+        as consecutive failures, so migrate them to a fresh one-failure cycle.
+        """
+        from datetime import datetime, timezone
+
+        state = self._state_store.load()
+        baseline = state.get("why_failure_baseline")
+        if not isinstance(baseline, dict) or not baseline.get("recorded_at"):
+            state["why_fail_count"] = 0
+            state["why2_metric_stagnation_count"] = 0
+            state["why_failure_baseline"] = {
+                "phase_id": phase_id,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            }
+            self._state_store.save(state)
+        return self._state_store.increment_why_fail_count()
+
+    def _why_failure_escalation_question(self, phase_id: str, fail_count: int) -> str:
+        """Return an actionable escalation with the reviewer findings at hand."""
+        state = self._state_store.load()
+        spec_dir_ref = str(state.get("spec_dir") or "").strip()
+        if spec_dir_ref:
+            issues_path = Path(spec_dir_ref)
+            if not issues_path.is_absolute():
+                issues_path = self._project_root / issues_path
+            issues_path = issues_path / "issues.md"
+            issues_hint = str(issues_path)
+        else:
+            issues_hint = "issues.md was not available"
+        return (
+            f"{phase_id} still fails after {fail_count} WHY assessments without a "
+            "detected CARTOGRAPHER artifact change. Review the unresolved findings at "
+            f"{issues_hint}, then choose one actionable direction: provide the missing "
+            "project evidence, narrow or clarify the requested scope, or authorize one "
+            "targeted WHAT repair that addresses the listed findings."
+        )
+
     def _evaluate_transitions(
         self, node: PhaseNode, result: SquadAgentResult
     ) -> str:
+        state = self._state_store.load()
+        self._reconcile_selected_issue_resolution(node, result, state)
+        state = self._state_store.load()
+        self._reset_why_failure_cycle_after_repair(node, state)
         state = self._state_store.load()
         if node.id in WHY_PHASES:
             self._normalize_why_result_quality_scores(result)
@@ -3088,20 +3462,23 @@ class SquadController:
                             return PHASE_TERMINAL_BLOCKED
                         self._state_store.save(refreshed)
 
-                fail_count = self._state_store.increment_why_fail_count()
+                fail_count = self._record_why_failure(node.id)
                 if fail_count >= 2 and not state.get("escalation_question"):
-                    last_ts = (state.get("last_dispatch") or {}).get("completed_at")
-                    if not self._phase_artifacts_changed_since(last_ts):
+                    baseline = self._state_store.load().get("why_failure_baseline")
+                    baseline_ts = (
+                        baseline.get("recorded_at")
+                        if isinstance(baseline, dict)
+                        else None
+                    )
+                    if baseline_ts and not self._phase_artifacts_changed_since(baseline_ts):
                         print(
                             f"[squad] ✗ consecutive-fail guard: {fail_count} {node.id} FAILs "
                             f"with no artifact progress — forcing escalation",
                             flush=True,
                         )
                         s = self._state_store.load()
-                        s["escalation_question"] = (
-                            f"Auto-detected: {fail_count} consecutive {node.id} FAILs "
-                            f"with no artifact progress. User input or banzai COMMANDER "
-                            f"judgment required before continuing."
+                        s["escalation_question"] = self._why_failure_escalation_question(
+                            node.id, fail_count
                         )
                         s["blocked_reason"] = "consecutive_why_fails"
                         s["status"] = "blocked"
@@ -3235,6 +3612,7 @@ class SquadController:
             if blocked_reason == "phase_dispatch_limit"
             else ""
         )
+        banzai_candidates = self._banzai_issue_resolution_candidates(state)
 
         staging_dir = Path(state.get("staging_dir", str(self._squad_dir / "staging")))
         staging_context = ""
@@ -3263,6 +3641,26 @@ class SquadController:
             f"harness resets it after a valid consecutive-fail recovery.\n\n"
             f"**Staging context:**\n{staging_context}"
         )
+        if capped_phase:
+            candidate_text = json.dumps(banzai_candidates, indent=2) if banzai_candidates else "(none)"
+            context += (
+                "\n\n## Dispatch-cap recovery: issue-level decision required\n\n"
+                "You may clear this cap only by selecting exactly one candidate below. "
+                "Never invent a product, scope, policy, security, or quality-waiver decision. "
+                "If no candidate is present, or none is safe to accept, return no "
+                "`issue_resolution_selection`; the controller will keep the run blocked "
+                "for a human decision.\n\n"
+                "For a selection, return exactly:\n"
+                "```yaml\n"
+                "issue_resolution_selection:\n"
+                "  issue_id: ISS-001\n"
+                "  decision: <copy the candidate suggested_option exactly>\n"
+                "  rationale: <why its cited evidence supports this choice>\n"
+                "  confidence: high | medium\n"
+                "  evidence_backed: true\n"
+                "```\n\n"
+                f"**Eligible candidates:**\n```json\n{candidate_text}\n```"
+            )
         if commander_path.exists():
             context = commander_path.read_text() + "\n\n" + context
         else:
@@ -3289,10 +3687,23 @@ class SquadController:
                 f"judgment returned invalid next_phase {requested_phase!r}",
             )
             return result
+        banzai_selection = None
+        if capped_phase:
+            banzai_selection = self._validate_banzai_issue_resolution_selection(
+                result.state_updates.get("issue_resolution_selection"),
+                banzai_candidates,
+            )
+            if banzai_selection is None:
+                self._block_banzai_issue_resolution(
+                    blocked_phase,
+                    capped_phase,
+                    "COMMANDER did not select one eligible, evidence-backed issue resolution",
+                )
+                return result
         if not self._apply_judgment_state_updates(
             result,
             blocked_phase,
-            exclude_keys={"next_phase", "phase"},
+            exclude_keys={"next_phase", "phase", "issue_resolution_selection"},
             delete_null=True,
         ):
             return result
@@ -3301,16 +3712,38 @@ class SquadController:
         if capped_phase:
             self._state_store.reset_phase_dispatch_count(capped_phase)
             recovered = self._state_store.load()
+            ledger = recovered.get("issue_resolution_ledger")
+            if not isinstance(ledger, dict):
+                ledger = {}
+            assert banzai_selection is not None
+            issue_id = banzai_selection["issue_id"]
+            ledger[issue_id] = {
+                **banzai_selection,
+                "status": "selected",
+                "repair_phase": "phase1-what",
+                "resolver": "COMMANDER-banzai",
+            }
+            recovered["issue_resolution_ledger"] = ledger
+            recovered["selected_issue_resolution"] = issue_id
             recovered["phase_dispatch_limit_recovery"] = {
                 "phase": capped_phase,
                 "resolver": "COMMANDER-banzai",
+                "issue_id": issue_id,
             }
+            # A decision that repairs a Phase 1 specification is always applied
+            # by CARTOGRAPHER; do not let a judgment leap around the phase graph.
+            recovered["phase"] = "phase1-what"
             self._state_store.save(recovered)
         if requested_phase:
             recovered = self._state_store.load()
             recovered["phase"] = requested_phase
             recovered.pop("next_phase", None)
             self._state_store.save(recovered)
+        elif capped_phase:
+            # The validated issue decision above deliberately routes through
+            # CARTOGRAPHER.  Do not overwrite that targeted repair with the
+            # capped phase that raised the escalation.
+            pass
         elif blocked_phase and blocked_phase != PHASE_TERMINAL_BLOCKED:
             # A judgment that only answers the question resumes the phase that
             # raised it; it must not leave the controller on terminal-blocked.
@@ -3320,6 +3753,86 @@ class SquadController:
         self._write_journal_entries(result, blocked_phase)
 
         return result
+
+    def _banzai_issue_resolution_candidates(self, state: dict) -> list[dict[str, str]]:
+        """Read only explicitly auto-eligible SAGE suggestions from issues.md."""
+        spec_ref = str(state.get("published_spec_dir") or state.get("spec_dir") or "").strip()
+        if not spec_ref:
+            return []
+        spec_dir = Path(spec_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        issues_path = spec_dir / "issues.md"
+        try:
+            issues_md = issues_path.read_text(errors="replace")
+        except OSError:
+            return []
+        candidates: list[dict[str, str]] = []
+        for title, body in re.findall(
+            r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### |\Z)",
+            issues_md,
+            re.MULTILINE | re.DOTALL,
+        ):
+            issue_match = re.match(r"^(ISS-\d+):\s*(.+)$", title.strip())
+            if not issue_match:
+                continue
+            guidance = re.search(r"### Resolution Guidance\n(.*?)(?=^### |\Z)", body, re.DOTALL)
+            if not guidance:
+                continue
+            text = guidance.group(1)
+            eligible = re.search(r"- \*\*Banzai eligible:\*\*\s*yes\b", text, re.IGNORECASE)
+            suggested = re.search(r"- \*\*Suggested option:\*\*\s*(.+)", text)
+            evidence = re.search(r"- \*\*Evidence basis:\*\*\s*(.+)", text)
+            required = re.search(r"- \*\*Decision required:\*\*\s*(.+)", text)
+            if not eligible or not suggested or not evidence or not required:
+                continue
+            candidates.append({
+                "issue_id": issue_match.group(1),
+                "title": issue_match.group(2),
+                "decision_required": required.group(1).strip(),
+                "suggested_option": suggested.group(1).strip(),
+                "evidence_basis": evidence.group(1).strip(),
+            })
+        return candidates
+
+    def _validate_banzai_issue_resolution_selection(
+        self, selection: object, candidates: list[dict[str, str]]
+    ) -> dict[str, str] | None:
+        """Allow Banzai only to copy an explicitly evidence-backed suggestion."""
+        if not isinstance(selection, dict) or selection.get("evidence_backed") is not True:
+            return None
+        issue_id = str(selection.get("issue_id") or "").strip()
+        decision = str(selection.get("decision") or "").strip()
+        rationale = str(selection.get("rationale") or "").strip()
+        confidence = str(selection.get("confidence") or "").strip().lower()
+        candidate = next((item for item in candidates if item["issue_id"] == issue_id), None)
+        if not candidate or decision != candidate["suggested_option"] or not rationale:
+            return None
+        if confidence not in {"high", "medium"}:
+            return None
+        return {
+            **candidate,
+            "decision": decision,
+            "rationale": rationale,
+            "confidence": confidence,
+            "evidence_backed": "true",
+        }
+
+    def _block_banzai_issue_resolution(
+        self, blocked_phase: str, capped_phase: str, reason: str
+    ) -> None:
+        """Keep a capped run blocked when Banzai cannot safely choose for the user."""
+        state = self._state_store.load()
+        state["status"] = "blocked"
+        state["phase"] = PHASE_TERMINAL_BLOCKED
+        state["blocked_reason"] = "phase_dispatch_limit"
+        state["phase_dispatch_limit_phase"] = capped_phase
+        state["escalation_question"] = (
+            f"{reason}. Resolve one issue explicitly before retrying {capped_phase}: "
+            'echelon spec resolve ISS-<n> "<project decision>".'
+        )
+        self._state_store.save(state)
+        self._record_blocker_event(blocked_phase, "phase_dispatch_limit")
 
     def _write_journal_entries(self, result: SquadAgentResult, phase_id: str) -> None:
         """Mirror of PhaseExecutor._write_journal_entries for SquadController use."""
