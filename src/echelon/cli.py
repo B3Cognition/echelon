@@ -3047,6 +3047,36 @@ class _RunRecoveryAction:
     note: str = ""
 
 
+def _render_escalation_options(options: object) -> str:
+    """Render the same selectable choices that ``spec resume`` accepts.
+
+    Choice escalations are persisted separately from the prose question so the
+    resume command can route deterministically.  They must be displayed with
+    that question; otherwise users cannot know which positional answer maps to
+    which route.
+    """
+    if not isinstance(options, list):
+        return ""
+
+    rendered: list[str] = []
+    letters: list[str] = []
+    for index, raw in enumerate(options):
+        if not isinstance(raw, dict):
+            continue
+        label = str(raw.get("label") or raw.get("id") or "").strip()
+        if not label:
+            continue
+        letter = chr(ord("A") + index)
+        letters.append(letter)
+        rendered.append(f"{letter}: {label}")
+
+    if not rendered:
+        return ""
+    choices = "/".join(letters)
+    rendered.append(f"Answer with {choices}, the option id, or the option label.")
+    return "\n".join(rendered)
+
+
 def _phase_dispatch_limit_phase(run_state: dict) -> str | None:
     """Find the phase whose retry window was exhausted.
 
@@ -4198,8 +4228,13 @@ def _print_next_steps(project_root: Path, result_status: str) -> None:
             fields = [
                 ("reason", action.reason),
                 ("question", action.note),
-                ("next", action.command),
             ]
+            rendered_options = _render_escalation_options(
+                current_state.get("escalation_options")
+            )
+            if rendered_options:
+                fields.append(("options", rendered_options))
+            fields.append(("next", action.command))
             _banner("NEXT STEP", fields, subtitle="RUN BLOCKED — answer required")
             return
         if action.kind == "safe_rewind":
@@ -4792,6 +4827,7 @@ def _select_squad_dir(
     user_message: str,
     reset: bool = False,
     *,
+    manual_recovery: bool = False,
     configured_default_branch: str = "",
     dirty_action: str = "refuse",
     confirm_discard: bool = False,
@@ -4855,6 +4891,8 @@ def _select_squad_dir(
         return existing_dir, True
 
     status = state.get("status")
+    if manual_recovery and status == "blocked" and not state.get("escalation_question"):
+        return existing_dir, False
     if status not in ("running", "in_progress"):
         return start_fresh()
 
@@ -5269,6 +5307,7 @@ def _cmd_run(
         project_root,
         message,
         reset=reset,
+        manual_recovery=bool(next_phase),
         configured_default_branch=str(getattr(config, "target_default_branch", "") or ""),
         dirty_action=dirty_action,
         confirm_discard=confirm_discard,
@@ -6449,12 +6488,18 @@ def _cmd_continue(
         start_phase(action.phase, verb="Retrying incomplete phase", clear_recovery=True)
         return
     if action.kind == "human_resume":
+        fields = [
+            ("decision needed", action.note or "(no escalation question recorded)"),
+        ]
+        rendered_options = _render_escalation_options(
+            state.get("escalation_options")
+        )
+        if rendered_options:
+            fields.append(("options", rendered_options))
+        fields.append(("resume with", action.command))
         _banner(
             "CHECKPOINT",
-            [
-                ("decision needed", action.note or "(no escalation question recorded)"),
-                ("resume with", action.command),
-            ],
+            fields,
             subtitle="Run paused. Human decision required.",
         )
         return
