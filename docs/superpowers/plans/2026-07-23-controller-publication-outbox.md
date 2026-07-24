@@ -48,7 +48,7 @@ Echelon `SquadController` and `SquadStateStore`.
 - Produces: non-deferred provider usage that performs exactly one locked state
   mutation and preserves all concurrent fields.
 
-- [ ] **Step 1: Write the failing race regression**
+- [x] **Step 1: Write the failing race regression**
 
 Add a test that wraps `store.load()` to inject one locked concurrent mutation
 after returning the old snapshot, then calls `_record_provider_usage()`:
@@ -89,7 +89,7 @@ def test_provider_usage_increment_preserves_concurrent_state_mutation(
     assert state["token_usage"] == 37
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -100,7 +100,7 @@ Run:
 
 Expected: FAIL with stale-state save and `token_usage == 0`.
 
-- [ ] **Step 3: Implement the atomic increment**
+- [x] **Step 3: Implement the atomic increment**
 
 Keep the existing concrete positive-integer and deferred-usage checks. Replace
 only the non-deferred load/normalize/save sequence:
@@ -113,7 +113,7 @@ with self._telemetry_usage_lock:
     self._state_store.increment_token_usage(raw)
 ```
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run the focused test plus existing token state tests, then commit:
 
@@ -142,7 +142,7 @@ git commit -m "fix: increment provider usage atomically"
   - `SquadStateStore.complete_external_publication(marker)`
 - Consumes: trusted routing-effect and store-owned transaction namespaces.
 
-- [ ] **Step 1: Write RED marker and ownership tests**
+- [x] **Step 1: Write RED marker and ownership tests**
 
 Cover:
 
@@ -173,7 +173,7 @@ Then prove exact-marker mismatch cannot record or clear, and successful
 completion restores the preserved status/blocked reason and removes both
 internal keys in one locked save.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -186,7 +186,7 @@ Run:
 
 Expected: FAIL because the marker key and store methods do not exist.
 
-- [ ] **Step 3: Implement exact validation and store CAS methods**
+- [x] **Step 3: Implement exact validation and store CAS methods**
 
 Reserve the marker and bounded diagnostic keys in the central namespace; only
 the marker is a trusted routing effect. Validate with exact dict/string/int
@@ -221,7 +221,7 @@ Repeated failures update only the bounded code. Completion requires marker
 equality, restores the saved lifecycle values when a diagnostic exists, removes
 both keys, and calls `_save_unlocked()` once.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run the focused suites and commit:
 
@@ -257,7 +257,7 @@ git commit -m "fix: reserve durable publication marker state"
   - `PreparedSquadPublication.discard()`
 - Consumes: no controller or state-store objects.
 
-- [ ] **Step 1: Write RED manifest/ownership/durability tests**
+- [x] **Step 1: Write RED manifest/ownership/durability tests**
 
 Use real temporary files. Cover canonical sorted operations, exact preimage and
 postimage digests, workspace-relative targets, duplicate and overlapping target
@@ -269,7 +269,7 @@ After sealing, mutate a staged byte and prove loading fails with
 `stage_corrupt`; delete the stage and prove `stage_missing`; alter manifest
 bytes and prove `manifest_mismatch`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run:
 
@@ -279,7 +279,7 @@ Run:
 
 Expected: collection error because `harness.squad_publication` does not exist.
 
-- [ ] **Step 3: Implement canonical stage and manifest sealing**
+- [x] **Step 3: Implement canonical stage and manifest sealing**
 
 Use canonical JSON (`sort_keys=True`, compact separators, UTF-8 plus newline),
 SHA-256, exact schema validation, `Path.resolve()` containment checks, and
@@ -297,7 +297,7 @@ _fsync_directory(final_path.parent)
 The marker contains only schema version, validated transaction ID, and
 canonical manifest digest. Do not expose raw paths in `PublicationError`.
 
-- [ ] **Step 4: Write RED publish/recovery fault tests**
+- [x] **Step 4: Write RED publish/recovery fault tests**
 
 For each operation position, inject a fault after preceding operations. Assert:
 
@@ -310,7 +310,7 @@ For each operation position, inject a fault after preceding operations. Assert:
 - postimage verification failure retains the stage;
 - stage is not removed by `publish()`.
 
-- [ ] **Step 5: Implement idempotent publication**
+- [x] **Step 5: Implement idempotent publication**
 
 For writes, copy immutable staged bytes to a sibling temp, fsync, recheck the
 target preimage, `os.replace`, fsync the parent, then verify the postimage.
@@ -318,7 +318,7 @@ For deletes, recheck preimage, unlink the exact owned file, fsync the parent,
 and verify absence. At entry and exit, verify the manifest digest and all stage
 digests. Skip only an exact postimage. Never accept any other current state.
 
-- [ ] **Step 6: Verify GREEN and commit**
+- [x] **Step 6: Verify GREEN and commit**
 
 Run:
 
@@ -344,14 +344,14 @@ git commit -m "feat: add durable squad publication outbox"
   - staged Phase A/manual publication that returns owned file operations
 - Consumes: the transaction engine from Task 3.
 
-- [ ] **Step 1: Write RED product staging tests**
+- [x] **Step 1: Write RED product staging tests**
 
 Inject faults at structural repair JSON/Markdown, requirement-context refresh,
 candidate update JSON/Markdown, and final task validation. Snapshot visible
 product files before each call and assert byte-for-byte equality after failure.
 On success, assert only the staged copies change until `publish()` is called.
 
-- [ ] **Step 2: Write RED Phase A/manual staging tests**
+- [x] **Step 2: Write RED Phase A/manual staging tests**
 
 For Phase A, inject failures during active-spec overlay, product evidence,
 constitution, KB outputs, run history, report, artifact index, metadata, and
@@ -364,7 +364,7 @@ For manual runs, inject constitution and artifact-index failures and assert the
 visible spec remains unchanged. Confirm manual phase4 takes the full Phase A
 path.
 
-- [ ] **Step 3: Verify RED**
+- [x] **Step 3: Verify RED**
 
 Run:
 
@@ -378,7 +378,7 @@ Run:
 
 Expected: FAIL because current helpers write visible paths.
 
-- [ ] **Step 4: Implement staged controller adapters**
+- [x] **Step 4: Implement staged controller adapters**
 
 Create a virtual target tree under `transaction.build_path(...)`, seeded from
 the current published spec for correct index/history behavior. Rewrite product
@@ -406,7 +406,7 @@ operations. Keep destination-only files solely as virtual-tree context. Split
 metadata writing from MemPalace mining; mining occurs only after durable
 publication completion.
 
-- [ ] **Step 5: Verify GREEN and commit**
+- [x] **Step 5: Verify GREEN and commit**
 
 Run the three focused suites, inspect the manifest assertions, and commit:
 
@@ -423,179 +423,38 @@ git add src/harness/squad.py \
 git commit -m "fix: stage controller-owned phase publications"
 ```
 
-### Task 5: Routing Outbox Commit, Recovery Gate, and Terminal Reconciliation
+### Task 5: Durable Recovery and Terminal Reconciliation — Completed by Replacement Plan
 
-> **Superseded implementation detail:** The independent Task 5 review proved
-> that clearing publication authority before non-durable success work loses
-> journals, timing, checkpoints, context, mining, and manual no-replay across a
-> real process restart. Execute
-> `docs/superpowers/plans/2026-07-23-controller-completion-outbox.md` instead.
-> It retains the publication marker contract while adding the exact durable
-> completion authority and receipt protocol approved in the design.
+**Status:** Superseded and complete.
 
-**Files:**
-- Modify: `src/harness/squad.py`
-- Modify: `src/harness/squad_state.py`
-- Modify: `tests/kernel/test_squad_state.py`
-- Modify: `tests/integration/test_squad_controller.py`
-- Modify: `tests/unit/test_squad_phase_checkpoints.py`
+The publication-only recovery implementation landed in `0553ae2c`
+(`fix: recover controller publications before phase work`). Its independent
+review established that a publication marker alone cannot preserve bounded
+post-dispatch work across a real process restart.
 
-**Interfaces:**
-- Produces:
-  - `_publish_and_finalize(prepared, marker)`
-  - `_recover_pending_external_publication() -> bool`
-  - exact pending-marker mutation for terminal reconciliation
-- Consumes: Tasks 2-4.
+The executable successor is
+[`2026-07-23-controller-completion-outbox.md`](2026-07-23-controller-completion-outbox.md).
+That plan retains the exact publication marker and adds a durable completion
+intent, intrinsic effect receipts, terminal provenance, fresh-controller
+recovery, and the global lock hierarchy. Completion-plan Tasks 1–7, commits
+`0a9a93f1` through `908a9b8f`, replace every former Task 5 implementation
+step. The original one-marker pseudocode and commit recipe are intentionally
+removed so they cannot be mistaken for current executable guidance.
 
-- [ ] **Step 1: Write RED routed fault matrix**
+### Task 6: Expanded Verification and Report — Completed by Replacement Plan
 
-Cover:
+**Status:** Superseded and complete.
 
-- stale routing decision after staging;
-- injected first `_save_unlocked()` failure during `advance`;
-- failure before first publish operation and between every operation class;
-- failure when clearing the marker after all files match;
-- exact target drift before initial publish and between retries;
-- missing stage, corrupt manifest, manifest digest mismatch, and corrupt staged
-  file;
-- successful retry after each recoverable failure.
+The publication boundary suite remains part of the release evidence, but the
+authoritative expanded gate and final report are completion-plan Task 8. It
+verifies both outboxes together, the fresh-controller crash matrix, exact
+effect receipts, lock ordering, the shell hook, repository dry-run, full test
+suite, static checks, and synchronized version metadata.
 
-Assert routing save failure publishes nothing. Assert later failures retain the
-exact marker and stage, record only a bounded code, and never write success
-journals/timing/checkpoints. Assert retry skips exact postimages, completes the
-remaining operations, clears the marker durably, removes the stage afterward,
-then performs success work exactly once.
+See:
 
-- [ ] **Step 2: Write RED entry-order and terminal tests**
+- [completion outbox Task 8](2026-07-23-controller-completion-outbox.md#task-8-expanded-verification-and-final-report);
+- [controller publication/completion design](../specs/2026-07-23-controller-publication-outbox-design.md);
+- `.superpowers/sdd/final-fix-report.md` for the exact final evidence.
 
-Patch normal/manual phase/status mutation methods to explode and seed a pending
-transaction. Assert recovery completes before those methods run. Seed a
-missing/corrupt stage and assert both entry points return a blocked result
-without changing phase or clearing the marker.
-
-For already-terminal Phase A reconciliation, assert state receives a pending
-marker before any visible write, interrupted publication recovers, and terminal
-done handling happens only after marker clearance.
-
-- [ ] **Step 3: Verify RED**
-
-Run:
-
-```bash
-.venv/bin/pytest -q \
-  tests/kernel/test_squad_state.py \
-  tests/integration/test_squad_controller.py \
-  tests/unit/test_squad_phase_checkpoints.py \
-  -k "external_publication or publication_recovery or publication_fault"
-```
-
-Expected: FAIL because routing still invokes `before_commit` and no recovery
-gate exists.
-
-- [ ] **Step 4: Implement routed outbox orchestration**
-
-Prepare/stage before decision sealing and include the marker in trusted
-additional routing updates. Remove the mutating `before_commit` path from
-`SquadStateStore.advance()`.
-
-After a valid `AdvanceReceipt`:
-
-```python
-prepared_publication.publish()
-self._state_store.complete_external_publication(marker)
-assert "pending_external_publication" not in self._state_store.load()
-prepared_publication.discard()
-```
-
-On publish/finalize failure, record the mapped bounded code and stop without
-success work. On pre-commit failure, prove the state marker is absent before
-discarding the orphan stage.
-
-Run recovery inside `_run_with_execution_lease()` after both locks are acquired
-and before invoking either locked runner. Load only the transaction referenced
-by the exact state marker; orphan cleanup runs under the same locks and must
-recheck current state before deletion.
-
-- [ ] **Step 5: Implement terminal transaction orchestration**
-
-Add a state-store method that exact-CAS installs a pending marker without
-changing phase/status for terminal reconciliation. Use the same publish,
-bounded-failure, recovery, durable-clear, and cleanup sequence as routed
-publication.
-
-- [ ] **Step 6: Verify GREEN and commit**
-
-Run:
-
-```bash
-.venv/bin/pytest -q \
-  tests/kernel/test_squad_state.py \
-  tests/integration/test_squad_controller.py \
-  tests/unit/test_squad_phase_checkpoints.py \
-  tests/unit/test_squad_publication.py
-git add src/harness/squad.py src/harness/squad_state.py \
-  tests/kernel/test_squad_state.py \
-  tests/integration/test_squad_controller.py \
-  tests/unit/test_squad_phase_checkpoints.py
-git commit -m "fix: recover controller publications before phase work"
-```
-
-### Task 6: Expanded Verification and Report
-
-**Files:**
-- Append: `.superpowers/sdd/final-fix-report.md`
-
-**Interfaces:**
-- Produces: fresh evidence for all blocker requirements and a clean handoff.
-- Consumes: every prior task.
-
-- [ ] **Step 1: Run focused and expanded boundary suites**
-
-```bash
-.venv/bin/pytest -q \
-  tests/unit/test_squad_publication.py \
-  tests/unit/test_product_inputs.py \
-  tests/integration/test_squad_context_memory.py \
-  tests/kernel/test_prepared_phase_result.py \
-  tests/kernel/test_squad_state.py \
-  tests/integration/test_squad_controller.py \
-  tests/unit/test_squad_phase_checkpoints.py
-```
-
-- [ ] **Step 2: Run static and compile checks**
-
-```bash
-.venv/bin/ruff check \
-  src/harness/squad.py \
-  src/harness/squad_state.py \
-  src/harness/squad_publication.py \
-  src/harness/state_transaction_namespace.py \
-  tests/unit/test_squad_publication.py \
-  tests/unit/test_product_inputs.py \
-  tests/kernel/test_squad_state.py \
-  tests/integration/test_squad_controller.py
-.venv/bin/python -m compileall -q src tests
-```
-
-- [ ] **Step 3: Run the repository dry-run, version check, and full suite**
-
-Use the same dry-run command recorded in
-`.superpowers/sdd/final-fix-report.md`, verify `3.7.14` remains unchanged, then
-run:
-
-```bash
-.venv/bin/pytest -q
-```
-
-- [ ] **Step 4: Update report and commit**
-
-Append exact RED/GREEN evidence, the failure matrix, commit hashes, test counts,
-static/dry-run/version results, and remaining risks to the final report.
-
-```bash
-git add .superpowers/sdd/final-fix-report.md
-git commit -m "docs: report durable publication fixes"
-git status --short
-```
-
-Expected final status: no output. Do not push or merge.
+No publication-only implementation or report task remains outstanding.

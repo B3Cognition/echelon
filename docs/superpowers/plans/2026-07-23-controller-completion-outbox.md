@@ -45,7 +45,7 @@
   - `load_prepared_controller_completion(project_root, squad_dir, marker) -> PreparedControllerCompletion`
 - Consumes: `validate_pending_external_publication()` and prepared-result bounded detachment rules.
 
-- [ ] **Step 1: Write exact marker/namespace RED tests**
+- [x] **Step 1: Write exact marker/namespace RED tests**
 
 Add tests covering the exact seven marker fields, concrete `int` schema version, 32-hex completion ID, three 64-hex digests, origin enum, step enum, explicit null, extra fields, provider set/remove rejection, and trusted routing acceptance:
 
@@ -75,7 +75,7 @@ def test_completion_marker_is_exact(mutation):
         )
 ```
 
-- [ ] **Step 2: Run marker tests to verify RED**
+- [x] **Step 2: Run marker tests to verify RED**
 
 Run:
 
@@ -88,7 +88,7 @@ Run:
 
 Expected: FAIL because the module, key, and validator do not exist.
 
-- [ ] **Step 3: Implement the exact marker and namespace reservation**
+- [x] **Step 3: Implement the exact marker and namespace reservation**
 
 Use an exact-key validator and concrete types:
 
@@ -115,7 +115,7 @@ def validate_pending_controller_completion(
 
 Add the key to store-owned/provider-reserved/trusted-routing effect sets, but not trusted removal sets.
 
-- [ ] **Step 4: Write durable intent RED tests**
+- [x] **Step 4: Write durable intent RED tests**
 
 Cover exact tagged unions, fixed effect order, duplicate/future effect rejection, detached-value depth/node/string/integer/finite-float limits, 4 MiB serialized limit, canonical digest reread, missing/corrupt intent, one completion directory only, initial exact empty receipts, symlink/type/path attacks, and discard idempotency. Require the exact checkpoint-prestate union: `{"kind": "none"}` when no checkpoint is planned, or `{"kind": "git_head", "head": <captured 40- or 64-hex object ID>}` when it is.
 
@@ -136,7 +136,7 @@ route = {
 }
 ```
 
-- [ ] **Step 5: Run intent tests to verify RED**
+- [x] **Step 5: Run intent tests to verify RED**
 
 Run:
 
@@ -146,7 +146,7 @@ Run:
 
 Expected: FAIL because completion preparation/loading is absent.
 
-- [ ] **Step 6: Implement canonical stage preparation/loading**
+- [x] **Step 6: Implement canonical stage preparation/loading**
 
 Implement these immutable shapes:
 
@@ -175,7 +175,7 @@ class PreparedControllerCompletion:
 
 Write `intent.json` and `receipts.json` through sibling temp files, flush/fsync, atomically replace, sync directories, reread, hash, and reject a canonical intent larger than 4,194,304 bytes.
 
-- [ ] **Step 7: Run Task 1 GREEN**
+- [x] **Step 7: Run Task 1 GREEN**
 
 Run:
 
@@ -187,7 +187,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit Task 1**
+- [x] **Step 8: Commit Task 1**
 
 ```bash
 git add src/harness/squad_completion.py \
@@ -216,7 +216,7 @@ git commit -m "feat: seal controller completion intents"
   - `SquadStateStore.record_controller_completion_failure(...)`
   - `SquadStateStore.complete_controller_completion(...)`
 
-- [ ] **Step 1: Write dispatch-attestation RED tests**
+- [x] **Step 1: Write dispatch-attestation RED tests**
 
 Assert a pre-generated 32-hex dispatch ID changes the routing digest, tampering fails attestation, and `advance()` persists:
 
@@ -234,7 +234,7 @@ Assert a pre-generated 32-hex dispatch ID changes the routing digest, tampering 
 
 Also assert judgment hashes and completion binding match the typed intent.
 
-- [ ] **Step 2: Run dispatch tests to verify RED**
+- [x] **Step 2: Run dispatch tests to verify RED**
 
 Run:
 
@@ -247,11 +247,11 @@ Run:
 
 Expected: FAIL because dispatch IDs are generated inside `advance()`.
 
-- [ ] **Step 3: Attest and persist the supplied dispatch ID**
+- [x] **Step 3: Attest and persist the supplied dispatch ID**
 
 Add `dispatch_id` to routing facts and `PreparedRoutingDecision`; default the low-level factory to a fresh `secrets.token_hex(16)` only when callers do not supply one. Make `advance()` use the attested value rather than generating another ID.
 
-- [ ] **Step 4: Write exact-CAS state transition RED tests**
+- [x] **Step 4: Write exact-CAS state transition RED tests**
 
 Cover:
 
@@ -267,7 +267,7 @@ Cover:
 - malformed existing diagnostics are replaced canonically under exact raw-marker CAS;
 - `_save_unlocked` pre-save and save-then-raise ambiguity at every method.
 
-- [ ] **Step 5: Run state-machine tests to verify RED**
+- [x] **Step 5: Run state-machine tests to verify RED**
 
 Run:
 
@@ -278,7 +278,7 @@ Run:
 
 Expected: FAIL because completion state APIs do not exist.
 
-- [ ] **Step 6: Implement exact monotonic state APIs**
+- [x] **Step 6: Implement exact monotonic state APIs**
 
 Each method loads under the state lock, validates the exact marker plus typed intent digest, permits one legal transition, saves once, and never invokes an external callback. Final routed state includes:
 
@@ -297,7 +297,7 @@ last_dispatch.update(
 
 Phase 4 adds active-source and published-postimage inventory digests. Terminal completion writes the exact bounded terminal receipt in the same save.
 
-- [ ] **Step 7: Run Task 2 GREEN**
+- [x] **Step 7: Run Task 2 GREEN**
 
 Run:
 
@@ -309,7 +309,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit Task 2**
+- [x] **Step 8: Commit Task 2**
 
 ```bash
 git add src/harness/prepared_phase_result.py \
@@ -342,11 +342,11 @@ git commit -m "feat: persist controller completion state"
   - `apply_or_verify_completion_journal(plan) -> dict[str, object]`
 - Consumes: Task 1 receipt-prefix helpers.
 
-- [ ] **Step 1: Write journal replay RED tests**
+- [x] **Step 1: Write journal replay RED tests**
 
 Cover unrelated-row preservation, provider spoofing of `id`/`timestamp`/`phase`/completion fields, exact content digest calculation excluding generated metadata, durable replace, crash after replace before receipt, exact-row adoption, partial/missing/duplicate ordinal, same-ID drift, malformed unrelated JSON, concurrent shell append under the shared lock, and parent-directory fsync. The cross-language concurrency test must invoke the repository `scripts/bash/phase-timing.sh` and `scripts/bash/post-dispatch-hormone-update.sh` writers, not the distinct extension timing hook.
 
-- [ ] **Step 2: Run journal tests to verify RED**
+- [x] **Step 2: Run journal tests to verify RED**
 
 Run:
 
@@ -359,7 +359,7 @@ Run:
 
 Expected: FAIL because journal completion identity and shared lock are absent.
 
-- [ ] **Step 3: Implement exact journal plan/apply**
+- [x] **Step 3: Implement exact journal plan/apply**
 
 Define the reserved row stamp:
 
@@ -373,11 +373,11 @@ row["controller_completion"] = {
 
 Strip provider metadata before digesting, validate existing rows under one `fcntl` lock, preserve unrelated serialized rows, write the whole result with temp/fsync/replace/fsync, and accept an existing exact batch without regeneration.
 
-- [ ] **Step 4: Move every repository journal writer under the shared lock**
+- [x] **Step 4: Move every repository journal writer under the shared lock**
 
 Refactor both Python `_write_journal_entries()` implementations to one helper. Make shell Python snippets acquire the same lock file before append/index update. Do not change the unrelated KB mutation journal.
 
-- [ ] **Step 5: Run Task 3 GREEN**
+- [x] **Step 5: Run Task 3 GREEN**
 
 Run:
 
@@ -391,7 +391,7 @@ bash tests/integration/test_post_dispatch_hook.sh
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit Task 3**
+- [x] **Step 6: Commit Task 3**
 
 ```bash
 git add src/harness/squad_completion.py \
@@ -428,11 +428,11 @@ git commit -m "feat: make completion journals replay safe"
   - optional checkpoint `completion_id`
   - `create_or_recover_completion_checkpoint(...)`
 
-- [ ] **Step 1: Write timing crash RED tests**
+- [x] **Step 1: Write timing crash RED tests**
 
 Inject a crash after tagged close, after tagged open, and before receipt update. Require exact completion/effect IDs, no duplicate telemetry events, rejection of same-ID field drift, and exact one-ahead receipt adoption.
 
-- [ ] **Step 2: Run timing tests to verify RED**
+- [x] **Step 2: Run timing tests to verify RED**
 
 Run:
 
@@ -443,7 +443,7 @@ Run:
 
 Expected: FAIL because timing events have no completion identity.
 
-- [ ] **Step 3: Implement completion-tagged timing**
+- [x] **Step 3: Implement completion-tagged timing**
 
 Add optional fields without changing legacy events. Completion effects use stable IDs:
 
@@ -453,11 +453,11 @@ effect_id = f"{completion_id}:timing:{kind}:{phase}"
 
 Search and validate that exact event before appending. A legacy untagged event cannot satisfy a completion receipt.
 
-- [ ] **Step 4: Write checkpoint crash RED tests**
+- [x] **Step 4: Write checkpoint crash RED tests**
 
 Cover commit-created/ledger-missing, exact ledger present, same phase under two completion IDs, a matching commit no longer at HEAD, duplicate matches in bounded history, no owned diff with intent-captured HEAD (`no_change`), no active spec (`not_applicable`), and crash before state step.
 
-- [ ] **Step 5: Run checkpoint tests to verify RED**
+- [x] **Step 5: Run checkpoint tests to verify RED**
 
 Run:
 
@@ -468,11 +468,11 @@ Run:
 
 Expected: FAIL because commits and ledger entries lack completion identity.
 
-- [ ] **Step 6: Implement checkpoint receipts**
+- [x] **Step 6: Implement checkpoint receipts**
 
 Add `completion_id` to commit metadata/trailer and checkpoint ledger records. Before committing, validate the exact ledger receipt or search at most 256 `--all` commits for one unique exact trailer identity. Write ledger updates through lock + sibling temp + file `fsync` + atomic replace + parent-directory `fsync`. If a bound checkpoint receipt remains but the ledger is missing/truncated, repair it only from that receipt plus one uniquely matching bounded-history commit; all other prior-prefix postimage loss fails closed. Use `no_change` only when current HEAD equals `intent.checkpoint_prestate.head`.
 
-- [ ] **Step 7: Run Task 4 GREEN**
+- [x] **Step 7: Run Task 4 GREEN**
 
 Run:
 
@@ -485,7 +485,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit Task 4**
+- [x] **Step 8: Commit Task 4**
 
 ```bash
 git add src/echelon/telemetry/model.py \
@@ -520,11 +520,11 @@ git commit -m "feat: receipt timing and checkpoint completion"
   - `CompletionMiningOutcome`
   - `apply_or_verify_completion_mining(...)`
 
-- [ ] **Step 1: Write frozen-context RED tests**
+- [x] **Step 1: Write frozen-context RED tests**
 
 Generate into a completion substage, persist the one-ahead plan, crash before visible install, then change the clock, state revision, and MemPalace inputs. Require restart to install the original bytes/digests without calling the generator. Cover partial visible install, target drift, missing/corrupt substage, and fixed-path enforcement.
 
-- [ ] **Step 2: Run context tests to verify RED**
+- [x] **Step 2: Run context tests to verify RED**
 
 Run:
 
@@ -538,19 +538,19 @@ Run:
 
 Expected: FAIL because context writes directly to visible paths.
 
-- [ ] **Step 3: Implement completion context preparation/install**
+- [x] **Step 3: Implement completion context preparation/install**
 
 Allow `build_run_context()` to read from the real run but write its fixed output set under an explicit completion-local output root. Persist exact bytes/digests/source revision/preparation time before any visible write, then install with preimage/postimage checks.
 
-- [ ] **Step 4: Write mining outcome RED tests**
+- [x] **Step 4: Write mining outcome RED tests**
 
 Cover `written`, `already_present`, `unavailable`, `failed`, and `not_applicable`; crash after deterministic drawer write before receipt; exact one-ahead adoption; canonical spec drift; malformed drawer IDs; and guaranteed advancement for best-effort terminal outcomes.
 
-- [ ] **Step 5: Implement and verify mining receipts**
+- [x] **Step 5: Implement and verify mining receipts**
 
 Return a bounded result instead of `None`, validate deterministic drawer IDs/spec digest, and never retry a receipted `unavailable` or `failed` outcome.
 
-- [ ] **Step 6: Run Task 5 GREEN**
+- [x] **Step 6: Run Task 5 GREEN**
 
 Run:
 
@@ -563,7 +563,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 5**
+- [x] **Step 7: Commit Task 5**
 
 ```bash
 git add src/echelon/context_builder.py \
@@ -592,7 +592,7 @@ git commit -m "feat: freeze context and mining completion"
   - `_drain_pending_controller_completion() -> CompletionRecoveryOutcome`
   - exact routed/terminal orchestration and structured manual-stop result.
 
-- [ ] **Step 1: Write route and terminal orchestration RED tests**
+- [x] **Step 1: Write route and terminal orchestration RED tests**
 
 Assert:
 
@@ -607,7 +607,7 @@ Assert:
 - terminal never consults stale route work;
 - completed Phase 4 active-source/published-postimage digests suppress only an exact redundant terminal reconciliation.
 
-- [ ] **Step 2: Run orchestration tests to verify RED**
+- [x] **Step 2: Run orchestration tests to verify RED**
 
 Run:
 
@@ -620,7 +620,7 @@ Run:
 
 Expected: FAIL because controller completion is not orchestrated.
 
-- [ ] **Step 3: Implement the structured drain loop**
+- [x] **Step 3: Implement the structured drain loop**
 
 Use a result independent of stale `last_dispatch`:
 
@@ -635,13 +635,13 @@ class CompletionRecoveryOutcome:
 
 Under both execution locks: validate state key membership, load/validate intent and receipts, recover publication if present, drain one legal effect at a time, finalize, clean stages after fresh proof, then decide whether a manual runner may execute.
 
-- [ ] **Step 4: Write save-then-raise/token RED tests**
+- [x] **Step 4: Write save-then-raise/token RED tests**
 
 Inject route and terminal `_save_unlocked()` functions that durably save then raise. Use nonzero deferred token usage and assert exact routing/dispatch/markers prove the commit, publication/completion resumes, `advance()` runs once, token total increments once, and no stale failure diagnostic is merged.
 
 Inject the same ambiguity after publication handoff, every effect step, and final clear.
 
-- [ ] **Step 5: Implement exact ambiguity resolution**
+- [x] **Step 5: Implement exact ambiguity resolution**
 
 After a caught state error, reload and accept only:
 
@@ -651,7 +651,7 @@ After a caught state error, reload and accept only:
 
 Any third state fails closed. Precommit cleanup proves neither marker nor incomplete bound dispatch authorizes either stage.
 
-- [ ] **Step 6: Write terminal/legacy/orphan RED tests**
+- [x] **Step 6: Write terminal/legacy/orphan RED tests**
 
 Cover:
 
@@ -664,7 +664,7 @@ Cover:
 - final-clear fresh controller does not restage exact Phase 4 publication;
 - active or published inventory drift does restage.
 
-- [ ] **Step 7: Run Task 6 GREEN**
+- [x] **Step 7: Run Task 6 GREEN**
 
 Run:
 
@@ -678,7 +678,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit Task 6**
+- [x] **Step 8: Commit Task 6**
 
 ```bash
 git add src/harness/squad.py src/harness/squad_state.py \
@@ -703,18 +703,18 @@ git commit -m "fix: recover controller completion before phase work"
 - Consumes: complete protocol.
 - Produces: static/runtime lock-order assertion and full crash evidence.
 
-- [ ] **Step 1: Write lock-order RED tests**
+- [x] **Step 1: Write lock-order RED tests**
 
 Assign ranks to every lock and assert no code path acquires a lower rank while a higher rank is held. Add a two-thread barrier test for every used nested pair; require both threads to complete without timeout and the reverse-order test helper to raise immediately.
 Use the explicit order Phase A, spec run, publication, completion, checkpoint,
 journal, telemetry, then state. Equal-rank reentry is valid only for the exact
 same logical lock identity.
 
-- [ ] **Step 2: Implement lock-rank assertions**
+- [x] **Step 2: Implement lock-rank assertions**
 
 Keep a thread-local rank stack in test/debug helpers and ensure state-store methods never invoke controller/external callbacks. All reasoning-journal writers use the shared rank-6 lock.
 
-- [ ] **Step 3: Write full fresh-controller restart matrix**
+- [x] **Step 3: Write full fresh-controller restart matrix**
 
 For each boundary, discard the original controller instance and construct a new controller over the same project/run:
 
@@ -732,7 +732,7 @@ For each boundary, discard the original controller instance and construct a new 
 
 Assert exact effect counts/identities, no duplicate route/token/commit/journal/timing/mining, and no runner before recovery.
 
-- [ ] **Step 4: Run Task 7 GREEN**
+- [x] **Step 4: Run Task 7 GREEN**
 
 Run:
 
@@ -746,7 +746,7 @@ Run:
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit Task 7**
+- [x] **Step 5: Commit Task 7**
 
 ```bash
 git add src/harness/squad_completion.py \
@@ -769,7 +769,7 @@ git commit -m "test: prove controller completion crash recovery"
 - Consumes: Tasks 1–7.
 - Produces: fresh blocker evidence and updated original-plan status.
 
-- [ ] **Step 1: Run focused protocol suite**
+- [x] **Step 1: Run focused protocol suite**
 
 ```bash
 .venv/bin/pytest -q \
@@ -797,7 +797,12 @@ bash tests/integration/test_post_dispatch_hook.sh
 
 Expected: PASS.
 
-- [ ] **Step 2: Run original expanded publication boundary suite**
+Verified on Task 8 HEAD:
+
+- focused protocol suite: `1150 passed in 108.20s`;
+- post-dispatch shell hook: `13 passed, 0 failed`.
+
+- [x] **Step 2: Run original expanded publication boundary suite**
 
 ```bash
 .venv/bin/pytest -q \
@@ -812,7 +817,9 @@ Expected: PASS.
 
 Expected: PASS.
 
-- [ ] **Step 3: Run compile/static checks**
+Verified: `963 passed in 89.34s`.
+
+- [x] **Step 3: Run compile/static checks**
 
 ```bash
 .venv/bin/python -m py_compile \
@@ -825,11 +832,22 @@ git diff --check
 
 Expected: both commands exit 0. Run Ruff if installed; otherwise record exact unavailability.
 
-- [ ] **Step 4: Update report and original plan**
+Verified:
+
+- exact `py_compile`: exit 0;
+- full `compileall -q src tests`: exit 0;
+- `git diff --check`: exit 0;
+- Ruff was unavailable from both `.venv/bin/ruff` and `uv run ruff`.
+
+- [x] **Step 4: Update report and original plan**
 
 Record exact commits, test totals, crash boundaries, lock-order evidence, and independent review findings. Mark original Task 5 as superseded by and completed through this plan; do not retain the old one-marker instructions as executable guidance.
 
-- [ ] **Step 5: Commit Task 8**
+Recorded in `.superpowers/sdd/final-fix-report.md`. The repository-wide gate
+passed `5560` tests with `9` skipped and `4` deselected, and the original
+publication plan now contains only completed replacement-plan guidance.
+
+- [x] **Step 5: Commit Task 8**
 
 ```bash
 git add .superpowers/sdd/final-fix-report.md \

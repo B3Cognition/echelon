@@ -727,3 +727,40 @@ reconstructed. A state containing neither marker remains fully valid.
 
 No general filesystem transaction framework, database transaction, new
 dependency, or unrelated publication path is introduced.
+
+## Implementation Status
+
+Implemented and release-verified through the completion-outbox plan. The
+durable completion sequence is:
+
+1. `0a9a93f1` — exact completion intent and stage;
+2. `c45001a7` — attested state machine and exact CAS;
+3. `69fdaad4` — replay-safe journal receipts;
+4. `51737ec2` — completion-tagged timing and checkpoint receipts;
+5. `6e02779e` — frozen context and deterministic mining receipts;
+6. `81c572e9` — controller recovery gate and ambiguous-save handling;
+7. `908a9b8f` — fresh-controller fault and lock-order matrix.
+
+Task 8 also corrected the Phase 4 integration fixture in `72a60b89` so it
+exercises the configured-wing deterministic mining plan used by the durable
+protocol; production behavior was unchanged.
+
+The enforced outer-to-inner lock order is Phase A, spec-run, publication,
+completion, checkpoint, journal, telemetry, then state. Journal writers use
+rank 6, and same-rank reentry is valid only for the exact same logical lock
+identity.
+
+Fresh release evidence:
+
+- repository suite: `5560 passed, 9 skipped, 4 deselected`;
+- focused completion protocol: `1150 passed`;
+- expanded publication boundary suite: `963 passed`;
+- complete fresh-controller orchestration matrix: `64 passed`;
+- publication fault engine: `90 passed`;
+- lock-order assertions: `24 passed`;
+- shell post-dispatch hook: `13 passed, 0 failed`;
+- workflow dry-run: `138 passed, 1 expected warning, 0 failed`.
+
+Version metadata remains synchronized and unchanged at `3.7.14`. Static
+compilation and diff checks pass. Ruff was not installed in the Task 8
+environment, and the exact unavailability is retained in the final report.
