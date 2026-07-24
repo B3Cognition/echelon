@@ -235,6 +235,7 @@ provider-reserved trusted effect with this exact schema:
   "completion_id": "<32 lowercase hex>",
   "intent_sha256": "<64 lowercase hex>",
   "publication_binding_sha256": "<64 lowercase hex>",
+  "receipts_sha256": "<64 lowercase hex>",
   "origin": "routed | terminal",
   "step": "awaiting_publication | journal | timing | checkpoint | context | mining | complete"
 }
@@ -248,9 +249,12 @@ not `.get()` truthiness, distinguishes an absent marker from a malformed one.
 The sealed decision carries the completion marker and any applicable
 publication marker as transaction-owned updates and attests the pre-generated
 `dispatch_id`. `advance()` persists that exact ID in `last_dispatch`, sets
-`post_dispatch_complete` to false, and includes the completion payload digest
-in the routing attestation. For old `last_dispatch` records, an absent
-`post_dispatch_complete` means complete.
+`post_dispatch_complete` to false, and persists the immutable
+`completion_intent_sha256`, `completion_origin`, and
+`completion_publication_binding_sha256` alongside the phase and judgment
+digests. Those same values are routing-attested. They authenticate recovery
+even if the pending marker is corrupt or missing. For old `last_dispatch`
+records, an absent `post_dispatch_complete` means complete.
 `advance()` no longer invokes a mutating `before_commit` callback. Stale
 decisions and true pre-save failures leave only unreferenced hidden stages,
 which are discarded without touching targets. If a save writes durably and
@@ -306,6 +310,18 @@ and permit only the immediate successor in its bound effect plan. Skips,
 repeats, regressions, origin changes, and transitions not named by that intent
 fail without state mutation.
 
+The marker's `receipts_sha256` initially binds the canonical empty receipt
+document. Before each effect, recovery requires either:
+
+1. the receipt document exactly matching the marker-bound prefix; or
+2. that exact prefix plus the single exact receipt for the current effect,
+   whose postimage also verifies.
+
+The second case is the crash-after-effect/before-step-CAS case and advances
+without rerunning the producer. The next marker binds the new complete receipt
+prefix. Rollback, mutation of an earlier receipt, multiple uncommitted receipts,
+or a receipt for a future/inapplicable effect fails closed.
+
 ### Completion effects and receipts
 
 `receipts.json` has the exact top-level fields `schema_version`,
@@ -317,6 +333,13 @@ before the state step can advance:
   entries and controller quarantine warnings. It overwrites any
   provider-supplied completion stamp and stamps every emitted row with the
   exact completion ID, zero-based entry index, and canonical content digest.
+  The digest covers the canonical row after controller phase assignment but
+  excludes generated numeric ID, generated timestamp, and the completion stamp
+  itself, avoiding a recursive digest. The intent binds the ordered expected
+  content digests. If a crash leaves exact stamped rows but no receipt, recovery
+  adopts their existing IDs/timestamps only after validating consecutive
+  unique IDs, one shared valid timestamp, exact phase, ordinals, and content
+  digests; it never regenerates different metadata over a visible batch.
   Under a dedicated journal lock shared by every harness journal writer, it
   rereads and validates the complete journal, preserves all unrelated rows,
   rejects malformed JSON, duplicate indexes, missing indexes, unexpected rows,
@@ -324,12 +347,19 @@ before the state step can advance:
   through a durable temporary file, `fsync`, atomic replace, and parent
   directory `fsync`. A replay either verifies the exact complete batch or
   fails closed; it never appends a duplicate or overwrites an unrelated row.
-  The receipt records the ordered row digests.
+  The receipt records the ordered row digests and adopted stable metadata. All
+  repository writers of `reasoning-journal.jsonl`, including Python executors
+  and shell timing/hormone hooks, use the same lock before read, append, or
+  replace.
 - **Timing:** The existing transition helper is replay-convergent:
   an already-finished close is accepted and an already-started open is reused.
-  The receipt records the exact close/open phase and hashes of the observed
-  terminal timing events. A crash after telemetry write but before step CAS
-  revalidates those events and does not append duplicates.
+  Every new close/open timing event used as a receipt embeds the exact
+  completion ID and a stable event identity
+  `<completion_id>:timing:<close|open>:<phase>`. Recovery discovers and
+  validates those fields directly after a crash; post-hoc hashes alone are
+  insufficient. The receipt records the exact close/open phase and hashes of
+  those tagged events. A crash after telemetry write but before receipt/step
+  CAS reuses the exact tagged event and does not append duplicates.
 - **Checkpoint:** Automatic checkpoints carry the completion ID in both a Git
   trailer and the ledger record. Replay first validates an exact ledger
   receipt. If the commit happened before the ledger write, it performs a
@@ -337,18 +367,29 @@ before the state step can advance:
   requires the exact completion/run/spec/phase/next identity and unique commit,
   and repairs only the ledger receipt. It never creates a second commit for the
   same completion ID. The receipt records the verified commit and ledger
-  identity. A no-active-spec checkpoint has an exact `noop` receipt.
-- **Context:** Context generation overwrites only the existing fixed run-local
-  context files. Its receipt records their fixed-name content digests and the
-  controller-derived context directory identity. Replay rebuilds and rechecks
-  the fixed set; no arbitrary path is accepted. A failed build or state save
-  retains the step for retry with a bounded failure code.
+  identity. When no owned change exists, the intent-captured HEAD must still be
+  current and an exact `no_change` receipt records it; no trailer-bearing commit
+  is claimed or created. A no-active-spec checkpoint has a distinct exact
+  `not_applicable` receipt.
+- **Context:** Context generation writes only the fixed output set into a
+  completion-local substage. Once generated, the exact canonical bytes,
+  fixed-name digests, source state revision, and preparation time are durably
+  added as the current one-ahead context receipt before any visible context
+  write. Visible installation then uses a file-level preimage/postimage
+  algorithm equivalent to publication. Recovery with that receipt installs or
+  verifies the frozen bytes and never invokes the generator again, even if the
+  clock, state revision, or MemPalace inputs changed. If generation crashes
+  before the receipt, no visible context write is permitted and regeneration
+  is safe. No arbitrary path is accepted.
 - **Mining:** The deterministic MemPalace drawer identity makes replay
   convergent. The helper returns one bounded outcome:
   `written`, `already_present`, `unavailable`, `failed`, or `not_applicable`,
   plus only validated bounded drawer IDs and the canonical spec digest.
-  The outcome is durably receipted and the step advances even for best-effort
-  `unavailable` or `failed`, preventing an infinite pending completion.
+  If an exact one-ahead receipt already exists, recovery verifies its canonical
+  spec postimage and deterministic drawer identities before considering a
+  producer replay. The outcome is durably receipted and the step advances even
+  for best-effort `unavailable` or `failed`, preventing an infinite pending
+  completion.
 
 After the marker reaches `complete`, finalization reloads the intent and
 receipts, verifies an exact receipt for every applicable effect and no receipt
@@ -363,6 +404,26 @@ validates that receipt instead of staging a second time-varying terminal
 publication. A final-save exception is success only when a reload proves the
 marker absent and the durable routed `last_dispatch` or
 `last_terminal_completion` receipt fields exact.
+
+### Global lock order
+
+All code paths use one declared outer-to-inner lock rank:
+
+1. `PhaseAExecutionLock`;
+2. `SpecRunExecutionLock`;
+3. publication exclusivity lock;
+4. completion-outbox lock;
+5. reasoning-journal lock;
+6. telemetry-store write lock;
+7. `SquadStateStore` file lock.
+
+Locks at ranks 3 through 6 are acquired only for their individual side effect
+and released before the state step CAS unless the total order above is
+preserved. State-store code never calls a filesystem publisher, completion
+producer, journal writer, telemetry writer, or controller callback while its
+lock is held. Every writer of the reasoning journal uses rank 5. A static
+lock-rank assertion plus an adversarial two-thread regression covers every
+used nested pair and fails on reverse acquisition.
 
 ## Manifest and Ownership Contract
 
@@ -512,6 +573,10 @@ process restart.
   recovery skips them and exact-retries or accepts the handoff after reload.
 - **Missing/corrupt completion intent or receipts:** retain all authority, do
   not run further effects, and record only a bounded completion code.
+- **Publication marker without completion authority:** this cannot reconstruct
+  bounded success intent. Preserve the exact publication marker, publish
+  nothing further, and block with bounded `completion_missing`; do not infer
+  provenance from `last_dispatch`.
 - **Effect failure:** retain the exact current step and completion stage,
   preserve resumable lifecycle in a bounded diagnostic, and retry before any
   phase work.
@@ -592,15 +657,22 @@ production behavior is introduced through a red-green cycle.
   malformed, spoofed, or digest-drifted completion identities;
 - timing, checkpoint commit/ledger repair, context, and mining each prove
   crash-after-effect/before-step-CAS convergence and verified receipts;
+- timing tests require completion-tagged stable event identities; context tests
+  change the clock and state revision after its prepared receipt and prove
+  recovery installs the original frozen bytes without regeneration;
 - every state transition injects pre-save and save-then-raise faults;
 - missing/corrupt intent or receipts retain authority and only bounded
   diagnostics;
+- corrupt existing failure diagnostics are replaced by one canonical bounded
+  diagnostic under exact raw-marker CAS, for valid and malformed markers;
 - best-effort mining outcomes advance deterministically;
 - recovered manual work never redispatches, terminal provenance never replays
   stale route effects, and a completed Phase 4 receipt prevents redundant
   terminal publication after final-clear restart;
 - orphan intent cleanup requires fresh proof that neither state marker nor an
   incomplete bound `last_dispatch` authorizes the stage.
+- lock-rank static assertions and adversarial acquisition tests prove the
+  execution/publication/completion/journal/telemetry/state order cannot invert.
 
 ### Token race
 
@@ -617,6 +689,11 @@ externally visible artifacts and routing decisions; internal marker/receipt
 transitions add state revisions and bounded dispatch receipt fields.
 Interrupted runs gain a recoverable state instead of partial, untracked
 publication or lost post-dispatch work.
+
+A state containing `pending_external_publication` but no completion marker is
+not treated as a normal old state: it retains publication authority and blocks
+with `completion_missing`, because no safe journal/provenance intent can be
+reconstructed. A state containing neither marker remains fully valid.
 
 No general filesystem transaction framework, database transaction, new
 dependency, or unrelated publication path is introduced.
