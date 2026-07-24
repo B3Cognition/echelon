@@ -86,6 +86,7 @@ from harness.squad_completion import (
     prepare_controller_completion as prepare_controller_completion_stage,
     prepare_or_load_completion_context,
 )
+from harness.controller_lock_order import controller_lock_order
 from harness.squad_publication import (
     PreparedSquadPublication,
     PublicationError,
@@ -636,11 +637,15 @@ class SquadController:
         raw = result.token_usage
         if type(raw) is not int or raw <= 0:
             return
-        with self._telemetry_usage_lock:
-            if self._deferred_provider_usage is not None:
-                self._deferred_provider_usage["tokens"] += raw
-                return
-            self._state_store.increment_token_usage(raw)
+        with controller_lock_order(
+            "telemetry",
+            f"provider-usage:{self._squad_dir.absolute()}",
+        ):
+            with self._telemetry_usage_lock:
+                if self._deferred_provider_usage is not None:
+                    self._deferred_provider_usage["tokens"] += raw
+                    return
+                self._state_store.increment_token_usage(raw)
 
     @contextmanager
     def _defer_routing_provider_usage(self):
@@ -1033,6 +1038,20 @@ class SquadController:
         }
 
     def _apply_controller_completion_effect(
+        self,
+        prepared: PreparedControllerCompletion,
+        state: Mapping[str, object],
+    ) -> None:
+        with controller_lock_order(
+            "completion",
+            str(prepared._transaction_root.absolute()),
+        ):
+            self._apply_controller_completion_effect_ordered(
+                prepared,
+                state,
+            )
+
+    def _apply_controller_completion_effect_ordered(
         self,
         prepared: PreparedControllerCompletion,
         state: Mapping[str, object],
@@ -1485,8 +1504,14 @@ class SquadController:
 
         operation_id = f"squad-exec-{os.getpid()}"
         try:
-            with PhaseAExecutionLock.acquire(self._project_root, operation_id):
-                with SpecRunExecutionLock.acquire(self._squad_dir, operation_id):
+            with PhaseAExecutionLock.acquire(
+                self._project_root,
+                operation_id,
+            ):
+                with SpecRunExecutionLock.acquire(
+                    self._squad_dir,
+                    operation_id,
+                ):
                     recovery = (
                         self._drain_pending_controller_completion()
                     )

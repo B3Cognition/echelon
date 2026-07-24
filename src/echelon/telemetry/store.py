@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Iterator, Mapping
 
 from echelon.telemetry.model import ExecutionSpan, PhaseTimingEvent, TelemetryDiagnostic
+from harness.controller_lock_order import controller_lock_order
 
 
 TELEMETRY_SCHEMA_VERSION = 1
@@ -45,7 +46,8 @@ class TelemetryStore:
         self.run_id = run_id
         self.profile = dict(profile)
         self.trace_id = trace_id
-        self._write_lock = threading.Lock()
+        self._write_lock = threading.RLock()
+        self._controller_lock_identity = str(self.directory.absolute())
 
     def ensure_manifest(self) -> None:
         if self.manifest_path.is_file():
@@ -85,13 +87,17 @@ class TelemetryStore:
     def append_span(self, span: ExecutionSpan) -> None:
         if span.trace_id != self.trace_id:
             raise ValueError("span trace id does not match telemetry manifest")
-        with self._write_lock:
-            self.ensure_manifest()
-            record = json.dumps(span.to_json_dict(), separators=(",", ":"), sort_keys=True)
-            with self.spans_path.open("a", encoding="utf-8") as handle:
-                handle.write(record + "\n")
-                handle.flush()
-                os.fsync(handle.fileno())
+        with controller_lock_order(
+            "telemetry",
+            self._controller_lock_identity,
+        ):
+            with self._write_lock:
+                self.ensure_manifest()
+                record = json.dumps(span.to_json_dict(), separators=(",", ":"), sort_keys=True)
+                with self.spans_path.open("a", encoding="utf-8") as handle:
+                    handle.write(record + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
 
     def append_phase_timing(self, event: PhaseTimingEvent) -> None:
         """Persist phase timing separately from mutable controller state."""
@@ -114,13 +120,17 @@ class TelemetryStore:
                 raise ValueError("invalid dispatch lifecycle duration")
             if not isinstance(event.get("model"), str) or not isinstance(event.get("blocker"), str):
                 raise ValueError("invalid dispatch lifecycle metadata")
-        with self._write_lock:
-            self.ensure_manifest()
-            record = json.dumps(dict(event), separators=(",", ":"), sort_keys=True)
-            with self.events_path.open("a", encoding="utf-8") as handle:
-                handle.write(record + "\n")
-                handle.flush()
-                os.fsync(handle.fileno())
+        with controller_lock_order(
+            "telemetry",
+            self._controller_lock_identity,
+        ):
+            with self._write_lock:
+                self.ensure_manifest()
+                record = json.dumps(dict(event), separators=(",", ":"), sort_keys=True)
+                with self.events_path.open("a", encoding="utf-8") as handle:
+                    handle.write(record + "\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
 
     def read_spans(self) -> tuple[tuple[ExecutionSpan, ...], tuple[TelemetryDiagnostic, ...]]:
         if not self.spans_path.is_file():
@@ -197,6 +207,24 @@ class TelemetryStore:
         ]
     ]:
         """Serialize phase timing read/validate/append across store instances."""
+
+        with controller_lock_order(
+            "telemetry",
+            self._controller_lock_identity,
+        ):
+            with self._write_lock:
+                with self._phase_timing_transaction_ordered() as transaction:
+                    yield transaction
+
+    @contextmanager
+    def _phase_timing_transaction_ordered(
+        self,
+    ) -> Iterator[
+        tuple[
+            tuple[PhaseTimingEvent, ...],
+            tuple[TelemetryDiagnostic, ...],
+        ]
+    ]:
 
         self.ensure_manifest()
         flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)

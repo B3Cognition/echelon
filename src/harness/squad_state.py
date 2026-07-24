@@ -12,9 +12,10 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterator
+from typing import Any, Iterator
 
 from harness.blocked_decision import ensure_blocked_decision
+from harness.controller_lock_order import controller_lock_order
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
     validate_echelon_result,
@@ -767,13 +768,17 @@ class SquadStateStore:
 
     @contextmanager
     def _lock(self, *, exclusive: bool) -> Iterator[None]:
-        with self._lock_path.open("a+b") as lock_file:
-            operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-            fcntl.flock(lock_file.fileno(), operation)
-            try:
-                yield
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        with controller_lock_order(
+            "state",
+            str(self._lock_path.absolute()),
+        ):
+            with self._lock_path.open("a+b") as lock_file:
+                operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                fcntl.flock(lock_file.fileno(), operation)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def _load_unlocked(self) -> dict:
         if not self._path.exists():
@@ -855,14 +860,6 @@ class SquadStateStore:
                         validator="stale_state",
                     )
             self._save_unlocked(state)
-
-    def _mutate(self, mutation: Callable[[dict], Any]) -> Any:
-        """Apply one mutation to current state under the exclusive lock."""
-        with self._lock(exclusive=True):
-            state = self._load_unlocked()
-            result = mutation(state)
-            self._save_unlocked(state)
-            return result
 
     def initialize(
         self,
@@ -1900,10 +1897,15 @@ class SquadStateStore:
         state: dict[str, Any],
         *,
         diagnostic_key: str,
-        validator: Callable[[object], dict[str, object]],
     ) -> None:
         if diagnostic_key not in state:
             return
+        if diagnostic_key == _EXTERNAL_PUBLICATION_FAILURE_KEY:
+            validator = _validate_external_publication_failure
+        elif diagnostic_key == _CONTROLLER_COMPLETION_FAILURE_KEY:
+            validator = _validate_controller_completion_failure
+        else:  # pragma: no cover - internal programming error
+            raise AssertionError("unknown failure lifecycle")
         try:
             diagnostic = validator(state[diagnostic_key])
         except ValueError as exc:
@@ -1981,7 +1983,6 @@ class SquadStateStore:
             self._restore_failure_lifecycle(
                 desired,
                 diagnostic_key=_EXTERNAL_PUBLICATION_FAILURE_KEY,
-                validator=_validate_external_publication_failure,
             )
             desired.pop(PENDING_EXTERNAL_PUBLICATION_KEY, None)
             desired.pop(_EXTERNAL_PUBLICATION_FAILURE_KEY, None)
@@ -2255,7 +2256,6 @@ class SquadStateStore:
                 self._restore_failure_lifecycle(
                     desired,
                     diagnostic_key=_CONTROLLER_COMPLETION_FAILURE_KEY,
-                    validator=_validate_controller_completion_failure,
                 )
                 dispatch = desired["last_dispatch"]
                 dispatch.update(
@@ -2315,7 +2315,8 @@ class SquadStateStore:
             )
 
     def set_blocked(self, reason: str) -> None:
-        def mutate(state: dict) -> None:
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
             logger.debug(
                 "squad blocked run_id=%s reason=%r",
                 state.get("run_id", "?"),
@@ -2323,13 +2324,13 @@ class SquadStateStore:
             )
             self._transition_status(state, "blocked")
             state["blocked_reason"] = reason
-
-        self._mutate(mutate)
+            self._save_unlocked(state)
 
     def set_cancel_requested(self) -> None:
-        self._mutate(
-            lambda state: state.__setitem__("cancel_requested", True)
-        )
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            state["cancel_requested"] = True
+            self._save_unlocked(state)
 
     def is_cancel_requested(self) -> bool:
         return bool(self.load().get("cancel_requested", False))
@@ -2338,32 +2339,33 @@ class SquadStateStore:
         return int(self.load().get("token_usage", 0))
 
     def increment_token_usage(self, tokens: int) -> None:
-        def mutate(state: dict) -> None:
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
             state["token_usage"] = state.get("token_usage", 0) + tokens
-
-        self._mutate(mutate)
+            self._save_unlocked(state)
 
     def increment_why_fail_count(self) -> int:
-        def mutate(state: dict) -> int:
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
             count = state.get("why_fail_count", 0) + 1
             state["why_fail_count"] = count
-            return count
-
-        return int(self._mutate(mutate))
+            self._save_unlocked(state)
+            return int(count)
 
     def reset_why_fail_count(self) -> None:
-        self._mutate(
-            lambda state: state.__setitem__("why_fail_count", 0)
-        )
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            state["why_fail_count"] = 0
+            self._save_unlocked(state)
 
     def increment_phase_dispatch_count(self, phase: str) -> int:
-        def mutate(state: dict) -> int:
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
             counts = state.get("phase_dispatch_counts") or {}
             counts[phase] = counts.get(phase, 0) + 1
             state["phase_dispatch_counts"] = counts
-            return counts[phase]
-
-        return int(self._mutate(mutate))
+            self._save_unlocked(state)
+            return int(counts[phase])
 
     def get_phase_dispatch_count(self, phase: str) -> int:
         state = self.load()
@@ -2381,31 +2383,29 @@ class SquadStateStore:
             self._save_unlocked(state)
 
     def increment_convergence_guard_fires(self) -> int:
-        def mutate(state: dict) -> int:
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
             count = state.get("convergence_guard_fire_count", 0) + 1
             state["convergence_guard_fire_count"] = count
-            return count
-
-        return int(self._mutate(mutate))
+            self._save_unlocked(state)
+            return int(count)
 
     def reset_convergence_guard_fires(self) -> None:
-        self._mutate(
-            lambda state: state.__setitem__(
-                "convergence_guard_fire_count",
-                0,
-            )
-        )
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            state["convergence_guard_fire_count"] = 0
+            self._save_unlocked(state)
 
     def increment_cost(self, amount: float) -> None:
         if not amount:
             return
-        def mutate(state: dict) -> None:
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
             state["cost_usd"] = round(
                 state.get("cost_usd", 0.0) + amount,
                 6,
             )
-
-        self._mutate(mutate)
+            self._save_unlocked(state)
 
     def token_budget(self) -> int:
         return int(self.load().get("token_budget", 0))

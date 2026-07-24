@@ -11,8 +11,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Iterator
 
+from harness.controller_lock_order import controller_lock_order
 
-REASONING_JOURNAL_LOCK_RANK = 5
+
+REASONING_JOURNAL_LOCK_RANK = 6
 REASONING_JOURNAL_LOCK_NAME = "reasoning-journal.lock"
 MAX_JOURNAL_BYTES = 268_435_456
 
@@ -79,6 +81,22 @@ def reasoning_journal_lock(squad_dir: Path) -> Iterator[None]:
         descriptor = os.open(lock_path, flags, 0o600)
     except OSError:
         _raise("journal_io")
+    try:
+        with controller_lock_order(
+            "journal",
+            str(lock_path.absolute()),
+        ):
+            with _reasoning_journal_lock_ordered(descriptor, lock_path):
+                yield
+    finally:
+        os.close(descriptor)
+
+
+@contextmanager
+def _reasoning_journal_lock_ordered(
+    descriptor: int,
+    lock_path: Path,
+) -> Iterator[None]:
     locked = False
     try:
         metadata = os.fstat(descriptor)
@@ -107,7 +125,6 @@ def reasoning_journal_lock(squad_dir: Path) -> Iterator[None]:
                 fcntl.flock(descriptor, fcntl.LOCK_UN)
             except OSError:
                 pass
-        os.close(descriptor)
 
 
 def read_reasoning_journal(

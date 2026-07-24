@@ -161,8 +161,8 @@ def test_shared_journal_writer_rejects_malformed_preimage(
     assert journal.read_bytes() == before
 
 
-def test_reasoning_journal_lock_keeps_declared_rank_five() -> None:
-    assert REASONING_JOURNAL_LOCK_RANK == 5
+def test_reasoning_journal_lock_keeps_declared_rank_six() -> None:
+    assert REASONING_JOURNAL_LOCK_RANK == 6
     assert (
         completion_module.REASONING_JOURNAL_LOCK_RANK
         == REASONING_JOURNAL_LOCK_RANK

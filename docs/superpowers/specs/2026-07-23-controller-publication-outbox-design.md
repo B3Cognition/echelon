@@ -439,17 +439,20 @@ All code paths use one declared outer-to-inner lock rank:
 2. `SpecRunExecutionLock`;
 3. publication exclusivity lock;
 4. completion-outbox lock;
-5. reasoning-journal lock;
-6. telemetry-store write lock;
-7. `SquadStateStore` file lock.
+5. checkpoint ledger lock;
+6. reasoning-journal lock;
+7. telemetry-store write lock;
+8. `SquadStateStore` file lock.
 
-Locks at ranks 3 through 6 are acquired only for their individual side effect
+Locks at ranks 3 through 7 are acquired only for their individual side effect
 and released before the state step CAS unless the total order above is
 preserved. State-store code never calls a filesystem publisher, completion
 producer, journal writer, telemetry writer, or controller callback while its
-lock is held. Every writer of the reasoning journal uses rank 5. A static
+lock is held. Every writer of the reasoning journal uses rank 6. Equal-rank
+reentry is permitted only for the exact same logical lock identity. A static
 lock-rank assertion plus an adversarial two-thread regression covers every
-used nested pair and fails on reverse acquisition.
+used nested pair, fails on reverse acquisition, and rejects different lock
+identities at the same rank.
 
 ## Manifest and Ownership Contract
 
@@ -698,7 +701,8 @@ production behavior is introduced through a red-green cycle.
 - orphan intent cleanup requires fresh proof that neither state marker nor an
   incomplete bound `last_dispatch` authorizes the stage.
 - lock-rank static assertions and adversarial acquisition tests prove the
-  execution/publication/completion/journal/telemetry/state order cannot invert.
+  execution/publication/completion/checkpoint/journal/telemetry/state order
+  cannot invert.
 
 ### Token race
 

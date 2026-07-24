@@ -19,7 +19,8 @@
 - Every effect has an intrinsic replay receipt; final marker removal requires all exact applicable receipts.
 - Missing/malformed stages, markers, receipt prefixes, or diagnostics retain authority and block with a bounded code.
 - Old state with neither marker remains valid; publication authority without completion authority blocks as `completion_missing`.
-- Lock rank is Phase A execution → spec-run execution → publication → completion → journal → telemetry → state.
+- Lock rank is Phase A execution → spec-run execution → publication →
+  completion → checkpoint → journal → telemetry → state.
 - TDD is mandatory for every production change; each task ends in a focused commit and independent review gate.
 
 ---
@@ -705,10 +706,13 @@ git commit -m "fix: recover controller completion before phase work"
 - [ ] **Step 1: Write lock-order RED tests**
 
 Assign ranks to every lock and assert no code path acquires a lower rank while a higher rank is held. Add a two-thread barrier test for every used nested pair; require both threads to complete without timeout and the reverse-order test helper to raise immediately.
+Use the explicit order Phase A, spec run, publication, completion, checkpoint,
+journal, telemetry, then state. Equal-rank reentry is valid only for the exact
+same logical lock identity.
 
 - [ ] **Step 2: Implement lock-rank assertions**
 
-Keep a thread-local rank stack in test/debug helpers and ensure state-store methods never invoke controller/external callbacks. All reasoning-journal writers use the shared rank-5 lock.
+Keep a thread-local rank stack in test/debug helpers and ensure state-store methods never invoke controller/external callbacks. All reasoning-journal writers use the shared rank-6 lock.
 
 - [ ] **Step 3: Write full fresh-controller restart matrix**
 

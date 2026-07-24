@@ -16,6 +16,7 @@ from typing import Callable, Iterator, Mapping
 
 from echelon.commit_messages import EchelonCommitMetadata, build_echelon_commit_message
 from echelon.git_helpers import GitHelperError, run_git
+from harness.controller_lock_order import controller_lock_order
 
 
 CHECKPOINT_LEDGER_REL = Path(".echelon") / "checkpoints.json"
@@ -139,6 +140,14 @@ def _ensure_checkpoint_directory(spec_dir: Path) -> Path:
 
 @contextmanager
 def _checkpoint_ledger_lock(spec_dir: Path) -> Iterator[None]:
+    identity = str(checkpoint_lock_path(spec_dir).absolute())
+    with controller_lock_order("checkpoint", identity):
+        with _checkpoint_ledger_lock_ordered(spec_dir):
+            yield
+
+
+@contextmanager
+def _checkpoint_ledger_lock_ordered(spec_dir: Path) -> Iterator[None]:
     _ensure_checkpoint_runtime_ignored(spec_dir)
     directory = _ensure_checkpoint_directory(spec_dir)
     path = checkpoint_lock_path(spec_dir)

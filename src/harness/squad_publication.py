@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from harness.controller_lock_order import controller_lock_order
+
 try:
     import fcntl as _fcntl
 except ImportError:  # pragma: no cover - exercised by the capability gate
@@ -981,6 +983,16 @@ def _open_or_create_control_directory(
 def _publication_exclusivity(project_root: Path) -> Iterator[None]:
     """Serialize project-wide Echelon target prechecks and mutations."""
 
+    identity = str(
+        (project_root / _PUBLICATION_LOCK_RELATIVE).absolute()
+    )
+    with controller_lock_order("publication", identity):
+        with _publication_exclusivity_ordered(project_root):
+            yield
+
+
+@contextmanager
+def _publication_exclusivity_ordered(project_root: Path) -> Iterator[None]:
     _require_secure_posix()
     project_fd = _open_directory(
         project_root,

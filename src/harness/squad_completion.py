@@ -1349,7 +1349,7 @@ def discard_unreferenced_controller_completion(
 ) -> bool:
     """Discard one exact, valid stage after its caller proves no authority."""
     completion_id = _validate_completion_id(completion_id)
-    _, squad = _validate_roots(project_root, squad_dir)
+    project, squad = _validate_roots(project_root, squad_dir)
     outbox = squad / _OUTBOX_DIRECTORY
     try:
         outbox = _require_real_directory(
@@ -1402,6 +1402,27 @@ def discard_unreferenced_controller_completion(
         or receipts["completion_id"] != completion_id
     ):
         _raise("intent_mismatch")
+    publication = intent["publication"]
+    if publication["kind"] == "external":
+        from harness.squad_publication import (
+            PublicationError,
+            load_prepared_publication,
+        )
+
+        try:
+            prepared_publication = load_prepared_publication(
+                project,
+                squad,
+                publication["marker"],
+            )
+            prepared_publication.discard()
+        except PublicationError as error:
+            if error.code != "stage_missing":
+                _raise(
+                    "stage_io"
+                    if error.code == "publish_io"
+                    else "stage_corrupt"
+                )
     _discard_exact_transaction(
         outbox,
         completion_id,
@@ -1413,7 +1434,7 @@ def discard_unreferenced_controller_completion(
 
 @contextmanager
 def reasoning_journal_lock(squad_dir: Path) -> Iterator[None]:
-    """Hold the repository-wide rank-5 journal lock for one transaction."""
+    """Hold the repository-wide rank-6 journal lock for one transaction."""
     if not isinstance(squad_dir, Path):
         _raise("stage_corrupt")
     directory = _require_real_directory(
