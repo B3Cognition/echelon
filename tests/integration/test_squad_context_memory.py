@@ -1,6 +1,7 @@
 """Integration coverage for Squad Phase 4 canonical context publication."""
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 import subprocess
@@ -113,6 +114,18 @@ def test_finalize_published_spec_metadata_can_be_generated(tmp_path: Path) -> No
 
 def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_path: Path) -> None:
     _disable_lexicon_gate(tmp_path)
+    memory_config = (
+        tmp_path
+        / ".specify"
+        / "extensions"
+        / "echelon"
+        / "echelon-config.yml"
+    )
+    memory_config.parent.mkdir(parents=True)
+    memory_config.write_text(
+        "mempalace:\n  wing: photo-album\n",
+        encoding="utf-8",
+    )
     provider = _mock_provider()
     ctrl, store = _controller(tmp_path, provider=provider)
     store.initialize("run-test", "banzai", "msg", 0, "phase4-document", max_iterations=5)
@@ -138,6 +151,40 @@ def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_
 
     mock_ctx = object()
     mock_miner = MagicMock()
+    source = "specs/001-photo-album/spec.md"
+    expected_metadata = {
+        "scope": "canonical",
+        "canonical": True,
+        "artifact_path": source,
+        "artifact_hash": (
+            f"sha256:{hashlib.sha256(spec_text.encode('utf-8')).hexdigest()}"
+        ),
+        "lifecycle_status": "active",
+        "spec_id": "001",
+        "feature_id": "001-photo-album",
+    }
+    from codegen.memory.requirements_miner import (
+        MineResult,
+        plan_canonical_requirement_drawer_ids,
+    )
+
+    planned_drawer_ids = plan_canonical_requirement_drawer_ids(
+        spec_text.encode("utf-8"),
+        source=source,
+        artifact_metadata=expected_metadata,
+        wing="photo-album",
+    )
+    mock_miner.plan_canonical_bytes.return_value = planned_drawer_ids
+    mock_miner.mine_canonical_bytes.return_value = MineResult(
+        wing="photo-album",
+        total=len(planned_drawer_ids),
+        written=len(planned_drawer_ids),
+        skipped=0,
+        failed=0,
+        drawer_ids=planned_drawer_ids,
+        expected_drawer_ids=planned_drawer_ids,
+    )
+    mock_miner.verify_canonical_bytes.return_value = True
     with patch("codegen.memory.context.MemPalaceContext.from_project", return_value=mock_ctx) as mock_from_project:
         with patch("codegen.memory.requirements_miner.RequirementsMiner", return_value=mock_miner) as mock_miner_cls:
             result = ctrl.run("msg", "banzai")
@@ -150,23 +197,29 @@ def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_
     assert metadata.spec_id == "001"
 
     spec_file = published_dir / "spec.md"
-    expected_metadata = {
-        "scope": "canonical",
-        "canonical": True,
-        "artifact_path": "specs/001-photo-album/spec.md",
-        "artifact_hash": artifact_hash(spec_file),
-        "lifecycle_status": "active",
-        "spec_id": "001",
-        "feature_id": "001-photo-album",
-    }
+    assert artifact_hash(spec_file) == expected_metadata["artifact_hash"]
 
     mock_from_project.assert_any_call(tmp_path, run_id="run-test")
     mock_miner_cls.assert_called_once_with(mock_ctx, project_dir=tmp_path)
-    mock_miner.mine_canonical_bytes.assert_called_once_with(
+    mock_miner.plan_canonical_bytes.assert_called_once_with(
         spec_file.read_bytes(),
-        source="specs/001-photo-album/spec.md",
+        source=source,
         artifact_metadata=expected_metadata,
     )
+    mock_miner.mine_canonical_bytes.assert_called_once_with(
+        spec_file.read_bytes(),
+        source=source,
+        artifact_metadata=expected_metadata,
+    )
+    mock_miner.verify_canonical_bytes.assert_called_once_with(
+        spec_file.read_bytes(),
+        source=source,
+        artifact_metadata=expected_metadata,
+        drawer_ids=planned_drawer_ids,
+    )
+    dispatch = store.load()["last_dispatch"]
+    assert dispatch["post_dispatch_complete"] is True
+    assert len(dispatch["completion_receipts_sha256"]) == 64
 
 
 def test_phase4_publish_keeps_readiness_when_mempalace_setup_fails(tmp_path: Path) -> None:
