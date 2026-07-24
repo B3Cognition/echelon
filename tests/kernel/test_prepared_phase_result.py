@@ -902,6 +902,27 @@ def test_no_contract_preserves_unbounded_provider_behavior() -> None:
     assert prepared.normalized_paths == ()
 
 
+def test_contract_runtime_rejects_null_provider_allowlist(
+    contract: CompiledControllerStateContract,
+) -> None:
+    node = PhaseNode(
+        id="provider",
+        type="agent",
+        allowed_state_updates=None,
+        controller_state_contract=contract,
+    )
+
+    with pytest.raises(
+        ControllerStateContractViolation,
+        match="provider allowlist",
+    ):
+        prepare_phase_result(
+            node,
+            _result({"evidence": {"items": ["escape"]}}),
+            controller_updates={},
+        )
+
+
 def test_no_contract_rejects_controller_updates() -> None:
     node = PhaseNode(
         id="provider",

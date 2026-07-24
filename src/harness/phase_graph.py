@@ -56,6 +56,14 @@ class PhaseNode:
 
         entry = agent_entry or {}
         allowed = entry.get("allowed_state_updates", self.allowed_state_updates)
+        if (
+            self.controller_state_contract is not None
+            and type(allowed) is not list
+        ):
+            raise ControllerContractRegistryError(
+                f"phase {self.id!r} controller boundary requires "
+                "allowed_state_updates to be a list"
+            )
         required = entry.get("required_state_updates", self.required_state_updates)
         value_types = entry.get("state_update_types", self.state_update_types)
         value_enums = entry.get("state_update_enums", self.state_update_enums)
@@ -153,6 +161,28 @@ class PhaseGraph:
                         f"unknown controller state contract {contract_name!r} "
                         f"referenced by phase {p.get('id')!r}"
                     )
+            if contract is not None:
+                if type(p.get("allowed_state_updates")) is not list:
+                    raise ControllerContractRegistryError(
+                        f"phase {p.get('id')!r} controller boundary requires "
+                        "allowed_state_updates to be a list"
+                    )
+                for nested_name in ("agents", "pre_dispatch"):
+                    nested_entries = p.get(nested_name, [])
+                    if not isinstance(nested_entries, list):
+                        continue
+                    for entry in nested_entries:
+                        if (
+                            isinstance(entry, dict)
+                            and "allowed_state_updates" in entry
+                            and type(entry["allowed_state_updates"])
+                            is not list
+                        ):
+                            raise ControllerContractRegistryError(
+                                f"phase {p.get('id')!r} nested controller "
+                                "boundary requires allowed_state_updates "
+                                "to be a list"
+                            )
             node = PhaseNode(
                 id=p["id"],
                 type=p.get("type", "agent"),

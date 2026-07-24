@@ -148,6 +148,67 @@ def validate_workflow_definition(
     if required_contract_issues:
         return WorkflowValidationReport(required_contract_issues)
 
+    boundary_issues: list[WorkflowValidationIssue] = []
+    for phase in phases:
+        if (
+            not isinstance(phase, dict)
+            or "controller_state_contract" not in phase
+        ):
+            continue
+        phase_id = (
+            phase.get("id")
+            if isinstance(phase.get("id"), str)
+            else None
+        )
+        if "allowed_state_updates" not in phase:
+            boundary_issues.append(
+                WorkflowValidationIssue(
+                    "controller_state_contract requires an explicit "
+                    "allowed_state_updates list",
+                    phase_id=phase_id,
+                    path=path,
+                )
+            )
+        elif not isinstance(phase.get("allowed_state_updates"), list):
+            boundary_issues.append(
+                WorkflowValidationIssue(
+                    (
+                        "controller_state_contract requires "
+                        "allowed_state_updates to be a list"
+                        if phase.get("allowed_state_updates") is None
+                        else "allowed_state_updates must be a list"
+                    ),
+                    phase_id=phase_id,
+                    path=path,
+                )
+            )
+        for nested_name in ("agents", "pre_dispatch"):
+            entries = phase.get(nested_name, [])
+            if not isinstance(entries, list):
+                continue
+            for index, entry in enumerate(entries):
+                if (
+                    not isinstance(entry, dict)
+                    or "allowed_state_updates" not in entry
+                    or isinstance(entry["allowed_state_updates"], list)
+                ):
+                    continue
+                message = (
+                    "nested agent cannot override "
+                    "allowed_state_updates with null"
+                    if entry["allowed_state_updates"] is None
+                    else "allowed_state_updates must be a list"
+                )
+                boundary_issues.append(
+                    WorkflowValidationIssue(
+                        message,
+                        phase_id=phase_id,
+                        path=f"{path} {nested_name}[{index}]",
+                    )
+                )
+    if boundary_issues:
+        return WorkflowValidationReport(boundary_issues)
+
     try:
         graph = PhaseGraph(definition_path, extension_yml_path)
     except Exception as exc:

@@ -391,6 +391,55 @@ phases:
     ]
 
 
+@pytest.mark.parametrize("nested_field", (None, "agents", "pre_dispatch"))
+def test_phase_graph_rejects_null_allowlist_for_controller_boundary(
+    tmp_path: Path,
+    nested_field: str | None,
+) -> None:
+    registry = tmp_path / "contracts.yaml"
+    registry.write_bytes(
+        (
+            EXT_ROOT
+            / "extension/workflow/controller-state-contracts.yaml"
+        ).read_bytes()
+    )
+    phase = {
+        "id": "start",
+        "type": "agent",
+        "allowed_state_updates": [],
+        "controller_state_contract": "spec_lexicon",
+        "transitions": [{"to": "DONE", "condition": "always"}],
+    }
+    if nested_field is None:
+        phase["allowed_state_updates"] = None
+    else:
+        phase["type"] = "staged_parallel"
+        phase[nested_field] = [
+            {"id": "nested", "allowed_state_updates": None}
+        ]
+    definition = tmp_path / "definition.yaml"
+    definition.write_text(
+        yaml.safe_dump(
+            {
+                "controller_state_contracts_file": registry.name,
+                "phases": [phase, {"id": "DONE", "type": "terminal"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    extension_yml = tmp_path / "extension.yml"
+    extension_yml.write_text(
+        "provides: {commands: []}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ControllerContractRegistryError,
+        match="allowed_state_updates.*list",
+    ):
+        PhaseGraph(definition, extension_yml)
+
+
 def test_phase3_consensus_declares_per_agent_result_contracts():
     graph = PhaseGraph(DEFINITION, EXT_YML)
     node = graph.get("phase3-consensus")
