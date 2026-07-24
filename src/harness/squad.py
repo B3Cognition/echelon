@@ -812,11 +812,30 @@ class SquadController:
                 capture_output=True,
                 text=True,
             )
-            head = completed.stdout.strip()
-        except (OSError, subprocess.CalledProcessError):
-            head = "0" * 40
-        if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", head) is None:
-            head = "0" * 40
+            stdout = completed.stdout
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise StateAdvanceError(
+                "controller checkpoint prestate is unavailable",
+                json_path=(
+                    f"$.{PENDING_CONTROLLER_COMPLETION_KEY}"
+                    ".checkpoint_prestate"
+                ),
+                validator="checkpoint_prestate",
+            ) from exc
+        head = stdout.strip() if type(stdout) is str else ""
+        if (
+            re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", head)
+            is None
+            or set(head) == {"0"}
+        ):
+            raise StateAdvanceError(
+                "controller checkpoint prestate is invalid",
+                json_path=(
+                    f"$.{PENDING_CONTROLLER_COMPLETION_KEY}"
+                    ".checkpoint_prestate"
+                ),
+                validator="checkpoint_prestate",
+            )
         return {"kind": "git_head", "head": head}
 
     def _completion_timing_is_active(

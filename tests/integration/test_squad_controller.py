@@ -591,6 +591,161 @@ def _configure_tasks_lexicon_route(
     monkeypatch.setattr(ctrl, "_ensure_telemetry_manifest", lambda: None)
 
 
+def _prepare_checkpoint_boundary(
+    ctrl: SquadController,
+    store: SquadStateStore,
+) -> None:
+    snapshot = store.capture_routing_snapshot(
+        expected_phase="phase1-what",
+    )
+    ctrl._prepare_controller_completion(
+        from_phase="phase1-what",
+        to_phase="phase1-why1",
+        snapshot=snapshot,
+        manual_phase_run=False,
+        conditional_skip=False,
+        record_completion=False,
+        publication_marker=None,
+    )
+
+
+def _assert_checkpoint_preparation_unchanged(
+    ctrl: SquadController,
+    store: SquadStateStore,
+    *,
+    state_bytes: bytes,
+    state: dict[str, object],
+    artifact_bytes: bytes,
+) -> None:
+    assert store._path.read_bytes() == state_bytes
+    assert store.load() == state
+    assert (ctrl._project_root / "artifact.txt").read_bytes() == (
+        artifact_bytes
+    )
+    assert not (ctrl._squad_dir / ".completion-outbox").exists()
+    assert not (ctrl._squad_dir / ".publication-outbox").exists()
+
+
+@pytest.mark.parametrize(
+    "git_result",
+    (
+        subprocess.CalledProcessError(128, ["git", "rev-parse"]),
+        SimpleNamespace(stdout="not-an-object-id\n"),
+        SimpleNamespace(stdout=f"{'0' * 40}\n"),
+    ),
+    ids=("command-failure", "invalid-object-id", "zero-sentinel"),
+)
+def test_active_checkpoint_prestate_failure_is_side_effect_free(
+    tmp_path: Path,
+    git_result: object,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize(
+        "r",
+        "greenfield",
+        "message",
+        0,
+        "phase1-what",
+    )
+    artifact = tmp_path / "artifact.txt"
+    artifact.write_text("unchanged\n", encoding="utf-8")
+    state_bytes = store._path.read_bytes()
+    state = store.load()
+    artifact_bytes = artifact.read_bytes()
+
+    replacement = (
+        patch(
+            "harness.squad.subprocess.run",
+            side_effect=git_result,
+        )
+        if isinstance(git_result, BaseException)
+        else patch(
+            "harness.squad.subprocess.run",
+            return_value=git_result,
+        )
+    )
+    with replacement, pytest.raises(StateAdvanceError) as raised:
+        _prepare_checkpoint_boundary(ctrl, store)
+
+    assert raised.value.validator == "checkpoint_prestate"
+    _assert_checkpoint_preparation_unchanged(
+        ctrl,
+        store,
+        state_bytes=state_bytes,
+        state=state,
+        artifact_bytes=artifact_bytes,
+    )
+
+
+def test_active_checkpoint_prestate_rejects_unborn_repository(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(
+        ["git", "init", "-b", "main"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    ctrl, store = _controller(tmp_path)
+    store.initialize(
+        "r",
+        "greenfield",
+        "message",
+        0,
+        "phase1-what",
+    )
+    artifact = tmp_path / "artifact.txt"
+    artifact.write_text("unchanged\n", encoding="utf-8")
+    state_bytes = store._path.read_bytes()
+    state = store.load()
+    artifact_bytes = artifact.read_bytes()
+
+    with pytest.raises(StateAdvanceError) as raised:
+        _prepare_checkpoint_boundary(ctrl, store)
+
+    assert raised.value.validator == "checkpoint_prestate"
+    _assert_checkpoint_preparation_unchanged(
+        ctrl,
+        store,
+        state_bytes=state_bytes,
+        state=state,
+        artifact_bytes=artifact_bytes,
+    )
+
+
+def test_inactive_checkpoint_does_not_resolve_git_prestate(
+    tmp_path: Path,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize(
+        "r",
+        "greenfield",
+        "message",
+        0,
+        "phase1-what",
+    )
+    snapshot = store.capture_routing_snapshot(
+        expected_phase="phase1-what",
+    )
+
+    with patch(
+        "harness.squad.subprocess.run",
+        side_effect=AssertionError("checkpoint prestate was resolved"),
+    ):
+        prepared = ctrl._prepare_controller_completion(
+            from_phase="phase1-what",
+            to_phase="phase1-why1",
+            snapshot=snapshot,
+            manual_phase_run=False,
+            conditional_skip=False,
+            record_completion=True,
+            publication_marker=None,
+        )
+
+    assert "checkpoint" not in prepared.intent.effect_plan
+    assert prepared.intent.checkpoint_prestate == {"kind": "none"}
+
+
 def _evaluate_prepared_result(
     ctrl: SquadController,
     node: PhaseNode,
