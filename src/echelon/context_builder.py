@@ -18,6 +18,13 @@ from echelon.context_metadata import (
 from echelon.context_reconciliation import reconcile_drawers
 
 MAX_CONTEXT_SNIPPET_CHARS = 3000
+CONTEXT_OUTPUT_NAMES = (
+    "prior-spec-context.md",
+    "current-feature-context.md",
+    "feature-registry.snapshot.json",
+    "mempalace-reconciliation.json",
+    "stale-memory-report.md",
+)
 
 
 @dataclass(frozen=True)
@@ -35,19 +42,23 @@ def build_run_context(
     run_dir: Path,
     user_request: str = "",
     drawers: Sequence[Any] = (),
+    *,
+    output_dir: Path | None = None,
 ) -> ContextBuildResult:
-    context_dir = run_dir / "context"
+    context_dir = output_dir if output_dir is not None else run_dir / "context"
     context_dir.mkdir(parents=True, exist_ok=True)
 
     canonical_metadata = _canonical_metadata(project_root)
     wip_metadata = _wip_metadata(run_dir)
     reconciliation = reconcile_drawers(drawers, project_root)
 
-    prior_context = context_dir / "prior-spec-context.md"
-    current_context = context_dir / "current-feature-context.md"
-    feature_registry = context_dir / "feature-registry.snapshot.json"
-    reconciliation_json = context_dir / "mempalace-reconciliation.json"
-    stale_report = context_dir / "stale-memory-report.md"
+    (
+        prior_context,
+        current_context,
+        feature_registry,
+        reconciliation_json,
+        stale_report,
+    ) = (context_dir / name for name in CONTEXT_OUTPUT_NAMES)
 
     prior_context.write_text(_render_prior(canonical_metadata, reconciliation.accepted), encoding="utf-8")
     current_context.write_text(_render_current(wip_metadata, project_root, run_dir), encoding="utf-8")

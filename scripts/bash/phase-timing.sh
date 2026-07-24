@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(CDPATH='' cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(CDPATH='' cd "$SCRIPT_DIR/../.." && pwd)"
+. "$REPO_ROOT/extension/scripts/bash/python-detect.sh"
 
 # Detect the active spec run dir from runs/.current (primary); legacy squad/.current fallback.
 _phase_timing_squad_dir() {
@@ -140,21 +141,20 @@ append_timing_anomaly() {
   local elapsed_seconds="$4"
   local budget_seconds="$5"
 
-  python3 - "$journal_file" "$phase_key" "$run_id" "$elapsed_seconds" "$budget_seconds" <<'PY'
-import json
-import os
+  if ! "$PYTHON" - "$journal_file" "$phase_key" "$run_id" "$elapsed_seconds" "$budget_seconds" \
+      2>/dev/null <<'PY'
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-journal_path = Path(sys.argv[1])
+from harness.journal_entry_validator import append_reasoning_journal_entries
+from harness.reasoning_journal_store import canonicalize_store_path
+
+journal_path = canonicalize_store_path(Path(sys.argv[1]))
 phase_key = sys.argv[2]
 run_id = sys.argv[3]
 elapsed_seconds = float(sys.argv[4])
 budget_seconds = float(sys.argv[5])
-now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-journal_path.parent.mkdir(parents=True, exist_ok=True)
 entry = {
     "type": "timing_anomaly",
     "phase": phase_key,
@@ -162,11 +162,19 @@ entry = {
     "elapsed_seconds": elapsed_seconds,
     "budget_seconds": budget_seconds,
     "anomaly_reason": "EXCEEDED_BUDGET_20_PERCENT",
-    "timestamp": now,
+    "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
 }
-with journal_path.open("a", encoding="utf-8") as fh:
-    fh.write(json.dumps(entry, sort_keys=True) + "\n")
+append_reasoning_journal_entries(
+    journal_path.parent,
+    [entry],
+    phase_id=phase_key,
+    journal_path=journal_path,
+)
 PY
+  then
+    echo "phase-timing: journal append failed" >&2
+    return 1
+  fi
 }
 
 end_phase_cmd() {

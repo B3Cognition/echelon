@@ -432,7 +432,11 @@ def test_controller_ignores_empty_exclusions_for_context_only_catalog_units(tmp_
         },
     )
 
-    assert controller._apply_product_input_updates(result, "phase1-what") is None
+    assert controller._apply_product_input_updates(
+        result,
+        "phase1-what",
+        store.load(),
+    ) is None
     refreshed_context = resolution.requirement_context_path.read_text(encoding="utf-8")
     assert context_only_id not in refreshed_context
     assert requirement_id in refreshed_context
@@ -542,7 +546,11 @@ def test_phase_plan_controller_rejects_bad_traceability_before_consensus(tmp_pat
         },
     )
 
-    error = controller._apply_product_input_updates(result, "phase3-plan")
+    error = controller._apply_product_input_updates(
+        result,
+        "phase3-plan",
+        store.load(),
+    )
 
     assert error == f"invalid product input updates: {unit_id}: task T-S01 does not reference the mapped specification IDs"
     ledger = json.loads(resolution.traceability_path.read_text(encoding="utf-8"))
@@ -605,7 +613,11 @@ def test_consensus_controller_validates_run_local_traceability_without_requiring
         echelon_result={"verdict": "PASS"},
     )
 
-    assert controller._apply_product_input_updates(result, "phase3-consensus") is None
+    assert controller._apply_product_input_updates(
+        result,
+        "phase3-consensus",
+        store.load(),
+    ) is None
 
 
 def test_prompt_contract_uses_snapshot_paths_and_structured_updates() -> None:
@@ -798,3 +810,236 @@ def test_phase_a_publication_copies_evidence_only_after_traceability_is_ready(tm
 
     assert controller._publish_product_input_evidence(spec, store.load()) == []
     assert (spec / "inputs" / "manifest.json").is_file()
+
+
+def _product_effect_staging_fixture(
+    tmp_path: Path,
+):
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from harness.squad import SquadController
+    from harness.squad_provider import SquadAgentResult
+    from harness.squad_state import SquadStateStore
+
+    project = tmp_path / "workspace"
+    source = project / "requirements.md"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "# Product heading\n\nA normative requirement.\n",
+        encoding="utf-8",
+    )
+    run_dir = project / "runs" / "run-1"
+    resolution = resolve_product_inputs(
+        project,
+        run_dir,
+        [parse_input_declaration("requirement:requirements.md")],
+    )
+    catalog = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))
+    structural_unit, normative_unit = catalog["units"]
+    ledger = json.loads(resolution.traceability_path.read_text(encoding="utf-8"))
+    ledger["requirements"].insert(
+        0,
+        {
+            "input_unit_id": structural_unit["id"],
+            "disposition": "open_question",
+            "rationale": "Legacy structural entry.",
+            "spec_ids": [],
+            "task_ids": [],
+            "targets": [],
+        },
+    )
+    resolution.traceability_path.write_text(
+        json.dumps(ledger, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    resolution.traceability_markdown_path.write_text(
+        "# Product Input Traceability\n\nlegacy\n",
+        encoding="utf-8",
+    )
+    resolution.requirement_context_path.write_text(
+        "# stale requirement context\n",
+        encoding="utf-8",
+    )
+
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=build req=FR-001 "
+        "depends=none target=sources/web\n",
+        encoding="utf-8",
+    )
+    store = SquadStateStore(run_dir)
+    store.initialize(
+        "run-1",
+        "greenfield",
+        "demo",
+        0,
+        "phase3-plan",
+        implementation_targets=["sources/web"],
+        product_inputs=resolution.state_payload(project),
+    )
+    state = store.load()
+    state["spec_dir"] = str(spec_dir.relative_to(project))
+    store.save(state)
+    controller = SquadController(
+        object(),
+        store,
+        object(),
+        project / "ext",
+        project,
+        squad_dir=run_dir,
+    )
+    result = SquadAgentResult(
+        exit_code=0,
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+        echelon_result={
+            "verdict": "DONE",
+            "product_input_updates": [
+                {
+                    "input_unit_id": normative_unit["id"],
+                    "disposition": "included",
+                    "rationale": "Mapped during planning.",
+                    "spec_ids": ["FR-001"],
+                    "task_ids": ["T-001"],
+                    "targets": ["sources/web"],
+                }
+            ],
+        },
+    )
+    visible = (
+        resolution.traceability_path,
+        resolution.traceability_markdown_path,
+        resolution.requirement_context_path,
+    )
+    return controller, store, result, visible
+
+
+@pytest.mark.parametrize(
+    ("fault_point", "fault_occurrence"),
+    [
+        ("json", 1),
+        ("markdown", 1),
+        ("requirement_context", 1),
+        ("json", 2),
+        ("markdown", 2),
+        ("task_validation", 1),
+    ],
+    ids=[
+        "structural-json",
+        "structural-markdown",
+        "requirement-context",
+        "candidate-json",
+        "candidate-markdown",
+        "final-task-validation",
+    ],
+)
+def test_product_effect_staging_failure_keeps_visible_inputs_byte_identical(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault_point: str,
+    fault_occurrence: int,
+) -> None:
+    import echelon.product_inputs as product_inputs
+    from harness.squad import _ProductInputCommitError
+
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    before = {path: path.read_bytes() for path in visible}
+    calls = 0
+
+    if fault_point == "json":
+        original = product_inputs._write_json
+
+        def faulting_write_json(path, payload):
+            nonlocal calls
+            original(path, payload)
+            if path.name == "traceability.json":
+                calls += 1
+                if calls == fault_occurrence:
+                    raise OSError("injected staged JSON failure")
+
+        monkeypatch.setattr(product_inputs, "_write_json", faulting_write_json)
+    elif fault_point == "markdown":
+        original = product_inputs._write_traceability_markdown
+
+        def faulting_write_markdown(path, payload):
+            nonlocal calls
+            original(path, payload)
+            calls += 1
+            if calls == fault_occurrence:
+                raise OSError("injected staged Markdown failure")
+
+        monkeypatch.setattr(
+            product_inputs,
+            "_write_traceability_markdown",
+            faulting_write_markdown,
+        )
+    elif fault_point == "requirement_context":
+        original = product_inputs.refresh_requirement_context_from_catalog
+
+        def faulting_context(catalog_path, requirement_context_path):
+            original(catalog_path, requirement_context_path)
+            raise OSError("injected staged requirement-context failure")
+
+        monkeypatch.setattr(
+            product_inputs,
+            "refresh_requirement_context_from_catalog",
+            faulting_context,
+        )
+    else:
+        original = product_inputs.apply_product_input_updates
+
+        def faulting_final_validation(*args, **kwargs):
+            original(*args, **kwargs)
+            raise OSError("injected final task validation failure")
+
+        monkeypatch.setattr(
+            product_inputs,
+            "apply_product_input_updates",
+            faulting_final_validation,
+        )
+
+    with pytest.raises(_ProductInputCommitError):
+        controller._prepare_external_phase_effects(
+            result,
+            "phase3-plan",
+            store.load(),
+            manual_phase_run=False,
+        )
+
+    assert {path: path.read_bytes() for path in visible} == before
+    assert "pending_external_publication" not in store.load()
+
+
+def test_product_effect_staging_changes_only_sealed_copies_until_publish(
+    tmp_path: Path,
+) -> None:
+    controller, store, result, visible = _product_effect_staging_fixture(tmp_path)
+    before = {path: path.read_bytes() for path in visible}
+
+    prepared = controller._prepare_external_phase_effects(
+        result,
+        "phase3-plan",
+        store.load(),
+        manual_phase_run=False,
+    )
+
+    assert prepared is not None
+    assert {path: path.read_bytes() for path in visible} == before
+    manifest = json.loads(
+        next(
+            (
+                controller._squad_dir
+                / ".publication-outbox"
+                / prepared.marker.transaction_id
+            ).glob("manifest.json")
+        ).read_text(encoding="utf-8")
+    )
+    assert [operation["target"] for operation in manifest["operations"]] == sorted(
+        str(path.relative_to(controller._project_root)).replace("\\", "/")
+        for path in visible
+    )
+
+    prepared.publish()
+
+    assert {path: path.read_bytes() for path in visible} != before

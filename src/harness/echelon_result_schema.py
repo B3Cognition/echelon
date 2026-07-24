@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
 from harness.quality_scores import validate_quality_scores_shape
+from harness.state_transaction_namespace import (
+    PROVIDER_CONTROL_INTENT_KEYS,
+    STORE_OWNED_TRANSACTION_KEYS,
+)
 
 
 class EchelonResultValidationError(ValueError):
@@ -91,16 +95,7 @@ ALLOWED_VERDICTS = frozenset({
     "WARN",
 })
 
-RESERVED_STATE_UPDATE_KEYS = frozenset({
-    "completed_phases",
-    "created_at",
-    "last_dispatch",
-    "phase_dispatch_counts",
-    "run_id",
-    "squad_dir",
-    "staging_dir",
-    "updated_at",
-})
+RESERVED_STATE_UPDATE_KEYS = STORE_OWNED_TRANSACTION_KEYS
 
 PRODUCT_INPUT_DISPOSITIONS = frozenset({
     "included",
@@ -124,6 +119,7 @@ def validate_echelon_result(
     payload: Any,
     *,
     allowed_state_update_keys: Iterable[str] | None = None,
+    permitted_reserved_state_update_keys: Iterable[str] | None = None,
 ) -> dict:
     """Return a normalized copy of a safe echelon_result payload.
 
@@ -180,13 +176,21 @@ def validate_echelon_result(
         if allowed_state_update_keys is not None
         else None
     )
+    permitted_reserved_keys = frozenset(
+        permitted_reserved_state_update_keys or ()
+    )
 
     for key in state_updates:
         if not isinstance(key, str):
             raise EchelonResultValidationError(
                 "echelon_result.state_updates keys must be strings"
             )
-        if key in RESERVED_STATE_UPDATE_KEYS:
+        if (
+            key in RESERVED_STATE_UPDATE_KEYS
+            and (allowed_keys is None or key not in allowed_keys)
+            and key not in permitted_reserved_keys
+            and key not in PROVIDER_CONTROL_INTENT_KEYS
+        ):
             raise EchelonResultValidationError(
                 f"echelon_result.state_updates cannot set reserved key {key!r}"
             )
@@ -282,7 +286,12 @@ def validate_echelon_result_contract(
             + ", ".join(sorted(unsupported_types))
         )
 
-    result = validate_echelon_result(payload)
+    result = validate_echelon_result(
+        payload,
+        permitted_reserved_state_update_keys=(
+            contract.allowed_state_update_keys
+        ),
+    )
     verdict = result["verdict"]
     if contract.allowed_verdicts is not None and verdict not in contract.allowed_verdicts:
         allowed = ", ".join(sorted(contract.allowed_verdicts)) or "(none)"

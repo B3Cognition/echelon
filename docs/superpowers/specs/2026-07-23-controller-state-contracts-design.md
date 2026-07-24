@@ -1,7 +1,7 @@
 # Controller State Contracts Design
 
 **Date:** 2026-07-23  
-**Status:** Approved design; awaiting written-spec review  
+**Status:** Implemented design
 **Scope:** Add one fail-closed, reusable contract boundary for controller-owned
 workflow state.
 
@@ -54,6 +54,10 @@ toward successful checkpoint handling.
 8. Fail closed at the current phase with structured diagnostics.
 9. Preserve the existing state field names and valid workflow behavior.
 10. Migrate all current controller-producing nodes atomically.
+11. Seal route selection and every accepted controller/COMMANDER side effect
+    before publishing any of them.
+12. Use persisted compare-and-swap identity so stale or replayed decisions
+    cannot overwrite newer state.
 
 ## Non-Goals
 
@@ -142,13 +146,19 @@ Each named contract MUST:
   `properties.state_updates.properties`;
 - use only local `#/$defs/...` references when `$ref` is needed.
 
-Remote, file, and network references are forbidden. Defaults are forbidden:
-the schema validates state but never invents it.
+The loader walks the complete schema tree, including `$defs` and every nested
+subschema. It rejects unresolved local references, remote/file/network
+references, `$id`, `$anchor`, dynamic/recursive reference keywords, and
+`default`. A validator is constructed with a retrieval-disabled registry, so
+an unexpected reference cannot escape the local schema even after startup
+validation. The schema validates state but never invents it.
 
 The registry loader rejects duplicate YAML mapping keys before schema parsing.
 Every schema is checked with `Draft202012Validator.check_schema()` at workflow
-startup. `jsonschema` becomes a direct project dependency rather than relying
-on its current transitive presence.
+startup. The schema tree and registry mapping exposed to callers are immutable;
+the compiled validator is private and only a read-only validation method is
+published. `jsonschema` is a direct project dependency rather than relying on
+its transitive presence.
 
 ## Named Contracts and Atomic Migration
 
@@ -161,6 +171,12 @@ The first release defines five contracts:
 | `understanding` | `phase1-understanding`, `phase3-understanding` |
 | `feasibility_structural` | `phase2-decide` |
 | `intent_alignment_structural` | `phase2-tracker-alignment` |
+
+The seven controller-producing roles and their exact contract names are held
+in one central required-role mapping shared by `PhaseGraph` and the standalone
+workflow validator. Startup rejects a missing contract, an unexpected
+contract, and a controller-producing role without the registry declaration.
+This prevents either startup path from accepting a weakened workflow.
 
 The contract schemas own the existing 23 unique controller fields. The two
 Tasks Lexicon phases and two Understanding phases resolve the same compiled
@@ -247,8 +263,18 @@ state.
 
 ## Lossless Normalization
 
-Normalization operates on a deep copy of controller values. Provider values
-retain their existing contract behavior.
+Untrusted executor results are detached before any generic copying,
+normalization, validation, routing, or journaling. The detacher is an explicit,
+bounded tree walk over exact `dict`, `list`, and `tuple` containers plus the
+supported immutable scalar/path/enum values. It does not call
+`copy.deepcopy()`, arbitrary mapping methods, `__reduce__`, `__deepcopy__`,
+`__fspath__`, or representation hooks on an unapproved container. It rejects
+cycles and enforces the same depth, node, and collection ceilings described
+below. Any unexpected protocol failure becomes one typed, value-redacted
+contract violation with no chained producer exception.
+
+After this quarantine boundary, controller-owned values are losslessly
+normalized. Provider values retain their existing result-contract behavior.
 
 The only supported conversions are:
 
@@ -257,7 +283,7 @@ The only supported conversions are:
 | `os.PathLike` returning text | string |
 | `enum.Enum` with a supported scalar value | its scalar value |
 | exact tuple | list |
-| `collections.abc.Mapping` with string keys | plain dictionary |
+| approved mapping with string keys | plain dictionary |
 
 Normalization is recursive with:
 
@@ -282,7 +308,8 @@ Normalization MUST be idempotent. The normalized copy is used for both
 transition evaluation and persistence. The unnormalized object is never
 re-read after successful preparation.
 
-Telemetry records contract name and normalized JSON paths, not field values.
+Telemetry and `last_dispatch` record the contract name and sorted
+`controller_normalized_paths`, never normalized field values.
 
 ## Prepared Phase Result Boundary
 
@@ -295,11 +322,49 @@ factory. It contains:
 - controller-owned update keys;
 - controller contract name and digest, when present;
 - normalized field paths;
+- validated state-removal keys and terminal control updates;
 - any validated controller routing directive.
 
+The factory also attaches an internal, process-local attestation over the
+canonical payload and its preparation provenance, including phase identity,
+ownership sets, contract identity, normalized paths, and routing override.
+State advancement verifies that attestation before persistence. Ordinary
+attestation-protocol failures during preparation become one generic,
+value-redacted `ControllerStateContractViolation` with no chained cause or
+context; already typed contract violations and process-control exceptions
+retain their existing semantics.
+
 `_evaluate_transitions()` accepts `PreparedPhaseResult`, not raw
-`SquadAgentResult`. State advancement also accepts the prepared form. This
-forces production and test call sites through the same boundary.
+`SquadAgentResult`. State advancement accepts only the routing decision
+described below. This forces production and test call sites through both
+factory boundaries.
+
+## Prepared Routing Decision Boundary
+
+Route selection produces an immutable `PreparedRoutingDecision`. It nests the
+verified `PreparedPhaseResult` and seals:
+
+- source and destination phase;
+- expected persisted `state_revision`;
+- SHA-256 identity of the previous `last_dispatch`;
+- routing source and selected transition index;
+- approved queued state updates;
+- the `increment_iteration`, `manual_phase_run`, `conditional_skip`, and
+  `record_completion` flags;
+- ordered SHA-256 digests of every accepted canonical COMMANDER judgment.
+
+The decision has its own process-local HMAC attestation. Both attestations are
+verified before the state lock is acquired; phase, revision, and previous
+dispatch identity are then checked again against live state under the exclusive
+lock. Mutable values are never exposed by alias.
+
+COMMANDER output is detached, result-contract validated, and canonicalized
+before it can select a route or contribute state. Routing keys are consumed as
+control data, while approved extra updates are queued into the same decision.
+The banzai escalation/recovery path uses this boundary as well. Its decision
+sets `record_completion: false`, so recovering a blocked run can change route
+and clear recovery metadata atomically without falsely completing the blocked
+phase.
 
 Preparation order is:
 
@@ -310,16 +375,22 @@ Preparation order is:
 5. Losslessly normalize controller values.
 6. Reject provider/controller overlap and keys outside the ownership union.
 7. Validate the synthetic controller result against its named schema.
-8. Deep-copy and seal the canonical prepared result.
+8. Seal the canonical prepared result, including state removals and control
+   updates.
 9. Handle a valid `BLOCKED` result, or evaluate transitions for a valid
    non-blocked result.
 10. Apply product-input side effects only after result preparation succeeds.
 11. Determine whether the selected transition applies the existing
-    `increment_iteration` state mutation.
-12. Atomically advance state with the normalized updates, optional iteration
-    increment, completion history, and contract receipt.
-13. Apply successful post-commit timing telemetry.
-14. Create the successful phase checkpoint.
+    `increment_iteration` state mutation and collect accepted COMMANDER/policy
+    updates.
+12. Publish any required Phase A artifact, then queue its
+    `published_spec_dir` into the final decision.
+13. Bind and attest the complete routing decision to the current persisted
+    revision and previous-dispatch identity.
+14. Atomically advance state with all updates, removals, terminal control
+    metadata, optional iteration increment, completion history, and receipt.
+15. Apply successful post-commit timing telemetry.
+16. Create the successful phase checkpoint.
 
 No success-side state mutation occurs before preparation succeeds. Evidence
 files produced while evaluating an artifact may exist after a validation
@@ -372,6 +443,10 @@ types.
 
 - evaluation is one of `pending`, `passed`, or `failed`.
 - `pending` does not claim a pass or certified report.
+- When the global gate or spec artifact subgate is disabled, the existing
+  unexecuted branch persists only `pending` evaluation and attempt count,
+  removes stale pass, findings, and report evidence, and routes onward using
+  the derived effective `lexicon_gate.spec_enabled` value.
 - `passed` requires pass true, zero findings, and a report.
 - `failed` requires pass false, at least one finding, and a report.
 - attempts and findings are non-negative.
@@ -399,22 +474,50 @@ configuration first and then emits a complete candidate result for validation.
 
 ## Transactional State Advancement
 
-`SquadStateStore.advance()` becomes an all-or-error operation.
+All state reads and writes use a per-run `state.lock`: shared for reads and
+exclusive for writes. Every successful save increments a persisted,
+non-negative `state_revision`. Atomic file replacement remains the physical
+publication mechanism.
 
-It MUST:
+Public snapshot saves compare the caller's revision with live state under the
+exclusive lock and reject stale snapshots. Store-owned counters and flags use
+one locked read/mutate/save operation rather than a split load/save sequence.
+Prepared result updates and queued updates both reject transaction-owned keys
+such as `phase`, `state_revision`, `last_dispatch`, and completion identity, so
+payload application cannot overwrite the sealed route.
 
-1. load current state;
-2. build the complete next state in memory;
-3. validate the prepared result receipt and ownership metadata;
-4. apply the normalized updates to the in-memory copy;
-5. apply `increment_iteration` when selected and not already supplied by the
-   validated result;
-6. add completion history and contract receipt;
-7. perform the existing atomic file replacement;
-8. return an `AdvanceReceipt`.
+The SIGINT handler only sets the controller's in-memory cancellation flag.
+It never performs state I/O from signal context, because the signal may arrive
+while the interrupted thread owns `state.lock`. The main loop persists the
+interrupted state after the current phase and outside the signal handler.
 
-It MUST NOT catch a validation error, mutate state to blocked, and return
-normally.
+`SquadStateStore.advance()` is an all-or-error compare-and-swap operation. It
+accepts only `PreparedRoutingDecision` and:
+
+1. verifies the routing seal and its nested prepared-result seal;
+2. acquires the exclusive state lock;
+3. reloads live state and compares source phase, exact `state_revision`, and
+   SHA-256 identity of the previous `last_dispatch`;
+4. builds the complete next state in memory;
+5. records a new dispatch identity, previous-dispatch hash, preparation hash,
+   routing-decision hash, route source/index, COMMANDER payload digests,
+   contract receipt, and value-free normalization paths;
+6. applies sealed removals first, then normalized result/queued updates, then
+   terminal control updates;
+7. applies the sealed optional iteration increment, completion/manual history,
+   and recovery semantics;
+8. performs exactly one atomic save and returns an `AdvanceReceipt`.
+
+Revision and dispatch identity are both required. The dispatch hash
+distinguishes a newly published self-loop from the pre-commit state even when
+the phase string is unchanged. Reusing the same decision, replaying an older
+decision after later progress, or racing any intervening save therefore fails
+closed as stale state.
+
+The store is the authoritative verifier; the controller only checks that the
+returned object is an `AdvanceReceipt`. There is no post-commit reload-based
+receipt validator, mutable pre-advance snapshot, or rollback assignment.
+Once another commit wins, an older caller cannot move phase or state backward.
 
 On failure it raises a typed exception before changing:
 
@@ -425,8 +528,12 @@ On failure it raises a typed exception before changing:
 - controller values;
 - checkpoint metadata.
 
-The controller catches the exception and writes a separate blocked-state
-diagnostic. That diagnostic is not a successful phase advance.
+The controller may ask the store to merge a separate blocked-state diagnostic.
+That helper also runs under the exclusive lock and writes only when the current
+phase and expected pre-commit dispatch hash still match. It preserves unrelated
+state updates. If a successful route, including a self-loop, has already
+published, the late failure diagnostic is discarded rather than rolling that
+state back.
 
 ## Failure Diagnostics
 
@@ -473,7 +580,14 @@ Every successfully advanced phase with a controller contract records:
 {
   "controller_contract": "tasks_lexicon",
   "controller_contract_sha256": "...",
-  "controller_normalized": false
+  "controller_normalized": true,
+  "controller_normalized_paths": [
+    "$.state_updates.tasks_lexicon_report"
+  ],
+  "state_revision": 42,
+  "previous_dispatch_sha256": "...",
+  "preparation_sha256": "...",
+  "routing_decision_sha256": "..."
 }
 ```
 
@@ -488,14 +602,22 @@ prepare and validate
         ↓
 evaluate transition
         ↓
-resolve existing increment-iteration mutation
+publish required Phase A artifact
         ↓
-atomic state advance, optional increment, and receipt
+seal route, effects, provenance, and persisted CAS identity
+        ↓
+one locked atomic state advance and receipt
         ↓
 post-commit timing telemetry
         ↓
 phase checkpoint
 ```
+
+Every newly persisted dispatch and `AdvanceReceipt` carries an exact Boolean
+`conditional_skip` identity. `false` identifies an executed phase and `true`
+identifies the explicit condition-false skip path. This identity is verified
+independently from `manual_phase_run`: a manual invocation can execute normally
+or perform a conditional skip, so neither marker substitutes for the other.
 
 If state advance fails, checkpointing is not attempted. If checkpointing
 fails, existing checkpoint failure handling remains responsible for blocking
@@ -511,11 +633,15 @@ Startup validation rejects:
 - invalid JSON Schema;
 - duplicate contract names;
 - unknown phase contract references;
+- missing or incorrect contract assignments for any required controller role;
 - legacy `controller_state_updates`;
 - missing explicit provider allowlist on a controller-contract phase;
+- a `null` or otherwise non-list provider allowlist, including a nested-agent
+  override;
 - provider/controller field overlap;
 - controller schemas that allow additional state properties;
-- remote or non-local schema references;
+- unresolved, remote, dynamic, recursive, or otherwise unsupported schema
+  references/identifiers;
 - unsupported skip semantics on a controller-contract phase;
 - nested agent controller ownership;
 - transition fields that cannot be resolved from declared provider fields,
@@ -533,7 +659,10 @@ The preparation boundary is mandatory for:
 - provider-free deterministic executors;
 - mixed provider/controller governance nodes;
 - valid `BLOCKED` results;
-- controller policy routing on exhaustion.
+- controller policy routing on exhaustion;
+- conditional skips and manual runs;
+- COMMANDER transition judgments;
+- banzai COMMANDER escalation recovery without completion recording.
 
 Node skipping never fabricates required controller state. Workflow validation
 forbids the existing successful-skip action on contract-bearing nodes.
@@ -557,6 +686,8 @@ forbids the existing successful-skip action on contract-bearing nodes.
 - Normalization is idempotent.
 - Original result objects remain unchanged.
 - Cycles, depth overflow, node-count overflow, and oversized collections fail.
+- Deeply nested results and hostile copy/mapping/path/repr protocols fail
+  closed before they can execute.
 - Strings are not coerced to booleans, integers, or enum values.
 - Sets, bytes paths, dataclasses, and non-string mapping keys fail.
 
@@ -588,15 +719,28 @@ Injected malformed controller output proves that:
 - a deterministic structured error is persisted.
 
 Equivalent tests cover normal, manual, resumed, deterministic, mixed
-governance, and `BLOCKED` paths.
+governance, `BLOCKED`, COMMANDER transition, and COMMANDER recovery paths.
 
 ### State-store tests
 
 - Advance either commits the full new state or changes none of the
   success-state fields.
-- An invalid receipt raises instead of returning normally.
+- A forged or mutated routing/preparation seal raises instead of returning
+  normally.
+- Stale phase/revision/dispatch identity and repeated self-loop decisions are
+  rejected.
+- Stale public snapshots cannot erase a winning phase/dispatch, and
+  transaction-owned result keys cannot overwrite a sealed destination.
+- Removals, terminal control metadata, routing updates, iteration, history,
+  and receipt publish in one save.
+- Recovery decisions route and clear recovery metadata without recording phase
+  completion.
 - The controller's subsequent blocked diagnostic is distinct from a successful
   advance.
+- A late failure diagnostic cannot overwrite a successful self-loop or later
+  phase advance.
+- SIGINT handling performs no lock-taking state I/O and therefore cannot
+  deadlock an interrupted locked commit.
 - A failed advance cannot be followed by a successful checkpoint.
 
 ### Regression tests
@@ -639,7 +783,11 @@ The design is complete when:
 6. Scalar and cross-field routing invariants are validated before routing.
 7. Raw results cannot reach transition evaluation or state advancement.
 8. Invalid controller state cannot advance, complete, or checkpoint a phase.
-9. State advancement is all-or-error.
+9. State advancement is one locked, revision-bound all-or-error transaction.
 10. Failure diagnostics are stable, structured, and value-redacted.
 11. Valid existing workflow behavior remains unchanged.
 12. No compatibility or fallback path remains after migration.
+13. All accepted COMMANDER routing and recovery effects are canonical,
+    provenance-digested, and committed through the same decision boundary.
+14. Stale, replayed, and self-loop-replayed decisions cannot overwrite newer
+    state.

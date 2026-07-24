@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "echelon"
-version = "3.7.13"
+version = "3.7.14"
 description = "Multi-agent cognitive system with SOAR-powered build pipeline, MemPalace requirements memory, and 34-metric requirements quality analysis"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -17,6 +17,7 @@ authors = [
 dependencies = [
   # codegen
   "pyyaml>=6.0",
+  "jsonschema>=4.23,<5",
   "mempalace @ https://github.com/MemPalace/mempalace/archive/refs/tags/v3.3.0.tar.gz",
   # understanding
   "typer>=0.9.0",

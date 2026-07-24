@@ -56,7 +56,7 @@ SKILL_MAP = {
     "reopen":  "echelon.reopen",
 }
 
-CLI_VERSION = "3.7.13"
+CLI_VERSION = "3.7.14"
 LEXICON_TASK_SPEC_REF_PATH = "lexicon_gate.artifacts.tasks.spec_ref"
 
 from echelon.workspace_model import discover_workspace  # noqa: E402  (after stdlib imports)
@@ -2968,6 +2968,8 @@ def _exit_if_provider_session_limited(state_store: object) -> None:
 
 _RUNS_GITIGNORE_PATTERNS = (
     "**/.echelon/checkpoints.json",
+    "**/.echelon/checkpoints.lock",
+    "**/.echelon/.checkpoints.json.*.tmp",
     "*/state.json",
     "*/*.tmp",
     ".current*",

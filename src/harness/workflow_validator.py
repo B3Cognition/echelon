@@ -8,8 +8,16 @@ from typing import Any
 
 import yaml
 
+from harness.controller_state_contract_requirements import (
+    is_controller_producing_phase,
+    required_controller_contract_name,
+)
 from harness.echelon_result_schema import ALLOWED_VERDICTS, SUPPORTED_STATE_UPDATE_TYPES
-from harness.phase_graph import PhaseGraph
+from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.state_transaction_namespace import (
+    PROVIDER_CONTROL_INTENT_KEYS,
+    STORE_OWNED_TRANSACTION_KEYS,
+)
 
 
 SUPPORTED_TRANSITION_KEYS = frozenset({
@@ -46,6 +54,7 @@ KNOWN_CONDITION_FIELDS = frozenset({
     "governance.max_repair_attempts",
     "lexicon_gate.enabled",
     "lexicon_gate.max_repair_attempts",
+    "lexicon_gate.spec_enabled",
     # Build-task-loop progress predicates.
     "all_phase_groups_complete",
     "all_tasks_complete",
@@ -131,6 +140,75 @@ def validate_workflow_definition(
             WorkflowValidationIssue("workflow definition must contain phases[]", path=path)
         ])
 
+    required_contract_issues = _validate_required_controller_contracts(
+        raw,
+        phases,
+        path=path,
+    )
+    if required_contract_issues:
+        return WorkflowValidationReport(required_contract_issues)
+
+    boundary_issues: list[WorkflowValidationIssue] = []
+    for phase in phases:
+        if (
+            not isinstance(phase, dict)
+            or "controller_state_contract" not in phase
+        ):
+            continue
+        phase_id = (
+            phase.get("id")
+            if isinstance(phase.get("id"), str)
+            else None
+        )
+        if "allowed_state_updates" not in phase:
+            boundary_issues.append(
+                WorkflowValidationIssue(
+                    "controller_state_contract requires an explicit "
+                    "allowed_state_updates list",
+                    phase_id=phase_id,
+                    path=path,
+                )
+            )
+        elif not isinstance(phase.get("allowed_state_updates"), list):
+            boundary_issues.append(
+                WorkflowValidationIssue(
+                    (
+                        "controller_state_contract requires "
+                        "allowed_state_updates to be a list"
+                        if phase.get("allowed_state_updates") is None
+                        else "allowed_state_updates must be a list"
+                    ),
+                    phase_id=phase_id,
+                    path=path,
+                )
+            )
+        for nested_name in ("agents", "pre_dispatch"):
+            entries = phase.get(nested_name, [])
+            if not isinstance(entries, list):
+                continue
+            for index, entry in enumerate(entries):
+                if (
+                    not isinstance(entry, dict)
+                    or "allowed_state_updates" not in entry
+                    or isinstance(entry["allowed_state_updates"], list)
+                ):
+                    continue
+                message = (
+                    "nested agent cannot override "
+                    "allowed_state_updates with null"
+                    if entry["allowed_state_updates"] is None
+                    else "allowed_state_updates must be a list"
+                )
+                boundary_issues.append(
+                    WorkflowValidationIssue(
+                        message,
+                        phase_id=phase_id,
+                        path=f"{path} {nested_name}[{index}]",
+                    )
+                )
+    if boundary_issues:
+        return WorkflowValidationReport(boundary_issues)
+
     try:
         graph = PhaseGraph(definition_path, extension_yml_path)
     except Exception as exc:
@@ -172,11 +250,20 @@ def validate_workflow_definition(
                 )
             )
         seen.add(phase_id)
-        known_condition_fields.update(_phase_condition_fields(phase))
+        node = graph.get(phase_id)
+        known_condition_fields.update(_phase_condition_fields(node))
 
         issues.extend(
             _validate_result_contract_definition(
                 phase,
+                phase_id=phase_id,
+                path=path,
+            )
+        )
+        issues.extend(
+            _validate_controller_ownership(
+                phase,
+                node=node,
                 phase_id=phase_id,
                 path=path,
             )
@@ -210,6 +297,79 @@ def validate_workflow_definition(
                     effective,
                     phase_id=phase_id,
                     path=f"{path} agents[{agent_index}]",
+                )
+            )
+            if "controller_state_updates" in agent_entry:
+                issues.append(WorkflowValidationIssue(
+                    "controller_state_updates is no longer supported",
+                    phase_id=phase_id,
+                    path=f"{path} agents[{agent_index}]",
+                ))
+            if "controller_state_contract" in agent_entry:
+                issues.append(WorkflowValidationIssue(
+                    "nested agents cannot declare controller_state_contract",
+                    phase_id=phase_id,
+                    path=f"{path} agents[{agent_index}]",
+                ))
+            if (
+                node.controller_state_contract is not None
+                and "allowed_state_updates" in agent_entry
+                and agent_entry.get("allowed_state_updates") is None
+            ):
+                issues.append(WorkflowValidationIssue(
+                    "nested agent cannot override allowed_state_updates with null",
+                    phase_id=phase_id,
+                    path=f"{path} agents[{agent_index}]",
+                ))
+            nested_allowed = agent_entry.get(
+                "allowed_state_updates",
+                phase.get("allowed_state_updates"),
+            )
+            nested_allowed_set = (
+                set(str(key) for key in nested_allowed)
+                if isinstance(nested_allowed, list)
+                else set()
+            )
+            overlap = node.controller_state_update_keys & nested_allowed_set
+            if overlap:
+                issues.append(WorkflowValidationIssue(
+                    "nested agent allowed_state_updates overlap controller-owned "
+                    f"fields: {', '.join(sorted(overlap))}",
+                    phase_id=phase_id,
+                    path=f"{path} agents[{agent_index}]",
+                ))
+        for pre_dispatch_index, agent_entry in enumerate(
+            phase.get("pre_dispatch") or []
+        ):
+            if not isinstance(agent_entry, dict):
+                continue
+            effective = {
+                "allowed_state_updates": agent_entry.get(
+                    "allowed_state_updates", phase.get("allowed_state_updates")
+                ),
+                "required_state_updates": agent_entry.get(
+                    "required_state_updates",
+                    phase.get("required_state_updates", []),
+                ),
+                "state_update_types": agent_entry.get(
+                    "state_update_types", phase.get("state_update_types", {})
+                ),
+                "state_update_enums": agent_entry.get(
+                    "state_update_enums", phase.get("state_update_enums", {})
+                ),
+                "allowed_verdicts": agent_entry.get(
+                    "allowed_verdicts", phase.get("allowed_verdicts")
+                ),
+                "unexpected_state_updates": agent_entry.get(
+                    "unexpected_state_updates",
+                    phase.get("unexpected_state_updates", "quarantine"),
+                ),
+            }
+            issues.extend(
+                _validate_result_contract_definition(
+                    effective,
+                    phase_id=phase_id,
+                    path=f"{path} pre_dispatch[{pre_dispatch_index}]",
                 )
             )
 
@@ -282,6 +442,58 @@ def validate_workflow_definition(
     return WorkflowValidationReport(issues)
 
 
+def _validate_required_controller_contracts(
+    workflow: dict[str, Any],
+    phases: list[Any],
+    *,
+    path: str,
+) -> list[WorkflowValidationIssue]:
+    issues: list[WorkflowValidationIssue] = []
+    producers = [
+        phase
+        for phase in phases
+        if isinstance(phase, dict)
+        and is_controller_producing_phase(phase)
+    ]
+    if (
+        producers
+        and not isinstance(
+            workflow.get("controller_state_contracts_file"),
+            str,
+        )
+    ):
+        issues.append(
+            WorkflowValidationIssue(
+                "controller-producing phases require "
+                "controller_state_contracts_file",
+                path=path,
+            )
+        )
+    for phase in producers:
+        phase_id = phase.get("id")
+        phase_id = phase_id if isinstance(phase_id, str) else None
+        expected = required_controller_contract_name(phase)
+        actual = phase.get("controller_state_contract")
+        if expected is None:
+            issues.append(
+                WorkflowValidationIssue(
+                    "controller-producing phase has an unsupported role/type",
+                    phase_id=phase_id,
+                    path=path,
+                )
+            )
+        elif actual != expected:
+            issues.append(
+                WorkflowValidationIssue(
+                    f"required controller state contract {expected!r}; "
+                    f"got {actual!r}",
+                    phase_id=phase_id,
+                    path=path,
+                )
+            )
+    return issues
+
+
 def _validate_result_contract_definition(
     contract: dict,
     *,
@@ -290,7 +502,6 @@ def _validate_result_contract_definition(
 ) -> list[WorkflowValidationIssue]:
     issues: list[WorkflowValidationIssue] = []
     allowed = contract.get("allowed_state_updates")
-    controller_owned = contract.get("controller_state_updates", [])
     required = contract.get("required_state_updates", [])
     value_types = contract.get("state_update_types", {})
     value_enums = contract.get("state_update_enums", {})
@@ -309,24 +520,18 @@ def _validate_result_contract_definition(
         allowed_set: set[str] | None = set()
     else:
         allowed_set = set(allowed) if allowed is not None else None
-
-    if not isinstance(controller_owned, list) or not all(
-        isinstance(key, str) and key for key in controller_owned
-    ):
-        issues.append(WorkflowValidationIssue(
-            "controller_state_updates must be a list of non-empty strings",
-            phase_id=phase_id,
-            path=path,
-        ))
-        controller_owned_set: set[str] = set()
-    else:
-        controller_owned_set = set(controller_owned)
-    if allowed_set is not None and controller_owned_set & allowed_set:
-        issues.append(WorkflowValidationIssue(
-            "controller_state_updates must not overlap allowed_state_updates",
-            phase_id=phase_id,
-            path=path,
-        ))
+        transaction_owned = (
+            (allowed_set or set())
+            & STORE_OWNED_TRANSACTION_KEYS
+            - PROVIDER_CONTROL_INTENT_KEYS
+        )
+        for key in sorted(transaction_owned):
+            issues.append(WorkflowValidationIssue(
+                "allowed_state_updates contains transaction-owned key "
+                f"{key!r}",
+                phase_id=phase_id,
+                path=path,
+            ))
 
     if not isinstance(required, list) or not all(
         isinstance(key, str) and key for key in required
@@ -416,6 +621,68 @@ def _validate_result_contract_definition(
     if unexpected not in {"reject", "quarantine"}:
         issues.append(WorkflowValidationIssue(
             "unexpected_state_updates must be 'reject' or 'quarantine'",
+            phase_id=phase_id,
+            path=path,
+        ))
+    return issues
+
+
+def _validate_controller_ownership(
+    phase: dict[str, Any],
+    *,
+    node: PhaseNode,
+    phase_id: str,
+    path: str,
+) -> list[WorkflowValidationIssue]:
+    issues: list[WorkflowValidationIssue] = []
+    if "controller_state_updates" in phase:
+        issues.append(WorkflowValidationIssue(
+            "controller_state_updates is no longer supported",
+            phase_id=phase_id,
+            path=path,
+        ))
+
+    contract = node.controller_state_contract
+    if contract is None:
+        return issues
+
+    if "allowed_state_updates" not in phase:
+        issues.append(WorkflowValidationIssue(
+            "controller_state_contract requires an explicit "
+            "allowed_state_updates list",
+            phase_id=phase_id,
+            path=path,
+        ))
+        allowed: set[str] = set()
+    else:
+        raw_allowed = phase.get("allowed_state_updates")
+        if not isinstance(raw_allowed, list):
+            issues.append(WorkflowValidationIssue(
+                "controller_state_contract requires allowed_state_updates "
+                "to be a list",
+                phase_id=phase_id,
+                path=path,
+            ))
+            allowed = set()
+        else:
+            allowed = set(str(key) for key in raw_allowed)
+
+    overlap = contract.state_update_keys & allowed
+    if overlap:
+        issues.append(WorkflowValidationIssue(
+            "controller state contract must not overlap allowed_state_updates: "
+            + ", ".join(sorted(overlap)),
+            phase_id=phase_id,
+            path=path,
+        ))
+
+    on_greenfield = phase.get("on_greenfield")
+    if (
+        isinstance(on_greenfield, dict)
+        and on_greenfield.get("action") == "skip_agent_proceed_to_next"
+    ):
+        issues.append(WorkflowValidationIssue(
+            "skip_agent_proceed_to_next cannot bypass a controller state contract",
             phase_id=phase_id,
             path=path,
         ))
@@ -528,12 +795,17 @@ def _validate_transition(
     return issues
 
 
-def _phase_condition_fields(phase: dict[str, Any]) -> set[str]:
-    fields = set(str(key) for key in phase.get("allowed_state_updates") or [])
-    fields.update(str(key) for key in phase.get("controller_state_updates") or [])
-    fields.update(_output_fields(phase.get("outputs") or []))
+def _phase_condition_fields(phase: PhaseNode) -> set[str]:
+    allowed = phase.allowed_state_updates
+    fields = (
+        set(str(key) for key in allowed)
+        if isinstance(allowed, list)
+        else set()
+    )
+    fields.update(phase.controller_state_update_keys)
+    fields.update(_output_fields(phase.outputs or []))
     fields.update(_nested_agent_output_fields(phase))
-    transitions = phase.get("transitions") or []
+    transitions = phase.transitions or []
     if isinstance(transitions, list):
         for transition in transitions:
             if isinstance(transition, dict) and isinstance(transition.get("state_update"), dict):
@@ -541,9 +813,9 @@ def _phase_condition_fields(phase: dict[str, Any]) -> set[str]:
     return fields
 
 
-def _nested_agent_output_fields(phase: dict[str, Any]) -> set[str]:
+def _nested_agent_output_fields(phase: PhaseNode) -> set[str]:
     fields: set[str] = set()
-    for agent in phase.get("agents") or []:
+    for agent in phase.agents or []:
         if isinstance(agent, dict):
             fields.update(_output_fields(agent.get("outputs") or []))
     return fields

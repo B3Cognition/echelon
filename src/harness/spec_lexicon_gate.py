@@ -122,13 +122,7 @@ def run_spec_lexicon_gate(
     spec_gate = spec_gate if isinstance(spec_gate, dict) else {}
 
     if not gate.get("enabled", False) or spec_gate.get("enabled", True) is False:
-        return SpecLexiconGateResult(
-            evaluation="passed",
-            passed=True,
-            attempts=0,
-            findings=0,
-            detail="spec Lexicon gate disabled",
-        )
+        return _pending("spec Lexicon gate disabled")
 
     spec_dir_text = str(spec_dir_ref or "").strip()
     if not spec_dir_text:

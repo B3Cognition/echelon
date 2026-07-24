@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import socket
+from threading import Event, Thread
 
 import pytest
 
@@ -227,13 +228,41 @@ def test_run_execution_lock_refuses_a_second_owner_without_blocking_sibling_run(
 ) -> None:
     run_a = tmp_path / "runs" / "run-a"
     run_b = tmp_path / "runs" / "run-b"
+    sibling_acquired = Event()
+    release_sibling = Event()
+    sibling_errors: list[BaseException] = []
+
+    def hold_sibling() -> None:
+        try:
+            with SpecRunExecutionLock.acquire(
+                run_b,
+                "run-b-owner",
+            ) as sibling:
+                assert (
+                    sibling.path
+                    == run_b
+                    / ".echelon"
+                    / "runtime"
+                    / "execution.lock"
+                )
+                sibling_acquired.set()
+                assert release_sibling.wait(timeout=5)
+        except BaseException as error:
+            sibling_errors.append(error)
+            sibling_acquired.set()
 
     with SpecRunExecutionLock.acquire(run_a, "run-a-owner") as first:
         assert first.path == run_a / ".echelon" / "runtime" / "execution.lock"
         with pytest.raises(SpecLifecycleLocked, match="run-a-owner"):
             SpecRunExecutionLock.acquire(run_a, "run-a-second")
-        with SpecRunExecutionLock.acquire(run_b, "run-b-owner") as sibling:
-            assert sibling.path == run_b / ".echelon" / "runtime" / "execution.lock"
+        sibling_thread = Thread(target=hold_sibling)
+        sibling_thread.start()
+        assert sibling_acquired.wait(timeout=5)
+        release_sibling.set()
+        sibling_thread.join(timeout=5)
+
+    assert not sibling_errors
+    assert not sibling_thread.is_alive()
 
 
 def test_lifecycle_lock_release_does_not_remove_different_owner(tmp_path: Path) -> None:

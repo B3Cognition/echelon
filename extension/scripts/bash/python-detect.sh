@@ -6,7 +6,8 @@
 #
 # Usage: . "$(cd "$(dirname "$0")" && pwd)/python-detect.sh"
 
-_repo_root="$(CDPATH= cd -- "$(dirname "$0")/../../.." && pwd)"
+_python_detect_source="${BASH_SOURCE:-$0}"
+_repo_root="$(CDPATH= cd -- "$(dirname "$_python_detect_source")/../../.." && pwd)"
 
 PYTHON=""
 
@@ -20,6 +21,22 @@ fi
 if [ -z "$PYTHON" ] && [ -x "$HOME/.echelon/venv/bin/python" ] && \
    "$HOME/.echelon/venv/bin/python" -c "import sys; sys.exit(0)" > /dev/null 2>&1; then
   PYTHON="$HOME/.echelon/venv/bin/python"
+fi
+
+# Reuse the exact interpreter behind an installed Echelon console script.
+_echelon_cli="$(command -v echelon 2>/dev/null || true)"
+if [ -z "$PYTHON" ] && [ -n "$_echelon_cli" ]; then
+  _echelon_python="$(sed -n '1s/^#!//p' "$_echelon_cli" 2>/dev/null)"
+  case "$_echelon_python" in
+    ""|*" "*)
+      ;;
+    *)
+      if [ -x "$_echelon_python" ] && \
+         "$_echelon_python" -c "import echelon; import sys; sys.exit(0)" > /dev/null 2>&1; then
+        PYTHON="$_echelon_python"
+      fi
+      ;;
+  esac
 fi
 
 # Fall back to system Python
@@ -38,4 +55,4 @@ if [ -z "$PYTHON" ]; then
   exit 1
 fi
 
-unset _py_candidate _repo_root
+unset _echelon_cli _echelon_python _py_candidate _python_detect_source _repo_root

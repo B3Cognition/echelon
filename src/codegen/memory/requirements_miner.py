@@ -13,6 +13,7 @@ ADR-005: Requirement ID regex is intentionally broad (FR-*, NFR-*, AC-*, ADR-*,
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import sys
@@ -81,8 +82,11 @@ class MineResult:
     written: int
     skipped: int
     failed: int
+    already_present: int = 0
+    unavailable: int = 0
     requirements: list[MinedRequirement] = field(default_factory=list)
     drawer_ids: list[str] = field(default_factory=list)
+    expected_drawer_ids: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
 
@@ -300,6 +304,51 @@ def _parse_jira_issue(issue: dict, source: str) -> Optional[MinedRequirement]:
     return MinedRequirement(req_id=key, room=room, content=content, source=source)
 
 
+def plan_canonical_requirement_drawer_ids(
+    content: bytes,
+    *,
+    source: str,
+    artifact_metadata: dict[str, Any],
+    wing: str,
+) -> list[str]:
+    """Plan canonical IDs without constructing or accessing a backend."""
+    if (
+        type(content) is not bytes
+        or type(source) is not str
+        or not source
+        or type(artifact_metadata) is not dict
+        or artifact_metadata.get("canonical") is not True
+        or type(wing) is not str
+        or not wing
+    ):
+        raise ValueError("invalid canonical mining input")
+    digest = hashlib.sha256(content).hexdigest()
+    if artifact_metadata.get("artifact_hash") != f"sha256:{digest}":
+        raise ValueError("canonical spec digest mismatch")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("canonical spec is not UTF-8") from exc
+    requirements = _parse_markdown(text, source=source)
+    from codegen.memory.mempalace_writer import (
+        deterministic_requirement_drawer_id,
+    )
+
+    result = [
+        deterministic_requirement_drawer_id(
+            wing=wing,
+            room=requirement.room,
+            spec_sha256=digest,
+            requirement_id=requirement.req_id,
+            content=scrub_secrets(requirement.content),
+        )
+        for requirement in requirements
+    ]
+    if len(set(result)) != len(result):
+        raise ValueError("deterministic drawer identity collision")
+    return result
+
+
 class RequirementsMiner:
     """
     Mines requirement sources and writes them as MemPalace drawers.
@@ -358,6 +407,133 @@ class RequirementsMiner:
         )
         return result
 
+    def _canonical_requirements_from_bytes(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> tuple[str, list[MinedRequirement]]:
+        if (
+            type(content) is not bytes
+            or type(source) is not str
+            or not source
+            or type(artifact_metadata) is not dict
+            or artifact_metadata.get("canonical") is not True
+        ):
+            raise ValueError("invalid canonical mining input")
+        digest = hashlib.sha256(content).hexdigest()
+        if artifact_metadata.get("artifact_hash") != f"sha256:{digest}":
+            raise ValueError("canonical spec digest mismatch")
+        try:
+            text = content.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError("canonical spec is not UTF-8") from exc
+        return digest, _parse_markdown(text, source=source)
+
+    def plan_canonical_bytes(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> list[str]:
+        """Compute every exact drawer identity without reading or writing."""
+        return plan_canonical_requirement_drawer_ids(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+            wing=self.wing,
+        )
+
+    def mine_canonical_bytes(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> MineResult:
+        """Mine one already-snapshotted canonical spec without a path reread."""
+        _, requirements = self._canonical_requirements_from_bytes(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+        )
+        result = MineResult(
+            wing=self.wing,
+            total=len(requirements),
+            written=0,
+            skipped=0,
+            failed=0,
+        )
+        result.requirements = requirements
+        self._write_requirements(
+            requirements,
+            result,
+            artifact_metadata=artifact_metadata,
+        )
+        return result
+
+    def verify_canonical_bytes(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+        drawer_ids: list[str],
+    ) -> bool:
+        """Verify selected exact drawers from canonical bytes without writing."""
+        digest, requirements = self._canonical_requirements_from_bytes(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+        )
+        if (
+            type(drawer_ids) is not list
+            or any(type(value) is not str for value in drawer_ids)
+            or drawer_ids != sorted(set(drawer_ids))
+        ):
+            return False
+        from codegen.memory.mempalace_writer import (
+            deterministic_requirement_drawer_id,
+        )
+
+        planned: dict[str, MinedRequirement] = {}
+        for requirement in requirements:
+            scrubbed = scrub_secrets(requirement.content)
+            drawer_id = deterministic_requirement_drawer_id(
+                wing=self.wing,
+                room=requirement.room,
+                spec_sha256=digest,
+                requirement_id=requirement.req_id,
+                content=scrubbed,
+            )
+            if drawer_id in planned:
+                return False
+            planned[drawer_id] = requirement
+        if any(drawer_id not in planned for drawer_id in drawer_ids):
+            return False
+        writer = self._get_writer()
+        verify = getattr(writer, "verify_exact", None)
+        if not callable(verify):
+            return False
+        for drawer_id in drawer_ids:
+            requirement = planned[drawer_id]
+            result = verify(
+                room=requirement.room,
+                content=scrub_secrets(requirement.content),
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id=requirement.req_id,
+            )
+            if (
+                getattr(result, "outcome", None)
+                != "already_present"
+                or getattr(result, "drawer_id", None) != drawer_id
+            ):
+                return False
+        return True
+
     def mine_directory(self, directory: Path, glob: str = "**/*.md") -> MineResult:
         """Mine all matching files in a directory tree."""
         combined = MineResult(wing=self.wing, total=0, written=0, skipped=0, failed=0)
@@ -367,8 +543,13 @@ class RequirementsMiner:
             combined.written += r.written
             combined.skipped += r.skipped
             combined.failed += r.failed
+            combined.already_present += r.already_present
+            combined.unavailable += r.unavailable
             combined.requirements.extend(r.requirements)
             combined.drawer_ids.extend(r.drawer_ids)
+            combined.expected_drawer_ids.extend(
+                r.expected_drawer_ids
+            )
             combined.errors.extend(r.errors)
         return combined
 
@@ -453,11 +634,87 @@ class RequirementsMiner:
                     file=sys.stderr,
                 )
         writer = self._get_writer()
+        canonical_spec_sha256: str | None = None
+        if (
+            type(artifact_metadata) is dict
+            and artifact_metadata.get("canonical") is True
+        ):
+            artifact_digest = artifact_metadata.get("artifact_hash")
+            if (
+                type(artifact_digest) is str
+                and re.fullmatch(r"sha256:[0-9a-f]{64}", artifact_digest)
+            ):
+                canonical_spec_sha256 = artifact_digest.removeprefix(
+                    "sha256:"
+                )
+        deterministic_ids: set[str] = set()
         for req in reqs:
             try:
+                content = scrub_secrets(req.content)
+                exact_write = getattr(writer, "write_exact", None)
+                if (
+                    canonical_spec_sha256 is not None
+                    and callable(exact_write)
+                ):
+                    from codegen.memory.mempalace_writer import (
+                        deterministic_requirement_drawer_id,
+                    )
+
+                    expected_id = deterministic_requirement_drawer_id(
+                        wing=self.wing,
+                        room=req.room,
+                        spec_sha256=canonical_spec_sha256,
+                        requirement_id=req.req_id,
+                        content=content,
+                    )
+                    result.expected_drawer_ids.append(expected_id)
+                    if expected_id in deterministic_ids:
+                        result.failed += 1
+                        result.errors.append(
+                            "deterministic_identity_collision"
+                        )
+                        continue
+                    deterministic_ids.add(expected_id)
+                    exact_result = exact_write(
+                        room=req.room,
+                        content=content,
+                        phase="RE",
+                        drawer_id=expected_id,
+                        spec_sha256=canonical_spec_sha256,
+                        requirement_id=req.req_id,
+                        provenance_type="requirements_mine",
+                        source_file=req.source,
+                        extra_metadata=artifact_metadata,
+                    )
+                    outcome = getattr(exact_result, "outcome", None)
+                    drawer_id = getattr(
+                        exact_result,
+                        "drawer_id",
+                        None,
+                    )
+                    if outcome == "written" and drawer_id == expected_id:
+                        result.written += 1
+                        result.drawer_ids.append(expected_id)
+                    elif (
+                        outcome == "already_present"
+                        and drawer_id == expected_id
+                    ):
+                        result.skipped += 1
+                        result.already_present += 1
+                        result.drawer_ids.append(expected_id)
+                    elif outcome == "unavailable" and drawer_id is None:
+                        result.skipped += 1
+                        result.unavailable += 1
+                    else:
+                        result.failed += 1
+                        result.errors.append(
+                            "deterministic_write_failed"
+                        )
+                    continue
+
                 drawer_id = writer.write(  # type: ignore[union-attr]
                     room=req.room,
-                    content=scrub_secrets(req.content),
+                    content=content,
                     phase="RE",
                     provenance_type="requirements_mine",
                     source_file=req.source,
