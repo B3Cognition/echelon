@@ -5594,6 +5594,10 @@ class SquadController:
                     isinstance(exc, StateAdvanceError)
                     and exc.validator == "checkpoint_prestate"
                 ):
+                    if usage["tokens"]:
+                        self._state_store.increment_token_usage(
+                            usage["tokens"]
+                        )
                     # The caller owns any publication stage prepared before
                     # routing and discards it when this returns no decision.
                     # Do not turn unavailable Git authority into state.
@@ -6290,6 +6294,10 @@ class SquadController:
                 isinstance(exc, StateAdvanceError)
                 and exc.validator == "checkpoint_prestate"
             ):
+                if usage["tokens"]:
+                    self._state_store.increment_token_usage(
+                        usage["tokens"]
+                    )
                 if completion is not None:
                     self._discard_controller_completion_without_authority(
                         completion.marker.to_dict()

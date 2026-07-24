@@ -626,6 +626,26 @@ def _assert_checkpoint_preparation_unchanged(
     assert not (ctrl._squad_dir / ".publication-outbox").exists()
 
 
+def _assert_only_token_accounting_changed(
+    before: dict[str, object],
+    after: dict[str, object],
+    *,
+    token_delta: int,
+    accounting_updates: int = 1,
+) -> None:
+    assert after["token_usage"] == before["token_usage"] + token_delta
+    assert (
+        after["state_revision"]
+        == before["state_revision"] + accounting_updates
+    )
+    before_rest = dict(before)
+    after_rest = dict(after)
+    for key in ("token_usage", "state_revision", "updated_at"):
+        before_rest.pop(key, None)
+        after_rest.pop(key, None)
+    assert after_rest == before_rest
+
+
 @pytest.mark.parametrize(
     "git_result",
     (
@@ -746,7 +766,7 @@ def test_inactive_checkpoint_does_not_resolve_git_prestate(
     assert prepared.intent.checkpoint_prestate == {"kind": "none"}
 
 
-def test_routed_checkpoint_prestate_failure_keeps_state_exact_and_discards_stage(
+def test_routed_checkpoint_prestate_failure_records_only_deferred_tokens(
     tmp_path: Path,
 ) -> None:
     ctrl, store = _controller(tmp_path)
@@ -791,14 +811,20 @@ def test_routed_checkpoint_prestate_failure_keeps_state_exact_and_discards_stage
         / ".publication-outbox"
         / publication.marker.transaction_id
     )
-    before = store._path.read_bytes()
+    before = store.load()
+    usage_result = replace(result, token_usage=17)
 
-    with patch(
-        "harness.squad.subprocess.run",
-        side_effect=subprocess.CalledProcessError(
-            128,
-            ["git", "rev-parse"],
-        ),
+    def fail_after_usage() -> dict[str, object]:
+        ctrl._record_provider_usage(usage_result)
+        raise StateAdvanceError(
+            "checkpoint unavailable",
+            validator="checkpoint_prestate",
+        )
+
+    with patch.object(
+        ctrl,
+        "_completion_checkpoint_prestate",
+        side_effect=fail_after_usage,
     ):
         decision = ctrl._construct_routing_decision_or_block(
             node,
@@ -814,13 +840,16 @@ def test_routed_checkpoint_prestate_failure_keeps_state_exact_and_discards_stage
         ctrl._discard_publication_without_authority(publication)
 
     assert decision is None
-    assert store._path.read_bytes() == before
-    assert store.load() == snapshot.state
+    _assert_only_token_accounting_changed(
+        before,
+        store.load(),
+        token_delta=17,
+    )
     assert not publication_root.exists()
     assert not (ctrl._squad_dir / ".completion-outbox").exists()
 
 
-def test_commander_checkpoint_prestate_failure_keeps_state_exact(
+def test_commander_checkpoint_prestate_failure_records_only_provider_tokens(
     tmp_path: Path,
 ) -> None:
     provider = _mock_provider()
@@ -838,6 +867,7 @@ def test_commander_checkpoint_prestate_failure_keeps_state_exact(
         raw_output="",
         duration_ms=0,
         timed_out=False,
+        token_usage=17,
     )
     ctrl, store = _controller(tmp_path, provider=provider)
     store.initialize(
@@ -853,7 +883,7 @@ def test_commander_checkpoint_prestate_failure_keeps_state_exact(
     state["blocked_reason"] = "needs_judgment"
     store.save(state)
     state = store.load()
-    before = store._path.read_bytes()
+    before = store.load()
 
     with patch(
         "harness.squad.subprocess.run",
@@ -862,13 +892,18 @@ def test_commander_checkpoint_prestate_failure_keeps_state_exact(
             ["git", "rev-parse"],
         ),
     ):
-        ctrl._judgment_dispatch_escalation(
-            "Q1?",
-            "phase1-why1",
-        )
+        for _ in range(2):
+            ctrl._judgment_dispatch_escalation(
+                "Q1?",
+                "phase1-why1",
+            )
 
-    assert store._path.read_bytes() == before
-    assert store.load() == state
+    _assert_only_token_accounting_changed(
+        before,
+        store.load(),
+        token_delta=34,
+        accounting_updates=2,
+    )
     assert not (ctrl._squad_dir / ".completion-outbox").exists()
 
 
