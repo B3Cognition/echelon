@@ -9,7 +9,9 @@ from pathlib import Path
 import re
 from typing import Iterable
 
-REQ_ID_RE = re.compile(r"\b(?:FR|NFR|EDGE|REQ|AC|US|SC)-[A-Za-z0-9_.:-]+\b")
+REQ_ID_RE = re.compile(
+    r"\b(?:FR|NFR|EDGE|REQ|AC|US|SC)(?:-[A-Z0-9_.:]+)+\b(?!-[A-Za-z0-9])"
+)
 TASK_REQ_RE = re.compile(r"\breq=(?P<reqs>[A-Za-z0-9_,.:-]+)")
 INVENTORY_JSON = "canonical-requirements.json"
 INVENTORY_MD = "canonical-requirements.md"

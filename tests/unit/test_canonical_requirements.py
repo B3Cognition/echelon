@@ -73,6 +73,32 @@ def test_write_canonical_requirements_extracts_stable_ids_from_spec_inputs(tmp_p
     assert "| FR-005 | task_metadata | tasks.md |" in markdown
 
 
+def test_write_canonical_requirements_ignores_ids_extended_by_lowercase_prose(
+    tmp_path,
+):
+    spec_dir = tmp_path / "specs" / "001-demo"
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "- **FR-001**: Users can start a mission.\n",
+        encoding="utf-8",
+    )
+    (spec_dir / "coverage-map.md").write_text(
+        "| Requirement | Limitation |\n"
+        "| --- | --- |\n"
+        "| FR-001 | This does not create a second NFR-001-violating path. |\n",
+        encoding="utf-8",
+    )
+
+    result = write_canonical_requirements(
+        spec_dir=spec_dir, verify_run_dir=verify_run_dir
+    )
+
+    assert result.count == 1
+    payload = json.loads((verify_run_dir / "canonical-requirements.json").read_text())
+    assert [row["id"] for row in payload["requirements"]] == ["FR-001"]
+
+
 def test_write_requirement_audit_renders_deterministic_audit_table(tmp_path):
     verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
     verify_run_dir.mkdir(parents=True)
