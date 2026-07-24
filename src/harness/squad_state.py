@@ -1321,11 +1321,19 @@ class SquadStateStore:
             try:
                 saved_state = self._save_unlocked(next_state)
             except Exception as exc:
-                raise StateAdvanceError(
-                    "atomic state save failed",
-                    json_path="$.state",
-                    validator="save",
-                ) from exc
+                observed = self._load_unlocked()
+                if _state_matches_exact_save(
+                    state,
+                    next_state,
+                    observed,
+                ):
+                    saved_state = observed
+                else:
+                    raise StateAdvanceError(
+                        "atomic state save failed",
+                        json_path="$.state",
+                        validator="save",
+                    ) from exc
         return AdvanceReceipt(
             from_phase=from_phase,
             to_phase=to_phase,
@@ -1437,6 +1445,111 @@ class SquadStateStore:
                     json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
                     validator="save",
                 ) from exc
+
+    def begin_terminal_controller_completion(
+        self,
+        prepared: PreparedControllerCompletion,
+        *,
+        snapshot: RoutingStateSnapshot,
+        state_updates: dict[str, object] | None = None,
+    ) -> None:
+        """Atomically install one terminal completion and its publication."""
+        (
+            completion_marker,
+            intent,
+            _,
+            _,
+            prefix_kind,
+        ) = _validate_prepared_controller_completion(prepared)
+        route = intent["route"]
+        publication = intent["publication"]
+        if (
+            completion_marker["origin"] != "terminal"
+            or prefix_kind != "bound"
+            or type(route) is not dict
+            or route.get("kind") != "terminal"
+            or type(publication) is not dict
+        ):
+            raise StateAdvanceError(
+                "terminal completion intent is invalid",
+                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+                validator="completion_binding",
+            )
+        if not isinstance(snapshot, RoutingStateSnapshot):
+            raise StateAdvanceError(
+                "terminal completion snapshot is invalid",
+                json_path="$.routing_snapshot",
+                validator="type",
+            )
+        updates = deepcopy(state_updates or {})
+        if frozenset(updates) - {"published_spec_dir"}:
+            raise StateAdvanceError(
+                "terminal completion state update is not owned",
+                json_path="$.state_updates",
+                validator="ownership",
+            )
+        if "published_spec_dir" in updates and (
+            type(updates["published_spec_dir"]) is not str
+            or not updates["published_spec_dir"].strip()
+        ):
+            raise StateAdvanceError(
+                "published spec directory is invalid",
+                json_path="$.state_updates.published_spec_dir",
+                validator="type",
+            )
+        publication_marker: dict[str, object] | None
+        if publication.get("kind") == "external":
+            try:
+                publication_marker = validate_pending_external_publication(
+                    publication.get("marker")
+                )
+            except ValueError as exc:
+                raise StateAdvanceError(
+                    "terminal publication binding is invalid",
+                    json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+                    validator="completion_binding",
+                ) from exc
+        elif publication == {"kind": "none"}:
+            publication_marker = None
+        else:
+            raise StateAdvanceError(
+                "terminal publication binding is invalid",
+                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+                validator="completion_binding",
+            )
+
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            revision = state.get("state_revision", 0)
+            if (
+                state.get("phase") != snapshot.phase
+                or route.get("terminal_phase") != snapshot.phase
+                or type(revision) is not int
+                or revision != snapshot.state_revision
+                or _last_dispatch_sha256(state)
+                != snapshot.previous_dispatch_sha256
+                or PENDING_CONTROLLER_COMPLETION_KEY in state
+                or PENDING_EXTERNAL_PUBLICATION_KEY in state
+            ):
+                raise StateAdvanceError(
+                    "persisted state changed before terminal completion",
+                    json_path="$.routing_snapshot",
+                    validator="stale_state",
+                )
+            desired = deepcopy(state)
+            desired.update(updates)
+            desired[PENDING_CONTROLLER_COMPLETION_KEY] = (
+                completion_marker
+            )
+            if publication_marker is not None:
+                desired[PENDING_EXTERNAL_PUBLICATION_KEY] = (
+                    publication_marker
+                )
+            self._save_exact_completion_state_unlocked(
+                state,
+                desired,
+                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+            )
 
     @staticmethod
     def _require_external_publication_marker(
@@ -2113,7 +2226,14 @@ class SquadStateStore:
             expected_marker["origin"] == "routed"
             and route["from_phase"] == "phase4-document"
         )
-        if is_phase4_completion != has_active_digest:
+        if (
+            (is_phase4_completion and not has_active_digest)
+            or (
+                expected_marker["origin"] == "routed"
+                and not is_phase4_completion
+                and has_active_digest
+            )
+        ):
             raise StateAdvanceError(
                 "Phase A inventory digests do not match completion origin",
                 json_path="$.phase_a_active_source_sha256",
@@ -2162,7 +2282,7 @@ class SquadStateStore:
             else:
                 desired["status"] = "done"
                 desired.pop("blocked_reason", None)
-                desired["last_terminal_completion"] = {
+                terminal_receipt = {
                     "schema_version": 1,
                     "completion_id": expected_marker["completion_id"],
                     "intent_sha256": expected_marker["intent_sha256"],
@@ -2174,6 +2294,18 @@ class SquadStateStore:
                     ),
                     "terminal_phase": route["terminal_phase"],
                 }
+                if has_active_digest:
+                    terminal_receipt.update(
+                        {
+                            "phase_a_active_source_sha256": (
+                                phase_a_active_source_sha256
+                            ),
+                            "phase_a_published_postimage_sha256": (
+                                phase_a_published_postimage_sha256
+                            ),
+                        }
+                    )
+                desired["last_terminal_completion"] = terminal_receipt
             desired.pop(PENDING_CONTROLLER_COMPLETION_KEY, None)
             desired.pop(_CONTROLLER_COMPLETION_FAILURE_KEY, None)
             self._save_exact_completion_state_unlocked(

@@ -1298,6 +1298,122 @@ class TestSquadStateStore:
             "terminal_phase": "DONE",
         }
 
+    def test_terminal_controller_completion_records_reconciled_inventories(
+        self,
+        tmp_path,
+    ) -> None:
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "DONE")
+        prepared = _prepare_completion(
+            tmp_path,
+            store,
+            origin="terminal",
+            effect_plan=(),
+            from_phase="DONE",
+        )
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="DONE",
+        )
+        store.begin_terminal_controller_completion(
+            prepared,
+            snapshot=snapshot,
+        )
+
+        store.complete_controller_completion(
+            prepared,
+            phase_a_active_source_sha256="1" * 64,
+            phase_a_published_postimage_sha256="2" * 64,
+        )
+
+        terminal = store.load()["last_terminal_completion"]
+        assert terminal["phase_a_active_source_sha256"] == "1" * 64
+        assert (
+            terminal["phase_a_published_postimage_sha256"]
+            == "2" * 64
+        )
+
+    @pytest.mark.parametrize("external_publication", [False, True])
+    def test_terminal_controller_completion_begins_with_one_atomic_save(
+        self,
+        tmp_path,
+        external_publication,
+    ) -> None:
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "DONE")
+        prepared = _prepare_completion(
+            tmp_path,
+            store,
+            origin="terminal",
+            external_publication=external_publication,
+            effect_plan=(),
+            from_phase="DONE",
+        )
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="DONE",
+        )
+
+        with patch.object(
+            store,
+            "_save_unlocked",
+            wraps=store._save_unlocked,
+        ) as save:
+            store.begin_terminal_controller_completion(
+                prepared,
+                snapshot=snapshot,
+                state_updates={"published_spec_dir": "specs/001-demo"},
+            )
+
+        state = store.load()
+        assert save.call_count == 1
+        assert state["phase"] == "DONE"
+        assert state["published_spec_dir"] == "specs/001-demo"
+        assert state[PENDING_CONTROLLER_COMPLETION_KEY] == (
+            prepared.marker.to_dict()
+        )
+        if external_publication:
+            assert state[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
+        else:
+            assert PENDING_EXTERNAL_PUBLICATION_KEY not in state
+
+    def test_terminal_controller_completion_begin_resolves_saved_then_raised(
+        self,
+        tmp_path,
+    ) -> None:
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "DONE")
+        prepared = _prepare_completion(
+            tmp_path,
+            store,
+            origin="terminal",
+            external_publication=True,
+            effect_plan=(),
+            from_phase="DONE",
+        )
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="DONE",
+        )
+        original_save = store._save_unlocked
+
+        def save_then_raise(state):
+            original_save(state)
+            raise OSError("injected save ambiguity")
+
+        with patch.object(
+            store,
+            "_save_unlocked",
+            side_effect=save_then_raise,
+        ):
+            store.begin_terminal_controller_completion(
+                prepared,
+                snapshot=snapshot,
+            )
+
+        state = store.load()
+        assert state[PENDING_CONTROLLER_COMPLETION_KEY] == (
+            prepared.marker.to_dict()
+        )
+        assert state[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
+
     def test_phase4_completion_records_exact_inventory_digests(
         self,
         tmp_path,
@@ -1742,6 +1858,58 @@ class TestSquadStateStore:
         else:
             assert PENDING_CONTROLLER_COMPLETION_KEY not in after
             assert after["last_dispatch"]["post_dispatch_complete"] is True
+
+    def test_routed_advance_accepts_only_exact_saved_then_raised_state(
+        self,
+        tmp_path,
+    ) -> None:
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        prepared_completion = _prepare_completion(
+            tmp_path,
+            store,
+            external_publication=True,
+            effect_plan=(),
+        )
+        original_save = store._save_unlocked
+
+        def save_then_raise(state):
+            original_save(state)
+            raise OSError("injected route save ambiguity")
+
+        with patch.object(
+            store,
+            "_save_unlocked",
+            side_effect=save_then_raise,
+        ):
+            receipt = _advance(
+                store,
+                "init",
+                "next",
+                _result("DONE", phase_id="init"),
+                token_usage_delta=17,
+                dispatch_id=(
+                    prepared_completion.marker.completion_id
+                ),
+                transaction_state_updates={
+                    PENDING_CONTROLLER_COMPLETION_KEY: (
+                        prepared_completion.marker.to_dict()
+                    ),
+                    PENDING_EXTERNAL_PUBLICATION_KEY: VALID_MARKER,
+                },
+            )
+
+        state = store.load()
+        assert receipt.dispatch_id == (
+            prepared_completion.marker.completion_id
+        )
+        assert state["token_usage"] == 17
+        assert state["last_dispatch"]["dispatch_id"] == receipt.dispatch_id
+        assert state["last_dispatch"]["post_dispatch_complete"] is False
+        assert state[PENDING_CONTROLLER_COMPLETION_KEY] == (
+            prepared_completion.marker.to_dict()
+        )
+        assert state[PENDING_EXTERNAL_PUBLICATION_KEY] == VALID_MARKER
 
     def test_advance_records_completed_phase_provenance(self, tmp_path):
         store = _store(tmp_path)

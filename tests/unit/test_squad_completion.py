@@ -25,6 +25,7 @@ from harness.squad_completion import (
     CompletionMarker,
     load_prepared_controller_completion,
     prepare_controller_completion,
+    persist_completion_effect_receipt,
 )
 from harness.state_transaction_namespace import (
     validate_pending_controller_completion,
@@ -2105,6 +2106,19 @@ def test_completion_journal_strips_spoofed_metadata_and_attests_content(
         "timestamp": row["timestamp"],
         "content_sha256": list(plan.content_sha256),
     }
+
+    persisted = persist_completion_effect_receipt(
+        prepared,
+        "journal",
+        receipt,
+    )
+    reloaded = load_prepared_controller_completion(
+        tmp_path,
+        squad_dir,
+        prepared.marker,
+    )
+    assert persisted == receipt
+    assert reloaded.receipts["effects"]["journal"] == receipt
 
 
 def test_completion_journal_preserves_unrelated_serialized_rows(

@@ -48,6 +48,7 @@ from harness.phase_checkpoints import create_phase_checkpoint
 from harness.prepared_phase_result import (
     PreparedPhaseResult,
     PreparedRoutingDecision,
+    _canonical_payload_sha256,
     detach_squad_agent_result,
     prepare_phase_result,
 )
@@ -70,6 +71,21 @@ from harness.squad_executors import (
     StagedParallelExecutor,
 )
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
+from harness.squad_completion import (
+    CompletionError,
+    PreparedControllerCompletion,
+    apply_or_verify_completion_journal,
+    apply_or_verify_completion_mining,
+    apply_or_verify_completion_timing,
+    create_or_recover_completion_checkpoint,
+    discard_unreferenced_controller_completion,
+    install_or_verify_completion_context,
+    load_prepared_controller_completion,
+    persist_completion_effect_receipt,
+    prepare_completion_journal_plan,
+    prepare_controller_completion as prepare_controller_completion_stage,
+    prepare_or_load_completion_context,
+)
 from harness.squad_publication import (
     PreparedSquadPublication,
     PublicationError,
@@ -86,9 +102,11 @@ from harness.squad_state import (
     SquadStateStore,
 )
 from harness.state_transaction_namespace import (
+    PENDING_CONTROLLER_COMPLETION_KEY,
     PENDING_EXTERNAL_PUBLICATION_KEY,
     STORE_OWNED_TRANSACTION_KEYS,
     TRUSTED_ROUTING_EFFECT_KEYS,
+    validate_pending_controller_completion,
     validate_pending_external_publication,
 )
 from harness.prompt_markdown import read_prompt_markdown
@@ -375,6 +393,16 @@ class ControllerEnrichment:
         )
 
 
+@dataclass(frozen=True)
+class CompletionRecoveryOutcome:
+    """Structured proof of one completion recovered before phase work."""
+
+    recovered: bool
+    origin: str = ""
+    manual_phase_run: bool = False
+    completion_id: str = ""
+
+
 class _TransitionJudgmentRequired(RuntimeError):
     """Signal that ordered routing needs external COMMANDER coordination."""
 
@@ -464,9 +492,6 @@ class SquadController:
         self._evaluator = ConditionEvaluator()
         self._gate_config_cache: Optional[dict] = None
         self._gov_config_cache: Optional[dict] = None
-        self._pending_judgment_results: dict[
-            str, tuple[SquadAgentResult, ...]
-        ] = {}
         self._executors: dict[str, PhaseExecutor] = {
             "agent": AgentExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "commander_internal": CommanderInternalExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
@@ -725,6 +750,731 @@ class SquadController:
         except (Exception, SystemExit):
             return []
 
+    def _completion_timing_parameters(
+        self,
+        from_phase: str,
+        to_phase: str,
+    ) -> dict[str, object] | None:
+        if from_phase == to_phase:
+            return None
+        try:
+            node = self._graph.get(from_phase)
+        except KeyError:
+            return None
+        transition = node.timing_window_transition
+        if not isinstance(transition, dict) or not transition:
+            return None
+        close_phase = str(transition.get("close") or "").strip()
+        open_phase = str(transition.get("open") or "").strip()
+        if not close_phase and not open_phase:
+            return None
+        close_budget = (
+            self._declared_phase_timing_budget(close_phase)
+            if close_phase
+            else None
+        )
+        open_budget_value = transition.get("open_budget_seconds")
+        open_budget = (
+            float(open_budget_value)
+            if open_phase
+            and type(open_budget_value) in (int, float)
+            and float(open_budget_value) >= 0
+            else (
+                self._declared_phase_timing_budget(open_phase)
+                if open_phase
+                else None
+            )
+        )
+        if (
+            (close_phase and close_budget is None)
+            or (open_phase and open_budget is None)
+        ):
+            return None
+        return {
+            "close_phase": close_phase or None,
+            "close_budget_seconds": close_budget,
+            "open_phase": open_phase or None,
+            "open_budget_seconds": open_budget,
+        }
+
+    def _completion_checkpoint_prestate(self) -> dict[str, object]:
+        try:
+            completed = subprocess.run(
+                ["git", "rev-parse", "HEAD^{commit}"],
+                cwd=self._project_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            head = completed.stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            head = "0" * 40
+        if re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", head) is None:
+            head = "0" * 40
+        return {"kind": "git_head", "head": head}
+
+    def _completion_timing_is_active(
+        self,
+        from_phase: str,
+        to_phase: str,
+    ) -> bool:
+        parameters = self._completion_timing_parameters(
+            from_phase,
+            to_phase,
+        )
+        if parameters is None:
+            return False
+        close_phase = parameters["close_phase"]
+        if close_phase is None:
+            return True
+        try:
+            events, diagnostics = (
+                self._telemetry_store.read_phase_timings()
+            )
+        except Exception:
+            return False
+        if diagnostics:
+            return False
+        latest = next(
+            (
+                event
+                for event in reversed(events)
+                if event.phase == close_phase
+            ),
+            None,
+        )
+        return (
+            latest is not None
+            and latest.event == "started"
+            and latest.budget_seconds
+            == parameters["close_budget_seconds"]
+        )
+
+    @staticmethod
+    def _completion_judgment_record(
+        result: SquadAgentResult,
+    ) -> dict[str, object]:
+        detached = detach_squad_agent_result(result)
+        payload = detached.echelon_result
+        return {
+            "echelon_result": payload if isinstance(payload, dict) else {},
+            "quarantined_state_updates": dict(
+                detached.quarantined_state_updates
+            ),
+        }
+
+    def _prepare_controller_completion(
+        self,
+        *,
+        from_phase: str,
+        to_phase: str,
+        snapshot: RoutingStateSnapshot,
+        manual_phase_run: bool,
+        conditional_skip: bool,
+        record_completion: bool,
+        publication_marker: Mapping[str, object] | None,
+        judgments: tuple[SquadAgentResult, ...] = (),
+        origin: str = "routed",
+    ) -> PreparedControllerCompletion:
+        """Seal all post-dispatch work before its authorizing state save."""
+        if origin == "terminal":
+            route: dict[str, object] = {
+                "kind": "terminal",
+                "terminal_phase": from_phase,
+            }
+            effect_plan = (
+                ("mining",)
+                if self._active_phase_a_spec_dir(snapshot.state) is not None
+                else ()
+            )
+            judgment_records: tuple[dict[str, object], ...] = ()
+        else:
+            route = {
+                "kind": "routed",
+                "from_phase": from_phase,
+                "to_phase": to_phase,
+                "manual_phase_run": manual_phase_run,
+                "record_completion": record_completion,
+            }
+            judgment_records = tuple(
+                self._completion_judgment_record(result)
+                for result in judgments
+            )
+            if not record_completion:
+                effect_plan = ("journal", "checkpoint")
+            else:
+                effects: list[str] = []
+                if judgment_records:
+                    effects.append("journal")
+                if (
+                    self._completion_timing_is_active(
+                        from_phase,
+                        to_phase,
+                    )
+                ):
+                    effects.append("timing")
+                active_spec_dir = self._active_phase_a_spec_dir(
+                    snapshot.state
+                )
+                if (
+                    active_spec_dir is not None
+                    and active_spec_dir.exists()
+                ):
+                    effects.append("checkpoint")
+                effects.append("context")
+                if from_phase == "phase4-document":
+                    effects.append("mining")
+                effect_plan = tuple(effects)
+        publication = (
+            {
+                "kind": "external",
+                "marker": dict(publication_marker),
+            }
+            if publication_marker is not None
+            else {"kind": "none"}
+        )
+        checkpoint_prestate = (
+            self._completion_checkpoint_prestate()
+            if "checkpoint" in effect_plan
+            else {"kind": "none"}
+        )
+        judgment_digests = tuple(
+            _canonical_payload_sha256(
+                dict(record["echelon_result"])
+            )
+            for record in judgment_records
+        )
+        try:
+            return prepare_controller_completion_stage(
+                self._project_root,
+                self._squad_dir,
+                completion_id=uuid.uuid4().hex,
+                origin=origin,
+                publication=publication,
+                route=route,
+                effect_plan=effect_plan,
+                checkpoint_prestate=checkpoint_prestate,
+                context_reason=(
+                    "terminal Phase A reconciliation"
+                    if origin == "terminal"
+                    else (
+                        f"{'manual ' if manual_phase_run else ''}"
+                        f"{'skip ' if conditional_skip else ''}"
+                        f"phase advance {from_phase} -> {to_phase}"
+                    )
+                ),
+                mine_phase_a="mining" in effect_plan,
+                judgment_payload_sha256=judgment_digests,
+                judgments=judgment_records,
+            )
+        except CompletionError as exc:
+            raise StateAdvanceError(
+                "controller completion preparation failed",
+                json_path=f"$.{PENDING_CONTROLLER_COMPLETION_KEY}",
+                validator=exc.code,
+            ) from exc
+
+    def _record_controller_completion_failure_best_effort(
+        self,
+        marker: object,
+        code: str,
+    ) -> None:
+        try:
+            self._state_store.record_controller_completion_failure(
+                marker,
+                code,
+            )
+        except Exception:
+            logger.exception(
+                "Could not persist controller completion failure code %s",
+                code,
+            )
+
+    def _completion_checkpoint_inputs(
+        self,
+        prepared: PreparedControllerCompletion,
+        state: Mapping[str, object],
+    ) -> dict[str, object]:
+        route = prepared.intent.route
+        spec_dir = self._active_phase_a_spec_dir(dict(state))
+        if spec_dir is not None and not spec_dir.exists():
+            spec_dir = None
+        additional_spec_dirs: tuple[Path, ...] = ()
+        additional_owned_paths: tuple[Path, ...] = ()
+        if (
+            spec_dir is not None
+            and route.get("from_phase") == "phase4-document"
+            and route.get("to_phase") in TERMINAL_PHASES
+        ):
+            published = self._published_phase_a_spec_dir(
+                dict(state),
+                spec_dir,
+            )
+            if (
+                published.exists()
+                and published.resolve() != spec_dir.resolve()
+            ):
+                additional_spec_dirs = (published,)
+            additional_owned_paths = accepted_kb_target_paths(
+                self._project_root,
+                str(state.get("run_id") or ""),
+            )
+        return {
+            "project_root": self._project_root,
+            "spec_dir": spec_dir,
+            "run_id": str(state.get("run_id") or ""),
+            "spec_id": (
+                _checkpoint_spec_id_from_state(dict(state), spec_dir)
+                if spec_dir is not None
+                else ""
+            ),
+            "additional_spec_dirs": additional_spec_dirs,
+            "additional_owned_paths": additional_owned_paths,
+        }
+
+    def _apply_controller_completion_effect(
+        self,
+        prepared: PreparedControllerCompletion,
+        state: Mapping[str, object],
+    ) -> None:
+        effect = prepared.marker.step
+        existing = prepared.receipts["effects"].get(effect)
+        if effect == "journal":
+            plan = prepare_completion_journal_plan(
+                prepared.intent,
+                self._squad_dir / "reasoning-journal.jsonl",
+            )
+            receipt = apply_or_verify_completion_journal(plan)
+            persist_completion_effect_receipt(
+                prepared,
+                effect,
+                receipt,
+            )
+            return
+        if effect == "timing":
+            route = prepared.intent.route
+            parameters = self._completion_timing_parameters(
+                str(route["from_phase"]),
+                str(route["to_phase"]),
+            )
+            if parameters is None:
+                raise CompletionError("intent_mismatch")
+            receipt = apply_or_verify_completion_timing(
+                prepared.intent,
+                self._telemetry_store,
+                expected_receipt=existing,
+                **parameters,
+            )
+            persist_completion_effect_receipt(
+                prepared,
+                effect,
+                receipt,
+            )
+            return
+        if effect == "checkpoint":
+            receipt = create_or_recover_completion_checkpoint(
+                prepared.intent,
+                expected_receipt=existing,
+                **self._completion_checkpoint_inputs(
+                    prepared,
+                    state,
+                ),
+            )
+            persist_completion_effect_receipt(
+                prepared,
+                effect,
+                receipt,
+            )
+            return
+        if effect == "context":
+            receipt = prepare_or_load_completion_context(
+                prepared,
+                project_root=self._project_root,
+                source_state_revision=int(
+                    state.get("state_revision") or 0
+                ),
+                user_request=str(
+                    state.get(
+                        "user_request",
+                        state.get("user_message", ""),
+                    )
+                    or ""
+                ),
+                drawers=self._retrieve_mempalace_context_drawers(
+                    str(
+                        state.get(
+                            "user_request",
+                            state.get("user_message", ""),
+                        )
+                        or ""
+                    ),
+                    str(state.get("run_id") or ""),
+                ),
+            )
+            install_or_verify_completion_context(
+                prepared,
+                expected_receipt=receipt,
+            )
+            return
+        if effect == "mining":
+            published_ref = str(
+                state.get("published_spec_dir") or ""
+            ).strip()
+            spec_file = (
+                self._absolute_project_path(published_ref) / "spec.md"
+                if published_ref
+                else None
+            )
+            if spec_file is not None and not spec_file.is_file():
+                spec_file = None
+            metadata: object = None
+            if spec_file is not None:
+                try:
+                    from echelon.context_metadata import (
+                        read_feature_metadata,
+                    )
+
+                    raw_metadata = read_feature_metadata(
+                        spec_file.parent
+                    )
+                    if raw_metadata is not None:
+                        spec_sha256 = hashlib.sha256(
+                            spec_file.read_bytes()
+                        ).hexdigest()
+                        metadata = (
+                            self._canonical_spec_artifact_metadata(
+                                spec_file,
+                                raw_metadata,
+                                f"sha256:{spec_sha256}",
+                            )
+                        )
+                except Exception:
+                    metadata = None
+            apply_or_verify_completion_mining(
+                prepared,
+                project_root=self._project_root,
+                spec_file=spec_file,
+                run_id=str(state.get("run_id") or ""),
+                artifact_metadata=metadata,
+                expected_receipt=existing,
+            )
+            return
+        raise CompletionError("intent_mismatch")
+
+    def _discard_completed_controller_stage(
+        self,
+        prepared: PreparedControllerCompletion,
+    ) -> None:
+        try:
+            state = self._state_store.load()
+        except Exception:
+            return
+        if PENDING_CONTROLLER_COMPLETION_KEY in state:
+            return
+        marker = prepared.marker
+        if marker.origin == "routed":
+            dispatch = state.get("last_dispatch")
+            proven = (
+                isinstance(dispatch, Mapping)
+                and dispatch.get("dispatch_id") == marker.completion_id
+                and dispatch.get("post_dispatch_complete") is True
+                and dispatch.get("completion_intent_sha256")
+                == marker.intent_sha256
+                and dispatch.get("completion_receipts_sha256")
+                == marker.receipts_sha256
+            )
+        else:
+            terminal = state.get("last_terminal_completion")
+            proven = (
+                isinstance(terminal, Mapping)
+                and terminal.get("completion_id") == marker.completion_id
+                and terminal.get("intent_sha256")
+                == marker.intent_sha256
+                and terminal.get("receipts_sha256")
+                == marker.receipts_sha256
+            )
+        if not proven:
+            return
+        try:
+            prepared.discard()
+        except CompletionError:
+            logger.warning(
+                "Could not discard completed controller stage",
+                exc_info=True,
+            )
+
+    def _cleanup_controller_completion_orphans(self) -> bool:
+        """Remove valid unreferenced stages; retain incomplete dispatch proof."""
+        try:
+            state = self._state_store.load()
+        except Exception:
+            return False
+        if (
+            PENDING_CONTROLLER_COMPLETION_KEY in state
+            or PENDING_EXTERNAL_PUBLICATION_KEY in state
+        ):
+            return False
+        retained_id = ""
+        dispatch = state.get("last_dispatch")
+        if (
+            isinstance(dispatch, Mapping)
+            and dispatch.get("post_dispatch_complete") is False
+        ):
+            candidate = dispatch.get("dispatch_id")
+            intent_digest = dispatch.get(
+                "completion_intent_sha256"
+            )
+            if (
+                type(candidate) is not str
+                or re.fullmatch(r"[0-9a-f]{32}", candidate) is None
+                or type(intent_digest) is not str
+                or re.fullmatch(r"[0-9a-f]{64}", intent_digest) is None
+            ):
+                return False
+            retained_id = candidate
+        outbox = self._squad_dir / ".completion-outbox"
+        try:
+            metadata = os.lstat(outbox)
+        except FileNotFoundError:
+            return not retained_id
+        except OSError:
+            return False
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISDIR(metadata.st_mode)
+        ):
+            return False
+        try:
+            with os.scandir(outbox) as iterator:
+                entries = tuple(iterator)
+        except OSError:
+            return False
+        for entry in entries:
+            if (
+                re.fullmatch(r"[0-9a-f]{32}", entry.name) is None
+                or entry.name == retained_id
+            ):
+                continue
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                discard_unreferenced_controller_completion(
+                    self._project_root,
+                    self._squad_dir,
+                    entry.name,
+                )
+            except CompletionError:
+                continue
+        return not retained_id
+
+    def _drain_pending_controller_completion(
+        self,
+    ) -> CompletionRecoveryOutcome:
+        """Validate, replay, and finalize one exact durable completion."""
+        state = self._state_store.load()
+        if PENDING_CONTROLLER_COMPLETION_KEY not in state:
+            if PENDING_EXTERNAL_PUBLICATION_KEY in state:
+                self._record_controller_completion_failure_best_effort(
+                    None,
+                    "completion_missing",
+                )
+            return CompletionRecoveryOutcome(False)
+        raw_marker = state[PENDING_CONTROLLER_COMPLETION_KEY]
+        try:
+            marker = validate_pending_controller_completion(raw_marker)
+            prepared = load_prepared_controller_completion(
+                self._project_root,
+                self._squad_dir,
+                marker,
+            )
+        except CompletionError as exc:
+            self._record_controller_completion_failure_best_effort(
+                raw_marker,
+                exc.code,
+            )
+            return CompletionRecoveryOutcome(False)
+        except Exception:
+            self._record_controller_completion_failure_best_effort(
+                raw_marker,
+                "intent_invalid",
+            )
+            return CompletionRecoveryOutcome(False)
+
+        route = prepared.intent.route
+        origin = prepared.intent.origin
+        manual = bool(
+            route.get("manual_phase_run", False)
+            if origin == "routed"
+            else False
+        )
+        outcome = CompletionRecoveryOutcome(
+            False,
+            origin,
+            manual,
+            prepared.marker.completion_id,
+        )
+        try:
+            publication = prepared.intent.publication
+            has_persisted_publication = (
+                PENDING_EXTERNAL_PUBLICATION_KEY in state
+            )
+            persisted_publication = state.get(
+                PENDING_EXTERNAL_PUBLICATION_KEY
+            )
+            if publication["kind"] == "external":
+                expected_publication = publication["marker"]
+                if prepared.marker.step == "awaiting_publication":
+                    if (
+                        not has_persisted_publication
+                        or persisted_publication
+                        != expected_publication
+                    ):
+                        raise CompletionError("intent_mismatch")
+                    try:
+                        staged_publication = load_prepared_publication(
+                            self._project_root,
+                            self._squad_dir,
+                            expected_publication,
+                        )
+                        staged_publication.publish()
+                    except PublicationError as exc:
+                        self._record_external_publication_failure_best_effort(
+                            expected_publication,
+                            exc.code,
+                        )
+                        return outcome
+                    except Exception:
+                        self._record_external_publication_failure_best_effort(
+                            expected_publication,
+                            "publish_io",
+                        )
+                        return outcome
+                    try:
+                        self._state_store.handoff_external_publication(
+                            expected_publication,
+                            prepared,
+                        )
+                    except StateAdvanceError:
+                        self._record_external_publication_failure_best_effort(
+                            expected_publication,
+                            "state_finalize",
+                        )
+                        return outcome
+                    handed = self._state_store.load()
+                    expected_next = (
+                        prepared.intent.effect_plan[0]
+                        if prepared.intent.effect_plan
+                        else "complete"
+                    )
+                    next_marker = handed.get(
+                        PENDING_CONTROLLER_COMPLETION_KEY
+                    )
+                    if (
+                        PENDING_EXTERNAL_PUBLICATION_KEY in handed
+                        or not isinstance(next_marker, Mapping)
+                        or next_marker.get("completion_id")
+                        != prepared.marker.completion_id
+                        or next_marker.get("step") != expected_next
+                    ):
+                        return outcome
+                    try:
+                        staged_publication.discard()
+                    except PublicationError:
+                        logger.warning(
+                            "Could not discard handed-off publication stage",
+                            exc_info=True,
+                        )
+                    if route.get("from_phase") == "phase4-document":
+                        self._phase_a_published_this_run = True
+                elif has_persisted_publication:
+                    raise CompletionError("intent_mismatch")
+            elif has_persisted_publication:
+                raise CompletionError("intent_mismatch")
+
+            while True:
+                current_state = self._state_store.load()
+                if (
+                    PENDING_CONTROLLER_COMPLETION_KEY
+                    not in current_state
+                ):
+                    return outcome
+                current_raw = current_state[
+                    PENDING_CONTROLLER_COMPLETION_KEY
+                ]
+                prepared = load_prepared_controller_completion(
+                    self._project_root,
+                    self._squad_dir,
+                    current_raw,
+                )
+                step = prepared.marker.step
+                if step == "awaiting_publication":
+                    raise CompletionError("intent_mismatch")
+                if step == "complete":
+                    digests = self._phase_a_inventory_digests(
+                        current_state
+                    )
+                    if (
+                        prepared.marker.origin == "routed"
+                        and prepared.intent.route.get("from_phase")
+                        == "phase4-document"
+                    ):
+                        if digests is None:
+                            raise CompletionError("receipts_mismatch")
+                        self._state_store.complete_controller_completion(
+                            prepared,
+                            phase_a_active_source_sha256=digests[0],
+                            phase_a_published_postimage_sha256=digests[1],
+                        )
+                    elif (
+                        prepared.marker.origin == "terminal"
+                    ):
+                        if digests is None:
+                            raise CompletionError("receipts_mismatch")
+                        self._state_store.complete_controller_completion(
+                            prepared,
+                            phase_a_active_source_sha256=digests[0],
+                            phase_a_published_postimage_sha256=digests[1],
+                        )
+                    else:
+                        self._state_store.complete_controller_completion(
+                            prepared,
+                        )
+                    self._discard_completed_controller_stage(prepared)
+                    return CompletionRecoveryOutcome(
+                        True,
+                        origin,
+                        manual,
+                        prepared.marker.completion_id,
+                    )
+                self._apply_controller_completion_effect(
+                    prepared,
+                    current_state,
+                )
+                one_ahead = load_prepared_controller_completion(
+                    self._project_root,
+                    self._squad_dir,
+                    current_raw,
+                )
+                self._state_store.advance_controller_completion(
+                    one_ahead,
+                )
+        except CompletionError as exc:
+            self._record_controller_completion_failure_best_effort(
+                self._state_store.load().get(
+                    PENDING_CONTROLLER_COMPLETION_KEY
+                ),
+                exc.code,
+            )
+            return outcome
+        except StateAdvanceError:
+            self._record_controller_completion_failure_best_effort(
+                self._state_store.load().get(
+                    PENDING_CONTROLLER_COMPLETION_KEY
+                ),
+                "stage_io",
+            )
+            return outcome
+
     def _run_with_execution_lease(
         self,
         execute: Callable[[], SquadResult],
@@ -737,31 +1487,27 @@ class SquadController:
         try:
             with PhaseAExecutionLock.acquire(self._project_root, operation_id):
                 with SpecRunExecutionLock.acquire(self._squad_dir, operation_id):
-                    recovery_state = self._state_store.load()
-                    had_pending_publication = (
-                        PENDING_EXTERNAL_PUBLICATION_KEY
-                        in recovery_state
+                    recovery = (
+                        self._drain_pending_controller_completion()
                     )
-                    if not self._recover_pending_external_publication():
+                    recovered_state = self._state_store.load()
+                    if (
+                        PENDING_CONTROLLER_COMPLETION_KEY
+                        in recovered_state
+                        or PENDING_EXTERNAL_PUBLICATION_KEY
+                        in recovered_state
+                    ):
+                        return SquadResult.from_state(recovered_state)
+                    if (
+                        stop_after_recovered_manual
+                        and recovery.recovered
+                        and recovery.manual_phase_run
+                    ):
+                        return SquadResult.from_state(recovered_state)
+                    if not self._cleanup_controller_completion_orphans():
                         return SquadResult.from_state(
                             self._state_store.load()
                         )
-                    if had_pending_publication:
-                        if not self._complete_recovered_route_success(
-                            recovery_state
-                        ):
-                            return SquadResult.from_state(
-                                self._state_store.load()
-                            )
-                        last_dispatch = recovery_state.get("last_dispatch")
-                        if (
-                            stop_after_recovered_manual
-                            and isinstance(last_dispatch, Mapping)
-                            and last_dispatch.get("manual_phase_run") is True
-                        ):
-                            return SquadResult.from_state(
-                                self._state_store.load()
-                            )
                     return execute()
         except SpecLifecycleLocked as exc:
             state = self._state_store.load()
@@ -773,53 +1519,6 @@ class SquadController:
                 flush=True,
             )
             return SquadResult(status="busy", phase=phase, run_id=run_id)
-
-    def _complete_recovered_route_success(
-        self,
-        recovery_state: Mapping[str, object],
-    ) -> bool:
-        """Finish deferred success work after recovered marker clearance."""
-        try:
-            if (
-                PENDING_EXTERNAL_PUBLICATION_KEY
-                in self._state_store.load()
-            ):
-                return False
-        except Exception:
-            return False
-        diagnostic = recovery_state.get("external_publication_failure")
-        resume_status = (
-            diagnostic.get("resume_status")
-            if isinstance(diagnostic, Mapping)
-            else recovery_state.get("status")
-        )
-        last_dispatch = recovery_state.get("last_dispatch")
-        if not isinstance(last_dispatch, Mapping):
-            return True
-        phase = str(last_dispatch.get("phase_id") or "")
-        next_phase = str(last_dispatch.get("next_phase") or "")
-        routing_sha = str(
-            last_dispatch.get("routing_decision_sha256") or ""
-        )
-        if resume_status == "done" or not phase or not next_phase:
-            return True
-        pending_judgments = self._pending_judgment_results.pop(
-            routing_sha,
-            (),
-        )
-        for judgment in pending_judgments:
-            self._write_journal_entries(judgment, phase)
-        try:
-            node = self._graph.get(phase)
-        except Exception:
-            return True
-        self._apply_declared_phase_timing_transition(node, next_phase)
-        if not self._checkpoint_successful_phase(phase, next_phase):
-            return False
-        self._refresh_run_context(
-            f"recovered phase advance {phase} -> {next_phase}"
-        )
-        return True
 
     def _record_external_publication_failure_best_effort(
         self,
@@ -1222,13 +1921,13 @@ class SquadController:
         if existing and existing_status == "done" and str(existing.get("phase") or "") in TERMINAL_PHASES:
             readiness = self._publish_terminal_phase_a_artifacts_if_available()
             if readiness is not None and not readiness.ready:
+                pending_state = self._state_store.load()
                 if (
-                    PENDING_EXTERNAL_PUBLICATION_KEY
-                    in self._state_store.load()
+                    PENDING_CONTROLLER_COMPLETION_KEY
+                    in pending_state
+                    or PENDING_EXTERNAL_PUBLICATION_KEY in pending_state
                 ):
-                    return SquadResult.from_state(
-                        self._state_store.load()
-                    )
+                    return SquadResult.from_state(pending_state)
                 self._block_after_phase_a_readiness_failure(readiness)
             else:
                 state = self._state_store.load()
@@ -1319,13 +2018,13 @@ class SquadController:
                 if state.get("status") != "blocked":
                     readiness = self._publish_terminal_phase_a_artifacts_if_available()
                     if readiness is not None and not readiness.ready:
+                        pending_state = self._state_store.load()
                         if (
-                            PENDING_EXTERNAL_PUBLICATION_KEY
-                            in self._state_store.load()
+                            PENDING_CONTROLLER_COMPLETION_KEY
+                            in pending_state
+                            or PENDING_EXTERNAL_PUBLICATION_KEY in pending_state
                         ):
-                            return SquadResult.from_state(
-                                self._state_store.load()
-                            )
+                            return SquadResult.from_state(pending_state)
                         self._block_after_phase_a_readiness_failure(readiness)
                         return SquadResult.from_state(self._state_store.load())
                     state = self._state_store.load()
@@ -1514,10 +2213,6 @@ class SquadController:
             )
             if receipt is None:
                 return SquadResult.from_state(self._state_store.load())
-            self._apply_declared_phase_timing_transition(node, next_phase)
-            if not self._checkpoint_successful_phase(phase, next_phase):
-                return SquadResult.from_state(self._state_store.load())
-            self._refresh_run_context(f"phase advance {phase} -> {next_phase}")
 
             # Inline escalation check — fires when _evaluate_transitions detected
             # escalation_question in state_updates and returned the current phase.
@@ -1539,8 +2234,6 @@ class SquadController:
                         recovery_reason=recovery_reason,
                     )
                     if self._state_store.load().get("status") == "blocked":
-                        return SquadResult.from_state(self._state_store.load())
-                    if not self._checkpoint_successful_phase(phase, phase):
                         return SquadResult.from_state(self._state_store.load())
                     continue  # re-dispatch the same phase (e.g. phase1-why1) next iteration
                 else:
@@ -1862,10 +2555,6 @@ class SquadController:
         )
         if receipt is None:
             return SquadResult.from_state(self._state_store.load())
-        self._apply_declared_phase_timing_transition(node, next_phase)
-        if not self._checkpoint_successful_phase(phase, next_phase):
-            return SquadResult.from_state(self._state_store.load())
-        self._refresh_run_context(f"manual phase advance {phase} -> {next_phase}")
         print(f"[squad] ✓ {node.id}  → {next_phase}  (stopped)", flush=True)
         return SquadResult.from_state(self._state_store.load())
 
@@ -1938,10 +2627,6 @@ class SquadController:
             )
             if receipt is None:
                 return True
-            self._apply_declared_phase_timing_transition(node, next_phase)
-            if not self._checkpoint_successful_phase(node.id, next_phase):
-                return True
-            self._refresh_run_context(f"phase skip {node.id} -> {next_phase}")
             suffix = "  (stopped)" if manual_phase_run else ""
             print(
                 f"[squad] skipped {node.id}  ({condition} false) -> {next_phase}{suffix}",
@@ -2108,6 +2793,70 @@ class SquadController:
                     continue
                 files.add(relative)
         return frozenset(files)
+
+    def _controller_tree_inventory_sha256(
+        self,
+        root: Path,
+    ) -> str:
+        records: list[dict[str, object]] = []
+        for relative in sorted(
+            self._controller_tree_files(
+                root,
+                exclude_echelon=True,
+            ),
+            key=lambda path: path.as_posix(),
+        ):
+            content = self._read_project_regular_file(root / relative)
+            if content is None:
+                raise OSError(
+                    "controller inventory source changed during read"
+                )
+            records.append(
+                {
+                    "path": relative.as_posix(),
+                    "size_bytes": len(content),
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                }
+            )
+        encoded = json.dumps(
+            records,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _phase_a_inventory_digests(
+        self,
+        state: Mapping[str, object],
+    ) -> tuple[str, str] | None:
+        detached = dict(state)
+        active = self._active_phase_a_spec_dir(detached)
+        if active is None or not active.is_dir():
+            return None
+        published_ref = str(
+            detached.get("published_spec_dir") or ""
+        ).strip()
+        if not published_ref:
+            published = self._published_phase_a_spec_dir(
+                detached,
+                active,
+            )
+        else:
+            published = self._absolute_project_path(published_ref)
+        if not published.is_dir():
+            return None
+        try:
+            return (
+                self._controller_tree_inventory_sha256(
+                    self._absolute_project_path(active)
+                ),
+                self._controller_tree_inventory_sha256(
+                    self._absolute_project_path(published)
+                ),
+            )
+        except OSError:
+            return None
 
     def _copy_controller_tree(
         self,
@@ -2686,23 +3435,27 @@ class SquadController:
     def _publish_terminal_phase_a_artifacts_if_available(
         self,
     ) -> PhaseAReadinessResult | None:
-        """Reconcile completed run-local Phase A artifacts into project specs.
-
-        A resumed run can reach DONE with newer artifacts in runs/<id>/specs/<id>
-        than the project-visible specs/<id> directory. Terminal return is the
-        last deterministic chance to publish that tree.
-        """
+        """Reconcile terminal Phase A through an explicit completion intent."""
         state = self._state_store.load()
         active_spec_dir = self._active_phase_a_spec_dir(state)
         if active_spec_dir is None or not active_spec_dir.exists():
             return None
-        if self._phase_a_published_this_run:
-            published_ref = str(state.get("published_spec_dir") or "").strip()
+        current_digests = self._phase_a_inventory_digests(state)
+        if (
+            current_digests is not None
+            and self._terminal_inventory_provenance_matches(
+                state,
+                current_digests,
+            )
+        ):
+            published_ref = str(
+                state.get("published_spec_dir") or ""
+            ).strip()
             if published_ref:
-                published_spec_dir = Path(published_ref)
-                if not published_spec_dir.is_absolute():
-                    published_spec_dir = self._project_root / published_spec_dir
-                return validate_phase_a_readiness(state, [published_spec_dir])
+                return validate_phase_a_readiness(
+                    state,
+                    [self._absolute_project_path(published_ref)],
+                )
         snapshot = self._state_store.capture_routing_snapshot(
             expected_phase=str(state.get("phase") or "")
         )
@@ -2733,54 +3486,54 @@ class SquadController:
             "phase4-document",
             snapshot.state,
         )
-        if prepared is None:
-            published_ref = str(
-                planned_updates.get("published_spec_dir")
-                or state.get("published_spec_dir")
-                or ""
-            ).strip()
-            if not published_ref:
-                return None
-            return validate_phase_a_readiness(
-                state,
-                [self._absolute_project_path(published_ref)],
-            )
-        marker = prepared.marker.to_dict()
+        publication_marker = (
+            prepared.marker.to_dict()
+            if prepared is not None
+            else None
+        )
+        completion = self._prepare_controller_completion(
+            from_phase=snapshot.phase,
+            to_phase=snapshot.phase,
+            snapshot=snapshot,
+            manual_phase_run=False,
+            conditional_skip=False,
+            record_completion=True,
+            publication_marker=publication_marker,
+            origin="terminal",
+        )
         try:
-            self._state_store.begin_external_publication(
-                marker,
+            self._state_store.begin_terminal_controller_completion(
+                completion,
                 snapshot=snapshot,
                 state_updates=planned_updates,
             )
         except StateAdvanceError:
-            try:
-                marker_won = (
-                    self._state_store.load().get(
-                        PENDING_EXTERNAL_PUBLICATION_KEY
-                    )
-                    == marker
-                )
-            except Exception:
-                marker_won = False
-            if not marker_won:
-                self._discard_publication_without_authority(prepared)
-                return PhaseAReadinessResult(
-                    ready=False,
-                    blockers=[
-                        "failed to commit terminal external publication marker"
-                    ],
-                    missing={},
-                    ready_spec_dir=None,
-                )
-        if not self._publish_and_finalize(prepared, marker):
+            self._discard_publication_without_authority(prepared)
+            self._discard_controller_completion_without_authority(
+                completion.marker.to_dict()
+            )
             return PhaseAReadinessResult(
                 ready=False,
-                blockers=["external publication remains pending"],
+                blockers=[
+                    "failed to commit terminal completion authority"
+                ],
                 missing={},
                 ready_spec_dir=None,
             )
-        self._phase_a_published_this_run = True
-        self._mine_published_context_after_publication()
+        recovery = self._drain_pending_controller_completion()
+        if (
+            not recovery.recovered
+            or recovery.completion_id
+            != completion.marker.completion_id
+        ):
+            return PhaseAReadinessResult(
+                ready=False,
+                blockers=["terminal completion remains pending"],
+                missing={},
+                ready_spec_dir=None,
+            )
+        if prepared is not None:
+            self._phase_a_published_this_run = True
         published_ref = str(
             self._state_store.load().get("published_spec_dir") or ""
         ).strip()
@@ -2796,6 +3549,35 @@ class SquadController:
             self._state_store.load(),
             [published_spec_dir],
         )
+
+    @staticmethod
+    def _terminal_inventory_provenance_matches(
+        state: Mapping[str, object],
+        digests: tuple[str, str],
+    ) -> bool:
+        active_digest, published_digest = digests
+        dispatch = state.get("last_dispatch")
+        routed_match = (
+            isinstance(dispatch, Mapping)
+            and dispatch.get("phase_id") == "phase4-document"
+            and dispatch.get("post_dispatch_complete") is True
+            and state.get("phase_a_active_source_sha256")
+            == active_digest
+            and state.get("phase_a_published_postimage_sha256")
+            == published_digest
+        )
+        terminal = state.get("last_terminal_completion")
+        terminal_match = (
+            isinstance(terminal, Mapping)
+            and terminal.get("terminal_phase") == state.get("phase")
+            and terminal.get("phase_a_active_source_sha256")
+            == active_digest
+            and terminal.get(
+                "phase_a_published_postimage_sha256"
+            )
+            == published_digest
+        )
+        return routed_match or terminal_match
 
     def _phase_a_readiness_candidate_dirs(
         self,
@@ -4378,9 +5160,27 @@ class SquadController:
         prepared_publication: PreparedSquadPublication | None = None,
     ) -> AdvanceReceipt | None:
         """Commit one sealed route or persist a separate redacted failure."""
-        pending_judgments = self._pending_judgment_results.get(
-            decision.routing_sha256,
-            (),
+        completion_marker = dict(
+            decision.transaction_state_updates
+        ).get(PENDING_CONTROLLER_COMPLETION_KEY)
+        if not isinstance(completion_marker, Mapping):
+            self._block_after_state_advance_failure(
+                node,
+                decision.from_phase,
+                StateAdvanceError(
+                    "routing decision does not authorize completion",
+                    json_path=(
+                        "$.transaction_state_updates."
+                        f"{PENDING_CONTROLLER_COMPLETION_KEY}"
+                    ),
+                    validator="completion_binding",
+                ),
+                decision=decision,
+                token_usage_delta=decision.token_usage_delta,
+            )
+            return None
+        completion_id = str(
+            completion_marker.get("completion_id") or ""
         )
         try:
             if prepared_publication is not None:
@@ -4410,26 +5210,19 @@ class SquadController:
                     json_path="$.advance_receipt",
                     validator="receipt",
                 )
-            if prepared_publication is not None:
-                marker = prepared_publication.marker.to_dict()
-                if not self._publish_and_finalize(
-                    prepared_publication,
-                    marker,
-                ):
-                    return None
-                if decision.from_phase == "phase4-document":
-                    self._phase_a_published_this_run = True
-                    self._mine_published_context_after_publication()
-            self._pending_judgment_results.pop(
-                decision.routing_sha256,
-                None,
-            )
-            for judgment in pending_judgments:
-                self._write_journal_entries(judgment, decision.from_phase)
+            recovery = self._drain_pending_controller_completion()
+            if (
+                not recovery.recovered
+                or recovery.completion_id != completion_id
+            ):
+                return None
             return receipt
         except StateAdvanceError as exc:
             self._discard_publication_without_authority(
                 prepared_publication,
+            )
+            self._discard_controller_completion_without_authority(
+                completion_marker,
             )
             self._block_after_state_advance_failure(
                 node,
@@ -4439,6 +5232,37 @@ class SquadController:
                 token_usage_delta=decision.token_usage_delta,
             )
             return None
+
+    def _discard_controller_completion_without_authority(
+        self,
+        marker: Mapping[str, object],
+    ) -> None:
+        """Discard a route stage only after exact state proves no authority."""
+        try:
+            expected = validate_pending_controller_completion(marker)
+            state = self._state_store.load()
+        except Exception:
+            return
+        if state.get(PENDING_CONTROLLER_COMPLETION_KEY) == expected:
+            return
+        dispatch = state.get("last_dispatch")
+        if (
+            isinstance(dispatch, Mapping)
+            and dispatch.get("dispatch_id") == expected["completion_id"]
+            and dispatch.get("post_dispatch_complete") is False
+            and dispatch.get("completion_intent_sha256")
+            == expected["intent_sha256"]
+        ):
+            return
+        try:
+            prepared = load_prepared_controller_completion(
+                self._project_root,
+                self._squad_dir,
+                expected,
+            )
+            prepared.discard()
+        except CompletionError:
+            return
 
     def _block_after_state_advance_failure(
         self,
@@ -4930,30 +5754,62 @@ class SquadController:
             node,
             next_phase,
         )
-        decision = self._state_store.prepare_routing_decision(
-            prepared,
-            snapshot=snapshot,
+        if PENDING_CONTROLLER_COMPLETION_KEY in transaction_updates:
+            raise ControllerStateContractViolation(
+                "routing effects cannot provide completion authority",
+                contract="routing",
+                json_path=(
+                    "$.transaction_state_updates."
+                    f"{PENDING_CONTROLLER_COMPLETION_KEY}"
+                ),
+                validator="ownership",
+            )
+        publication_marker = transaction_updates.get(
+            PENDING_EXTERNAL_PUBLICATION_KEY
+        )
+        completion = self._prepare_controller_completion(
             from_phase=node.id,
             to_phase=next_phase,
-            queued_state_updates=queued_updates,
-            transaction_state_updates=transaction_updates,
-            transaction_state_removals=transaction_removals,
-            judgment_payloads=judgment_payloads,
-            source=source,
-            transition_index=transition_index,
-            increment_iteration=increment_iteration,
+            snapshot=snapshot,
             manual_phase_run=manual_phase_run,
             conditional_skip=conditional_skip,
-            token_usage_delta=(
-                self._deferred_provider_usage or {"tokens": 0}
-            )["tokens"],
+            record_completion=True,
+            publication_marker=(
+                publication_marker
+                if isinstance(publication_marker, Mapping)
+                else None
+            ),
+            judgments=tuple(judgment_results),
         )
-        if judgment_results:
-            self._pending_judgment_results[decision.routing_sha256] = tuple(
-                detach_squad_agent_result(result)
-                for result in judgment_results
+        transaction_updates[PENDING_CONTROLLER_COMPLETION_KEY] = (
+            completion.marker.to_dict()
+        )
+        try:
+            return self._state_store.prepare_routing_decision(
+                prepared,
+                snapshot=snapshot,
+                from_phase=node.id,
+                to_phase=next_phase,
+                queued_state_updates=queued_updates,
+                transaction_state_updates=transaction_updates,
+                transaction_state_removals=transaction_removals,
+                judgment_payloads=judgment_payloads,
+                source=source,
+                transition_index=transition_index,
+                increment_iteration=increment_iteration,
+                manual_phase_run=manual_phase_run,
+                conditional_skip=conditional_skip,
+                token_usage_delta=(
+                    self._deferred_provider_usage or {"tokens": 0}
+                )["tokens"],
+                dispatch_id=completion.marker.completion_id,
             )
-        return decision
+        except BaseException:
+            try:
+                completion.discard()
+            except CompletionError:
+                pass
+            raise
 
     def _transition_increments_iteration(
         self,
@@ -5279,6 +6135,7 @@ class SquadController:
             type="commander_recovery",
             allowed_state_updates=[],
         )
+        completion: PreparedControllerCompletion | None = None
         try:
             prepared = prepare_phase_result(
                 recovery_node,
@@ -5287,6 +6144,19 @@ class SquadController:
                 routing_override=target_phase,
                 state_removals=removals,
             )
+            completion = self._prepare_controller_completion(
+                from_phase=from_phase,
+                to_phase=target_phase,
+                snapshot=snapshot,
+                manual_phase_run=False,
+                conditional_skip=False,
+                record_completion=False,
+                publication_marker=None,
+                judgments=(result,),
+            )
+            transaction_updates[
+                PENDING_CONTROLLER_COMPLETION_KEY
+            ] = completion.marker.to_dict()
             decision = self._state_store.prepare_routing_decision(
                 prepared,
                 snapshot=snapshot,
@@ -5298,18 +6168,31 @@ class SquadController:
                 token_usage_delta=usage["tokens"],
                 judgment_payloads=(
                     [result.echelon_result]
-                    if not validation_reason
-                    and isinstance(result.echelon_result, dict)
+                    if isinstance(result.echelon_result, dict)
                     else []
                 ),
                 source=source,
                 record_completion=False,
+                dispatch_id=completion.marker.completion_id,
             )
-            self._state_store.advance(
+            receipt = self._state_store.advance(
                 from_phase,
                 target_phase,
                 decision,
             )
+            if not isinstance(receipt, AdvanceReceipt):
+                raise StateAdvanceError(
+                    "recovery state advance did not return a receipt",
+                    json_path="$.advance_receipt",
+                    validator="receipt",
+                )
+            recovery = self._drain_pending_controller_completion()
+            if (
+                not recovery.recovered
+                or recovery.completion_id
+                != completion.marker.completion_id
+            ):
+                return result
         except (
             ControllerStateContractViolation,
             StateAdvanceError,
@@ -5339,8 +6222,11 @@ class SquadController:
                 ),
                 diagnostic_subject="recovery routing decision",
             )
+            if completion is not None:
+                self._discard_controller_completion_without_authority(
+                    completion.marker.to_dict()
+                )
             return result
-        self._write_journal_entries(result, blocked_origin_phase)
         return result
 
     def _write_journal_entries(self, result: SquadAgentResult, phase_id: str) -> None:
