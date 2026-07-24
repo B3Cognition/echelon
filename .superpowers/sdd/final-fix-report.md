@@ -274,6 +274,8 @@ Verification implementation HEAD:
   `test: prove controller completion crash recovery`
 - `72a60b890edcdd7157b3251d298f7143f4b5ccd4` —
   `test: align phase4 mining fixture with durable plan`
+- `cc5348cee3b5dcd93b06b736fa7fecc0e3ec76db` —
+  `docs: report durable completion recovery`
 
 The earlier publication recovery commit is `0553ae2c400aeed925ac0fb0e493d25212d969b6`
 (`fix: recover controller publications before phase work`). The completion
