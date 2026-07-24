@@ -354,6 +354,62 @@ class TestSquadStateStore:
         assert repeated["blocked_reason"] == "external_publication_pending"
 
     @pytest.mark.parametrize(
+        "marker",
+        [
+            None,
+            {
+                "schema_version": 1,
+                "transaction_id": "bad",
+                "manifest_sha256": "b" * 64,
+            },
+        ],
+    )
+    def test_malformed_external_publication_failure_uses_exact_raw_marker_cas(
+        self,
+        tmp_path,
+        marker,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        state = store.load()
+        state[PENDING_EXTERNAL_PUBLICATION_KEY] = marker
+        store.save(state)
+
+        store.record_malformed_external_publication_failure(marker)
+
+        failed = store.load()
+        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
+        assert failed["status"] == "blocked"
+        assert failed["blocked_reason"] == "external_publication_pending"
+        assert failed["external_publication_failure"] == {
+            "schema_version": 1,
+            "code": "manifest_invalid",
+            "resume_status": "running",
+            "resume_blocked_reason": None,
+        }
+
+    def test_malformed_external_publication_failure_rejects_marker_mismatch(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r", "greenfield", "msg", 0, "init")
+        malformed = {
+            "schema_version": 1,
+            "transaction_id": "bad",
+            "manifest_sha256": "b" * 64,
+        }
+        state = store.load()
+        state[PENDING_EXTERNAL_PUBLICATION_KEY] = malformed
+        store.save(state)
+        before = store.load()
+
+        with pytest.raises(StateAdvanceError):
+            store.record_malformed_external_publication_failure(None)
+
+        assert store.load() == before
+
+    @pytest.mark.parametrize(
         "method_name,args",
         [
             (

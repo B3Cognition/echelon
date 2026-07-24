@@ -837,6 +837,19 @@ class SquadController:
                 code,
             )
 
+    def _record_malformed_external_publication_failure_best_effort(
+        self,
+        marker: object,
+    ) -> None:
+        try:
+            self._state_store.record_malformed_external_publication_failure(
+                marker,
+            )
+        except Exception:
+            logger.exception(
+                "Could not persist malformed external publication failure"
+            )
+
     def _publish_and_finalize(
         self,
         prepared: PreparedSquadPublication,
@@ -845,6 +858,9 @@ class SquadController:
         """Publish one authorized stage and durably clear its exact marker."""
         try:
             expected_marker = validate_pending_external_publication(marker)
+            prepared_marker = validate_pending_external_publication(
+                prepared.marker.to_dict()
+            )
             persisted_marker = validate_pending_external_publication(
                 self._state_store.load().get(
                     PENDING_EXTERNAL_PUBLICATION_KEY
@@ -852,7 +868,10 @@ class SquadController:
             )
         except Exception:
             return False
-        if persisted_marker != expected_marker:
+        if (
+            prepared_marker != expected_marker
+            or persisted_marker != expected_marker
+        ):
             return False
         try:
             prepared.publish()
@@ -915,11 +934,17 @@ class SquadController:
     def _recover_pending_external_publication(self) -> bool:
         """Replay the exact state-authorized stage before any phase work."""
         state = self._state_store.load()
-        marker_value = state.get(PENDING_EXTERNAL_PUBLICATION_KEY)
-        if marker_value is None:
+        if PENDING_EXTERNAL_PUBLICATION_KEY not in state:
             return True
+        marker_value = state[PENDING_EXTERNAL_PUBLICATION_KEY]
         try:
             marker = validate_pending_external_publication(marker_value)
+        except Exception:
+            self._record_malformed_external_publication_failure_best_effort(
+                marker_value,
+            )
+            return False
+        try:
             prepared = load_prepared_publication(
                 self._project_root,
                 self._squad_dir,
@@ -937,11 +962,6 @@ class SquadController:
             )
             return False
         except Exception:
-            marker = (
-                marker_value
-                if isinstance(marker_value, Mapping)
-                else {}
-            )
             self._record_external_publication_failure_best_effort(
                 marker,
                 "manifest_invalid",
@@ -1308,6 +1328,7 @@ class SquadController:
                             )
                         self._block_after_phase_a_readiness_failure(readiness)
                         return SquadResult.from_state(self._state_store.load())
+                    state = self._state_store.load()
                     state["status"] = "done"
                     self._state_store.save(state)
                 return SquadResult.from_state(self._state_store.load())
@@ -2732,15 +2753,25 @@ class SquadController:
                 state_updates=planned_updates,
             )
         except StateAdvanceError:
-            self._discard_publication_without_authority(prepared)
-            return PhaseAReadinessResult(
-                ready=False,
-                blockers=[
-                    "failed to commit terminal external publication marker"
-                ],
-                missing={},
-                ready_spec_dir=None,
-            )
+            try:
+                marker_won = (
+                    self._state_store.load().get(
+                        PENDING_EXTERNAL_PUBLICATION_KEY
+                    )
+                    == marker
+                )
+            except Exception:
+                marker_won = False
+            if not marker_won:
+                self._discard_publication_without_authority(prepared)
+                return PhaseAReadinessResult(
+                    ready=False,
+                    blockers=[
+                        "failed to commit terminal external publication marker"
+                    ],
+                    missing={},
+                    ready_spec_dir=None,
+                )
         if not self._publish_and_finalize(prepared, marker):
             return PhaseAReadinessResult(
                 ready=False,

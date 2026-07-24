@@ -1360,6 +1360,93 @@ class TestAgentResultIntegrity:
             "# active spec.md"
         )
 
+    def test_running_terminal_reconciliation_reloads_state_before_done_save(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store, _, _, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        state = store.load()
+        state["phase"] = "DONE"
+        state["status"] = "running"
+        store.save(state)
+        monkeypatch.setattr(
+            ctrl,
+            "_guard_spec_lexicon_evidence",
+            lambda phase: phase,
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_guard_understanding_evidence",
+            lambda phase: phase,
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_apply_phase_recommendation_guard",
+            lambda phase: phase,
+        )
+        monkeypatch.setattr(
+            ctrl,
+            "_guard_constitution_provenance",
+            lambda phase: phase,
+        )
+        monkeypatch.setattr(ctrl, "_ensure_telemetry_manifest", lambda: None)
+
+        result = ctrl.run("msg", "banzai")
+
+        assert result.status == "done"
+        completed = store.load()
+        assert completed["status"] == "done"
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
+        assert (published / "spec.md").read_text(encoding="utf-8").startswith(
+            "# active spec.md"
+        )
+
+    def test_terminal_marker_post_save_exception_continues_publication(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store, _, _, published = (
+            self._phase_a_publication_staging_fixture(tmp_path)
+        )
+        state = store.load()
+        state["phase"] = "DONE"
+        state["status"] = "done"
+        store.save(state)
+        save = store._save_unlocked
+        injected = False
+
+        def save_marker_then_raise(next_state):
+            nonlocal injected
+            saved = save(next_state)
+            if (
+                not injected
+                and PENDING_EXTERNAL_PUBLICATION_KEY in next_state
+            ):
+                injected = True
+                raise OSError("injected post-save marker exception")
+            return saved
+
+        monkeypatch.setattr(
+            store,
+            "_save_unlocked",
+            save_marker_then_raise,
+        )
+
+        result = ctrl.run("msg", "banzai")
+
+        assert injected is True
+        assert result.status == "done"
+        completed = store.load()
+        assert PENDING_EXTERNAL_PUBLICATION_KEY not in completed
+        assert "external_publication_failure" not in completed
+        assert (published / "spec.md").read_text(encoding="utf-8").startswith(
+            "# active spec.md"
+        )
+
     def test_terminal_reconciliation_interruption_recovers_without_diagnostic_overwrite(
         self,
         tmp_path: Path,
@@ -1824,6 +1911,27 @@ class TestAgentResultIntegrity:
         )
         assert PENDING_EXTERNAL_PUBLICATION_KEY not in store.load()
 
+    def test_external_publication_rejects_a_stage_not_named_by_the_marker(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        authorized, _ = _sealed_publication_fixture(ctrl)
+        marker = _install_publication_marker(store, authorized)
+        unauthorized, _ = _sealed_publication_fixture(ctrl)
+        publish = MagicMock()
+        monkeypatch.setattr(
+            PreparedSquadPublication,
+            "publish",
+            publish,
+        )
+
+        assert ctrl._publish_and_finalize(unauthorized, marker) is False
+        publish.assert_not_called()
+        assert store.load()[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
+
     def test_external_publication_finalize_exception_after_clear_accepts_completion(
         self,
         tmp_path: Path,
@@ -1926,6 +2034,62 @@ class TestAgentResultIntegrity:
         }
         assert expected_code in json.dumps(failed)
         assert str(transaction_root) not in json.dumps(failed)
+
+    @pytest.mark.parametrize(
+        "marker",
+        [
+            None,
+            {
+                "schema_version": 1,
+                "transaction_id": "bad",
+                "manifest_sha256": "b" * 64,
+            },
+        ],
+    )
+    @pytest.mark.parametrize("entrypoint", ["normal", "manual"])
+    def test_malformed_publication_marker_blocks_with_bounded_diagnostic(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        marker: object,
+        entrypoint: str,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what")
+        state = store.load()
+        state[PENDING_EXTERNAL_PUBLICATION_KEY] = marker
+        store.save(state)
+        callback = MagicMock(
+            side_effect=AssertionError(
+                "entrypoint ran with a malformed publication marker"
+            )
+        )
+        if entrypoint == "normal":
+            monkeypatch.setattr(ctrl, "_run_locked", callback)
+            result = ctrl.run("msg", "banzai")
+        else:
+            monkeypatch.setattr(
+                ctrl,
+                "_run_single_phase_locked",
+                callback,
+            )
+            result = ctrl.run_single_phase(
+                "phase1-what",
+                "msg",
+                "banzai",
+            )
+
+        failed = store.load()
+        assert result.status == "blocked"
+        assert callback.call_count == 0
+        assert failed[PENDING_EXTERNAL_PUBLICATION_KEY] == marker
+        assert failed["blocked_reason"] == "external_publication_pending"
+        assert failed["external_publication_failure"] == {
+            "schema_version": 1,
+            "code": "manifest_invalid",
+            "resume_status": "running",
+            "resume_blocked_reason": None,
+        }
 
     @pytest.mark.parametrize("entrypoint", ["normal", "manual"])
     def test_pending_external_publication_recovers_before_entrypoint_status_logic(

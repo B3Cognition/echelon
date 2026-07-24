@@ -1136,6 +1136,60 @@ class SquadStateStore:
             state["blocked_reason"] = "external_publication_pending"
             self._save_unlocked(state)
 
+    def record_malformed_external_publication_failure(
+        self,
+        marker: object,
+    ) -> None:
+        """Block on one exact malformed marker without accepting it as valid."""
+        with self._lock(exclusive=True):
+            state = self._load_unlocked()
+            if (
+                PENDING_EXTERNAL_PUBLICATION_KEY not in state
+                or state[PENDING_EXTERNAL_PUBLICATION_KEY] != marker
+            ):
+                raise StateAdvanceError(
+                    "malformed external publication marker changed",
+                    json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
+                    validator="stale_state",
+                )
+            try:
+                validate_pending_external_publication(
+                    state[PENDING_EXTERNAL_PUBLICATION_KEY]
+                )
+            except ValueError:
+                pass
+            else:
+                raise StateAdvanceError(
+                    "external publication marker is not malformed",
+                    json_path=f"$.{PENDING_EXTERNAL_PUBLICATION_KEY}",
+                    validator="state_contract",
+                )
+            if _EXTERNAL_PUBLICATION_FAILURE_KEY in state:
+                try:
+                    diagnostic = _validate_external_publication_failure(
+                        state[_EXTERNAL_PUBLICATION_FAILURE_KEY]
+                    )
+                except ValueError as exc:
+                    raise StateAdvanceError(
+                        "persisted external publication failure is invalid",
+                        json_path=f"$.{_EXTERNAL_PUBLICATION_FAILURE_KEY}",
+                        validator="state_contract",
+                    ) from exc
+                diagnostic["code"] = "manifest_invalid"
+            else:
+                diagnostic = _validate_external_publication_failure(
+                    {
+                        "schema_version": 1,
+                        "code": "manifest_invalid",
+                        "resume_status": state.get("status", "running"),
+                        "resume_blocked_reason": state.get("blocked_reason"),
+                    }
+                )
+            state[_EXTERNAL_PUBLICATION_FAILURE_KEY] = diagnostic
+            state["status"] = "blocked"
+            state["blocked_reason"] = "external_publication_pending"
+            self._save_unlocked(state)
+
     def complete_external_publication(self, marker: object) -> None:
         try:
             expected_marker = validate_pending_external_publication(marker)
