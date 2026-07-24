@@ -10,6 +10,7 @@ import harness.prepared_phase_result as prepared_phase_result_module
 import harness.state_transaction_namespace as state_transaction_namespace
 from harness.controller_state_contracts import (
     CompiledControllerStateContract,
+    ControllerContractRegistryError,
     ControllerStateContractViolation,
     load_controller_state_contracts,
 )
@@ -888,6 +889,8 @@ def test_no_contract_preserves_unbounded_provider_behavior() -> None:
     node = PhaseNode(id="legacy", type="agent", allowed_state_updates=None)
     provider_path = PurePath("provider.json")
 
+    assert node.result_contract().allowed_state_update_keys is None
+
     prepared = prepare_phase_result(
         node,
         _result({"legacy": provider_path}),
@@ -920,6 +923,22 @@ def test_contract_runtime_rejects_null_provider_allowlist(
             node,
             _result({"evidence": {"items": ["escape"]}}),
             controller_updates={},
+        )
+
+
+@pytest.mark.parametrize(
+    "unsafe_allowlist",
+    ([123], [""], ["tasks_lexicon_pass"]),
+)
+def test_contract_dispatch_rejects_unsafe_provider_allowlist(
+    contract: CompiledControllerStateContract,
+    unsafe_allowlist: list[object],
+) -> None:
+    node = _node(contract)
+
+    with pytest.raises(ControllerContractRegistryError):
+        node.result_contract(
+            {"allowed_state_updates": unsafe_allowlist}
         )
 
 

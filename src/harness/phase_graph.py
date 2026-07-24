@@ -18,6 +18,33 @@ from harness.controller_state_contract_requirements import (
 )
 
 
+def _validate_controller_provider_allowlist(
+    *,
+    phase_id: object,
+    allowed: object,
+    contract: CompiledControllerStateContract,
+    nested: bool = False,
+) -> None:
+    boundary = "nested controller boundary" if nested else "controller boundary"
+    if type(allowed) is not list:
+        raise ControllerContractRegistryError(
+            f"phase {phase_id!r} {boundary} requires "
+            "allowed_state_updates to be a list"
+        )
+    if not all(isinstance(key, str) and key for key in allowed):
+        raise ControllerContractRegistryError(
+            f"phase {phase_id!r} {boundary} requires "
+            "allowed_state_updates to contain only non-empty strings"
+        )
+    overlap = contract.state_update_keys.intersection(allowed)
+    if overlap:
+        raise ControllerContractRegistryError(
+            f"phase {phase_id!r} {boundary}: controller state contract "
+            "must not overlap allowed_state_updates: "
+            f"{', '.join(sorted(overlap))}"
+        )
+
+
 @dataclass
 class PhaseNode:
     id: str
@@ -56,13 +83,12 @@ class PhaseNode:
 
         entry = agent_entry or {}
         allowed = entry.get("allowed_state_updates", self.allowed_state_updates)
-        if (
-            self.controller_state_contract is not None
-            and type(allowed) is not list
-        ):
-            raise ControllerContractRegistryError(
-                f"phase {self.id!r} controller boundary requires "
-                "allowed_state_updates to be a list"
+        if self.controller_state_contract is not None:
+            _validate_controller_provider_allowlist(
+                phase_id=self.id,
+                allowed=allowed,
+                contract=self.controller_state_contract,
+                nested=agent_entry is not None,
             )
         required = entry.get("required_state_updates", self.required_state_updates)
         value_types = entry.get("state_update_types", self.state_update_types)
@@ -162,26 +188,25 @@ class PhaseGraph:
                         f"referenced by phase {p.get('id')!r}"
                     )
             if contract is not None:
-                if type(p.get("allowed_state_updates")) is not list:
-                    raise ControllerContractRegistryError(
-                        f"phase {p.get('id')!r} controller boundary requires "
-                        "allowed_state_updates to be a list"
-                    )
+                _validate_controller_provider_allowlist(
+                    phase_id=p.get("id"),
+                    allowed=p.get("allowed_state_updates"),
+                    contract=contract,
+                )
                 for nested_name in ("agents", "pre_dispatch"):
                     nested_entries = p.get(nested_name, [])
                     if not isinstance(nested_entries, list):
                         continue
                     for entry in nested_entries:
-                        if (
-                            isinstance(entry, dict)
-                            and "allowed_state_updates" in entry
-                            and type(entry["allowed_state_updates"])
-                            is not list
-                        ):
-                            raise ControllerContractRegistryError(
-                                f"phase {p.get('id')!r} nested controller "
-                                "boundary requires allowed_state_updates "
-                                "to be a list"
+                        if isinstance(entry, dict):
+                            _validate_controller_provider_allowlist(
+                                phase_id=p.get("id"),
+                                allowed=entry.get(
+                                    "allowed_state_updates",
+                                    p.get("allowed_state_updates"),
+                                ),
+                                contract=contract,
+                                nested=True,
                             )
             node = PhaseNode(
                 id=p["id"],

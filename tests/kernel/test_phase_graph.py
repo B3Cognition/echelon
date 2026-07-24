@@ -391,11 +391,14 @@ phases:
     ]
 
 
-@pytest.mark.parametrize("nested_field", (None, "agents", "pre_dispatch"))
-def test_phase_graph_rejects_null_allowlist_for_controller_boundary(
+def _write_controller_boundary_graph(
     tmp_path: Path,
+    *,
+    allowlist: object,
     nested_field: str | None,
-) -> None:
+) -> tuple[Path, Path]:
+    """Write one direct-PhaseGraph controller-boundary fixture."""
+
     registry = tmp_path / "contracts.yaml"
     registry.write_bytes(
         (
@@ -403,7 +406,7 @@ def test_phase_graph_rejects_null_allowlist_for_controller_boundary(
             / "extension/workflow/controller-state-contracts.yaml"
         ).read_bytes()
     )
-    phase = {
+    phase: dict[str, object] = {
         "id": "start",
         "type": "agent",
         "allowed_state_updates": [],
@@ -411,11 +414,11 @@ def test_phase_graph_rejects_null_allowlist_for_controller_boundary(
         "transitions": [{"to": "DONE", "condition": "always"}],
     }
     if nested_field is None:
-        phase["allowed_state_updates"] = None
+        phase["allowed_state_updates"] = allowlist
     else:
         phase["type"] = "staged_parallel"
         phase[nested_field] = [
-            {"id": "nested", "allowed_state_updates": None}
+            {"id": "nested", "allowed_state_updates": allowlist}
         ]
     definition = tmp_path / "definition.yaml"
     definition.write_text(
@@ -432,11 +435,44 @@ def test_phase_graph_rejects_null_allowlist_for_controller_boundary(
         "provides: {commands: []}\n",
         encoding="utf-8",
     )
+    return definition, extension_yml
+
+
+@pytest.mark.parametrize("nested_field", (None, "agents", "pre_dispatch"))
+def test_phase_graph_rejects_null_allowlist_for_controller_boundary(
+    tmp_path: Path,
+    nested_field: str | None,
+) -> None:
+    definition, extension_yml = _write_controller_boundary_graph(
+        tmp_path,
+        allowlist=None,
+        nested_field=nested_field,
+    )
 
     with pytest.raises(
         ControllerContractRegistryError,
         match="allowed_state_updates.*list",
     ):
+        PhaseGraph(definition, extension_yml)
+
+
+@pytest.mark.parametrize("nested_field", (None, "agents", "pre_dispatch"))
+@pytest.mark.parametrize(
+    "unsafe_allowlist",
+    ([123], [""], ["lexicon_pass"]),
+)
+def test_phase_graph_rejects_unsafe_controller_boundary_allowlist(
+    tmp_path: Path,
+    nested_field: str | None,
+    unsafe_allowlist: list[object],
+) -> None:
+    definition, extension_yml = _write_controller_boundary_graph(
+        tmp_path,
+        allowlist=unsafe_allowlist,
+        nested_field=nested_field,
+    )
+
+    with pytest.raises(ControllerContractRegistryError):
         PhaseGraph(definition, extension_yml)
 
 
