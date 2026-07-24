@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import json
 import os
+import stat
 import subprocess
 import threading
 from pathlib import Path
@@ -12,11 +13,14 @@ import pytest
 
 from echelon.telemetry.model import PhaseTimingEvent
 from echelon.telemetry.phase_timing import record_phase_start
-from echelon.telemetry.store import TelemetryStore
+from echelon.telemetry.store import (
+    TelemetryDurabilityError,
+    TelemetryStore,
+)
 from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController
 from harness.squad_state import SquadStateStore
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 pytestmark = pytest.mark.unit
@@ -330,3 +334,399 @@ def test_completion_timing_two_stores_share_one_effect_transaction(
     events, diagnostics = fresh.read_phase_timings()
     assert diagnostics == ()
     assert [event.effect_id for event in events] == [effect_id]
+
+
+def test_phase_timing_atomic_rewrite_preserves_exact_prior_bytes(
+    tmp_path: Path,
+) -> None:
+    store = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    store.ensure_manifest()
+    prior = (
+        b'{"event_time":"2026-07-23T09:00:00Z","schema_version":1,'
+        b'"trace_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+        b'"type":"split_metrics"}\n\n'
+    )
+    store.events_path.write_bytes(prior)
+    calls = []
+    real_fsync = os.fsync
+    real_replace = os.replace
+
+    def observed_fsync(descriptor):
+        mode = os.fstat(descriptor).st_mode
+        calls.append(
+            "dir_fsync" if stat.S_ISDIR(mode) else "file_fsync"
+        )
+        real_fsync(descriptor)
+
+    def observed_replace(source, target, *args, **kwargs):
+        calls.append("replace")
+        return real_replace(source, target, *args, **kwargs)
+
+    with (
+        patch(
+            "echelon.telemetry.store.os.fsync",
+            side_effect=observed_fsync,
+        ),
+        patch(
+            "echelon.telemetry.store.os.replace",
+            side_effect=observed_replace,
+        ),
+    ):
+        record_phase_start(
+            store,
+            phase="phase4-build",
+            budget_seconds=600,
+        )
+
+    assert store.events_path.read_bytes().startswith(prior)
+    assert calls[-3:] == ["file_fsync", "replace", "dir_fsync"]
+
+
+def test_phase_timing_pre_replace_failure_preserves_prior_stream(
+    tmp_path: Path,
+) -> None:
+    store = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    store.ensure_manifest()
+    prior = (
+        b'{"event_time":"2026-07-23T09:00:00Z","schema_version":1,'
+        b'"trace_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+        b'"type":"split_metrics"}\n'
+    )
+    store.events_path.write_bytes(prior)
+
+    with (
+        patch(
+            "echelon.telemetry.store.os.replace",
+            side_effect=OSError("injected replace failure"),
+        ),
+        pytest.raises(TelemetryDurabilityError) as raised,
+    ):
+        record_phase_start(
+            store,
+            phase="phase4-build",
+            budget_seconds=600,
+        )
+
+    assert raised.value.stage == "pre_replace"
+    assert store.events_path.read_bytes() == prior
+    assert list(store.directory.glob(".events-*.tmp")) == []
+
+
+def test_phase_timing_first_file_creation_fsyncs_file_and_parent(
+    tmp_path: Path,
+) -> None:
+    store = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    store.ensure_manifest()
+    synchronized_types = []
+    real_fsync = os.fsync
+
+    def observed_fsync(descriptor):
+        synchronized_types.append(os.fstat(descriptor).st_mode)
+        real_fsync(descriptor)
+
+    with patch(
+        "echelon.telemetry.store.os.fsync",
+        side_effect=observed_fsync,
+    ):
+        record_phase_start(
+            store,
+            phase="phase4-build",
+            budget_seconds=600,
+        )
+
+    assert stat.S_ISREG(synchronized_types[-2])
+    assert stat.S_ISDIR(synchronized_types[-1])
+
+
+def test_phase_timing_post_replace_failure_requires_fresh_confirmed_retry(
+    tmp_path: Path,
+) -> None:
+    store = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    store.ensure_manifest()
+    real_fsync = os.fsync
+    real_replace = os.replace
+    event_replaced = False
+
+    def fail_parent_sync(descriptor):
+        if (
+            event_replaced
+            and stat.S_ISDIR(os.fstat(descriptor).st_mode)
+        ):
+            raise OSError("injected telemetry parent sync failure")
+        real_fsync(descriptor)
+
+    def observe_replace(source, target, *args, **kwargs):
+        nonlocal event_replaced
+        result = real_replace(source, target, *args, **kwargs)
+        if Path(target) == store.events_path:
+            event_replaced = True
+        return result
+
+    with (
+        patch(
+            "echelon.telemetry.store.os.fsync",
+            side_effect=fail_parent_sync,
+        ),
+        patch(
+            "echelon.telemetry.store.os.replace",
+            side_effect=observe_replace,
+        ),
+        pytest.raises(TelemetryDurabilityError) as raised,
+    ):
+        record_phase_start(
+            store,
+            phase="phase4-build",
+            budget_seconds=600,
+            completion_id="b" * 32,
+            effect_id=f"{'b' * 32}:timing:open:phase4-build",
+        )
+
+    assert raised.value.stage == "post_replace"
+    assert store.events_path.is_file()
+
+    fresh = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    with patch.object(
+        fresh,
+        "confirm_phase_timing_stream",
+        wraps=fresh.confirm_phase_timing_stream,
+    ) as confirm:
+        adopted = record_phase_start(
+            fresh,
+            phase="phase4-build",
+            budget_seconds=600,
+            completion_id="b" * 32,
+            effect_id=f"{'b' * 32}:timing:open:phase4-build",
+        )
+
+    events, diagnostics = fresh.read_phase_timings()
+    assert diagnostics == ()
+    assert adopted.effect_id == events[0].effect_id
+    assert len(events) == 1
+    assert confirm.call_count == 1
+
+
+def test_phase_timing_true_save_then_raise_uses_exact_confirmation(
+    tmp_path: Path,
+) -> None:
+    store = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    store.ensure_manifest()
+    original_append = store.append_phase_timing
+    completion_id = "b" * 32
+    effect_id = f"{completion_id}:timing:open:phase4-build"
+
+    def append_then_raise(event):
+        original_append(event)
+        raise OSError("injected outer timing ambiguity")
+
+    with (
+        patch.object(
+            store,
+            "append_phase_timing",
+            side_effect=append_then_raise,
+        ),
+        patch.object(
+            store,
+            "confirm_phase_timing_stream",
+            return_value=b"",
+            create=True,
+        ) as confirm,
+    ):
+        event = record_phase_start(
+            store,
+            phase="phase4-build",
+            budget_seconds=600,
+            completion_id=completion_id,
+            effect_id=effect_id,
+        )
+
+    assert event.effect_id == effect_id
+    assert confirm.call_count == 1
+
+
+def test_fresh_tagged_timing_requires_exact_stream_confirmation(
+    tmp_path: Path,
+) -> None:
+    store = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    store.ensure_manifest()
+    completion_id = "b" * 32
+    effect_id = f"{completion_id}:timing:open:phase4-build"
+    record_phase_start(
+        store,
+        phase="phase4-build",
+        budget_seconds=600,
+        completion_id=completion_id,
+        effect_id=effect_id,
+    )
+    before = store.events_path.read_bytes()
+    fresh = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+
+    with (
+        patch.object(
+            fresh,
+            "confirm_phase_timing_stream",
+            side_effect=TelemetryDurabilityError(
+                "injected exact stream confirmation failure",
+                stage="confirm",
+            ),
+            create=True,
+        ) as confirm,
+        pytest.raises(TelemetryDurabilityError),
+    ):
+        record_phase_start(
+            fresh,
+            phase="phase4-build",
+            budget_seconds=600,
+            completion_id=completion_id,
+            effect_id=effect_id,
+        )
+
+    assert confirm.call_count == 1
+    assert fresh.events_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        b'{"type":"phase_timing"}\n{not-json}\n',
+        b'{"type":"phase_timing"',
+    ],
+)
+def test_phase_timing_malformed_stream_remains_fail_closed(
+    tmp_path: Path,
+    malformed: bytes,
+) -> None:
+    store = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    store.ensure_manifest()
+    store.events_path.write_bytes(malformed)
+
+    with pytest.raises(ValueError):
+        record_phase_start(
+            store,
+            phase="phase4-build",
+            budget_seconds=600,
+        )
+
+    assert store.events_path.read_bytes() == malformed
+
+
+def test_phase_timing_directory_parent_failure_reconfirms_on_retry(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    store = TelemetryStore(
+        run_dir,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    real_fsync = os.fsync
+    failed = False
+
+    def fail_parent_once(descriptor):
+        nonlocal failed
+        metadata = os.fstat(descriptor)
+        if (
+            not failed
+            and stat.S_ISDIR(metadata.st_mode)
+            and store.directory.is_dir()
+        ):
+            parent = run_dir.stat()
+            if (
+                metadata.st_dev,
+                metadata.st_ino,
+            ) == (parent.st_dev, parent.st_ino):
+                failed = True
+                raise OSError(
+                    "injected telemetry directory parent failure"
+                )
+        real_fsync(descriptor)
+
+    with (
+        patch(
+            "echelon.telemetry.store.os.fsync",
+            side_effect=fail_parent_once,
+        ),
+        pytest.raises(TelemetryDurabilityError) as raised,
+    ):
+        record_phase_start(
+            store,
+            phase="phase4-build",
+            budget_seconds=600,
+        )
+
+    assert raised.value.stage == "directory_create"
+    assert store.directory.is_dir()
+
+    fresh = TelemetryStore(
+        run_dir,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    record_phase_start(
+        fresh,
+        phase="phase4-build",
+        budget_seconds=600,
+    )
+    events, diagnostics = fresh.read_phase_timings()
+    assert diagnostics == ()
+    assert [(event.phase, event.event) for event in events] == [
+        ("phase4-build", "started")
+    ]

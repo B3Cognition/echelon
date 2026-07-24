@@ -2103,10 +2103,17 @@ def _completion_timing_effect_id(
     return f"{completion_id}:timing:{kind}:{phase}"
 
 
-def _completion_timing_events(store: object) -> tuple[object, ...]:
+def _completion_timing_events(
+    store: object,
+    *,
+    require_durable: bool = False,
+) -> tuple[object, ...]:
     try:
-        events, diagnostics = store.read_phase_timings()
-    except (AttributeError, OSError, ValueError):
+        if require_durable:
+            events, diagnostics = store.read_durable_phase_timings()
+        else:
+            events, diagnostics = store.read_phase_timings()
+    except (AttributeError, OSError, RuntimeError, ValueError):
         _raise("receipts_invalid")
     if diagnostics:
         _raise("receipts_invalid")
@@ -2183,7 +2190,10 @@ def _validate_completion_timing_receipt(
         expected_digests[effect_id] = digest
     if tuple(effect_ids) not in allowed_sequences:
         _raise("receipts_mismatch")
-    events = _completion_timing_events(store)
+    events = _completion_timing_events(
+        store,
+        require_durable=True,
+    )
     completion_events = [
         event
         for event in events

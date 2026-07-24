@@ -9,7 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from echelon.telemetry.model import PhaseTimingEvent
-from echelon.telemetry.store import TelemetryStore
+from echelon.telemetry.store import (
+    TelemetryDurabilityError,
+    TelemetryStore,
+)
 
 
 def _timestamp(now: datetime | None = None) -> str:
@@ -20,6 +23,19 @@ def _parse_timestamp(value: str) -> datetime:
     normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
     parsed = datetime.fromisoformat(normalized)
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
+def _persist_timing_event(
+    store: TelemetryStore,
+    event: PhaseTimingEvent,
+) -> None:
+    expected_stream = store.phase_timing_stream_with_event(event)
+    try:
+        store.append_phase_timing(event)
+    except TelemetryDurabilityError:
+        raise
+    except (AttributeError, OSError, ValueError):
+        store.confirm_phase_timing_stream(expected_stream)
 
 
 def record_phase_start(
@@ -59,6 +75,9 @@ def record_phase_start(
                     or prior.completion_id != completion_id
                 ):
                     raise ValueError("completion timing effect drift")
+                store.confirm_phase_timing_stream(
+                    store.current_phase_timing_stream()
+                )
                 return prior
         else:
             prior = next(
@@ -79,7 +98,7 @@ def record_phase_start(
             completion_id=completion_id,
             effect_id=effect_id,
         )
-        store.append_phase_timing(event)
+        _persist_timing_event(store, event)
         return event
 
 
@@ -158,6 +177,9 @@ def record_phase_finish(
                 or existing.completion_id != completion_id
             ):
                 raise ValueError("completion timing effect drift")
+            store.confirm_phase_timing_stream(
+                store.current_phase_timing_stream()
+            )
             return existing
         prior = next(
             (
@@ -193,7 +215,7 @@ def record_phase_finish(
             completion_id=completion_id,
             effect_id=effect_id,
         )
-        store.append_phase_timing(event)
+        _persist_timing_event(store, event)
         return event
 
 

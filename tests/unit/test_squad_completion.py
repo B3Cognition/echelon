@@ -17,7 +17,10 @@ from codegen.memory.mempalace_writer import (
 )
 from echelon.telemetry.model import PhaseTimingEvent
 from echelon.telemetry.phase_timing import record_phase_start
-from echelon.telemetry.store import TelemetryStore
+from echelon.telemetry.store import (
+    TelemetryDurabilityError,
+    TelemetryStore,
+)
 import harness.prepared_phase_result as prepared_phase_result_module
 import harness.squad_completion as completion_module
 from harness.squad_completion import (
@@ -2586,6 +2589,49 @@ def test_completion_timing_adopts_tagged_events_after_crash(
     assert store.events_path.read_bytes() == postimage
 
 
+def test_completion_timing_receipt_requires_durable_exact_stream(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, squad_dir, prepared = _prepare_minimal(
+        tmp_path,
+        effect_plan=("timing",),
+    )
+    store = _completion_timing_store(squad_dir)
+    receipt = completion_module.apply_or_verify_completion_timing(
+        prepared.intent,
+        store,
+        open_phase="phase4-build",
+        open_budget_seconds=600,
+    )
+    postimage = store.events_path.read_bytes()
+
+    def fail_confirmation(expected: bytes) -> bytes:
+        raise TelemetryDurabilityError(
+            "simulated confirmation failure",
+            stage="confirm",
+        )
+
+    monkeypatch.setattr(
+        store,
+        "confirm_phase_timing_stream",
+        fail_confirmation,
+    )
+
+    _assert_completion_error(
+        "receipts_invalid",
+        lambda: completion_module.apply_or_verify_completion_timing(
+            prepared.intent,
+            store,
+            open_phase="phase4-build",
+            open_budget_seconds=600,
+            expected_receipt=receipt,
+        ),
+    )
+
+    assert store.events_path.read_bytes() == postimage
+
+
 def test_completion_timing_rejects_same_effect_identity_drift(
     tmp_path: Path,
 ) -> None:
@@ -2726,6 +2772,8 @@ def test_completion_timing_receipt_rejects_close_id_on_started_event(
         def read_phase_timings(self):
             return (event,), ()
 
+        read_durable_phase_timings = read_phase_timings
+
     receipt = {
         "schema_version": 1,
         "completion_id": completion_id,
@@ -2780,6 +2828,8 @@ def test_completion_timing_receipt_rejects_open_semantic_drift(
         def read_phase_timings(self):
             return (event,), ()
 
+        read_durable_phase_timings = read_phase_timings
+
     receipt = {
         "schema_version": 1,
         "completion_id": completion_id,
@@ -2833,6 +2883,8 @@ def test_completion_timing_receipt_rejects_invalid_finished_semantics(
 
         def read_phase_timings(self):
             return (event,), ()
+
+        read_durable_phase_timings = read_phase_timings
 
     receipt = {
         "schema_version": 1,
