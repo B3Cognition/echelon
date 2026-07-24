@@ -177,8 +177,10 @@ fields and terminal route fields cannot overlap. Judgment payload digests must
 match both the canonical detached payloads in the intent and durable
 `last_dispatch`. `effect_plan` contains each applicable effect at most once in
 the fixed order shown. Terminal completion permits only `mining`. Commander
-recovery may use only `journal`; ordinary routed completion uses
-`journal`, `timing`, `checkpoint`, `context`, and optionally `mining`.
+recovery uses `journal` followed by `checkpoint`; ordinary routed completion
+uses `journal`, `timing`, `checkpoint`, `context`, and optionally `mining`.
+The existing caller-side commander-recovery checkpoint is removed so top-of-run
+and inline recovery have one path-independent durable behavior.
 The exact publication variants are `{"kind": "none"}` and
 `{"kind": "external", "marker": <exact publication marker>}`. The exact route
 variants are:
@@ -280,8 +282,10 @@ The store also provides exact compare-and-swap operations to:
 Routed finalization adds these bounded fields to the exact matching
 `last_dispatch`: `completion_intent_sha256`,
 `completion_receipts_sha256`, `completed_publication_binding_sha256`, and
-`post_dispatch_complete: true`. Terminal finalization writes this separate
-controller-owned exact receipt while setting status:
+`post_dispatch_complete: true`; Phase 4 completion additionally stores
+`phase_a_active_source_sha256` and
+`phase_a_published_postimage_sha256`. Terminal finalization writes this
+separate controller-owned exact receipt while setting status:
 
 ```json
 {
@@ -315,12 +319,15 @@ document. Before each effect, recovery requires either:
 
 1. the receipt document exactly matching the marker-bound prefix; or
 2. that exact prefix plus the single exact receipt for the current effect,
-   whose postimage also verifies.
+   whose immutable effect plan and any referenced fixed substage verify.
 
 The second case is the crash-after-effect/before-step-CAS case and advances
-without rerunning the producer. The next marker binds the new complete receipt
-prefix. Rollback, mutation of an earlier receipt, multiple uncommitted receipts,
-or a receipt for a future/inapplicable effect fails closed.
+without rerunning the producer when its postimage verifies. If its postimage is
+not yet complete, recovery may finish only that exact immutable plan from its
+validated substage, then verify it and advance. It never regenerates the plan.
+The next marker binds the new complete receipt prefix. Rollback, mutation of an
+earlier receipt, multiple uncommitted receipts, or a receipt for a
+future/inapplicable effect fails closed.
 
 ### Completion effects and receipts
 
@@ -331,8 +338,9 @@ before the state step can advance:
 
 - **Journal:** The controller reconstructs only the intent's detached judgment
   entries and controller quarantine warnings. It overwrites any
-  provider-supplied completion stamp and stamps every emitted row with the
-  exact completion ID, zero-based entry index, and canonical content digest.
+  provider-supplied `id`, `timestamp`, `phase`, or reserved completion fields,
+  then stamps every emitted row with the exact completion ID, zero-based entry
+  index, and canonical content digest.
   The digest covers the canonical row after controller phase assignment but
   excludes generated numeric ID, generated timestamp, and the completion stamp
   itself, avoiding a recursive digest. The intent binds the ordered expected
@@ -399,10 +407,13 @@ same `last_dispatch.dispatch_id` to `post_dispatch_complete: true` and stores
 the receipt digest plus the exact completed publication-binding digest.
 Terminal finalization sets `status: done` in that same save. A latest completed
 Phase 4-to-terminal dispatch whose stored publication binding matches the
-published identity is durable proof for terminal readiness; a fresh controller
-validates that receipt instead of staging a second time-varying terminal
-publication. A final-save exception is success only when a reload proves the
-marker absent and the durable routed `last_dispatch` or
+published identity is durable proof for terminal readiness. For Phase 4, final
+state also persists canonical `phase_a_active_source_sha256` and
+`phase_a_published_postimage_sha256` inventory digests. A fresh controller
+recomputes both exact owned inventories; only equal digests suppress a second
+time-varying terminal publication. A mismatch triggers normal terminal
+reconciliation. A final-save exception is success only when a reload proves
+the marker absent and the durable routed `last_dispatch` or
 `last_terminal_completion` receipt fields exact.
 
 ### Global lock order
