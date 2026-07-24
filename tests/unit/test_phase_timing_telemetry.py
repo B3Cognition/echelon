@@ -12,7 +12,10 @@ from pathlib import Path
 import pytest
 
 from echelon.telemetry.model import PhaseTimingEvent
-from echelon.telemetry.phase_timing import record_phase_start
+from echelon.telemetry.phase_timing import (
+    record_phase_finish,
+    record_phase_start,
+)
 from echelon.telemetry.store import (
     TelemetryDurabilityError,
     TelemetryStore,
@@ -630,6 +633,130 @@ def test_fresh_tagged_timing_requires_exact_stream_confirmation(
 
     assert confirm.call_count == 1
     assert fresh.events_path.read_bytes() == before
+
+
+def test_fresh_start_adoption_returns_event_from_confirmed_stream(
+    tmp_path: Path,
+) -> None:
+    store = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    completion_id = "b" * 32
+    effect_id = f"{completion_id}:timing:open:phase4-build"
+    record_phase_start(
+        store,
+        phase="phase4-build",
+        budget_seconds=600,
+        completion_id=completion_id,
+        effect_id=effect_id,
+    )
+    replacement = (
+        b'{"schema_version":1,"trace_id":"'
+        + b"a" * 32
+        + b'","type":"split_metrics"}\n'
+    )
+    fresh = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    read_current = fresh._current_phase_timing_stream_unlocked
+    replaced = False
+
+    def replace_before_current_read() -> bytes:
+        nonlocal replaced
+        if not replaced:
+            replaced = True
+            fresh.events_path.write_bytes(replacement)
+        return read_current()
+
+    with patch.object(
+        fresh,
+        "_current_phase_timing_stream_unlocked",
+        side_effect=replace_before_current_read,
+    ):
+        adopted = record_phase_start(
+            fresh,
+            phase="phase4-build",
+            budget_seconds=600,
+            completion_id=completion_id,
+            effect_id=effect_id,
+        )
+
+    events, diagnostics = fresh.read_phase_timings()
+    assert diagnostics == ()
+    assert adopted.effect_id == effect_id
+    assert [event.effect_id for event in events] == [effect_id]
+
+
+def test_fresh_finish_adoption_returns_event_from_confirmed_stream(
+    tmp_path: Path,
+) -> None:
+    store = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    record_phase_start(
+        store,
+        phase="phase3-solution",
+        budget_seconds=300,
+        event_time="2026-07-24T08:00:00Z",
+    )
+    replacement = store.events_path.read_bytes()
+    completion_id = "b" * 32
+    effect_id = f"{completion_id}:timing:close:phase3-solution"
+    record_phase_finish(
+        store,
+        phase="phase3-solution",
+        event_time="2026-07-24T08:01:00Z",
+        completion_id=completion_id,
+        effect_id=effect_id,
+        expected_budget_seconds=300,
+    )
+    fresh = TelemetryStore(
+        tmp_path,
+        workflow="spec",
+        run_id="run-1",
+        profile={"name": "banzai"},
+        trace_id="a" * 32,
+    )
+    read_current = fresh._current_phase_timing_stream_unlocked
+    replaced = False
+
+    def replace_before_current_read() -> bytes:
+        nonlocal replaced
+        if not replaced:
+            replaced = True
+            fresh.events_path.write_bytes(replacement)
+        return read_current()
+
+    with patch.object(
+        fresh,
+        "_current_phase_timing_stream_unlocked",
+        side_effect=replace_before_current_read,
+    ):
+        adopted = record_phase_finish(
+            fresh,
+            phase="phase3-solution",
+            event_time="2026-07-24T08:02:00Z",
+            completion_id=completion_id,
+            effect_id=effect_id,
+            expected_budget_seconds=300,
+        )
+
+    events, diagnostics = fresh.read_phase_timings()
+    assert diagnostics == ()
+    assert adopted.effect_id == effect_id
+    assert [event.effect_id for event in events] == [None, effect_id]
 
 
 @pytest.mark.parametrize(

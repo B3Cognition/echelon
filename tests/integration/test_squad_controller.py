@@ -746,6 +746,80 @@ def test_inactive_checkpoint_does_not_resolve_git_prestate(
     assert prepared.intent.checkpoint_prestate == {"kind": "none"}
 
 
+def test_routed_checkpoint_prestate_failure_keeps_state_exact_and_discards_stage(
+    tmp_path: Path,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    store.initialize(
+        "r",
+        "greenfield",
+        "message",
+        0,
+        "phase1-what",
+    )
+    spec_dir = ctrl._squad_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+    state = store.load()
+    state["spec_id"] = "001-demo"
+    state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
+    store.save(state)
+    node = PhaseNode(
+        id="phase1-what",
+        type="agent",
+        allowed_state_updates=[],
+        transitions=[{"condition": "always", "to": "phase1-why1"}],
+    )
+    result = SquadAgentResult(
+        exit_code=0,
+        echelon_result={"verdict": "DONE", "state_updates": {}},
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+    prepared = prepare_phase_result(
+        node,
+        result,
+        controller_updates={},
+    )
+    snapshot = store.capture_routing_snapshot(
+        expected_phase=node.id,
+    )
+    publication, _ = _sealed_publication_fixture(ctrl)
+    publication_root = (
+        ctrl._squad_dir
+        / ".publication-outbox"
+        / publication.marker.transaction_id
+    )
+    before = store._path.read_bytes()
+
+    with patch(
+        "harness.squad.subprocess.run",
+        side_effect=subprocess.CalledProcessError(
+            128,
+            ["git", "rev-parse"],
+        ),
+    ):
+        decision = ctrl._construct_routing_decision_or_block(
+            node,
+            prepared,
+            snapshot,
+            additional_state_updates={
+                PENDING_EXTERNAL_PUBLICATION_KEY: (
+                    publication.marker.to_dict()
+                ),
+            },
+        )
+    if decision is None:
+        ctrl._discard_publication_without_authority(publication)
+
+    assert decision is None
+    assert store._path.read_bytes() == before
+    assert store.load() == snapshot.state
+    assert not publication_root.exists()
+    assert not (ctrl._squad_dir / ".completion-outbox").exists()
+
+
 def _evaluate_prepared_result(
     ctrl: SquadController,
     node: PhaseNode,

@@ -5590,6 +5590,14 @@ class SquadController:
                 ControllerStateContractViolation,
                 StateAdvanceError,
             ) as exc:
+                if (
+                    isinstance(exc, StateAdvanceError)
+                    and exc.validator == "checkpoint_prestate"
+                ):
+                    # The caller owns any publication stage prepared before
+                    # routing and discards it when this returns no decision.
+                    # Do not turn unavailable Git authority into state.
+                    return None
                 if isinstance(exc, ControllerStateContractViolation):
                     error = StateAdvanceError(
                         "routing decision construction failed",

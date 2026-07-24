@@ -38,6 +38,17 @@ def _persist_timing_event(
         store.confirm_phase_timing_stream(expected_stream)
 
 
+def _durable_timing_events(
+    store: TelemetryStore,
+) -> tuple[PhaseTimingEvent, ...]:
+    events, diagnostics = store.read_durable_phase_timings()
+    if diagnostics:
+        raise ValueError(
+            "cannot adopt phase timing from invalid telemetry events"
+        )
+    return events
+
+
 def record_phase_start(
     store: TelemetryStore,
     *,
@@ -64,6 +75,15 @@ def record_phase_start(
             if len(matches) > 1:
                 raise ValueError("duplicate completion timing effect")
             if matches:
+                events = _durable_timing_events(store)
+                matches = [
+                    event
+                    for event in events
+                    if event.effect_id == effect_id
+                ]
+            if len(matches) > 1:
+                raise ValueError("duplicate completion timing effect")
+            if matches:
                 prior = matches[0]
                 if (
                     prior.trace_id != store.trace_id
@@ -75,9 +95,6 @@ def record_phase_start(
                     or prior.completion_id != completion_id
                 ):
                     raise ValueError("completion timing effect drift")
-                store.confirm_phase_timing_stream(
-                    store.current_phase_timing_stream()
-                )
                 return prior
         else:
             prior = next(
@@ -139,6 +156,15 @@ def record_phase_finish(
         if len(matches) > 1:
             raise ValueError("duplicate completion timing effect")
         if matches:
+            events = _durable_timing_events(store)
+            matches = [
+                (index, event)
+                for index, event in enumerate(events)
+                if event.effect_id == effect_id
+            ]
+        if len(matches) > 1:
+            raise ValueError("duplicate completion timing effect")
+        if matches:
             position, existing = matches[0]
             prior = next(
                 (
@@ -177,9 +203,6 @@ def record_phase_finish(
                 or existing.completion_id != completion_id
             ):
                 raise ValueError("completion timing effect drift")
-            store.confirm_phase_timing_stream(
-                store.current_phase_timing_stream()
-            )
             return existing
         prior = next(
             (
