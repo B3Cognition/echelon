@@ -8,6 +8,43 @@
 
 **Tech Stack:** Python 3.11, `os`/`fcntl`/`tempfile`/`errno`/`json`, existing controller lock ranks and outboxes, pytest fault injection.
 
+## Completion Record
+
+Complete at verified implementation HEAD
+`b239e2108f7d522c535b709ca2110eda3772c0f5`. Final review: Critical 0,
+Important 0, Minor 0, APPROVE. No push or merge was performed.
+
+Implementation commits:
+
+- `24693068` — `fix: require durable controller state authority`
+- `7bfcfd9d` — `fix: atomically persist phase timing`
+- `a944ca3a` — `fix: reject unavailable checkpoint prestate`
+- `612c9a31` — `fix: bind durable recovery postimages`
+- `40237a00` — `fix: preserve checkpoint recovery prestate`
+
+Final hardening commits:
+
+- `bb11d962` — `fix: close null provider allowlists`
+- `8610e847` — `fix: account checkpoint failure tokens`
+- `cfc8cc43` — `fix: bind state lock identity`
+- `6b741e3a` — `fix: serialize state lock replacements`
+- `2307fdd4` — `fix: validate controller provider allowlists`
+- `5b05d9a2` — `fix: clarify provider allowlist diagnostic`
+- `b239e210` — `test: align provider allowlist diagnostics`
+
+Verified guarantees:
+
+- file replacement becomes authority only after file and durable parent
+  synchronization plus exact postimage confirmation;
+- phase-timing telemetry atomically replaces and confirms one exact complete
+  JSONL snapshot;
+- checkpoint prestate fails before route/outbox authority and persists only
+  deferred provider token accounting;
+- controller-bearing provider allowlists are finite, non-empty-string-only,
+  and disjoint at validator, graph, and per-dispatch runtime boundaries; and
+- a stable squad-directory inode lock prevents replacement of `state.lock`
+  from admitting a second conforming writer.
+
 ## Global Constraints
 
 - Fsync retries only `EINTR`; every other file or directory error fails closed.
@@ -42,7 +79,7 @@
   - `SquadStateStore._confirm_durable_state_unlocked(expected: dict[str, Any]) -> dict[str, Any]`.
 - Consumes: existing state lock, exact marker schemas, completion/publication stage load and discard APIs.
 
-- [ ] **Step 1: Write directory and save-order RED tests**
+- [x] **Step 1: Write directory and save-order RED tests**
 
 Add tests that patch `os.fsync`, `os.replace`, and `os.open` without replacing
 the real write. Record file descriptors and assert:
@@ -75,7 +112,7 @@ Cover initial `state.json` creation, replacement, nested squad-directory
 creation, staging-directory creation, symlink/non-directory rejection, and
 `EINTR` retry followed by success.
 
-- [ ] **Step 2: Run the save-order tests and capture RED**
+- [x] **Step 2: Run the save-order tests and capture RED**
 
 Run:
 
@@ -87,7 +124,7 @@ Run:
 Expected: failures show there is no parent-directory fsync, no durable
 directory helper, and no `EINTR` retry.
 
-- [ ] **Step 3: Implement durable directories and atomic save**
+- [x] **Step 3: Implement durable directories and atomic save**
 
 Add bounded durability errors and an `EINTR`-only fsync helper:
 
@@ -118,13 +155,13 @@ its parent, and revalidate the parent entry against the open descriptor. Change
 sync the squad directory. Raise `StateDurabilityError(stage="post_replace")`
 when the final directory proof fails.
 
-- [ ] **Step 4: Run save-order tests and capture GREEN**
+- [x] **Step 4: Run save-order tests and capture GREEN**
 
 Run the Step 2 command.
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Write exact-confirmation and ambiguity RED tests**
+- [x] **Step 5: Write exact-confirmation and ambiguity RED tests**
 
 Add tests for the wished-for public API:
 
@@ -161,7 +198,7 @@ Cover:
 - old-state-survives outcome has no effects and a safe orphan;
 - new-state-survives outcome retains the referenced stage for recovery.
 
-- [ ] **Step 6: Run confirmation/ambiguity tests and capture RED**
+- [x] **Step 6: Run confirmation/ambiguity tests and capture RED**
 
 Run:
 
@@ -173,7 +210,7 @@ Run:
 Expected: confirmation API tests fail and existing save-then-raise adoption
 does not perform a durability proof.
 
-- [ ] **Step 7: Implement exact under-lock confirmation**
+- [x] **Step 7: Implement exact under-lock confirmation**
 
 Implement `_confirm_durable_state_unlocked()` to:
 
@@ -199,7 +236,7 @@ The public method acquires the exclusive state lock. The routed-save ambiguity
 handler and `_save_exact_completion_state_unlocked()` call the ordered helper
 only for exceptions other than `StateDurabilityError(stage="post_replace")`.
 
-- [ ] **Step 8: Write fresh-recovery and final-cleanup RED tests**
+- [x] **Step 8: Write fresh-recovery and final-cleanup RED tests**
 
 In controller integration tests, inject confirmation failure at each authority
 boundary and assert:
@@ -223,7 +260,7 @@ Cover pending external publication, pending completion, repeated failure, final
 completion clear, final publication clear, and orphan cleanup. Model both
 old/new power-loss states with fresh controller instances.
 
-- [ ] **Step 9: Run recovery/cleanup tests and capture RED**
+- [x] **Step 9: Run recovery/cleanup tests and capture RED**
 
 Run:
 
@@ -237,7 +274,7 @@ Run:
 Expected: fresh recovery executes from a merely loaded marker and cleanup
 deletes after a merely visible clear.
 
-- [ ] **Step 10: Gate fresh authority and final cleanup**
+- [x] **Step 10: Gate fresh authority and final cleanup**
 
 At the entry of `_drain_pending_controller_completion()` and
 `_recover_pending_external_publication()`, confirm the exact loaded state
@@ -248,7 +285,7 @@ Before publication/completion stage discard and orphan cleanup, confirm the
 exact state snapshot that proves the marker is absent and the final receipt is
 present. Confirmation failure retains the stage and returns a pending outcome.
 
-- [ ] **Step 11: Run the complete state/controller focused suite**
+- [x] **Step 11: Run the complete state/controller focused suite**
 
 Run:
 
@@ -262,7 +299,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 12: Commit Task 1**
+- [x] **Step 12: Commit Task 1**
 
 ```bash
 git add \
@@ -294,7 +331,7 @@ git commit -m "fix: require durable controller state authority"
   `PhaseTimingEvent.to_json_dict()`, legacy untagged records, mixed-event rank
   order, and the existing phase-timing lock rank.
 
-- [ ] **Step 1: Write atomic-rewrite RED tests**
+- [x] **Step 1: Write atomic-rewrite RED tests**
 
 Create exact prior bytes containing a non-timing event and a legacy timing
 event. Record a tagged event and assert the new file begins byte-for-byte with
@@ -304,7 +341,7 @@ file fsync, replace, then parent fsync.
 Add pre-replace failure tests proving the old stream remains byte-identical and
 no sibling temp remains.
 
-- [ ] **Step 2: Run atomic-rewrite tests and capture RED**
+- [x] **Step 2: Run atomic-rewrite tests and capture RED**
 
 Run:
 
@@ -315,7 +352,7 @@ Run:
 
 Expected: direct append does not call replace or parent fsync.
 
-- [ ] **Step 3: Implement validated whole-stream rewrite**
+- [x] **Step 3: Implement validated whole-stream rewrite**
 
 Under `phase_timing_transaction()`:
 
@@ -337,13 +374,13 @@ opened with exclusive/no-follow flags, fully written, fsynced, replaced, and
 the telemetry directory is fsynced. First directory and file creation are
 durably synchronized.
 
-- [ ] **Step 4: Run atomic-rewrite tests and capture GREEN**
+- [x] **Step 4: Run atomic-rewrite tests and capture GREEN**
 
 Run the Step 2 command.
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Write ambiguity/fresh-retry RED tests**
+- [x] **Step 5: Write ambiguity/fresh-retry RED tests**
 
 Cover:
 
@@ -359,7 +396,7 @@ Cover:
 - malformed middle record and torn final record remain unchanged and fail
   closed.
 
-- [ ] **Step 6: Run ambiguity/retry tests and capture RED**
+- [x] **Step 6: Run ambiguity/retry tests and capture RED**
 
 Run:
 
@@ -373,7 +410,7 @@ Run:
 Expected: visible tagged events are currently adopted without exact stream
 durability confirmation.
 
-- [ ] **Step 7: Implement exact stream confirmation and adoption**
+- [x] **Step 7: Implement exact stream confirmation and adoption**
 
 `confirm_phase_timing_stream(expected)` runs under the telemetry transaction
 lock, no-follow opens the stream, checks regular-file/path identity, reads
@@ -389,7 +426,7 @@ confirmation proves those bytes. They never adopt the store's own
 Completion timing receipt validation uses the same confirmation before
 adopting an existing effect-tagged event in a fresh controller.
 
-- [ ] **Step 8: Run the complete telemetry/completion focused suite**
+- [x] **Step 8: Run the complete telemetry/completion focused suite**
 
 Run:
 
@@ -402,7 +439,7 @@ Run:
 
 Expected: all tests pass with legacy serialization and rank order unchanged.
 
-- [ ] **Step 9: Commit Task 2**
+- [x] **Step 9: Commit Task 2**
 
 ```bash
 git add \
@@ -429,24 +466,26 @@ git commit -m "fix: atomically persist phase timing"
   `StateAdvanceError(validator="checkpoint_prestate")`.
 - Preserves: `{"kind": "none"}` when the effect plan has no checkpoint.
 
-- [ ] **Step 1: Write Git failure/invalid/unborn RED tests**
+- [x] **Step 1: Write Git failure/invalid/unborn RED tests**
 
 Patch `subprocess.run` separately to raise `OSError`, raise
 `CalledProcessError`, and return invalid output. Create a real unborn Git
 repository for the final case. For each active-checkpoint route, snapshot:
 
 ```python
-before_state = state_path.read_bytes()
-before_revision = store.load()["state_revision"]
+before_state = store.load()
 before_artifacts = artifact_tree_digest(project_root)
 before_outboxes = outbox_tree_digest(squad_dir)
 ```
 
 Assert preparation raises `StateAdvanceError` with
-`validator == "checkpoint_prestate"` and that phase, revision, dispatch,
-artifacts, publication outbox, and completion outbox are unchanged.
+`validator == "checkpoint_prestate"` and that phase, dispatch, workflow
+fields, artifacts, publication outbox, and completion outbox are unchanged.
+When a provider call has already consumed tokens, assert only `token_usage`,
+`state_revision`, and `updated_at` change. Repeat the failure to prove each
+attempt is accounted and cannot bypass the token budget.
 
-- [ ] **Step 2: Run checkpoint-prestate tests and capture RED**
+- [x] **Step 2: Run checkpoint-prestate tests and capture RED**
 
 Run:
 
@@ -459,7 +498,7 @@ Run:
 
 Expected: active failures return an all-zero prestate and continue.
 
-- [ ] **Step 3: Remove the sentinel and raise bounded preparation failure**
+- [x] **Step 3: Remove the sentinel and raise bounded preparation failure**
 
 Implement:
 
@@ -490,9 +529,11 @@ def _completion_checkpoint_prestate(self) -> dict[str, object]:
 ```
 
 The caller invokes it before completion-stage preparation, so no outbox or
-state marker exists on failure.
+route marker exists on failure. Routed and COMMANDER recovery catches durably
+persist deferred provider usage through the store's locked token-accounting
+operation before returning the state-neutral failure.
 
-- [ ] **Step 4: Run checkpoint-prestate and completion suites**
+- [x] **Step 4: Run checkpoint-prestate and completion suites**
 
 Run:
 
@@ -506,7 +547,7 @@ Run:
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit Task 3**
+- [x] **Step 5: Commit Task 3**
 
 ```bash
 git add \
@@ -530,7 +571,7 @@ git commit -m "fix: reject unavailable checkpoint prestate"
 - Produces: exact RED/GREEN ledger, commit ledger, verification totals,
   independent review verdict, and preserved branch status.
 
-- [ ] **Step 1: Run the durability matrix**
+- [x] **Step 1: Run the durability matrix**
 
 ```bash
 .venv/bin/pytest -q \
@@ -543,7 +584,9 @@ git commit -m "fix: reject unavailable checkpoint prestate"
   tests/unit/test_controller_lock_order.py
 ```
 
-- [ ] **Step 2: Run the full suite**
+Final result: `785 passed in 119.49s`.
+
+- [x] **Step 2: Run the full suite**
 
 ```bash
 .venv/bin/pytest -q
@@ -551,7 +594,12 @@ git commit -m "fix: reject unavailable checkpoint prestate"
 
 Record exact passed, skipped, deselected, failed, and duration totals.
 
-- [ ] **Step 3: Run non-pytest verification**
+The first run produced `5617 passed, 1 failed, 9 skipped, 4 deselected`; the
+only failure was a stale diagnostic assertion. Test-only commit `b239e210`
+aligned that assertion. The final rerun produced
+`5618 passed, 9 skipped, 4 deselected in 454.46s`.
+
+- [x] **Step 3: Run non-pytest verification**
 
 ```bash
 bash scripts/bash/dry-run.sh
@@ -561,30 +609,40 @@ git diff --check
 
 Ruff is not configured in this repository; do not add it or claim a lint pass.
 
-- [ ] **Step 4: Update the design, plan, final report, and progress**
+Final results: dry-run PASS 138, WARN 1 expected, FAIL 0; compileall exit 0;
+`git diff --check` exit 0. Version remained synchronized at `3.7.14` in
+`pyproject.toml` and `extension/extension.yml`.
+
+- [x] **Step 4: Update the design, plan, final report, and progress**
 
 Mark every completed checkbox, record exact commit hashes and test totals,
 state the power-loss outcomes proved, and retain the statement that no push or
 merge occurred.
 
-- [ ] **Step 5: Commit the verification report**
+- [x] **Step 5: Commit the verification report**
 
 ```bash
-git add -f \
-  .superpowers/sdd/final-fix-report.md \
+git add \
   docs/superpowers/specs/2026-07-24-controller-durable-authority-design.md \
   docs/superpowers/plans/2026-07-24-controller-durable-authority.md
-git commit -m "docs: report durable authority verification"
+git add -u -- .superpowers/sdd/final-fix-report.md
+git commit -m "docs: finalize controller authority verification"
 ```
 
-- [ ] **Step 6: Request independent review**
+The ignored `.superpowers/sdd/progress.md` remains a local working ledger and
+is intentionally not committed.
+
+- [x] **Step 6: Request independent review**
 
 Provide the reviewer the exact base before Task 1, final HEAD, this plan, this
 design, and a generated diff. Require separate spec-compliance and code-quality
 verdicts with Critical/Important/Minor counts. Resolve all Critical and
 Important findings, rerun affected tests, and request focused re-review.
 
-- [ ] **Step 7: Take a final clean-state snapshot**
+Final whole-branch review at `b239e210`: Critical 0, Important 0, Minor 0,
+APPROVE.
+
+- [x] **Step 7: Take a final clean-state snapshot**
 
 ```bash
 git diff --check

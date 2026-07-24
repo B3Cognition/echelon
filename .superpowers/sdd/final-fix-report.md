@@ -421,3 +421,138 @@ as already complete here.
 
 No known implementation concern. Ruff availability is the only unexecuted
 optional gate and is recorded explicitly above.
+
+---
+
+## Controller Durable Authority — Final Verification
+
+### Status
+
+Complete and independently approved. Controller state, phase-timing telemetry,
+checkpoint preparation, provider/controller ownership, and state locking now
+fail closed at their durable authority boundaries. No push or merge was
+performed.
+
+Durable-authority implementation base:
+`b91e63071f7265b5f3ba15c1b1e61298f33d1a19`
+
+Final verified implementation HEAD:
+`b239e2108f7d522c535b709ca2110eda3772c0f5`
+
+Final whole-branch review: Critical 0, Important 0, Minor 0, APPROVE.
+
+### Commit Ledger
+
+Core implementation:
+
+- `24693068` — `fix: require durable controller state authority`
+- `7bfcfd9d` — `fix: atomically persist phase timing`
+- `a944ca3a` — `fix: reject unavailable checkpoint prestate`
+- `612c9a31` — `fix: bind durable recovery postimages`
+- `40237a00` — `fix: preserve checkpoint recovery prestate`
+
+Final-review hardening:
+
+- `bb11d962` — `fix: close null provider allowlists`
+- `8610e847` — `fix: account checkpoint failure tokens`
+- `cfc8cc43` — `fix: bind state lock identity`
+- `6b741e3a` — `fix: serialize state lock replacements`
+- `2307fdd4` — `fix: validate controller provider allowlists`
+- `5b05d9a2` — `fix: clarify provider allowlist diagnostic`
+- `b239e210` — `test: align provider allowlist diagnostics`
+
+### Verified Guarantees
+
+1. Durable parent authority
+   - Missing state/staging path components are created and synchronized into
+     their parents one component at a time.
+   - Atomic state replacement is authoritative only after the complete file
+     and no-follow opened squad directory are fsynced.
+   - Ambiguous save/recovery/final-clear postimages are adopted only after an
+     exact under-lock file, directory, identity, revision, marker, and content
+     confirmation. Failed confirmation performs no diagnostic write, external
+     effect, marker advance, stage deletion, or orphan cleanup.
+
+2. Exact phase-timing snapshot
+   - Timing writes validate the complete prior JSONL stream, preserve its exact
+     bytes, append one canonical record in memory, and atomically replace the
+     whole stream.
+   - Tagged-event ambiguity and fresh-controller idempotence require exact
+     file-and-parent durability confirmation. Malformed or torn streams remain
+     unchanged and fail closed.
+
+3. Checkpoint prestate and token accounting
+   - An active checkpoint requires one valid lowercase 40- or 64-character Git
+     commit ID. Git failure, invalid output, and unborn `HEAD` fail before route
+     or outbox authority.
+   - The phase, dispatch metadata, workflow fields, artifacts, and both
+     outboxes remain unchanged. Only consumed provider `token_usage`, the
+     accounting `state_revision`, and `updated_at` may change.
+   - Repeated checkpoint-prestate failures persist every provider token delta,
+     so retries cannot bypass the configured budget.
+
+4. Finite and disjoint provider allowlists
+   - A controller-bearing phase and every `agents` or `pre_dispatch` override
+     require an explicit list containing only non-empty strings.
+   - Effective provider keys must be disjoint from the compiled
+     controller-owned state keys.
+   - The invariant is enforced by standalone workflow validation, direct
+     `PhaseGraph` construction, and per-dispatch
+     `PhaseNode.result_contract(entry)`. Legacy unbounded `None` behavior is
+     retained only for nodes without controller contracts.
+
+5. Two-writer state-lock exclusion
+   - The real squad-directory inode is locked before the named `state.lock`;
+     both are type/identity checked and held through the state operation.
+   - Symlink, non-regular, and inode/path replacement fail closed.
+   - A real two-thread regression replaces `state.lock` while writer one holds
+     authority and proves writer two cannot enter until the stable directory
+     lock is released. Both thread error channels are explicitly asserted.
+   - The established controller lock rank remains unchanged.
+
+### TDD and Focused Evidence
+
+- Null allowlist runtime escape: `4 failed` RED, then `4 passed`; expanded
+  contract boundary `513 passed`.
+- Checkpoint token-accounting paths: `2 failed` RED, then `2 passed`; broader
+  checkpoint set `33 passed`.
+- True two-writer replacement race: second writer entered on RED; after stable
+  directory authority the selected lock set passed, followed by
+  `179 passed` for state and lock-order suites.
+- Malformed/overlapping direct-runtime allowlists: `12 failed` RED, then
+  selected `16 passed`; affected contract suites `525 passed`.
+- Combined final-hardening gate: `1028 passed in 118.60s`.
+- Final diagnostic wording regression was proven RED and the focused set
+  passed after the production and test-only alignment.
+
+### Final Release Verification
+
+- Durability matrix:
+  `785 passed in 119.49s`.
+- First full suite:
+  `5617 passed, 1 failed, 9 skipped, 4 deselected`.
+  The sole failure was a stale diagnostic assertion; production behavior was
+  already correct.
+- Test-only correction:
+  `b239e210` aligned the expected provider-allowlist diagnostic.
+- Final full rerun:
+  `5618 passed, 9 skipped, 4 deselected in 454.46s`.
+- Workflow dry-run:
+  PASS 138, WARN 1 expected, FAIL 0. The warning is the expected
+  `agents.yaml` to `extension.yml` notice.
+- `.venv/bin/python -m compileall -q src tests`: exit 0.
+- `git diff --check`: exit 0.
+- Version: `3.7.14` in both `pyproject.toml` and
+  `extension/extension.yml`.
+- Tracked status before this documentation finalization: clean.
+
+### Review and Handoff
+
+The final whole-branch review inspected exact implementation HEAD `b239e210`
+and returned Critical 0, Important 0, Minor 0, APPROVE. The branch and isolated
+worktree are preserved for the parent workflow. No push or merge was requested
+or performed.
+
+### Remaining Concerns
+
+None. The single dry-run warning is expected and non-actionable.

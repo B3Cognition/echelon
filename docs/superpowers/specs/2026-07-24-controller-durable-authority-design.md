@@ -1,5 +1,12 @@
 # Controller Durable Authority Design
 
+## Final Status
+
+Implemented and independently approved at verified implementation HEAD
+`b239e2108f7d522c535b709ca2110eda3772c0f5`. The final whole-branch review
+reported Critical 0, Important 0, Minor 0 and APPROVE. No push or merge was
+performed.
+
 ## Goal
 
 Make controller state, phase-timing telemetry, and checkpoint preparation
@@ -66,6 +73,15 @@ Checkpoint preparation has no ambiguity protocol: when a checkpoint effect is
 active, failure to capture one valid 40- or 64-character lowercase Git commit
 ID is a bounded preparation failure before state advance.
 
+The final hardening pass adds two boundary rules:
+
+- state locking uses the real squad-directory inode as stable authority before
+  it opens and locks the named `state.lock`, so replacement of the named lock
+  cannot admit a second conforming writer; and
+- every controller-bearing provider allowlist is finite, made only of
+  non-empty strings, and disjoint from the compiled controller-owned state
+  keys at both workflow validation and direct runtime construction/dispatch.
+
 ## State Persistence Contract
 
 ### Directory creation
@@ -103,6 +119,28 @@ while synchronizing the parent after replacement raises a distinct bounded
 `StateDurabilityError` whose stage is `post_replace`. Generic ambiguity
 handlers must re-raise it and must not adopt its visible postimage in the same
 operation.
+
+### Stable state-lock authority
+
+`SquadStateStore` acquires the established rank-8 state lock in this order:
+
+1. no-follow open and identity-check the real squad directory;
+2. take a shared or exclusive `flock` on that stable directory inode;
+3. revalidate the named directory;
+4. no-follow open or exclusively create `state.lock`;
+5. require a regular file whose path identity matches the open descriptor;
+6. take the corresponding named-file lock and revalidate it; and
+7. retain both locks through the state operation, releasing the named lock
+   before the directory lock.
+
+The named file remains compatible with existing lock participants, while the
+directory lock prevents a replacement path from splitting authority between
+two conforming writers. Symlinks, directories, non-regular files, pre-lock
+inode replacement, and post-body path replacement fail closed. The
+two-writer regression replaces `state.lock` while writer one is inside the
+critical section and proves writer two cannot enter until writer one releases
+the stable directory authority; exceptions from both threads are captured
+and asserted.
 
 ### Exact durable confirmation
 
@@ -216,13 +254,34 @@ otherwise invalid output, and an unborn repository all raise a bounded
 `StateAdvanceError` with a checkpoint-prestate validator.
 
 This failure occurs before route state advance and before publication or
-completion markers become authoritative. The current phase, state revision,
-dispatch metadata, artifacts, publication outbox, and completion outbox remain
-unchanged.
+completion markers become authoritative. The current phase, dispatch
+metadata, workflow fields, artifacts, publication outbox, and completion
+outbox remain unchanged. Provider tokens already consumed before the failure
+are durably recorded through the store's locked token-accounting operation.
+Therefore only `token_usage`, `state_revision`, and `updated_at` may change.
+Repeated Git failures repeat that accounting, so retrying checkpoint
+preparation cannot bypass the configured token budget.
+
+## Provider/Controller Allowlist Contract
+
+A phase with a compiled controller state contract must declare an explicit
+provider `allowed_state_updates` list. The effective list for the top-level
+phase and every `agents` or `pre_dispatch` override must:
+
+- be a concrete list rather than missing or `null`;
+- contain only non-empty strings; and
+- be disjoint from `controller_state_update_keys`.
+
+The workflow validator preserves precise configuration diagnostics, while
+`PhaseGraph` enforces the same rule when callers bypass standalone workflow
+validation. `PhaseNode.result_contract(entry)` repeats the effective
+per-dispatch check so staged and conditional executor paths cannot persist a
+malformed or overlapping nested result contract. Nodes without controller
+contracts retain their legacy unbounded `None` behavior.
 
 ## Verification
 
-Focused tests must cover:
+Focused tests cover:
 
 - initial state creation and replacement with file and parent fsync ordering;
 - directory creation synchronization and non-directory/symlink rejection;
@@ -236,8 +295,25 @@ Focused tests must cover:
   post-replace failure, exact tagged-event confirmation, fresh retry, and
   malformed/torn-stream rejection;
 - checkpoint Git failure, invalid SHA, and unborn `HEAD` with no state,
-  artifact, or outbox mutation.
+  artifact, or outbox mutation beyond durable provider token accounting;
+- top-level, nested-agent, and pre-dispatch `null`, malformed, and overlapping
+  provider allowlists at validator, graph-construction, and dispatch time; and
+- a real two-writer lock-inode replacement race.
 
-The final gate runs the relevant state, timing, completion, checkpoint, and
-controller suites, then the entire Python suite, workflow dry-run, compileall,
-and `git diff --check`. No push or merge is part of this work.
+Final evidence:
+
+- durability matrix: `785 passed in 119.49s`;
+- first full run: `5617 passed, 1 failed, 9 skipped, 4 deselected`; the only
+  failure was a stale diagnostic assertion;
+- test-only diagnostic alignment: `b239e210`;
+- final full rerun:
+  `5618 passed, 9 skipped, 4 deselected in 454.46s`;
+- workflow dry-run: PASS 138, WARN 1 expected, FAIL 0;
+- `.venv/bin/python -m compileall -q src tests`: exit 0;
+- `git diff --check`: exit 0;
+- version synchronized at `3.7.14` in `pyproject.toml` and
+  `extension/extension.yml`; and
+- final whole-branch review at `b239e210`: Critical 0, Important 0, Minor 0,
+  APPROVE.
+
+No push or merge is part of this work, and neither was performed.
