@@ -1020,13 +1020,107 @@ class SquadStateStore:
             "state",
             str(self._lock_path.absolute()),
         ):
-            with self._lock_path.open("a+b") as lock_file:
-                operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-                fcntl.flock(lock_file.fileno(), operation)
+            descriptor = -1
+            directory_fd = -1
+            locked = False
+            created = False
+            body_exception = False
+            create_flags = (
+                os.O_RDWR
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+            )
+            open_flags = (
+                os.O_RDWR
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+            )
+            try:
+                try:
+                    descriptor = os.open(
+                        self._lock_path,
+                        create_flags,
+                        0o600,
+                    )
+                    created = True
+                except FileExistsError:
+                    descriptor = os.open(
+                        self._lock_path,
+                        open_flags,
+                    )
+                opened = os.fstat(descriptor)
+                named = os.lstat(self._lock_path)
+                if (
+                    not stat.S_ISREG(opened.st_mode)
+                    or stat.S_ISLNK(named.st_mode)
+                    or not stat.S_ISREG(named.st_mode)
+                    or _identity(opened) != _identity(named)
+                ):
+                    raise StateDurabilityError(
+                        "state lock identity changed",
+                        stage="confirm",
+                    )
+                if created:
+                    _fsync_retry(descriptor)
+                    directory_fd = _open_real_directory(
+                        self._squad_dir,
+                        stage="confirm",
+                    )
+                    _fsync_retry(directory_fd)
+                operation = (
+                    fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                )
+                fcntl.flock(descriptor, operation)
+                locked = True
+                locked_metadata = os.fstat(descriptor)
+                current = os.lstat(self._lock_path)
+                if (
+                    not stat.S_ISREG(locked_metadata.st_mode)
+                    or stat.S_ISLNK(current.st_mode)
+                    or not stat.S_ISREG(current.st_mode)
+                    or _identity(locked_metadata) != _identity(opened)
+                    or _identity(current) != _identity(opened)
+                ):
+                    raise StateDurabilityError(
+                        "state lock identity changed",
+                        stage="confirm",
+                    )
                 try:
                     yield
-                finally:
-                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+                except BaseException:
+                    body_exception = True
+                    raise
+                final_named = os.lstat(self._lock_path)
+                if (
+                    stat.S_ISLNK(final_named.st_mode)
+                    or not stat.S_ISREG(final_named.st_mode)
+                    or _identity(final_named) != _identity(opened)
+                ):
+                    raise StateDurabilityError(
+                        "state lock identity changed",
+                        stage="confirm",
+                    )
+            except StateDurabilityError:
+                raise
+            except OSError as exc:
+                if body_exception:
+                    raise
+                raise StateDurabilityError(
+                    "state lock is unavailable",
+                    stage="confirm",
+                ) from exc
+            finally:
+                if locked:
+                    try:
+                        fcntl.flock(descriptor, fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                if directory_fd >= 0:
+                    os.close(directory_fd)
+                if descriptor >= 0:
+                    os.close(descriptor)
 
     def _load_unlocked(self) -> dict:
         if not self._path.exists():

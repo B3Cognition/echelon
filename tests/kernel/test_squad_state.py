@@ -1,5 +1,6 @@
 """Tests for SquadStateStore."""
 import errno
+import fcntl
 import hashlib
 import json
 import os
@@ -2809,6 +2810,55 @@ class TestFsync:
 
 
 class TestDurableStateAuthority:
+    @pytest.mark.parametrize("kind", ("symlink", "directory"))
+    def test_state_lock_rejects_non_regular_path(
+        self,
+        tmp_path,
+        kind,
+    ):
+        store = _store(tmp_path)
+        lock_path = store.squad_dir / "state.lock"
+        if kind == "symlink":
+            target = tmp_path / "redirected.lock"
+            target.write_bytes(b"")
+            lock_path.symlink_to(target)
+        else:
+            lock_path.mkdir()
+
+        with pytest.raises(StateDurabilityError):
+            store.initialize("r1", "greenfield", "msg", 0, "init")
+
+    def test_state_lock_rejects_inode_swap_before_acquisition(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        lock_path = store.squad_dir / "state.lock"
+        real_flock = fcntl.flock
+        swapped = False
+
+        def swap_named_lock(descriptor, operation):
+            nonlocal swapped
+            if operation == fcntl.LOCK_EX and not swapped:
+                swapped = True
+                old = store.squad_dir / ".old-state-lock"
+                os.replace(lock_path, old)
+                lock_path.write_bytes(b"")
+            return real_flock(descriptor, operation)
+
+        with (
+            patch(
+                "harness.squad_state.fcntl.flock",
+                side_effect=swap_named_lock,
+            ),
+            pytest.raises(StateDurabilityError),
+        ):
+            store.save(store.load())
+
+        fresh = SquadStateStore(store.squad_dir)
+        fresh.save(fresh.load())
+
     def test_confirm_durable_state_requires_exact_revision_and_marker(
         self,
         tmp_path,
