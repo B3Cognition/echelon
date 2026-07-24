@@ -6,7 +6,7 @@ import json
 import pytest
 from typer.testing import CliRunner
 
-from lexicon.cli import app
+from lexicon.cli import _load_glossary, app
 
 runner = CliRunner()
 
@@ -106,6 +106,26 @@ def test_unresolved_term_without_glossary_exits_one(tmp_path):
     result = runner.invoke(app, ["validate", spec])
     assert result.exit_code == 1
     assert "due_date" in result.stdout
+
+
+@pytest.mark.unit
+def test_load_glossary_recognizes_terms_from_markdown_headings(tmp_path):
+    glossary = tmp_path / "glossary.md"
+    glossary.write_text(
+        """# Domain Glossary
+
+## Terms
+
+### StatsPerform
+- **Definition:** The API provider.
+
+### outlet_key
+- **Definition:** An API credential.
+""",
+        encoding="utf-8",
+    )
+
+    assert {"StatsPerform", "outlet_key"}.issubset(_load_glossary(glossary))
 
 
 @pytest.mark.unit

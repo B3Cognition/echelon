@@ -75,6 +75,7 @@ spec_app = typer.Typer(
         "                    [--re-policy none|cached-only|changed|refresh-all]\n"
         "                    [--re-max-inner <n>]\n"
         "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
+        "  resolve ISS-<n> <decision>  Record one issue decision and run its targeted repair.\n"
         "  publish <spec-id-or-branch> | publish --all\n"
         "                    Commit spec-only snapshots to the local default branch.\n"
         "  targets <spec_id>  Display every task grouped by delivery target.\n"
@@ -1445,6 +1446,35 @@ def spec_resume(
 
 
 @spec_app.command(
+    "resolve",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def spec_resolve(
+    ctx: typer.Context,
+    issue_id: str = typer.Argument(..., help="SAGE issue ID, for example ISS-002."),
+    decision: Optional[str] = typer.Argument(None, help="Explicit project decision for this issue."),
+) -> None:
+    """Record one issue decision and dispatch its targeted WHAT repair."""
+    from echelon import cli as legacy_cli
+
+    project_root = Path.cwd()
+    args = [issue_id]
+    if decision is not None:
+        args.append(decision)
+    args.extend(list(ctx.args))
+    ext_dir = legacy_cli._installed_extension_or_exit(project_root)
+    legacy_cli._require_provider_capability(
+        "echelon spec resolve",
+        legacy_cli.ProviderCapability.ARTIFACT,
+        project_dir=project_root,
+    )
+    legacy_cli._require_phase_a_git_ownership(
+        project_root, command_name="echelon spec resolve"
+    )
+    legacy_cli._cmd_spec_resolve(args, project_root=project_root, ext_dir=ext_dir)
+
+
+@spec_app.command(
     "rewind",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )
@@ -1843,6 +1873,31 @@ def spec_change(
     from echelon import cli as legacy_cli
 
     legacy_cli._dispatch_skill_command("change", [spec_id, description, *list(ctx.args)])
+
+
+@spec_app.command(
+    "amend",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)
+def spec_amend(
+    ctx: typer.Context,
+    spec_id: str = typer.Argument(..., help="Planned spec id to amend."),
+    description: str = typer.Argument(..., help="Product change summary."),
+    input_values: Optional[list[str]] = typer.Option(
+        None,
+        "--input",
+        help="Product input as requirement:<path> or reference:<path>; repeat as needed.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview baseline and inputs without mutation."),
+) -> None:
+    """Prepare an isolated amendment for an unbuilt spec."""
+    from echelon import cli as legacy_cli
+
+    args = [spec_id, description, *list(ctx.args)]
+    _extend_repeated_option(args, "--input", input_values)
+    if dry_run:
+        args.append("--dry-run")
+    legacy_cli._cmd_spec_amend(args)
 
 
 @delivery_app.command(

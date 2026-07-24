@@ -143,6 +143,14 @@ class TestSageTemplates:
         assert "Quality gates pass AND no CRITICAL issues**" not in text
         assert "Certified gates pass, no CRITICAL issues, and no required amendments remain" in text
 
+    def test_why2_dispatch_requires_structured_evidence_resolution_requests(self) -> None:
+        text = WHY2_PHASE.read_text(encoding="utf-8")
+
+        assert "evidence_resolution_status: pending" in text
+        assert "evidence_requests" in text
+        assert "spec_repair" in text
+        assert "human_decision" in text
+
     def test_why3_dispatch_includes_sage_templates(self) -> None:
         text = WHY3_PHASE.read_text(encoding="utf-8")
 

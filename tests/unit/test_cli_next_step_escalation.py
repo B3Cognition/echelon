@@ -131,6 +131,48 @@ def test_blocked_squad_escalation_prioritizes_resume(
     assert "echelon spec continue" not in captured.out
 
 
+def test_blocked_squad_escalation_displays_executable_options(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260724-070600-019100"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "checkpoint-assess",
+                "blocked_reason": "checkpoint-assess human gate",
+                "escalation_question": (
+                    "Approve proceeding to DECIDE, or return to WHAT to fix "
+                    "the priority-tag inconsistency?"
+                ),
+                "escalation_options": [
+                    {
+                        "id": "proceed_to_decide",
+                        "label": "Proceed to DECIDE",
+                        "next_phase": "phase2-decide",
+                    },
+                    {
+                        "id": "route_back_to_what",
+                        "label": "Return to WHAT",
+                        "next_phase": "phase1-what",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "blocked")
+
+    captured = capsys.readouterr()
+    assert "A: Proceed to DECIDE" in captured.out
+    assert "B: Return to WHAT" in captured.out
+    assert "Answer with A/B, the option id, or the option label." in captured.out
+
+
 def test_ready_next_step_has_clear_subtitle_and_next_command(
     tmp_path: Path,
     capsys,

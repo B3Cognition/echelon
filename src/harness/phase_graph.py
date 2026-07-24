@@ -33,6 +33,7 @@ class PhaseNode:
     state_update_enums: dict = field(default_factory=dict)
     allowed_verdicts: Optional[list] = None
     unexpected_state_updates: str = "quarantine"
+    evidence_routing: str = "none"
     transitions: list = field(default_factory=list)
 
     def result_contract(self, agent_entry: dict | None = None):
@@ -48,6 +49,7 @@ class PhaseNode:
         unexpected = entry.get(
             "unexpected_state_updates", self.unexpected_state_updates
         )
+        evidence_routing = entry.get("evidence_routing", self.evidence_routing)
         return EchelonResultContract(
             allowed_state_update_keys=(
                 frozenset(str(key) for key in allowed)
@@ -69,6 +71,7 @@ class PhaseNode:
                 else None
             ),
             unexpected_state_updates=str(unexpected),
+            evidence_routing=str(evidence_routing),
         )
 
 
@@ -116,6 +119,7 @@ class PhaseGraph:
                 unexpected_state_updates=p.get(
                     "unexpected_state_updates", "quarantine"
                 ),
+                evidence_routing=p.get("evidence_routing", "none"),
                 transitions=p.get("transitions", []),
             )
             self._phases[node.id] = node

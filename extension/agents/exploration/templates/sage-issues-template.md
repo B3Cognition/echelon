@@ -18,6 +18,14 @@
 - **Evidence:** <quote or specific finding>
 - **Recommendation:** <specific fix>
 - **Responsible agent:** <DISCOVER | WHAT | HOW>
+- **Action Required:** <the next concrete action; use `None` only when advisory>
+
+### Resolution Guidance
+- **Decision required:** <exact decision, or `No user decision — agent repair`>
+- **Suggested option:** <one evidence-backed option, or `None`>
+- **Evidence basis:** <specific cited artifact/evidence, or `None`>
+- **Values not inferable:** <what only the user can decide, or `None`>
+- **Banzai eligible:** yes | no
 
 ### ISS-002: ...
 
