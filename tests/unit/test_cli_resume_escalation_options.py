@@ -469,3 +469,37 @@ No action required.
             "guidance": "Complete every transition with explicit outcomes.",
         }
     ]
+
+
+def test_issue_screen_guidance_shows_action_command_and_clickable_source(tmp_path: Path) -> None:
+    from echelon.cli import _issue_resolution_screen_guidance
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    issues_path = spec_dir / "issues.md"
+    issues_path.write_text(
+        """### ISS-002: Retry policy
+- **Severity:** CRITICAL
+- **Action Required:** Select retry behavior.
+
+### Resolution Guidance
+- **Decision required:** Retry behavior.
+- **Suggested option:** Use exponential backoff with a cap of three attempts.
+- **Evidence basis:** API reference documents idempotent reads.
+- **Values not inferable:** Retry behavior for non-idempotent writes.
+- **Banzai eligible:** no
+""",
+        encoding="utf-8",
+    )
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    state["spec_dir"] = str(spec_dir)
+
+    fields = dict(_issue_resolution_screen_guidance(tmp_path, run_dir, state))
+    assert fields["issues file"] == str(issues_path)
+    assert fields["open issues"] == issues_path.as_uri()
+    assert "action: Select retry behavior." in fields["ISS-002"]
+    assert "suggested: Use exponential backoff with a cap of three attempts." in fields["ISS-002"]
+    assert "evidence: API reference documents idempotent reads." in fields["ISS-002"]
+    assert "user decides: Retry behavior for non-idempotent writes." in fields["ISS-002"]
+    assert "echelon spec resolve ISS-002" in fields["ISS-002"]

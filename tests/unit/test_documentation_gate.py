@@ -152,6 +152,37 @@ def test_version_two_coverage_rejects_uncovered_delivery_change(tmp_path: Path) 
     assert "FR-004" in failure[1]
 
 
+def test_version_two_coverage_batches_missing_readme_citations_by_five(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "feature.py").write_text("VALUE = 1\n", encoding="utf-8")
+    delivery_ids = [f"FR-{index:03d}" for index in range(1, 7)]
+    impact = {
+        "schema_version": 2,
+        "delivery_change_ids": delivery_ids,
+        "documented_changes": [
+            {
+                "change_id": change_id,
+                "disposition": "covered",
+                "evidence_paths": ["src/feature.py"],
+                "readme_sections": [],
+                "changelog_sections": ["Added / Runtime resolution"],
+            }
+            for change_id in delivery_ids
+        ],
+    }
+
+    failure = validate_documentation_coverage(tmp_path, impact, {})
+
+    assert failure is not None
+    assert failure[0] == "documentation-coverage-incomplete"
+    for change_id in delivery_ids[:5]:
+        assert f"{change_id} must cite at least one README section" in failure[1]
+    assert "FR-006 must cite at least one README section" not in failure[1]
+    assert "and 1 more documentation coverage issue" in failure[1]
+
+
 def test_version_two_coverage_rejects_missing_evidence_path(tmp_path: Path) -> None:
     impact = {
         "schema_version": 2,

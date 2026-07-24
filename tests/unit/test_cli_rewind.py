@@ -440,6 +440,37 @@ def test_rewind_to_spec_authoring_or_gate_resets_spec_lexicon_repair_state(
     assert "lexicon_gate_exhausted" not in rewound
 
 
+def test_rewind_before_why2_clears_stale_issue_and_why_state() -> None:
+    rewound = _reset_rewind_state(
+        {
+            "issue_resolution_ledger": {"ISS-002": {"status": "selected"}},
+            "selected_issue_resolution": "ISS-002",
+            "issue_resolution_recovery": {"issue_id": "ISS-002"},
+            "issue_resolution_repair_baseline": {"issue_id": "ISS-002"},
+            "phase_dispatch_limit_recovery": {"phase": "phase1-what"},
+            "issues_log": [{"issue_id": "ISS-002"}],
+            "why_fail_count": 2,
+            "why2_metric_stagnation_count": 2,
+            "why_failure_baseline": {"phase_id": "phase1-why2"},
+        },
+        "init",
+        "runs/spec-1/specs/001-demo",
+    )
+
+    for key in (
+        "issue_resolution_ledger",
+        "selected_issue_resolution",
+        "issue_resolution_recovery",
+        "issue_resolution_repair_baseline",
+        "phase_dispatch_limit_recovery",
+        "issues_log",
+        "why_failure_baseline",
+    ):
+        assert key not in rewound
+    assert rewound["why_fail_count"] == 0
+    assert rewound["why2_metric_stagnation_count"] == 0
+
+
 def test_rewind_missing_checkpoint_exits_without_traceback(
     tmp_path: Path,
     capsys,

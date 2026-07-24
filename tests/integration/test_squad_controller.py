@@ -4048,11 +4048,11 @@ class TestSquadControllerBasics:
         ctrl.run("msg", "banzai")
         assert store.load().get("why_fail_count", 0) == 0
 
-    def test_consecutive_fails_force_escalation(self, tmp_path):
-        """≥2 consecutive WHY fails with no staging progress → auto-escalation."""
+    def test_consecutive_why1_fails_remain_in_the_declared_discovery_loop(self, tmp_path):
+        """WHY1 has no spec issue ledger, so its graph iteration cap owns retries."""
         from harness.squad_provider import SquadAgentResult
         provider = _mock_provider()
-        provider.exec_agent.return_value = SquadAgentResult(
+        why1_result = SquadAgentResult(
             exit_code=0,
             echelon_result={
                 "verdict": "FAIL",
@@ -4060,6 +4060,7 @@ class TestSquadControllerBasics:
             },
             raw_output="", duration_ms=0, timed_out=False,
         )
+        provider.exec_agent.return_value = why1_result
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "semi", "msg", 0, "phase1-why1", max_iterations=5)
         # Pre-set why_fail_count=1 so next fail triggers guard
@@ -4069,12 +4070,16 @@ class TestSquadControllerBasics:
         state = store.load()
         state["last_dispatch"] = {"completed_at": "2020-01-01T00:00:00Z"}
         store.save(state)
-        result = ctrl.run("msg", "semi")
-        # Should be blocked by consecutive-fail guard
-        assert result.status == "blocked"
+
+        next_phase = _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-why1"),
+            why1_result,
+        )
+
+        assert next_phase == "phase1-discover"
         state = store.load()
-        assert state.get("escalation_question") is not None
-        assert "consecutive" in state.get("escalation_question", "").lower()
+        assert state.get("escalation_question") is None
 
     def test_consecutive_why2_fail_with_active_spec_progress_routes_to_repair(self, tmp_path):
         """Fresh WHY2 artifacts in state.spec_dir count as progress."""
@@ -4115,6 +4120,123 @@ class TestSquadControllerBasics:
 
         assert next_phase == "phase1-what"
         assert store.load().get("escalation_question") is None
+
+    def test_what_artifact_repair_starts_a_fresh_why_failure_cycle(self, tmp_path):
+        """A repaired spec must not inherit a WHY failure from its prior version."""
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-what", max_iterations=5)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Repaired specification\n", encoding="utf-8")
+        state = store.load()
+        state.update(
+            {
+                "spec_dir": "runs/run-test/specs/001-demo",
+                "why_fail_count": 1,
+                "why2_metric_stagnation_count": 1,
+                "why_failure_baseline": {
+                    "phase_id": "phase1-why2",
+                    "recorded_at": "2020-01-01T00:00:00+00:00",
+                },
+            }
+        )
+        store.save(state)
+
+        what_result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {"evidence_resolution_status": "not_required"},
+            },
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+        _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-what"),
+            what_result,
+        )
+
+        refreshed = store.load()
+        assert refreshed["why_fail_count"] == 0
+        assert refreshed["why2_metric_stagnation_count"] == 0
+
+        why2_result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {
+                    "evidence_resolution_status": "not_required",
+                    "finding_routes": {
+                        "findings": [{
+                            "issue_id": "ISS-FRESH",
+                            "route": "spec_repair",
+                            "rationale": "The active specification needs repair.",
+                        }]
+                    },
+                },
+            },
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+        store.save({**store.load(), "phase": "phase1-why2"})
+        assert (
+            _coordinate_prepared_result(
+                ctrl,
+                ctrl._graph.get("phase1-why2"),
+                why2_result,
+            )
+            == "phase1-what"
+        )
+        assert store.load()["why_fail_count"] == 1
+        assert store.load().get("escalation_question") is None
+
+    def test_consecutive_why_escalation_gives_an_actionable_question(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "issues.md").write_text("# Findings\n", encoding="utf-8")
+        state = store.load()
+        state.update(
+            {
+                "spec_dir": "runs/run-test/specs/001-demo",
+                "why_fail_count": 1,
+                "why_failure_baseline": {
+                    "phase_id": "phase1-why2",
+                    "recorded_at": "2999-01-01T00:00:00+00:00",
+                },
+            }
+        )
+        store.save(state)
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {
+                    "evidence_resolution_status": "not_required",
+                    "finding_routes": {
+                        "findings": [{
+                            "issue_id": "ISS-BLOCKED",
+                            "route": "spec_repair",
+                            "rationale": "The active specification needs repair.",
+                        }]
+                    },
+                },
+            },
+            raw_output="", duration_ms=0, timed_out=False,
+        )
+
+        assert (
+            _coordinate_prepared_result(
+                ctrl,
+                ctrl._graph.get("phase1-why2"),
+                result,
+            )
+            == "terminal-blocked"
+        )
+        question = store.load()["escalation_question"]
+        assert "No retry is authorized" in question
+        assert "echelon spec resolve ISS-<n>" in question
+        assert str(spec_dir / "issues.md") in question
 
     def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path, monkeypatch):
         """Banzai: WHY1 returns escalation_question in state_updates → inline COMMANDER, not routing judge."""

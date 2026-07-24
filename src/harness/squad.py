@@ -145,6 +145,18 @@ MAX_PHASE_DISPATCHES = 5
 MAX_PRODUCT_INPUT_MAPPING_REPAIRS = 2
 PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION = 2
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
+WHY2_METRIC_STAGNATION_LIMIT = 2
+WHY2_METRIC_MIN_DELTA = 0.01
+_WHY2_CERTIFIED_METRICS = (
+    "overall",
+    "structure",
+    "testability",
+    "behavioral",
+    "semantic",
+    "cognitive",
+    "readability",
+    "depth",
+)
 _PHASE_A_GENERATED_FILES = frozenset(
     {
         Path("constitution.md"),
@@ -172,6 +184,30 @@ _PRODUCT_INPUT_PATH_KEYS = frozenset(
         "traceability_markdown",
     }
 )
+
+
+def _why2_certified_metrics_improved(scores: object) -> bool | None:
+    """Return whether the latest two certified WHY2 scores moved materially."""
+    if not isinstance(scores, list):
+        return None
+    why2_scores = [
+        score
+        for score in scores
+        if isinstance(score, dict)
+        and str(score.get("pass_id") or "").startswith("WHY2-")
+    ]
+    if len(why2_scores) < 2:
+        return None
+    previous, latest = why2_scores[-2:]
+    comparable = []
+    for metric in _WHY2_CERTIFIED_METRICS:
+        try:
+            comparable.append(float(latest[metric]) - float(previous[metric]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not comparable:
+        return None
+    return any(delta >= WHY2_METRIC_MIN_DELTA for delta in comparable)
 JUDGMENT_STATE_UPDATE_KEYS = frozenset(
     {
         "next_phase",
@@ -5662,6 +5698,35 @@ class SquadController:
             snapshot,
         )
 
+    def _coordinate_what_repair_cycle_updates(
+        self,
+        node: PhaseNode,
+        snapshot: RoutingStateSnapshot,
+    ) -> dict[str, object]:
+        """Start a fresh WHY cycle when WHAT changed phase artifacts."""
+        if node.id != "phase1-what":
+            return {}
+        state = snapshot.state
+        try:
+            if int(state.get("why_fail_count") or 0) <= 0:
+                return {}
+        except (TypeError, ValueError):
+            return {}
+        baseline = state.get("why_failure_baseline")
+        baseline_ts = (
+            baseline.get("recorded_at")
+            if isinstance(baseline, dict)
+            else None
+        )
+        if not baseline_ts:
+            return {}
+        if not self._phase_artifacts_changed_since(baseline_ts, state):
+            return {}
+        return {
+            "why_fail_count": 0,
+            "why2_metric_stagnation_count": 0,
+        }
+
     def _coordinate_why_transition_state(
         self,
         node: PhaseNode,
@@ -5697,15 +5762,60 @@ class SquadController:
         if not is_fail:
             return None, {"why_fail_count": 0}
 
+        from datetime import datetime, timezone
+
+        baseline = state.get("why_failure_baseline")
+        baseline_ts = (
+            baseline.get("recorded_at")
+            if isinstance(baseline, dict)
+            else None
+        )
         try:
-            fail_count = int(state.get("why_fail_count") or 0) + 1
+            prior_fail_count = int(state.get("why_fail_count") or 0)
+        except (TypeError, ValueError):
+            prior_fail_count = 0
+        try:
+            fail_count = prior_fail_count + 1
         except (TypeError, ValueError):
             fail_count = 1
-        updates = {"why_fail_count": fail_count}
+        updates: dict[str, object] = {"why_fail_count": fail_count}
+        if prior_fail_count <= 0 or not baseline_ts:
+            updates["why_fail_count"] = 1
+            updates["why_failure_baseline"] = {
+                "phase_id": node.id,
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            }
+            return None, updates
+        if node.id != "phase1-why2":
+            return None, updates
+
+        metrics_improved = _why2_certified_metrics_improved(
+            eval_state.get("quality_scores")
+        )
+        if metrics_improved is True:
+            updates["why2_metric_stagnation_count"] = 0
+        elif metrics_improved is False:
+            try:
+                stagnation_count = (
+                    int(state.get("why2_metric_stagnation_count") or 0) + 1
+                )
+            except (TypeError, ValueError):
+                stagnation_count = 1
+            updates["why2_metric_stagnation_count"] = stagnation_count
+            if stagnation_count >= WHY2_METRIC_STAGNATION_LIMIT:
+                updates["escalation_question"] = (
+                    "WHY2 certified metrics did not improve across "
+                    f"{stagnation_count} consecutive repair cycles. "
+                    "Provide new evidence, narrow scope, or authorize a "
+                    "different repair strategy."
+                )
+                updates["blocked_reason"] = "why2_metric_stagnation"
+                updates["status"] = "blocked"
+                return PHASE_TERMINAL_BLOCKED, updates
+
         if fail_count < 2 or state.get("escalation_question"):
             return None, updates
-        last_ts = (state.get("last_dispatch") or {}).get("completed_at")
-        if self._phase_artifacts_changed_since(last_ts, snapshot.state):
+        if self._phase_artifacts_changed_since(baseline_ts, snapshot.state):
             return None, updates
 
         print(
@@ -5713,10 +5823,20 @@ class SquadController:
             "FAILs with no artifact progress — forcing escalation",
             flush=True,
         )
+        spec_dir_ref = str(state.get("spec_dir") or "").strip()
+        if spec_dir_ref:
+            issues_path = Path(spec_dir_ref)
+            if not issues_path.is_absolute():
+                issues_path = self._project_root / issues_path
+            issues_hint = str(issues_path / "issues.md")
+        else:
+            issues_hint = "issues.md was not available"
         updates["escalation_question"] = (
-            f"Auto-detected: {fail_count} consecutive {node.id} FAILs "
-            "with no artifact progress. User input or banzai COMMANDER "
-            "judgment required before continuing."
+            f"{node.id} still fails after {fail_count} assessments without "
+            "a spec artifact change. No retry is authorized. Resolve the "
+            f"first unresolved SAGE issue from {issues_hint} with "
+            "`echelon spec resolve ISS-<n> '<decision>'`; the controller "
+            "will run and revalidate only that issue's declared repair edge."
         )
         updates["blocked_reason"] = "consecutive_why_fails"
         updates["status"] = "blocked"
@@ -5864,6 +5984,9 @@ class SquadController:
                 )
 
         merge_effects(dict(additional_state_updates or {}))
+        merge_effects(
+            self._coordinate_what_repair_cycle_updates(node, snapshot)
+        )
         judgment_payloads: list[dict[str, object]] = []
         judgment_results: list[SquadAgentResult] = []
         source = "transition"
