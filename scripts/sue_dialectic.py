@@ -591,9 +591,10 @@ def main(argv: list | None = None) -> int:
         )
     except v1.ArgumentFailure as exc:
         return v1.fail(v1.EXIT_BAD_INPUT, f"bad input: {exc}")
-    failure = v1.preflight(config)
-    if failure is not None:
-        return v1.fail(*failure)
+    # Tool-specific input guards run BEFORE preflight: a report-path collision is
+    # a bad-input error detectable without a model, so it must not be masked by
+    # preflight's "model executable not found" (exit 2) when no CLI is installed
+    # (e.g. CI). preflight still owns spec-readable / dir-writable / model checks.
     spec_dir = config.spec_path.resolve().parent
     if config.spec_path.resolve() in (
         spec_dir / REPORT_FILENAME, spec_dir / JSON_FILENAME
@@ -603,6 +604,9 @@ def main(argv: list | None = None) -> int:
             f"bad input: challenged file '{config.spec_path}' is a dialogue "
             "report path — rename it to challenge it",
         )
+    failure = v1.preflight(config)
+    if failure is not None:
+        return v1.fail(*failure)
     spec = v1.load_spec(config.spec_path)
     if not any(line.strip() for line in spec.lines):
         return v1.fail(
