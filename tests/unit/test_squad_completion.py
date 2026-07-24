@@ -4,12 +4,16 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
 import pytest
 
+from echelon.telemetry.model import PhaseTimingEvent
+from echelon.telemetry.phase_timing import record_phase_start
+from echelon.telemetry.store import TelemetryStore
 import harness.prepared_phase_result as prepared_phase_result_module
 import harness.squad_completion as completion_module
 from harness.squad_completion import (
@@ -2246,6 +2250,626 @@ def test_completion_journal_rejects_malformed_unrelated_json_without_write(
     )
 
     assert journal.read_bytes() == before
+
+
+def _completion_timing_store(squad_dir: Path) -> TelemetryStore:
+    store = TelemetryStore(
+        squad_dir,
+        workflow="spec",
+        run_id=squad_dir.name,
+        profile={"name": "banzai"},
+        trace_id="1" * 32,
+    )
+    store.ensure_manifest()
+    return store
+
+
+def _git_for_completion_checkpoint(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _prepare_completion_checkpoint(
+    tmp_path: Path,
+) -> tuple[Path, Path, object]:
+    project_root, squad_dir = _roots(tmp_path)
+    _git_for_completion_checkpoint(project_root, "init", "-b", "main")
+    _git_for_completion_checkpoint(
+        project_root,
+        "config",
+        "user.email",
+        "test@example.com",
+    )
+    _git_for_completion_checkpoint(
+        project_root,
+        "config",
+        "user.name",
+        "Test User",
+    )
+    spec_dir = squad_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+    (project_root / "README.md").write_text(
+        "# Repository\n",
+        encoding="utf-8",
+    )
+    _git_for_completion_checkpoint(project_root, "add", "-A")
+    _git_for_completion_checkpoint(project_root, "commit", "-m", "base")
+    head = _git_for_completion_checkpoint(
+        project_root,
+        "rev-parse",
+        "HEAD",
+    )
+    prepared = prepare_controller_completion(
+        project_root,
+        squad_dir,
+        completion_id=COMPLETION_ID,
+        origin="routed",
+        publication={"kind": "none"},
+        route=ROUTED_ROUTE,
+        effect_plan=("checkpoint",),
+        checkpoint_prestate={"kind": "git_head", "head": head},
+        context_reason="routed phase completion",
+        mine_phase_a=False,
+        judgment_payload_sha256=(),
+        judgments=(),
+    )
+    return project_root, spec_dir, prepared
+
+
+def _apply_completion_checkpoint(
+    project_root: Path,
+    spec_dir: Path | None,
+    prepared: object,
+    *,
+    expected_receipt: object | None = None,
+    fault_hook=None,
+) -> dict[str, object]:
+    return completion_module.create_or_recover_completion_checkpoint(
+        prepared.intent,
+        project_root=project_root,
+        spec_dir=spec_dir,
+        run_id="spec-1",
+        spec_id="001-demo" if spec_dir is not None else "",
+        expected_receipt=expected_receipt,
+        fault_hook=fault_hook,
+    )
+
+
+def test_completion_checkpoint_wrapper_binds_intent_and_one_ahead_receipt(
+    tmp_path: Path,
+) -> None:
+    project_root, spec_dir, prepared = _prepare_completion_checkpoint(
+        tmp_path
+    )
+    (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+
+    receipt = _apply_completion_checkpoint(
+        project_root,
+        spec_dir,
+        prepared,
+    )
+    count_after = _git_for_completion_checkpoint(
+        project_root,
+        "rev-list",
+        "--count",
+        "--all",
+    )
+    replayed = _apply_completion_checkpoint(
+        project_root,
+        spec_dir,
+        prepared,
+        expected_receipt=receipt,
+    )
+
+    assert replayed == receipt
+    assert receipt["completion_id"] == COMPLETION_ID
+    assert receipt["phase"] == ROUTED_ROUTE["from_phase"]
+    assert receipt["next_phase"] == ROUTED_ROUTE["to_phase"]
+    assert _git_for_completion_checkpoint(
+        project_root,
+        "rev-list",
+        "--count",
+        "--all",
+    ) == count_after
+
+
+def test_completion_checkpoint_rejects_malformed_or_drifted_receipts(
+    tmp_path: Path,
+) -> None:
+    project_root, spec_dir, prepared = _prepare_completion_checkpoint(
+        tmp_path
+    )
+    (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    receipt = _apply_completion_checkpoint(
+        project_root,
+        spec_dir,
+        prepared,
+    )
+    ledger = spec_dir / ".echelon" / "checkpoints.json"
+    postimage = ledger.read_bytes()
+    count_after = _git_for_completion_checkpoint(
+        project_root,
+        "rev-list",
+        "--count",
+        "--all",
+    )
+    malformed = (
+        {**receipt, "extra": True},
+        {**receipt, "schema_version": True},
+        {**receipt, "completion_id": "b" * 32},
+        {**receipt, "phase": "phase4-build"},
+        {**receipt, "next_phase": "done"},
+        {**receipt, "commit": "f" * 40},
+    )
+
+    for candidate in malformed:
+        _assert_completion_error(
+            "receipts_mismatch",
+            lambda candidate=candidate: _apply_completion_checkpoint(
+                project_root,
+                spec_dir,
+                prepared,
+                expected_receipt=candidate,
+            ),
+        )
+
+    assert ledger.read_bytes() == postimage
+    assert _git_for_completion_checkpoint(
+        project_root,
+        "rev-list",
+        "--count",
+        "--all",
+    ) == count_after
+
+
+def test_completion_checkpoint_rejects_bound_receipt_postimage_drift(
+    tmp_path: Path,
+) -> None:
+    project_root, spec_dir, prepared = _prepare_completion_checkpoint(
+        tmp_path
+    )
+    (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    receipt = _apply_completion_checkpoint(
+        project_root,
+        spec_dir,
+        prepared,
+    )
+    ledger_path = spec_dir / ".echelon" / "checkpoints.json"
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    ledger["checkpoints"][0]["next_phase"] = "phase4-drifted"
+    ledger_path.write_text(json.dumps(ledger) + "\n", encoding="utf-8")
+    postimage = ledger_path.read_bytes()
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: _apply_completion_checkpoint(
+            project_root,
+            spec_dir,
+            prepared,
+            expected_receipt=receipt,
+        ),
+    )
+
+    assert ledger_path.read_bytes() == postimage
+
+
+def test_completion_checkpoint_replays_crash_before_state_step(
+    tmp_path: Path,
+) -> None:
+    project_root, spec_dir, prepared = _prepare_completion_checkpoint(
+        tmp_path
+    )
+    (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+
+    def crash(boundary: str) -> None:
+        if boundary == "after_ledger":
+            raise RuntimeError("crash")
+
+    with pytest.raises(RuntimeError, match="crash"):
+        _apply_completion_checkpoint(
+            project_root,
+            spec_dir,
+            prepared,
+            fault_hook=crash,
+        )
+    count_after = _git_for_completion_checkpoint(
+        project_root,
+        "rev-list",
+        "--count",
+        "--all",
+    )
+
+    receipt = _apply_completion_checkpoint(
+        project_root,
+        spec_dir,
+        prepared,
+    )
+    adopted = _apply_completion_checkpoint(
+        project_root,
+        spec_dir,
+        prepared,
+        expected_receipt=receipt,
+    )
+
+    assert adopted == receipt
+    assert _git_for_completion_checkpoint(
+        project_root,
+        "rev-list",
+        "--count",
+        "--all",
+    ) == count_after
+
+
+@pytest.mark.parametrize("crash_boundary", ("after_close", "after_open"))
+def test_completion_timing_adopts_tagged_events_after_crash(
+    tmp_path: Path,
+    crash_boundary: str,
+) -> None:
+    _, squad_dir, prepared = _prepare_minimal(
+        tmp_path,
+        effect_plan=("timing",),
+    )
+    store = _completion_timing_store(squad_dir)
+    record_phase_start(
+        store,
+        phase="phase3-solution",
+        budget_seconds=300,
+        event_time="2026-07-23T10:00:00Z",
+    )
+
+    def crash(boundary: str) -> None:
+        if boundary == crash_boundary:
+            raise RuntimeError("crash")
+
+    with pytest.raises(RuntimeError, match="crash"):
+        completion_module.apply_or_verify_completion_timing(
+            prepared.intent,
+            store,
+            close_phase="phase3-solution",
+            close_budget_seconds=300,
+            open_phase="phase4-build",
+            open_budget_seconds=600,
+            fault_hook=crash,
+        )
+
+    receipt = completion_module.apply_or_verify_completion_timing(
+        prepared.intent,
+        store,
+        close_phase="phase3-solution",
+        close_budget_seconds=300,
+        open_phase="phase4-build",
+        open_budget_seconds=600,
+    )
+    postimage = store.events_path.read_bytes()
+    adopted = completion_module.apply_or_verify_completion_timing(
+        prepared.intent,
+        store,
+        close_phase="phase3-solution",
+        close_budget_seconds=300,
+        open_phase="phase4-build",
+        open_budget_seconds=600,
+        expected_receipt=receipt,
+    )
+
+    events, diagnostics = store.read_phase_timings()
+    tagged = [event for event in events if event.completion_id]
+    assert diagnostics == ()
+    assert [event.effect_id for event in tagged] == [
+        f"{COMPLETION_ID}:timing:close:phase3-solution",
+        f"{COMPLETION_ID}:timing:open:phase4-build",
+    ]
+    assert receipt == adopted
+    assert store.events_path.read_bytes() == postimage
+
+
+def test_completion_timing_rejects_same_effect_identity_drift(
+    tmp_path: Path,
+) -> None:
+    _, squad_dir, prepared = _prepare_minimal(
+        tmp_path,
+        effect_plan=("timing",),
+    )
+    store = _completion_timing_store(squad_dir)
+    completion_module.apply_or_verify_completion_timing(
+        prepared.intent,
+        store,
+        open_phase="phase4-build",
+        open_budget_seconds=600,
+    )
+    rows = [
+        json.loads(line)
+        for line in store.events_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    rows[-1]["phase"] = "phase4-drifted"
+    store.events_path.write_text(
+        "".join(
+            json.dumps(row, sort_keys=True) + "\n"
+            for row in rows
+        ),
+        encoding="utf-8",
+    )
+    before = store.events_path.read_bytes()
+
+    _assert_completion_error(
+        "receipts_invalid",
+        lambda: completion_module.apply_or_verify_completion_timing(
+            prepared.intent,
+            store,
+            open_phase="phase4-build",
+            open_budget_seconds=600,
+        ),
+    )
+
+    assert store.events_path.read_bytes() == before
+
+
+def test_completion_timing_does_not_adopt_legacy_untagged_event(
+    tmp_path: Path,
+) -> None:
+    _, squad_dir, prepared = _prepare_minimal(
+        tmp_path,
+        effect_plan=("timing",),
+    )
+    store = _completion_timing_store(squad_dir)
+    record_phase_start(
+        store,
+        phase="phase4-build",
+        budget_seconds=600,
+        event_time="2026-07-23T10:00:00Z",
+    )
+
+    receipt = completion_module.apply_or_verify_completion_timing(
+        prepared.intent,
+        store,
+        open_phase="phase4-build",
+        open_budget_seconds=600,
+    )
+
+    events, diagnostics = store.read_phase_timings()
+    assert diagnostics == ()
+    assert len(events) == 2
+    assert events[0].completion_id is None
+    assert events[1].completion_id == COMPLETION_ID
+    assert receipt["events"][0]["effect_id"] == (
+        f"{COMPLETION_ID}:timing:open:phase4-build"
+    )
+
+
+def test_completion_timing_rejects_unknown_tagged_row_fields(
+    tmp_path: Path,
+) -> None:
+    _, squad_dir, prepared = _prepare_minimal(
+        tmp_path,
+        effect_plan=("timing",),
+    )
+    store = _completion_timing_store(squad_dir)
+    receipt = completion_module.apply_or_verify_completion_timing(
+        prepared.intent,
+        store,
+        open_phase="phase4-build",
+        open_budget_seconds=600,
+    )
+    rows = [
+        json.loads(line)
+        for line in store.events_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    rows[-1]["unknown"] = "drift"
+    store.events_path.write_text(
+        json.dumps(rows[-1], sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    postimage = store.events_path.read_bytes()
+
+    _assert_completion_error(
+        "receipts_invalid",
+        lambda: completion_module.apply_or_verify_completion_timing(
+            prepared.intent,
+            store,
+            open_phase="phase4-build",
+            open_budget_seconds=600,
+            expected_receipt=receipt,
+        ),
+    )
+
+    assert store.events_path.read_bytes() == postimage
+
+
+def test_completion_timing_receipt_rejects_close_id_on_started_event(
+    tmp_path: Path,
+) -> None:
+    _, _, prepared = _prepare_minimal(
+        tmp_path,
+        effect_plan=("timing",),
+    )
+    completion_id = prepared.intent.completion_id
+    effect_id = (
+        f"{completion_id}:timing:close:phase3-solution"
+    )
+    event = PhaseTimingEvent.started(
+        trace_id="1" * 32,
+        phase="phase3-solution",
+        budget_seconds=300,
+        event_time="2026-07-23T10:00:00Z",
+        completion_id=completion_id,
+        effect_id=effect_id,
+    )
+
+    class FakeStore:
+        def read_phase_timings(self):
+            return (event,), ()
+
+    receipt = {
+        "schema_version": 1,
+        "completion_id": completion_id,
+        "events": [
+            {
+                "effect_id": effect_id,
+                "event_sha256": (
+                    completion_module._completion_timing_event_sha256(
+                        event
+                    )
+                ),
+            }
+        ],
+    }
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.apply_or_verify_completion_timing(
+            prepared.intent,
+            FakeStore(),
+            close_phase="phase3-solution",
+            close_budget_seconds=300,
+            expected_receipt=receipt,
+        ),
+    )
+
+
+@pytest.mark.parametrize("drift", ("budget", "trace"))
+def test_completion_timing_receipt_rejects_open_semantic_drift(
+    tmp_path: Path,
+    drift: str,
+) -> None:
+    _, _, prepared = _prepare_minimal(
+        tmp_path,
+        effect_plan=("timing",),
+    )
+    completion_id = prepared.intent.completion_id
+    effect_id = f"{completion_id}:timing:open:phase4-build"
+    expected_trace = "1" * 32
+    event = PhaseTimingEvent.started(
+        trace_id="2" * 32 if drift == "trace" else expected_trace,
+        phase="phase4-build",
+        budget_seconds=601 if drift == "budget" else 600,
+        event_time="2026-07-23T10:00:00Z",
+        completion_id=completion_id,
+        effect_id=effect_id,
+    )
+
+    class FakeStore:
+        trace_id = expected_trace
+
+        def read_phase_timings(self):
+            return (event,), ()
+
+    receipt = {
+        "schema_version": 1,
+        "completion_id": completion_id,
+        "events": [
+            {
+                "effect_id": effect_id,
+                "event_sha256": (
+                    completion_module._completion_timing_event_sha256(
+                        event
+                    )
+                ),
+            }
+        ],
+    }
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.apply_or_verify_completion_timing(
+            prepared.intent,
+            FakeStore(),
+            open_phase="phase4-build",
+            open_budget_seconds=600,
+            expected_receipt=receipt,
+        ),
+    )
+
+
+def test_completion_timing_receipt_rejects_invalid_finished_semantics(
+    tmp_path: Path,
+) -> None:
+    _, _, prepared = _prepare_minimal(
+        tmp_path,
+        effect_plan=("timing",),
+    )
+    completion_id = prepared.intent.completion_id
+    effect_id = (
+        f"{completion_id}:timing:close:phase3-solution"
+    )
+    event = PhaseTimingEvent.finished(
+        trace_id="1" * 32,
+        phase="phase3-solution",
+        budget_seconds=300,
+        elapsed_seconds=-5.0,
+        event_time="not-a-time",
+        completion_id=completion_id,
+        effect_id=effect_id,
+    )
+
+    class FakeStore:
+        trace_id = "1" * 32
+
+        def read_phase_timings(self):
+            return (event,), ()
+
+    receipt = {
+        "schema_version": 1,
+        "completion_id": completion_id,
+        "events": [
+            {
+                "effect_id": effect_id,
+                "event_sha256": (
+                    completion_module._completion_timing_event_sha256(
+                        event
+                    )
+                ),
+            }
+        ],
+    }
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.apply_or_verify_completion_timing(
+            prepared.intent,
+            FakeStore(),
+            close_phase="phase3-solution",
+            close_budget_seconds=300,
+            expected_receipt=receipt,
+        ),
+    )
+
+
+def test_completion_timing_close_budget_drift_fails_without_append(
+    tmp_path: Path,
+) -> None:
+    _, squad_dir, prepared = _prepare_minimal(
+        tmp_path,
+        effect_plan=("timing",),
+    )
+    store = _completion_timing_store(squad_dir)
+    record_phase_start(
+        store,
+        phase="phase3-solution",
+        budget_seconds=250,
+        event_time="2026-07-23T10:00:00Z",
+    )
+    preimage = store.events_path.read_bytes()
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.apply_or_verify_completion_timing(
+            prepared.intent,
+            store,
+            close_phase="phase3-solution",
+            close_budget_seconds=300,
+        ),
+    )
+
+    assert store.events_path.read_bytes() == preimage
 
 
 def test_completion_journal_durable_replace_syncs_parent(

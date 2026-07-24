@@ -2968,6 +2968,8 @@ def _exit_if_provider_session_limited(state_store: object) -> None:
 
 _RUNS_GITIGNORE_PATTERNS = (
     "**/.echelon/checkpoints.json",
+    "**/.echelon/checkpoints.lock",
+    "**/.echelon/.checkpoints.json.*.tmp",
     "*/state.json",
     "*/*.tmp",
     ".current*",

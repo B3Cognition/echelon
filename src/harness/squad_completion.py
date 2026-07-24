@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -12,7 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator, Mapping
 
 from harness.prepared_phase_result import (
     _bounded_detach_untrusted,
@@ -1609,3 +1610,384 @@ def apply_or_verify_completion_journal(
             entry_ids=entry_ids,
             timestamp=timestamp,
         )
+
+
+def _completion_timing_effect_id(
+    completion_id: str,
+    kind: str,
+    phase: str,
+) -> str:
+    return f"{completion_id}:timing:{kind}:{phase}"
+
+
+def _completion_timing_events(store: object) -> tuple[object, ...]:
+    try:
+        events, diagnostics = store.read_phase_timings()
+    except (AttributeError, OSError, ValueError):
+        _raise("receipts_invalid")
+    if diagnostics:
+        _raise("receipts_invalid")
+    return tuple(events)
+
+
+def _completion_timing_event_sha256(event: object) -> str:
+    try:
+        record = event.to_json_dict()
+    except AttributeError:
+        _raise("receipts_invalid")
+    return hashlib.sha256(
+        _canonical_json(record, newline=False)
+    ).hexdigest()
+
+
+def _completion_timing_receipt(
+    completion_id: str,
+    events: list[object],
+) -> dict[str, object]:
+    return {
+        "schema_version": _SCHEMA_VERSION,
+        "completion_id": completion_id,
+        "events": [
+            {
+                "effect_id": event.effect_id,
+                "event_sha256": _completion_timing_event_sha256(event),
+            }
+            for event in events
+        ],
+    }
+
+
+def _validate_completion_timing_receipt(
+    receipt: object,
+    *,
+    completion_id: str,
+    store: object,
+    allowed_sequences: tuple[tuple[str, ...], ...],
+    effect_semantics: Mapping[str, Mapping[str, object]],
+) -> dict[str, object]:
+    record = _validate_exact_dict(
+        receipt,
+        frozenset({"schema_version", "completion_id", "events"}),
+        code="receipts_mismatch",
+    )
+    event_receipts = record["events"]
+    if (
+        type(record["schema_version"]) is not int
+        or record["schema_version"] != _SCHEMA_VERSION
+        or type(record["completion_id"]) is not str
+        or record["completion_id"] != completion_id
+        or type(event_receipts) is not list
+    ):
+        _raise("receipts_mismatch")
+    effect_ids: list[str] = []
+    expected_digests: dict[str, str] = {}
+    for event_receipt in event_receipts:
+        item = _validate_exact_dict(
+            event_receipt,
+            frozenset({"effect_id", "event_sha256"}),
+            code="receipts_mismatch",
+        )
+        effect_id = item["effect_id"]
+        digest = item["event_sha256"]
+        if (
+            type(effect_id) is not str
+            or type(digest) is not str
+            or _SHA256_PATTERN.fullmatch(digest) is None
+            or effect_id in expected_digests
+        ):
+            _raise("receipts_mismatch")
+        effect_ids.append(effect_id)
+        expected_digests[effect_id] = digest
+    if tuple(effect_ids) not in allowed_sequences:
+        _raise("receipts_mismatch")
+    events = _completion_timing_events(store)
+    completion_events = [
+        event
+        for event in events
+        if getattr(event, "completion_id", None) == completion_id
+    ]
+    if len(completion_events) != len(effect_ids):
+        _raise("receipts_mismatch")
+    by_effect: dict[str, object] = {}
+    for event in completion_events:
+        effect_id = getattr(event, "effect_id", None)
+        if (
+            type(effect_id) is not str
+            or effect_id in by_effect
+            or effect_id not in expected_digests
+        ):
+            _raise("receipts_mismatch")
+        by_effect[effect_id] = event
+    for effect_id in effect_ids:
+        event = by_effect.get(effect_id)
+        semantics = effect_semantics.get(effect_id)
+        trace_id = getattr(store, "trace_id", None)
+        try:
+            from echelon.telemetry.model import PhaseTimingEvent
+
+            PhaseTimingEvent.from_json_dict(event.to_json_dict())
+        except (AttributeError, ValueError):
+            _raise("receipts_mismatch")
+        if (
+            event is None
+            or semantics is None
+            or getattr(event, "completion_id", None) != completion_id
+            or getattr(event, "phase", None) != semantics["phase"]
+            or getattr(event, "event", None) != semantics["event"]
+            or getattr(event, "budget_seconds", None)
+            != semantics["budget_seconds"]
+            or (
+                type(trace_id) is str
+                and getattr(event, "trace_id", None) != trace_id
+            )
+            or (
+                semantics["event"] == "started"
+                and (
+                    getattr(event, "elapsed_seconds", None) is not None
+                    or getattr(event, "over_budget", None) is not None
+                )
+            )
+            or (
+                semantics["event"] == "finished"
+                and (
+                    type(getattr(event, "elapsed_seconds", None))
+                    is not float
+                    or type(getattr(event, "over_budget", None))
+                    is not bool
+                )
+            )
+            or _completion_timing_event_sha256(event)
+            != expected_digests[effect_id]
+        ):
+            _raise("receipts_mismatch")
+    return {
+        "schema_version": _SCHEMA_VERSION,
+        "completion_id": completion_id,
+        "events": [
+            {
+                "effect_id": effect_id,
+                "event_sha256": expected_digests[effect_id],
+            }
+            for effect_id in effect_ids
+        ],
+    }
+
+
+def apply_or_verify_completion_timing(
+    intent: CompletionIntent,
+    store: object,
+    *,
+    close_phase: str | None = None,
+    close_budget_seconds: float | None = None,
+    open_phase: str | None = None,
+    open_budget_seconds: float | None = None,
+    expected_receipt: object | None = None,
+    fault_hook: Callable[[str], None] | None = None,
+) -> dict[str, object]:
+    """Append or adopt one completion-tagged timing transition."""
+    if (
+        type(intent) is not CompletionIntent
+        or "timing" not in intent.effect_plan
+        or intent.route.get("kind") != "routed"
+        or (fault_hook is not None and not callable(fault_hook))
+    ):
+        _raise("intent_invalid")
+    close = (
+        _validate_bounded_string(
+            close_phase,
+            maximum=_MAX_PHASE_LENGTH,
+        )
+        if close_phase is not None
+        else None
+    )
+    opened = (
+        _validate_bounded_string(
+            open_phase,
+            maximum=_MAX_PHASE_LENGTH,
+        )
+        if open_phase is not None
+        else None
+    )
+    if close is None and opened is None:
+        _raise("intent_invalid")
+
+    def budget(value: object, *, required: bool) -> float | None:
+        if value is None and not required:
+            return None
+        if (
+            type(value) not in (int, float)
+            or not math.isfinite(float(value))
+            or float(value) < 0
+        ):
+            _raise("intent_invalid")
+        return float(value)
+
+    close_budget = budget(
+        close_budget_seconds,
+        required=close is not None,
+    )
+    open_budget = budget(
+        open_budget_seconds,
+        required=opened is not None,
+    )
+    completion_id = intent.completion_id
+    close_id = (
+        _completion_timing_effect_id(
+            completion_id,
+            "close",
+            close,
+        )
+        if close is not None
+        else None
+    )
+    open_id = (
+        _completion_timing_effect_id(
+            completion_id,
+            "open",
+            opened,
+        )
+        if opened is not None
+        else None
+    )
+    base_ids = tuple(
+        effect_id
+        for effect_id in (close_id, open_id)
+        if effect_id is not None
+    )
+    allowed_sequences = (base_ids,)
+    effect_semantics: dict[str, dict[str, object]] = {}
+    if close_id is not None:
+        effect_semantics[close_id] = {
+            "phase": close,
+            "event": "finished",
+            "budget_seconds": close_budget,
+        }
+    if open_id is not None:
+        effect_semantics[open_id] = {
+            "phase": opened,
+            "event": "started",
+            "budget_seconds": open_budget,
+        }
+    if expected_receipt is not None:
+        return _validate_completion_timing_receipt(
+            expected_receipt,
+            completion_id=completion_id,
+            store=store,
+            allowed_sequences=allowed_sequences,
+            effect_semantics=effect_semantics,
+        )
+
+    from echelon.telemetry.phase_timing import (
+        record_phase_finish,
+        record_phase_start,
+    )
+
+    allowed_ids = {
+        effect_id
+        for effect_id in (close_id, open_id)
+        if effect_id is not None
+    }
+    if any(
+        getattr(event, "effect_id", None) not in allowed_ids
+        for event in _completion_timing_events(store)
+        if getattr(event, "completion_id", None) == completion_id
+    ):
+        _raise("receipts_mismatch")
+
+    def call_timing(function: Callable[..., object], **kwargs: object) -> object:
+        try:
+            return function(store, **kwargs)
+        except (AttributeError, OSError, ValueError):
+            _raise("receipts_mismatch")
+
+    if close is not None and close_id is not None:
+        call_timing(
+            record_phase_finish,
+            phase=close,
+            completion_id=completion_id,
+            effect_id=close_id,
+            expected_budget_seconds=close_budget,
+        )
+        if fault_hook is not None:
+            fault_hook("after_close")
+
+    if opened is not None and open_id is not None:
+        assert open_budget is not None
+        call_timing(
+            record_phase_start,
+            phase=opened,
+            budget_seconds=open_budget,
+            completion_id=completion_id,
+            effect_id=open_id,
+        )
+        if fault_hook is not None:
+            fault_hook("after_open")
+
+    events = _completion_timing_events(store)
+    by_effect = {
+        getattr(event, "effect_id", None): event
+        for event in events
+        if getattr(event, "completion_id", None) == completion_id
+    }
+    ordered_ids = base_ids
+    try:
+        receipt_events = [by_effect[effect_id] for effect_id in ordered_ids]
+    except KeyError:
+        _raise("receipts_mismatch")
+    receipt = _completion_timing_receipt(
+        completion_id,
+        receipt_events,
+    )
+    return _validate_completion_timing_receipt(
+        receipt,
+        completion_id=completion_id,
+        store=store,
+        allowed_sequences=allowed_sequences,
+        effect_semantics=effect_semantics,
+    )
+
+
+def create_or_recover_completion_checkpoint(
+    intent: CompletionIntent,
+    *,
+    project_root: Path,
+    spec_dir: Path | None,
+    run_id: str,
+    spec_id: str,
+    additional_spec_dirs: tuple[Path, ...] = (),
+    additional_owned_paths: tuple[Path, ...] = (),
+    expected_receipt: object | None = None,
+    fault_hook: Callable[[str], None] | None = None,
+) -> dict[str, object]:
+    """Apply a checkpoint using only identity sealed by the intent."""
+
+    if (
+        type(intent) is not CompletionIntent
+        or "checkpoint" not in intent.effect_plan
+    ):
+        _raise("intent_invalid")
+    route = intent.route
+    if route.get("kind") != "routed":
+        _raise("intent_invalid")
+    from harness.phase_checkpoints import (
+        PhaseCheckpointError,
+        create_or_recover_completion_checkpoint as apply_checkpoint,
+    )
+
+    try:
+        return apply_checkpoint(
+            project_root=project_root,
+            spec_dir=spec_dir,
+            phase=route["from_phase"],
+            next_phase=route["to_phase"],
+            run_id=run_id,
+            spec_id=spec_id,
+            completion_id=intent.completion_id,
+            checkpoint_prestate=intent.checkpoint_prestate,
+            additional_spec_dirs=additional_spec_dirs,
+            additional_owned_paths=additional_owned_paths,
+            expected_receipt=expected_receipt,
+            fault_hook=fault_hook,
+        )
+    except PhaseCheckpointError:
+        _raise("receipts_mismatch")

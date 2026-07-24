@@ -14,7 +14,13 @@ from echelon.git_helpers import (
     run_git,
     worktree_dirty_paths,
 )
-from harness.phase_checkpoints import checkpoint_targets, load_checkpoint_ledger, resolve_checkpoint
+from harness.phase_checkpoints import (
+    CHECKPOINT_LEDGER_REL,
+    CHECKPOINT_LOCK_REL,
+    checkpoint_targets,
+    load_checkpoint_ledger,
+    resolve_checkpoint,
+)
 
 
 class RewindError(RuntimeError):
@@ -40,7 +46,21 @@ def _active_spec_dirty_paths(project_root: Path, spec_dir: Path, paths: set[str]
         # A run-local spec directory outside the project cannot be classified safely.
         return sorted(paths)
     prefix = f"{spec_path}/"
-    return sorted(path for path in paths if path == spec_path or path.startswith(prefix))
+    runtime_files = {
+        f"{spec_path}/{CHECKPOINT_LEDGER_REL.as_posix()}",
+        f"{spec_path}/{CHECKPOINT_LOCK_REL.as_posix()}",
+    }
+    temporary_prefix = f"{spec_path}/.echelon/.checkpoints.json."
+    return sorted(
+        path
+        for path in paths
+        if (path == spec_path or path.startswith(prefix))
+        and path not in runtime_files
+        and not (
+            path.startswith(temporary_prefix)
+            and path.endswith(".tmp")
+        )
+    )
 
 
 def _find_spec_dir(project_root: Path, spec: str) -> Path:

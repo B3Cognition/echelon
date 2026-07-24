@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import fcntl
 import json
 import os
+import stat
 import tempfile
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping
+from typing import Iterator, Mapping
 
 from echelon.telemetry.model import ExecutionSpan, PhaseTimingEvent, TelemetryDiagnostic
 
@@ -37,6 +40,7 @@ class TelemetryStore:
         self.manifest_path = self.directory / "manifest.json"
         self.spans_path = self.directory / "spans.jsonl"
         self.events_path = self.directory / "events.jsonl"
+        self.phase_timing_lock_path = self.directory / "phase-timing.lock"
         self.workflow = workflow
         self.run_id = run_id
         self.profile = dict(profile)
@@ -91,6 +95,7 @@ class TelemetryStore:
 
     def append_phase_timing(self, event: PhaseTimingEvent) -> None:
         """Persist phase timing separately from mutable controller state."""
+        PhaseTimingEvent.from_json_dict(event.to_json_dict())
         self.append_event(event.to_json_dict())
 
     def append_event(self, event: Mapping[str, object]) -> None:
@@ -148,6 +153,11 @@ class TelemetryStore:
     def read_phase_timings(
         self,
     ) -> tuple[tuple[PhaseTimingEvent, ...], tuple[TelemetryDiagnostic, ...]]:
+        return self._read_phase_timings_unlocked()
+
+    def _read_phase_timings_unlocked(
+        self,
+    ) -> tuple[tuple[PhaseTimingEvent, ...], tuple[TelemetryDiagnostic, ...]]:
         if not self.events_path.is_file():
             return (), ()
         raw = self.events_path.read_text(encoding="utf-8", errors="replace")
@@ -176,3 +186,37 @@ class TelemetryStore:
             except ValueError as exc:
                 diagnostics.append(TelemetryDiagnostic("invalid-event", str(exc), index))
         return tuple(events), tuple(diagnostics)
+
+    @contextmanager
+    def phase_timing_transaction(
+        self,
+    ) -> Iterator[
+        tuple[
+            tuple[PhaseTimingEvent, ...],
+            tuple[TelemetryDiagnostic, ...],
+        ]
+    ]:
+        """Serialize phase timing read/validate/append across store instances."""
+
+        self.ensure_manifest()
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(self.phase_timing_lock_path, flags, 0o600)
+        locked = False
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
+                raise ValueError("phase timing lock must be a regular file")
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            locked = True
+            current = os.lstat(self.phase_timing_lock_path)
+            if (
+                not stat.S_ISREG(current.st_mode)
+                or (current.st_dev, current.st_ino)
+                != (opened.st_dev, opened.st_ino)
+            ):
+                raise ValueError("phase timing lock identity changed")
+            yield self._read_phase_timings_unlocked()
+        finally:
+            if locked:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
