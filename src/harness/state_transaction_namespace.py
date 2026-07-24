@@ -7,6 +7,7 @@ from collections.abc import Iterable
 
 
 PENDING_EXTERNAL_PUBLICATION_KEY = "pending_external_publication"
+PENDING_CONTROLLER_COMPLETION_KEY = "pending_controller_completion"
 _PENDING_EXTERNAL_PUBLICATION_KEYS = frozenset(
     {
         "schema_version",
@@ -14,8 +15,31 @@ _PENDING_EXTERNAL_PUBLICATION_KEYS = frozenset(
         "manifest_sha256",
     }
 )
+_PENDING_CONTROLLER_COMPLETION_KEYS = frozenset(
+    {
+        "schema_version",
+        "completion_id",
+        "intent_sha256",
+        "publication_binding_sha256",
+        "receipts_sha256",
+        "origin",
+        "step",
+    }
+)
 _TRANSACTION_ID_PATTERN = re.compile(r"\A[0-9a-f]{32}\Z")
 _MANIFEST_SHA256_PATTERN = re.compile(r"\A[0-9a-f]{64}\Z")
+_COMPLETION_ORIGINS = frozenset({"routed", "terminal"})
+_COMPLETION_STEPS = frozenset(
+    {
+        "awaiting_publication",
+        "journal",
+        "timing",
+        "checkpoint",
+        "context",
+        "mining",
+        "complete",
+    }
+)
 
 CAS_AND_RUN_IDENTITY_KEYS = frozenset(
     {
@@ -83,6 +107,7 @@ LIFECYCLE_AND_DIAGNOSTIC_KEYS = frozenset(
         "lexicon_gate_exhausted",
         "tasks_lexicon_gate_exhausted",
         PENDING_EXTERNAL_PUBLICATION_KEY,
+        PENDING_CONTROLLER_COMPLETION_KEY,
         "external_publication_failure",
     }
 )
@@ -140,6 +165,7 @@ TRUSTED_ROUTING_EFFECT_KEYS = frozenset(
         "phase_dispatch_limit_recovery",
         "cartographer_resume_existing_spec",
         PENDING_EXTERNAL_PUBLICATION_KEY,
+        PENDING_CONTROLLER_COMPLETION_KEY,
         *PHASE_A_IDENTITY_KEYS,
     }
 )
@@ -148,7 +174,11 @@ TRUSTED_ROUTING_EFFECT_KEYS = frozenset(
 # exact-marker state. Other trusted routing effects retain their existing
 # update and removal authority.
 TRUSTED_ROUTING_REMOVAL_KEYS = (
-    TRUSTED_ROUTING_EFFECT_KEYS - {PENDING_EXTERNAL_PUBLICATION_KEY}
+    TRUSTED_ROUTING_EFFECT_KEYS
+    - {
+        PENDING_EXTERNAL_PUBLICATION_KEY,
+        PENDING_CONTROLLER_COMPLETION_KEY,
+    }
 )
 
 # These fields are valid provider control syntax, but never ordinary provider
@@ -203,4 +233,68 @@ def validate_pending_external_publication(
         "schema_version": schema_version,
         "transaction_id": transaction_id,
         "manifest_sha256": manifest_sha256,
+    }
+
+
+def validate_pending_controller_completion(
+    value: object,
+) -> dict[str, object]:
+    """Return a detached exact-schema durable completion marker."""
+    if (
+        type(value) is not dict
+        or frozenset(dict.keys(value))
+        != _PENDING_CONTROLLER_COMPLETION_KEYS
+    ):
+        raise ValueError(
+            "pending controller completion marker must have exact fields"
+        )
+    schema_version = dict.__getitem__(value, "schema_version")
+    completion_id = dict.__getitem__(value, "completion_id")
+    intent_sha256 = dict.__getitem__(value, "intent_sha256")
+    publication_binding_sha256 = dict.__getitem__(
+        value,
+        "publication_binding_sha256",
+    )
+    receipts_sha256 = dict.__getitem__(value, "receipts_sha256")
+    origin = dict.__getitem__(value, "origin")
+    step = dict.__getitem__(value, "step")
+    if type(schema_version) is not int or schema_version != 1:
+        raise ValueError(
+            "pending controller completion schema version is invalid"
+        )
+    if (
+        type(completion_id) is not str
+        or _TRANSACTION_ID_PATTERN.fullmatch(completion_id) is None
+    ):
+        raise ValueError(
+            "pending controller completion id is invalid"
+        )
+    for field_name, digest in (
+        ("intent", intent_sha256),
+        ("publication binding", publication_binding_sha256),
+        ("receipts", receipts_sha256),
+    ):
+        if (
+            type(digest) is not str
+            or _MANIFEST_SHA256_PATTERN.fullmatch(digest) is None
+        ):
+            raise ValueError(
+                f"pending controller completion {field_name} digest is invalid"
+            )
+    if type(origin) is not str or origin not in _COMPLETION_ORIGINS:
+        raise ValueError(
+            "pending controller completion origin is invalid"
+        )
+    if type(step) is not str or step not in _COMPLETION_STEPS:
+        raise ValueError(
+            "pending controller completion step is invalid"
+        )
+    return {
+        "schema_version": schema_version,
+        "completion_id": completion_id,
+        "intent_sha256": intent_sha256,
+        "publication_binding_sha256": publication_binding_sha256,
+        "receipts_sha256": receipts_sha256,
+        "origin": origin,
+        "step": step,
     }

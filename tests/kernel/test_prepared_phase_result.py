@@ -24,9 +24,11 @@ from harness.prepared_phase_result import (
 )
 from harness.squad_provider import SquadAgentResult
 from harness.state_transaction_namespace import (
+    PENDING_CONTROLLER_COMPLETION_KEY,
     PENDING_EXTERNAL_PUBLICATION_KEY,
     STORE_OWNED_TRANSACTION_KEYS,
     TRUSTED_ROUTING_EFFECT_KEYS,
+    TRUSTED_ROUTING_REMOVAL_KEYS,
 )
 
 
@@ -35,6 +37,15 @@ VALID_MARKER = {
     "schema_version": 1,
     "transaction_id": "a" * 32,
     "manifest_sha256": "b" * 64,
+}
+VALID_COMPLETION_MARKER = {
+    "schema_version": 1,
+    "completion_id": "a" * 32,
+    "intent_sha256": "b" * 64,
+    "publication_binding_sha256": "c" * 64,
+    "receipts_sha256": "d" * 64,
+    "origin": "routed",
+    "step": "journal",
 }
 
 
@@ -317,6 +328,25 @@ def test_prepared_phase_cannot_seal_pending_publication_removal() -> None:
     assert raised.value.json_path == "$.trusted_transaction_state_removals"
 
 
+def test_prepared_phase_cannot_seal_pending_completion_removal() -> None:
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_phase_result(
+            PhaseNode(
+                id="controller",
+                type="agent",
+                allowed_state_updates=[],
+            ),
+            _result({}),
+            controller_updates={},
+            trusted_transaction_state_removals={
+                PENDING_CONTROLLER_COMPLETION_KEY
+            },
+        )
+
+    assert raised.value.validator == "state_effects"
+    assert raised.value.json_path == "$.trusted_transaction_state_removals"
+
+
 @pytest.mark.parametrize(
     "invalid_key",
     sorted(STORE_OWNED_TRANSACTION_KEYS - TRUSTED_ROUTING_EFFECT_KEYS)[:3]
@@ -549,6 +579,123 @@ def test_pending_publication_marker_cannot_be_a_trusted_routing_removal() -> Non
         "$.transaction_state_removals."
         f"{PENDING_EXTERNAL_PUBLICATION_KEY}"
     )
+
+
+def test_pending_completion_marker_has_controller_only_routing_authority() -> None:
+    assert PENDING_CONTROLLER_COMPLETION_KEY in STORE_OWNED_TRANSACTION_KEYS
+    assert PENDING_CONTROLLER_COMPLETION_KEY in TRUSTED_ROUTING_EFFECT_KEYS
+    assert PENDING_CONTROLLER_COMPLETION_KEY not in TRUSTED_ROUTING_REMOVAL_KEYS
+
+    prepared = prepare_phase_result(
+        PhaseNode(
+            id="provider",
+            type="agent",
+            allowed_state_updates=[],
+        ),
+        _result({}),
+        controller_updates={},
+    )
+    decision = prepare_routing_decision(
+        prepared,
+        from_phase="provider",
+        to_phase="next",
+        expected_state_revision=1,
+        expected_previous_dispatch_sha256="0" * 64,
+        transaction_state_updates={
+            PENDING_CONTROLLER_COMPLETION_KEY: VALID_COMPLETION_MARKER,
+        },
+    )
+
+    assert decision.transaction_state_updates == {
+        PENDING_CONTROLLER_COMPLETION_KEY: VALID_COMPLETION_MARKER,
+    }
+
+
+@pytest.mark.parametrize(
+    "invalid_marker",
+    [
+        None,
+        {
+            **VALID_COMPLETION_MARKER,
+            "completion_id": "unsafe",
+        },
+        {
+            **VALID_COMPLETION_MARKER,
+            "extra": None,
+        },
+    ],
+)
+def test_routing_decision_rejects_malformed_pending_completion_marker(
+    invalid_marker: object,
+) -> None:
+    prepared = prepare_phase_result(
+        PhaseNode(
+            id="provider",
+            type="agent",
+            allowed_state_updates=[],
+        ),
+        _result({}),
+        controller_updates={},
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        prepare_routing_decision(
+            prepared,
+            from_phase="provider",
+            to_phase="next",
+            expected_state_revision=1,
+            expected_previous_dispatch_sha256="0" * 64,
+            transaction_state_updates={
+                PENDING_CONTROLLER_COMPLETION_KEY: invalid_marker,
+            },
+        )
+
+    assert raised.value.validator == "type"
+    assert raised.value.json_path == (
+        "$.transaction_state_updates."
+        f"{PENDING_CONTROLLER_COMPLETION_KEY}"
+    )
+
+
+def test_provider_cannot_set_or_remove_pending_completion_marker() -> None:
+    node = PhaseNode(
+        id="provider",
+        type="agent",
+        allowed_state_updates=[PENDING_CONTROLLER_COMPLETION_KEY],
+    )
+    with pytest.raises(ControllerStateContractViolation):
+        prepare_phase_result(
+            node,
+            _result(
+                {
+                    PENDING_CONTROLLER_COMPLETION_KEY: (
+                        VALID_COMPLETION_MARKER
+                    )
+                }
+            ),
+            controller_updates={},
+        )
+
+    prepared = prepare_phase_result(
+        PhaseNode(
+            id="provider",
+            type="agent",
+            allowed_state_updates=[],
+        ),
+        _result({}),
+        controller_updates={},
+    )
+    with pytest.raises(ControllerStateContractViolation):
+        prepare_routing_decision(
+            prepared,
+            from_phase="provider",
+            to_phase="next",
+            expected_state_revision=1,
+            expected_previous_dispatch_sha256="0" * 64,
+            transaction_state_removals={
+                PENDING_CONTROLLER_COMPLETION_KEY,
+            },
+        )
 
 
 @pytest.mark.parametrize(

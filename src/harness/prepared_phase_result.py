@@ -34,11 +34,13 @@ from harness.echelon_result_schema import (
 from harness.phase_graph import PhaseNode
 from harness.squad_provider import SquadAgentResult
 from harness.state_transaction_namespace import (
+    PENDING_CONTROLLER_COMPLETION_KEY,
     PROVIDER_CONTROL_INTENT_KEYS,
     STORE_OWNED_TRANSACTION_KEYS,
     TRUSTED_ROUTING_EFFECT_KEYS,
     TRUSTED_ROUTING_REMOVAL_KEYS,
     store_owned_update_keys,
+    validate_pending_controller_completion,
 )
 
 
@@ -1128,6 +1130,28 @@ def prepare_routing_decision(
             json_path=f"$.transaction_state_updates.{key}",
             validator="ownership",
         )
+    if (
+        PENDING_CONTROLLER_COMPLETION_KEY
+        in detached_transaction_updates
+    ):
+        try:
+            detached_transaction_updates[
+                PENDING_CONTROLLER_COMPLETION_KEY
+            ] = validate_pending_controller_completion(
+                detached_transaction_updates[
+                    PENDING_CONTROLLER_COMPLETION_KEY
+                ]
+            )
+        except ValueError as exc:
+            raise ControllerStateContractViolation(
+                "pending controller completion marker is invalid",
+                contract="routing",
+                json_path=(
+                    "$.transaction_state_updates."
+                    f"{PENDING_CONTROLLER_COMPLETION_KEY}"
+                ),
+                validator="type",
+            ) from exc
     try:
         detached_transaction_removals = frozenset(
             transaction_state_removals  # type: ignore[arg-type]
