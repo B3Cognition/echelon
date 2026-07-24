@@ -1,5 +1,8 @@
 # SUE — Socratic Understanding Engine: Usage Guide
 
+> **New to SUE?** Start with `docs/sue-walkthrough.md` — one worked example
+> (a leaderboard spec) run through every tool step by step, explained plainly.
+
 ## 0. `sue_auto.py` — the one-command robotic pipeline
 
 *When:* you don't want to assemble tiers, seeds, lenses, and model flags by
