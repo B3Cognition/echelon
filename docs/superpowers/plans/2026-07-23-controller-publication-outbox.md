@@ -425,6 +425,14 @@ git commit -m "fix: stage controller-owned phase publications"
 
 ### Task 5: Routing Outbox Commit, Recovery Gate, and Terminal Reconciliation
 
+> **Superseded implementation detail:** The independent Task 5 review proved
+> that clearing publication authority before non-durable success work loses
+> journals, timing, checkpoints, context, mining, and manual no-replay across a
+> real process restart. Execute
+> `docs/superpowers/plans/2026-07-23-controller-completion-outbox.md` instead.
+> It retains the publication marker contract while adding the exact durable
+> completion authority and receipt protocol approved in the design.
+
 **Files:**
 - Modify: `src/harness/squad.py`
 - Modify: `src/harness/squad_state.py`
