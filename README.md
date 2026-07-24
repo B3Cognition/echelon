@@ -342,6 +342,30 @@ echelon delivery target 001                      # target-specific verify detect
 # If target detection reports "not configured", set delivery.verify_command in specs/<id>/targets.yml.
 ```
 
+### Spec quality: SUE (Socratic Understanding Engine)
+
+Five standalone, stdlib-only tools (`scripts/sue_*.py`) that challenge a
+specification for ambiguity and contradiction by having isolated model readers
+interpret it and surface where they disagree. No echelon imports; reports are
+written beside the spec.
+
+```bash
+# One command — runs the whole pipeline and writes a fix-ready dossier:
+python3 scripts/sue_auto.py specs/030-build-sue-challenge-script/spec.md
+python3 scripts/sue_auto.py <spec.md> --profile lite       # quick, ~2 model calls
+python3 scripts/sue_auto.py <spec.md> --profile forensic   # deepest
+
+# Or run a single tier directly:
+python3 scripts/sue_challenge.py <spec.md>                 # quick questions → gaps
+python3 scripts/sue_consensus.py <spec.md> --readers 3     # only ≥2-reader findings
+python3 scripts/sue_reproducibility.py <spec.md> --passes 2 # measure interpretation spread
+python3 scripts/sue_dialectic.py <spec.md> --lens theaetetus --seed "<claim>"  # drill one gap
+```
+
+Docs: **[walkthrough / start here](docs/sue-walkthrough.md)** ·
+**[full usage reference](docs/sue-usage.md)** ·
+**[Socratic lenses reference](docs/sue-socratic-lenses.md)**.
+
 ### Harness fulfillment refresh policy
 
 Harness fulfillment refreshes are controlled from the repo config under
