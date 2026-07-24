@@ -105,6 +105,122 @@ the lens by defect type (`theaetetus` = claims with no evidence, `parmenides` =
 contradictions, `philebus` = missing numeric bounds, … full table in
 `docs/sue-usage.md`).
 
+## A little Plato — the rules of the Socratic dialogue
+
+Level 4 isn't decoration. It really is Socrates' method, turned into a machine.
+Here's the idea and the rules, then the nine "lenses" you can pick from.
+
+### Who Socrates was, and what "elenchus" means
+
+Socrates walked around Athens asking people to define things they were sure
+they understood — *what is justice? what is courage? what is holiness?* He
+never lectured. He only asked questions, and his questions kept exposing that
+the confident expert couldn't actually say what he meant. That method of
+question-and-refutation has a name: **elenchus**. SUE runs an elenchus against
+a specification.
+
+### The three rules that make it Socratic (not just Q&A)
+
+1. **SUE only asks. The spec only answers.** SUE never states an opinion about
+   the rule; it poses one question per turn. The "answering voice" must reply
+   using **only the specification's own words** — exactly like Socrates forcing
+   an opponent to commit to *their own* statements, not to outside knowledge.
+2. **Each question is chosen by the last answer.** The dialogue is a little
+   state machine: the previous answer's verdict (did the text support it,
+   partly, not at all, or contradict itself?) decides the next question. That
+   decision table is the **lens** — see below.
+3. **The honest ending is often "we don't know."** Most real Platonic dialogues
+   don't end with an answer — they end in **aporia** (Greek for *impasse*): the
+   proof that the interlocutor never actually knew what he claimed to know. For
+   a spec that's not failure — it's the finding. "We proved the rulebook has no
+   answer here" is exactly what you want to learn *before* building.
+
+### The eight moves
+
+Every lens is built from the same eight question-types (Socrates' toolkit):
+**DEFINE** (state the essence), **DISTINGUISH** (separate the real definition
+from mere examples), **CAUSE_OR_CRITERION** (give the test to recognize it),
+**COUNTEREXAMPLE** (find a case that fits the words but breaks the meaning),
+**FOLLOW_CONSEQUENCE** (assume it's true — what must follow?), **TEST_OPPOSITE**
+(assume the opposite — what breaks?), **DIVIDE** (split into the distinct
+cases), **REVISE** (repair a broken understanding).
+
+### The nine lenses (each is a real Plato dialogue)
+
+A *lens* is just which move to start with and how to react to each answer —
+named after the dialogue whose style it imitates. Pick the lens by the *kind*
+of defect you're chasing.
+
+- **euthyphro** — *In the dialogue,* Socrates asks Euthyphro "what is holiness?"
+  and Euthyphro keeps offering examples ("what I'm doing right now") and circles
+  ("what the gods love"), never an essence. *SUE move:* demand a real definition,
+  reject examples-as-definition. *Reach for it when:* a term is undefined or
+  defined in a circle. (Leaderboard: is "highest score" ever actually defined?)
+- **meno** — *Meno can't say what virtue is, raising the paradox: how would you
+  even recognize the answer if you found it?* *SUE move:* demand the criterion by
+  which you'd verify the thing. *When:* a requirement can't be tested — QA
+  couldn't tell pass from fail.
+- **parmenides** — *The dialogue drills a claim by working out the consequences
+  of it AND of its negation ("if the one is… if the one is not…").* *SUE move:*
+  follow what the claim commits the text to, then test the opposite. *When:* you
+  suspect two rules quietly clash.
+- **cratylus** — *A debate about names: are words stable, or does meaning drift?*
+  *SUE move:* check that one name means one thing throughout. *When:* the same
+  idea is called two names, or one name covers two ideas.
+- **theaetetus** — *"What is knowledge?" — tested as "true belief plus an
+  account." A claim without a justification isn't knowledge.* *SUE move:* ask
+  whether the text can actually justify a stated claim. *When:* a rule asserts
+  something the spec never grounds. (This is the lens that drilled the Opta
+  accuracy metric to APORIA_UNDEFINED.)
+- **sophist** — *Socrates hunts the sophist by "division" — repeatedly splitting
+  a category to separate the look-alike from the real thing.* *SUE move:* divide
+  into cases and test the supposedly-excluded one. *When:* a boundary or
+  exception is missing.
+- **gorgias** — *Gorgias the rhetorician can persuade about anything without
+  knowing it; Socrates calls rhetoric flattery, not an art.* *SUE move:* if a
+  confident-sounding claim commits the text to nothing checkable, it's rhetoric,
+  not a requirement — never "resolved." *When:* the text sounds authoritative but
+  says nothing you could implement.
+- **republic** — *Justice is "each part doing its own proper work" — the right
+  role in the right place.* *SUE move:* check who is permitted to do what. *When:*
+  a permission or actor rule is fuzzy (the FR-001-style "who may do X").
+- **philebus** — *The good life needs "limit" imposed on "the unlimited" — measure
+  over the boundless.* *SUE move:* demand the numeric bound. *When:* a constraint
+  says "fast" / "large" / "soon" with no number. (Leaderboard NFR-001 says "within
+  2 seconds" — good; a rule that just said "fast" would fail here.)
+
+### How a dialogue ends (the terminal states)
+
+- **RESOLVED** — the claim survived counterexample and consequence tests,
+  sharpened rather than refuted. (Rare — as in Plato.)
+- **APORIA_UNDEFINED** — no stable definition or criterion can be built from the
+  text. (Euthyphro's actual ending: they never do define holiness.)
+- **APORIA_CONTRADICTED** — the text supports two incompatible answers.
+- **APORIA_UNDERDETERMINED** — more than one equally valid reading survives.
+- **BOUNDED_STOP** — hit the turn limit; a safety cap, **not** a verdict.
+
+### Try it on the leaderboard, three ways
+
+```bash
+# "highest score" is never defined → definition lens
+python3 scripts/sue_dialectic.py docs/examples/leaderboard.spec.md \
+  --lens euthyphro --target FR-001 \
+  --seed "what the specification defines a player's 'highest score' to be"
+
+# top-5 rule vs ban rule may clash → consequences-and-opposite lens
+python3 scripts/sue_dialectic.py docs/examples/leaderboard.spec.md \
+  --lens parmenides --target FR-002 \
+  --seed "whether the top-5 rule (FR-001) and the ban rule (FR-002) can both hold when a top-5 player is banned"
+
+# is the ban rule even checkable? → criterion lens
+python3 scripts/sue_dialectic.py docs/examples/leaderboard.spec.md \
+  --lens meno --target FR-002 \
+  --seed "the criterion by which the system recognizes that a player is banned"
+```
+
+Each writes `docs/examples/socratic-dialogue.md` — a full, auditable transcript:
+every question, the text-only answer with cited lines, and the terminal verdict.
+
 ## Bonus — whole-spec conflict map · `sue_jgraph`
 
 Each reader builds one claims-and-conflicts graph of the whole spec in a single
