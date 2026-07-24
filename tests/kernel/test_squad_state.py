@@ -10,6 +10,7 @@ from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from pathlib import PurePath
+from threading import Event, Thread
 from unittest.mock import patch
 
 import pytest
@@ -2840,7 +2841,11 @@ class TestDurableStateAuthority:
 
         def swap_named_lock(descriptor, operation):
             nonlocal swapped
-            if operation == fcntl.LOCK_EX and not swapped:
+            if (
+                operation == fcntl.LOCK_EX
+                and stat.S_ISREG(os.fstat(descriptor).st_mode)
+                and not swapped
+            ):
                 swapped = True
                 old = store.squad_dir / ".old-state-lock"
                 os.replace(lock_path, old)
@@ -2858,6 +2863,58 @@ class TestDurableStateAuthority:
 
         fresh = SquadStateStore(store.squad_dir)
         fresh.save(fresh.load())
+
+    def test_state_lock_inode_swap_cannot_admit_second_writer(
+        self,
+        tmp_path,
+    ):
+        first = _store(tmp_path)
+        first.initialize("r1", "greenfield", "msg", 0, "init")
+        second = SquadStateStore(first.squad_dir)
+        lock_path = first.squad_dir / "state.lock"
+        first_entered = Event()
+        release_first = Event()
+        second_entered = Event()
+        first_errors: list[BaseException] = []
+        second_errors: list[BaseException] = []
+
+        def hold_first() -> None:
+            try:
+                with first._lock(exclusive=True):
+                    first_entered.set()
+                    assert release_first.wait(2)
+            except BaseException as exc:
+                first_errors.append(exc)
+
+        def enter_second() -> None:
+            try:
+                with second._lock(exclusive=True):
+                    second_entered.set()
+            except BaseException as exc:
+                second_errors.append(exc)
+
+        first_thread = Thread(target=hold_first)
+        first_thread.start()
+        assert first_entered.wait(2)
+        os.replace(
+            lock_path,
+            first.squad_dir / ".replaced-state-lock",
+        )
+        lock_path.write_bytes(b"")
+        second_thread = Thread(target=enter_second)
+        second_thread.start()
+
+        assert not second_entered.wait(0.2)
+        release_first.set()
+        first_thread.join(2)
+        second_thread.join(2)
+
+        assert second_entered.is_set()
+        assert not first_thread.is_alive()
+        assert not second_thread.is_alive()
+        assert len(first_errors) == 1
+        assert isinstance(first_errors[0], StateDurabilityError)
+        assert second_errors == []
 
     def test_confirm_durable_state_requires_exact_revision_and_marker(
         self,

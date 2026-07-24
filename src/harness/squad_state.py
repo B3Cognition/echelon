@@ -1022,9 +1022,13 @@ class SquadStateStore:
         ):
             descriptor = -1
             directory_fd = -1
-            locked = False
+            named_locked = False
+            directory_locked = False
             created = False
             body_exception = False
+            operation = (
+                fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+            )
             create_flags = (
                 os.O_RDWR
                 | os.O_CREAT
@@ -1038,6 +1042,26 @@ class SquadStateStore:
                 | getattr(os, "O_NONBLOCK", 0)
             )
             try:
+                # The directory inode is the stable authority.  Taking it
+                # before opening the named lock prevents another conforming
+                # writer from entering through a replacement state.lock.
+                directory_fd = _open_real_directory(
+                    self._squad_dir,
+                    stage="confirm",
+                )
+                directory_identity = _identity(os.fstat(directory_fd))
+                fcntl.flock(directory_fd, operation)
+                directory_locked = True
+                current_directory = os.lstat(self._squad_dir)
+                if (
+                    stat.S_ISLNK(current_directory.st_mode)
+                    or not stat.S_ISDIR(current_directory.st_mode)
+                    or _identity(current_directory) != directory_identity
+                ):
+                    raise StateDurabilityError(
+                        "state directory identity changed",
+                        stage="confirm",
+                    )
                 try:
                     descriptor = os.open(
                         self._lock_path,
@@ -1064,16 +1088,9 @@ class SquadStateStore:
                     )
                 if created:
                     _fsync_retry(descriptor)
-                    directory_fd = _open_real_directory(
-                        self._squad_dir,
-                        stage="confirm",
-                    )
                     _fsync_retry(directory_fd)
-                operation = (
-                    fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-                )
                 fcntl.flock(descriptor, operation)
-                locked = True
+                named_locked = True
                 locked_metadata = os.fstat(descriptor)
                 current = os.lstat(self._lock_path)
                 if (
@@ -1112,15 +1129,20 @@ class SquadStateStore:
                     stage="confirm",
                 ) from exc
             finally:
-                if locked:
+                if named_locked:
                     try:
                         fcntl.flock(descriptor, fcntl.LOCK_UN)
                     except OSError:
                         pass
-                if directory_fd >= 0:
-                    os.close(directory_fd)
                 if descriptor >= 0:
                     os.close(descriptor)
+                if directory_locked:
+                    try:
+                        fcntl.flock(directory_fd, fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                if directory_fd >= 0:
+                    os.close(directory_fd)
 
     def _load_unlocked(self) -> dict:
         if not self._path.exists():
