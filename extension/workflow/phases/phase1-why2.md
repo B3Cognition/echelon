@@ -56,7 +56,7 @@ unsupported included mappings, unresolved questions, or conflicts, preserving
 canonical fields exactly. Do not edit the controller-owned ledger.
 
 Return journal entries in `echelon_result.journal_entries` and a qualitative
-`PASS`, `FAIL`, or `BLOCKED` verdict. Do not include `quality_scores` in state
+`DONE`, `PASS`, `FAIL`, or `STOP_AND_ASK` verdict. Do not include `quality_scores` in state
 updates or in `echelon_result.state_updates`.
 
 </instructions>
@@ -120,6 +120,29 @@ echelon_result:
           evidence_needed: "<minimum authoritative evidence required>"
           supplied_reference_ids: [IN-REF-...]
 ```
+
+Every WHY2 result MUST also classify its findings in the control plane. For a
+passing review return `evidence_resolution_status: not_required` with an empty
+list. For a failing review, include one entry for every blocking finding. The
+`route` value must be exactly `spec_repair`, `evidence_resolution`, or
+`human_decision`:
+
+```yaml
+echelon_result:
+  state_updates:
+    evidence_resolution_status: not_required # or pending
+    finding_routes:
+      findings:
+        - issue_id: ISS-001
+          route: evidence_resolution
+          rationale: "A declared primary reference must establish the fact."
+```
+
+If any finding has `route: evidence_resolution`,
+`evidence_resolution_status` MUST be `pending` and a complete
+`evidence_requests` object is required. If none do, status MUST be
+`not_required` and omit `evidence_requests`. NEVER use an agent-authored
+`BLOCKED` verdict for a routeable evidence gap; it is rejected before routing.
 
 Create a request only when the missing fact cannot be resolved by amending the
 specification. Every request must name the affected requirement and the

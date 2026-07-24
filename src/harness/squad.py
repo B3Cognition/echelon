@@ -1167,6 +1167,12 @@ class SquadController:
 
     def _guard_spec_lexicon_evidence(self, phase: str) -> str:
         """Route legacy downstream resumes through visible spec certification."""
+        # INVESTIGATOR resolves a declared evidence gap before the next WHAT
+        # amendment.  It is reachable from WHY2 but is not a downstream spec
+        # consumer, so forcing it through Lexicon would erase the route that
+        # requested it and restart CARTOGRAPHER instead.
+        if phase == "phase1-investigate":
+            return phase
         phase_ids = list(self._graph.all_phase_ids())
         try:
             gate_index = phase_ids.index("phase1-lexicon")
@@ -2929,6 +2935,61 @@ class SquadController:
         self._state_store.save(exhausted)
         return True
 
+    def _record_pending_evidence_request(
+        self,
+        phase: str,
+        state: dict,
+        updates: dict,
+    ) -> bool:
+        """Persist a new evidence request or terminal-block a repeated one."""
+        requests = updates.get("evidence_requests")
+        fingerprint = _evidence_requests_fingerprint(requests)
+        if not fingerprint:
+            blocked = self._state_store.load()
+            blocked["status"] = "blocked"
+            blocked["phase"] = PHASE_TERMINAL_BLOCKED
+            blocked["blocked_reason"] = "evidence_resolution_invalid_request"
+            blocked["escalation_question"] = (
+                f"{phase} requested evidence resolution without a valid "
+                "evidence_requests object. Provide the missing project-specific "
+                "evidence request."
+            )
+            self._state_store.save(blocked)
+            self._record_blocker_event(phase, "evidence_resolution_invalid_request")
+            return True
+
+        prior_fingerprint = str(state.get("evidence_request_fingerprint") or "")
+        prior_status = str(state.get("evidence_resolution_status") or "")
+        if prior_fingerprint == fingerprint and prior_status in {"validated", "conflicting"}:
+            request_ids = []
+            raw_requests = requests.get("requests") if isinstance(requests, dict) else None
+            if isinstance(raw_requests, list):
+                request_ids = [
+                    str(item.get("id") or "").strip()
+                    for item in raw_requests
+                    if isinstance(item, dict) and str(item.get("id") or "").strip()
+                ]
+            blocked = self._state_store.load()
+            blocked["status"] = "blocked"
+            blocked["phase"] = PHASE_TERMINAL_BLOCKED
+            blocked["blocked_reason"] = "evidence_resolution_no_new_evidence"
+            blocked["escalation_question"] = (
+                f"{phase} repeated an already completed evidence request"
+                + (f" ({', '.join(request_ids)})." if request_ids else ".")
+                + " Provide new evidence or authorize a different investigation."
+            )
+            self._state_store.save(blocked)
+            self._record_blocker_event(phase, "evidence_resolution_no_new_evidence")
+            return True
+
+        pending = self._state_store.load()
+        pending["evidence_request_fingerprint"] = fingerprint
+        pending["evidence_resolution_attempts"] = int(
+            pending.get("evidence_resolution_attempts") or 0
+        ) + 1
+        self._state_store.save(pending)
+        return False
+
     def _evaluate_transitions(
         self, node: PhaseNode, result: SquadAgentResult
     ) -> str:
@@ -2947,65 +3008,17 @@ class SquadController:
         # keys (lexicon_gate.*, governance.*) the self-loop guards reference resolve.
         eval_state = {**self._lexicon_gate_config(), **self._governance_config(), **state, **(result.state_updates or {})}
 
+        evidence_resolution_pending = (
+            node.id in {"phase1-what", "phase1-why2"}
+            and result.state_updates.get("evidence_resolution_status") == "pending"
+        )
+        if evidence_resolution_pending and self._record_pending_evidence_request(
+            node.id, state, result.state_updates
+        ):
+            return PHASE_TERMINAL_BLOCKED
+
         # ── WHY fail tracking + consecutive-fail safety net ──────────────────
         if node.id in WHY_PHASES:
-            evidence_resolution_pending = (
-                node.id == "phase1-why2"
-                and result.state_updates.get("evidence_resolution_status") == "pending"
-            )
-            if (
-                evidence_resolution_pending
-            ):
-                requests = result.state_updates.get("evidence_requests")
-                fingerprint = _evidence_requests_fingerprint(requests)
-                if not fingerprint:
-                    blocked = self._state_store.load()
-                    blocked["status"] = "blocked"
-                    blocked["phase"] = PHASE_TERMINAL_BLOCKED
-                    blocked["blocked_reason"] = "evidence_resolution_invalid_request"
-                    blocked["escalation_question"] = (
-                        "WHY2 requested evidence resolution without a valid "
-                        "evidence_requests object. Please provide the missing "
-                        "project-specific evidence request."
-                    )
-                    self._state_store.save(blocked)
-                    self._record_blocker_event(node.id, "evidence_resolution_invalid_request")
-                    return PHASE_TERMINAL_BLOCKED
-
-                prior_fingerprint = str(state.get("evidence_request_fingerprint") or "")
-                prior_status = str(state.get("evidence_resolution_status") or "")
-                if (
-                    prior_fingerprint == fingerprint
-                    and prior_status in {"validated", "conflicting"}
-                ):
-                    request_ids = []
-                    raw_requests = requests.get("requests") if isinstance(requests, dict) else None
-                    if isinstance(raw_requests, list):
-                        request_ids = [
-                            str(item.get("id") or "").strip()
-                            for item in raw_requests
-                            if isinstance(item, dict) and str(item.get("id") or "").strip()
-                        ]
-                    blocked = self._state_store.load()
-                    blocked["status"] = "blocked"
-                    blocked["phase"] = PHASE_TERMINAL_BLOCKED
-                    blocked["blocked_reason"] = "evidence_resolution_no_new_evidence"
-                    blocked["escalation_question"] = (
-                        "WHY2 repeated an already completed evidence request"
-                        + (f" ({', '.join(request_ids)})." if request_ids else ".")
-                        + " Provide new evidence or authorize a different investigation."
-                    )
-                    self._state_store.save(blocked)
-                    self._record_blocker_event(node.id, "evidence_resolution_no_new_evidence")
-                    return PHASE_TERMINAL_BLOCKED
-
-                pending = self._state_store.load()
-                pending["evidence_request_fingerprint"] = fingerprint
-                pending["evidence_resolution_attempts"] = int(
-                    pending.get("evidence_resolution_attempts") or 0
-                ) + 1
-                self._state_store.save(pending)
-
             # Early escalation detection: agent explicitly signalled user-gated
             # CRITICAL issues via escalation_question in state_updates.  Handle
             # here before condition evaluation so empty quality_scores don't cause

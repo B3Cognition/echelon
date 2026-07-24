@@ -7,6 +7,7 @@ WHY3 + ASSESS2 (stage 1) before PLAN2 (stage 2) and before checkpoint-plan.
 import sys
 import json
 import hashlib
+import copy
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -37,13 +38,28 @@ EXT_YML = EXT_ROOT / "extension/extension.yml"
 
 def _mock_provider(verdict: str = "DONE") -> MagicMock:
     provider = MagicMock()
-    provider.exec_agent.return_value = SquadAgentResult(
+    default_result = SquadAgentResult(
         exit_code=0,
-        echelon_result={"verdict": verdict, "state_updates": {}},
+        echelon_result={
+            "verdict": verdict,
+            "state_updates": {
+                "evidence_resolution_status": "not_required",
+                "finding_routes": {"findings": []},
+            },
+        },
         raw_output="",
         duration_ms=100,
         timed_out=False,
     )
+    provider.exec_agent.return_value = default_result
+
+    def default_exec_agent(*args, **kwargs):
+        configured = provider.exec_agent.return_value
+        if configured is not default_result:
+            return configured
+        return copy.deepcopy(default_result)
+
+    provider.exec_agent.side_effect = default_exec_agent
     return provider
 
 
@@ -473,6 +489,120 @@ class TestAgentResultIntegrity:
         assert state["status"] == "blocked"
         assert state["blocked_reason"] == "missing_echelon_result"
         assert "phase1-what" not in state.get("completed_phases", [])
+
+    def test_what_rejects_agent_authored_blocked_verdict(self, tmp_path):
+        ctrl, _ = _controller(tmp_path)
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "BLOCKED",
+                "state_updates": {
+                    "blocked_reason": "investigation is needed",
+                },
+            },
+            raw_output="",
+            duration_ms=100,
+            timed_out=False,
+        )
+
+        validated = ctrl._executors["agent"]._validate_result_state_updates(
+            ctrl._graph.get("phase1-what"), result
+        )
+
+        assert validated.verdict == "BLOCKED"
+        assert "verdict 'BLOCKED' is not allowed" in validated.state_updates["blocked_reason"]
+
+    def test_what_evidence_request_routes_to_investigator(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.side_effect = [
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "FAIL",
+                    "state_updates": {
+                        "evidence_resolution_status": "pending",
+                        "evidence_requests": {
+                            "requests": [{
+                                "id": "ER-001",
+                                "question": "Which pagination scheme does the supplied API use?",
+                                "affected_requirements": ["FR-012"],
+                                "evidence_needed": "The declared primary API reference.",
+                                "supplied_reference_ids": ["IN-REF-001"],
+                            }],
+                        },
+                    },
+                },
+                raw_output="",
+                duration_ms=100,
+                timed_out=False,
+            ),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {
+                        "evidence_resolution_status": "access_required",
+                    },
+                },
+                raw_output="",
+                duration_ms=100,
+                timed_out=False,
+            ),
+        ]
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "phase1-what", max_iterations=5)
+        _mark_constitution_complete(tmp_path, store)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        (spec_dir / "investigation").mkdir(parents=True)
+        for name in ("spec.md", "00-overview.md", "evidence-resolution.md", "evidence-grades.md"):
+            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        state = store.load()
+        state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai")
+
+        assert result.status == "blocked"
+        assert [call.args[0] for call in provider.exec_agent.call_args_list] == [str(tmp_path), str(tmp_path)]
+        assert store.load()["last_dispatch"]["phase_id"] == "phase1-investigate"
+
+    def test_what_rejects_repeat_of_completed_evidence_request(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        request = {
+            "requests": [{
+                "id": "ER-001",
+                "question": "Which pagination scheme does the supplied API use?",
+                "affected_requirements": ["FR-012"],
+                "evidence_needed": "The declared primary API reference.",
+                "supplied_reference_ids": ["IN-REF-001"],
+            }],
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        store.initialize("r", "banzai", "msg", 0, "phase1-what", max_iterations=5)
+        state = store.load()
+        state.update({
+            "evidence_request_fingerprint": fingerprint,
+            "evidence_resolution_status": "validated",
+        })
+        store.save(state)
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {
+                    "evidence_resolution_status": "pending",
+                    "evidence_requests": request,
+                },
+            },
+            raw_output="",
+            duration_ms=100,
+            timed_out=False,
+        )
+
+        assert ctrl._evaluate_transitions(ctrl._graph.get("phase1-what"), result) == "terminal-blocked"
+        assert store.load()["blocked_reason"] == "evidence_resolution_no_new_evidence"
 
     def test_phase1_what_missing_result_preserves_existing_spec_context(self, tmp_path):
         provider = _mock_provider()
@@ -1072,6 +1202,14 @@ class TestSquadControllerBasics:
             echelon_result={
                 "verdict": "FAIL",
                 "state_updates": {
+                    "evidence_resolution_status": "not_required",
+                    "finding_routes": {
+                        "findings": [{
+                            "issue_id": "ISS-001",
+                            "route": "spec_repair",
+                            "rationale": "The supplied specification can be amended.",
+                        }],
+                    },
                     "quality_scores": [{
                         "pass": "WHY2-iter-0",
                         "overall": 0.745,
@@ -1103,7 +1241,16 @@ class TestSquadControllerBasics:
             provider.exec_agent.return_value,
             result_contract=node.result_contract(),
         )
-        assert result.state_updates == {}
+        assert result.state_updates == {
+            "evidence_resolution_status": "not_required",
+            "finding_routes": {
+                "findings": [{
+                    "issue_id": "ISS-001",
+                    "route": "spec_repair",
+                    "rationale": "The supplied specification can be amended.",
+                }],
+            },
+        }
         assert "quality_scores" in result.quarantined_state_updates
         next_phase = ctrl._evaluate_transitions(node, result)
         store.advance(
@@ -1479,6 +1626,7 @@ class TestSquadControllerBasics:
                             "spec_id": "001-test",
                             "spec_dir": "specs/001-test",
                             "spec_status": "planned",
+                            "evidence_resolution_status": "not_required",
                             "lexicon_pass": True,
                         },
                     },
@@ -1490,7 +1638,11 @@ class TestSquadControllerBasics:
                     exit_code=0,
                     echelon_result={
                         "verdict": "DONE",
-                        "state_updates": {"quality_scores": [{"pass": True}]},
+                        "state_updates": {
+                            "quality_scores": [{"pass": True}],
+                            "evidence_resolution_status": "not_required",
+                            "finding_routes": {"findings": []},
+                        },
                     },
                     raw_output="", duration_ms=0, timed_out=False,
                 )

@@ -450,16 +450,29 @@ phases:
       - requirements.lexicon.md       # only when lexicon_gate.enabled; derived from spec.md
     allowed_state_updates:
       - spec_status
+      - evidence_resolution_status
+      - evidence_requests
       - status
       - blocked_reason
       - shadow_output_recovered
+    required_state_updates:
+      - evidence_resolution_status
     state_update_types:
       spec_status: string
+      evidence_resolution_status: string
+      evidence_requests: object
       status: string
     state_update_enums:
       spec_status: [planned, blocked]
+      evidence_resolution_status: [not_required, pending]
       status: [blocked]
+    allowed_verdicts: [DONE, FAIL]
+    evidence_routing: requests
     transitions:
+      # A declared reference that can resolve a product fact is an executable
+      # evidence route, not an agent-authored terminal block.
+      - to: phase1-investigate
+        condition: "evidence_resolution_status = pending"
       - to: phase1-lexicon
         condition: always
 
@@ -537,6 +550,7 @@ phases:
       - dependency_checks
       - evidence_resolution_status
       - evidence_requests
+      - finding_routes
       - escalation_question
       - blocked_reason
       - status
@@ -545,10 +559,16 @@ phases:
       dependency_checks: object
       evidence_resolution_status: string
       evidence_requests: object
+      finding_routes: object
       status: string
     state_update_enums:
-      evidence_resolution_status: [pending]
+      evidence_resolution_status: [not_required, pending]
       status: [blocked]
+    required_state_updates:
+      - evidence_resolution_status
+      - finding_routes
+    allowed_verdicts: [DONE, PASS, FAIL, STOP_AND_ASK]
+    evidence_routing: finding_routes
     transitions:
       # Externally verifiable product facts need evidence collection, not another
       # speculative WHAT pass. This must precede the generic FAIL repair routes.

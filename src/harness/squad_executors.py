@@ -751,6 +751,9 @@ class PhaseExecutor(ABC):
             "unexpected_state_updates",
             getattr(node, "unexpected_state_updates", "quarantine"),
         )
+        evidence_routing = entry.get(
+            "evidence_routing", getattr(node, "evidence_routing", "none")
+        )
         return EchelonResultContract(
             allowed_state_update_keys=(
                 frozenset(str(key) for key in allowed)
@@ -772,6 +775,7 @@ class PhaseExecutor(ABC):
                 else None
             ),
             unexpected_state_updates=str(unexpected),
+            evidence_routing=str(evidence_routing),
         )
 
     def _exec_agent_with_contract(
@@ -856,18 +860,12 @@ class PhaseExecutor(ABC):
         from harness.echelon_result_schema import (
             EchelonResultContract,
             EchelonResultValidationError,
-            validate_echelon_result,
             validate_echelon_result_contract,
         )
         from harness.squad_provider import SquadAgentResult
 
         try:
             self._normalize_why_result_quality_scores(node, result)
-            if (result.verdict or "").upper() == "BLOCKED":
-                # BLOCKED results are consumed by the controller as harness-owned
-                # blocked-state metadata, not applied through phase state_updates.
-                result.echelon_result = validate_echelon_result(result.echelon_result)
-                return result
             contract = result_contract or self._result_contract(node)
             if allowed_state_updates is not None:
                 contract = EchelonResultContract(
@@ -877,6 +875,7 @@ class PhaseExecutor(ABC):
                     state_update_enums=contract.state_update_enums,
                     allowed_verdicts=contract.allowed_verdicts,
                     unexpected_state_updates=contract.unexpected_state_updates,
+                    evidence_routing=contract.evidence_routing,
                 )
             outcome = validate_echelon_result_contract(
                 result.echelon_result,
