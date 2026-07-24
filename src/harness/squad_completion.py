@@ -15,6 +15,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping
 
+from echelon.context_builder import (
+    CONTEXT_OUTPUT_NAMES as _CONTEXT_OUTPUT_NAMES,
+)
 from harness.prepared_phase_result import (
     _bounded_detach_untrusted,
     _canonical_payload_sha256,
@@ -39,6 +42,9 @@ _RECEIPTS_NAME = "receipts.json"
 _MAX_INTENT_BYTES = 4_194_304
 _MAX_RECEIPTS_BYTES = 1_048_576
 _MAX_CONTEXT_REASON_LENGTH = 4_096
+_MAX_CONTEXT_FILE_BYTES = 16_777_216
+_MAX_MINING_DRAWER_IDS = 256
+_MAX_MINING_DRAWER_ID_LENGTH = 1_024
 _MAX_PHASE_LENGTH = 1_024
 _COMPLETION_ID_PATTERN = re.compile(r"\A[0-9a-f]{32}\Z")
 _SHA256_PATTERN = re.compile(r"\A[0-9a-f]{64}\Z")
@@ -59,6 +65,17 @@ _ERROR_CODES = frozenset(
 )
 _COMPLETION_STAMP_KEYS = frozenset(
     {"completion_id", "entry_index", "content_sha256"}
+)
+_CONTEXT_STAGE_NAME = "context"
+_CONTEXT_FILES_NAME = "files"
+_MINING_OUTCOMES = frozenset(
+    {
+        "written",
+        "already_present",
+        "unavailable",
+        "failed",
+        "not_applicable",
+    }
 )
 
 
@@ -153,6 +170,8 @@ class PreparedControllerCompletion:
 
     marker: CompletionMarker
     intent: CompletionIntent
+    _project_root: Path = field(repr=False)
+    _squad_dir: Path = field(repr=False)
     _transaction_root: Path = field(repr=False)
     _transaction_identity: tuple[int, int, int] = field(repr=False)
     _receipts_json: bytes = field(repr=False)
@@ -193,6 +212,25 @@ class JournalPlan:
         if type(value) is not list:
             raise AssertionError("invalid internal journal plan snapshot")
         return tuple(value)
+
+
+@dataclass(frozen=True)
+class CompletionMiningOutcome:
+    """One bounded deterministic mining result suitable for a receipt."""
+
+    completion_id: str
+    outcome: str
+    spec_sha256: str | None
+    drawer_ids: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": _SCHEMA_VERSION,
+            "completion_id": self.completion_id,
+            "outcome": self.outcome,
+            "spec_sha256": self.spec_sha256,
+            "drawer_ids": list(self.drawer_ids),
+        }
 
 
 def _raise(code: str) -> None:
@@ -1163,7 +1201,7 @@ def load_prepared_controller_completion(
 ) -> PreparedControllerCompletion:
     """Load one exact state-authorized completion stage without regeneration."""
     expected_marker = _marker_from(marker)
-    _, squad = _validate_roots(project_root, squad_dir)
+    project, squad = _validate_roots(project_root, squad_dir)
     outbox = _require_real_directory(
         squad / _OUTBOX_DIRECTORY,
         missing_code="stage_missing",
@@ -1296,6 +1334,8 @@ def load_prepared_controller_completion(
     return PreparedControllerCompletion(
         marker=expected_marker,
         intent=_intent_view(intent),
+        _project_root=project,
+        _squad_dir=squad,
         _transaction_root=transaction_root,
         _transaction_identity=transaction_identity,
         _receipts_json=_canonical_json(receipts, newline=False),
@@ -1334,20 +1374,373 @@ def _read_reasoning_journal(
         _raise(code)
 
 
-def _durably_replace_file(path: Path, content: bytes) -> None:
-    """Replace one regular file from a sibling fsynced temporary file."""
+def _atomic_exchange_files(
+    directory_fd: int,
+    first_name: str,
+    second_name: str,
+) -> None:
+    """Atomically exchange two names within one pinned directory."""
+    import ctypes
+    import ctypes.util
+    import sys
+
+    library_name = ctypes.util.find_library("c")
+    if library_name is None:
+        _raise("stage_io")
+    libc = ctypes.CDLL(library_name, use_errno=True)
+    first = os.fsencode(first_name)
+    second = os.fsencode(second_name)
+    if sys.platform == "darwin" and hasattr(libc, "renameatx_np"):
+        function = libc.renameatx_np
+        function.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        function.restype = ctypes.c_int
+        result = function(
+            directory_fd,
+            first,
+            directory_fd,
+            second,
+            0x00000002,  # RENAME_SWAP
+        )
+    elif hasattr(libc, "renameat2"):
+        function = libc.renameat2
+        function.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        )
+        function.restype = ctypes.c_int
+        result = function(
+            directory_fd,
+            first,
+            directory_fd,
+            second,
+            0x00000002,  # RENAME_EXCHANGE
+        )
+    else:
+        _raise("stage_io")
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(
+            error_number,
+            os.strerror(error_number),
+        )
+
+
+def _durably_replace_file(
+    path: Path,
+    content: bytes,
+    *,
+    expected_preimage: Mapping[str, object] | None = None,
+    postimage: Mapping[str, object] | None = None,
+    mismatch_code: str = "stage_corrupt",
+) -> None:
+    """Replace a file durably, optionally with a pinned final preimage CAS."""
+    if expected_preimage is None and postimage is None:
+        try:
+            _store_durably_replace_file(
+                path,
+                content,
+                directory_sync=_fsync_directory,
+            )
+        except JournalStoreError as error:
+            _raise(
+                "stage_io"
+                if error.code == "journal_io"
+                else "stage_corrupt"
+            )
+        return
+    if (
+        expected_preimage is None
+        or postimage is None
+        or mismatch_code not in _ERROR_CODES
+        or path.name in {"", ".", ".."}
+        or path.parent / path.name != path
+    ):
+        _raise("stage_corrupt")
+    expected = dict(expected_preimage)
+    expected_postimage = dict(postimage)
+    actual_postimage = {
+        "kind": "file",
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "size_bytes": len(content),
+    }
+    if expected_postimage != actual_postimage:
+        _raise("stage_corrupt")
+
+    parent = _require_real_directory(
+        path.parent,
+        missing_code="stage_missing",
+    )
     try:
-        _store_durably_replace_file(
-            path,
-            content,
-            directory_sync=_fsync_directory,
+        parent_before = os.lstat(parent)
+    except OSError:
+        _raise("stage_io")
+    parent_fd = _open_directory_fd(
+        parent,
+        missing_code="stage_missing",
+    )
+    temporary_name = f".{path.name}-{secrets.token_hex(12)}.tmp"
+    temporary_fd: int | None = None
+    preserve_temporary = False
+
+    def entry_token_at(name: str) -> tuple[object, ...]:
+        """Return a bounded identity/version token without reading contents."""
+        try:
+            metadata = os.stat(
+                name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return ("missing",)
+        except OSError:
+            _raise("stage_io")
+        return (
+            "entry",
+            stat.S_IFMT(metadata.st_mode),
+            metadata.st_mode,
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_nlink,
+            metadata.st_size,
+            metadata.st_mtime_ns,
+            getattr(metadata, "st_flags", None),
+            getattr(metadata, "st_gen", None),
         )
-    except JournalStoreError as error:
-        _raise(
-            "stage_io"
-            if error.code == "journal_io"
-            else "stage_corrupt"
+
+    def descriptor_at(name: str) -> dict[str, object]:
+        try:
+            metadata = os.stat(
+                name,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return {"kind": "missing"}
+        except OSError:
+            _raise("stage_io")
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(
+            metadata.st_mode
+        ):
+            _raise(mismatch_code)
+        allowed_sizes = {
+            value.get("size_bytes")
+            for value in (expected, expected_postimage)
+            if value.get("kind") == "file"
+        }
+        if metadata.st_size not in allowed_sizes:
+            _raise(mismatch_code)
+        try:
+            descriptor = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=parent_fd,
+            )
+        except OSError:
+            _raise(mismatch_code)
+        try:
+            opened = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(opened.st_mode)
+                or (opened.st_dev, opened.st_ino, opened.st_size)
+                != (metadata.st_dev, metadata.st_ino, metadata.st_size)
+            ):
+                _raise(mismatch_code)
+            remaining = opened.st_size
+            chunks: list[bytes] = []
+            while remaining:
+                chunk = os.read(
+                    descriptor,
+                    min(1_048_576, remaining),
+                )
+                if not chunk:
+                    _raise(mismatch_code)
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            after = os.fstat(descriptor)
+            if (
+                after.st_dev,
+                after.st_ino,
+                after.st_size,
+            ) != (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+            ):
+                _raise(mismatch_code)
+            try:
+                current_entry = os.stat(
+                    name,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except OSError:
+                _raise(mismatch_code)
+            if (
+                current_entry.st_dev,
+                current_entry.st_ino,
+                current_entry.st_size,
+            ) != (
+                opened.st_dev,
+                opened.st_ino,
+                opened.st_size,
+            ):
+                _raise(mismatch_code)
+            observed = b"".join(chunks)
+            return {
+                "kind": "file",
+                "sha256": hashlib.sha256(observed).hexdigest(),
+                "size_bytes": len(observed),
+            }
+        except CompletionError:
+            raise
+        except OSError:
+            _raise("stage_io")
+        finally:
+            os.close(descriptor)
+
+    try:
+        opened_parent = os.fstat(parent_fd)
+        if _directory_identity(opened_parent) != _directory_identity(
+            parent_before
+        ):
+            _raise("stage_corrupt")
+        temporary_fd = os.open(
+            temporary_name,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=parent_fd,
         )
+        view = memoryview(content)
+        while view:
+            written = os.write(temporary_fd, view)
+            if written <= 0:
+                _raise("stage_io")
+            view = view[written:]
+        os.fsync(temporary_fd)
+        os.close(temporary_fd)
+        temporary_fd = None
+        postimage_token = entry_token_at(temporary_name)
+
+        current = descriptor_at(path.name)
+        if current != expected_postimage:
+            if current != expected:
+                _raise(mismatch_code)
+            if expected.get("kind") == "missing":
+                try:
+                    os.link(
+                        temporary_name,
+                        path.name,
+                        src_dir_fd=parent_fd,
+                        dst_dir_fd=parent_fd,
+                        follow_symlinks=False,
+                    )
+                except FileExistsError:
+                    if descriptor_at(path.name) != expected_postimage:
+                        _raise(mismatch_code)
+            else:
+                captured_expected_token = entry_token_at(path.name)
+                if (
+                    descriptor_at(path.name) != expected
+                    or entry_token_at(path.name)
+                    != captured_expected_token
+                ):
+                    _raise(mismatch_code)
+                try:
+                    _atomic_exchange_files(
+                        parent_fd,
+                        temporary_name,
+                        path.name,
+                    )
+                except FileNotFoundError:
+                    _raise(mismatch_code)
+                captured_token = entry_token_at(temporary_name)
+                try:
+                    captured_descriptor = descriptor_at(
+                        temporary_name
+                    )
+                except CompletionError:
+                    captured_descriptor = None
+                if (
+                    captured_token != captured_expected_token
+                    or captured_descriptor
+                    not in (expected, expected_postimage)
+                ):
+                    candidate_token = captured_token
+                    target_expected_token = postimage_token
+                    for _ in range(8):
+                        if (
+                            entry_token_at(path.name)
+                            != target_expected_token
+                        ):
+                            _raise(mismatch_code)
+                        try:
+                            _atomic_exchange_files(
+                                parent_fd,
+                                temporary_name,
+                                path.name,
+                            )
+                        except OSError:
+                            _raise("stage_io")
+                        os.fsync(parent_fd)
+                        displaced_token = entry_token_at(
+                            temporary_name
+                        )
+                        if displaced_token == target_expected_token:
+                            if (
+                                entry_token_at(path.name)
+                                != candidate_token
+                            ):
+                                _raise(mismatch_code)
+                            _raise(mismatch_code)
+                        target_expected_token = candidate_token
+                        candidate_token = displaced_token
+                    preserve_temporary = True
+                    _raise(mismatch_code)
+                try:
+                    installed = descriptor_at(path.name)
+                except CompletionError:
+                    installed = None
+                if installed != expected_postimage:
+                    _raise(mismatch_code)
+            os.fsync(parent_fd)
+        try:
+            parent_after = os.lstat(parent)
+        except OSError:
+            _raise("stage_io")
+        if _directory_identity(parent_after) != _directory_identity(
+            opened_parent
+        ):
+            _raise("stage_corrupt")
+    except CompletionError:
+        raise
+    except OSError:
+        _raise("stage_io")
+    finally:
+        if temporary_fd is not None:
+            try:
+                os.close(temporary_fd)
+            except OSError:
+                pass
+        if not preserve_temporary:
+            try:
+                os.unlink(temporary_name, dir_fd=parent_fd)
+            except OSError:
+                pass
+        os.close(parent_fd)
 
 
 def _journal_timestamp() -> str:
@@ -1991,3 +2384,1228 @@ def create_or_recover_completion_checkpoint(
         )
     except PhaseCheckpointError:
         _raise("receipts_mismatch")
+
+
+def _verify_prepared_completion_identity(
+    prepared: PreparedControllerCompletion,
+) -> None:
+    if type(prepared) is not PreparedControllerCompletion:
+        _raise("intent_invalid")
+    root = prepared._transaction_root
+    if (
+        root.name != prepared.marker.completion_id
+        or root.parent.name != _OUTBOX_DIRECTORY
+        or root.parent.parent != prepared._squad_dir
+    ):
+        _raise("stage_corrupt")
+    try:
+        metadata = os.lstat(root)
+    except FileNotFoundError:
+        _raise("stage_missing")
+    except OSError:
+        _raise("stage_io")
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISDIR(metadata.st_mode)
+        or _directory_identity(metadata)
+        != prepared._transaction_identity
+    ):
+        _raise("stage_corrupt")
+
+
+def _require_prepared_project_root(
+    prepared: PreparedControllerCompletion,
+    project_root: Path,
+) -> Path:
+    if not isinstance(project_root, Path):
+        _raise("intent_invalid")
+    project = _require_real_directory(
+        project_root,
+        missing_code="stage_missing",
+    )
+    if project != prepared._project_root:
+        _raise("intent_invalid")
+    return project
+
+
+def _current_completion_effect_receipt(
+    prepared: PreparedControllerCompletion,
+    effect: str,
+) -> tuple[dict[str, object], dict[str, object] | None]:
+    """Read a marker-bound prefix or its one exact current receipt."""
+    _verify_prepared_completion_identity(prepared)
+    plan = prepared.intent.effect_plan
+    if (
+        effect not in plan
+        or prepared.marker.step != effect
+        or plan.index(effect) >= len(plan)
+    ):
+        _raise("intent_invalid")
+    content = _read_regular(
+        prepared._transaction_root / _RECEIPTS_NAME,
+        maximum=_MAX_RECEIPTS_BYTES,
+        code="receipts_invalid",
+    )
+    try:
+        receipts = _validate_receipts(
+            _detach_loaded_json(
+                _decode_canonical(
+                    content,
+                    code="receipts_invalid",
+                ),
+                root_path="$.controller_completion_receipts",
+                code="receipts_invalid",
+            ),
+            intent=prepared.intent.to_dict(),
+        )
+    except CompletionError:
+        raise
+    except Exception:
+        _raise("receipts_invalid")
+    index = plan.index(effect)
+    effects = receipts["effects"]
+    if len(effects) not in {index, index + 1}:
+        _raise("receipts_mismatch")
+    prior_effects = {
+        name: effects[name]
+        for name in plan[:index]
+    }
+    prior = {
+        "schema_version": _SCHEMA_VERSION,
+        "completion_id": prepared.intent.completion_id,
+        "effects": prior_effects,
+    }
+    if hashlib.sha256(_canonical_json(prior)).hexdigest() != (
+        prepared.marker.receipts_sha256
+    ):
+        _raise("receipts_mismatch")
+    receipt = effects.get(effect)
+    if len(effects) == index and receipt is not None:
+        _raise("receipts_mismatch")
+    if len(effects) == index + 1 and type(receipt) is not dict:
+        _raise("receipts_mismatch")
+    return receipts, receipt
+
+
+def _persist_current_completion_receipt(
+    prepared: PreparedControllerCompletion,
+    effect: str,
+    receipt: dict[str, object],
+) -> dict[str, object]:
+    receipts, existing = _current_completion_effect_receipt(
+        prepared,
+        effect,
+    )
+    if existing is not None:
+        if _canonical_json(existing, newline=False) != _canonical_json(
+            receipt,
+            newline=False,
+        ):
+            _raise("receipts_mismatch")
+        return existing
+    effects = dict(receipts["effects"])
+    effects[effect] = _clone_json(receipt)
+    updated = {
+        "schema_version": _SCHEMA_VERSION,
+        "completion_id": prepared.intent.completion_id,
+        "effects": effects,
+    }
+    content = _canonical_json(updated)
+    if len(content) > _MAX_RECEIPTS_BYTES:
+        _raise("receipts_invalid")
+    prior_content = _canonical_json(receipts)
+    _durably_replace_file(
+        prepared._transaction_root / _RECEIPTS_NAME,
+        content,
+        expected_preimage={
+            "kind": "file",
+            "sha256": hashlib.sha256(prior_content).hexdigest(),
+            "size_bytes": len(prior_content),
+        },
+        postimage={
+            "kind": "file",
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "size_bytes": len(content),
+        },
+        mismatch_code="receipts_mismatch",
+    )
+    observed = _read_regular(
+        prepared._transaction_root / _RECEIPTS_NAME,
+        maximum=_MAX_RECEIPTS_BYTES,
+        code="receipts_invalid",
+    )
+    if observed != content:
+        _raise("stage_io")
+    _, persisted = _current_completion_effect_receipt(
+        prepared,
+        effect,
+    )
+    if persisted is None:
+        _raise("receipts_mismatch")
+    return persisted
+
+
+def _context_stage_paths(
+    prepared: PreparedControllerCompletion,
+) -> tuple[Path, Path]:
+    stage = prepared._transaction_root / _CONTEXT_STAGE_NAME
+    return stage, stage / _CONTEXT_FILES_NAME
+
+
+def _remove_unreceipted_context_stage(
+    prepared: PreparedControllerCompletion,
+) -> None:
+    stage, _ = _context_stage_paths(prepared)
+    try:
+        metadata = os.lstat(stage)
+    except FileNotFoundError:
+        return
+    except OSError:
+        _raise("stage_io")
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(
+        metadata.st_mode
+    ):
+        _raise("stage_corrupt")
+    stage_fd = _open_directory_fd(
+        stage,
+        missing_code="stage_missing",
+    )
+    try:
+        opened = os.fstat(stage_fd)
+        identity = _directory_identity(opened)
+        if identity != _directory_identity(metadata):
+            _raise("stage_corrupt")
+        _remove_directory_contents_fd(stage_fd)
+        current = os.lstat(stage)
+        if _directory_identity(current) != identity:
+            _raise("stage_corrupt")
+        os.rmdir(stage)
+        _fsync_directory(prepared._transaction_root)
+    except CompletionError:
+        raise
+    except (FileNotFoundError, OSError):
+        _raise("stage_io")
+    finally:
+        os.close(stage_fd)
+
+
+def _create_context_stage(
+    prepared: PreparedControllerCompletion,
+) -> Path:
+    stage, files = _context_stage_paths(prepared)
+    try:
+        os.mkdir(stage, 0o700)
+        os.mkdir(files, 0o700)
+        _fsync_directory(files)
+        _fsync_directory(stage)
+        _fsync_directory(prepared._transaction_root)
+    except FileExistsError:
+        _raise("stage_corrupt")
+    except OSError:
+        _raise("stage_io")
+    return files
+
+
+def _read_context_stage(
+    prepared: PreparedControllerCompletion,
+) -> dict[str, bytes]:
+    stage, files = _context_stage_paths(prepared)
+    _require_real_directory(stage, missing_code="stage_missing")
+    _require_real_directory(files, missing_code="stage_missing")
+    try:
+        if sorted(os.listdir(stage)) != [_CONTEXT_FILES_NAME]:
+            _raise("stage_corrupt")
+        names = tuple(os.listdir(files))
+    except CompletionError:
+        raise
+    except OSError:
+        _raise("stage_io")
+    if any(name not in names for name in _CONTEXT_OUTPUT_NAMES):
+        _raise("stage_missing")
+    if len(names) != len(_CONTEXT_OUTPUT_NAMES):
+        _raise("stage_corrupt")
+    result: dict[str, bytes] = {}
+    for name in _CONTEXT_OUTPUT_NAMES:
+        result[name] = _read_regular(
+            files / name,
+            maximum=_MAX_CONTEXT_FILE_BYTES,
+            code="stage_corrupt",
+        )
+    return result
+
+
+def _sync_context_stage(
+    prepared: PreparedControllerCompletion,
+) -> dict[str, bytes]:
+    content = _read_context_stage(prepared)
+    _, files = _context_stage_paths(prepared)
+    for name in _CONTEXT_OUTPUT_NAMES:
+        try:
+            descriptor = os.open(
+                files / name,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0),
+            )
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        except OSError:
+            _raise("stage_io")
+    _fsync_directory(files)
+    _fsync_directory(files.parent)
+    _fsync_directory(prepared._transaction_root)
+    return content
+
+
+def _context_file_descriptor(path: Path) -> dict[str, object]:
+    try:
+        metadata = os.lstat(path)
+    except FileNotFoundError:
+        return {"kind": "missing"}
+    except OSError:
+        _raise("stage_io")
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(
+        metadata.st_mode
+    ):
+        _raise("receipts_mismatch")
+    content = _read_regular(
+        path,
+        maximum=_MAX_CONTEXT_FILE_BYTES,
+        code="receipts_mismatch",
+    )
+    return {
+        "kind": "file",
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "size_bytes": len(content),
+    }
+
+
+def _capture_context_preimages(
+    prepared: PreparedControllerCompletion,
+) -> dict[str, dict[str, object]]:
+    target = prepared._squad_dir / "context"
+    try:
+        metadata = os.lstat(target)
+    except FileNotFoundError:
+        return {
+            name: {"kind": "missing"}
+            for name in _CONTEXT_OUTPUT_NAMES
+        }
+    except OSError:
+        _raise("stage_io")
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(
+        metadata.st_mode
+    ):
+        _raise("receipts_mismatch")
+    _require_real_directory(target, missing_code="stage_missing")
+    return {
+        name: _context_file_descriptor(target / name)
+        for name in _CONTEXT_OUTPUT_NAMES
+    }
+
+
+def _validate_context_preimage(value: object) -> dict[str, object]:
+    if type(value) is not dict:
+        _raise("receipts_mismatch")
+    kind = dict.get(value, "kind")
+    if kind == "missing":
+        _validate_exact_dict(
+            value,
+            frozenset({"kind"}),
+            code="receipts_mismatch",
+        )
+        return {"kind": "missing"}
+    _validate_exact_dict(
+        value,
+        frozenset({"kind", "sha256", "size_bytes"}),
+        code="receipts_mismatch",
+    )
+    size = value["size_bytes"]
+    if (
+        kind != "file"
+        or type(size) is not int
+        or size < 0
+        or size > _MAX_CONTEXT_FILE_BYTES
+    ):
+        _raise("receipts_mismatch")
+    digest = value["sha256"]
+    if type(digest) is not str or _SHA256_PATTERN.fullmatch(digest) is None:
+        _raise("receipts_mismatch")
+    return {
+        "kind": "file",
+        "sha256": digest,
+        "size_bytes": size,
+    }
+
+
+def _validate_completion_context_receipt(
+    receipt: object,
+    *,
+    prepared: PreparedControllerCompletion,
+    staged: Mapping[str, bytes],
+) -> dict[str, object]:
+    record = _validate_exact_dict(
+        receipt,
+        frozenset(
+            {
+                "schema_version",
+                "completion_id",
+                "source_state_revision",
+                "prepared_at",
+                "files",
+            }
+        ),
+        code="receipts_mismatch",
+    )
+    revision = record["source_state_revision"]
+    prepared_at = record["prepared_at"]
+    files = record["files"]
+    if (
+        type(record["schema_version"]) is not int
+        or record["schema_version"] != _SCHEMA_VERSION
+        or record["completion_id"] != prepared.intent.completion_id
+        or type(revision) is not int
+        or revision < 0
+        or revision > (1 << 63) - 1
+        or not _valid_journal_timestamp(prepared_at)
+        or type(files) is not list
+        or len(files) != len(_CONTEXT_OUTPUT_NAMES)
+    ):
+        _raise("receipts_mismatch")
+    validated_files: list[dict[str, object]] = []
+    for expected_name, value in zip(
+        _CONTEXT_OUTPUT_NAMES,
+        files,
+        strict=True,
+    ):
+        item = _validate_exact_dict(
+            value,
+            frozenset({"name", "preimage", "sha256", "size_bytes"}),
+            code="receipts_mismatch",
+        )
+        name = item["name"]
+        digest = item["sha256"]
+        size = item["size_bytes"]
+        if (
+            type(name) is not str
+            or name != expected_name
+            or type(digest) is not str
+            or _SHA256_PATTERN.fullmatch(digest) is None
+            or type(size) is not int
+            or size < 0
+            or size > _MAX_CONTEXT_FILE_BYTES
+        ):
+            _raise("receipts_mismatch")
+        if (
+            name not in staged
+            or len(staged[name]) != size
+            or hashlib.sha256(staged[name]).hexdigest() != digest
+        ):
+            _raise("stage_corrupt")
+        validated_files.append(
+            {
+                "name": name,
+                "preimage": _validate_context_preimage(
+                    item["preimage"]
+                ),
+                "sha256": digest,
+                "size_bytes": size,
+            }
+        )
+    return {
+        "schema_version": _SCHEMA_VERSION,
+        "completion_id": prepared.intent.completion_id,
+        "source_state_revision": revision,
+        "prepared_at": prepared_at,
+        "files": validated_files,
+    }
+
+
+def prepare_or_load_completion_context(
+    prepared: PreparedControllerCompletion,
+    *,
+    project_root: Path,
+    source_state_revision: int,
+    prepared_at: str | None = None,
+    user_request: str = "",
+    drawers: object = (),
+    generator: Callable[..., object] | None = None,
+    fault_hook: Callable[[str], None] | None = None,
+) -> dict[str, object]:
+    """Freeze the fixed context output set and persist its one-ahead receipt."""
+    _verify_prepared_completion_identity(prepared)
+    _require_prepared_project_root(prepared, project_root)
+    if (
+        "context" not in prepared.intent.effect_plan
+        or prepared.marker.step != "context"
+        or (fault_hook is not None and not callable(fault_hook))
+    ):
+        _raise("intent_invalid")
+    _, existing = _current_completion_effect_receipt(
+        prepared,
+        "context",
+    )
+    if existing is not None:
+        staged = _read_context_stage(prepared)
+        return _validate_completion_context_receipt(
+            existing,
+            prepared=prepared,
+            staged=staged,
+        )
+    if (
+        type(source_state_revision) is not int
+        or source_state_revision < 0
+        or source_state_revision > (1 << 63) - 1
+        or type(user_request) is not str
+    ):
+        _raise("intent_invalid")
+    timestamp = _journal_timestamp() if prepared_at is None else prepared_at
+    if not _valid_journal_timestamp(timestamp):
+        _raise("intent_invalid")
+    if generator is None:
+        from echelon.context_builder import build_run_context
+
+        generator = build_run_context
+    if not callable(generator):
+        _raise("intent_invalid")
+
+    preimages = _capture_context_preimages(prepared)
+    _remove_unreceipted_context_stage(prepared)
+    output_dir = _create_context_stage(prepared)
+    try:
+        generator(
+            prepared._project_root,
+            prepared._squad_dir,
+            user_request=user_request,
+            drawers=drawers,
+            output_dir=output_dir,
+        )
+        staged = _sync_context_stage(prepared)
+        if _capture_context_preimages(prepared) != preimages:
+            _raise("receipts_mismatch")
+        receipt = {
+            "schema_version": _SCHEMA_VERSION,
+            "completion_id": prepared.intent.completion_id,
+            "source_state_revision": source_state_revision,
+            "prepared_at": timestamp,
+            "files": [
+                {
+                    "name": name,
+                    "preimage": preimages[name],
+                    "sha256": hashlib.sha256(
+                        staged[name]
+                    ).hexdigest(),
+                    "size_bytes": len(staged[name]),
+                }
+                for name in _CONTEXT_OUTPUT_NAMES
+            ],
+        }
+        validated = _validate_completion_context_receipt(
+            receipt,
+            prepared=prepared,
+            staged=staged,
+        )
+        if fault_hook is not None:
+            fault_hook("after_generation")
+        return _persist_current_completion_receipt(
+            prepared,
+            "context",
+            validated,
+        )
+    except BaseException:
+        current = None
+        try:
+            _, current = _current_completion_effect_receipt(
+                prepared,
+                "context",
+            )
+        except CompletionError:
+            pass
+        if current is None:
+            try:
+                _remove_unreceipted_context_stage(prepared)
+            except CompletionError:
+                pass
+        raise
+
+
+def install_or_verify_completion_context(
+    prepared: PreparedControllerCompletion,
+    *,
+    expected_receipt: object | None = None,
+    fault_hook: Callable[[str], None] | None = None,
+) -> dict[str, object]:
+    """Install or exactly verify the immutable fixed context output set."""
+    _verify_prepared_completion_identity(prepared)
+    if (
+        "context" not in prepared.intent.effect_plan
+        or prepared.marker.step != "context"
+        or (fault_hook is not None and not callable(fault_hook))
+    ):
+        _raise("intent_invalid")
+    _, persisted = _current_completion_effect_receipt(
+        prepared,
+        "context",
+    )
+    if persisted is None:
+        _raise("receipts_invalid")
+    staged = _read_context_stage(prepared)
+    receipt = _validate_completion_context_receipt(
+        persisted,
+        prepared=prepared,
+        staged=staged,
+    )
+    if (
+        expected_receipt is not None
+        and _canonical_json(expected_receipt, newline=False)
+        != _canonical_json(receipt, newline=False)
+    ):
+        _raise("receipts_mismatch")
+
+    target = prepared._squad_dir / "context"
+    expected_by_name = {
+        item["name"]: item
+        for item in receipt["files"]
+    }
+    current_by_name = _capture_context_preimages(prepared)
+    states: dict[str, str] = {}
+    for name in _CONTEXT_OUTPUT_NAMES:
+        current = current_by_name[name]
+        item = expected_by_name[name]
+        postimage = {
+            "kind": "file",
+            "sha256": item["sha256"],
+            "size_bytes": item["size_bytes"],
+        }
+        if current == postimage:
+            states[name] = "postimage"
+        elif current == item["preimage"]:
+            states[name] = "preimage"
+        else:
+            _raise("receipts_mismatch")
+
+    try:
+        metadata = os.lstat(target)
+    except FileNotFoundError:
+        try:
+            os.mkdir(target, 0o755)
+            _fsync_directory(target)
+            _fsync_directory(prepared._squad_dir)
+        except FileExistsError:
+            _raise("receipts_mismatch")
+        except OSError:
+            _raise("stage_io")
+    except OSError:
+        _raise("stage_io")
+    else:
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(
+            metadata.st_mode
+        ):
+            _raise("receipts_mismatch")
+        _require_real_directory(target, missing_code="stage_missing")
+
+    for name in _CONTEXT_OUTPUT_NAMES:
+        if states[name] == "postimage":
+            continue
+        item = expected_by_name[name]
+        path = target / name
+        current = _context_file_descriptor(path)
+        postimage = {
+            "kind": "file",
+            "sha256": item["sha256"],
+            "size_bytes": item["size_bytes"],
+        }
+        if current == postimage:
+            continue
+        if current != item["preimage"]:
+            _raise("receipts_mismatch")
+        _durably_replace_file(
+            path,
+            staged[name],
+            expected_preimage=item["preimage"],
+            postimage=postimage,
+            mismatch_code="receipts_mismatch",
+        )
+        if _context_file_descriptor(path) != postimage:
+            _raise("stage_io")
+        if fault_hook is not None:
+            fault_hook(f"after_install:{name}")
+
+    for name in _CONTEXT_OUTPUT_NAMES:
+        item = expected_by_name[name]
+        if _context_file_descriptor(target / name) != {
+            "kind": "file",
+            "sha256": item["sha256"],
+            "size_bytes": item["size_bytes"],
+        }:
+            _raise("receipts_mismatch")
+    return receipt
+
+
+def _validate_mining_drawer_ids(
+    value: object,
+) -> tuple[str, ...]:
+    if (
+        type(value) is not list
+        or len(value) > _MAX_MINING_DRAWER_IDS
+    ):
+        _raise("receipts_mismatch")
+    result: list[str] = []
+    total_length = 0
+    for drawer_id in value:
+        if (
+            type(drawer_id) is not str
+            or not drawer_id.startswith("drawer_")
+            or len(drawer_id) > _MAX_MINING_DRAWER_ID_LENGTH
+            or re.fullmatch(r".+_[0-9a-f]{64}", drawer_id) is None
+            or any(
+                character in drawer_id
+                for character in ("/", "\\", "\x00", "\n", "\r")
+            )
+        ):
+            _raise("receipts_mismatch")
+        total_length += len(drawer_id)
+        result.append(drawer_id)
+    if (
+        result != sorted(set(result))
+        or total_length > 262_144
+    ):
+        _raise("receipts_mismatch")
+    return tuple(result)
+
+
+def _validate_completion_mining_receipt(
+    receipt: object,
+    *,
+    prepared: PreparedControllerCompletion,
+) -> CompletionMiningOutcome:
+    record = _validate_exact_dict(
+        receipt,
+        frozenset(
+            {
+                "schema_version",
+                "completion_id",
+                "outcome",
+                "spec_sha256",
+                "drawer_ids",
+            }
+        ),
+        code="receipts_mismatch",
+    )
+    outcome = record["outcome"]
+    spec_sha256 = record["spec_sha256"]
+    drawer_ids = _validate_mining_drawer_ids(record["drawer_ids"])
+    if (
+        type(record["schema_version"]) is not int
+        or record["schema_version"] != _SCHEMA_VERSION
+        or record["completion_id"] != prepared.intent.completion_id
+        or type(outcome) is not str
+        or outcome not in _MINING_OUTCOMES
+    ):
+        _raise("receipts_mismatch")
+    if outcome == "not_applicable":
+        if spec_sha256 is not None or drawer_ids:
+            _raise("receipts_mismatch")
+    else:
+        if (
+            type(spec_sha256) is not str
+            or _SHA256_PATTERN.fullmatch(spec_sha256) is None
+        ):
+            _raise("receipts_mismatch")
+        if outcome == "unavailable" and drawer_ids:
+            _raise("receipts_mismatch")
+        if outcome == "written" and not drawer_ids:
+            _raise("receipts_mismatch")
+    return CompletionMiningOutcome(
+        completion_id=prepared.intent.completion_id,
+        outcome=outcome,
+        spec_sha256=spec_sha256,
+        drawer_ids=drawer_ids,
+    )
+
+
+def _completion_mining_spec_snapshot(
+    prepared: PreparedControllerCompletion,
+    *,
+    project_root: Path,
+    spec_file: Path,
+) -> tuple[bytes, str, str]:
+    _require_prepared_project_root(prepared, project_root)
+    if not isinstance(spec_file, Path):
+        _raise("intent_invalid")
+    try:
+        relative = spec_file.relative_to(prepared._project_root)
+    except ValueError:
+        _raise("intent_invalid")
+    if (
+        len(relative.parts) != 3
+        or relative.parts[0] != "specs"
+        or relative.parts[1] in {"", ".", ".."}
+        or relative.parts[2] != "spec.md"
+    ):
+        _raise("intent_invalid")
+    _require_real_directory(
+        spec_file.parent,
+        missing_code="stage_missing",
+    )
+    content = _read_regular(
+        spec_file,
+        maximum=_MAX_CONTEXT_FILE_BYTES,
+        code="receipts_mismatch",
+    )
+    return (
+        content,
+        hashlib.sha256(content).hexdigest(),
+        relative.as_posix(),
+    )
+
+
+def _completion_mining_metadata(
+    metadata: object,
+    *,
+    source: str,
+    spec_sha256: str,
+) -> dict[str, object]:
+    if metadata is None:
+        result: dict[str, object] = {}
+    elif type(metadata) is dict:
+        try:
+            result = _normalize_json(
+                _bounded_detach_untrusted(
+                    metadata,
+                    root_path="$.completion_mining_metadata",
+                )
+            )
+        except Exception:
+            _raise("intent_invalid")
+    else:
+        _raise("intent_invalid")
+    required = {
+        "scope": "canonical",
+        "canonical": True,
+        "artifact_path": source,
+        "artifact_hash": f"sha256:{spec_sha256}",
+    }
+    for key, expected in required.items():
+        if key in result and result[key] != expected:
+            _raise("receipts_mismatch")
+        result[key] = expected
+    return result
+
+
+def _completion_local_mining_plan(
+    *,
+    project_root: Path,
+    content: bytes,
+    source: str,
+    metadata: dict[str, object],
+) -> tuple[str, ...]:
+    """Compute deterministic IDs from local config/spec without a backend."""
+    try:
+        from codegen.memory.context import (
+            _read_wing_from_echelon_yml,
+        )
+        from codegen.memory.requirements_miner import (
+            plan_canonical_requirement_drawer_ids,
+        )
+
+        wing = _read_wing_from_echelon_yml(project_root)
+        planned = plan_canonical_requirement_drawer_ids(
+            content,
+            source=source,
+            artifact_metadata=metadata,
+            wing=wing,
+        )
+    except (Exception, SystemExit) as exc:
+        raise ValueError("local deterministic mining plan failed") from exc
+    if type(planned) is not list:
+        raise ValueError("local deterministic mining plan is invalid")
+    return _validate_mining_drawer_ids(sorted(planned))
+
+
+def _default_completion_miner_factory(
+    project_root: Path,
+    run_id: str,
+) -> object:
+    from codegen.memory.context import MemPalaceContext
+    from codegen.memory.requirements_miner import RequirementsMiner
+
+    context = MemPalaceContext.from_project(
+        project_root,
+        run_id=run_id,
+    )
+    return RequirementsMiner(context, project_dir=project_root)
+
+
+def _completion_mining_factory(
+    factory: Callable[[], object] | None,
+    *,
+    project_root: Path,
+    run_id: str,
+) -> object:
+    if factory is None:
+        return _default_completion_miner_factory(
+            project_root,
+            run_id,
+        )
+    if not callable(factory):
+        _raise("intent_invalid")
+    return factory()
+
+
+def _verify_completion_mining_postimage(
+    miner: object,
+    *,
+    content: bytes,
+    source: str,
+    metadata: dict[str, object],
+    drawer_ids: tuple[str, ...],
+) -> bool:
+    verify = getattr(miner, "verify_canonical_bytes", None)
+    if not callable(verify):
+        return False
+    try:
+        return verify(
+            content,
+            source=source,
+            artifact_metadata=metadata,
+            drawer_ids=list(drawer_ids),
+        ) is True
+    except (Exception, SystemExit):
+        return False
+
+
+def _persist_completion_mining_outcome(
+    prepared: PreparedControllerCompletion,
+    outcome: CompletionMiningOutcome,
+) -> CompletionMiningOutcome:
+    persisted = _persist_current_completion_receipt(
+        prepared,
+        "mining",
+        outcome.to_dict(),
+    )
+    return _validate_completion_mining_receipt(
+        persisted,
+        prepared=prepared,
+    )
+
+
+def apply_or_verify_completion_mining(
+    prepared: PreparedControllerCompletion,
+    *,
+    project_root: Path,
+    spec_file: Path | None,
+    run_id: str,
+    artifact_metadata: object = None,
+    miner_factory: Callable[[], object] | None = None,
+    expected_receipt: object | None = None,
+    fault_hook: Callable[[str], None] | None = None,
+) -> CompletionMiningOutcome:
+    """Mine, receipt, or verify one bounded deterministic canonical outcome."""
+    _verify_prepared_completion_identity(prepared)
+    _require_prepared_project_root(prepared, project_root)
+    if (
+        "mining" not in prepared.intent.effect_plan
+        or prepared.marker.step != "mining"
+        or not prepared.intent.mine_phase_a
+        or (fault_hook is not None and not callable(fault_hook))
+    ):
+        _raise("intent_invalid")
+    _, current_receipt = _current_completion_effect_receipt(
+        prepared,
+        "mining",
+    )
+    persisted_outcome = (
+        _validate_completion_mining_receipt(
+            current_receipt,
+            prepared=prepared,
+        )
+        if current_receipt is not None
+        else None
+    )
+    if expected_receipt is not None:
+        expected = _validate_completion_mining_receipt(
+            expected_receipt,
+            prepared=prepared,
+        )
+        if persisted_outcome is None or expected != persisted_outcome:
+            _raise("receipts_mismatch")
+
+    if spec_file is None:
+        if persisted_outcome is not None:
+            if persisted_outcome.outcome != "not_applicable":
+                _raise("receipts_mismatch")
+            return persisted_outcome
+        return _persist_completion_mining_outcome(
+            prepared,
+            CompletionMiningOutcome(
+                completion_id=prepared.intent.completion_id,
+                outcome="not_applicable",
+                spec_sha256=None,
+                drawer_ids=(),
+            ),
+        )
+
+    content, spec_sha256, source = _completion_mining_spec_snapshot(
+        prepared,
+        project_root=project_root,
+        spec_file=spec_file,
+    )
+    metadata = _completion_mining_metadata(
+        artifact_metadata,
+        source=source,
+        spec_sha256=spec_sha256,
+    )
+    if persisted_outcome is not None:
+        if (
+            persisted_outcome.outcome == "not_applicable"
+            or persisted_outcome.spec_sha256 != spec_sha256
+        ):
+            _raise("receipts_mismatch")
+        if persisted_outcome.outcome == "unavailable":
+            return persisted_outcome
+        if (
+            persisted_outcome.outcome == "failed"
+            and not persisted_outcome.drawer_ids
+        ):
+            return persisted_outcome
+    try:
+        planned_ids = _completion_local_mining_plan(
+            project_root=prepared._project_root,
+            content=content,
+            source=source,
+            metadata=metadata,
+        )
+    except (CompletionError, ValueError):
+        if persisted_outcome is not None:
+            _raise("receipts_mismatch")
+        return _persist_completion_mining_outcome(
+            prepared,
+            CompletionMiningOutcome(
+                completion_id=prepared.intent.completion_id,
+                outcome="failed",
+                spec_sha256=spec_sha256,
+                drawer_ids=(),
+            ),
+        )
+    if persisted_outcome is not None:
+        if any(
+            drawer_id not in planned_ids
+            for drawer_id in persisted_outcome.drawer_ids
+        ):
+            _raise("receipts_mismatch")
+        if persisted_outcome.outcome == "failed":
+            return persisted_outcome
+        if type(run_id) is not str or not run_id or len(run_id) > 1_024:
+            _raise("intent_invalid")
+        try:
+            miner = _completion_mining_factory(
+                miner_factory,
+                project_root=prepared._project_root,
+                run_id=run_id,
+            )
+        except (Exception, SystemExit):
+            _raise("receipts_mismatch")
+        plan = getattr(miner, "plan_canonical_bytes", None)
+        try:
+            planned = plan(
+                content,
+                source=source,
+                artifact_metadata=metadata,
+            )
+        except (Exception, SystemExit, TypeError):
+            _raise("receipts_mismatch")
+        producer_planned_ids = _validate_mining_drawer_ids(
+            sorted(planned) if type(planned) is list else planned
+        )
+        if producer_planned_ids != planned_ids:
+            _raise("receipts_mismatch")
+        if (
+            persisted_outcome.outcome
+            in {"written", "already_present"}
+            and persisted_outcome.drawer_ids != planned_ids
+        ):
+            _raise("receipts_mismatch")
+        if not _verify_completion_mining_postimage(
+            miner,
+            content=content,
+            source=source,
+            metadata=metadata,
+            drawer_ids=persisted_outcome.drawer_ids,
+        ):
+            _raise("receipts_mismatch")
+        return persisted_outcome
+
+    if type(run_id) is not str or not run_id or len(run_id) > 1_024:
+        _raise("intent_invalid")
+    try:
+        miner = _completion_mining_factory(
+            miner_factory,
+            project_root=prepared._project_root,
+            run_id=run_id,
+        )
+    except (Exception, SystemExit):
+        return _persist_completion_mining_outcome(
+            prepared,
+            CompletionMiningOutcome(
+                completion_id=prepared.intent.completion_id,
+                outcome="unavailable",
+                spec_sha256=spec_sha256,
+                drawer_ids=(),
+            ),
+        )
+
+    plan = getattr(miner, "plan_canonical_bytes", None)
+    mine = getattr(miner, "mine_canonical_bytes", None)
+    if not callable(plan) or not callable(mine):
+        result_outcome = CompletionMiningOutcome(
+            completion_id=prepared.intent.completion_id,
+            outcome="failed",
+            spec_sha256=spec_sha256,
+            drawer_ids=(),
+        )
+        return _persist_completion_mining_outcome(
+            prepared,
+            result_outcome,
+        )
+    try:
+        planned_raw = plan(
+            content,
+            source=source,
+            artifact_metadata=metadata,
+        )
+        if type(planned_raw) is not list:
+            raise ValueError("invalid deterministic mining plan")
+        producer_planned_ids = _validate_mining_drawer_ids(
+            sorted(planned_raw)
+        )
+        if producer_planned_ids != planned_ids:
+            _raise("receipts_mismatch")
+    except CompletionError:
+        raise
+    except (Exception, SystemExit):
+        return _persist_completion_mining_outcome(
+            prepared,
+            CompletionMiningOutcome(
+                completion_id=prepared.intent.completion_id,
+                outcome="failed",
+                spec_sha256=spec_sha256,
+                drawer_ids=(),
+            ),
+        )
+    try:
+        result = mine(
+            content,
+            source=source,
+            artifact_metadata=metadata,
+        )
+    except (Exception, SystemExit):
+        result = None
+
+    observed, observed_digest, _ = _completion_mining_spec_snapshot(
+        prepared,
+        project_root=project_root,
+        spec_file=spec_file,
+    )
+    if observed != content or observed_digest != spec_sha256:
+        _raise("receipts_mismatch")
+    if result is None:
+        return _persist_completion_mining_outcome(
+            prepared,
+            CompletionMiningOutcome(
+                completion_id=prepared.intent.completion_id,
+                outcome="failed",
+                spec_sha256=spec_sha256,
+                drawer_ids=(),
+            ),
+        )
+
+    counters: dict[str, int] = {}
+    for name in (
+        "total",
+        "written",
+        "already_present",
+        "unavailable",
+        "failed",
+    ):
+        value = getattr(result, name, None)
+        if type(value) is not int or value < 0:
+            _raise("receipts_mismatch")
+        counters[name] = value
+    expected_ids_value = getattr(result, "expected_drawer_ids", None)
+    drawer_ids_value = getattr(result, "drawer_ids", None)
+    if (
+        type(expected_ids_value) is not list
+        or type(drawer_ids_value) is not list
+    ):
+        _raise("receipts_mismatch")
+    result_expected_ids = _validate_mining_drawer_ids(
+        sorted(expected_ids_value)
+    )
+    drawer_ids = _validate_mining_drawer_ids(
+        sorted(drawer_ids_value)
+    )
+    if (
+        result_expected_ids != planned_ids
+        or counters["total"] != len(planned_ids)
+        or sum(
+            counters[name]
+            for name in (
+                "written",
+                "already_present",
+                "unavailable",
+                "failed",
+            )
+        )
+        != counters["total"]
+        or len(drawer_ids)
+        != counters["written"] + counters["already_present"]
+        or any(
+            drawer_id not in planned_ids
+            for drawer_id in drawer_ids
+        )
+    ):
+        _raise("receipts_mismatch")
+    if drawer_ids and not _verify_completion_mining_postimage(
+        miner,
+        content=content,
+        source=source,
+        metadata=metadata,
+        drawer_ids=drawer_ids,
+    ):
+        _raise("receipts_mismatch")
+    observed, observed_digest, _ = _completion_mining_spec_snapshot(
+        prepared,
+        project_root=project_root,
+        spec_file=spec_file,
+    )
+    if observed != content or observed_digest != spec_sha256:
+        _raise("receipts_mismatch")
+
+    if counters["failed"]:
+        outcome_name = "failed"
+    elif counters["unavailable"]:
+        outcome_name = (
+            "unavailable" if not drawer_ids else "failed"
+        )
+    elif counters["written"]:
+        outcome_name = "written"
+    else:
+        outcome_name = "already_present"
+    outcome_ids = (
+        ()
+        if outcome_name == "unavailable"
+        else drawer_ids
+    )
+    outcome = CompletionMiningOutcome(
+        completion_id=prepared.intent.completion_id,
+        outcome=outcome_name,
+        spec_sha256=spec_sha256,
+        drawer_ids=outcome_ids,
+    )
+    if fault_hook is not None:
+        fault_hook("after_mining")
+    return _persist_completion_mining_outcome(
+        prepared,
+        outcome,
+    )

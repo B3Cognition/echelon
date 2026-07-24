@@ -3098,26 +3098,64 @@ class SquadController:
         spec_file: Path,
         run_id: str,
         metadata: object,
-    ) -> None:
+    ) -> str:
         try:
             from codegen.memory.context import MemPalaceContext
             from codegen.memory.requirements_miner import RequirementsMiner
-            from echelon.context_metadata import artifact_hash
         except Exception:
-            return
+            return "unavailable"
 
-        artifact_metadata = self._canonical_spec_artifact_metadata(
-            spec_file,
-            metadata,
-            artifact_hash(spec_file),
-        )
+        try:
+            content = spec_file.read_bytes()
+            spec_sha256 = hashlib.sha256(content).hexdigest()
+            artifact_metadata = self._canonical_spec_artifact_metadata(
+                spec_file,
+                metadata,
+                f"sha256:{spec_sha256}",
+            )
+        except (Exception, SystemExit):
+            return "failed"
 
         try:
             ctx = MemPalaceContext.from_project(self._project_root, run_id=run_id)
             miner = RequirementsMiner(ctx, project_dir=self._project_root)
-            miner.mine_file(spec_file, artifact_metadata=artifact_metadata)
         except (Exception, SystemExit):
-            return
+            return "unavailable"
+        try:
+            source = str(artifact_metadata["artifact_path"])
+            result = miner.mine_canonical_bytes(
+                content,
+                source=source,
+                artifact_metadata=artifact_metadata,
+            )
+            if (
+                spec_file.read_bytes() != content
+                or hashlib.sha256(content).hexdigest() != spec_sha256
+            ):
+                return "failed"
+        except (Exception, SystemExit):
+            return "failed"
+        failed = getattr(result, "failed", None)
+        unavailable = getattr(result, "unavailable", None)
+        written = getattr(result, "written", None)
+        already_present = getattr(result, "already_present", None)
+        if any(
+            type(value) is not int or value < 0
+            for value in (
+                failed,
+                unavailable,
+                written,
+                already_present,
+            )
+        ):
+            return "failed"
+        if failed:
+            return "failed"
+        if unavailable:
+            return "unavailable" if not written and not already_present else "failed"
+        if written:
+            return "written"
+        return "already_present"
 
     def _canonical_spec_artifact_metadata(
         self,
@@ -3127,8 +3165,10 @@ class SquadController:
     ) -> dict[str, object]:
         try:
             artifact_path = spec_file.relative_to(self._project_root).as_posix()
-        except ValueError:
-            artifact_path = spec_file.as_posix()
+        except ValueError as exc:
+            raise ValueError(
+                "canonical spec must be inside the project"
+            ) from exc
 
         payload: dict[str, object] = {
             "scope": "canonical",

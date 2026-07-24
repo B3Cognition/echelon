@@ -46,6 +46,45 @@ def test_build_run_context_writes_prior_and_current_files(tmp_path: Path) -> Non
     assert (run_dir / "context" / "feature-registry.snapshot.json").exists()
 
 
+def test_build_run_context_can_write_frozen_context_to_explicit_output_dir(
+    tmp_path: Path,
+) -> None:
+    canonical = tmp_path / "specs" / "001-photo-album"
+    canonical.mkdir(parents=True)
+    (canonical / "spec.md").write_text(
+        "FR-001: Upload a photo.\n",
+        encoding="utf-8",
+    )
+    run_dir = tmp_path / "runs" / "spec-1"
+    run_dir.mkdir(parents=True)
+    output_dir = (
+        run_dir
+        / ".completion-outbox"
+        / ("a" * 32)
+        / "context"
+        / "files"
+    )
+
+    result = build_run_context(
+        tmp_path,
+        run_dir,
+        user_request="frozen request",
+        output_dir=output_dir,
+    )
+
+    assert result.context_dir == output_dir
+    assert not (run_dir / "context").exists()
+    assert {
+        path.name for path in output_dir.iterdir()
+    } == {
+        "prior-spec-context.md",
+        "current-feature-context.md",
+        "feature-registry.snapshot.json",
+        "mempalace-reconciliation.json",
+        "stale-memory-report.md",
+    }
+
+
 def test_build_run_context_resolves_run_local_requirement_paths(tmp_path: Path) -> None:
     run_dir = tmp_path / "runs" / "spec-1"
     wip = run_dir / "specs" / "002-share-album"

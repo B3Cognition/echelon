@@ -162,7 +162,11 @@ def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_
 
     mock_from_project.assert_any_call(tmp_path, run_id="run-test")
     mock_miner_cls.assert_called_once_with(mock_ctx, project_dir=tmp_path)
-    mock_miner.mine_file.assert_called_once_with(spec_file, artifact_metadata=expected_metadata)
+    mock_miner.mine_canonical_bytes.assert_called_once_with(
+        spec_file.read_bytes(),
+        source="specs/001-photo-album/spec.md",
+        artifact_metadata=expected_metadata,
+    )
 
 
 def test_phase4_publish_keeps_readiness_when_mempalace_setup_fails(tmp_path: Path) -> None:
@@ -264,6 +268,7 @@ def test_context_metadata_publication_staging_defers_mining(
     assert not (tmp_path / "specs" / "001-photo-album").exists()
     mock_from_project.assert_not_called()
     mock_miner.mine_file.assert_not_called()
+    mock_miner.mine_canonical_bytes.assert_not_called()
 
     prepared.publish()
 

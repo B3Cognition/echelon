@@ -8,9 +8,13 @@ import subprocess
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from codegen.memory.mempalace_writer import (
+    deterministic_requirement_drawer_id,
+)
 from echelon.telemetry.model import PhaseTimingEvent
 from echelon.telemetry.phase_timing import record_phase_start
 from echelon.telemetry.store import TelemetryStore
@@ -2923,3 +2927,1310 @@ def test_completion_journal_includes_controller_quarantine_warning(
     assert row["type"] == "state_contract_warning"
     assert row["phase"] == ROUTED_ROUTE["from_phase"]
     assert row["data"]["dropped_keys"] == ["status", "total_tasks"]
+
+
+_COMPLETION_CONTEXT_NAMES = (
+    "prior-spec-context.md",
+    "current-feature-context.md",
+    "feature-registry.snapshot.json",
+    "mempalace-reconciliation.json",
+    "stale-memory-report.md",
+)
+
+
+def _completion_context_generator(calls: list[dict[str, object]]):
+    def generate(
+        project_root: Path,
+        run_dir: Path,
+        *,
+        user_request: str,
+        drawers: object,
+        output_dir: Path,
+    ) -> object:
+        call = {
+            "project_root": project_root,
+            "run_dir": run_dir,
+            "user_request": user_request,
+            "drawers": tuple(drawers),
+            "output_dir": output_dir,
+        }
+        calls.append(call)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for name in _COMPLETION_CONTEXT_NAMES:
+            (output_dir / name).write_bytes(
+                (
+                    f"{name}|{user_request}|"
+                    f"{','.join(map(str, drawers))}\n"
+                ).encode("utf-8")
+            )
+        return SimpleNamespace(context_dir=output_dir)
+
+    return generate
+
+
+def _prepare_context_completion(tmp_path: Path):
+    return _prepare_minimal(
+        tmp_path,
+        effect_plan=("context",),
+    )
+
+
+def test_completion_context_freezes_one_ahead_before_visibility_and_replays(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    calls: list[dict[str, object]] = []
+    first_generator = _completion_context_generator(calls)
+
+    receipt = completion_module.prepare_or_load_completion_context(
+        prepared,
+        project_root=project_root,
+        source_state_revision=7,
+        prepared_at="2026-07-23T10:11:12Z",
+        user_request="original",
+        drawers=("drawer-original",),
+        generator=first_generator,
+    )
+
+    assert not (squad_dir / "context").exists()
+    assert len(calls) == 1
+    assert receipt["schema_version"] == 1
+    assert receipt["completion_id"] == COMPLETION_ID
+    assert receipt["source_state_revision"] == 7
+    assert receipt["prepared_at"] == "2026-07-23T10:11:12Z"
+    assert [item["name"] for item in receipt["files"]] == list(
+        _COMPLETION_CONTEXT_NAMES
+    )
+    assert all(
+        set(item) == {
+            "name",
+            "preimage",
+            "sha256",
+            "size_bytes",
+        }
+        for item in receipt["files"]
+    )
+    receipts = json.loads(
+        (
+            prepared._transaction_root / "receipts.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert receipts["effects"]["context"] == receipt
+
+    reloaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        prepared.marker,
+    )
+
+    def must_not_regenerate(*args, **kwargs):
+        raise AssertionError("frozen context was regenerated")
+
+    replayed = completion_module.prepare_or_load_completion_context(
+        reloaded,
+        project_root=project_root,
+        source_state_revision=99,
+        prepared_at="2030-01-01T00:00:00Z",
+        user_request="changed",
+        drawers=("drawer-changed",),
+        generator=must_not_regenerate,
+    )
+    installed = completion_module.install_or_verify_completion_context(
+        reloaded
+    )
+
+    assert replayed == receipt
+    assert installed == receipt
+    for item in receipt["files"]:
+        expected = (
+            prepared._transaction_root
+            / "context"
+            / "files"
+            / item["name"]
+        ).read_bytes()
+        assert (squad_dir / "context" / item["name"]).read_bytes() == (
+            expected
+        )
+    assert (
+        completion_module.install_or_verify_completion_context(reloaded)
+        == receipt
+    )
+
+
+def test_completion_context_recovers_partial_visible_install(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    receipt = completion_module.prepare_or_load_completion_context(
+        prepared,
+        project_root=project_root,
+        source_state_revision=1,
+        prepared_at="2026-07-23T10:11:12Z",
+        generator=_completion_context_generator([]),
+    )
+    reloaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        prepared.marker,
+    )
+    installed: list[str] = []
+
+    def crash_after_first(stage: str) -> None:
+        installed.append(stage)
+        raise RuntimeError("crash")
+
+    with pytest.raises(RuntimeError, match="crash"):
+        completion_module.install_or_verify_completion_context(
+            reloaded,
+            fault_hook=crash_after_first,
+        )
+
+    assert len(installed) == 1
+    assert len(list((squad_dir / "context").iterdir())) == 1
+
+    assert (
+        completion_module.install_or_verify_completion_context(reloaded)
+        == receipt
+    )
+    assert {
+        path.name for path in (squad_dir / "context").iterdir()
+    } == set(_COMPLETION_CONTEXT_NAMES)
+
+
+def test_completion_context_crash_before_receipt_allows_private_regeneration(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+
+    def crash(stage: str) -> None:
+        assert stage == "after_generation"
+        raise RuntimeError("crash")
+
+    with pytest.raises(RuntimeError, match="crash"):
+        completion_module.prepare_or_load_completion_context(
+            prepared,
+            project_root=project_root,
+            source_state_revision=1,
+            prepared_at="2026-07-23T10:11:12Z",
+            user_request="first",
+            generator=_completion_context_generator([]),
+            fault_hook=crash,
+        )
+
+    assert not (squad_dir / "context").exists()
+    assert not (
+        prepared._transaction_root / "context"
+    ).exists()
+    receipts = json.loads(
+        (
+            prepared._transaction_root / "receipts.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert receipts["effects"] == {}
+
+    receipt = completion_module.prepare_or_load_completion_context(
+        prepared,
+        project_root=project_root,
+        source_state_revision=2,
+        prepared_at="2026-07-23T11:12:13Z",
+        user_request="second",
+        generator=_completion_context_generator([]),
+    )
+
+    assert receipt["source_state_revision"] == 2
+    staged = (
+        prepared._transaction_root
+        / "context"
+        / "files"
+        / "prior-spec-context.md"
+    )
+    assert b"|second|" in staged.read_bytes()
+
+
+def test_completion_context_target_drift_fails_before_any_install(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    completion_module.prepare_or_load_completion_context(
+        prepared,
+        project_root=project_root,
+        source_state_revision=1,
+        prepared_at="2026-07-23T10:11:12Z",
+        generator=_completion_context_generator([]),
+    )
+    visible = squad_dir / "context"
+    visible.mkdir()
+    drifted = visible / "stale-memory-report.md"
+    drifted.write_bytes(b"unbound drift\n")
+    reloaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        prepared.marker,
+    )
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.install_or_verify_completion_context(
+            reloaded
+        ),
+    )
+
+    assert list(visible.iterdir()) == [drifted]
+    assert drifted.read_bytes() == b"unbound drift\n"
+
+
+def test_completion_context_final_replace_rechecks_bound_preimage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    completion_module.prepare_or_load_completion_context(
+        prepared,
+        project_root=project_root,
+        source_state_revision=1,
+        prepared_at="2026-07-23T10:11:12Z",
+        generator=_completion_context_generator([]),
+    )
+    reloaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        prepared.marker,
+    )
+    real_replace = completion_module._durably_replace_file
+    injected = False
+
+    def inject_drift(path: Path, content: bytes, **kwargs) -> None:
+        nonlocal injected
+        if path.parent == squad_dir / "context" and not injected:
+            injected = True
+            path.write_bytes(b"racing drift\n")
+        real_replace(path, content, **kwargs)
+
+    monkeypatch.setattr(
+        completion_module,
+        "_durably_replace_file",
+        inject_drift,
+    )
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.install_or_verify_completion_context(
+            reloaded
+        ),
+    )
+
+    assert injected
+    assert (
+        squad_dir / "context" / "prior-spec-context.md"
+    ).read_bytes() == b"racing drift\n"
+    assert not (
+        squad_dir / "context" / "current-feature-context.md"
+    ).exists()
+
+
+def test_completion_context_receipt_replace_rechecks_bound_prefix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    receipts_path = prepared._transaction_root / "receipts.json"
+    real_replace = completion_module._durably_replace_file
+    injected = False
+
+    def inject_drift(path: Path, content: bytes, **kwargs) -> None:
+        nonlocal injected
+        if path == receipts_path and not injected:
+            injected = True
+            path.write_bytes(b"unbound receipt drift\n")
+        real_replace(path, content, **kwargs)
+
+    monkeypatch.setattr(
+        completion_module,
+        "_durably_replace_file",
+        inject_drift,
+    )
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.prepare_or_load_completion_context(
+            prepared,
+            project_root=project_root,
+            source_state_revision=1,
+            prepared_at="2026-07-23T10:11:12Z",
+            generator=_completion_context_generator([]),
+        ),
+    )
+
+    assert injected
+    assert receipts_path.read_bytes() == b"unbound receipt drift\n"
+    assert not (squad_dir / "context").exists()
+
+
+def test_completion_context_receipt_exchange_restores_last_moment_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    receipts_path = prepared._transaction_root / "receipts.json"
+    real_exchange = completion_module._atomic_exchange_files
+    injected = False
+
+    def inject_inside_exchange(
+        directory_fd: int,
+        first_name: str,
+        second_name: str,
+    ) -> None:
+        nonlocal injected
+        if second_name == "receipts.json" and not injected:
+            injected = True
+            receipts_path.write_bytes(b"last-moment drift\n")
+        real_exchange(directory_fd, first_name, second_name)
+
+    monkeypatch.setattr(
+        completion_module,
+        "_atomic_exchange_files",
+        inject_inside_exchange,
+    )
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.prepare_or_load_completion_context(
+            prepared,
+            project_root=project_root,
+            source_state_revision=1,
+            prepared_at="2026-07-23T10:11:12Z",
+            generator=_completion_context_generator([]),
+        ),
+    )
+
+    assert injected
+    assert receipts_path.read_bytes() == b"last-moment drift\n"
+    assert not (squad_dir / "context").exists()
+
+
+def test_completion_context_receipt_exchange_preserves_post_exchange_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    receipts_path = prepared._transaction_root / "receipts.json"
+    real_exchange = completion_module._atomic_exchange_files
+    injected = False
+
+    def inject_after_exchange(
+        directory_fd: int,
+        first_name: str,
+        second_name: str,
+    ) -> None:
+        nonlocal injected
+        real_exchange(directory_fd, first_name, second_name)
+        if second_name == "receipts.json" and not injected:
+            injected = True
+            receipts_path.write_bytes(b"post-exchange drift\n")
+
+    monkeypatch.setattr(
+        completion_module,
+        "_atomic_exchange_files",
+        inject_after_exchange,
+    )
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.prepare_or_load_completion_context(
+            prepared,
+            project_root=project_root,
+            source_state_revision=1,
+            prepared_at="2026-07-23T10:11:12Z",
+            generator=_completion_context_generator([]),
+        ),
+    )
+
+    assert injected
+    assert receipts_path.read_bytes() == b"post-exchange drift\n"
+    assert not (squad_dir / "context").exists()
+
+
+def test_completion_context_receipt_exchange_preserves_newest_racing_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    receipts_path = prepared._transaction_root / "receipts.json"
+    real_exchange = completion_module._atomic_exchange_files
+    injected = False
+
+    def inject_around_exchange(
+        directory_fd: int,
+        first_name: str,
+        second_name: str,
+    ) -> None:
+        nonlocal injected
+        if second_name == "receipts.json" and not injected:
+            receipts_path.write_bytes(b"pre-exchange drift\n")
+            real_exchange(directory_fd, first_name, second_name)
+            receipts_path.write_bytes(b"newer post-exchange drift\n")
+            injected = True
+            return
+        real_exchange(directory_fd, first_name, second_name)
+
+    monkeypatch.setattr(
+        completion_module,
+        "_atomic_exchange_files",
+        inject_around_exchange,
+    )
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.prepare_or_load_completion_context(
+            prepared,
+            project_root=project_root,
+            source_state_revision=1,
+            prepared_at="2026-07-23T10:11:12Z",
+            generator=_completion_context_generator([]),
+        ),
+    )
+
+    assert injected
+    assert (
+        receipts_path.read_bytes()
+        == b"newer post-exchange drift\n"
+    )
+    assert not (squad_dir / "context").exists()
+
+
+def test_completion_context_receipt_rollback_preserves_exchange_boundary_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    receipts_path = prepared._transaction_root / "receipts.json"
+    real_exchange = completion_module._atomic_exchange_files
+    exchange_count = 0
+
+    def inject_before_each_exchange(
+        directory_fd: int,
+        first_name: str,
+        second_name: str,
+    ) -> None:
+        nonlocal exchange_count
+        if second_name == "receipts.json":
+            exchange_count += 1
+            if exchange_count == 1:
+                receipts_path.write_bytes(b"pre-exchange drift\n")
+            elif exchange_count == 2:
+                receipts_path.write_bytes(
+                    b"rollback-boundary drift\n"
+                )
+        real_exchange(directory_fd, first_name, second_name)
+
+    monkeypatch.setattr(
+        completion_module,
+        "_atomic_exchange_files",
+        inject_before_each_exchange,
+    )
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.prepare_or_load_completion_context(
+            prepared,
+            project_root=project_root,
+            source_state_revision=1,
+            prepared_at="2026-07-23T10:11:12Z",
+            generator=_completion_context_generator([]),
+        ),
+    )
+
+    assert exchange_count == 3
+    assert (
+        receipts_path.read_bytes()
+        == b"rollback-boundary drift\n"
+    )
+    assert not (squad_dir / "context").exists()
+
+
+def test_completion_context_receipt_rollback_restores_oversized_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    receipts_path = prepared._transaction_root / "receipts.json"
+    real_exchange = completion_module._atomic_exchange_files
+    oversized = b"x" * (
+        completion_module._MAX_CONTEXT_FILE_BYTES + 1
+    )
+    injected = False
+
+    def inject_oversized_drift(
+        directory_fd: int,
+        first_name: str,
+        second_name: str,
+    ) -> None:
+        nonlocal injected
+        if second_name == "receipts.json" and not injected:
+            receipts_path.write_bytes(oversized)
+            injected = True
+        real_exchange(directory_fd, first_name, second_name)
+
+    monkeypatch.setattr(
+        completion_module,
+        "_atomic_exchange_files",
+        inject_oversized_drift,
+    )
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.prepare_or_load_completion_context(
+            prepared,
+            project_root=project_root,
+            source_state_revision=1,
+            prepared_at="2026-07-23T10:11:12Z",
+            generator=_completion_context_generator([]),
+        ),
+    )
+
+    assert injected
+    assert receipts_path.read_bytes() == oversized
+    assert not list(
+        receipts_path.parent.glob(".receipts.json-*.tmp")
+    )
+    assert not (squad_dir / "context").exists()
+
+
+def test_completion_context_receipt_exchange_hashes_stat_preserving_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    receipts_path = prepared._transaction_root / "receipts.json"
+    original = receipts_path.read_bytes()
+    original_stat = receipts_path.stat()
+    same_stat_drift = b"x" * len(original)
+    real_exchange = completion_module._atomic_exchange_files
+    injected = False
+
+    def inject_same_stat_drift(
+        directory_fd: int,
+        first_name: str,
+        second_name: str,
+    ) -> None:
+        nonlocal injected
+        if second_name == "receipts.json" and not injected:
+            receipts_path.write_bytes(same_stat_drift)
+            os.utime(
+                receipts_path,
+                ns=(
+                    original_stat.st_atime_ns,
+                    original_stat.st_mtime_ns,
+                ),
+            )
+            injected = True
+        real_exchange(directory_fd, first_name, second_name)
+
+    monkeypatch.setattr(
+        completion_module,
+        "_atomic_exchange_files",
+        inject_same_stat_drift,
+    )
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.prepare_or_load_completion_context(
+            prepared,
+            project_root=project_root,
+            source_state_revision=1,
+            prepared_at="2026-07-23T10:11:12Z",
+            generator=_completion_context_generator([]),
+        ),
+    )
+
+    assert injected
+    assert receipts_path.read_bytes() == same_stat_drift
+    assert not (squad_dir / "context").exists()
+
+
+def test_completion_context_rejects_symlinked_visible_root_before_child_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    completion_module.prepare_or_load_completion_context(
+        prepared,
+        project_root=project_root,
+        source_state_revision=1,
+        prepared_at="2026-07-23T10:11:12Z",
+        generator=_completion_context_generator([]),
+    )
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    for name in _COMPLETION_CONTEXT_NAMES:
+        (outside / name).write_bytes(b"outside\n")
+    (squad_dir / "context").symlink_to(
+        outside,
+        target_is_directory=True,
+    )
+    reloaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        prepared.marker,
+    )
+    original_read = completion_module._read_regular
+    reads: list[Path] = []
+
+    def track_read(path: Path, **kwargs):
+        reads.append(path)
+        return original_read(path, **kwargs)
+
+    monkeypatch.setattr(
+        completion_module,
+        "_read_regular",
+        track_read,
+    )
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.install_or_verify_completion_context(
+            reloaded
+        ),
+    )
+
+    assert not any(outside in path.parents for path in reads)
+    assert all(
+        (outside / name).read_bytes() == b"outside\n"
+        for name in _COMPLETION_CONTEXT_NAMES
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        ("missing", "stage_missing"),
+        ("corrupt", "stage_corrupt"),
+    ],
+)
+def test_completion_context_rejects_missing_or_corrupt_frozen_substage(
+    tmp_path: Path,
+    mutation: str,
+    expected_code: str,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    completion_module.prepare_or_load_completion_context(
+        prepared,
+        project_root=project_root,
+        source_state_revision=1,
+        prepared_at="2026-07-23T10:11:12Z",
+        generator=_completion_context_generator([]),
+    )
+    staged = (
+        prepared._transaction_root
+        / "context"
+        / "files"
+        / "prior-spec-context.md"
+    )
+    if mutation == "missing":
+        staged.unlink()
+    else:
+        staged.write_bytes(b"changed after receipt\n")
+    reloaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        prepared.marker,
+    )
+
+    _assert_completion_error(
+        expected_code,
+        lambda: completion_module.install_or_verify_completion_context(
+            reloaded
+        ),
+    )
+
+    assert not (squad_dir / "context").exists()
+
+
+def test_completion_context_rejects_non_fixed_receipt_path(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir, prepared = _prepare_context_completion(
+        tmp_path
+    )
+    completion_module.prepare_or_load_completion_context(
+        prepared,
+        project_root=project_root,
+        source_state_revision=1,
+        prepared_at="2026-07-23T10:11:12Z",
+        generator=_completion_context_generator([]),
+    )
+    receipts_path = prepared._transaction_root / "receipts.json"
+    receipts = json.loads(receipts_path.read_text(encoding="utf-8"))
+    receipts["effects"]["context"]["files"][0]["name"] = "../escape"
+    receipts_path.write_bytes(
+        (
+            json.dumps(receipts, sort_keys=True, separators=(",", ":"))
+            + "\n"
+        ).encode("utf-8")
+    )
+    reloaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        prepared.marker,
+    )
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.install_or_verify_completion_context(
+            reloaded
+        ),
+    )
+    assert not (squad_dir / "context").exists()
+
+
+_MINING_SPEC_BYTES = b"FR-001: Deterministic mining.\n"
+_MINING_DRAWER_ID = deterministic_requirement_drawer_id(
+    wing="demo",
+    room="functional-requirements",
+    spec_sha256=hashlib.sha256(_MINING_SPEC_BYTES).hexdigest(),
+    requirement_id="FR-001",
+    content="FR-001: Deterministic mining.",
+)
+
+
+def _prepare_mining_completion(
+    tmp_path: Path,
+    *,
+    with_spec: bool = True,
+):
+    project_root, squad_dir, prepared = _prepare_minimal(
+        tmp_path,
+        origin="terminal",
+        route={"kind": "terminal", "terminal_phase": "DONE"},
+        effect_plan=("mining",),
+        mine_phase_a=True,
+    )
+    config = (
+        project_root
+        / ".specify"
+        / "extensions"
+        / "echelon"
+        / "echelon-config.yml"
+    )
+    config.parent.mkdir(parents=True)
+    config.write_text(
+        "mempalace:\n  wing: demo\n",
+        encoding="utf-8",
+    )
+    spec_file = None
+    if with_spec:
+        spec_dir = project_root / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        spec_file = spec_dir / "spec.md"
+        spec_file.write_bytes(_MINING_SPEC_BYTES)
+    return project_root, squad_dir, prepared, spec_file
+
+
+class _CompletionMiner:
+    def __init__(
+        self,
+        *,
+        outcome: str,
+        mutate_spec: Path | None = None,
+    ) -> None:
+        self.outcome = outcome
+        self.mutate_spec = mutate_spec
+        self.mine_calls = 0
+        self.verify_calls = 0
+
+    def plan_canonical_bytes(self, *args, **kwargs):
+        return [_MINING_DRAWER_ID]
+
+    def mine_canonical_bytes(self, *args, **kwargs):
+        self.mine_calls += 1
+        if self.mutate_spec is not None:
+            self.mutate_spec.write_text(
+                "FR-001: Drifted during mining.\n",
+                encoding="utf-8",
+            )
+        if self.outcome == "written":
+            return SimpleNamespace(
+                total=1,
+                written=1,
+                already_present=0,
+                unavailable=0,
+                failed=0,
+                skipped=0,
+                drawer_ids=[_MINING_DRAWER_ID],
+                expected_drawer_ids=[_MINING_DRAWER_ID],
+            )
+        if self.outcome == "already_present":
+            return SimpleNamespace(
+                total=1,
+                written=0,
+                already_present=1,
+                unavailable=0,
+                failed=0,
+                skipped=1,
+                drawer_ids=[_MINING_DRAWER_ID],
+                expected_drawer_ids=[_MINING_DRAWER_ID],
+            )
+        return SimpleNamespace(
+            total=1,
+            written=0,
+            already_present=0,
+            unavailable=0,
+            failed=1,
+            skipped=0,
+            drawer_ids=[],
+            expected_drawer_ids=[_MINING_DRAWER_ID],
+        )
+
+    def verify_canonical_bytes(self, *args, **kwargs):
+        self.verify_calls += 1
+        return True
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected", "with_spec"),
+    [
+        ("written", "written", True),
+        ("already_present", "already_present", True),
+        ("failed", "failed", True),
+        ("unavailable", "unavailable", True),
+        ("not_applicable", "not_applicable", False),
+    ],
+)
+def test_completion_mining_returns_and_persists_every_bounded_outcome(
+    tmp_path: Path,
+    requested: str,
+    expected: str,
+    with_spec: bool,
+) -> None:
+    project_root, _, prepared, spec_file = (
+        _prepare_mining_completion(
+            tmp_path,
+            with_spec=with_spec,
+        )
+    )
+    miner = _CompletionMiner(outcome=requested)
+
+    def factory():
+        if requested == "unavailable":
+            raise ImportError("mempalace unavailable")
+        return miner
+
+    outcome = completion_module.apply_or_verify_completion_mining(
+        prepared,
+        project_root=project_root,
+        spec_file=spec_file,
+        run_id="run-test",
+        miner_factory=factory,
+    )
+
+    assert outcome.outcome == expected
+    assert outcome.completion_id == COMPLETION_ID
+    if expected == "not_applicable":
+        assert outcome.spec_sha256 is None
+        assert outcome.drawer_ids == ()
+    else:
+        assert len(outcome.spec_sha256) == 64
+    receipts = json.loads(
+        (
+            prepared._transaction_root / "receipts.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert receipts["effects"]["mining"] == outcome.to_dict()
+
+
+def test_completion_mining_crash_after_drawers_replays_as_exact_existing(
+    tmp_path: Path,
+) -> None:
+    project_root, _, prepared, spec_file = (
+        _prepare_mining_completion(tmp_path)
+    )
+    first = _CompletionMiner(outcome="written")
+
+    def crash(stage: str) -> None:
+        assert stage == "after_mining"
+        raise RuntimeError("crash")
+
+    with pytest.raises(RuntimeError, match="crash"):
+        completion_module.apply_or_verify_completion_mining(
+            prepared,
+            project_root=project_root,
+            spec_file=spec_file,
+            run_id="run-test",
+            miner_factory=lambda: first,
+            fault_hook=crash,
+        )
+
+    receipts = json.loads(
+        (
+            prepared._transaction_root / "receipts.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert receipts["effects"] == {}
+    replay = _CompletionMiner(outcome="already_present")
+    outcome = completion_module.apply_or_verify_completion_mining(
+        prepared,
+        project_root=project_root,
+        spec_file=spec_file,
+        run_id="changed-run",
+        miner_factory=lambda: replay,
+    )
+
+    assert first.mine_calls == 1
+    assert replay.mine_calls == 1
+    assert outcome.outcome == "already_present"
+    assert outcome.drawer_ids == (_MINING_DRAWER_ID,)
+
+
+@pytest.mark.parametrize("outcome_name", ["unavailable", "failed"])
+def test_completion_mining_receipted_best_effort_outcome_never_retries(
+    tmp_path: Path,
+    outcome_name: str,
+) -> None:
+    project_root, squad_dir, prepared, spec_file = (
+        _prepare_mining_completion(tmp_path)
+    )
+    if outcome_name == "unavailable":
+        factory = lambda: (_ for _ in ()).throw(ImportError("offline"))
+    else:
+        factory = lambda: _CompletionMiner(outcome="failed")
+    first = completion_module.apply_or_verify_completion_mining(
+        prepared,
+        project_root=project_root,
+        spec_file=spec_file,
+        run_id="run-test",
+        miner_factory=factory,
+    )
+    reloaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        prepared.marker,
+    )
+
+    def must_not_retry():
+        raise AssertionError("receipted best-effort outcome retried")
+
+    replay = completion_module.apply_or_verify_completion_mining(
+        reloaded,
+        project_root=project_root,
+        spec_file=spec_file,
+        run_id="changed-run",
+        miner_factory=must_not_retry,
+    )
+
+    assert replay == first
+    assert replay.outcome == outcome_name
+
+
+def test_completion_mining_receipted_partial_failure_never_retries_backend(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir, prepared, spec_file = (
+        _prepare_mining_completion(tmp_path)
+    )
+    assert spec_file is not None
+    partial_spec = (
+        b"FR-001: Deterministic mining.\n"
+        b"FR-002: Partial failure.\n"
+    )
+    spec_file.write_bytes(partial_spec)
+    partial_digest = hashlib.sha256(partial_spec).hexdigest()
+    first_id = deterministic_requirement_drawer_id(
+        wing="demo",
+        room="functional-requirements",
+        spec_sha256=partial_digest,
+        requirement_id="FR-001",
+        content="FR-001: Deterministic mining.",
+    )
+    second_id = deterministic_requirement_drawer_id(
+        wing="demo",
+        room="functional-requirements",
+        spec_sha256=partial_digest,
+        requirement_id="FR-002",
+        content="FR-002: Partial failure.",
+    )
+    miner = _CompletionMiner(outcome="failed")
+
+    def plan(*args, **kwargs):
+        return [first_id, second_id]
+
+    def partial_failure(*args, **kwargs):
+        return SimpleNamespace(
+            total=2,
+            written=1,
+            already_present=0,
+            unavailable=0,
+            failed=1,
+            skipped=0,
+            drawer_ids=[first_id],
+            expected_drawer_ids=[first_id, second_id],
+        )
+
+    miner.plan_canonical_bytes = plan
+    miner.mine_canonical_bytes = partial_failure
+    first = completion_module.apply_or_verify_completion_mining(
+        prepared,
+        project_root=project_root,
+        spec_file=spec_file,
+        run_id="run-test",
+        miner_factory=lambda: miner,
+    )
+    assert first.outcome == "failed"
+    assert first.drawer_ids == (first_id,)
+    reloaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        prepared.marker,
+    )
+
+    def unavailable():
+        raise ImportError("backend later unavailable")
+
+    replay = completion_module.apply_or_verify_completion_mining(
+        reloaded,
+        project_root=project_root,
+        spec_file=spec_file,
+        run_id="changed-run",
+        miner_factory=unavailable,
+    )
+
+    assert replay == first
+
+
+def test_completion_mining_rejects_forged_partial_failed_receipt_offline(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir, prepared, spec_file = (
+        _prepare_mining_completion(tmp_path)
+    )
+    assert spec_file is not None
+    forged_id = (
+        "drawer_demo_functional-requirements_" + ("f" * 64)
+    )
+    assert forged_id != _MINING_DRAWER_ID
+    completion_module._persist_current_completion_receipt(
+        prepared,
+        "mining",
+        {
+            "schema_version": 1,
+            "completion_id": prepared.intent.completion_id,
+            "outcome": "failed",
+            "spec_sha256": hashlib.sha256(
+                spec_file.read_bytes()
+            ).hexdigest(),
+            "drawer_ids": [forged_id],
+        },
+    )
+    reloaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        prepared.marker,
+    )
+
+    def must_not_call():
+        raise AssertionError("forged receipt reached mining backend")
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.apply_or_verify_completion_mining(
+            reloaded,
+            project_root=project_root,
+            spec_file=spec_file,
+            run_id="backend-offline",
+            miner_factory=must_not_call,
+        ),
+    )
+
+
+def test_completion_mining_replays_empty_failed_receipt_after_local_plan_error(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir, prepared, spec_file = (
+        _prepare_mining_completion(tmp_path)
+    )
+    assert spec_file is not None
+    spec_file.write_bytes(b"\xff")
+
+    def must_not_call():
+        raise AssertionError("local plan failure reached mining backend")
+
+    first = completion_module.apply_or_verify_completion_mining(
+        prepared,
+        project_root=project_root,
+        spec_file=spec_file,
+        run_id="backend-offline",
+        miner_factory=must_not_call,
+    )
+    assert first.outcome == "failed"
+    assert first.drawer_ids == ()
+    reloaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        prepared.marker,
+    )
+
+    replay = completion_module.apply_or_verify_completion_mining(
+        reloaded,
+        project_root=project_root,
+        spec_file=spec_file,
+        run_id="changed-run",
+        miner_factory=must_not_call,
+    )
+
+    assert replay == first
+
+
+def test_completion_mining_one_ahead_written_receipt_verifies_without_mining(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir, prepared, spec_file = (
+        _prepare_mining_completion(tmp_path)
+    )
+    first_miner = _CompletionMiner(outcome="written")
+    first = completion_module.apply_or_verify_completion_mining(
+        prepared,
+        project_root=project_root,
+        spec_file=spec_file,
+        run_id="run-test",
+        miner_factory=lambda: first_miner,
+    )
+    reloaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        prepared.marker,
+    )
+    verifier = _CompletionMiner(outcome="written")
+
+    replay = completion_module.apply_or_verify_completion_mining(
+        reloaded,
+        project_root=project_root,
+        spec_file=spec_file,
+        run_id="changed-run",
+        miner_factory=lambda: verifier,
+        expected_receipt=first.to_dict(),
+    )
+
+    assert replay == first
+    assert verifier.verify_calls == 1
+    assert verifier.mine_calls == 0
+
+
+def test_completion_mining_rejects_canonical_spec_drift(
+    tmp_path: Path,
+) -> None:
+    project_root, squad_dir, prepared, spec_file = (
+        _prepare_mining_completion(tmp_path)
+    )
+    first = completion_module.apply_or_verify_completion_mining(
+        prepared,
+        project_root=project_root,
+        spec_file=spec_file,
+        run_id="run-test",
+        miner_factory=lambda: _CompletionMiner(outcome="written"),
+    )
+    reloaded = load_prepared_controller_completion(
+        project_root,
+        squad_dir,
+        prepared.marker,
+    )
+    assert spec_file is not None
+    spec_file.write_text(
+        "FR-001: Changed after receipt.\n",
+        encoding="utf-8",
+    )
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.apply_or_verify_completion_mining(
+            reloaded,
+            project_root=project_root,
+            spec_file=spec_file,
+            run_id="run-test",
+            miner_factory=lambda: _CompletionMiner(outcome="written"),
+            expected_receipt=first.to_dict(),
+        ),
+    )
+
+
+def test_completion_mining_rejects_drift_during_producer_without_receipt(
+    tmp_path: Path,
+) -> None:
+    project_root, _, prepared, spec_file = (
+        _prepare_mining_completion(tmp_path)
+    )
+    assert spec_file is not None
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.apply_or_verify_completion_mining(
+            prepared,
+            project_root=project_root,
+            spec_file=spec_file,
+            run_id="run-test",
+            miner_factory=lambda: _CompletionMiner(
+                outcome="written",
+                mutate_spec=spec_file,
+            ),
+        ),
+    )
+    receipts = json.loads(
+        (
+            prepared._transaction_root / "receipts.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert receipts["effects"] == {}
+
+
+def test_completion_mining_rejects_non_deterministic_drawer_id(
+    tmp_path: Path,
+) -> None:
+    project_root, _, prepared, spec_file = (
+        _prepare_mining_completion(tmp_path)
+    )
+    miner = _CompletionMiner(outcome="written")
+    original_mine = miner.mine_canonical_bytes
+
+    def malformed_result(*args, **kwargs):
+        result = original_mine(*args, **kwargs)
+        result.drawer_ids = ["drawer_malformed"]
+        return result
+
+    miner.mine_canonical_bytes = malformed_result
+
+    _assert_completion_error(
+        "receipts_mismatch",
+        lambda: completion_module.apply_or_verify_completion_mining(
+            prepared,
+            project_root=project_root,
+            spec_file=spec_file,
+            run_id="run-test",
+            miner_factory=lambda: miner,
+        ),
+    )

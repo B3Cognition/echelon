@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -115,3 +116,72 @@ def test_mine_file_passes_artifact_metadata(monkeypatch, tmp_path):
 
     assert calls[0]["extra_metadata"]["artifact_hash"] == "sha256:" + "2" * 64
     assert calls[0]["extra_metadata"]["canonical"] is True
+
+
+def test_canonical_mining_uses_unique_stable_ids_for_same_room_requirements(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    text = "FR-001: First capability.\nFR-002: Second capability.\n"
+    first_spec = tmp_path / "first" / "spec.md"
+    second_spec = tmp_path / "moved" / "canonical.md"
+    first_spec.parent.mkdir()
+    second_spec.parent.mkdir()
+    first_spec.write_text(text, encoding="utf-8")
+    second_spec.write_text(text, encoding="utf-8")
+    digest = "5" * 64
+
+    class ExactWriter:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def write_exact(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(
+                outcome="written",
+                drawer_id=kwargs["drawer_id"],
+            )
+
+    monkeypatch.setattr(
+        "codegen.memory.requirements_miner.check_wing_collision",
+        lambda *args, **kwargs: [],
+    )
+    monkeypatch.setattr(
+        "codegen.memory.requirements_miner.scrub_secrets",
+        lambda value: value,
+    )
+    first_writer = ExactWriter()
+    first = RequirementsMiner(
+        _make_ctx(wing="demo", run_id="run-one"),
+        project_dir=tmp_path,
+    )
+    first._writer = first_writer
+    first_result = first.mine_file(
+        first_spec,
+        artifact_metadata={
+            "canonical": True,
+            "artifact_hash": f"sha256:{digest}",
+        },
+    )
+    second_writer = ExactWriter()
+    second = RequirementsMiner(
+        _make_ctx(wing="demo", run_id="run-two"),
+        project_dir=tmp_path,
+    )
+    second._writer = second_writer
+    second_result = second.mine_file(
+        second_spec,
+        artifact_metadata={
+            "canonical": True,
+            "artifact_hash": f"sha256:{digest}",
+        },
+    )
+
+    assert len(first_result.drawer_ids) == 2
+    assert len(set(first_result.drawer_ids)) == 2
+    assert second_result.drawer_ids == first_result.drawer_ids
+    assert [call["requirement_id"] for call in first_writer.calls] == [
+        "FR-001",
+        "FR-002",
+    ]
+    assert all(call["spec_sha256"] == digest for call in first_writer.calls)
