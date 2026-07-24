@@ -27,6 +27,10 @@ SUPPORTED_TRANSITION_KEYS = frozenset({
     "state_update",
 })
 
+# Runtime-only terminal used by SquadController guards and explicit evidence
+# escalation routes. It intentionally has no workflow definition node.
+RUNTIME_TERMINAL_TARGETS = frozenset({"terminal-blocked"})
+
 
 KNOWN_CONDITION_FIELDS = frozenset({
     # Result payload fields.
@@ -291,6 +295,9 @@ def validate_workflow_definition(
                     "unexpected_state_updates",
                     phase.get("unexpected_state_updates", "quarantine"),
                 ),
+                "evidence_routing": agent_entry.get(
+                    "evidence_routing", phase.get("evidence_routing", "none")
+                ),
             }
             issues.extend(
                 _validate_result_contract_definition(
@@ -507,6 +514,7 @@ def _validate_result_contract_definition(
     value_enums = contract.get("state_update_enums", {})
     verdicts = contract.get("allowed_verdicts")
     unexpected = contract.get("unexpected_state_updates", "quarantine")
+    evidence_routing = contract.get("evidence_routing", "none")
 
     if allowed is not None and (
         not isinstance(allowed, list)
@@ -624,6 +632,12 @@ def _validate_result_contract_definition(
             phase_id=phase_id,
             path=path,
         ))
+    if evidence_routing not in {"none", "requests", "finding_routes"}:
+        issues.append(WorkflowValidationIssue(
+            "evidence_routing must be 'none', 'requests', or 'finding_routes'",
+            phase_id=phase_id,
+            path=path,
+        ))
     return issues
 
 
@@ -738,7 +752,7 @@ def _validate_transition(
                 path=path,
             )
         )
-    elif target not in known_phase_ids:
+    elif target not in known_phase_ids and target not in RUNTIME_TERMINAL_TARGETS:
         issues.append(
             WorkflowValidationIssue(
                 f"unknown transition target {target!r}",

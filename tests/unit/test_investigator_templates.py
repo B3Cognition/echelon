@@ -10,6 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = ROOT / "extension" / "templates"
 AGENT = ROOT / "extension" / "agents" / "specialists" / "investigator.md"
+PHASE1 = ROOT / "extension" / "workflow" / "phases" / "phase1-investigate.md"
 PHASE = ROOT / "extension" / "workflow" / "phases" / "phase3-specialists.md"
 
 
@@ -81,3 +82,27 @@ class TestInvestigatorTemplates:
         assert "extension/templates/evidence-grades-template.md" in text
         assert "extension/templates/recommendations-template.md" in text
         assert "extension/templates/knowledge-gaps-template.md" in text
+
+    def test_phase1_reference_acquisition_precedes_endpoint_discovery(self) -> None:
+        phase_text = PHASE1.read_text(encoding="utf-8")
+        agent_text = AGENT.read_text(encoding="utf-8")
+
+        assert "## Reference Acquisition Protocol" in phase_text
+        assert "every declared snapshot" in phase_text
+        assert "Before web search or endpoint discovery" in phase_text
+        assert "same-origin links, redirects, and static assets" in phase_text
+        assert "NEVER guess conventional schema or API paths" in phase_text
+        assert "browser automation only after" in phase_text
+        assert "## Evidence Inventory and Bounded Expansion" in phase_text
+        assert "Do not select one sibling source as representative" in phase_text
+        assert "evidence-inventory.json" in phase_text
+        assert "Phase 1 Evidence Resolution" in agent_text
+        assert "declared product references take priority" in agent_text
+
+    def test_phase1_investigate_repairs_missing_artifacts_without_repeating_research(self) -> None:
+        text = PHASE1.read_text(encoding="utf-8")
+
+        assert "## Missing-Output Recovery" in text
+        assert "Do not repeat external retrieval" in text
+        assert "evidence-resolution.md`, `evidence-grades.md`, and `evidence-inventory.json`" in text
+        assert "Before returning `echelon_result`" in text

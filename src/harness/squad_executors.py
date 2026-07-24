@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import json
-import inspect
 import re
+import inspect
 import shutil
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -307,16 +307,37 @@ def _render_product_input_context(state: dict) -> str:
     if isinstance(repair, dict):
         blockers = repair.get("blockers")
         if isinstance(blockers, list) and blockers:
+            is_phase_one_id_repair = repair.get("phase") == "phase1-what"
             lines.extend([
                 "",
                 "## Product Input Mapping Repair (Controller-Enforced)",
-                "The prior planning result did not resolve these ledger entries:",
+                "The prior result did not resolve these ledger entries:",
                 *[f"- {str(blocker)}" for blocker in blockers],
-                "Read PRODUCT_INPUT_TRACEABILITY before editing tasks.",
-                "Return one canonical product_input_updates entry for every unresolved unit, "
-                "with task_ids whose req= values intersect that unit's spec_ids.",
-                "Do not return COMPLETE while any listed unit remains open_question or conflict.",
             ])
+            if is_phase_one_id_repair:
+                invalid_ids = [
+                    str(value) for value in repair.get("invalid_input_unit_ids", [])
+                    if str(value).strip()
+                ]
+                valid_ids = [
+                    str(value) for value in repair.get("valid_requirement_ids", [])
+                    if str(value).strip()
+                ]
+                if invalid_ids:
+                    lines.append(f"Invalid IDs from the prior result: {', '.join(invalid_ids)}")
+                if valid_ids:
+                    lines.append(f"Only these canonical IDs may be used: {', '.join(valid_ids)}")
+                lines.extend([
+                    "Never derive an ID from a requirement label; copy it exactly from the allowlist above.",
+                    "Return only Phase 1 product_input_updates: use spec_ids for FR/AC mappings, with task_ids: [] and targets: [].",
+                ])
+            else:
+                lines.extend([
+                    "Read PRODUCT_INPUT_TRACEABILITY before editing tasks.",
+                    "Return one canonical product_input_updates entry for every unresolved unit, "
+                    "with task_ids whose req= values intersect that unit's spec_ids.",
+                    "Do not return COMPLETE while any listed unit remains open_question or conflict.",
+                ])
         candidates = repair.get("candidates")
         task_matrix = repair.get("task_requirement_matrix")
         if isinstance(candidates, list) or isinstance(task_matrix, list):
@@ -393,7 +414,69 @@ def _render_controller_repair_context(state: dict) -> str:
             f"Do not report `{pass_key}` or run a validator; the controller certifies the file after dispatch.",
             "",
         ])
+    output_recovery = state.get("phase_output_recovery")
+    if isinstance(output_recovery, dict):
+        phase = str(output_recovery.get("phase") or "").strip()
+        missing = output_recovery.get("missing_outputs")
+        invalid = output_recovery.get("invalid_outputs")
+        prior_updates = output_recovery.get("prior_state_updates")
+        if phase and (
+            (isinstance(missing, list) and missing)
+            or (isinstance(invalid, list) and invalid)
+        ):
+            rendered_missing = ", ".join(
+                str(item) for item in missing if isinstance(item, str) and item
+            ) if isinstance(missing, list) else ""
+            rendered_invalid = ", ".join(
+                f"{item.get('path')}: {item.get('reason')}"
+                for item in invalid
+                if isinstance(item, dict) and item.get("path") and item.get("reason")
+            ) if isinstance(invalid, list) else ""
+            sections.extend([
+                "## Phase Output Repair",
+                f"The prior `{phase}` result was valid except for required artifacts needing repair. Missing: {rendered_missing or '(none)'}. Invalid: {rendered_invalid or '(none)'}.",
+                "Read the existing phase artifacts and repair only the named artifacts. Do not repeat external retrieval or discard established evidence unless the existing artifacts are contradictory or cannot support the required repair.",
+                "Before returning, verify every required phase output exists. Return the prior routing state updates again after the artifacts are complete.",
+            ])
+            if rendered_invalid:
+                sections.extend([
+                    "### Non-negotiable invalid-artifact repair",
+                    "The invalid artifact is not evidence and must not be treated as a completed result.",
+                    "Do NOT respond that the prior investigation is already complete. Write a replacement for every invalid artifact, using the declared source seeds and the required schema. If the prior evidence cannot establish its source frontier, perform the necessary bounded source expansion before answering.",
+                    "This retry intentionally excludes stale evidence reports and journal entries from its context. Use tools to inspect the declared inputs and create the replacement artifact on disk before returning `echelon_result`.",
+                ])
+            if isinstance(prior_updates, dict) and prior_updates:
+                sections.extend([
+                    "Prior routing state updates to preserve:",
+                    "```json",
+                    json.dumps(prior_updates, indent=2, sort_keys=True),
+                    "```",
+                ])
+            sections.append("")
     return "\n".join(sections)
+
+
+def _render_issue_resolution_context(state: dict) -> str:
+    """Render the one issue decision a repair is authorized to apply."""
+    selected = str(state.get("selected_issue_resolution") or "").strip()
+    ledger = state.get("issue_resolution_ledger")
+    if not selected or not isinstance(ledger, dict):
+        return ""
+    entry = ledger.get(selected)
+    if not isinstance(entry, dict) or entry.get("status") != "selected":
+        return ""
+    return (
+        "## Selected Issue Resolution (Controller-Owned)\n"
+        f"- Issue: {selected} — {entry.get('title', '')}\n"
+        f"- SAGE guidance: {entry.get('guidance', '')}\n"
+        f"- User decision: {entry.get('decision', '')}\n"
+        "- You MUST amend the canonical spec.md to implement this named repair. "
+        "Do not declare the issue advisory, defer it, or claim design readiness instead.\n"
+        "- If the repair cannot be completed from the declared evidence, return FAIL "
+        "with the exact missing evidence or user decision; do not advance.\n"
+        "- Apply this decision only to the named issue. Do not claim that any "
+        "other issue is resolved; the controller retains them in the ledger.\n\n"
+    )
 
 
 def _render_spec_lexicon_context(
@@ -526,10 +609,92 @@ def _render_published_re_context(state: dict) -> str:
 
 _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
     "phase1-what": ("spec.md", "00-overview.md"),
+    "phase1-investigate": (
+        "evidence-resolution.md",
+        "evidence-grades.md",
+        "evidence-inventory.json",
+    ),
     "phase3-how": ("plan.md", "research.md", "data-model.md", "contracts"),
     "phase3-sentinel": ("test-strategy.md", "test-architecture.md", "coverage-map.md"),
     "phase3-plan": ("tasks.md", "critical-path.md", "risk-matrix.md", "dependencies.md"),
 }
+
+
+def _reference_url_seeds(state: dict) -> tuple[str, ...]:
+    """Return declared URL entry points, without treating credentials as seeds."""
+    inputs = state.get("product_inputs")
+    if not isinstance(inputs, dict):
+        return ()
+    reference_context = Path(str(inputs.get("reference_context") or ""))
+    try:
+        text = reference_context.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    # The reference context is controller-produced.  URLs are safe locators to
+    # require in the inventory; never extract arbitrary text, which may include
+    # access material supplied alongside a URL.
+    return tuple(dict.fromkeys(re.findall(r"https?://[^\s<>()]+", text)))
+
+
+def _validate_evidence_inventory(
+    path: Path, *, required_seed_locators: tuple[str, ...] = ()
+) -> str | None:
+    """Return a structural error for an evidence inventory, or ``None`` when valid."""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"not valid JSON: {exc}"
+    if not isinstance(payload, dict):
+        return "root must be an object"
+    if payload.get("schema_version") != 1:
+        return "schema_version must equal 1"
+    sources = payload.get("sources")
+    if not isinstance(sources, list):
+        return "missing required list: sources"
+    if not sources:
+        return "sources must not be empty"
+    required_source_fields = (
+        "id",
+        "locator",
+        "kind",
+        "status",
+        "disposition",
+        "discovered_from",
+        "discovery_method",
+    )
+    for index, source in enumerate(sources):
+        if not isinstance(source, dict):
+            return f"sources[{index}] must be an object"
+        for field in required_source_fields:
+            if not isinstance(source.get(field), str) or not source[field].strip():
+                return f"sources[{index}].{field} must be a non-empty string"
+    frontier = payload.get("frontier")
+    if not isinstance(frontier, dict):
+        return "missing required object: frontier"
+    if not isinstance(frontier.get("disposition"), str) or not frontier["disposition"].strip():
+        return "frontier.disposition must be a non-empty string"
+    unvisited = frontier.get("unvisited_relevant_sources")
+    if not isinstance(unvisited, list) or not all(
+        isinstance(source, str) and source.strip() for source in unvisited
+    ):
+        return "frontier.unvisited_relevant_sources must be a list of non-empty strings"
+    expanded_seeds = frontier.get("expanded_seed_locators")
+    if not isinstance(expanded_seeds, list) or not all(
+        isinstance(source, str) and source.strip() for source in expanded_seeds
+    ):
+        return "frontier.expanded_seed_locators must be a list of non-empty strings"
+    inventory_locators = {str(source["locator"]).strip() for source in sources}
+    missing_seeds = [seed for seed in required_seed_locators if seed not in inventory_locators]
+    if missing_seeds:
+        return "missing declared source seed(s): " + ", ".join(missing_seeds)
+    missing_expanded_seeds = [
+        seed for seed in required_seed_locators if seed not in expanded_seeds
+    ]
+    if missing_expanded_seeds:
+        return "frontier does not account for declared source seed(s): " + ", ".join(
+            missing_expanded_seeds
+        )
+    return None
 
 
 def _normalize_spec_dir_ref(spec_dir_ref: str, project_root: Path) -> str:
@@ -738,6 +903,9 @@ class PhaseExecutor(ABC):
             "unexpected_state_updates",
             getattr(node, "unexpected_state_updates", "quarantine"),
         )
+        evidence_routing = entry.get(
+            "evidence_routing", getattr(node, "evidence_routing", "none")
+        )
         return EchelonResultContract(
             allowed_state_update_keys=(
                 frozenset(str(key) for key in allowed)
@@ -759,6 +927,7 @@ class PhaseExecutor(ABC):
                 else None
             ),
             unexpected_state_updates=str(unexpected),
+            evidence_routing=str(evidence_routing),
         )
 
     def _exec_agent_with_contract(
@@ -886,6 +1055,7 @@ class PhaseExecutor(ABC):
                     state_update_enums=contract.state_update_enums,
                     allowed_verdicts=contract.allowed_verdicts,
                     unexpected_state_updates=contract.unexpected_state_updates,
+                    evidence_routing=contract.evidence_routing,
                 )
             outcome = validate_echelon_result_contract(
                 result.echelon_result,
@@ -971,6 +1141,14 @@ class PhaseExecutor(ABC):
     def _assemble_prompt(self, node: "PhaseNode", state: dict) -> str:
         static_parts: list[str] = []
         dynamic_parts: list[str] = []
+        output_recovery = state.get("phase_output_recovery")
+        isolated_invalid_inventory_repair = (
+            node.id == "phase1-investigate"
+            and isinstance(output_recovery, dict)
+            and output_recovery.get("phase") == node.id
+            and isinstance(output_recovery.get("invalid_outputs"), list)
+            and bool(output_recovery["invalid_outputs"])
+        )
 
         # Resolve run dirs early — needed for both context pack file reads and
         # the text-level translation applied to agent/spec file content below.
@@ -1006,6 +1184,13 @@ class PhaseExecutor(ABC):
         spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
         search_bases = _spec_search_bases(spec_dir_ref, self._project_root, staging_dir_str)
         for item in node.context_pack:
+            if isolated_invalid_inventory_repair and (
+                item.startswith("{spec_dir}/evidence-resolution.md")
+                or item.startswith("{spec_dir}/investigation/")
+                or item.startswith("{spec_dir}/evidence-inventory.json")
+                or item.startswith(".specify/squad/reasoning-journal.jsonl")
+            ):
+                continue
             # Items may have inline comments: ".specify/echelon/re/state.json — current run state"
             file_ref = item.split(" ")[0].split("(")[0].rstrip()
             if not file_ref or file_ref.startswith("#"):
@@ -1039,6 +1224,7 @@ class PhaseExecutor(ABC):
             f"{_render_implementation_target_context(state)}"
             f"{_render_product_input_context(state)}"
             f"{_render_controller_repair_context(state)}"
+            f"{_render_issue_resolution_context(state)}"
             f"{_render_spec_lexicon_context(state, node.id, self._resolved_config())}"
             f"{_render_published_re_context(state)}"
             f"{_render_certified_understanding_context(state, node.id)}"
@@ -1276,6 +1462,8 @@ class AgentExecutor(PhaseExecutor):
         from harness.squad_provider import SquadAgentResult
 
         state = state_store.load()
+        self._quarantine_invalid_recovery_outputs(node, state, state_store)
+        state = state_store.load()
         pre_dispatch_result = self._run_pre_dispatch(node, state, state_store)
         if pre_dispatch_result is not None and pre_dispatch_result.blocked:
             return pre_dispatch_result
@@ -1312,21 +1500,103 @@ class AgentExecutor(PhaseExecutor):
                     updates["shadow_output_recovered"] = recovered
             missing_outputs = self._required_phase_outputs_missing(node, state)
             if missing_outputs:
+                recovery_state_updates = dict(result.state_updates)
+                prior_recovery = state.get("phase_output_recovery")
+                prior_invalid_outputs = (
+                    prior_recovery.get("invalid_outputs")
+                    if isinstance(prior_recovery, dict)
+                    else None
+                )
+                recovery_updates: dict[str, object] = {
+                    "blocked_reason": "missing_phase_outputs",
+                    "missing_outputs": missing_outputs,
+                    "recovery_state_updates": recovery_state_updates,
+                }
+                if isinstance(prior_invalid_outputs, list) and prior_invalid_outputs:
+                    recovery_updates["invalid_outputs"] = prior_invalid_outputs
                 result = SquadAgentResult(
                     exit_code=0,
                     echelon_result={
                         "verdict": "BLOCKED",
-                        "state_updates": {
-                            "blocked_reason": "missing_phase_outputs",
-                            "missing_outputs": missing_outputs,
-                        },
+                        "state_updates": recovery_updates,
                     },
                     raw_output=result.raw_output,
                     duration_ms=result.duration_ms,
                     timed_out=result.timed_out,
                     cost_usd=result.cost_usd,
                 )
+            elif node.id == "phase1-investigate":
+                spec_dir = self._canonical_spec_dir(state)
+                inventory_error = (
+                    _validate_evidence_inventory(
+                        spec_dir / "evidence-inventory.json",
+                        required_seed_locators=_reference_url_seeds(state),
+                    )
+                    if spec_dir is not None
+                    else "spec_dir is unavailable"
+                )
+                if inventory_error:
+                    recovery_state_updates = dict(result.state_updates)
+                    result = SquadAgentResult(
+                        exit_code=0,
+                        echelon_result={
+                            "verdict": "BLOCKED",
+                            "state_updates": {
+                                "blocked_reason": "invalid_evidence_inventory",
+                                "invalid_outputs": [{
+                                    "path": "evidence-inventory.json",
+                                    "reason": inventory_error,
+                                }],
+                                "recovery_state_updates": recovery_state_updates,
+                            },
+                        },
+                        raw_output=result.raw_output,
+                        duration_ms=result.duration_ms,
+                        timed_out=result.timed_out,
+                        cost_usd=result.cost_usd,
+                    )
         return result
+
+    def _quarantine_invalid_recovery_outputs(
+        self,
+        node: "PhaseNode",
+        state: dict,
+        state_store: "SquadStateStore",
+    ) -> None:
+        """Move rejected outputs aside so an agent cannot mistake them for evidence."""
+        recovery = state.get("phase_output_recovery")
+        if not isinstance(recovery, dict) or recovery.get("phase") != node.id:
+            return
+        invalid = recovery.get("invalid_outputs")
+        if not isinstance(invalid, list) or not invalid:
+            return
+        spec_dir = self._canonical_spec_dir(state)
+        if spec_dir is None:
+            return
+        quarantined: list[str] = []
+        for item in invalid:
+            if not isinstance(item, dict):
+                continue
+            relative = str(item.get("path") or "").strip()
+            candidate = spec_dir / relative
+            if not relative or candidate.parent != spec_dir or not candidate.is_file():
+                continue
+            archived = candidate.with_name(f"{candidate.stem}.invalid{candidate.suffix}")
+            index = 1
+            while archived.exists():
+                archived = candidate.with_name(
+                    f"{candidate.stem}.invalid-{index}{candidate.suffix}"
+                )
+                index += 1
+            candidate.replace(archived)
+            quarantined.append(archived.name)
+        if quarantined:
+            refreshed = state_store.load()
+            refreshed_recovery = refreshed.get("phase_output_recovery")
+            if isinstance(refreshed_recovery, dict):
+                refreshed_recovery["quarantined_invalid_outputs"] = quarantined
+                refreshed["phase_output_recovery"] = refreshed_recovery
+                state_store.save(refreshed)
 
 
 class CommanderInternalExecutor(PhaseExecutor):

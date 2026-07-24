@@ -164,6 +164,51 @@ def test_workflow_validator_rejects_unknown_transition_target(tmp_path: Path) ->
     assert any("unknown transition target" in issue.message for issue in report.issues)
 
 
+def test_workflow_validator_accepts_terminal_blocked_runtime_target(tmp_path: Path) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "investigate",
+                "type": "agent",
+                "transitions": [
+                    {"to": "terminal-blocked", "condition": "always"},
+                ],
+            }
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert report.ok, report.format()
+
+
+def test_workflow_validator_rejects_unknown_evidence_routing_mode(tmp_path: Path) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "what",
+                "type": "agent",
+                "evidence_routing": "prose",
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    assert any("evidence_routing" in issue.message for issue in report.issues)
+
+
 def test_workflow_validator_rejects_unknown_phase_condition_field(tmp_path: Path) -> None:
     definition = _write_definition(
         tmp_path,

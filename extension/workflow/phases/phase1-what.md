@@ -16,6 +16,7 @@ Read and include in the subagent prompt:
 - `${STAGING_DIR}/assumptions.md` + `${STAGING_DIR}/unknowns.md`
 - `${STAGING_DIR}/reference-architectures.md` (if greenfield)
 - `${STAGING_DIR}/user-clarifications.md` (if present; fresh control-plane input on every WHAT pass)
+- `{spec_dir}/evidence-resolution.md` + `{spec_dir}/evidence-grades.md` (if Phase 1 INVESTIGATOR ran; treat recorded facts as authoritative evidence for this amendment)
 - `reasoning-journal.jsonl` (filtered to DISCOVER + WHY1 entries)
 - User input (original request)
 - `agents/exploration/templates/cartographer-spec-template.md`
@@ -41,13 +42,15 @@ The active runtime dispatches this role with the following request:
 
   ```xml
   <context>
-  [include read-only .specify/memory/constitution.md, glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, reference-architectures.md if greenfield, cartographer output templates, reasoning-journal.jsonl — staging artifacts from ${STAGING_DIR}/, user input]
+  [include read-only .specify/memory/constitution.md, glossary.md, mental-model.md, boundaries.md, assumptions.md, unknowns.md, evidence-resolution.md and evidence-grades.md if present, reference-architectures.md if greenfield, cartographer output templates, reasoning-journal.jsonl — staging artifacts from ${STAGING_DIR}/, user input]
   </context>
 
   <instructions>
   You are CARTOGRAPHER. Read agents/exploration/cartographer.md for your complete protocol.
   Phase A identity is controller-owned. If this is a first WHAT pass with no existing `{spec_dir}/spec.md`, create it from the supplied template in `{spec_dir}`, move discovery artifacts there, then enhance it with speckit-echelon-scout (SCOUT)'s domain insights. If this is a resumed/amendment pass, enhance the existing file in place. Never create, switch, rename, or discover a branch or another spec directory.
   Treat `.specify/memory/constitution.md` as read-only governance context. Apply its principles while authoring `spec.md`; do not edit, patch, append to, or regenerate the constitution from this phase.
+  If `evidence-resolution.md` is present, apply its observed facts and confidence limits to the amendment. Do not re-investigate the same source, discard evidence because it conflicts with the prior draft, or invent facts beyond its stated gaps.
+  Evidence routing is controller-owned. ALWAYS return `evidence_resolution_status: not_required` after an ordinary WHAT pass. When a declared input or directly relevant primary source must establish a project-specific fact before requirements can be amended, ALWAYS return `FAIL` with `evidence_resolution_status: pending` and a complete `evidence_requests` object. NEVER return `BLOCKED` merely because the missing fact is investigable; `BLOCKED` bypasses workflow transitions and is reserved for controller-owned operational failures.
   When the Product Input Contract is present, read its requirement snapshot and cite every adopted or challenged `IN-REQ-*` unit. Return one `echelon_result.product_input_updates` entry per normative unit. This is a strict API contract: copy the catalog ID into `input_unit_id`; use exactly one of `included`, `excluded`, `duplicate`, `open_question`, or `conflict` for `disposition`; give an evidence-backed `rationale`; place mapped FR/AC IDs in `spec_ids`; and set `task_ids: []` and `targets: []` in this phase. Never use aliases such as `unit`, `adopted`, or `mapped`. Do not write the ledger file directly; COMMANDER validates and persists the structured updates. Example:
   ```yaml
   product_input_updates:
@@ -103,14 +106,40 @@ returns through the ordinary WHY2 repair route rather than relying on model-exec
 After the required WHAT artifacts exist, the controller always advances to the visible,
 provider-free `phase1-lexicon` node. CARTOGRAPHER does not certify or route around that node.
 
-Return only this state update in `echelon_result`; the harness preserves the
-controller-owned Phase A identity in `state.json`:
+For an ordinary completed WHAT pass, return these state updates; the harness
+preserves the controller-owned Phase A identity in `state.json`:
 
 ```yaml
 echelon_result:
+  verdict: DONE
   state_updates:
     spec_status: planned
+    evidence_resolution_status: not_required
 ```
+
+### Evidence Resolution Route — MANDATORY WHEN NEEDED
+
+If evidence from a declared reference must be collected before the specification
+can be amended, return this executable route instead of prose such as “route to
+INVESTIGATOR”:
+
+```yaml
+echelon_result:
+  verdict: FAIL
+  state_updates:
+    evidence_resolution_status: pending
+    evidence_requests:
+      requests:
+        - id: ER-001
+          question: "<project-specific fact to establish>"
+          affected_requirements: [FR-001]
+          evidence_needed: "<minimum authoritative evidence required>"
+          supplied_reference_ids: [IN-REF-...]
+```
+
+Every request must name the affected requirement, the minimum evidence, and a
+declared reference ID. Do not set `spec_status: blocked`, `status: blocked`, or
+`blocked_reason` for this route. The graph sends this result to INVESTIGATOR.
 
 ### Spec Status Transition — MANDATORY
 

@@ -438,6 +438,8 @@ phases:
       - unknowns.md
       - reference-architectures.md    # greenfield only, if exists
       - "{staging_dir}/user-clarifications.md" # control-plane input, if present
+      - "{spec_dir}/evidence-resolution.md" # if Phase 1 INVESTIGATOR resolved external facts
+      - "{spec_dir}/evidence-grades.md" # if Phase 1 INVESTIGATOR resolved external facts
       - "{context_dir}/prior-spec-context.md"
       - "{context_dir}/current-feature-context.md"
       - "{context_dir}/stale-memory-report.md"
@@ -449,16 +451,29 @@ phases:
       - requirements.lexicon.md       # only when lexicon_gate.enabled; derived from spec.md
     allowed_state_updates:
       - spec_status
+      - evidence_resolution_status
+      - evidence_requests
       - status
       - blocked_reason
       - shadow_output_recovered
+    required_state_updates:
+      - evidence_resolution_status
     state_update_types:
       spec_status: string
+      evidence_resolution_status: string
+      evidence_requests: object
       status: string
     state_update_enums:
       spec_status: [planned, blocked]
+      evidence_resolution_status: [not_required, pending]
       status: [blocked]
+    allowed_verdicts: [DONE, FAIL]
+    evidence_routing: requests
     transitions:
+      # A declared reference that can resolve a product fact is an executable
+      # evidence route, not an agent-authored terminal block.
+      - to: phase1-investigate
+        condition: "evidence_resolution_status = pending"
       - to: phase1-lexicon
         condition: always
 
@@ -519,16 +534,32 @@ phases:
       - issues → state.json.issues_log (severity-tagged)
     allowed_state_updates:
       - dependency_checks
+      - evidence_resolution_status
+      - evidence_requests
+      - finding_routes
       - escalation_question
       - blocked_reason
       - status
       - shadow_output_recovered
     state_update_types:
       dependency_checks: object
+      evidence_resolution_status: string
+      evidence_requests: object
+      finding_routes: object
       status: string
     state_update_enums:
+      evidence_resolution_status: [not_required, pending]
       status: [blocked]
+    required_state_updates:
+      - evidence_resolution_status
+      - finding_routes
+    allowed_verdicts: [DONE, PASS, FAIL, STOP_AND_ASK]
+    evidence_routing: finding_routes
     transitions:
+      # Externally verifiable product facts need evidence collection, not another
+      # speculative WHAT pass. This must precede the generic FAIL repair routes.
+      - to: phase1-investigate
+        condition: "evidence_resolution_status = pending"
       - to: phase1-what
         condition: "verdict = FAIL AND iteration < max_iterations"
         action: increment_iteration
@@ -540,6 +571,50 @@ phases:
       - to: checkpoint-assess
         condition: "iteration >= max_iterations"
         action: force_convergence_warning
+
+  # --------------------------------------------------------------------------
+  - id: phase1-investigate
+    label: "Evidence Resolution (INVESTIGATOR)"
+    spec_file: workflow/phases/phase1-investigate.md
+    type: agent
+    agent: speckit-echelon-investigator
+    tier: specialists
+    context_pack:
+      - "{spec_dir}/spec.md"
+      - "{spec_dir}/assumptions.md"
+      - "{spec_dir}/unknowns.md"
+      - "{spec_dir}/issues.md"
+      - "{spec_dir}/evidence-resolution.md" # prior evidence, if retrying a missing output
+      - "{spec_dir}/investigation/"          # prior reports, if retrying a missing output
+      - "{spec_dir}/evidence-inventory.json" # prior source graph, if retrying a missing output
+      - "{context_dir}/current-feature-context.md"
+      - .specify/squad/reasoning-journal.jsonl [phase=phase1-why2]
+    outputs:
+      - investigation/
+      - evidence-resolution.md
+      - evidence-grades.md
+      - evidence-inventory.json
+    allowed_state_updates:
+      - evidence_resolution_status
+      - escalation_question
+      - blocked_reason
+      - status
+      - shadow_output_recovered
+    required_state_updates:
+      - evidence_resolution_status
+    state_update_types:
+      evidence_resolution_status: string
+      escalation_question: string
+      blocked_reason: string
+      status: string
+    state_update_enums:
+      evidence_resolution_status: [validated, conflicting, inconclusive, access_required]
+      status: [blocked]
+    transitions:
+      - to: phase1-what
+        condition: "evidence_resolution_status in [validated, conflicting]"
+      - to: terminal-blocked
+        condition: "evidence_resolution_status in [inconclusive, access_required]"
 
   # --------------------------------------------------------------------------
   - id: checkpoint-assess

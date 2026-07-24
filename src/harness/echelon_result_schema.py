@@ -43,6 +43,7 @@ class EchelonResultContract:
     state_update_enums: Mapping[str, frozenset[Any]] = field(default_factory=dict)
     allowed_verdicts: frozenset[str] | None = None
     unexpected_state_updates: str = "quarantine"
+    evidence_routing: str = "none"
 
 
 @dataclass(frozen=True)
@@ -274,6 +275,10 @@ def validate_echelon_result_contract(
         raise EchelonResultValidationError(
             "unexpected_state_updates must be 'reject' or 'quarantine'"
         )
+    if contract.evidence_routing not in {"none", "requests", "finding_routes"}:
+        raise EchelonResultValidationError(
+            "evidence_routing must be 'none', 'requests', or 'finding_routes'"
+        )
 
     unsupported_types = {
         value_type
@@ -339,10 +344,100 @@ def validate_echelon_result_contract(
                 f"echelon_result.state_updates.{key} must be one of: {allowed_text}"
             )
 
+    if contract.evidence_routing != "none":
+        validate_evidence_routing_state_updates(
+            updates,
+            verdict=verdict,
+            require_finding_routes=contract.evidence_routing == "finding_routes",
+        )
+
     return EchelonResultContractOutcome(
         result=result,
         quarantined_state_updates=quarantined,
     )
+
+
+def validate_evidence_routing_state_updates(
+    updates: Mapping[str, Any],
+    *,
+    verdict: str,
+    require_finding_routes: bool,
+) -> None:
+    """Fail closed when an evidence route lacks executable request data."""
+    status = updates.get("evidence_resolution_status")
+    if status not in {"not_required", "pending"}:
+        raise EchelonResultValidationError(
+            "evidence_resolution_status must be 'not_required' or 'pending'"
+        )
+
+    requests = updates.get("evidence_requests")
+    if status == "pending":
+        if not isinstance(requests, Mapping):
+            raise EchelonResultValidationError(
+                "evidence_requests must be an object when evidence resolution is pending"
+            )
+        items = requests.get("requests")
+        if not isinstance(items, list) or not items:
+            raise EchelonResultValidationError(
+                "evidence_requests.requests must be a non-empty list"
+            )
+        for index, request in enumerate(items):
+            prefix = f"evidence_requests.requests[{index}]"
+            if not isinstance(request, Mapping):
+                raise EchelonResultValidationError(f"{prefix} must be an object")
+            for field in ("id", "question", "evidence_needed"):
+                if not isinstance(request.get(field), str) or not request[field].strip():
+                    raise EchelonResultValidationError(
+                        f"{prefix}.{field} must be a non-empty string"
+                    )
+            for field in ("affected_requirements", "supplied_reference_ids"):
+                values = request.get(field)
+                if (
+                    not isinstance(values, list)
+                    or not values
+                    or not all(isinstance(value, str) and value.strip() for value in values)
+                ):
+                    raise EchelonResultValidationError(
+                        f"{prefix}.{field} must be a non-empty list of strings"
+                    )
+    elif requests is not None:
+        raise EchelonResultValidationError(
+            "evidence_requests is allowed only when evidence resolution is pending"
+        )
+
+    if not require_finding_routes:
+        return
+
+    finding_routes = updates.get("finding_routes")
+    findings = finding_routes.get("findings") if isinstance(finding_routes, Mapping) else None
+    if not isinstance(findings, list):
+        raise EchelonResultValidationError("finding_routes.findings must be a list")
+    if verdict == "FAIL" and not findings:
+        raise EchelonResultValidationError(
+            "failing WHY2 results require at least one finding_routes.findings entry"
+        )
+
+    has_evidence_route = False
+    for index, finding in enumerate(findings):
+        prefix = f"finding_routes.findings[{index}]"
+        if not isinstance(finding, Mapping):
+            raise EchelonResultValidationError(f"{prefix} must be an object")
+        for field in ("issue_id", "rationale"):
+            if not isinstance(finding.get(field), str) or not finding[field].strip():
+                raise EchelonResultValidationError(
+                    f"{prefix}.{field} must be a non-empty string"
+                )
+        route = finding.get("route")
+        if route not in {"spec_repair", "evidence_resolution", "human_decision"}:
+            raise EchelonResultValidationError(
+                f"{prefix}.route must be spec_repair, evidence_resolution, or human_decision"
+            )
+        has_evidence_route = has_evidence_route or route == "evidence_resolution"
+
+    if has_evidence_route != (status == "pending"):
+        raise EchelonResultValidationError(
+            "evidence_resolution findings must exactly match evidence_resolution_status"
+        )
 
 
 def _validate_state_update_type(key: str, value: Any, value_type: str) -> None:

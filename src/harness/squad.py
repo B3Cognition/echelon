@@ -69,6 +69,7 @@ from harness.squad_executors import (
     HumanGateExecutor,
     PhaseExecutor,
     StagedParallelExecutor,
+    _MANDATORY_PHASE_OUTPUTS,
 )
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from harness.squad_completion import (
@@ -126,9 +127,7 @@ ITERATIVE_PHASES = WHY_PHASES | frozenset(
         "phase3-how",
         "phase3-sentinel",
         "phase3-plan",
-        "phase3-tasks-lexicon",
         "phase3-consensus",
-        "phase3-consensus-tasks-lexicon",
     }
 )
 
@@ -139,9 +138,10 @@ MAX_CONVERGENCE_GUARD_FIRES = 3
 # Max dispatches of any single phase per run before forcing escalation.
 # WHY phases are governed separately by why_fail_count; this cap applies to all others.
 MAX_PHASE_DISPATCHES = 5
-# A planning agent gets the original pass plus two controller-directed repairs
-# to resolve its own product-input mapping omissions.  This is intentionally
-# bounded: the controller may demand evidence, but must never invent mappings.
+# An authoring or planning agent gets the original pass plus two
+# controller-directed repairs to resolve its own product-input mapping errors.
+# This is intentionally bounded: the controller may demand evidence, but must
+# never invent mappings.
 MAX_PRODUCT_INPUT_MAPPING_REPAIRS = 2
 PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION = 2
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
@@ -186,6 +186,7 @@ JUDGMENT_STATE_UPDATE_KEYS = frozenset(
         "escalation_risk_level",
         "escalation_recommended_answer",
         "escalation_default_answer",
+        "issue_resolution_selection",
         "risk_level",
         "fallback_mode",
         "execution_mode",
@@ -199,6 +200,7 @@ JUDGMENT_RESULT_CONTRACT = EchelonResultContract(
         "iteration": "integer",
         "status": "string",
         "escalation_resolved": "boolean",
+        "issue_resolution_selection": "object",
     },
     state_update_enums={
         "status": frozenset({"running", "blocked", "done", "interrupted", "killed"}),
@@ -2359,6 +2361,12 @@ class SquadController:
 
     def _guard_spec_lexicon_evidence(self, phase: str) -> str:
         """Route legacy downstream resumes through visible spec certification."""
+        # INVESTIGATOR resolves a declared evidence gap before the next WHAT
+        # amendment.  It is reachable from WHY2 but is not a downstream spec
+        # consumer, so forcing it through Lexicon would erase the route that
+        # requested it and restart CARTOGRAPHER instead.
+        if phase == "phase1-investigate":
+            return phase
         phase_ids = list(self._graph.all_phase_ids())
         try:
             gate_index = phase_ids.index("phase1-lexicon")
@@ -4140,14 +4148,18 @@ class SquadController:
         self,
         result: SquadAgentResult,
         phase: str,
-        state: Mapping[str, object],
+        state: Mapping[str, object] | None = None,
         *,
         path_overrides: Mapping[str, Path] | None = None,
     ) -> str | None:
         """Validate and persist agent proposals through the controller-owned ledger."""
         payload = result.echelon_result or {}
         updates = payload.get("product_input_updates")
-        state = dict(state)
+        # DISCOVER consumes references as evidence but does not own requirement
+        # or task traceability.
+        if phase == "phase1-discover":
+            return None
+        state = dict(state) if state is not None else self._state_store.load()
         metadata = state.get("product_inputs")
         if not isinstance(metadata, dict) or not metadata:
             return "product_input_updates received without declared product inputs" if updates else None
@@ -4259,14 +4271,14 @@ class SquadController:
         *,
         snapshot: RoutingStateSnapshot,
     ) -> bool:
-        """Re-dispatch PLAN with exact unresolved product-input evidence.
+        """Re-dispatch a phase with exact unresolved product-input evidence.
 
-        Product-input mappings are authored by ORCHESTRATOR, not inferred by the
-        controller.  A missing/invalid update therefore gets a bounded repair
-        pass with the ledger blockers injected into its prompt; only exhaustion
-        becomes a terminal block.
+        Product-input mappings are authored by agents, not inferred by the
+        controller. A missing or invalid update therefore gets a bounded repair
+        pass with controller-derived evidence; only exhaustion becomes a
+        terminal block.
         """
-        if phase not in {"phase3-plan", "phase3-consensus"}:
+        if phase not in {"phase1-what", "phase3-plan", "phase3-consensus"}:
             return False
         prefixes = (
             "invalid product input task mappings:",
@@ -4305,7 +4317,36 @@ class SquadController:
         payload = result.echelon_result if result is not None else None
         updates = payload.get("product_input_updates") if isinstance(payload, dict) else None
         active_spec_dir = self._active_phase_a_spec_dir(state)
-        if isinstance(updates, list) and active_spec_dir is not None:
+        if phase == "phase1-what":
+            metadata = state.get("product_inputs")
+            traceability_ref = (
+                str(metadata.get("traceability") or "").strip()
+                if isinstance(metadata, dict)
+                else ""
+            )
+            if traceability_ref:
+                traceability_path = Path(traceability_ref)
+                if not traceability_path.is_absolute():
+                    traceability_path = self._project_root / traceability_path
+                try:
+                    ledger = json.loads(traceability_path.read_text(encoding="utf-8"))
+                    requirements = ledger.get("requirements") if isinstance(ledger, dict) else []
+                    valid_ids = [
+                        str(entry.get("input_unit_id"))
+                        for entry in requirements
+                        if isinstance(entry, dict) and str(entry.get("input_unit_id") or "").strip()
+                    ]
+                    invalid_ids = re.findall(
+                        r"unknown requirement unit ['\"]([^'\"]+)['\"]",
+                        error,
+                    )
+                    hints = {
+                        "invalid_input_unit_ids": invalid_ids,
+                        "valid_requirement_ids": valid_ids,
+                    }
+                except (OSError, json.JSONDecodeError) as exc:
+                    logger.warning("Could not construct phase-one product-input ID repair hints: %s", exc)
+        elif isinstance(updates, list) and active_spec_dir is not None:
             try:
                 from echelon.product_inputs import build_product_input_mapping_repair_hints
 
@@ -4324,6 +4365,7 @@ class SquadController:
         state["product_input_mapping_repair"] = {
             "attempt": attempts + 1,
             "blockers": blockers,
+            "phase": phase,
             "protocol_version": PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION,
             **hints,
         }
@@ -4470,6 +4512,49 @@ class SquadController:
         state["phase"] = phase if retryable_analysis else PHASE_TERMINAL_BLOCKED
         state["status"] = "blocked"
         state["blocked_reason"] = reason
+        if reason in {"missing_phase_outputs", "invalid_evidence_inventory"}:
+            updates = result.state_updates or {}
+            missing_outputs = updates.get("missing_outputs")
+            invalid_outputs = updates.get("invalid_outputs")
+            recovery_updates = updates.get("recovery_state_updates")
+            has_missing = (
+                isinstance(missing_outputs, list)
+                and all(isinstance(item, str) and item for item in missing_outputs)
+            )
+            has_invalid = (
+                isinstance(invalid_outputs, list)
+                and all(
+                    isinstance(item, dict)
+                    and isinstance(item.get("path"), str)
+                    and item["path"].strip()
+                    and isinstance(item.get("reason"), str)
+                    and item["reason"].strip()
+                    for item in invalid_outputs
+                )
+            )
+            if has_missing or has_invalid:
+                if has_missing:
+                    state["missing_outputs"] = list(missing_outputs)
+                recovery = {
+                    "phase": phase,
+                    "prior_state_updates": (
+                        dict(recovery_updates)
+                        if isinstance(recovery_updates, dict)
+                        else {}
+                    ),
+                }
+                if has_missing:
+                    recovery["missing_outputs"] = list(missing_outputs)
+                if has_invalid:
+                    recovery["invalid_outputs"] = list(invalid_outputs)
+                prior_recovery = state.get("phase_output_recovery")
+                if isinstance(prior_recovery, dict) and prior_recovery.get(
+                    "quarantined_invalid_outputs"
+                ):
+                    recovery["quarantined_invalid_outputs"] = list(
+                        prior_recovery["quarantined_invalid_outputs"]
+                    )
+                state["phase_output_recovery"] = recovery
         if retryable_analysis:
             node = self._graph.get(phase)
             for key in node.controller_state_update_keys:
@@ -4501,6 +4586,75 @@ class SquadController:
         if reason == "provider_session_limit":
             detail = f"missing_echelon_result; provider: {result.provider_limit_message}"
         print(f"[squad] ✗ {phase} blocked: {reason} ({detail})", flush=True)
+        return True
+
+    def _restore_missing_phase_output_recovery(self, phase: str) -> bool:
+        """Recreate artifact-repair context for runs blocked before it was persisted."""
+        state = self._state_store.load()
+        recovery = state.get("phase_output_recovery")
+        if isinstance(recovery, dict) and recovery.get("phase") == phase:
+            spec_dir_ref = str(state.get("spec_dir") or "").strip()
+            spec_dir = Path(spec_dir_ref)
+            if spec_dir_ref and not spec_dir.is_absolute():
+                spec_dir = self._project_root / spec_dir
+            has_quarantined_inventory = bool(
+                spec_dir_ref
+                and spec_dir.is_dir()
+                and any(spec_dir.glob("evidence-inventory.invalid*.json"))
+            )
+            if (
+                phase == "phase1-investigate"
+                and (
+                    recovery.get("quarantined_invalid_outputs")
+                    or has_quarantined_inventory
+                )
+                and not recovery.get("invalid_outputs")
+            ):
+                recovery["invalid_outputs"] = [{
+                    "path": "evidence-inventory.json",
+                    "reason": "a prior invalid inventory was quarantined; rebuild the replacement from declared source seeds",
+                }]
+                state["phase_output_recovery"] = recovery
+                self._state_store.save(state)
+            return True
+        reason = str(state.get("blocked_reason") or "")
+        if reason.startswith("invalid_evidence_inventory") and phase == "phase1-investigate":
+            state["phase_output_recovery"] = {
+                "phase": phase,
+                "invalid_outputs": [{
+                    "path": "evidence-inventory.json",
+                    "reason": "inventory failed validation in a prior Echelon version; rebuild it from declared source seeds",
+                }],
+                "prior_state_updates": {},
+            }
+            self._state_store.save(state)
+            return True
+        if reason != "missing_phase_outputs":
+            return False
+        last_dispatch = state.get("last_dispatch")
+        if not isinstance(last_dispatch, dict) or last_dispatch.get("phase_id") != phase:
+            return False
+        required = _MANDATORY_PHASE_OUTPUTS.get(phase, ())
+        spec_dir_ref = str(state.get("spec_dir") or "").strip()
+        if not required or not spec_dir_ref:
+            return False
+        spec_dir = Path(spec_dir_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        missing = [
+            output
+            for output in required
+            if not (spec_dir / output).exists()
+        ]
+        if not missing:
+            return False
+        state["missing_outputs"] = missing
+        state["phase_output_recovery"] = {
+            "phase": phase,
+            "missing_outputs": missing,
+            "prior_state_updates": {},
+        }
+        self._state_store.save(state)
         return True
 
     def _record_blocker_event(self, phase: str, reason: str) -> None:
@@ -4751,6 +4905,7 @@ class SquadController:
         # reported repairs", never an indeterminate condition that falls
         # through to a later phase.
         cfg.setdefault("lexicon_attempts", 0)
+        cfg.setdefault("tasks_lexicon_attempts", 0)
         self._gate_config_cache = cfg
         return cfg
 
@@ -4768,6 +4923,8 @@ class SquadController:
         """
         gate_artifacts = {
             "phase1-lexicon": ("spec", "lexicon_pass", "lexicon_attempts"),
+            "phase3-plan": ("tasks", "tasks_lexicon_pass", "tasks_lexicon_attempts"),
+            "phase3-consensus": ("tasks", "tasks_lexicon_pass", "tasks_lexicon_attempts"),
         }
         gate_fields = gate_artifacts.get(node.id)
         if gate_fields is None:
@@ -6028,6 +6185,7 @@ class SquadController:
             if blocked_reason == "phase_dispatch_limit"
             else ""
         )
+        banzai_candidates = self._banzai_issue_resolution_candidates(state)
 
         staging_dir = Path(state.get("staging_dir", str(self._squad_dir / "staging")))
         staging_context = ""
@@ -6056,6 +6214,26 @@ class SquadController:
             f"harness resets it after a valid consecutive-fail recovery.\n\n"
             f"**Staging context:**\n{staging_context}"
         )
+        if capped_phase:
+            candidate_text = json.dumps(banzai_candidates, indent=2) if banzai_candidates else "(none)"
+            context += (
+                "\n\n## Dispatch-cap recovery: issue-level decision required\n\n"
+                "You may clear this cap only by selecting exactly one candidate below. "
+                "Never invent a product, scope, policy, security, or quality-waiver decision. "
+                "If no candidate is present, or none is safe to accept, return no "
+                "`issue_resolution_selection`; the controller will keep the run blocked "
+                "for a human decision.\n\n"
+                "For a selection, return exactly:\n"
+                "```yaml\n"
+                "issue_resolution_selection:\n"
+                "  issue_id: ISS-001\n"
+                "  decision: <copy the candidate suggested_option exactly>\n"
+                "  rationale: <why its cited evidence supports this choice>\n"
+                "  confidence: high | medium\n"
+                "  evidence_backed: true\n"
+                "```\n\n"
+                f"**Eligible candidates:**\n```json\n{candidate_text}\n```"
+            )
         if commander_path.exists():
             context = commander_path.read_text() + "\n\n" + context
         else:
@@ -6334,6 +6512,86 @@ class SquadController:
                 )
             return result
         return result
+
+    def _banzai_issue_resolution_candidates(self, state: dict) -> list[dict[str, str]]:
+        """Read only explicitly auto-eligible SAGE suggestions from issues.md."""
+        spec_ref = str(state.get("published_spec_dir") or state.get("spec_dir") or "").strip()
+        if not spec_ref:
+            return []
+        spec_dir = Path(spec_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        issues_path = spec_dir / "issues.md"
+        try:
+            issues_md = issues_path.read_text(errors="replace")
+        except OSError:
+            return []
+        candidates: list[dict[str, str]] = []
+        for title, body in re.findall(
+            r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### |\Z)",
+            issues_md,
+            re.MULTILINE | re.DOTALL,
+        ):
+            issue_match = re.match(r"^(ISS-\d+):\s*(.+)$", title.strip())
+            if not issue_match:
+                continue
+            guidance = re.search(r"### Resolution Guidance\n(.*?)(?=^### |\Z)", body, re.DOTALL)
+            if not guidance:
+                continue
+            text = guidance.group(1)
+            eligible = re.search(r"- \*\*Banzai eligible:\*\*\s*yes\b", text, re.IGNORECASE)
+            suggested = re.search(r"- \*\*Suggested option:\*\*\s*(.+)", text)
+            evidence = re.search(r"- \*\*Evidence basis:\*\*\s*(.+)", text)
+            required = re.search(r"- \*\*Decision required:\*\*\s*(.+)", text)
+            if not eligible or not suggested or not evidence or not required:
+                continue
+            candidates.append({
+                "issue_id": issue_match.group(1),
+                "title": issue_match.group(2),
+                "decision_required": required.group(1).strip(),
+                "suggested_option": suggested.group(1).strip(),
+                "evidence_basis": evidence.group(1).strip(),
+            })
+        return candidates
+
+    def _validate_banzai_issue_resolution_selection(
+        self, selection: object, candidates: list[dict[str, str]]
+    ) -> dict[str, str] | None:
+        """Allow Banzai only to copy an explicitly evidence-backed suggestion."""
+        if not isinstance(selection, dict) or selection.get("evidence_backed") is not True:
+            return None
+        issue_id = str(selection.get("issue_id") or "").strip()
+        decision = str(selection.get("decision") or "").strip()
+        rationale = str(selection.get("rationale") or "").strip()
+        confidence = str(selection.get("confidence") or "").strip().lower()
+        candidate = next((item for item in candidates if item["issue_id"] == issue_id), None)
+        if not candidate or decision != candidate["suggested_option"] or not rationale:
+            return None
+        if confidence not in {"high", "medium"}:
+            return None
+        return {
+            **candidate,
+            "decision": decision,
+            "rationale": rationale,
+            "confidence": confidence,
+            "evidence_backed": "true",
+        }
+
+    def _block_banzai_issue_resolution(
+        self, blocked_phase: str, capped_phase: str, reason: str
+    ) -> None:
+        """Keep a capped run blocked when Banzai cannot safely choose for the user."""
+        state = self._state_store.load()
+        state["status"] = "blocked"
+        state["phase"] = PHASE_TERMINAL_BLOCKED
+        state["blocked_reason"] = "phase_dispatch_limit"
+        state["phase_dispatch_limit_phase"] = capped_phase
+        state["escalation_question"] = (
+            f"{reason}. Resolve one issue explicitly before retrying {capped_phase}: "
+            'echelon spec resolve ISS-<n> "<project decision>".'
+        )
+        self._state_store.save(state)
+        self._record_blocker_event(blocked_phase, "phase_dispatch_limit")
 
     def _write_journal_entries(self, result: SquadAgentResult, phase_id: str) -> None:
         """Mirror executor journal writes through the shared durable store."""

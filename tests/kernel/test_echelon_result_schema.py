@@ -14,6 +14,7 @@ from harness.echelon_result_schema import (  # noqa: E402
     ALLOWED_VERDICTS,
     EchelonResultContract,
     EchelonResultValidationError,
+    validate_evidence_routing_state_updates,
     validate_echelon_result,
     validate_echelon_result_contract,
 )
@@ -286,6 +287,48 @@ def test_result_contract_rejects_invalid_routing_state_type():
             {
                 "verdict": "COMPLETE",
                 "state_updates": {"tasks_lexicon_attempts": "two"},
+            },
+            contract,
+        )
+
+
+def test_evidence_route_requires_actionable_declared_reference_request():
+    with pytest.raises(EchelonResultValidationError, match="evidence_requests.requests"):
+        validate_evidence_routing_state_updates(
+            {
+                "evidence_resolution_status": "pending",
+                "evidence_requests": {"requests": []},
+            },
+            verdict="FAIL",
+            require_finding_routes=False,
+        )
+
+
+def test_result_contract_rejects_unstructured_pending_evidence_route():
+    contract = EchelonResultContract(
+        allowed_state_update_keys=frozenset({
+            "evidence_resolution_status",
+            "evidence_requests",
+        }),
+        required_state_update_keys=frozenset({"evidence_resolution_status"}),
+        state_update_types={
+            "evidence_resolution_status": "string",
+            "evidence_requests": "object",
+        },
+        state_update_enums={
+            "evidence_resolution_status": frozenset({"not_required", "pending"}),
+        },
+        evidence_routing="requests",
+    )
+
+    with pytest.raises(EchelonResultValidationError, match="evidence_requests.requests"):
+        validate_echelon_result_contract(
+            {
+                "verdict": "FAIL",
+                "state_updates": {
+                    "evidence_resolution_status": "pending",
+                    "evidence_requests": {"requests": []},
+                },
             },
             contract,
         )

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
+import sys
+import types
 
 import pytest
 
@@ -41,6 +44,169 @@ def test_requirement_folder_is_snapshotted_with_stable_catalog(tmp_path: Path) -
         "task_ids": [],
         "targets": [],
     }]
+
+
+def test_requirement_pdf_revision_creates_page_traceability_units(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import (
+        parse_input_declaration,
+        resolve_product_input_revision,
+    )
+
+    project = tmp_path / "workspace"
+    source = project / "sources" / "PBS-E-73.pdf"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"%PDF-placeholder")
+    base_inputs = project / "specs" / "004-demo" / "inputs"
+    base_inputs.mkdir(parents=True)
+    (base_inputs / "manifest.json").write_text('{"base": true}\n', encoding="utf-8")
+    monkeypatch.setattr(
+        "echelon.product_inputs._extract_pdf_pages",
+        lambda _path: ["Requirement one", "Requirement two"],
+    )
+
+    resolution = resolve_product_input_revision(
+        project,
+        project / "specs" / "004-demo" / "amendments" / "001" / "inputs",
+        [parse_input_declaration("requirement:sources/PBS-E-73.pdf")],
+    )
+
+    catalog = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))["units"]
+    assert [unit["statement"] for unit in catalog] == ["Requirement one", "Requirement two"]
+    assert [unit["source_locator"] for unit in catalog] == [
+        "sources/PBS-E-73.pdf:page:1",
+        "sources/PBS-E-73.pdf:page:2",
+    ]
+    assert all(unit["id"].startswith("IN-REQ-") for unit in catalog)
+    assert (base_inputs / "manifest.json").read_text(encoding="utf-8") == '{"base": true}\n'
+
+
+def test_product_input_revision_refuses_to_replace_existing_evidence(tmp_path: Path) -> None:
+    from echelon.product_inputs import (
+        ProductInputError,
+        parse_input_declaration,
+        resolve_product_input_revision,
+    )
+
+    project = tmp_path / "workspace"
+    source = project / "requirements.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("Requirement\n", encoding="utf-8")
+    destination = project / "specs" / "004-demo" / "amendments" / "001" / "inputs"
+    destination.mkdir(parents=True)
+
+    with pytest.raises(ProductInputError, match="already exists"):
+        resolve_product_input_revision(
+            project,
+            destination,
+            [parse_input_declaration("requirement:requirements.md")],
+        )
+
+
+def test_requirement_pdf_without_extractable_text_blocks_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import (
+        ProductInputError,
+        parse_input_declaration,
+        resolve_product_input_revision,
+    )
+
+    project = tmp_path / "workspace"
+    source = project / "requirements.pdf"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"%PDF-placeholder")
+    monkeypatch.setattr("echelon.product_inputs._extract_pdf_pages", lambda _path: [])
+
+    with pytest.raises(ProductInputError, match="no extractable text"):
+        resolve_product_input_revision(
+            project,
+            project / "revision-inputs",
+            [parse_input_declaration("requirement:requirements.pdf")],
+        )
+
+
+def test_requirement_pdf_uses_pypdf_when_poppler_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import _extract_pdf_pages
+
+    source = tmp_path / "requirements.pdf"
+    source.write_bytes(b"%PDF-placeholder")
+
+    class _Page:
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def extract_text(self) -> str:
+            return self._text
+
+    class _Reader:
+        def __init__(self, _path: Path) -> None:
+            self.pages = [_Page("Requirement one"), _Page("Requirement two")]
+
+    fake_pypdf = types.ModuleType("pypdf")
+    fake_pypdf.PdfReader = _Reader  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pypdf", fake_pypdf)
+
+    def _missing_poppler(*_args: object, **_kwargs: object) -> object:
+        raise FileNotFoundError
+
+    monkeypatch.setattr("echelon.product_inputs.subprocess.run", _missing_poppler)
+
+    assert _extract_pdf_pages(source) == ["Requirement one", "Requirement two"]
+
+
+def test_requirement_pdf_prefers_pypdf_over_poppler(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import _extract_pdf_pages
+
+    source = tmp_path / "requirements.pdf"
+    source.write_bytes(b"%PDF-placeholder")
+
+    class _Page:
+        def extract_text(self) -> str:
+            return "pypdf requirement"
+
+    class _Reader:
+        def __init__(self, _path: Path) -> None:
+            self.pages = [_Page()]
+
+    fake_pypdf = types.ModuleType("pypdf")
+    fake_pypdf.PdfReader = _Reader  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "pypdf", fake_pypdf)
+
+    def _poppler_must_not_run(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("pypdf must be attempted before pdftotext")
+
+    monkeypatch.setattr("echelon.product_inputs.subprocess.run", _poppler_must_not_run)
+
+    assert _extract_pdf_pages(source) == ["pypdf requirement"]
+
+
+def test_requirement_pdf_falls_back_to_poppler_when_pypdf_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.product_inputs import _extract_pdf_pages
+
+    source = tmp_path / "requirements.pdf"
+    source.write_bytes(b"%PDF-placeholder")
+    monkeypatch.setitem(sys.modules, "pypdf", None)
+    monkeypatch.setattr(
+        "echelon.product_inputs.subprocess.run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Poppler requirement\f", stderr=""
+        ),
+    )
+
+    assert _extract_pdf_pages(source) == ["Poppler requirement"]
 
 
 def test_requirement_catalog_keeps_markdown_scaffolding_as_context_only(tmp_path: Path) -> None:
@@ -451,6 +617,61 @@ def test_controller_ignores_empty_exclusions_for_context_only_catalog_units(tmp_
     }]
 
 
+def test_discover_ignores_reference_traceability_updates(tmp_path: Path) -> None:
+    """Discovery may use references as evidence but cannot mutate the requirement ledger."""
+    from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
+    from harness.squad import SquadController
+    from harness.squad_provider import SquadAgentResult
+    from harness.squad_state import SquadStateStore
+
+    project = tmp_path / "workspace"
+    source = project / "sources" / "docs.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("https://api.example.test/openapi.json\n", encoding="utf-8")
+    run_dir = project / "runs" / "run-1"
+    resolution = resolve_product_inputs(
+        project,
+        run_dir,
+        [parse_input_declaration("reference:sources/docs.md")],
+    )
+    reference_id = json.loads(resolution.catalog_path.read_text(encoding="utf-8"))["units"][0]["id"]
+    store = SquadStateStore(run_dir)
+    store.initialize(
+        "run-1",
+        "greenfield",
+        "demo",
+        0,
+        "phase1-discover",
+        product_inputs=resolution.state_payload(project),
+    )
+    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    result = SquadAgentResult(
+        exit_code=0,
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+        echelon_result={
+            "product_input_updates": [{
+                "input_unit_id": reference_id,
+                "disposition": "included",
+                "rationale": "Used as API documentation evidence during discovery.",
+                "spec_ids": [],
+                "task_ids": [],
+                "targets": [],
+            }],
+        },
+    )
+
+    assert controller._apply_product_input_updates(result, "phase1-discover") is None
+    ledger = json.loads(resolution.traceability_path.read_text(encoding="utf-8"))
+    assert ledger["requirements"] == []
+    assert ledger["references"] == [{
+        "input_unit_id": reference_id,
+        "state": "reviewed_unused",
+        "rationale": "Awaiting analysis.",
+    }]
+
+
 def test_plan_updates_reject_contextual_task_ids_without_mutating_ledger(tmp_path: Path) -> None:
     from echelon.product_inputs import (
         ProductInputError,
@@ -665,6 +886,31 @@ def test_product_input_context_includes_controller_mapping_repair() -> None:
     assert "Product Input Mapping Repair" in prompt
     assert "IN-REQ-1: unresolved disposition open_question" in prompt
     assert "Do not return COMPLETE" in prompt
+
+
+def test_product_input_context_makes_phase_one_id_repair_allowlist_explicit() -> None:
+    from harness.squad_executors import _render_product_input_context
+
+    prompt = _render_product_input_context({
+        "product_inputs": {
+            "manifest": "runs/one/inputs/manifest.json",
+            "catalog": "runs/one/inputs/catalog.json",
+            "traceability": "runs/one/inputs/traceability.json",
+            "requirement_context": "runs/one/inputs/requirement-context.md",
+            "reference_context": "runs/one/inputs/reference-context.md",
+        },
+        "product_input_mapping_repair": {
+            "attempt": 1,
+            "phase": "phase1-what",
+            "blockers": ["product input update references unknown requirement unit 'IN-REQ-FILTER-GROUPS'"],
+            "invalid_input_unit_ids": ["IN-REQ-FILTER-GROUPS"],
+            "valid_requirement_ids": ["IN-REQ-CANONICAL"],
+        },
+    })
+
+    assert "Invalid IDs from the prior result: IN-REQ-FILTER-GROUPS" in prompt
+    assert "Only these canonical IDs may be used: IN-REQ-CANONICAL" in prompt
+    assert "Never derive an ID from a requirement label" in prompt
 
 
 def test_product_input_context_exposes_deterministic_mapping_worksheet() -> None:

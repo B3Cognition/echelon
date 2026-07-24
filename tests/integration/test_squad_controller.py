@@ -8,6 +8,7 @@ from collections.abc import Mapping
 import sys
 import json
 import hashlib
+import copy
 import subprocess
 import uuid
 from copy import deepcopy
@@ -104,13 +105,28 @@ class _ExplodingRepr:
 
 def _mock_provider(verdict: str = "DONE") -> MagicMock:
     provider = MagicMock()
-    provider.exec_agent.return_value = SquadAgentResult(
+    default_result = SquadAgentResult(
         exit_code=0,
-        echelon_result={"verdict": verdict, "state_updates": {}},
+        echelon_result={
+            "verdict": verdict,
+            "state_updates": {
+                "evidence_resolution_status": "not_required",
+                "finding_routes": {"findings": []},
+            },
+        },
         raw_output="",
         duration_ms=100,
         timed_out=False,
     )
+    provider.exec_agent.return_value = default_result
+
+    def default_exec_agent(*args, **kwargs):
+        configured = provider.exec_agent.return_value
+        if configured is not default_result:
+            return configured
+        return copy.deepcopy(default_result)
+
+    provider.exec_agent.side_effect = default_exec_agent
     return provider
 
 
@@ -3831,7 +3847,15 @@ class TestSquadControllerBasics:
                         "overall": 0.745,
                         "structure": 0.660,
                         "testability": 0.679,
-                    }]
+                    }],
+                    "evidence_resolution_status": "not_required",
+                    "finding_routes": {
+                        "findings": [{
+                            "issue_id": "ISS-QUALITY",
+                            "route": "spec_repair",
+                            "rationale": "The qualitative review failed.",
+                        }]
+                    },
                 },
             },
             raw_output="",
@@ -3857,7 +3881,16 @@ class TestSquadControllerBasics:
             provider.exec_agent.return_value,
             result_contract=node.result_contract(),
         )
-        assert result.state_updates == {}
+        assert result.state_updates == {
+            "evidence_resolution_status": "not_required",
+            "finding_routes": {
+                "findings": [{
+                    "issue_id": "ISS-QUALITY",
+                    "route": "spec_repair",
+                    "rationale": "The qualitative review failed.",
+                }]
+            },
+        }
         assert "quality_scores" in result.quarantined_state_updates
         snapshot = store.capture_routing_snapshot(expected_phase=node.id)
         prepared = ctrl._prepare_phase_result(node, result, snapshot)
@@ -3894,7 +3927,19 @@ class TestSquadControllerBasics:
         store.save(state)
         result = SquadAgentResult(
             exit_code=0,
-            echelon_result={"verdict": "FAIL", "state_updates": {}},
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {
+                    "evidence_resolution_status": "not_required",
+                    "finding_routes": {
+                        "findings": [{
+                            "issue_id": "ISS-QUALITY",
+                            "route": "spec_repair",
+                            "rationale": "The qualitative review failed.",
+                        }]
+                    },
+                },
+            },
             raw_output="",
             duration_ms=0,
             timed_out=False,
@@ -4038,7 +4083,16 @@ class TestSquadControllerBasics:
             exit_code=0,
             echelon_result={
                 "verdict": "FAIL",
-                "state_updates": {},
+                "state_updates": {
+                    "evidence_resolution_status": "not_required",
+                    "finding_routes": {
+                        "findings": [{
+                            "issue_id": "ISS-PROGRESS",
+                            "route": "spec_repair",
+                            "rationale": "The active specification needs repair.",
+                        }]
+                    },
+                },
             },
             raw_output="",
             duration_ms=0,
@@ -4127,6 +4181,7 @@ class TestSquadControllerBasics:
                         "verdict": "DONE",
                         "state_updates": {
                             "spec_status": "planned",
+                            "evidence_resolution_status": "not_required",
                         },
                     },
                     raw_output="", duration_ms=0, timed_out=False,
@@ -4138,7 +4193,10 @@ class TestSquadControllerBasics:
                     exit_code=0,
                     echelon_result={
                         "verdict": "DONE",
-                        "state_updates": {},
+                        "state_updates": {
+                            "evidence_resolution_status": "not_required",
+                            "finding_routes": {"findings": []},
+                        },
                     },
                     raw_output="", duration_ms=0, timed_out=False,
                 )
@@ -5906,7 +5964,11 @@ class TestStructuralGuardDeterminism:
         (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
         with patch.object(ctrl, "_judgment_dispatch",
                           side_effect=AssertionError("guard punted to COMMANDER")):
-            nxt = _evaluate_prepared_result(ctrl, node, self._result({}))
+            nxt = _evaluate_prepared_result(
+                ctrl,
+                node,
+                self._result({}),
+            )
         assert nxt == "phase2-decide"
 
     def test_omitted_feasibility_structural_result_does_not_fail_open(self, tmp_path):
@@ -8398,7 +8460,11 @@ THEN: The dashboard is visible
             "_judgment_dispatch",
             side_effect=AssertionError("missing Lexicon result punted to COMMANDER"),
         ):
-            nxt = _evaluate_prepared_result(ctrl, node, self._result({}))
+            nxt = _evaluate_prepared_result(
+                ctrl,
+                node,
+                self._result({"evidence_resolution_status": "not_required"}),
+            )
 
         assert nxt == "phase1-lexicon"
 

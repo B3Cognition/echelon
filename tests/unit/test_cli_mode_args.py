@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from echelon.cli import _cmd_run, _consume_mode_arg
+from echelon.cli import _cmd_run, _consume_mode_arg, _print_squad_summary
 
 
 def test_consume_mode_arg_accepts_split_form() -> None:
@@ -130,6 +130,67 @@ def test_cmd_run_exits_nonzero_when_squad_blocks(
     assert "echelon spec continue" in out
     assert "will retry the blocked phase; it was not marked complete" in out
     assert "blocked  ·  2m 31s  ·  $0.1234" in out
+
+
+def test_blocked_summary_recaps_current_issues_and_prints_absolute_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    squad_dir = tmp_path / "runs" / "spec-20260723-180158-273719"
+    spec_dir = tmp_path / "specs" / "001-sdk"
+    squad_dir.mkdir(parents=True)
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        "\n".join(
+            [
+                "# Issues — WHY2",
+                "",
+                "## Summary",
+                "- **CRITICAL:** 1",
+                "- **HIGH:** 2",
+                "- **MEDIUM:** 0",
+                "- **LOW:** 0",
+                "",
+                "## Issues",
+                "",
+                "### ISS-001: SDK authentication scheme is undefined",
+                "- **Severity:** CRITICAL",
+                "",
+                "### ISS-002: Retry policy needs a product decision",
+                "- **Severity:** HIGH",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (squad_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "spec_id": "001-sdk",
+                "spec_dir": "specs/001-sdk",
+                "blocked_reason": "phase_dispatch_limit",
+                "escalation_question": "Phase 'phase1-what' has been dispatched too often.",
+                "phase_dispatch_limit_phase": "phase1-what",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_squad_summary(
+        tmp_path,
+        squad_dir,
+        SimpleNamespace(status="blocked", phase="terminal-blocked"),
+        mode="semi",
+        message="Create an SDK",
+    )
+
+    output = capsys.readouterr().out
+    assert "issues" in output
+    assert "CRITICAL 1 · HIGH 2" in output
+    assert "[CRITICAL] SDK authentication scheme is undefined" in output
+    assert "[HIGH] Retry policy needs a product decision" in output
+    assert str((spec_dir / "issues.md").resolve()) in output
 
 
 def test_cmd_run_passes_repeatable_implementation_targets_and_ignore_re(
