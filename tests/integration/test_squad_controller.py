@@ -1749,8 +1749,8 @@ class TestSquadControllerBasics:
         ctrl.run("msg", "banzai")
         assert store.load().get("why_fail_count", 0) == 0
 
-    def test_consecutive_fails_force_escalation(self, tmp_path):
-        """≥2 consecutive WHY fails with no staging progress → auto-escalation."""
+    def test_consecutive_why1_fails_remain_in_the_declared_discovery_loop(self, tmp_path):
+        """WHY1 has no spec issue ledger, so its graph iteration cap owns retries."""
         from harness.squad_provider import SquadAgentResult
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(
@@ -1774,12 +1774,10 @@ class TestSquadControllerBasics:
             "recorded_at": "2020-01-01T00:00:00Z",
         }
         store.save(state)
-        result = ctrl.run("msg", "semi")
-        # Should be blocked by consecutive-fail guard
-        assert result.status == "blocked"
+        result = ctrl._evaluate_transitions(ctrl._graph.get("phase1-why1"), provider.exec_agent.return_value)
+        assert result == "phase1-discover"
         state = store.load()
-        assert state.get("escalation_question") is not None
-        assert "choose one actionable direction" in state.get("escalation_question", "")
+        assert state.get("escalation_question") is None
 
     def test_consecutive_why2_fail_with_active_spec_progress_routes_to_repair(self, tmp_path):
         """Fresh WHY2 artifacts in state.spec_dir count as progress."""
@@ -1893,7 +1891,8 @@ class TestSquadControllerBasics:
 
         assert ctrl._evaluate_transitions(ctrl._graph.get("phase1-why2"), result) == "terminal-blocked"
         question = store.load()["escalation_question"]
-        assert "choose one actionable direction" in question
+        assert "No retry is authorized" in question
+        assert "echelon spec resolve ISS-<n>" in question
         assert str(spec_dir / "issues.md") in question
 
     def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path, monkeypatch):

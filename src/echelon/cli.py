@@ -3818,6 +3818,22 @@ def _reset_rewind_state(
         phase_index = _ROADMAP_PHASES.index(phase)
     except ValueError:
         phase_index = len(_ROADMAP_PHASES)
+    # Issues, selected resolutions, and WHY failure counters are valid only
+    # for the artifact epoch that produced them. Rewinding before WHY2 must not
+    # let a stale spec review steer discovery or assumption validation.
+    if phase_index <= _ROADMAP_PHASES.index("phase1-why2"):
+        for key in (
+            "issue_resolution_ledger",
+            "selected_issue_resolution",
+            "issue_resolution_recovery",
+            "issue_resolution_repair_baseline",
+            "phase_dispatch_limit_recovery",
+            "issues_log",
+            "why_failure_baseline",
+        ):
+            rewound.pop(key, None)
+        rewound["why_fail_count"] = 0
+        rewound["why2_metric_stagnation_count"] = 0
     if phase_index <= _ROADMAP_PHASES.index("phase1-lexicon"):
         rewound.pop("lexicon_pass", None)
         rewound["lexicon_attempts"] = 0

@@ -3348,7 +3348,7 @@ class SquadController:
         return self._state_store.increment_why_fail_count()
 
     def _why_failure_escalation_question(self, phase_id: str, fail_count: int) -> str:
-        """Return an actionable escalation with the reviewer findings at hand."""
+        """Return an issue-level WHY2 escalation; WHY1 never calls this guard."""
         state = self._state_store.load()
         spec_dir_ref = str(state.get("spec_dir") or "").strip()
         if spec_dir_ref:
@@ -3360,11 +3360,10 @@ class SquadController:
         else:
             issues_hint = "issues.md was not available"
         return (
-            f"{phase_id} still fails after {fail_count} WHY assessments without a "
-            "detected CARTOGRAPHER artifact change. Review the unresolved findings at "
-            f"{issues_hint}, then choose one actionable direction: provide the missing "
-            "project evidence, narrow or clarify the requested scope, or authorize one "
-            "targeted WHAT repair that addresses the listed findings."
+            f"{phase_id} still fails after {fail_count} assessments without a spec artifact "
+            "change. No retry is authorized. Resolve the first unresolved SAGE issue from "
+            f"{issues_hint} with `echelon spec resolve ISS-<n> '<decision>'`; the controller "
+            "will run and revalidate only that issue's declared repair edge."
         )
 
     def _evaluate_transitions(
@@ -3463,7 +3462,16 @@ class SquadController:
                         self._state_store.save(refreshed)
 
                 fail_count = self._record_why_failure(node.id)
-                if fail_count >= 2 and not state.get("escalation_question"):
+                # WHY1 is intentionally a bounded DISCOVER ↔ WHY1 loop. It has
+                # no canonical spec issue ledger yet, so a two-failure guard
+                # cannot ask an actionable issue-level question. Let its graph
+                # transitions and iteration cap govern that loop. WHY2 is the
+                # first phase with durable SAGE issues and repair routes.
+                if (
+                    node.id == "phase1-why2"
+                    and fail_count >= 2
+                    and not state.get("escalation_question")
+                ):
                     baseline = self._state_store.load().get("why_failure_baseline")
                     baseline_ts = (
                         baseline.get("recorded_at")
