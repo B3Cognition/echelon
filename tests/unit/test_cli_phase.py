@@ -191,6 +191,66 @@ def test_phase_run_tasks_lexicon_nodes_use_single_phase_controller(
     assert calls == [(phase_id, "validate tasks", "banzai")]
 
 
+def test_phase_run_blocked_spec_lexicon_gate_prints_repair_guidance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+) -> None:
+    run_dir = _initialize_active_run(tmp_path)
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    state_path = run_dir / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "run_id": "run-active",
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "lexicon_gate_exhausted",
+                "spec_id": "001-demo",
+                "spec_dir": "specs/001-demo",
+                "user_message": "validate lexicon",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_run_single_phase(
+        self,
+        selected: str,
+        user_message: str,
+        mode: str,
+        initial_state_updates: dict,
+    ):
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state.update(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "lexicon_gate_exhausted",
+                "last_dispatch": {"phase_id": selected},
+            }
+        )
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        return type("Result", (), {"status": "blocked", "phase": "terminal-blocked"})()
+
+    monkeypatch.setattr(
+        "harness.squad.SquadController.run_single_phase",
+        fake_run_single_phase,
+    )
+
+    _cmd_phase(
+        ["run", "phase1-lexicon", "--spec", "001"],
+        project_root=tmp_path,
+        ext_dir=EXT_DIR,
+    )
+
+    output = capsys.readouterr().out
+    assert "repair requirements.lexicon.md" in output
+    assert "spec-lexicon-report.json" in output
+    assert "echelon phase run phase1-lexicon" in output
+
+
 def test_phase_run_records_manual_replay_and_targets_spec_dir(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

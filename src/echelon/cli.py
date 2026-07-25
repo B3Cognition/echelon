@@ -3192,14 +3192,6 @@ def _phase_a_readiness_traceability_blockers(run_state: dict) -> list[str]:
     ]
 
 
-def _lexicon_gate_recovery_phase(state: dict) -> str | None:
-    """Route exhausted spec-gate recovery through the visible deterministic node."""
-    if str(state.get("blocked_reason") or "") != "lexicon_gate_exhausted":
-        return None
-    phase = str((state.get("last_dispatch") or {}).get("phase_id") or "")
-    return "phase1-lexicon" if phase in {"phase1-what", "phase1-lexicon"} else None
-
-
 def _interrupted_retry_phase(run_state: dict) -> str | None:
     phase_id = str(run_state.get("interrupted_phase") or run_state.get("phase") or "").strip()
     if phase_id and phase_id not in {"DONE", "terminal-blocked"}:
@@ -3296,6 +3288,22 @@ def _classify_run_recovery(
             reason=reason,
             command="increase analysis.token_budget_k, then echelon spec continue",
             note="the run cannot continue until the configured budget is higher",
+        )
+
+    if reason == "lexicon_gate_exhausted":
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            phase="phase1-lexicon",
+            command=(
+                'repair requirements.lexicon.md using spec-lexicon-report.json, '
+                "then run: echelon phase run phase1-lexicon"
+            ),
+            note=(
+                "The hard spec Lexicon gate is exhausted. Echelon will not "
+                "blindly re-run the deterministic gate from `spec continue`; "
+                "the derived artifact must change before certification is useful."
+            ),
         )
 
     if reason == "provider_session_limit":
@@ -6733,25 +6741,6 @@ def _cmd_continue(
         _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
         return
 
-    lexicon_recovery = _lexicon_gate_recovery_phase(state)
-    if lexicon_recovery is not None:
-        state["lexicon_evaluation"] = "pending"
-        state.pop("lexicon_pass", None)
-        state.pop("lexicon_findings", None)
-        state.pop("lexicon_report", None)
-        state.pop("lexicon_warning_waiver", None)
-        state.pop("lexicon_gate_exhausted", None)
-        state["blocked_reason"] = None
-        dispatch_counts = state.get("phase_dispatch_counts")
-        if isinstance(dispatch_counts, dict):
-            dispatch_counts["phase1-lexicon"] = 0
-        print(
-            "[squad] Lexicon recovery requested; resuming at the visible deterministic gate.",
-            flush=True,
-        )
-        start_phase(lexicon_recovery, verb="Continuing with Lexicon certification")
-        return
-
     # Echelon versions before the banzai-routing fix persisted a COMMANDER
     # ``next_phase`` as inert metadata, then incorrectly entered Phase-A
     # finalization from ``terminal-blocked``.  Recover that exact historic
@@ -7545,13 +7534,20 @@ def _cmd_phase(
         initial_state_updates=initial_updates,
     )
 
+    next_action = "echelon spec continue"
+    final_state = state_store.load()
+    if result.status == "blocked":
+        recovery = _classify_run_recovery(final_state, project_root=project_root)
+        if recovery.kind in {"manual_recovery", "human_resume", "safe_rewind"} and recovery.command:
+            next_action = recovery.command
+
     status_icon = "✓" if result.status in {"running", "done"} else "✗"
     _banner(
         f"{status_icon}  PHASE RUN {result.status.upper()}",
         [
             ("phase", result.phase),
             ("artifacts", str(target_spec_dir or run_dir)),
-            ("next", "echelon spec continue"),
+            ("next", next_action),
         ],
     )
 

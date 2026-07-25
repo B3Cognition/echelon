@@ -43,6 +43,9 @@ def _patch_resume_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
 
     phase_graph_mod = types.ModuleType("harness.phase_graph")
 
+    class FakePhaseNode:
+        pass
+
     class FakePhaseGraph:
         def __init__(self, *args, **kwargs) -> None:
             pass
@@ -57,14 +60,19 @@ def _patch_resume_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
                 "DONE",
             ]
 
+    phase_graph_mod.PhaseNode = FakePhaseNode
     phase_graph_mod.PhaseGraph = FakePhaseGraph
 
     provider_mod = types.ModuleType("harness.squad_provider")
+
+    class FakeSquadAgentResult:
+        pass
 
     class FakeProvider:
         def __init__(self, *args, **kwargs) -> None:
             pass
 
+    provider_mod.SquadAgentResult = FakeSquadAgentResult
     provider_mod.SquadCliProvider = FakeProvider
 
     squad_mod = types.ModuleType("harness.squad")

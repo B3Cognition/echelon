@@ -145,12 +145,13 @@ def test_readiness_candidates_exclude_stale_short_spec_alias_when_slug_is_known(
 
 
 @pytest.mark.parametrize("last_dispatch_phase", ["phase1-what", "phase1-lexicon"])
-def test_continue_routes_terminal_lexicon_block_to_visible_gate(
+def test_continue_does_not_rerun_exhausted_lexicon_gate_without_repair(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys,
     last_dispatch_phase: str,
 ) -> None:
-    """Hard-gate recovery is certified by the visible node, not the CLI."""
+    """An exhausted hard gate needs artifact repair, not another blind gate run."""
     _write_real_constitution(tmp_path)
     run_dir = _write_run_state(
         tmp_path,
@@ -199,11 +200,15 @@ THEN: The dashboard is visible
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-    assert state["phase"] == "phase1-lexicon"
-    assert state["status"] == "running"
-    assert "lexicon_pass" not in state
-    assert "lexicon_findings" not in state
-    assert calls == [["build the dashboard", "--mode", "semi"]]
+    assert state["phase"] == "terminal-blocked"
+    assert state["status"] == "blocked"
+    assert state["blocked_reason"] == "lexicon_gate_exhausted"
+    assert calls == []
+    output = capsys.readouterr().out
+    assert "Manual recovery required" in output
+    assert "requirements.lexicon.md" in output
+    assert "spec-lexicon-report.json" in output
+    assert "echelon phase run phase1-lexicon" in output
 
 
 def test_continue_honors_persisted_banzai_judgment_after_readiness_misroute(
@@ -1032,9 +1037,11 @@ def test_continue_explains_how_to_recover_from_phase_dispatch_limit(
     _cmd_continue([], project_root=tmp_path, ext_dir=tmp_path / ".specify/extensions/echelon")
 
     output = capsys.readouterr().out
-    assert "authorize one targeted retry of phase1-what" in output.lower()
-    assert "latest issues.md findings" in output
-    assert 'echelon spec resume "Authorize one targeted retry of phase1-what' in output
+    assert 'echelon spec resolve ISS-<n> "<project decision>"' in output
+    assert "No retry has been authorized" in output
+    assert "Resolve the first unresolved issue" in output
+    assert "targeted repair" in output
+    assert "retain the remaining issue ledger" in output
 
 
 def test_continue_ignores_legacy_nested_re_state_for_active_spec_run(
