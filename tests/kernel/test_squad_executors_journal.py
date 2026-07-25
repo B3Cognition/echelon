@@ -931,6 +931,35 @@ def test_phase1_what_prompt_injects_controller_spec_lexicon_repair_report(tmp_pa
     from harness.phase_graph import PhaseNode
 
     report = tmp_path / "runs/run-test/specs/001-demo/spec-lexicon-report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        json.dumps(
+            {
+                "ok": False,
+                "findings": [
+                    {
+                        "code": "parse-error",
+                        "message": "Unexpected token OUTPUT",
+                        "line": 12,
+                        "span": "OUTPUT",
+                    },
+                    {
+                        "code": "banned-word",
+                        "message": "banned word 'robust'",
+                        "line": 27,
+                        "span": "robust",
+                    },
+                    {
+                        "code": "banned-word",
+                        "message": "banned word 'simple'",
+                        "line": 42,
+                        "span": "simple",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     prompt = ex._assemble_prompt(
         PhaseNode(id="phase1-what", type="agent"),
         {
@@ -947,6 +976,13 @@ def test_phase1_what_prompt_injects_controller_spec_lexicon_repair_report(tmp_pa
     assert prompt.count(str(report)) == 1
     assert "Attempt: `2`" in prompt
     assert "Validation execution and deterministic verdict reporting are controller-owned." in prompt
+    assert "Finding count: `3`" in prompt
+    assert "`parse-error`: 1" in prompt
+    assert "`banned-word`: 2" in prompt
+    assert "line 12" in prompt
+    assert "Unexpected token OUTPUT" in prompt
+    assert "span `robust`" in prompt
+    assert "return `requirements.lexicon.md` in `output_files`" in prompt
 
 
 def test_unrelated_phase_does_not_receive_spec_lexicon_configuration(tmp_path):

@@ -8740,6 +8740,75 @@ THEN: The dashboard is visible
         assert report["findings"]
         assert {"code", "message"}.issubset(report["findings"][0])
 
+    def test_what_lexicon_repair_without_artifact_progress_blocks(self, tmp_path):
+        """A failed Lexicon repair pass must change the derived artifact."""
+        ctrl, store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-what")
+        store.initialize("r", "greenfield", "msg", 0, node.id)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
+        (spec_dir / "00-overview.md").write_text("# Overview\n", encoding="utf-8")
+        derived = spec_dir / "requirements.lexicon.md"
+        derived.write_text("not Lexicon grammar\n", encoding="utf-8")
+        artifact_sha = hashlib.sha256(derived.read_bytes()).hexdigest()
+        report = spec_dir / "spec-lexicon-report.json"
+        report.write_text(
+            json.dumps(
+                {
+                    "ok": False,
+                    "artifact_path": str(derived),
+                    "artifact_sha256": artifact_sha,
+                    "findings": [
+                        {
+                            "code": "parse-error",
+                            "message": "not canonical grammar",
+                            "line": 1,
+                            "span": "not",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        state = store.load()
+        state.update(
+            {
+                "spec_dir": str(spec_dir.relative_to(tmp_path)),
+                "lexicon_evaluation": "failed",
+                "lexicon_pass": False,
+                "lexicon_attempts": 1,
+                "lexicon_findings": 1,
+                "lexicon_report": str(report),
+            }
+        )
+        store.save(state)
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "output_files": [
+                    str(spec_dir / "spec.md"),
+                    str(spec_dir / "00-overview.md"),
+                ],
+                "state_updates": {
+                    "spec_status": "planned",
+                    "evidence_resolution_status": "not_required",
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        next_phase = _coordinate_prepared_result(ctrl, node, result)
+
+        assert next_phase == "terminal-blocked"
+        blocked = store.load()
+        assert blocked["status"] == "blocked"
+        assert blocked["blocked_reason"] == "lexicon_repair_no_artifact_progress"
+        assert blocked["lexicon_repair_no_artifact_progress"] is True
+
     def test_spec_gate_uses_resolved_local_paths_in_report(self, tmp_path):
         config_dir = tmp_path / ".echelon"
         config_dir.mkdir(parents=True)

@@ -535,12 +535,61 @@ def _render_spec_lexicon_context(
             "The previous derived requirements artifact failed the controller-owned hard gate.",
             f"- Report: `{report}`",
             f"- Attempt: `{attempt}` of `{repair_limit}`",
+            f"- Artifact: `{artifact_path}`",
             "Read the report and repair every listed finding in the configured artifact.",
+            f"This dispatch is a Lexicon repair pass: update the configured artifact and return `{artifact_path}` in `output_files`.",
             "Preserve source IDs and sections that already satisfy the grammar.",
             "Validation execution and deterministic verdict reporting are controller-owned.",
             "",
         ])
+        lines.extend(_render_spec_lexicon_repair_findings(report))
+        lines.append("")
     return "\n".join(lines)
+
+
+def _render_spec_lexicon_repair_findings(report: str) -> list[str]:
+    """Render compact, actionable findings from a controller report."""
+    report_path = Path(report)
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return [
+            "The report could not be read by the prompt renderer; the path above remains authoritative.",
+        ]
+    findings = payload.get("findings") if isinstance(payload, dict) else None
+    if not isinstance(findings, list):
+        return ["The report does not contain a readable `findings[]` list."]
+    counts: dict[str, int] = {}
+    normalized: list[dict[str, object]] = []
+    for item in findings:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or "unknown").strip() or "unknown"
+        counts[code] = counts.get(code, 0) + 1
+        normalized.append(item)
+    lines = [f"- Finding count: `{len(normalized)}`"]
+    if counts:
+        lines.append("- Findings by code:")
+        for code, count in sorted(counts.items()):
+            lines.append(f"  - `{code}`: {count}")
+    if normalized:
+        lines.append("- First concrete findings:")
+        for item in normalized[:8]:
+            code = str(item.get("code") or "unknown").strip() or "unknown"
+            message = str(item.get("message") or "").strip()
+            span = str(item.get("span") or "").strip()
+            line = item.get("line")
+            try:
+                line_text = f"line {int(line)}"
+            except (TypeError, ValueError):
+                line_text = "line unknown"
+            detail = f"  - `{code}` at {line_text}"
+            if span:
+                detail += f", span `{span}`"
+            if message:
+                detail += f": {message}"
+            lines.append(detail)
+    return lines
 
 
 def _render_certified_understanding_context(state: dict, dispatch: str) -> str:

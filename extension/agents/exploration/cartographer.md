@@ -102,9 +102,11 @@ The block declares whether the spec Lexicon gate is enabled and supplies `artifa
 ### Spec Lexicon Repair
 
 On a repair dispatch, the harness injects a `Spec Lexicon Repair (Controller-Enforced)` section
-with the authoritative report path and attempt number. Read that report and repair every listed
-finding in the configured derived artifact. Validation execution and verdict reporting belong to
-`phase1-lexicon`; routing and exhaustion policy are controller-owned.
+with the authoritative report path, attempt number, configured artifact, grouped finding counts,
+and concrete line/span examples. Treat this as a narrow repair-only dispatch: repair the
+configured derived artifact, include it in `output_files`, and do not claim WHAT/design readiness
+instead. Validation execution and verdict reporting belong to `phase1-lexicon`; routing,
+no-progress blocking, and exhaustion policy are controller-owned.
 
 ## Lexicon Gate Mode
 

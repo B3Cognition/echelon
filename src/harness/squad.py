@@ -5250,6 +5250,74 @@ class SquadController:
 
         return updates, PHASE_TERMINAL_BLOCKED
 
+    def _lexicon_repair_no_progress_enrichment(
+        self,
+        node: PhaseNode,
+        state: Mapping[str, object],
+    ) -> tuple[dict[str, object], str | None]:
+        """Return a terminal block when a WHAT Lexicon repair changes nothing."""
+        if node.id != "phase1-what":
+            return {}, None
+        if (
+            state.get("lexicon_evaluation") != "failed"
+            or state.get("lexicon_pass") is not False
+        ):
+            return {}, None
+        report_ref = str(state.get("lexicon_report") or "").strip()
+        if not report_ref:
+            return {}, None
+        report_path = Path(report_ref)
+        if not report_path.is_absolute():
+            report_path = self._project_root / report_path
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, TypeError, json.JSONDecodeError):
+            return {}, None
+        if not isinstance(report, dict) or report.get("ok") is not False:
+            return {}, None
+        prior_sha = str(report.get("artifact_sha256") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", prior_sha):
+            return {}, None
+
+        artifact_ref = str(report.get("artifact_path") or "").strip()
+        if artifact_ref:
+            artifact_path = Path(artifact_ref)
+            if not artifact_path.is_absolute():
+                artifact_path = self._project_root / artifact_path
+        else:
+            spec_dir_ref = str(state.get("spec_dir") or "").strip()
+            if not spec_dir_ref:
+                return {}, None
+            spec_dir = Path(spec_dir_ref)
+            if not spec_dir.is_absolute():
+                spec_dir = self._project_root / spec_dir
+            gate = self._lexicon_gate_config().get("lexicon_gate", {})
+            artifacts = (
+                gate.get("artifacts", {}) if isinstance(gate, dict) else {}
+            )
+            spec_gate = (
+                artifacts.get("spec", {})
+                if isinstance(artifacts, dict)
+                else {}
+            )
+            artifact_name = (
+                spec_gate.get("path")
+                if isinstance(spec_gate, dict)
+                else None
+            )
+            artifact_path = spec_dir / str(
+                artifact_name or "requirements.lexicon.md"
+            ).strip()
+        try:
+            current_sha = hashlib.sha256(
+                artifact_path.read_bytes()
+            ).hexdigest()
+        except OSError:
+            return {}, None
+        if current_sha != prior_sha:
+            return {}, None
+        return {}, PHASE_TERMINAL_BLOCKED
+
     def _controller_enrichment(
         self,
         node: PhaseNode,
@@ -5277,6 +5345,10 @@ class SquadController:
             result,
         )
         updates.update(lexicon_updates)
+        repair_updates, repair_override = (
+            self._lexicon_repair_no_progress_enrichment(node, state_copy)
+        )
+        updates.update(repair_updates)
         state_removals: set[str] = set()
         if node.id == "phase1-lexicon":
             state_removals.add("lexicon_warning_waiver")
@@ -5295,7 +5367,9 @@ class SquadController:
                     "product_input_mapping_repair_attempts",
                 }
             )
-        routing_override = governance_override or lexicon_override
+        routing_override = (
+            governance_override or lexicon_override or repair_override
+        )
         control_updates: dict[str, object] = {}
         if routing_override == PHASE_TERMINAL_BLOCKED:
             control_updates["status"] = "blocked"
@@ -5308,6 +5382,15 @@ class SquadController:
                     {
                         "blocked_reason": "lexicon_gate_exhausted",
                         "lexicon_gate_exhausted": True,
+                    }
+                )
+            elif repair_override:
+                control_updates.update(
+                    {
+                        "blocked_reason": (
+                            "lexicon_repair_no_artifact_progress"
+                        ),
+                        "lexicon_repair_no_artifact_progress": True,
                     }
                 )
         return ControllerEnrichment(

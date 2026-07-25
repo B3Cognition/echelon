@@ -66,7 +66,7 @@ The active runtime dispatches this role with the following request:
   Controller-Owned Validation Contract:
   - Read the injected `Controller Configuration` section and treat its `<controller_configuration>` values as authoritative. Do not discover or override configuration from project files.
   - When the spec Lexicon gate is enabled, author the configured derived artifact from the configured source and glossary. The provider-free `phase1-lexicon` node validates it after this dispatch.
-  - On a repair pass, read the injected `Spec Lexicon Repair (Controller-Enforced)` report and repair each listed finding locally. Validation execution and verdict reporting are controller-owned.
+  - On a repair pass, read the injected `Spec Lexicon Repair (Controller-Enforced)` section, use the grouped findings and concrete line/span examples, and repair the configured derived artifact locally. Include the derived artifact in `output_files`. Validation execution and verdict reporting are controller-owned.
   - The harness owns formal Understanding analysis in `phase1-understanding` and `phase3-understanding`; do not calculate or report deterministic scores.
   - Fix `parse-error` before treating `source-id-missing` as independently established, because failed parsing can suppress derived IDs.
   - `NFR-…` IDs are valid `REQ: NFR-…` blocks in the controlled grammar. Do not describe NFRs as an unsupported grammar feature.
@@ -171,8 +171,15 @@ validates it, writes `spec-lexicon-report.json`, owns all validation fields and 
 and applies the configured re-dispatch or exhaustion policy without invoking a provider.
 
 **Spec Lexicon Repair.** When validation fails, the next WHAT prompt includes a
-`Spec Lexicon Repair (Controller-Enforced)` section naming the report and attempt. CARTOGRAPHER
-repairs the listed spans without executing validation; the controller revalidates after dispatch.
+`Spec Lexicon Repair (Controller-Enforced)` section naming the report, attempt,
+configured artifact, grouped finding counts, and concrete line/span examples. CARTOGRAPHER
+repairs the configured derived artifact without executing validation, includes that artifact in
+`output_files`, and preserves passing blocks. The controller revalidates after dispatch.
+
+If the failed report's `artifact_sha256` still matches the derived artifact after a repair
+dispatch, the controller blocks immediately with
+`blocked_reason: lexicon_repair_no_artifact_progress`; it does not spend another Lexicon gate
+attempt on an unchanged artifact.
 
 **Controlled-outcome routing.** After `phase1-lexicon` executes, read the controller-certified
 `state.json.lexicon_evaluation` and `state.json.lexicon_pass`:
