@@ -413,7 +413,10 @@ def test_rewind_reconstructs_primary_predecessors_for_the_roadmap() -> None:
     assert rewound["iteration"] == 0
 
 
-@pytest.mark.parametrize("target_phase", ["phase1-what", "phase1-lexicon"])
+@pytest.mark.parametrize(
+    "target_phase",
+    ["phase1-what", "phase1-lexicon-derive", "phase1-lexicon"],
+)
 def test_rewind_to_spec_authoring_or_gate_resets_spec_lexicon_repair_state(
     target_phase: str,
 ) -> None:
@@ -438,6 +441,41 @@ def test_rewind_to_spec_authoring_or_gate_resets_spec_lexicon_repair_state(
     assert "lexicon_warning_waiver" not in rewound
     assert rewound["lexicon_evaluation"] == "pending"
     assert "lexicon_gate_exhausted" not in rewound
+
+
+@pytest.mark.parametrize(
+    "target_phase",
+    ["phase1-what", "phase1-understanding", "phase1-why2"],
+)
+def test_rewind_to_spec_quality_sequence_clears_quality_certificate(
+    target_phase: str,
+) -> None:
+    rewound = _reset_rewind_state(
+        {
+            "spec_quality_certificate": {
+                "spec_sha256": "stale",
+                "understanding_report_sha256": "stale",
+            },
+        },
+        target_phase,
+        "runs/spec-1/specs/001-demo",
+    )
+
+    assert "spec_quality_certificate" not in rewound
+
+
+def test_rewind_to_lexicon_derivation_preserves_current_quality_certificate() -> None:
+    certificate = {
+        "spec_sha256": "current",
+        "understanding_report_sha256": "current",
+    }
+    rewound = _reset_rewind_state(
+        {"spec_quality_certificate": certificate},
+        "phase1-lexicon-derive",
+        "runs/spec-1/specs/001-demo",
+    )
+
+    assert rewound["spec_quality_certificate"] == certificate
 
 
 def test_rewind_before_why2_clears_stale_issue_and_why_state() -> None:

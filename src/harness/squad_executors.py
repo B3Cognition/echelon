@@ -485,7 +485,7 @@ def _render_spec_lexicon_context(
     resolved_config: dict[str, object],
 ) -> str:
     """Render authoritative spec Lexicon configuration and repair evidence."""
-    if dispatch != "phase1-what":
+    if dispatch != "phase1-lexicon-derive":
         return ""
     gate = resolved_config.get("lexicon_gate")
     gate = gate if isinstance(gate, dict) else {}
@@ -538,8 +538,8 @@ def _render_spec_lexicon_context(
             f"- Artifact: `{artifact_path}`",
             "Read the report and repair every listed finding in the configured artifact.",
             f"This dispatch is a Lexicon repair pass: update the configured artifact and return `{artifact_path}` in `output_files`.",
-            "Do not return a generic Phase1-What completion summary.",
-            "Do not declare design readiness, spec completion, or downstream phase readiness unless the configured Lexicon artifact was repaired in this dispatch.",
+            "Do not edit spec.md or any other canonical source artifact.",
+            "Do not declare specification quality, design readiness, spec completion, or downstream phase readiness.",
             "Preserve source IDs and sections that already satisfy the grammar.",
             "Validation execution and deterministic verdict reporting are controller-owned.",
             "",
@@ -660,6 +660,7 @@ def _render_published_re_context(state: dict) -> str:
 
 _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
     "phase1-what": ("spec.md", "00-overview.md"),
+    "phase1-lexicon-derive": ("requirements.lexicon.md",),
     "phase1-investigate": (
         "evidence-resolution.md",
         "evidence-grades.md",

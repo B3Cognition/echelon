@@ -174,6 +174,8 @@ def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
     config_template = root / "extension/config-template.yml"
     cartographer = root / "extension/agents/exploration/cartographer.md"
     phase1_what = root / "extension/workflow/phases/phase1-what.md"
+    deriver = root / "extension/agents/exploration/lexicon-deriver.md"
+    derive_phase = root / "extension/workflow/phases/phase1-lexicon-derive.md"
     orchestrator = root / "extension/agents/solution/orchestrator.md"
     pipeline_matrix = root / "docs/pipeline-matrix.md"
     flags = re.IGNORECASE
@@ -190,31 +192,37 @@ def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
             r"requirements\.lexicon\.md",
         ),
         PatternCheck(
-            "CARTOGRAPHER preserves rich spec.md",
+            "CARTOGRAPHER preserves canonical spec.md ownership",
             cartographer,
-            r"spec\.md.*rich|rich.*spec\.md",
+            r"canonical `spec\.md`",
             flags,
         ),
         PatternCheck(
-            "CARTOGRAPHER authors derived Lexicon artifact",
+            "CARTOGRAPHER does not author derived Lexicon artifact",
             cartographer,
+            r"requirements\.lexicon\.md",
+            should_match=False,
+        ),
+        PatternCheck(
+            "Lexicon deriver authors the derived artifact",
+            deriver,
             r"requirements\.lexicon\.md",
         ),
         PatternCheck(
-            "CARTOGRAPHER derives Lexicon artifact from controller-configured source",
-            cartographer,
-            r"Derive the configured `artifact_path`[\s\S]{0,240}configured `source_path`",
+            "Lexicon deriver compiles from the canonical source",
+            deriver,
+            r"quality-certified canonical specification",
             flags,
         ),
         PatternCheck(
-            "CARTOGRAPHER delegates derived Lexicon validation to visible node",
-            cartographer,
-            r"Validation execution and verdict reporting belong to\s+`phase1-lexicon`",
+            "Lexicon deriver delegates validation to visible node",
+            deriver,
+            r"Validation and routing belong to the\s+provider-free `phase1-lexicon`",
             flags,
         ),
         PatternCheck(
-            "CARTOGRAPHER requires source hash metadata",
-            cartographer,
+            "Lexicon deriver requires source hash metadata",
+            deriver,
             r"SOURCE_SHA256",
         ),
         PatternCheck(
@@ -224,8 +232,14 @@ def validate_lexicon_derived_spec_contract(root: Path) -> list[str]:
             should_match=False,
         ),
         PatternCheck(
-            "phase1 what names derived Lexicon artifact",
+            "phase1 what does not own derived Lexicon artifact",
             phase1_what,
+            r"requirements\.lexicon\.md",
+            should_match=False,
+        ),
+        PatternCheck(
+            "Lexicon derive phase names derived artifact",
+            derive_phase,
             r"requirements\.lexicon\.md",
         ),
         PatternCheck(
@@ -266,6 +280,7 @@ def validate_cartographer_tool_usage_contract(root: Path) -> list[str]:
 
     cartographer = root / "extension/agents/exploration/cartographer.md"
     phase1_what = root / "extension/workflow/phases/phase1-what.md"
+    deriver = root / "extension/agents/exploration/lexicon-deriver.md"
     flags = re.IGNORECASE
 
     return _run_checks(
@@ -292,8 +307,8 @@ def validate_cartographer_tool_usage_contract(root: Path) -> list[str]:
                 should_match=False,
             ),
             PatternCheck(
-                "CARTOGRAPHER consumes controller configuration",
-                cartographer,
+                "Lexicon deriver consumes controller configuration",
+                deriver,
                 r"Controller Configuration",
             ),
             PatternCheck(
@@ -322,9 +337,15 @@ def validate_cartographer_tool_usage_contract(root: Path) -> list[str]:
                 should_match=False,
             ),
             PatternCheck(
-                "phase1 what names controller repair evidence",
+                "phase1 what does not receive Lexicon repair evidence",
                 phase1_what,
                 r"Spec Lexicon Repair",
+                should_match=False,
+            ),
+            PatternCheck(
+                "Lexicon deriver receives controller repair evidence",
+                deriver,
+                r"spec-lexicon-report\.json",
             ),
         ]
     )

@@ -64,13 +64,9 @@ The active runtime dispatches this role with the following request:
   Add user stories with acceptance criteria (Given/When/Then) using the provided templates. Cross-reference the glossary and mental model. No implementation details — no languages, frameworks, or databases. Staging directory: `${STAGING_DIR}/`. Return journal entries in `echelon_result.journal_entries`.
 
   Controller-Owned Validation Contract:
-  - Read the injected `Controller Configuration` section and treat its `<controller_configuration>` values as authoritative. Do not discover or override configuration from project files.
-  - When the spec Lexicon gate is enabled, author the configured derived artifact from the configured source and glossary. The provider-free `phase1-lexicon` node validates it after this dispatch.
-  - On a repair pass, read the injected `Spec Lexicon Repair (Controller-Enforced)` section, use the grouped findings and concrete line/span examples, and repair the configured derived artifact locally. Include the derived artifact in `output_files`. Validation execution and verdict reporting are controller-owned.
   - The harness owns formal Understanding analysis in `phase1-understanding` and `phase3-understanding`; do not calculate or report deterministic scores.
-  - Fix `parse-error` before treating `source-id-missing` as independently established, because failed parsing can suppress derived IDs.
-  - `NFR-…` IDs are valid `REQ: NFR-…` blocks in the controlled grammar. Do not describe NFRs as an unsupported grammar feature.
-  - Never emit `lexicon_evaluation`, `lexicon_pass`, `lexicon_attempts`, `lexicon_findings`, or `lexicon_report`; the controller owns them.
+  - After this phase, deterministic Understanding and SAGE WHY2 validate the current `spec.md`.
+  - Do not create or repair the derived Lexicon artifact. A dedicated node runs only after spec quality passes.
 
   Always complete ALL of the following before returning. Do NOT return until they are true:
   1. `{spec_dir}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.
@@ -99,12 +95,13 @@ artifact blocks the phase with `missing_phase_outputs`; the model must not creat
 directory. The controller's constitution provenance guard independently rejects a missing or
 template constitution before this phase or any later governed phase can run.
 
-Specification quality is evaluated after the hard Lexicon boundary by the deterministic
-`phase1-understanding` node and SAGE. A draft with missing or weak acceptance criteria therefore
+Specification quality is evaluated immediately by the deterministic
+`phase1-understanding` node and SAGE WHY2. A draft with missing or weak acceptance criteria therefore
 returns through the ordinary WHY2 repair route rather than relying on model-executed probes.
 
 After the required WHAT artifacts exist, the controller always advances to the visible,
-provider-free `phase1-lexicon` node. CARTOGRAPHER does not certify or route around that node.
+provider-free `phase1-understanding` node. Only a quality-certified specification advances to
+the dedicated Lexicon derivation and validation nodes.
 
 For an ordinary completed WHAT pass, return these state updates; the harness
 preserves the controller-owned Phase A identity in `state.json`:
@@ -155,56 +152,10 @@ This step is part of the `echelon_result.state_updates` block above. Skipping it
 - `spec.md` (created and enhanced by speckit-echelon-cartographer (CARTOGRAPHER) in the controller-provided directory with GWT acceptance criteria and glossary cross-references)
 - `00-overview.md` (speckit-echelon-cartographer (CARTOGRAPHER)-authored 1–2 page human summary: what the feature does, key design choices, primary constraints)
 
-### 4.4 Lexicon Gate (when `lexicon_gate.enabled` in echelon-config.yml)
+### 4.4 Quality-Certified Transition
 
-This subsection is INERT when `lexicon_gate.enabled` is false — the standard flow above is
-unchanged. When it is true, the deterministic controlled-grammar gate applies to a derived
-artifact. The canonical `{spec_dir}/spec.md` remains the rich spec-kit Markdown feature
-specification.
-
-**Controller Configuration.** The harness injects one authoritative
-`<controller_configuration>` block containing effective activation, paths, artifact type, mode,
-and repair limit. CARTOGRAPHER must not discover these values from files.
-
-CARTOGRAPHER authors the configured derived artifact. The `phase1-lexicon` node independently
-validates it, writes `spec-lexicon-report.json`, owns all validation fields and attempt accounting,
-and applies the configured re-dispatch or exhaustion policy without invoking a provider.
-
-**Spec Lexicon Repair.** When validation fails, the next WHAT prompt includes a
-`Spec Lexicon Repair (Controller-Enforced)` section naming the report, attempt,
-configured artifact, grouped finding counts, and concrete line/span examples. CARTOGRAPHER
-repairs the configured derived artifact without executing validation, includes that artifact in
-`output_files`, and preserves passing blocks. The controller revalidates after dispatch.
-
-If the failed report's `artifact_sha256` still matches the derived artifact after a repair
-dispatch, the controller blocks immediately with
-`blocked_reason: lexicon_repair_no_artifact_progress`; it does not spend another Lexicon gate
-attempt on an unchanged artifact.
-
-**Controlled-outcome routing.** After `phase1-lexicon` executes, read the controller-certified
-`state.json.lexicon_evaluation` and `state.json.lexicon_pass`:
-- `lexicon_evaluation == pending` → re-dispatch `phase1-what` (`increment_iteration`).
-  This means the derived artifact was absent or the controller validator could not execute.
-  A missing artifact is pending, never `lexicon_pass: false`.
-- `lexicon_pass == true` → proceed to `phase1-understanding` (controller-certified Understanding analysis runs there,
-  once, on rich `spec.md`, after the derived requirements artifact is structurally clean).
-- `lexicon_evaluation == failed AND lexicon_attempts < max_repair_attempts AND iteration < max_iterations`
-  → re-dispatch `phase1-what` (`increment_iteration`). This is the only condition that
-  re-dispatches CARTOGRAPHER after a failed validation; the preceding `pending` condition
-  handles an unevaluated artifact — see the transitions in `workflow/definition.yaml`.
-- `lexicon_attempts >= max_repair_attempts` (or the secondary `iteration >= max_iterations` cap)
-  → honor `lexicon_gate.on_exhausted`:
-  `warn` → proceed to `phase1-understanding` with a `lexicon_gate_exhausted` warning journal entry;
-  `block` → set `spec_status: blocked`, `blocked_reason: "lexicon gate not satisfied"`, and stop.
-
-The controller writes `lexicon_evaluation`, `lexicon_pass`, `lexicon_attempts`,
-`lexicon_findings`, and `lexicon_report`. These fields must never appear in the agent's
-`echelon_result.state_updates`.
-
-> Ordering invariant: Lexicon is the FIRST, hard, deterministic gate; `understanding`/SAGE
-> (`phase1-understanding`) runs only AFTER `lexicon_pass`. The hard gate validates
-> `requirements.lexicon.md`; the soft score still reads the canonical rich `spec.md`. Never let
-> the soft score gate structure — that is the "score-quality-later" anti-pattern this gate
-> replaces.
-
-**Transition:** `phases[phase1-lexicon]` — see `workflow/definition.yaml`
+The successful transition is `phase1-what -> phase1-understanding ->
+phase1-why2`. A WHY2 failure returns to this phase for a canonical amendment.
+After an amendment, the full quality sequence repeats. Lexicon derivation is
+downstream of a passing WHY2 result and is owned by
+`phase1-lexicon-derive`.

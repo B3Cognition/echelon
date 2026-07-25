@@ -76,7 +76,7 @@ phase routing.
 
 The current Phase A graph is no longer the old compressed
 `SCOUT -> SAGE -> CARTOGRAPHER` story. It includes explicit synthesis,
-modeling, tracking, deterministic Lexicon, deterministic Understanding,
+modeling, tracking, deterministic Understanding, deterministic Lexicon,
 human gates, and post-plan validation.
 
 ```mermaid
@@ -98,15 +98,16 @@ flowchart TD
     investigate -->|validated or conflicting| what
     investigate -->|inconclusive or access required| blocked["terminal-blocked"]
 
-    what --> lexicon1["phase1-lexicon<br/>deterministic spec Lexicon"]
-    lexicon1 -->|pending or failed repairable| what
-    lexicon1 --> understanding1["phase1-understanding<br/>deterministic Understanding"]
+    what --> understanding1["phase1-understanding<br/>deterministic Understanding"]
     understanding1 --> why2["phase1-why2<br/>SAGE WHY2"]
 
     why2 -->|evidence pending| investigate
     why2 -->|FAIL or quality fail and cap not hit| what
-    why2 -->|PASS and no critical issues| checkpointAssess["checkpoint-assess<br/>human gate"]
-    why2 -->|iteration cap| checkpointAssess
+    why2 -->|PASS, no critical issues, quality pass| derive1["phase1-lexicon-derive<br/>narrow derived-artifact author"]
+    why2 -->|iteration cap| blocked
+    derive1 --> lexicon1["phase1-lexicon<br/>deterministic spec Lexicon"]
+    lexicon1 -->|pending or failed repairable| derive1
+    lexicon1 -->|pass| checkpointAssess["checkpoint-assess<br/>human gate"]
 
     checkpointAssess -->|banzai or approved| decide["phase2-decide<br/>GATEKEEPER"]
     decide -->|structural repair needed| decide
@@ -268,8 +269,8 @@ control.
 | Loop or gate | Entry | Exit | Owner |
 | --- | --- | --- | --- |
 | WHY1 quality loop | `phase1-why1` | pass, convergence, or iteration cap | Graph and deterministic quality state |
-| Spec Lexicon repair | `phase1-lexicon -> phase1-what` | pass, disabled, or repair cap | Controller Lexicon contract |
-| WHY2 validation loop | `phase1-why2 -> phase1-what` | pass, evidence route, or cap | Graph conditions |
+| Spec quality loop | `phase1-what -> phase1-understanding -> phase1-why2 -> phase1-what` | certified pass, evidence route, or terminal block at cap | Graph conditions and content-bound quality certificate |
+| Spec Lexicon repair | `phase1-lexicon -> phase1-lexicon-derive` | pass, disabled, or terminal block at repair cap | Controller Lexicon contract |
 | Evidence investigation | `phase1-what -> phase1-investigate` | validated/conflicting back to WHAT, or terminal block | Investigator result plus graph |
 | Assessment checkpoint | `checkpoint-assess` | human approval or banzai auto-proceed | Human gate/autonomy |
 | Feasibility structural repair | `phase2-decide` self-loop | pass, kill, defer, or cap | Controller structural contract |
@@ -419,7 +420,8 @@ Effective invariants:
 
 What is now robust:
 
-- Lexicon and Understanding are first-class deterministic phase nodes.
+- Understanding and Lexicon are first-class deterministic phase nodes, with
+  quality certification preceding narrow derived Lexicon authoring.
 - Tasks Lexicon is also represented as deterministic nodes before consensus
   and after consensus.
 - Controller state contracts are reusable and centralized.

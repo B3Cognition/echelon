@@ -61,15 +61,17 @@ class TestPhaseGraph:
         assert why2_gate.understanding_target == "phase1-why2"
         assert why3_gate.type == "deterministic_understanding"
         assert why3_gate.understanding_target == "phase3-consensus"
-        assert self.graph.get("phase1-lexicon").transitions[-1]["to"] == why2_gate.id
+        assert self.graph.get("phase1-what").transitions[-1]["to"] == why2_gate.id
         assert why2_gate.transitions == [{"to": "phase1-why2", "condition": "always"}]
         tasks_gate = self.graph.get("phase3-tasks-lexicon")
         assert self.graph.get("phase3-plan").transitions[-1]["to"] == tasks_gate.id
         assert tasks_gate.transitions[-1]["to"] == why3_gate.id
         assert why3_gate.transitions == [{"to": "phase3-consensus", "condition": "always"}]
 
-    def test_spec_lexicon_runs_in_visible_provider_free_node(self):
+    def test_spec_lexicon_derivation_and_validation_are_separate_nodes(self):
         what = self.graph.get("phase1-what")
+        why2 = self.graph.get("phase1-why2")
+        derive = self.graph.get("phase1-lexicon-derive")
         lexicon = self.graph.get("phase1-lexicon")
 
         assert what.transitions == [
@@ -77,11 +79,26 @@ class TestPhaseGraph:
                 "to": "phase1-investigate",
                 "condition": "evidence_resolution_status = pending",
             },
-            {"to": "phase1-lexicon", "condition": "always"},
+            {"to": "phase1-understanding", "condition": "always"},
         ]
         assert set(what.required_state_updates) == {"evidence_resolution_status"}
         assert set(what.allowed_verdicts) == {"DONE", "FAIL"}
         assert what.evidence_routing == "requests"
+        assert why2.transitions[-2] == {
+            "to": "phase1-lexicon-derive",
+            "condition": (
+                "verdict = PASS AND no_CRITICAL_issues "
+                "AND quality_gates.pass"
+            ),
+        }
+        assert derive.type == "agent"
+        assert derive.agent == "speckit-echelon-lexicon-deriver"
+        assert derive.outputs == ["requirements.lexicon.md"]
+        assert derive.allowed_state_updates == []
+        assert set(derive.allowed_verdicts or []) == {"DONE", "FAIL"}
+        assert derive.transitions == [
+            {"to": "phase1-lexicon", "condition": "always"},
+        ]
         assert lexicon.type == "deterministic_lexicon"
         assert lexicon.lexicon_artifact == "spec"
         assert lexicon.allowed_state_updates == []
@@ -96,7 +113,7 @@ class TestPhaseGraph:
         }
         assert lexicon.transitions == [
             {
-                "to": "phase1-what",
+                "to": "phase1-lexicon-derive",
                 "condition": (
                     "lexicon_gate.spec_enabled AND lexicon_evaluation = pending "
                     "AND iteration < max_iterations"
@@ -104,7 +121,7 @@ class TestPhaseGraph:
                 "action": "increment_iteration",
             },
             {
-                "to": "phase1-what",
+                "to": "phase1-lexicon-derive",
                 "condition": (
                     "lexicon_gate.spec_enabled AND lexicon_evaluation = failed "
                     "AND lexicon_attempts < lexicon_gate.max_repair_attempts "
@@ -112,7 +129,7 @@ class TestPhaseGraph:
                 ),
                 "action": "increment_iteration",
             },
-            {"to": "phase1-understanding", "condition": "always"},
+            {"to": "checkpoint-assess", "condition": "always"},
         ]
 
     def test_why2_requires_structured_finding_routes(self):
@@ -126,7 +143,7 @@ class TestPhaseGraph:
             "not_required",
             "pending",
         ]
-        assert set(why2.allowed_verdicts) == {"DONE", "PASS", "FAIL", "STOP_AND_ASK"}
+        assert set(why2.allowed_verdicts) == {"PASS", "FAIL", "STOP_AND_ASK"}
         assert why2.evidence_routing == "finding_routes"
 
     def test_phase_timing_windows_are_controller_metadata(self):

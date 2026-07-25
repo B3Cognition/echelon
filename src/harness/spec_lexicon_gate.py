@@ -50,11 +50,6 @@ def has_current_spec_lexicon_evidence(
     spec_gate = spec_gate if isinstance(spec_gate, dict) else {}
     if not gate.get("enabled", False) or spec_gate.get("enabled", True) is False:
         return True
-    if (
-        str(gate.get("on_exhausted") or "block").lower() == "warn"
-        and state.get("lexicon_warning_waiver") is True
-    ):
-        return True
     if state.get("lexicon_evaluation") != "passed" or state.get("lexicon_pass") is not True:
         return False
 

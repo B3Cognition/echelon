@@ -4456,6 +4456,9 @@ class TestSquadControllerBasics:
             timed_out=False,
         )
         ctrl, store = _controller(tmp_path, provider=provider, mode="semi")
+        ctrl._guard_phase1_quality_evidence = MagicMock(
+            side_effect=lambda phase: phase,
+        )
         store.initialize("r", "semi", "msg", 0, "checkpoint-assess", max_iterations=5)
         _mark_constitution_complete(tmp_path, store)
         state = store.load()
@@ -8012,6 +8015,170 @@ class TestLexiconGateGuardDeterminism:
             raw_output="", duration_ms=0, timed_out=False,
         )
 
+    def test_lexicon_derivation_requires_current_spec_quality_certificate(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        ctrl, store = _controller(tmp_path)
+        state = store.load()
+        state.update(
+            {
+                "phase": "phase1-lexicon-derive",
+                "completed_phases": [
+                    "phase1-what",
+                    "phase1-understanding",
+                    "phase1-why2",
+                    "phase1-lexicon-derive",
+                    "phase1-lexicon",
+                ],
+                "phase_dispatch_counts": {
+                    "phase1-understanding": 1,
+                    "phase1-why2": 1,
+                    "phase1-lexicon-derive": 1,
+                    "phase1-lexicon": 1,
+                },
+            }
+        )
+        store.save(state)
+        monkeypatch.setattr(
+            "harness.squad.has_current_phase1_quality_certificate",
+            lambda *_args, **_kwargs: False,
+            raising=False,
+        )
+
+        guarded = ctrl._guard_phase1_quality_evidence(
+            "phase1-lexicon-derive"
+        )
+
+        assert guarded == "phase1-understanding"
+        persisted = store.load()
+        assert persisted["phase"] == "phase1-understanding"
+        assert "phase1-why2" not in persisted["completed_phases"]
+        assert "phase1-lexicon-derive" not in persisted["phase_dispatch_counts"]
+
+    def test_current_spec_quality_certificate_allows_lexicon_derivation(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        ctrl, store = _controller(tmp_path)
+        state = store.load()
+        state["phase"] = "phase1-lexicon-derive"
+        store.save(state)
+        monkeypatch.setattr(
+            "harness.squad.has_current_phase1_quality_certificate",
+            lambda *_args, **_kwargs: True,
+            raising=False,
+        )
+
+        assert (
+            ctrl._guard_phase1_quality_evidence("phase1-lexicon-derive")
+            == "phase1-lexicon-derive"
+        )
+
+    def test_quality_guard_does_not_rewind_a_later_phase_resume(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        ctrl, store = _controller(tmp_path)
+        state = store.load()
+        state["phase"] = "phase3-plan"
+        store.save(state)
+        monkeypatch.setattr(
+            "harness.squad.has_current_phase1_quality_certificate",
+            lambda *_args, **_kwargs: False,
+            raising=False,
+        )
+
+        assert ctrl._guard_phase1_quality_evidence("phase3-plan") == "phase3-plan"
+        assert store.load()["phase"] == "phase3-plan"
+
+    def test_passing_why2_creates_controller_quality_certificate(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        ctrl, _store = _controller(tmp_path)
+        node = ctrl._graph.get("phase1-why2")
+        certificate = {
+            "schema_version": 1,
+            "status": "passed",
+            "source_path": "specs/001/spec.md",
+            "source_sha256": "a" * 64,
+            "understanding_evidence": "runs/r/evidence/why2.json",
+            "understanding_evidence_sha256": "b" * 64,
+            "sage_phase": "phase1-why2",
+        }
+        monkeypatch.setattr(
+            "harness.squad.build_phase1_quality_certificate",
+            lambda *_args, **_kwargs: certificate,
+        )
+        result = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "PASS",
+                "state_updates": {
+                    "evidence_resolution_status": "not_required",
+                    "finding_routes": {"findings": []},
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        enrichment = ctrl._controller_enrichment(
+            node,
+            {"quality_scores": [{"pass": True}]},
+            result,
+        )
+
+        assert enrichment.updates["spec_quality_certificate"] == certificate
+
+    def test_spec_and_lexicon_writes_invalidate_only_owned_certificates(
+        self,
+        tmp_path,
+    ):
+        ctrl, _store = _controller(tmp_path)
+        done = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {},
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+
+        what = ctrl._controller_enrichment(
+            ctrl._graph.get("phase1-what"),
+            {},
+            done,
+        )
+        derive = ctrl._controller_enrichment(
+            ctrl._graph.get("phase1-lexicon-derive"),
+            {},
+            done,
+        )
+
+        assert "spec_quality_certificate" in what.state_removals
+        assert "spec_quality_certificate" not in derive.state_removals
+        assert {
+            "lexicon_evaluation",
+            "lexicon_pass",
+            "lexicon_findings",
+            "lexicon_report",
+        }.issubset(what.state_removals)
+        assert {
+            "lexicon_evaluation",
+            "lexicon_pass",
+            "lexicon_findings",
+            "lexicon_report",
+        }.issubset(derive.state_removals)
+
     def test_spec_lexicon_node_certifies_valid_artifact_without_provider(self, tmp_path):
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
@@ -8072,7 +8239,10 @@ THEN: The dashboard is visible
         ).hexdigest()
         assert report["glossary_sha256"] == hashlib.sha256(b"").hexdigest()
 
-    def test_legacy_understanding_resume_routes_through_visible_spec_gate(self, tmp_path):
+    def test_understanding_resume_is_not_blocked_by_downstream_lexicon_gate(
+        self,
+        tmp_path,
+    ):
         ctrl, store = _controller(tmp_path)
         state = store.load()
         state.update({
@@ -8083,8 +8253,8 @@ THEN: The dashboard is visible
 
         guarded = ctrl._guard_spec_lexicon_evidence("phase1-understanding")
 
-        assert guarded == "phase1-lexicon"
-        assert store.load()["phase"] == "phase1-lexicon"
+        assert guarded == "phase1-understanding"
+        assert store.load()["phase"] == "phase1-understanding"
 
     def test_later_phase_resume_without_current_evidence_reopens_spec_pipeline(
         self, tmp_path
@@ -8119,10 +8289,18 @@ THEN: The dashboard is visible
 
         guarded = ctrl._guard_spec_lexicon_evidence("phase2-decide")
 
-        assert guarded == "phase1-lexicon"
+        assert guarded == "phase1-lexicon-derive"
         persisted = store.load()
-        assert persisted["completed_phases"] == ["phase1-what"]
-        assert persisted["phase_dispatch_counts"] == {"phase1-what": 1}
+        assert persisted["completed_phases"] == [
+            "phase1-what",
+            "phase1-understanding",
+            "phase1-why2",
+        ]
+        assert persisted["phase_dispatch_counts"] == {
+            "phase1-what": 1,
+            "phase1-understanding": 1,
+            "phase1-why2": 1,
+        }
         assert persisted["iteration"] == 0
         assert persisted["why_fail_count"] == 0
         assert "phase_recommendation" not in persisted
@@ -8130,7 +8308,7 @@ THEN: The dashboard is visible
         assert persisted["convergence_detected"] is False
         assert persisted["convergence_guard_fire_count"] == 0
 
-    def test_current_spec_lexicon_evidence_allows_understanding(self, tmp_path):
+    def test_current_spec_lexicon_evidence_allows_phase1_checkpoint(self, tmp_path):
         provider = _mock_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
         node = ctrl._graph.get("phase1-lexicon")
@@ -8172,22 +8350,22 @@ THEN: The dashboard is visible
             prepared,
             snapshot=snapshot,
             from_phase=node.id,
-            to_phase="phase1-understanding",
+            to_phase="checkpoint-assess",
         )
         store.advance(
             node.id,
-            "phase1-understanding",
+            "checkpoint-assess",
             decision,
         )
 
-        guarded = ctrl._guard_spec_lexicon_evidence("phase1-understanding")
+        guarded = ctrl._guard_spec_lexicon_evidence("checkpoint-assess")
 
-        assert guarded == "phase1-understanding"
+        assert guarded == "checkpoint-assess"
 
         (spec_dir / "glossary.md").write_text("**Dashboard**\n", encoding="utf-8")
-        guarded = ctrl._guard_spec_lexicon_evidence("phase1-understanding")
+        guarded = ctrl._guard_spec_lexicon_evidence("checkpoint-assess")
 
-        assert guarded == "phase1-lexicon"
+        assert guarded == "phase1-lexicon-derive"
 
     def test_disabled_spec_lexicon_gate_allows_understanding_without_evidence(
         self, tmp_path
@@ -8259,7 +8437,7 @@ THEN: The dashboard is visible
         }
         assert result.state_updates == expected
         assert prepared.state_updates == expected
-        assert next_phase == "phase1-understanding"
+        assert next_phase == "checkpoint-assess"
 
         decision = store.prepare_routing_decision(
             prepared,
@@ -8280,7 +8458,7 @@ THEN: The dashboard is visible
         assert "lexicon_report" not in persisted
         assert (
             ctrl._guard_spec_lexicon_evidence(next_phase)
-            == "phase1-understanding"
+            == "checkpoint-assess"
         )
 
     def test_manual_spec_lexicon_node_is_visible_and_provider_free(
@@ -8295,11 +8473,14 @@ THEN: The dashboard is visible
         state = store.load()
         state["spec_dir"] = str(spec_dir.relative_to(tmp_path))
         store.save(state)
+        ctrl._guard_phase1_quality_evidence = MagicMock(
+            side_effect=lambda phase: phase
+        )
 
         result = ctrl.run_single_phase("phase1-lexicon", "validate", "banzai")
 
         provider.exec_agent.assert_not_called()
-        assert result.phase == "phase1-what"
+        assert result.phase == "phase1-lexicon-derive"
         assert "phase1-lexicon" in store.load()["completed_phases"]
         output = capsys.readouterr().out
         assert "Deterministic Spec Lexicon Gate" in output
@@ -8372,6 +8553,9 @@ THEN: The dashboard is visible
             "quality_scores": [{"pass": True, "source": "harness:understanding"}],
         })
         store.save(state)
+        ctrl._guard_phase1_quality_evidence = MagicMock(
+            side_effect=lambda phase: phase
+        )
         ctrl._checkpoint_successful_phase = MagicMock(return_value=False)
 
         result = ctrl.run_single_phase(
@@ -8588,7 +8772,7 @@ THEN: The dashboard is visible
                 self._result({"evidence_resolution_status": "not_required"}),
             )
 
-        assert nxt == "phase1-lexicon"
+        assert nxt == "phase1-understanding"
 
     def test_spec_gate_marks_missing_derived_artifact_pending_without_false_result(self, tmp_path):
         """No derived artifact means validation has not happened, not failed."""
@@ -8626,7 +8810,7 @@ THEN: The dashboard is visible
             )
             nxt = ctrl._evaluate_transitions(node, prepared, snapshot)
 
-        assert nxt == "phase1-what"
+        assert nxt == "phase1-lexicon-derive"
         assert "lexicon_pass" not in result.state_updates
         assert "lexicon_findings" not in result.state_updates
         assert "lexicon_report" not in result.state_updates
@@ -8695,7 +8879,7 @@ THEN: The dashboard is visible
 
         nxt = _evaluate_prepared_result(ctrl, node, result)
 
-        assert nxt == "phase1-understanding"
+        assert nxt == "checkpoint-assess"
         assert result.state_updates["lexicon_evaluation"] == "passed"
         assert result.state_updates["lexicon_pass"] is True
         assert result.state_updates["lexicon_attempts"] == 0
@@ -8723,7 +8907,10 @@ THEN: The dashboard is visible
         store.save(state)
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
 
-        assert _evaluate_prepared_result(ctrl, node, result) == "phase1-what"
+        assert (
+            _evaluate_prepared_result(ctrl, node, result)
+            == "phase1-lexicon-derive"
+        )
         assert result.state_updates["lexicon_evaluation"] == "failed"
         assert result.state_updates["lexicon_pass"] is False
         assert result.state_updates["lexicon_findings"] > 0
@@ -8740,15 +8927,14 @@ THEN: The dashboard is visible
         assert report["findings"]
         assert {"code", "message"}.issubset(report["findings"][0])
 
-    def test_what_lexicon_repair_without_artifact_progress_blocks(self, tmp_path):
+    def test_lexicon_derivation_without_artifact_progress_blocks(self, tmp_path):
         """A failed Lexicon repair pass must change the derived artifact."""
         ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase1-what")
+        node = ctrl._graph.get("phase1-lexicon-derive")
         store.initialize("r", "greenfield", "msg", 0, node.id)
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text("# Feature\n", encoding="utf-8")
-        (spec_dir / "00-overview.md").write_text("# Overview\n", encoding="utf-8")
         derived = spec_dir / "requirements.lexicon.md"
         derived.write_text("not Lexicon grammar\n", encoding="utf-8")
         artifact_sha = hashlib.sha256(derived.read_bytes()).hexdigest()
@@ -8788,13 +8974,9 @@ THEN: The dashboard is visible
             echelon_result={
                 "verdict": "DONE",
                 "output_files": [
-                    str(spec_dir / "spec.md"),
-                    str(spec_dir / "00-overview.md"),
+                    str(derived),
                 ],
-                "state_updates": {
-                    "spec_status": "planned",
-                    "evidence_resolution_status": "not_required",
-                },
+                "state_updates": {},
             },
             raw_output="",
             duration_ms=0,
@@ -8847,7 +9029,10 @@ THEN: The dashboard is visible
         store.save(state)
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
 
-        assert _evaluate_prepared_result(ctrl, node, result) == "phase1-what"
+        assert (
+            _evaluate_prepared_result(ctrl, node, result)
+            == "phase1-lexicon-derive"
+        )
         report = json.loads(
             Path(result.state_updates["lexicon_report"]).read_text(encoding="utf-8")
         )
@@ -8898,8 +9083,8 @@ THEN: The dashboard is visible
         assert state["status"] == "blocked"
         assert state["blocked_reason"] == "lexicon_gate_exhausted"
 
-    def test_pending_spec_gate_warns_without_commander_punt_at_iteration_cap(self, tmp_path):
-        """A configured warning may advance at the cap without inventing a failure."""
+    def test_pending_spec_gate_cannot_warn_past_iteration_cap(self, tmp_path):
+        """Phase 1 Lexicon certification remains hard even under warn config."""
         (tmp_path / ".echelon").mkdir()
         (tmp_path / ".echelon" / "config.yml").write_text(
             "lexicon_gate:\n"
@@ -8928,31 +9113,17 @@ THEN: The dashboard is visible
 
         snapshot = store.capture_routing_snapshot(expected_phase=node.id)
         prepared = ctrl._prepare_phase_result(node, result, snapshot)
-        with patch.object(
-            ctrl,
-            "_judgment_dispatch",
-            side_effect=AssertionError("pending Lexicon state punted to COMMANDER"),
-        ):
-            nxt = ctrl._evaluate_transitions(node, prepared, snapshot)
+        decision = ctrl._coordinate_transition_routing(
+            node,
+            prepared,
+            snapshot,
+        )
 
-        assert nxt == "phase1-understanding"
+        assert decision.to_phase == "terminal-blocked"
         assert result.state_updates["lexicon_evaluation"] == "pending"
         assert "lexicon_pass" not in result.state_updates
-        assert prepared.state_updates["lexicon_warning_waiver"] is True
+        assert "lexicon_warning_waiver" not in prepared.state_updates
         assert "lexicon_warning_waiver" not in result.state_updates
-
-        decision = store.prepare_routing_decision(
-            prepared,
-            snapshot=snapshot,
-            from_phase=node.id,
-            to_phase=nxt,
-        )
-        store.advance(
-            node.id,
-            nxt,
-            decision,
-        )
-        assert ctrl._guard_spec_lexicon_evidence(nxt) == "phase1-understanding"
 
     def test_spec_gate_does_not_trust_stale_failure_without_validation(self, tmp_path):
         """Stale failure state cannot exhaust a gate whose artifact was not validated."""
@@ -8984,7 +9155,7 @@ THEN: The dashboard is visible
         result = ctrl._executors["deterministic_lexicon"].execute(node, store)
         nxt = _evaluate_prepared_result(ctrl, node, result)
 
-        assert nxt == "phase1-what"
+        assert nxt == "phase1-lexicon-derive"
         assert result.state_updates["lexicon_evaluation"] == "pending"
         assert "lexicon_pass" not in result.state_updates
         assert result.state_updates["lexicon_attempts"] == 0

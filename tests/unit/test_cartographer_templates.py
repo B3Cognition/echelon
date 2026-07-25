@@ -7,6 +7,10 @@ ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = ROOT / "extension" / "agents" / "exploration" / "templates"
 AGENT = ROOT / "extension" / "agents" / "exploration" / "cartographer.md"
 PHASE = ROOT / "extension" / "workflow" / "phases" / "phase1-what.md"
+DERIVER = ROOT / "extension" / "agents" / "exploration" / "lexicon-deriver.md"
+DERIVE_PHASE = (
+    ROOT / "extension" / "workflow" / "phases" / "phase1-lexicon-derive.md"
+)
 DEFINITION = ROOT / "extension" / "workflow" / "definition.yaml"
 
 
@@ -89,16 +93,24 @@ class TestCartographerTemplates:
             assert "/tmp/cartographer-understanding.json" not in text
             assert "controller-owned" in text.lower()
 
-    def test_prompt_consumes_injected_configuration_and_findings(self) -> None:
+    def test_lexicon_deriver_consumes_injected_configuration_and_findings(
+        self,
+    ) -> None:
         agent_text = AGENT.read_text(encoding="utf-8")
         phase_text = PHASE.read_text(encoding="utf-8")
+        deriver_text = DERIVER.read_text(encoding="utf-8")
+        derive_phase_text = DERIVE_PHASE.read_text(encoding="utf-8")
 
         for text in (agent_text, phase_text):
+            assert "Spec Lexicon Repair" not in text
+            assert "requirements.lexicon.md" not in text
+        for text in (deriver_text, derive_phase_text):
             assert "Controller Configuration" in text
-            assert "Spec Lexicon Repair" in text
-            assert "Do not discover" in text
-        assert "after the final source write" in agent_text
-        assert "Never estimate" in agent_text
+            assert "spec-lexicon-report.json" in text
+            assert "requirements.lexicon.md" in text
+        assert "Never edit" in deriver_text
+        assert "spec.md" in deriver_text
+        assert "Never declare specification quality" in deriver_text
 
     def test_workflow_definition_lists_cartographer_outputs(self) -> None:
         text = DEFINITION.read_text(encoding="utf-8")

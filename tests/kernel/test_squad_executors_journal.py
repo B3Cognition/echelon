@@ -825,18 +825,15 @@ def test_why2_routing_contract_uses_full_quality_score_shape():
 
 
 def test_spec_lexicon_routing_contract_requires_certificate_fields():
-    """WHAT agents do not report fields owned by controller validation."""
-    from harness.phase_graph import PhaseNode
+    """Derivation agents do not report fields owned by controller validation."""
+    from harness.phase_graph import PhaseGraph
     from harness.squad_executors import _routing_contract
 
-    node = PhaseNode(
-        id="phase1-what",
-        type="agent",
-        transitions=[{
-            "condition": "lexicon_gate.spec_enabled AND lexicon_evaluation = failed AND iteration < max_iterations",
-            "to": "phase1-what",
-        }],
-    )
+    root = Path(__file__).resolve().parents[2]
+    node = PhaseGraph(
+        root / "extension/workflow/definition.yaml",
+        root / "extension/extension.yml",
+    ).get("phase1-lexicon-derive")
 
     contract = _routing_contract(node)
 
@@ -844,11 +841,14 @@ def test_spec_lexicon_routing_contract_requires_certificate_fields():
     assert "lexicon_attempts:" not in contract
     assert "lexicon_findings:" not in contract
 
-    phase_text = (Path(__file__).resolve().parents[2] / "extension/workflow/phases/phase1-what.md").read_text()
-    assert "a missing artifact is pending, never `lexicon_pass: false`" in phase_text.lower()
+    phase_text = (
+        Path(__file__).resolve().parents[2]
+        / "extension/workflow/phases/phase1-lexicon-derive.md"
+    ).read_text()
+    assert "do not execute validation" in phase_text.lower()
 
 
-def test_phase1_what_prompt_injects_resolved_spec_lexicon_configuration(tmp_path):
+def test_phase1_lexicon_derive_prompt_injects_resolved_configuration(tmp_path):
     config_dir = tmp_path / ".echelon"
     config_dir.mkdir(parents=True)
     (config_dir / "config.yml").write_text(
@@ -877,7 +877,7 @@ def test_phase1_what_prompt_injects_resolved_spec_lexicon_configuration(tmp_path
     from harness.phase_graph import PhaseNode
 
     prompt = ex._assemble_prompt(
-        PhaseNode(id="phase1-what", type="agent"),
+        PhaseNode(id="phase1-lexicon-derive", type="agent"),
         {
             "squad_dir": str(squad_dir),
             "spec_dir": "runs/run-test/specs/001-demo",
@@ -896,7 +896,7 @@ def test_phase1_what_prompt_injects_resolved_spec_lexicon_configuration(tmp_path
     assert "Do not discover or override these values" in prompt
 
 
-def test_phase1_what_prompt_marks_disabled_spec_lexicon_subgate(tmp_path):
+def test_phase1_lexicon_derive_prompt_marks_disabled_spec_subgate(tmp_path):
     config_dir = tmp_path / ".echelon"
     config_dir.mkdir(parents=True)
     (config_dir / "config.yml").write_text(
@@ -913,7 +913,7 @@ def test_phase1_what_prompt_marks_disabled_spec_lexicon_subgate(tmp_path):
     from harness.phase_graph import PhaseNode
 
     prompt = ex._assemble_prompt(
-        PhaseNode(id="phase1-what", type="agent"),
+        PhaseNode(id="phase1-lexicon-derive", type="agent"),
         {
             "squad_dir": str(squad_dir),
             "spec_dir": "runs/run-test/specs/001-demo",
@@ -924,7 +924,7 @@ def test_phase1_what_prompt_marks_disabled_spec_lexicon_subgate(tmp_path):
     assert "When disabled, do not create or amend a derived Lexicon artifact." in prompt
 
 
-def test_phase1_what_prompt_injects_controller_spec_lexicon_repair_report(tmp_path):
+def test_phase1_lexicon_derive_prompt_injects_controller_repair_report(tmp_path):
     squad_dir = tmp_path / "runs" / "run-test"
     squad_dir.mkdir(parents=True)
     ex = _executor(tmp_path, squad_dir=squad_dir)
@@ -961,7 +961,7 @@ def test_phase1_what_prompt_injects_controller_spec_lexicon_repair_report(tmp_pa
         encoding="utf-8",
     )
     prompt = ex._assemble_prompt(
-        PhaseNode(id="phase1-what", type="agent"),
+        PhaseNode(id="phase1-lexicon-derive", type="agent"),
         {
             "squad_dir": str(squad_dir),
             "spec_dir": "runs/run-test/specs/001-demo",
@@ -983,8 +983,29 @@ def test_phase1_what_prompt_injects_controller_spec_lexicon_repair_report(tmp_pa
     assert "Unexpected token OUTPUT" in prompt
     assert "span `robust`" in prompt
     assert "return `requirements.lexicon.md` in `output_files`" in prompt
-    assert "Do not return a generic Phase1-What completion summary" in prompt
-    assert "Do not declare design readiness" in prompt
+    assert "Do not declare specification quality" in prompt
+    assert "Do not edit spec.md" in prompt
+
+
+def test_phase1_what_prompt_does_not_receive_spec_lexicon_repair(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-what", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "spec_dir": "runs/run-test/specs/001-demo",
+            "lexicon_evaluation": "failed",
+            "lexicon_pass": False,
+            "lexicon_report": "/evidence/spec-lexicon-report.json",
+        },
+    )
+
+    assert "# Controller Configuration" not in prompt
+    assert "# Spec Lexicon Repair (Controller-Enforced)" not in prompt
 
 
 def test_unrelated_phase_does_not_receive_spec_lexicon_configuration(tmp_path):
@@ -1024,6 +1045,28 @@ def test_phase1_what_outputs_are_checked_by_the_executor(tmp_path):
     ]
     (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
     (spec_dir / "00-overview.md").write_text("# Overview\n", encoding="utf-8")
+    assert ex._required_phase_outputs_missing(node, state) == []
+
+
+def test_phase1_lexicon_derive_checks_only_derived_artifact(tmp_path):
+    squad_dir = tmp_path / "runs" / "run-test"
+    squad_dir.mkdir(parents=True)
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    spec_dir = tmp_path / "runs/run-test/specs/001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
+    state = {"spec_dir": str(spec_dir.relative_to(tmp_path))}
+    node = PhaseNode(id="phase1-lexicon-derive", type="agent")
+
+    assert ex._required_phase_outputs_missing(node, state) == [
+        "requirements.lexicon.md",
+    ]
+    (spec_dir / "requirements.lexicon.md").write_text(
+        "ARTIFACT: SPEC\n",
+        encoding="utf-8",
+    )
     assert ex._required_phase_outputs_missing(node, state) == []
 
 

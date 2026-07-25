@@ -448,7 +448,6 @@ phases:
     outputs:
       - spec.md
       - 00-overview.md
-      - requirements.lexicon.md       # only when lexicon_gate.enabled; derived from spec.md
     allowed_state_updates:
       - spec_status
       - evidence_resolution_status
@@ -474,29 +473,6 @@ phases:
       # evidence route, not an agent-authored terminal block.
       - to: phase1-investigate
         condition: "evidence_resolution_status = pending"
-      - to: phase1-lexicon
-        condition: always
-
-  # --------------------------------------------------------------------------
-  - id: phase1-lexicon
-    label: "Deterministic Spec Lexicon Gate"
-    type: deterministic_lexicon
-    lexicon_artifact: spec
-    outputs:
-      - spec-lexicon-report.json      # controller-owned findings report when the gate runs
-    allowed_state_updates: []
-    controller_state_contract: spec_lexicon
-    transitions:
-      # CARTOGRAPHER authors or repairs the derived artifact. This provider-free
-      # node validates it, persists findings, increments the repair count, and
-      # re-dispatches WHAT with report context. When disabled, the executor emits
-      # a pending/unexecuted marker and flow continues to deterministic Understanding.
-      - to: phase1-what
-        condition: "lexicon_gate.spec_enabled AND lexicon_evaluation = pending AND iteration < max_iterations"
-        action: increment_iteration
-      - to: phase1-what
-        condition: "lexicon_gate.spec_enabled AND lexicon_evaluation = failed AND lexicon_attempts < lexicon_gate.max_repair_attempts AND iteration < max_iterations"
-        action: increment_iteration
       - to: phase1-understanding
         condition: always
 
@@ -553,7 +529,7 @@ phases:
     required_state_updates:
       - evidence_resolution_status
       - finding_routes
-    allowed_verdicts: [DONE, PASS, FAIL, STOP_AND_ASK]
+    allowed_verdicts: [PASS, FAIL, STOP_AND_ASK]
     evidence_routing: finding_routes
     transitions:
       # Externally verifiable product facts need evidence collection, not another
@@ -567,10 +543,11 @@ phases:
         condition: "quality_gates.fail AND iteration < max_iterations"
         action: increment_iteration
       - to: checkpoint-assess
+        condition: "NOT lexicon_gate.spec_enabled AND verdict = PASS AND no_CRITICAL_issues AND quality_gates.pass"
+      - to: phase1-lexicon-derive
         condition: "verdict = PASS AND no_CRITICAL_issues AND quality_gates.pass"
-      - to: checkpoint-assess
+      - to: terminal-blocked
         condition: "iteration >= max_iterations"
-        action: force_convergence_warning
 
   # --------------------------------------------------------------------------
   - id: phase1-investigate
@@ -615,6 +592,47 @@ phases:
         condition: "evidence_resolution_status in [validated, conflicting]"
       - to: terminal-blocked
         condition: "evidence_resolution_status in [inconclusive, access_required]"
+
+  # --------------------------------------------------------------------------
+  - id: phase1-lexicon-derive
+    label: "Derived Spec Lexicon Authoring"
+    spec_file: workflow/phases/phase1-lexicon-derive.md
+    type: agent
+    agent: speckit-echelon-lexicon-deriver
+    tier: exploration
+    context_pack:
+      - "{spec_dir}/spec.md"
+      - "{spec_dir}/glossary.md"
+      - "{spec_dir}/spec-lexicon-report.json"
+    outputs:
+      - requirements.lexicon.md
+    allowed_state_updates: []
+    allowed_verdicts: [DONE, FAIL]
+    transitions:
+      - to: phase1-lexicon
+        condition: always
+
+  # --------------------------------------------------------------------------
+  - id: phase1-lexicon
+    label: "Deterministic Spec Lexicon Gate"
+    type: deterministic_lexicon
+    lexicon_artifact: spec
+    outputs:
+      - spec-lexicon-report.json      # controller-owned findings report when the gate runs
+    allowed_state_updates: []
+    controller_state_contract: spec_lexicon
+    transitions:
+      # The narrow derivation node authors or repairs the derived artifact.
+      # This provider-free node validates it, persists findings, and owns
+      # attempt accounting. It never reopens general spec authoring.
+      - to: phase1-lexicon-derive
+        condition: "lexicon_gate.spec_enabled AND lexicon_evaluation = pending AND iteration < max_iterations"
+        action: increment_iteration
+      - to: phase1-lexicon-derive
+        condition: "lexicon_gate.spec_enabled AND lexicon_evaluation = failed AND lexicon_attempts < lexicon_gate.max_repair_attempts AND iteration < max_iterations"
+        action: increment_iteration
+      - to: checkpoint-assess
+        condition: always
 
   # --------------------------------------------------------------------------
   - id: checkpoint-assess

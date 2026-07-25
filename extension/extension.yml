@@ -241,6 +241,14 @@ provides:
         capability: strong
         tools: full         # writes spec.md, 00-overview.md (via Skill + direct)
         color: green
+    - name: "speckit.echelon.lexicon-deriver"
+      file: "agents/exploration/lexicon-deriver.md"
+      description: "LEXICON DERIVER — compiles a quality-certified specification into the controlled requirements grammar"
+      behavior:
+        execution: agent
+        capability: balanced
+        tools: write
+        color: green
     - name: "speckit.echelon.sage"
       file: "agents/exploration/sage.md"
       description: "SAGE — adversarial critic and requirements quality gatekeeper"

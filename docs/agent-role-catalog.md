@@ -15,8 +15,8 @@ Current grounded counts:
 
 | Surface | Count | Meaning |
 |---|---:|---|
-| Registered agent roles | 55 | `extension.yml` entries whose `file` is under `agents/` |
-| Active-routed manifest roles | 45 | Registered roles referenced by `definition.yaml` |
+| Registered agent roles | 56 | `extension.yml` entries whose `file` is under `agents/` |
+| Active-routed manifest roles | 46 | Registered roles referenced by `definition.yaml` |
 | Manifest-only roles | 10 | Registered roles not currently referenced by `definition.yaml` |
 | Workflow-only dispatch aliases | 1 | Dispatch identifiers in `definition.yaml` that are not separate manifest roles |
 | Support prompt files | 14 | Markdown appendices/templates under `extension/agents/` that are not agent entry points |
@@ -30,12 +30,12 @@ number of agent roles.
 | Layer | Registered roles | Active-routed | Manifest-only |
 |---|---:|---:|---:|
 | Control | 6 | 5 | 1 |
-| Exploration | 6 | 5 | 1 |
+| Exploration | 7 | 6 | 1 |
 | Feasibility | 2 | 2 | 0 |
 | Solution | 3 | 3 | 0 |
 | Specialists | 6 | 6 | 0 |
 | Learning | 8 | 3 | 5 |
-| Build | 14 | 12 | 2 |
+| Build | 15 | 12 | 3 |
 | Reverse engineering | 9 | 9 | 0 |
 
 ## Active-Routed Manifest Roles
@@ -45,12 +45,12 @@ These registered roles are referenced by `extension/workflow/definition.yaml`.
 | Layer | Roles |
 |---|---|
 | Control | COMMANDER, CHIEF, SCOREKEEPER, STRATEGIST, TRACKER |
-| Exploration | SCOUT, SYNTHESIZER, CARTOGRAPHER, SAGE, MODELER |
+| Exploration | SCOUT, SYNTHESIZER, CARTOGRAPHER, LEXICON DERIVER, SAGE, MODELER |
 | Feasibility | GATEKEEPER, VALIDATOR |
 | Solution | ARCHITECT, ORCHESTRATOR, SENTINEL |
 | Specialists | INVESTIGATOR, GUARDIAN, BENCHMARK, ADVOCATE, ORACLE, MAVERICK |
 | Learning | AUDITOR, REALIST, MIRROR |
-| Build | IMPLEMENTER, SPEC GUARD, SPEC FULFILLMENT AUDITOR, IMPLEMENTATION MAPPER, CODE REVIEWER, TEST GUARDIAN, TECH WRITER, INTEGRATOR, PROGRESS TRACKER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR |
+| Build | IMPLEMENTER, SPEC GUARD, IMPLEMENTATION MAPPER, CODE REVIEWER, TEST GUARDIAN, TECH WRITER, DOCS VERIFIER, INTEGRATOR, PROGRESS TRACKER, DEBUGGER, VERIFICATION, VISUAL VALIDATOR |
 | Reverse engineering | RE-ANALYZER, RE-SPECIFIER, RE-VERIFIER, RE-EXPANDER, RE-VALIDATOR, RE-CHECKLISTER, RE-CONSTITUTER, RE-PLANNER, RE-TASKER |
 
 ## Manifest-Only Roles
@@ -71,6 +71,7 @@ run.
 | CONSOLIDATOR | `agents/learning/consolidator.md` | Episodic-to-schema learning role; registered but not active-routed |
 | ENGINEERING MANAGER | `agents/build/engineering-manager.md` | Build convergence coordination role; registered but not active-routed |
 | CHANGE CONTROLLER | `agents/build/change-controller.md` | Spec-change blast-radius role; registered but not active-routed |
+| SPEC FULFILLMENT AUDITOR | `agents/build/spec-fulfillment-auditor.md` | Delivery fulfillment audit role; registered but not active-routed |
 
 ## Workflow-Only Alias
 

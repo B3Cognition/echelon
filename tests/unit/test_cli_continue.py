@@ -208,7 +208,9 @@ THEN: The dashboard is visible
     assert "Manual recovery required" in output
     assert "requirements.lexicon.md" in output
     assert "spec-lexicon-report.json" in output
-    assert "echelon phase run phase1-lexicon" in output
+    assert "echelon phase run phase1-lexicon-derive" in output
+    assert "echelon phase run phase1-what" not in output
+    assert "echelon phase run phase1-lexicon\n" not in output
 
 
 def test_continue_honors_persisted_banzai_judgment_after_readiness_misroute(

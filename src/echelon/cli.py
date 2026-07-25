@@ -3294,15 +3294,15 @@ def _classify_run_recovery(
         return _RunRecoveryAction(
             "manual_recovery",
             reason=reason,
-            phase="phase1-lexicon",
+            phase="phase1-lexicon-derive",
             command=(
-                'repair requirements.lexicon.md using spec-lexicon-report.json, '
-                "then run: echelon phase run phase1-lexicon"
+                "echelon phase run phase1-lexicon-derive"
             ),
             note=(
-                "The hard spec Lexicon gate is exhausted. Echelon will not "
-                "blindly re-run the deterministic gate from `spec continue`; "
-                "the derived artifact must change before certification is useful."
+                "The hard spec Lexicon gate failed. Dispatch the dedicated "
+                "derivation node to repair requirements.lexicon.md "
+                "from spec-lexicon-report.json. Certify with the deterministic "
+                "Lexicon gate only after the repair pass changes the artifact."
             ),
         )
 
@@ -3310,15 +3310,16 @@ def _classify_run_recovery(
         return _RunRecoveryAction(
             "manual_recovery",
             reason=reason,
-            phase="phase1-what",
+            phase="phase1-lexicon-derive",
             command=(
-                'repair requirements.lexicon.md using spec-lexicon-report.json, '
-                "then run: echelon phase run phase1-lexicon"
+                "echelon phase run phase1-lexicon-derive"
             ),
             note=(
-                "The WHAT repair pass did not change the derived Lexicon "
-                "artifact. Re-running certification will only repeat the same "
-                "findings until requirements.lexicon.md changes."
+                "The derivation repair pass did not change the derived Lexicon "
+                "artifact. Re-run the repair node to repair requirements.lexicon.md "
+                "with the controller-injected "
+                "spec-lexicon-report.json context; re-running certification "
+                "will only repeat the same findings until requirements.lexicon.md changes."
             ),
         )
 
@@ -3910,6 +3911,7 @@ def _reset_rewind_state(
     # for the artifact epoch that produced them. Rewinding before WHY2 must not
     # let a stale spec review steer discovery or assumption validation.
     if phase_index <= _ROADMAP_PHASES.index("phase1-why2"):
+        rewound.pop("spec_quality_certificate", None)
         for key in (
             "issue_resolution_ledger",
             "selected_issue_resolution",
@@ -6335,7 +6337,8 @@ def _phase_a_ready_to_build(project_root: Path, current_state: dict) -> bool:
 _FALLBACK_ROADMAP_PHASES = [
     "init", "phase1-discover", "phase1-synthesizer", "phase1-modeler",
     "phase1-tracker", "phase1-why1", "phase1-constitution", "phase1-what",
-    "phase1-lexicon", "phase1-understanding", "phase1-why2",
+    "phase1-understanding", "phase1-why2", "phase1-lexicon-derive",
+    "phase1-lexicon",
     "checkpoint-assess", "phase2-decide",
     "phase2-strategic-overview", "phase2-tracker-alignment",
     "phase3-specialists", "phase3-how", "phase3-sentinel", "phase3-plan",
@@ -6362,16 +6365,14 @@ def _derive_roadmap_phases(workflow_path: Path) -> list[str]:
         if isinstance(phase, dict) and phase.get("id")
     }
 
-    path: list[str] = []
-    current = "init"
-    seen: set[str] = set()
-    while current and current in phases and current not in seen:
-        path.append(current)
-        seen.add(current)
+    def longest_path_to_done(current: str, seen: frozenset[str]) -> list[str]:
         if current == "done":
-            break
+            return ["done"]
+        if current not in phases or current in seen:
+            return []
 
-        next_phase = ""
+        next_seen = seen | {current}
+        candidates: list[list[str]] = []
         transitions = phases[current].get("transitions") or []
         if isinstance(transitions, list):
             for transition in transitions:
@@ -6379,16 +6380,18 @@ def _derive_roadmap_phases(workflow_path: Path) -> list[str]:
                     continue
                 candidate = str(transition.get("to") or "")
                 if (
-                    candidate
-                    and candidate != current
-                    and candidate != "escalate"
-                    and candidate != "terminal-blocked"
-                    and candidate not in seen
+                    not candidate
+                    or candidate == current
+                    or candidate in {"escalate", "terminal-blocked"}
+                    or candidate in next_seen
                 ):
-                    next_phase = candidate
-                    break
-        current = next_phase
+                    continue
+                suffix = longest_path_to_done(candidate, next_seen)
+                if suffix:
+                    candidates.append([current, *suffix])
+        return max(candidates, key=len, default=[])
 
+    path = longest_path_to_done("init", frozenset())
     if not path or path[-1] != "done":
         return list(_FALLBACK_ROADMAP_PHASES)
     return path
@@ -6699,6 +6702,7 @@ def _cmd_continue(
         "phase1-discover":     "SCOUT (retry failed discovery dispatch)",
         "phase1-constitution": "CHIEF → speckit.constitution (creates constitution.md)",
         "phase1-what":         "CARTOGRAPHER (spec authoring or amendment)",
+        "phase1-lexicon-derive": "LEXICON DERIVER (derived artifact repair)",
         "phase1-lexicon":      "Deterministic spec Lexicon gate",
         "phase1-understanding": "Deterministic Understanding gate",
         "phase3-how":          "ARCHITECT (architecture, data-model, contracts)",
@@ -7550,21 +7554,30 @@ def _cmd_phase(
         initial_state_updates=initial_updates,
     )
 
-    next_action = "echelon spec continue"
+    next_action = (
+        "echelon phase run phase1-lexicon"
+        if phase_id == "phase1-lexicon-derive" and result.status in {"running", "done"}
+        else "echelon spec continue"
+    )
+    recovery_note = ""
     final_state = state_store.load()
     if result.status == "blocked":
         recovery = _classify_run_recovery(final_state, project_root=project_root)
         if recovery.kind in {"manual_recovery", "human_resume", "safe_rewind"} and recovery.command:
             next_action = recovery.command
+            recovery_note = recovery.note
+    fields = [
+        ("phase", result.phase),
+        ("artifacts", str(target_spec_dir or run_dir)),
+        ("next", next_action),
+    ]
+    if recovery_note:
+        fields.append(("note", recovery_note))
 
     status_icon = "✓" if result.status in {"running", "done"} else "✗"
     _banner(
         f"{status_icon}  PHASE RUN {result.status.upper()}",
-        [
-            ("phase", result.phase),
-            ("artifacts", str(target_spec_dir or run_dir)),
-            ("next", next_action),
-        ],
+        fields,
     )
 
 

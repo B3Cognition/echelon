@@ -55,9 +55,11 @@ against `{spec_dir}/spec.md`. Return corrective `product_input_updates` for
 unsupported included mappings, unresolved questions, or conflicts, preserving
 canonical fields exactly. Do not edit the controller-owned ledger.
 
-Return journal entries in `echelon_result.journal_entries` and a qualitative
-`DONE`, `PASS`, `FAIL`, or `STOP_AND_ASK` verdict. Do not include `quality_scores` in state
-updates or in `echelon_result.state_updates`.
+Return journal entries in `echelon_result.journal_entries` and exactly one
+qualitative `PASS`, `FAIL`, or `STOP_AND_ASK` verdict. `DONE` is not a valid
+WHY2 verdict because it does not certify whether the specification may advance.
+Do not include `quality_scores` in state updates or in
+`echelon_result.state_updates`.
 
 </instructions>
 
@@ -78,11 +80,14 @@ Produce in `{spec_dir}/`:
 The controller combines SAGE's qualitative result with its certified score:
 
 1. Certified gates pass, no CRITICAL issues, and no required amendments remain:
-   proceed to the assessment checkpoint.
+   return `PASS`; the controller certifies the exact spec content and proceeds
+   to derived Lexicon authoring (or directly to assessment when that gate is
+   disabled).
 2. Certified gates fail, a CRITICAL issue exists, or a required amendment
    remains: route to WHAT with the concrete amendment list while below the
    iteration limit.
-3. At the iteration cap, use the workflow's explicit force-convergence warning.
+3. At the iteration cap, the controller blocks. Do not claim best-effort
+   convergence or waive failed quality.
 
 SAGE may make a certified pass stricter through a qualitative FAIL. SAGE may
 never make a certified failure pass. Score history, deltas, and iteration

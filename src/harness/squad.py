@@ -45,6 +45,10 @@ from harness.phase_a_readiness import (
     validate_phase_a_readiness,
 )
 from harness.phase_checkpoints import create_phase_checkpoint
+from harness.phase1_quality import (
+    build_phase1_quality_certificate,
+    has_current_phase1_quality_certificate,
+)
 from harness.prepared_phase_result import (
     PreparedPhaseResult,
     PreparedRoutingDecision,
@@ -53,6 +57,7 @@ from harness.prepared_phase_result import (
     prepare_phase_result,
 )
 from harness.quality_scores import (
+    explicit_quality_pass,
     normalize_why_quality_scores,
     resolve_quality_gate_thresholds,
 )
@@ -2110,6 +2115,7 @@ class SquadController:
         while True:
             phase = self._state_store.current_phase()
             phase = self._guard_spec_lexicon_evidence(phase)
+            phase = self._guard_phase1_quality_evidence(phase)
             phase = self._guard_understanding_evidence(phase)
             guarded_phase = self._apply_phase_recommendation_guard(phase)
             if guarded_phase != phase:
@@ -2395,6 +2401,62 @@ class SquadController:
         )
         return gate
 
+    def _guard_phase1_quality_evidence(self, phase: str) -> str:
+        """Prevent Phase 1 certification from advancing on an uncertified spec.
+
+        Later-phase resumes are deliberately not rewound here.  Normal graph
+        execution can enter those phases only through checkpoint-assess, while
+        manual replay is explicitly a single-node diagnostic facility.
+        """
+        protected = {
+            "phase1-lexicon-derive",
+            "phase1-lexicon",
+            "checkpoint-assess",
+        }
+        if phase not in protected:
+            return phase
+        state = self._state_store.load()
+        if has_current_phase1_quality_certificate(
+            state,
+            project_root=self._project_root,
+        ):
+            return phase
+
+        invalidated = {
+            "phase1-understanding",
+            "phase1-why2",
+            "phase1-lexicon-derive",
+            "phase1-lexicon",
+            "checkpoint-assess",
+        }
+        completed = state.get("completed_phases")
+        if isinstance(completed, list):
+            state["completed_phases"] = [
+                item for item in completed if item not in invalidated
+            ]
+        counts = state.get("phase_dispatch_counts")
+        if isinstance(counts, dict):
+            state["phase_dispatch_counts"] = {
+                item: count
+                for item, count in counts.items()
+                if item not in invalidated
+            }
+        state.pop("spec_quality_certificate", None)
+        state["iteration"] = 0
+        state["why_fail_count"] = 0
+        state["convergence_forced"] = False
+        state["convergence_detected"] = False
+        state["convergence_guard_fire_count"] = 0
+        state.pop("phase_recommendation", None)
+        state["phase"] = "phase1-understanding"
+        self._state_store.save(state)
+        print(
+            f"[squad] {phase}: Phase 1 quality certificate missing or stale; "
+            "routing through phase1-understanding",
+            flush=True,
+        )
+        return "phase1-understanding"
+
     def _guard_spec_lexicon_evidence(self, phase: str) -> str:
         """Route legacy downstream resumes through visible spec certification."""
         # INVESTIGATOR resolves a declared evidence gap before the next WHAT
@@ -2419,7 +2481,10 @@ class SquadController:
             config=self._lexicon_gate_config(),
         ):
             return phase
-        invalidated = downstream | {"phase1-lexicon"}
+        invalidated = downstream | {
+            "phase1-lexicon-derive",
+            "phase1-lexicon",
+        }
         completed = state.get("completed_phases")
         if isinstance(completed, list):
             state["completed_phases"] = [
@@ -2438,14 +2503,14 @@ class SquadController:
         state["convergence_detected"] = False
         state["convergence_guard_fire_count"] = 0
         state.pop("phase_recommendation", None)
-        state["phase"] = "phase1-lexicon"
+        state["phase"] = "phase1-lexicon-derive"
         self._state_store.save(state)
         print(
             f"[squad] {phase}: spec Lexicon evidence missing or stale; "
-            "routing through phase1-lexicon",
+            "routing through phase1-lexicon-derive",
             flush=True,
         )
-        return "phase1-lexicon"
+        return "phase1-lexicon-derive"
 
     def _is_deterministic_understanding_phase(self, phase: str) -> bool:
         if not phase:
@@ -2549,6 +2614,7 @@ class SquadController:
             return SquadResult.from_state(self._state_store.load())
         phase = guarded_phase
         phase = self._guard_spec_lexicon_evidence(phase)
+        phase = self._guard_phase1_quality_evidence(phase)
         phase = self._guard_understanding_evidence(phase)
 
         node = self._graph.get(phase)
@@ -4991,7 +5057,10 @@ class SquadController:
         if result.state_updates.get(pass_key) is True:
             return {}, None
 
-        if str(gate.get("on_exhausted", "block")).lower() == "warn":
+        if (
+            node.id != "phase1-lexicon"
+            and str(gate.get("on_exhausted", "block")).lower() == "warn"
+        ):
             return {"lexicon_warning_waiver": True}, None
 
         return {}, PHASE_TERMINAL_BLOCKED
@@ -5255,8 +5324,8 @@ class SquadController:
         node: PhaseNode,
         state: Mapping[str, object],
     ) -> tuple[dict[str, object], str | None]:
-        """Return a terminal block when a WHAT Lexicon repair changes nothing."""
-        if node.id != "phase1-what":
+        """Return a terminal block when a Lexicon derivation changes nothing."""
+        if node.id != "phase1-lexicon-derive":
             return {}, None
         if (
             state.get("lexicon_evaluation") != "failed"
@@ -5349,7 +5418,35 @@ class SquadController:
             self._lexicon_repair_no_progress_enrichment(node, state_copy)
         )
         updates.update(repair_updates)
+        quality_certificate_override: str | None = None
+        scores = state_copy.get("quality_scores")
+        latest_score = scores[-1] if isinstance(scores, list) and scores else None
+        if (
+            node.id == "phase1-why2"
+            and (result.verdict or "").upper() == "PASS"
+            and explicit_quality_pass(latest_score) is True
+        ):
+            certificate = build_phase1_quality_certificate(
+                state_copy,
+                project_root=self._project_root,
+            )
+            if certificate is None:
+                quality_certificate_override = PHASE_TERMINAL_BLOCKED
+            else:
+                updates["spec_quality_certificate"] = certificate
         state_removals: set[str] = set()
+        lexicon_certification_fields = {
+            "lexicon_evaluation",
+            "lexicon_pass",
+            "lexicon_findings",
+            "lexicon_report",
+            "lexicon_warning_waiver",
+        }
+        if node.id == "phase1-what":
+            state_removals.add("spec_quality_certificate")
+            state_removals.update(lexicon_certification_fields)
+        if node.id == "phase1-lexicon-derive":
+            state_removals.update(lexicon_certification_fields)
         if node.id == "phase1-lexicon":
             state_removals.add("lexicon_warning_waiver")
             if result.state_updates.get("lexicon_evaluation") == "pending":
@@ -5368,7 +5465,10 @@ class SquadController:
                 }
             )
         routing_override = (
-            governance_override or lexicon_override or repair_override
+            governance_override
+            or lexicon_override
+            or repair_override
+            or quality_certificate_override
         )
         control_updates: dict[str, object] = {}
         if routing_override == PHASE_TERMINAL_BLOCKED:
@@ -5392,6 +5492,10 @@ class SquadController:
                         ),
                         "lexicon_repair_no_artifact_progress": True,
                     }
+                )
+            elif quality_certificate_override:
+                control_updates["blocked_reason"] = (
+                    "spec_quality_certificate_unavailable"
                 )
         return ControllerEnrichment(
             updates=updates,
