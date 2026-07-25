@@ -983,6 +983,8 @@ def test_phase1_what_prompt_injects_controller_spec_lexicon_repair_report(tmp_pa
     assert "Unexpected token OUTPUT" in prompt
     assert "span `robust`" in prompt
     assert "return `requirements.lexicon.md` in `output_files`" in prompt
+    assert "Do not return a generic Phase1-What completion summary" in prompt
+    assert "Do not declare design readiness" in prompt
 
 
 def test_unrelated_phase_does_not_receive_spec_lexicon_configuration(tmp_path):

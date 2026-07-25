@@ -191,10 +191,15 @@ def test_phase_run_tasks_lexicon_nodes_use_single_phase_controller(
     assert calls == [(phase_id, "validate tasks", "banzai")]
 
 
+@pytest.mark.parametrize(
+    "blocked_reason",
+    ["lexicon_gate_exhausted", "lexicon_repair_no_artifact_progress"],
+)
 def test_phase_run_blocked_spec_lexicon_gate_prints_repair_guidance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys,
+    blocked_reason: str,
 ) -> None:
     run_dir = _initialize_active_run(tmp_path)
     spec_dir = tmp_path / "specs" / "001-demo"
@@ -206,7 +211,7 @@ def test_phase_run_blocked_spec_lexicon_gate_prints_repair_guidance(
                 "run_id": "run-active",
                 "status": "blocked",
                 "phase": "terminal-blocked",
-                "blocked_reason": "lexicon_gate_exhausted",
+                "blocked_reason": blocked_reason,
                 "spec_id": "001-demo",
                 "spec_dir": "specs/001-demo",
                 "user_message": "validate lexicon",
@@ -227,7 +232,7 @@ def test_phase_run_blocked_spec_lexicon_gate_prints_repair_guidance(
             {
                 "status": "blocked",
                 "phase": "terminal-blocked",
-                "blocked_reason": "lexicon_gate_exhausted",
+                "blocked_reason": blocked_reason,
                 "last_dispatch": {"phase_id": selected},
             }
         )

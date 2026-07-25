@@ -538,6 +538,8 @@ def _render_spec_lexicon_context(
             f"- Artifact: `{artifact_path}`",
             "Read the report and repair every listed finding in the configured artifact.",
             f"This dispatch is a Lexicon repair pass: update the configured artifact and return `{artifact_path}` in `output_files`.",
+            "Do not return a generic Phase1-What completion summary.",
+            "Do not declare design readiness, spec completion, or downstream phase readiness unless the configured Lexicon artifact was repaired in this dispatch.",
             "Preserve source IDs and sections that already satisfy the grammar.",
             "Validation execution and deterministic verdict reporting are controller-owned.",
             "",

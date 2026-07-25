@@ -3306,6 +3306,22 @@ def _classify_run_recovery(
             ),
         )
 
+    if reason == "lexicon_repair_no_artifact_progress":
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            phase="phase1-what",
+            command=(
+                'repair requirements.lexicon.md using spec-lexicon-report.json, '
+                "then run: echelon phase run phase1-lexicon"
+            ),
+            note=(
+                "The WHAT repair pass did not change the derived Lexicon "
+                "artifact. Re-running certification will only repeat the same "
+                "findings until requirements.lexicon.md changes."
+            ),
+        )
+
     if reason == "provider_session_limit":
         provider_message = str(run_state.get("provider_limit_message") or "").strip()
         note = "wait for the provider reset, then retry the blocked phase"
