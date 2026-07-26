@@ -580,11 +580,22 @@ def spec_analyze(
     output_format: str = typer.Option(
         "text", "--format", help="Output format: text or json."
     ),
+    health: bool = typer.Option(
+        False,
+        "--health",
+        help="Render an observe-only reliability and telemetry exception report.",
+    ),
 ) -> None:
     """Analyze Spec execution cost, repair loops, blockers, and telemetry."""
     import json
 
-    from echelon.telemetry.render import analysis_to_json, render_analysis_text
+    from echelon.telemetry.health import analyze_spec_health
+    from echelon.telemetry.render import (
+        analysis_to_json,
+        health_to_json,
+        render_analysis_text,
+        render_health_text,
+    )
     from echelon.telemetry.spec_adapter import analyze_spec_run, analyze_spec_runs
 
     if output_format not in {"text", "json"}:
@@ -598,6 +609,17 @@ def spec_analyze(
         reports = analyze_spec_runs(resolved)
     if not reports:
         typer.echo(f"No Spec runs found under {path}.")
+        return
+    if health:
+        health_report = analyze_spec_health(reports)
+        typer.echo(
+            (
+                health_to_json(health_report)
+                if output_format == "json"
+                else render_health_text(health_report)
+            ),
+            nl=False,
+        )
         return
     if output_format == "json":
         if len(reports) == 1:
