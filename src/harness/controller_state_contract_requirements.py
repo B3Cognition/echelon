@@ -10,6 +10,7 @@ REQUIRED_CONTROLLER_CONTRACTS: Mapping[str, str] = MappingProxyType(
     {
         "phase1-lexicon": "spec_lexicon",
         "phase1-understanding": "understanding",
+        "phase1-why2": "phase1_quality_certificate",
         "phase2-decide": "feasibility_structural",
         "phase2-tracker-alignment": "intent_alignment_structural",
         "phase3-tasks-lexicon": "tasks_lexicon",

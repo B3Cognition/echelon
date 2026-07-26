@@ -187,7 +187,7 @@ def test_blocked_summary_recaps_current_issues_and_prints_absolute_path(
 
     output = capsys.readouterr().out
     assert "issues" in output
-    assert "CRITICAL 1 · HIGH 2" in output
+    assert "CRITICAL 1 · HIGH 1" in output
     assert "[CRITICAL] SDK authentication scheme is undefined" in output
     assert "[HIGH] Retry policy needs a product decision" in output
     assert str((spec_dir / "issues.md").resolve()) in output

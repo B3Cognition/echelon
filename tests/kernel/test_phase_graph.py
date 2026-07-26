@@ -20,6 +20,7 @@ EXT_YML = EXT_ROOT / "extension/extension.yml"
 REQUIRED_CONTROLLER_CONTRACTS = {
     "phase1-lexicon": "spec_lexicon",
     "phase1-understanding": "understanding",
+    "phase1-why2": "phase1_quality_certificate",
     "phase2-decide": "feasibility_structural",
     "phase2-tracker-alignment": "intent_alignment_structural",
     "phase3-tasks-lexicon": "tasks_lexicon",
@@ -677,6 +678,9 @@ def test_production_contracts_own_exact_existing_controller_field_inventory() ->
             "understanding_evidence",
             "blocked_reason",
         },
+        "phase1_quality_certificate": {
+            "spec_quality_certificate",
+        },
         "feasibility_structural": {
             "feasibility_structural_pass",
             "feasibility_structural_attempts",
@@ -697,7 +701,7 @@ def test_production_contracts_own_exact_existing_controller_field_inventory() ->
         name: graph.controller_contract(name).state_update_keys
         for name in expected
     } == expected
-    assert len(set().union(*expected.values())) == 23
+    assert len(set().union(*expected.values())) == 24
 
 
 def test_production_contracts_reject_incomplete_success_results() -> None:

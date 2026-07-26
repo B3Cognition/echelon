@@ -27,6 +27,11 @@ Python.
 ## Architecture Decisions
 - ADR-001: Keep it simple.
 
+## Requirement Preservation
+| Requirement | Product Invariant | Architecture Decision | Preserves? | Evidence |
+| --- | --- | --- | --- | --- |
+| INFRA | Delivery remains stable. | ADR-001 | yes | Covered by harness tests. |
+
 ## Project Structure
 ```text
 src/

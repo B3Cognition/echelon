@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import FrozenInstanceError, replace
 from pathlib import Path, PurePath
+from types import MappingProxyType
 
 import pytest
 
@@ -909,6 +910,26 @@ def test_no_contract_preserves_unbounded_provider_behavior() -> None:
     assert prepared.controller_update_keys == frozenset()
     assert prepared.controller_contract_name is None
     assert prepared.controller_contract_sha256 is None
+    assert prepared.normalized_paths == ()
+
+
+def test_empty_frozen_controller_bundle_has_no_normalization_receipt(
+    contract: CompiledControllerStateContract,
+) -> None:
+    node = PhaseNode(
+        id="mixed",
+        type="agent",
+        allowed_state_updates=["provider_value"],
+        controller_state_contract=contract,
+    )
+
+    prepared = prepare_phase_result(
+        node,
+        _result({"provider_value": "running"}),
+        controller_updates=MappingProxyType({}),
+    )
+
+    assert prepared.controller_update_keys == frozenset()
     assert prepared.normalized_paths == ()
 
 

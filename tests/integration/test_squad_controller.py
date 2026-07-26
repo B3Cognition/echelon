@@ -130,6 +130,44 @@ def _mock_provider(verdict: str = "DONE") -> MagicMock:
     return provider
 
 
+def _mock_quality_first_flow_provider() -> MagicMock:
+    """Return deterministic valid verdicts for the post-Understanding flow."""
+    provider = _mock_provider()
+    default_exec_agent = provider.exec_agent.side_effect
+
+    def phase_aware_exec_agent(*args, **kwargs):
+        prompt = str(args[1])
+        if "# Phase: phase1-why2" in prompt:
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "PASS",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                        "finding_routes": {"findings": []},
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+        if "# Phase: phase2-decide" in prompt:
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "KILL",
+                    "state_updates": {},
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
+        return default_exec_agent(*args, **kwargs)
+
+    provider.exec_agent.side_effect = phase_aware_exec_agent
+    return provider
+
+
 def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: Path = None):
     if not (tmp_path / ".git").exists():
         subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
@@ -3480,7 +3518,7 @@ class TestCartographerResumeGuard:
 class TestSquadControllerBasics:
     def test_generation_change_does_not_mutate_attached_spec_context(self, tmp_path, monkeypatch):
         _disable_lexicon_gate(tmp_path)
-        provider = _mock_provider()
+        provider = _mock_quality_first_flow_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
         monkeypatch.setattr(
             ctrl,
@@ -3497,6 +3535,7 @@ class TestSquadControllerBasics:
         state = store.load()
         state["re_generation"] = 1
         state["spec_dir"] = "specs/001-test"
+        state["autonomy_mode"] = "banzai"
         store.save(state)
         spec_dir = tmp_path / "specs" / "001-test"
         spec_dir.mkdir(parents=True)
@@ -3536,7 +3575,7 @@ class TestSquadControllerBasics:
 
     def test_legacy_generation_state_is_not_synchronized_during_spec_run(self, tmp_path, monkeypatch):
         _disable_lexicon_gate(tmp_path)
-        provider = _mock_provider()
+        provider = _mock_quality_first_flow_provider()
         ctrl, store = _controller(tmp_path, provider=provider)
         monkeypatch.setattr(
             ctrl,
@@ -3548,6 +3587,7 @@ class TestSquadControllerBasics:
         state = store.load()
         state["re_generation"] = 1
         state["spec_dir"] = "specs/001-test"
+        state["autonomy_mode"] = "banzai"
         store.save(state)
         spec_dir = tmp_path / "specs" / "001-test"
         spec_dir.mkdir(parents=True)
@@ -4400,7 +4440,7 @@ class TestSquadControllerBasics:
                 return SquadAgentResult(
                     exit_code=0,
                     echelon_result={
-                        "verdict": "DONE",
+                        "verdict": "PASS",
                         "state_updates": {
                             "evidence_resolution_status": "not_required",
                             "finding_routes": {"findings": []},

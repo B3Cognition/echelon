@@ -220,6 +220,42 @@ contracts:
                     path: {type: string, minLength: 1}
                     pass: {type: boolean}
 
+  phase1_quality_certificate:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    additionalProperties: false
+    required: [verdict, state_updates]
+    properties:
+      verdict: {type: string}
+      state_updates:
+        type: object
+        additionalProperties: false
+        properties:
+          spec_quality_certificate:
+            type: object
+            additionalProperties: false
+            required:
+              - schema_version
+              - status
+              - source_path
+              - source_sha256
+              - understanding_evidence
+              - understanding_evidence_sha256
+              - sage_phase
+            properties:
+              schema_version: {const: 1}
+              status: {const: passed}
+              source_path: {type: string, minLength: 1}
+              source_sha256:
+                type: string
+                pattern: "^[0-9a-f]{64}$"
+              understanding_evidence:
+                {type: string, minLength: 1}
+              understanding_evidence_sha256:
+                type: string
+                pattern: "^[0-9a-f]{64}$"
+              sage_phase: {const: phase1-why2}
+
   feasibility_structural:
     $schema: https://json-schema.org/draft/2020-12/schema
     type: object

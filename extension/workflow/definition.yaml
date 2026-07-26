@@ -531,6 +531,7 @@ phases:
       - finding_routes
     allowed_verdicts: [PASS, FAIL, STOP_AND_ASK]
     evidence_routing: finding_routes
+    controller_state_contract: phase1_quality_certificate
     transitions:
       # Externally verifiable product facts need evidence collection, not another
       # speculative WHAT pass. This must precede the generic FAIL repair routes.

@@ -845,7 +845,10 @@ def test_spec_lexicon_routing_contract_requires_certificate_fields():
         Path(__file__).resolve().parents[2]
         / "extension/workflow/phases/phase1-lexicon-derive.md"
     ).read_text()
-    assert "do not execute validation" in phase_text.lower()
+    assert (
+        "provider-free `phase1-lexicon` node performs structural certification"
+        in phase_text.lower()
+    )
 
 
 def test_phase1_lexicon_derive_prompt_injects_resolved_configuration(tmp_path):
