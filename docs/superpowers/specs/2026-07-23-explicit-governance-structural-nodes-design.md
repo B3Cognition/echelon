@@ -2,8 +2,7 @@
 
 **Date:** 2026-07-23
 **Revised:** 2026-07-26
-**Status:** Revised after controller-state contracts and durable controller
-authority landed; awaiting implementation-plan approval
+**Status:** Revised after ambiguity review; awaiting user review
 **Scope:** Replace the hidden governance structural-validation hook with two
 visible, provider-free workflow nodes.
 
@@ -111,12 +110,15 @@ phase2-intent-alignment-structural
     |-- repair ----------------------> phase2-tracker-alignment
     |-- block -----------------------> terminal-blocked
     |-- ALIGNED / DRIFT / DRIFTING --> phase3-specialists
-    `-- STOP_AND_ASK / ESCALATE -----> phase2-tracker-alignment
+    `-- ESCALATE --------------------> phase2-tracker-alignment
 ```
 
 The deterministic nodes run only after their provider phase returns a valid,
 non-blocking executor result. Provider execution failures and typed human
-escalations continue to stop before transition evaluation as they do today.
+blocking requests continue to stop before transition evaluation as they do
+today.
+In particular, TRACKER `STOP_AND_ASK` remains blocked at
+`phase2-tracker-alignment`; it never enters the structural node.
 
 ## Current Controller Contract Architecture
 
@@ -157,7 +159,7 @@ phase-specific state:
 
 ```yaml
 feasibility_verdict: PASS | KILL | DEFER
-intent_alignment_verdict: ALIGNED | DRIFT | DRIFTING | STOP_AND_ASK | ESCALATE
+intent_alignment_verdict: ALIGNED | DRIFT | DRIFTING | ESCALATE
 ```
 
 Add two narrow controller contracts:
@@ -168,10 +170,39 @@ intent_alignment_authoring_verdict
 ```
 
 Each contract permits exactly one state field and validates it against the
-existing top-level provider verdict enum. Controller enrichment projects the
-detached provider result's validated top-level verdict into the contract update
-bundle. Preparation rejects a missing, unsupported, or contradictory verdict
-before route construction.
+phase's non-blocking routing-verdict subset. Projection is one explicit
+controller function:
+
+```python
+def project_authoring_verdict(
+    *,
+    phase_id: str,
+    provider_verdict: str,
+) -> Mapping[str, str]:
+    ...
+```
+
+It accepts exact canonical values only:
+
+- `phase2-decide`: `PASS`, `KILL`, or `DEFER` becomes
+  `feasibility_verdict`;
+- `phase2-tracker-alignment`: `ALIGNED`, `DRIFT`, `DRIFTING`, or `ESCALATE`
+  becomes `intent_alignment_verdict`;
+- `phase2-tracker-alignment` plus `STOP_AND_ASK` returns no projected field,
+  requests removal of a stale `intent_alignment_verdict`, and delegates the
+  already schema-validated blocking fields to the existing control-intent path;
+- every other phase/value pair raises `ControllerStateContractViolation` with
+  the authoring contract name, `json_path="$.verdict"`, and
+  `validator="projection"` before `prepare_phase_result()`.
+
+`STOP_AND_ASK` is deliberately not projected. Its existing result-schema
+contract requires `state_updates.status: blocked`, `blocked_reason`, and
+`escalation_question`. The controller promotes those values through the
+existing blocking-control-intent path, removes any stale
+`intent_alignment_verdict`, keeps the phase at `phase2-tracker-alignment`, and
+does not construct a route to the structural node. A later resumed TRACKER
+dispatch must return one of the four non-blocking values before certification
+can run.
 
 This is a narrow controller-owned projection, not a new provider state-update
 permission. Agents must not emit either field themselves.
@@ -185,7 +216,8 @@ before certification runs again.
 
 The projected verdict is not stored in `last_dispatch`, inferred from a report,
 or recovered from raw provider output. The named state contract is its only
-authority.
+authority. Recovery replays the already prepared and attested projection; it
+does not re-project untrusted raw output.
 
 ## Node Definitions
 
@@ -243,7 +275,7 @@ allowing both structural artifacts to share one focused executor and service.
     - to: phase3-specialists
       condition: "structural_action in [proceed, proceed_with_warning] AND intent_alignment_verdict in [ALIGNED, DRIFT, DRIFTING]"
     - to: phase2-tracker-alignment
-      condition: "structural_action in [proceed, proceed_with_warning] AND intent_alignment_verdict in [STOP_AND_ASK, ESCALATE]"
+      condition: "structural_action in [proceed, proceed_with_warning] AND intent_alignment_verdict = ESCALATE"
 ```
 
 `phase2-decide` changes to one successful forward transition:
@@ -262,9 +294,10 @@ transitions:
     condition: always
 ```
 
-The controller preserves existing early handling for a provider result that
-sets typed blocked/escalation state. Such a result does not advance to the
-structural node.
+The controller preserves existing early handling for typed blocking results.
+Such a result does not advance to the structural node. `ESCALATE` remains a
+non-blocking TRACKER routing verdict and therefore is structurally certified
+before returning to TRACKER, preserving the current loop semantics.
 
 The provider nodes change their named contracts:
 
@@ -290,7 +323,8 @@ Workflow validation requires:
 
 - `type: deterministic_structural` has a non-empty `structural_artifact`;
 - the artifact key exists under the bundled governance artifact contract;
-- the node has no provider agent or provider-owned state updates;
+- the node has no provider agent, an empty provider allowlist, and no
+  provider-owned state updates;
 - the node references the exact structural contract required for its artifact;
 - the provider phase references the exact authoring-verdict contract required
   for its structural successor;
@@ -300,10 +334,21 @@ Workflow validation requires:
 - the node has explicit repair, block, and forward transitions;
 - unknown executor types remain invalid.
 
-The central required-role mapping moves the two existing structural contracts
-from the provider phases to the explicit nodes and adds the two authoring
-verdict contracts to the provider phases. Both `PhaseGraph` and the standalone
-workflow validator use that same mapping.
+The central required-contract mapping moves the two existing structural
+contracts from the provider phases to the explicit nodes and adds the two
+authoring verdict contracts to the provider phases:
+
+```text
+phase2-decide                       -> feasibility_authoring_verdict
+phase2-feasibility-structural       -> feasibility_structural
+phase2-tracker-alignment            -> intent_alignment_authoring_verdict
+phase2-intent-alignment-structural  -> intent_alignment_structural
+```
+
+`CONTROLLER_PRODUCING_TYPES` adds `deterministic_structural`. For this type the
+required contract is derived from `structural_artifact`; a phase-id,
+artifact-key, or contract mismatch is a startup error. Both `PhaseGraph` and
+the standalone workflow validator use the same mapping.
 
 The runtime registers `deterministic_structural` explicitly. Workflow startup
 rejects an unknown node type before execution; runtime must not dispatch
@@ -311,7 +356,9 @@ COMMANDER for a missing deterministic executor.
 
 ## Controller Contract Registry Changes
 
-The existing `feasibility_structural` schema gains:
+The existing structural schemas remain closed Draft 2020-12 contracts and add
+`structural_action`. They bind each action to an exact executor verdict and
+state shape; an action/verdict mismatch is rejected before routing.
 
 ```yaml
 structural_action:
@@ -319,18 +366,50 @@ structural_action:
   enum: [proceed, repair, proceed_with_warning, block]
 ```
 
-Its invariants require:
+For either artifact, substituting its existing field prefix and artifact key,
+the complete outcome requirements are:
 
-- `proceed` implies `feasibility_structural_pass: true`;
-- `repair` implies `feasibility_structural_pass: false` and a positive attempt;
-- `proceed_with_warning` implies pass false and
-  `governance_gate_exhausted: feasibility`;
-- `block` uses result verdict `BLOCKED`, pass false, and a non-empty controller
-  `blocked_reason` through the existing control-update channel;
-- positive findings require a non-empty report path.
+| Action | Executor verdict | Required state | Forbidden or removed state |
+|---|---|---|---|
+| `proceed` after active validation | `PASS` | pass `true`, attempts `0`, findings `0`, non-empty report | `governance_gate_exhausted` |
+| `proceed` for disabled/absent/non-structural bypass | `PASS` | pass `true`, attempts `0`, findings `0` | report and `governance_gate_exhausted` |
+| `repair` | `REPAIR` | pass `false`, attempts `>= 1`, findings `>= 1`, non-empty report | `governance_gate_exhausted` |
+| `proceed_with_warning` | `WARN` | pass `false`, attempts `>= 1`, findings `>= 1`, non-empty report, `governance_gate_exhausted` equal to the artifact key | none |
+| `block` after validation exhaustion | `FAIL` | pass `false`, attempts `>= 1`, findings `>= 1`, non-empty report, `governance_gate_exhausted` equal to the artifact key | none |
+| `block` for invalid controller context | `FAIL` | pass `false`, preserved normalized attempts, findings `0` | report and `governance_gate_exhausted` |
+| `block` for evidence-write failure | `FAIL` | pass `false`, preserved normalized attempts, findings equal to the validation result | report; exhaustion is present only if exhaustion caused the attempted write |
 
-The `intent_alignment_structural` schema gets equivalent invariants using the
-intent-alignment fields and exhaustion value `intent-alignment-check`.
+“Preserved normalized attempts” means the prior non-negative integer, or `0`
+when absent/invalid; it never consumes repair budget. A positive findings count
+requires a report except on evidence-write failure, where persistence of that
+report is the failed operation.
+
+The `block` verdict is intentionally `FAIL`, not `BLOCKED`. The controller's
+generic executor-failure check intercepts `BLOCKED` before prepared routing and
+would discard structural evidence. A `FAIL` result is prepared normally;
+`structural_action = block` selects the explicit graph edge to
+`terminal-blocked`. The resulting prepared routing decision includes sealed
+control updates:
+
+```yaml
+status: blocked
+blocked_reason: <one exact reason code>
+```
+
+Allowed reason codes are:
+
+```text
+governance_structural_exhausted
+governance_structural_spec_dir_invalid
+governance_structural_config_invalid
+governance_structural_artifact_unknown
+governance_structural_evidence_write_failed
+governance_structural_authoring_verdict_missing
+```
+
+These use the existing `status`/`blocked_reason` control-update channel. They
+are attested with the prepared result and applied atomically with the graph
+transition, so the block report and state are not lost.
 
 The two authoring contracts are:
 
@@ -343,15 +422,23 @@ feasibility_authoring_verdict:
 intent_alignment_authoring_verdict:
   state_updates:
     intent_alignment_verdict:
-      enum: [ALIGNED, DRIFT, DRIFTING, STOP_AND_ASK, ESCALATE]
+      enum: [ALIGNED, DRIFT, DRIFTING, ESCALATE]
 ```
 
 Their full schemas follow the registry's closed Draft 2020-12 profile:
 top-level and `state_updates` objects reject additional properties; the single
-field is required for non-blocking provider results; and the projected field
+field is required for projectable provider results; and the projected field
 must equal the prepared provider result's top-level verdict. The equality check
 is performed by deterministic enrichment before contract validation because
 JSON Schema cannot reference a sibling instance value as an enum constant.
+Provider-emitted projected fields are rejected by the existing
+provider/controller ownership-disjointness check.
+
+`intent_alignment_authoring_verdict` has one additional closed branch for
+`verdict: STOP_AND_ASK`: the controller projection is empty and
+`intent_alignment_verdict` is forbidden. The ordinary Echelon result schema,
+not this controller contract, remains authoritative for its required
+`status: blocked`, `blocked_reason`, and `escalation_question`.
 
 ## Structural Gate Service
 
@@ -455,8 +542,12 @@ The service uses the existing output field names:
 
 | Artifact | File | Report | State prefix |
 |---|---|---|---|
-| `feasibility` | `feasibility.md` | Existing configured/default structural report | `feasibility_structural_*` |
-| `intent-alignment-check` | `intent-alignment-check.md` | Existing configured/default structural report | `intent_alignment_check_structural_*` |
+| `feasibility` | `feasibility.md` | `feasibility-structural-report.json` | `feasibility_structural_*` |
+| `intent-alignment-check` | `intent-alignment-check.md` | `intent-alignment-check-structural-report.json` | `intent_alignment_check_structural_*` |
+
+Those are the exact existing default names produced by
+`<artifact-key>-structural-report.json`. An explicitly configured report path
+continues to override the default.
 
 Report schema remains version 1:
 
@@ -503,6 +594,34 @@ Exhaustion occurs when either:
 When exhausted, `governance_gate_exhausted` records the artifact key for both
 warn and block policies, preserving current operator evidence.
 
+### State replacement and removal
+
+Every outcome defines a full replacement shape so evidence from a prior attempt
+cannot masquerade as the current certification:
+
+- a successful authoring phase overwrites its projected verdict and removes
+  the prior pass, findings, report, and `governance_gate_exhausted` fields for
+  that artifact; it preserves the attempt counter so repair budgets survive
+  the authoring round trip;
+- `proceed` after active validation writes pass `true`, attempts `0`, findings
+  `0`, and the new report, and removes exhaustion and `blocked_reason`;
+- `proceed` for disabled, absent-config, and non-structural bypasses writes pass
+  `true`, attempts `0`, findings `0`, and removes report, exhaustion, and
+  `blocked_reason`;
+- `repair` writes pass `false`, the new attempt count, findings, and report,
+  and removes exhaustion and `blocked_reason`;
+- `proceed_with_warning` writes its complete exhausted shape and removes
+  `blocked_reason`;
+- `block` writes the applicable complete block shape and its sealed lifecycle
+  control updates;
+- TRACKER `STOP_AND_ASK` removes a stale
+  `intent_alignment_verdict` while preserving current structural evidence,
+  because certification has not run for the blocked authoring result.
+
+All removals are named in `PreparedPhaseResult.state_removals` (or the existing
+trusted transaction-removal channel for store-owned keys), attested, and
+committed in the same routing decision as the replacement values.
+
 ## Executor Integration
 
 Add `DeterministicStructuralExecutor` to `squad_executors.py`.
@@ -522,7 +641,7 @@ The executor returns a stable generic verdict:
 - `PASS` for `proceed`;
 - `WARN` for `proceed_with_warning`;
 - `REPAIR` for `repair`;
-- `BLOCKED` for `block`.
+- `FAIL` for `block`.
 
 Routing uses `structural_action`, not these generic verdicts.
 
@@ -532,6 +651,28 @@ migration. For `deterministic_structural` nodes,
 Lexicon and Understanding ownership path. `prepare_phase_result()` validates
 the executor output against the compiled structural contract and returns the
 only routable immutable result.
+
+The block edge remains graph-visible. Structural controller enrichment attaches
+the exact lifecycle control update to the immutable prepared result when
+`structural_action = block`; ordinary transition evaluation then selects the
+explicit graph edge. No routing override is used.
+
+### Transition actions
+
+Actions move with the provider-verdict edges:
+
+- `increment_iteration` remains on each repair edge and is already a sealed,
+  completion-bound routing effect;
+- `write_kill_report` remains on certified feasibility `KILL`;
+- `increment_defer_count` remains on certified feasibility `DEFER`.
+
+The latter two action names exist in the current workflow but are not currently
+implemented as durable controller effects. This package preserves that current
+behavior and must add characterization tests proving the move neither fires
+them before certification nor changes their observable behavior. Implementing
+new durable semantics for those two actions is a separate work package. The
+design therefore makes no false once-only guarantee for behavior that does not
+yet exist.
 
 ## State Ownership
 
@@ -591,12 +732,33 @@ repair they proceed through the new node.
 Existing state may have `last_dispatch.post_dispatch_complete: false` or may
 remain on the provider phase. Existing dispatch recovery remains authoritative.
 The migration must not infer provider success solely from a structural report.
+Prepared provider results carrying an old contract digest are not reinterpreted
+under a new authoring contract. A provider phase without a durably completed
+new projection is redispatched under the new contract; an already committed
+downstream phase is not rewound.
+
+Pending durable completion/publication records retain their existing recovery
+authority and must be drained before deploying the graph change. The rollout
+preflight refuses activation while either affected provider phase has an
+in-flight old-contract completion record. This avoids inventing a cross-contract
+receipt migration.
 
 ### Runs manually placed on a new node
 
 `echelon phase run` and normal resume execute the provider-free node without an
-LLM call. Missing authoring context produces a typed block or repair outcome
-according to the service contract.
+LLM call. Before validation or report writing, the executor requires the
+durably persisted projected verdict for that artifact. If it is absent, it
+returns `FAIL` plus `structural_action = block`, performs no evidence write, and
+uses `governance_structural_authoring_verdict_missing`. Operator recovery is to
+run or resume the corresponding authoring phase first:
+
+```text
+phase2-feasibility-structural      -> phase2-decide
+phase2-intent-alignment-structural -> phase2-tracker-alignment
+```
+
+The structural node never infers the verdict, redispatches the provider, or
+invokes COMMANDER.
 
 No persisted-state migration is required. Existing structural state fields are
 reused; the routing-verdict fields are additive.
@@ -666,7 +828,9 @@ Add focused tests for:
 - invalid spec directory;
 - invalid configuration;
 - atomic report failure;
-- exact state-update projection.
+- exact state-update projection;
+- full replacement/removal shape for every outcome;
+- `FAIL` plus `structural_action = block` for every blocking cause.
 
 ### Graph and contract tests
 
@@ -680,6 +844,9 @@ Verify:
 - every structural and projected-verdict field is controller-owned and
   schema-validated;
 - projected provider verdict fields are controller-only;
+- `STOP_AND_ASK` is excluded from projection and structural transitions;
+- every action/verdict/state-shape combination is accepted only by its exact
+  schema branch;
 - all forward routes are gated by
   `structural_action in [proceed, proceed_with_warning]`;
 - the workflow validator rejects malformed structural nodes;
@@ -695,7 +862,8 @@ Cover:
 - feasibility DEFER routing and defer exhaustion;
 - intent alignment pass;
 - intent alignment repair and redispatch;
-- STOP_AND_ASK/ESCALATE behavior after certification;
+- STOP_AND_ASK blocks at TRACKER without entering certification;
+- ESCALATE routes through certification and returns to TRACKER;
 - disabled-gate bypass;
 - warning exhaustion;
 - blocking exhaustion;
@@ -707,7 +875,12 @@ Cover:
 - missing projected verdict blocking;
 - resume directly at each deterministic node;
 - no provider call during deterministic-node execution;
-- structural report in phase checkpoint commits.
+- structural report in phase checkpoint commits;
+- structural `block` persists its report/state and reaches
+  `terminal-blocked` without generic executor-failure interception;
+- authoring and structural state removals eliminate stale evidence;
+- the moved `write_kill_report` and `increment_defer_count` actions retain
+  their characterized current behavior.
 
 ### Regression tests
 
@@ -730,16 +903,24 @@ package.
 
 Rollout:
 
-1. extract the service with characterization tests;
-2. revise and extend the four named controller contracts;
-3. add the deterministic executor;
-4. add graph nodes and durable provider-verdict projection;
-5. add prepared-result, recovery, checkpoint, and manual-phase tests;
-6. remove the hidden controller enrichment and exhaustion hook;
-7. update phase/prompt documentation;
-8. run focused and full verification;
-9. reinstall the development extension for live validation;
-10. run one representative Phase A flow with governance enabled.
+1. add characterization tests for current structural reports, repair budgets,
+   verdict routes, and transition-action behavior;
+2. extract the service behind the existing hidden hook without changing the
+   graph, then run the characterization suite;
+3. add and validate the new schemas, executor type, and graph support while
+   leaving the installed workflow unchanged;
+4. add prepared-result, recovery, checkpoint, STOP_AND_ASK, and manual-phase
+   tests;
+5. preflight that no affected old-contract completion/publication record is
+   in flight;
+6. switch both artifacts together to the explicit nodes and durable
+   provider-verdict projection;
+7. remove the hidden controller enrichment and exhaustion hook in the same
+   commit as the graph switch, leaving exactly one authoritative path;
+8. update phase/prompt documentation;
+9. run focused and full verification;
+10. reinstall the development extension for live validation;
+11. run one representative Phase A flow with governance enabled.
 
 Rollback is one coherent revert restoring:
 
