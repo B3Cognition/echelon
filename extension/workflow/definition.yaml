@@ -675,28 +675,37 @@ phases:
     allowed_state_updates:
       - status
       - shadow_output_recovered
-    controller_state_contract: feasibility_structural
+    controller_state_contract: feasibility_authoring_verdict
     state_update_types:
       status: string
     state_update_enums:
       status: [blocked, killed]
     transitions:
-      # Controller validates feasibility.md after dispatch. When enabled, an
-      # invalid artifact is re-dispatched within both governance and convergence
-      # repair budgets. Disabled gates are made routing-inert by the controller.
+      - to: phase2-feasibility-structural
+        condition: always
+
+  - id: phase2-feasibility-structural
+    label: "Deterministic Feasibility Structural Gate"
+    type: deterministic_structural
+    structural_artifact: feasibility
+    allowed_state_updates: []
+    controller_state_contract: feasibility_structural
+    transitions:
       - to: phase2-decide
-        condition: "governance.enabled AND NOT feasibility_structural_pass AND feasibility_structural_attempts < governance.max_repair_attempts AND iteration < max_iterations"
+        condition: "structural_action = repair"
         action: increment_iteration
+      - to: terminal-blocked
+        condition: "structural_action = block"
       - to: phase2-strategic-overview
-        condition: "verdict = PASS"
+        condition: "structural_action in [proceed, proceed_with_warning] AND feasibility_verdict = PASS"
       - to: done
-        condition: "verdict = KILL"
+        condition: "structural_action in [proceed, proceed_with_warning] AND feasibility_verdict = KILL"
         action: write_kill_report
       - to: phase1-what
-        condition: "verdict = DEFER AND defer_count < assess_defer_loop_limit"
+        condition: "structural_action in [proceed, proceed_with_warning] AND feasibility_verdict = DEFER AND defer_count < assess_defer_loop_limit"
         action: increment_defer_count
       - to: escalate
-        condition: "verdict = DEFER AND defer_count >= assess_defer_loop_limit"
+        condition: "structural_action in [proceed, proceed_with_warning] AND feasibility_verdict = DEFER AND defer_count >= assess_defer_loop_limit"
 
   # --------------------------------------------------------------------------
   - id: phase2-strategic-overview
@@ -739,21 +748,31 @@ phases:
       - escalation_recommended_answer
       - escalation_default_answer
       - shadow_output_recovered
-    controller_state_contract: intent_alignment_structural
+    controller_state_contract: intent_alignment_authoring_verdict
     state_update_types:
       status: string
     state_update_enums:
       status: [blocked]
     transitions:
-      # Controller validates intent-alignment-check.md after dispatch. Invalid
-      # artifacts are re-dispatched within the configured repair budgets.
+      - to: phase2-intent-alignment-structural
+        condition: always
+
+  - id: phase2-intent-alignment-structural
+    label: "Deterministic Intent Alignment Structural Gate"
+    type: deterministic_structural
+    structural_artifact: intent-alignment-check
+    allowed_state_updates: []
+    controller_state_contract: intent_alignment_structural
+    transitions:
       - to: phase2-tracker-alignment
-        condition: "governance.enabled AND NOT intent_alignment_check_structural_pass AND intent_alignment_check_structural_attempts < governance.max_repair_attempts AND iteration < max_iterations"
+        condition: "structural_action = repair"
         action: increment_iteration
-      - to: phase3-specialists    # specialists run BEFORE speckit-echelon-architect (ARCHITECT) so their findings feed the design
-        condition: "verdict = ALIGNED OR verdict = DRIFT OR verdict = DRIFTING"
+      - to: terminal-blocked
+        condition: "structural_action = block"
+      - to: phase3-specialists
+        condition: "structural_action in [proceed, proceed_with_warning] AND intent_alignment_verdict in [ALIGNED, DRIFT, DRIFTING]"
       - to: phase2-tracker-alignment
-        condition: "verdict = STOP_AND_ASK OR verdict = ESCALATE"
+        condition: "structural_action in [proceed, proceed_with_warning] AND intent_alignment_verdict = ESCALATE"
 
   # --------------------------------------------------------------------------
   - id: phase3-how

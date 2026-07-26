@@ -37,6 +37,7 @@ from harness.squad import (
     SquadResult,
     _constitution_artifact_is_real,
     _phase_requires_constitution_provenance,
+    project_authoring_verdict,
 )
 from harness.squad_executors import AgentExecutor
 from harness.squad_provider import SquadAgentResult
@@ -69,6 +70,147 @@ EXT_YML = EXT_ROOT / "extension/extension.yml"
 
 
 _RAW_ATTESTATION_SECRET = "raw-attestation-secret"
+
+
+@pytest.mark.parametrize(
+    ("phase", "verdict", "expected"),
+    [
+        ("phase2-decide", "PASS", {"feasibility_verdict": "PASS"}),
+        ("phase2-decide", "KILL", {"feasibility_verdict": "KILL"}),
+        ("phase2-decide", "DEFER", {"feasibility_verdict": "DEFER"}),
+        (
+            "phase2-tracker-alignment",
+            "DRIFTING",
+            {"intent_alignment_verdict": "DRIFTING"},
+        ),
+        (
+            "phase2-tracker-alignment",
+            "ESCALATE",
+            {"intent_alignment_verdict": "ESCALATE"},
+        ),
+    ],
+)
+def test_project_authoring_verdict(
+    phase: str, verdict: str, expected: dict[str, str]
+) -> None:
+    assert dict(
+        project_authoring_verdict(
+            phase_id=phase,
+            provider_verdict=verdict,
+        )
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    ("phase", "verdict"),
+    [
+        ("phase2-decide", "pass"),
+        ("phase2-decide", " PASS "),
+        ("phase2-decide", ""),
+        ("phase2-decide", "ALIGNED"),
+        ("phase2-tracker-alignment", "PASS"),
+        ("unknown", "PASS"),
+    ],
+)
+def test_project_authoring_verdict_rejects_noncanonical_input(
+    phase: str, verdict: str
+) -> None:
+    with pytest.raises(ControllerStateContractViolation) as caught:
+        project_authoring_verdict(
+            phase_id=phase,
+            provider_verdict=verdict,
+        )
+
+    assert caught.value.json_path == "$.verdict"
+    assert caught.value.validator == "projection"
+
+
+def test_deterministic_structural_executor_repairs_without_provider(
+    tmp_path: Path,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    node = ctrl._graph.get("phase2-feasibility-structural")
+    spec_dir = tmp_path / "specs"
+    spec_dir.mkdir()
+    (spec_dir / "feasibility.md").write_text("# Incomplete\n", encoding="utf-8")
+    state = store.load()
+    state.update(
+        {
+            "phase": node.id,
+            "spec_dir": str(spec_dir),
+            "feasibility_verdict": "PASS",
+            "iteration": 0,
+            "max_iterations": 5,
+        }
+    )
+    store.save(state)
+
+    result = ctrl._executors["deterministic_structural"].execute(node, store)
+
+    assert result.verdict == "REPAIR"
+    assert result.state_updates["structural_action"] == "repair"
+    assert _evaluate_prepared_result(ctrl, node, result) == "phase2-decide"
+
+
+def test_deterministic_structural_executor_passes_to_projected_route(
+    tmp_path: Path,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    node = ctrl._graph.get("phase2-feasibility-structural")
+    spec_dir = tmp_path / "specs"
+    spec_dir.mkdir()
+    (spec_dir / "feasibility.md").write_text(
+        "# Feasibility\n\n"
+        "## Metadata\nSpec: demo\n\n"
+        "## Feasibility Verdict\nFeasible.\n\n"
+        "## Key Risks\nNo blocking risks.\n\n"
+        "## Kill / Defer / Pass Decision\nDecision: PASS\n",
+        encoding="utf-8",
+    )
+    state = store.load()
+    state.update(
+        {
+            "phase": node.id,
+            "spec_dir": str(spec_dir),
+            "feasibility_verdict": "PASS",
+            "iteration": 0,
+            "max_iterations": 5,
+        }
+    )
+    store.save(state)
+
+    result = ctrl._executors["deterministic_structural"].execute(node, store)
+
+    assert result.verdict == "PASS"
+    assert result.state_updates["structural_action"] == "proceed"
+    assert (
+        _evaluate_prepared_result(ctrl, node, result)
+        == "phase2-strategic-overview"
+    )
+
+
+def test_deterministic_structural_missing_authoring_verdict_blocks(
+    tmp_path: Path,
+) -> None:
+    ctrl, store = _controller(tmp_path)
+    node = ctrl._graph.get("phase2-feasibility-structural")
+    state = store.load()
+    state["phase"] = node.id
+    store.save(state)
+
+    result = ctrl._executors["deterministic_structural"].execute(node, store)
+    snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+    prepared = ctrl._prepare_phase_result(node, result, snapshot)
+
+    assert result.verdict == "FAIL"
+    assert prepared.state_updates["structural_action"] == "block"
+    assert prepared.control_updates["blocked_reason"] == (
+        "governance_structural_authoring_verdict_missing"
+    )
+    assert (
+        ctrl._evaluate_transitions(node, prepared, snapshot)
+        == "terminal-blocked"
+    )
 
 
 class _ExplodingPath:
@@ -4717,7 +4859,10 @@ class TestConvergenceRoutingGuard:
         result = ctrl.run("msg", "banzai")
 
         assert result.status == "done"
-        assert store.load()["last_dispatch"]["phase_id"] == "phase2-decide"
+        assert (
+            store.load()["last_dispatch"]["phase_id"]
+            == "phase2-feasibility-structural"
+        )
         assert provider.exec_agent.call_count == 1
 
     def test_blocked_empty_escalation_with_convergence_recovers_to_recommendation(self, tmp_path):
@@ -4740,7 +4885,10 @@ class TestConvergenceRoutingGuard:
         result = ctrl.run("msg", "banzai")
 
         assert result.status == "done"
-        assert store.load()["last_dispatch"]["phase_id"] == "phase2-decide"
+        assert (
+            store.load()["last_dispatch"]["phase_id"]
+            == "phase2-feasibility-structural"
+        )
         assert provider.exec_agent.call_count == 1
 
 
@@ -6255,7 +6403,7 @@ class TestStructuralGuardDeterminism:
         from harness.squad_provider import SquadAgentResult
         return SquadAgentResult(
             exit_code=0,
-            echelon_result={"verdict": "DONE", "state_updates": updates},
+            echelon_result={"verdict": "PASS", "state_updates": updates},
             raw_output="",
             duration_ms=0,
             timed_out=False,
@@ -6280,7 +6428,7 @@ class TestStructuralGuardDeterminism:
                 node,
                 self._result({}),
             )
-        assert nxt == "phase2-decide"
+        assert nxt == "phase2-feasibility-structural"
 
     def test_omitted_feasibility_structural_result_does_not_fail_open(self, tmp_path):
         from unittest.mock import patch
@@ -6302,7 +6450,7 @@ class TestStructuralGuardDeterminism:
                           side_effect=AssertionError("guard punted to COMMANDER")):
             nxt = _evaluate_prepared_result(ctrl, node, result)
 
-        assert nxt == "phase2-decide"
+        assert nxt == "phase2-feasibility-structural"
 
     def test_omitted_intent_alignment_structural_result_does_not_fail_open(self, tmp_path):
         from unittest.mock import patch
@@ -6324,7 +6472,7 @@ class TestStructuralGuardDeterminism:
                           side_effect=AssertionError("guard punted to COMMANDER")):
             nxt = _evaluate_prepared_result(ctrl, node, result)
 
-        assert nxt == "phase2-tracker-alignment"
+        assert nxt == "phase2-intent-alignment-structural"
 
     def test_invalid_feasibility_artifact_overrides_stale_model_pass(self, tmp_path):
         ctrl, store = _controller(tmp_path)
@@ -6346,12 +6494,25 @@ class TestStructuralGuardDeterminism:
         prepared = ctrl._prepare_phase_result(node, result, snapshot)
         assert (
             ctrl._evaluate_transitions(node, prepared, snapshot)
-            == "phase2-decide"
+            == "phase2-feasibility-structural"
         )
         assert result.state_updates == {}
-        assert prepared.state_updates["feasibility_structural_pass"] is False
+        assert prepared.state_updates["feasibility_verdict"] == "PASS"
+        state = store.load()
+        state.update(
+            {
+                "phase": "phase2-feasibility-structural",
+                "feasibility_verdict": "PASS",
+            }
+        )
+        store.save(state)
+        gate_node = ctrl._graph.get("phase2-feasibility-structural")
+        gate_result = ctrl._executors["deterministic_structural"].execute(
+            gate_node, store
+        )
+        assert gate_result.state_updates["feasibility_structural_pass"] is False
         report = json.loads(
-            Path(prepared.state_updates["feasibility_structural_report"]).read_text(
+            Path(gate_result.state_updates["feasibility_structural_report"]).read_text(
                 encoding="utf-8"
             )
         )
@@ -6394,14 +6555,14 @@ class TestStructuralGuardDeterminism:
         prepared = ctrl._prepare_phase_result(node, result, snapshot)
         assert (
             ctrl._evaluate_transitions(node, prepared, snapshot)
-            == "phase2-strategic-overview"
+            == "phase2-feasibility-structural"
         )
         assert result.state_updates == {}
-        assert prepared.state_updates["feasibility_structural_pass"] is True
+        assert prepared.state_updates["feasibility_verdict"] == "PASS"
 
     def test_governance_warn_exhaustion_is_explicit(self, tmp_path):
         ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase2-decide")
+        node = ctrl._graph.get("phase2-feasibility-structural")
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
         (spec_dir / "feasibility.md").write_text("# Incomplete\n", encoding="utf-8")
@@ -6412,24 +6573,19 @@ class TestStructuralGuardDeterminism:
             "max_iterations": 5,
             "spec_dir": str(spec_dir.relative_to(tmp_path)),
             "feasibility_structural_attempts": 3,
+            "feasibility_verdict": "PASS",
         })
         store.save(state)
 
-        result = SquadAgentResult(
-            exit_code=0,
-            echelon_result={"verdict": "PASS", "state_updates": {}},
-            raw_output="",
-            duration_ms=0,
-            timed_out=False,
-        )
+        result = ctrl._executors["deterministic_structural"].execute(node, store)
         snapshot = store.capture_routing_snapshot(expected_phase=node.id)
         prepared = ctrl._prepare_phase_result(node, result, snapshot)
         assert (
             ctrl._evaluate_transitions(node, prepared, snapshot)
             == "phase2-strategic-overview"
         )
+        assert result.verdict == "WARN"
         assert prepared.state_updates["governance_gate_exhausted"] == "feasibility"
-        assert "governance_gate_exhausted" not in result.state_updates
 
     def test_governance_block_exhaustion_stops_pipeline(self, tmp_path):
         config_dir = tmp_path / ".echelon"
@@ -6442,7 +6598,7 @@ class TestStructuralGuardDeterminism:
             encoding="utf-8",
         )
         ctrl, store = _controller(tmp_path)
-        node = ctrl._graph.get("phase2-decide")
+        node = ctrl._graph.get("phase2-feasibility-structural")
         store.initialize(
             "r",
             "greenfield",
@@ -6458,18 +6614,13 @@ class TestStructuralGuardDeterminism:
             "iteration": 0,
             "max_iterations": 5,
             "spec_dir": str(spec_dir.relative_to(tmp_path)),
+            "feasibility_verdict": "PASS",
         })
         store.save(state)
 
-        result = SquadAgentResult(
-            exit_code=0,
-            echelon_result={"verdict": "PASS", "state_updates": {}},
-            raw_output="",
-            duration_ms=0,
-            timed_out=False,
-        )
+        result = ctrl._executors["deterministic_structural"].execute(node, store)
         assert _coordinate_prepared_result(ctrl, node, result) == "terminal-blocked"
-        assert store.load()["blocked_reason"] == "governance_gate_exhausted"
+        assert store.load()["blocked_reason"] == "governance_structural_exhausted"
 
     def test_governance_enrichment_does_not_mutate_provider_result(
         self,
@@ -6487,7 +6638,7 @@ class TestStructuralGuardDeterminism:
         )
 
         assert provider_result.echelon_result == original
-        assert "feasibility_structural_pass" in enrichment.updates
+        assert enrichment.updates["feasibility_verdict"] == "PASS"
         assert enrichment.controller_owns_result_updates is False
 
     def test_governance_hard_exhaustion_is_an_unpersisted_routing_override(
@@ -6515,8 +6666,8 @@ class TestStructuralGuardDeterminism:
             provider_result,
         )
 
-        assert enrichment.routing_override == "terminal-blocked"
-        assert enrichment.updates["governance_gate_exhausted"] == "feasibility"
+        assert enrichment.routing_override is None
+        assert enrichment.updates["feasibility_verdict"] == "PASS"
         assert store.load() == before_state
         assert provider_result.echelon_result == original
 
@@ -7180,10 +7331,7 @@ class TestFailClosedControllerPreparation:
             ctrl,
             "_controller_enrichment",
             lambda *_: ControllerEnrichment(
-                updates={
-                    "feasibility_structural_pass": False,
-                    "feasibility_structural_attempts": 1,
-                },
+                updates={"feasibility_verdict": "PASS"},
                 routing_override="phase2-decide",
             ),
         )
@@ -7914,7 +8062,7 @@ class TestFailClosedControllerPreparation:
         assert "shadow_output_recovered" not in blocked
         assert (
             blocked["controller_contract_error"]["contract"]
-            == "feasibility_structural"
+            == "feasibility_authoring_verdict"
         )
         assert "governance-secret" not in json.dumps(
             blocked["controller_contract_error"]

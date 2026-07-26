@@ -821,8 +821,8 @@ def test_workflow_validator_rejects_contract_bearing_greenfield_skip(
 _REQUIRED_CONTROLLER_CONTRACTS = {
     "phase1-lexicon": "spec_lexicon",
     "phase1-understanding": "understanding",
-    "phase2-decide": "feasibility_structural",
-    "phase2-tracker-alignment": "intent_alignment_structural",
+    "phase2-decide": "feasibility_authoring_verdict",
+    "phase2-tracker-alignment": "intent_alignment_authoring_verdict",
     "phase3-tasks-lexicon": "tasks_lexicon",
     "phase3-understanding": "understanding",
     "phase3-consensus-tasks-lexicon": "tasks_lexicon",

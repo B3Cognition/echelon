@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from harness.controller_state_contracts import ControllerStateContractViolation
+from harness.governance_structural_gate import (
+    GovernanceStructuralGateResult,
+    run_governance_structural_gate,
+)
 from harness.prompt_markdown import read_prompt_markdown
 from harness.quality_scores import (
     normalize_why_quality_scores,
@@ -1836,6 +1840,110 @@ class DeterministicLexiconExecutor(PhaseExecutor):
             duration_ms=0,
             timed_out=False,
         )
+
+
+class DeterministicStructuralExecutor(PhaseExecutor):
+    """Certify one governance artifact without invoking an AI provider."""
+
+    def __init__(
+        self,
+        phase_graph: "PhaseGraph",
+        ext_dir: Path,
+        project_root: Path,
+        squad_dir: Optional[Path] = None,
+    ) -> None:
+        self._graph = phase_graph
+        self._ext_dir = ext_dir
+        self._project_root = project_root
+        self._squad_dir = squad_dir
+
+    def execute(
+        self, node: "PhaseNode", state_store: "SquadStateStore"
+    ) -> "SquadAgentResult":
+        from harness.config import get_full_resolved_config
+        from harness.squad_provider import SquadAgentResult
+
+        artifact = str(getattr(node, "structural_artifact", "") or "")
+        prefixes = {
+            "feasibility": (
+                "feasibility_verdict",
+                "feasibility_structural_attempts",
+            ),
+            "intent-alignment-check": (
+                "intent_alignment_verdict",
+                "intent_alignment_check_structural_attempts",
+            ),
+        }
+        state = state_store.load()
+        if artifact not in prefixes:
+            gate = GovernanceStructuralGateResult(
+                artifact_key=artifact,
+                action="block",
+                passed=False,
+                attempts=0,
+                findings=0,
+                report_path=None,
+                exhausted_artifact=None,
+                blocked_reason="governance_structural_artifact_unknown",
+                detail=f"unsupported structural artifact for {node.id}",
+            )
+            updates: dict[str, object] = {"structural_action": "block"}
+        else:
+            verdict_key, attempts_key = prefixes[artifact]
+            if state.get(verdict_key) is None:
+                gate = GovernanceStructuralGateResult(
+                    artifact_key=artifact,
+                    action="block",
+                    passed=False,
+                    attempts=_normalized_attempts(state.get(attempts_key)),
+                    findings=0,
+                    report_path=None,
+                    exhausted_artifact=None,
+                    blocked_reason=(
+                        "governance_structural_authoring_verdict_missing"
+                    ),
+                    detail=f"run the owner phase before {node.id}",
+                )
+            else:
+                spec_ref = str(state.get("spec_dir") or "").strip()
+                spec_dir = Path(spec_ref) if spec_ref else None
+                if spec_dir is not None and not spec_dir.is_absolute():
+                    spec_dir = self._project_root / spec_dir
+                gate = run_governance_structural_gate(
+                    artifact_key=artifact,
+                    spec_dir=spec_dir,
+                    extension_root=self._ext_dir,
+                    governance_config=get_full_resolved_config(
+                        self._project_root,
+                        fallback_config_path=(
+                            self._ext_dir / "echelon-config.yml"
+                        ),
+                    ),
+                    previous_attempts=state.get(attempts_key, 0),
+                    iteration=state.get("iteration", 0),
+                    max_iterations=state.get("max_iterations", 0),
+                )
+            updates = gate.state_updates()
+        verdict = {
+            "proceed": "PASS",
+            "repair": "REPAIR",
+            "proceed_with_warning": "WARN",
+            "block": "FAIL",
+        }[gate.action]
+        return SquadAgentResult(
+            exit_code=0,
+            echelon_result={"verdict": verdict, "state_updates": updates},
+            raw_output=str(gate.report_path or gate.detail),
+            duration_ms=0,
+            timed_out=False,
+        )
+
+
+def _normalized_attempts(value: object) -> int:
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
 
 
 class StagedParallelExecutor(PhaseExecutor):
