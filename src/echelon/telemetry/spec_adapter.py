@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -49,12 +50,17 @@ def analyze_spec_run(run_dir: Path) -> RunAnalysis:
     dimensions = {
         "by_phase": _dimension(spans, "echelon.workflow.phase"),
         "by_agent": _dimension(spans, "echelon.agent.name"),
+        "by_provider": _dimension(spans, "gen_ai.provider.name"),
         "by_model": _dimension(spans, "gen_ai.response.model"),
         "by_dispatch_kind": _dimension(spans, "echelon.dispatch.kind"),
     }
+    blocker_events = _blocker_events(
+        run / "telemetry/events.jsonl",
+        trace_id,
+    )
     blockers = Counter(
         str(event["reason"])
-        for event in _blocker_events(run / "telemetry/events.jsonl", trace_id)
+        for event in blocker_events
         if isinstance(event.get("reason"), str) and event["reason"]
     )
     loops = {
@@ -90,6 +96,10 @@ def analyze_spec_run(run_dir: Path) -> RunAnalysis:
             "repair_loops": loops,
             "repair_dispatches": sum(event.get("reason") in {"semantic_repair", "deterministic_repair"} for event in dispatch_events),
             "repeated_blockers": dict(sorted((key, count) for key, count in blockers.items() if count > 1)),
+            "dispatches": _dispatch_summary(dispatch_events),
+            "blockers_by_phase": _blockers_by_phase(blocker_events),
+            "phase_order": _phase_order(dispatch_events),
+            "recency": _run_recency(run, state, manifest),
         },
         provenance={
             "tokens": "telemetry/spans.jsonl" if spans else "unavailable",
@@ -154,6 +164,112 @@ def _tokens(spans: Iterable[ExecutionSpan]) -> tuple[TokenUsage, int, int]:
             unknown,
         )
     return TokenUsage.unknown(), 0, unknown
+
+
+def _dispatch_summary(
+    events: Iterable[Mapping[str, object]],
+) -> dict[str, object]:
+    by_reason: Counter[str] = Counter()
+    by_phase: dict[str, dict[str, object]] = {}
+    total = 0
+    for event in events:
+        phase = event.get("phase")
+        reason = event.get("reason")
+        if not isinstance(phase, str) or not phase:
+            continue
+        if not isinstance(reason, str) or not reason:
+            continue
+        total += 1
+        by_reason[reason] += 1
+        bucket = by_phase.setdefault(
+            phase,
+            {
+                "total": 0,
+                "by_reason": Counter(),
+                "max_attempt": 0,
+                "errors": 0,
+            },
+        )
+        bucket["total"] = int(bucket["total"]) + 1
+        reason_counts = bucket["by_reason"]
+        if isinstance(reason_counts, Counter):
+            reason_counts[reason] += 1
+        attempt = event.get("attempt")
+        if isinstance(attempt, int) and not isinstance(attempt, bool):
+            bucket["max_attempt"] = max(int(bucket["max_attempt"]), attempt)
+        if event.get("outcome") == "ERROR":
+            bucket["errors"] = int(bucket["errors"]) + 1
+    normalized_phases: dict[str, dict[str, object]] = {}
+    for phase, bucket in sorted(by_phase.items()):
+        reason_counts = bucket["by_reason"]
+        normalized_phases[phase] = {
+            "total": bucket["total"],
+            "by_reason": (
+                dict(sorted(reason_counts.items()))
+                if isinstance(reason_counts, Counter)
+                else {}
+            ),
+            "max_attempt": bucket["max_attempt"],
+            "errors": bucket["errors"],
+        }
+    return {
+        "total": total,
+        "by_reason": dict(sorted(by_reason.items())),
+        "by_phase": normalized_phases,
+    }
+
+
+def _blockers_by_phase(
+    events: Iterable[Mapping[str, object]],
+) -> dict[str, dict[str, int]]:
+    result: dict[str, Counter[str]] = {}
+    for event in events:
+        phase = event.get("phase")
+        reason = event.get("reason")
+        if (
+            not isinstance(phase, str)
+            or not phase
+            or not isinstance(reason, str)
+            or not reason
+        ):
+            continue
+        result.setdefault(phase, Counter())[reason] += 1
+    return {
+        phase: dict(sorted(reasons.items()))
+        for phase, reasons in sorted(result.items())
+    }
+
+
+def _phase_order(events: Iterable[Mapping[str, object]]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for event in events:
+        phase = event.get("phase")
+        if isinstance(phase, str) and phase and phase not in seen:
+            seen.add(phase)
+            result.append(phase)
+    return result
+
+
+def _run_recency(
+    run: Path,
+    state: Mapping[str, object],
+    manifest: Mapping[str, object],
+) -> dict[str, str]:
+    state_created = state.get("created_at")
+    if isinstance(state_created, str) and state_created:
+        return {"value": state_created, "source": "state.created_at"}
+    manifest_created = manifest.get("created_at")
+    if isinstance(manifest_created, str) and manifest_created:
+        return {
+            "value": manifest_created,
+            "source": "telemetry.manifest.created_at",
+        }
+    modified = datetime.fromtimestamp(
+        run.stat().st_mtime,
+        tz=timezone.utc,
+    ).isoformat().replace("+00:00", "Z")
+    return {"value": modified, "source": "run_directory.mtime"}
 
 
 def _read_object(path: Path) -> dict[str, object]:

@@ -62,6 +62,7 @@ def test_spec_analysis_aggregates_phase_agent_model_and_loops(tmp_path: Path) ->
                     "echelon.workflow.phase": phase,
                     "echelon.agent.name": agent,
                     "echelon.dispatch.kind": kind,
+                    "gen_ai.provider.name": "anthropic",
                     "gen_ai.response.model": model,
                 },
                 token_usage=TokenUsage(reported_total_tokens=tokens),
@@ -80,9 +81,131 @@ def test_spec_analysis_aggregates_phase_agent_model_and_loops(tmp_path: Path) ->
     assert report.workflow == "spec"
     assert report.tokens.total == 12
     assert report.dimensions["by_agent"]["CARTOGRAPHER"]["tokens"] == 10
+    assert report.dimensions["by_provider"]["anthropic"]["dispatches"] == 2
     assert report.dimensions["by_model"]["sonnet"]["dispatches"] == 2
     assert report.workflow_metrics["repair_loops"] == {"why": 2, "what": 1, "plan": 3}
     assert report.workflow_metrics["repeated_blockers"] == {"traceability": 2}
+    assert report.workflow_metrics["dispatches"] == {
+        "total": 6,
+        "by_reason": {"initial": 6},
+        "by_phase": {
+            "phase1-what": {
+                "total": 1,
+                "by_reason": {"initial": 1},
+                "max_attempt": 3,
+                "errors": 0,
+            },
+            "phase1-why1": {
+                "total": 1,
+                "by_reason": {"initial": 1},
+                "max_attempt": 1,
+                "errors": 0,
+            },
+            "phase1-why2": {
+                "total": 1,
+                "by_reason": {"initial": 1},
+                "max_attempt": 2,
+                "errors": 0,
+            },
+            "phase3-plan": {
+                "total": 3,
+                "by_reason": {"initial": 3},
+                "max_attempt": 6,
+                "errors": 0,
+            },
+        },
+    }
+    assert report.workflow_metrics["blockers_by_phase"] == {
+        "phase1-why1": {"traceability": 2}
+    }
+    assert report.workflow_metrics["phase_order"] == [
+        "phase1-why1",
+        "phase1-why2",
+        "phase1-what",
+        "phase3-plan",
+    ]
+
+
+def test_spec_analysis_normalizes_future_phases_by_dispatch_reason(
+    tmp_path: Path,
+) -> None:
+    run = _spec_run(tmp_path)
+    store = TelemetryStore(
+        run,
+        workflow="spec",
+        run_id="spec-1",
+        profile={"name": "semi"},
+        trace_id="a" * 32,
+    )
+    store.append_event(
+        {
+            "schema_version": 1,
+            "type": "dispatch",
+            "trace_id": "a" * 32,
+            "phase": "phase1-lexicon",
+            "agent": "lexicon-gate",
+            "attempt": 2,
+            "reason": "deterministic_repair",
+            "outcome": "ERROR",
+            "event_time": "2026-07-20T00:00:01Z",
+            "started_at": "2026-07-20T00:00:00Z",
+            "ended_at": "2026-07-20T00:00:01Z",
+            "duration_ms": 1000,
+            "model": "",
+            "blocker": "lexicon_gate_exhausted",
+        }
+    )
+
+    report = analyze_spec_run(run)
+
+    assert report.workflow_metrics["dispatches"]["by_phase"]["phase1-lexicon"] == {
+        "total": 1,
+        "by_reason": {"deterministic_repair": 1},
+        "max_attempt": 2,
+        "errors": 1,
+    }
+    assert report.workflow_metrics["phase_order"] == ["phase1-lexicon"]
+
+
+def test_spec_analysis_records_recency_provenance(tmp_path: Path) -> None:
+    state_run = _spec_run(tmp_path / "state", "spec-state")
+    _write_json(
+        state_run / "state.json",
+        {
+            "run_id": "spec-state",
+            "spec_id": "001-demo",
+            "created_at": "2026-07-20T01:02:03Z",
+        },
+    )
+    manifest_run = _spec_run(tmp_path / "manifest", "spec-manifest")
+    _write_json(
+        manifest_run / "telemetry/manifest.json",
+        {
+            "schema_version": 1,
+            "workflow": "spec",
+            "run_id": "spec-manifest",
+            "trace_id": "a" * 32,
+            "created_at": "2026-07-21T01:02:03Z",
+            "profile": {"name": "semi"},
+        },
+    )
+    fallback_run = _spec_run(tmp_path / "fallback", "spec-fallback")
+
+    state_recency = analyze_spec_run(state_run).workflow_metrics["recency"]
+    manifest_recency = analyze_spec_run(manifest_run).workflow_metrics["recency"]
+    fallback_recency = analyze_spec_run(fallback_run).workflow_metrics["recency"]
+
+    assert state_recency == {
+        "value": "2026-07-20T01:02:03Z",
+        "source": "state.created_at",
+    }
+    assert manifest_recency == {
+        "value": "2026-07-21T01:02:03Z",
+        "source": "telemetry.manifest.created_at",
+    }
+    assert fallback_recency["source"] == "run_directory.mtime"
+    assert isinstance(fallback_recency["value"], str)
+    assert fallback_recency["value"].endswith("Z")
 
 
 def test_spec_analysis_does_not_treat_budget_counter_as_telemetry(tmp_path: Path) -> None:
