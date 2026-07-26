@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 
 from echelon.telemetry.analyzer import RunAnalysis
 from echelon.telemetry.health import analyze_spec_health
 from echelon.telemetry.model import TokenUsage
+from echelon.telemetry.render import health_to_json, render_health_text
 
 
 def _report(
@@ -308,3 +310,53 @@ def test_unknown_identity_is_not_used_for_cross_run_comparison() -> None:
         finding.code == "telemetry.identity_unavailable"
         for finding in health.findings
     )
+
+
+def test_health_renderers_are_stable_and_expose_the_same_conclusions() -> None:
+    health = analyze_spec_health(
+        (
+            _report(
+                "spec-1",
+                status="blocked",
+                phase="terminal-blocked",
+                blockers={"phase1-lexicon": {"lexicon_gate_exhausted": 1}},
+            ),
+        )
+    )
+
+    json_output = health_to_json(health)
+    text_output = render_health_text(health)
+    payload = json.loads(json_output)
+
+    assert payload["schema_version"] == 1
+    assert payload["workflow"] == "spec"
+    assert payload["state"] == health.state
+    assert [item["code"] for item in payload["findings"]] == [
+        finding.code for finding in health.findings
+    ]
+    assert "SPEC TELEMETRY HEALTH" in text_output
+    assert f"State: {health.state}" in text_output
+    assert f"Latest run: {health.cohort['latest_run']}" in text_output
+    assert health.findings[0].code in text_output
+    assert "phase1-lexicon" in text_output
+    assert "lexicon_gate_exhausted=1" in text_output
+    assert health_to_json(health) == json_output
+    assert render_health_text(health) == text_output
+
+
+def test_health_text_renders_exclusions_and_diagnostics() -> None:
+    report = _report(
+        "spec-1",
+        diagnostics=("truncated final telemetry line",),
+    )
+    other = _report(
+        "spec-2",
+        created_at="2026-07-19T00:00:00Z",
+        profile="banzai",
+    )
+
+    text_output = render_health_text(analyze_spec_health((other, report)))
+
+    assert "Excluded runs: profile_mismatch=1" in text_output
+    assert "Data limitations:" in text_output
+    assert "truncated final telemetry line" in text_output

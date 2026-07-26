@@ -5,10 +5,79 @@ from __future__ import annotations
 import json
 
 from echelon.telemetry.analyzer import RunAnalysis
+from echelon.telemetry.health import HealthReport
 
 
 def analysis_to_json(analysis: RunAnalysis) -> str:
     return json.dumps(analysis.to_json_dict(), indent=2, sort_keys=True) + "\n"
+
+
+def health_to_json(report: HealthReport) -> str:
+    return json.dumps(report.to_json_dict(), indent=2, sort_keys=True) + "\n"
+
+
+def render_health_text(report: HealthReport) -> str:
+    cohort = report.cohort
+    summary = report.summary
+    lines = [
+        "SPEC TELEMETRY HEALTH",
+        f"State: {report.state}",
+        f"Latest run: {cohort.get('latest_run') or 'unavailable'}",
+        (
+            f"Cohort: {cohort.get('eligible_runs', 0)}/"
+            f"{cohort.get('discovered_runs', 0)} compatible runs"
+        ),
+        (
+            "Telemetry coverage: "
+            + _coverage_text(summary.get("telemetry_coverage"))
+        ),
+        (
+            f"Reliability: {summary.get('blocked_runs', 0)} blocked/failed, "
+            f"{summary.get('dispatches', 0)} dispatches"
+        ),
+    ]
+    if report.findings:
+        lines.append("Findings:")
+        lines.extend(
+            f"  [{finding.severity.upper()}] {finding.code} "
+            f"({finding.subject}) — {finding.evidence}"
+            for finding in report.findings
+        )
+    else:
+        lines.append("Findings: none")
+    if report.phase_observations:
+        lines.append("Phase observations:")
+        for phase, values in report.phase_observations.items():
+            blockers = values.get("blockers")
+            blocker_text = (
+                ", ".join(
+                    f"{reason}={count}"
+                    for reason, count in blockers.items()
+                )
+                if isinstance(blockers, dict) and blockers
+                else "none"
+            )
+            lines.append(
+                f"  {phase}: dispatches={values.get('dispatches', 0)}, "
+                f"repairs={values.get('repairs', 0)}, "
+                f"manual_reruns={values.get('manual_reruns', 0)}, "
+                f"provider_retries={values.get('provider_retries', 0)}, "
+                f"errors={values.get('errors', 0)}, "
+                f"max_attempt={values.get('max_attempt', 0)}, "
+                f"blockers={blocker_text}"
+            )
+    if report.excluded_runs:
+        lines.append(
+            "Excluded runs: "
+            + ", ".join(
+                f"{reason}={count}"
+                for reason, count in report.excluded_runs.items()
+            )
+        )
+    if report.diagnostics:
+        lines.append("Data limitations:")
+        lines.extend(f"  - {diagnostic}" for diagnostic in report.diagnostics)
+    return "\n".join(lines) + "\n"
 
 
 def render_analysis_text(analysis: RunAnalysis) -> str:
@@ -83,6 +152,12 @@ def _duration(milliseconds: int) -> str:
     if seconds < 60:
         return f"{seconds:.1f}s"
     return f"{seconds / 60:.1f}m"
+
+
+def _coverage_text(value: object) -> str:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "unavailable"
+    return f"{value:.0%}"
 
 
 def _token_text(analysis: RunAnalysis) -> str:
