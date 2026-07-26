@@ -4,13 +4,14 @@ Load this appendix during SAGE spec-validation Step 8.
 
 ## Contradiction Types
 
-Check these five contradiction types:
+Check these six contradiction types:
 
 1. `requirement_conflict`: two `FR-*` requirements cannot both be satisfied. Example: one requirement says all data is encrypted at rest while another requires plaintext search indexes.
 2. `assumption_requirement_misalignment`: `assumptions.md` states one condition while `spec.md` requires behavior that contradicts it.
 3. `boundary_violation`: `spec.md` requires behavior that `boundaries.md` explicitly declares out of scope.
 4. `priority_inversion`: a P0 requirement depends on a P2 requirement that may not be implemented.
 5. `acceptance_criteria_conflict`: Given/When/Then blocks describe contradictory outcomes for overlapping conditions.
+6. `architecture_requirement_drift`: HOW/PLAN artifacts (`plan.md, research.md, data-model.md, contracts/`) or TASKS introduce a mechanism, deferral, persistence, ordering, consistency, security, privacy, or lifecycle behavior that changes an invariant in validated `spec.md`.
 
 ## Report Format
 
@@ -31,7 +32,7 @@ When zero contradictions are found, include:
 
 ```text
 No contradictions detected across [N] artifacts ([list artifact filenames]).
-Contradiction types checked: requirement_conflict, assumption_requirement_misalignment, boundary_violation, priority_inversion, acceptance_criteria_conflict.
+Contradiction types checked: requirement_conflict, assumption_requirement_misalignment, boundary_violation, priority_inversion, acceptance_criteria_conflict, architecture_requirement_drift.
 ```
 
 ## Logging Requirement

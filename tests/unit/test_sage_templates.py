@@ -6,6 +6,14 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = ROOT / "extension" / "agents" / "exploration" / "templates"
 AGENT = ROOT / "extension" / "agents" / "exploration" / "sage.md"
+CONTRADICTION_REFERENCE = (
+    ROOT
+    / "extension"
+    / "agents"
+    / "exploration"
+    / "appendices"
+    / "sage-contradiction-detection-reference.md"
+)
 WHY1_PHASE = ROOT / "extension" / "workflow" / "phases" / "phase1-why1.md"
 WHY2_PHASE = ROOT / "extension" / "workflow" / "phases" / "phase1-why2.md"
 WHY3_PHASE = ROOT / "extension" / "workflow" / "phases" / "phase3-consensus.md"
@@ -76,6 +84,9 @@ class TestSageTemplates:
         assert "{spec_dir}/issues.md" in text
         assert "agent: speckit-echelon-sage (SAGE)" in text
         assert "agent: WHY" not in text
+        assert "architecture_requirement_drift" in text
+        assert "plan.md, research.md, data-model.md, contracts/" in text
+        assert "validated `spec.md`" in text
 
     def test_sage_pass_verdict_forbids_required_amendments(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
@@ -157,3 +168,12 @@ class TestSageTemplates:
         assert "agents/exploration/templates/sage-quality-gates-template.md" in text
         assert "agents/exploration/templates/sage-issues-template.md" in text
         assert "using the provided templates" in text
+        assert "architecture_requirement_drift" in text
+        assert "validated `spec.md`" in text
+
+    def test_sage_contradiction_reference_includes_architecture_drift(self) -> None:
+        text = CONTRADICTION_REFERENCE.read_text(encoding="utf-8")
+
+        assert "architecture_requirement_drift" in text
+        assert "validated `spec.md`" in text
+        assert "plan.md, research.md, data-model.md, contracts/" in text

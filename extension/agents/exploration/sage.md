@@ -266,7 +266,13 @@ For every claim that a prior issue is "resolved", verify: (a) is there an integr
 
 Perform a structured sweep across all artifacts to detect contradictions. This step is MANDATORY — it must always execute and always produce a result (even if that result is zero contradictions). Silent skipping is forbidden.
 
-Load `agents/exploration/appendices/sage-contradiction-detection-reference.md` for the five contradiction types, structured report fields, zero-contradiction statement, and logging requirements.
+Load `agents/exploration/appendices/sage-contradiction-detection-reference.md` for the six contradiction types, structured report fields, zero-contradiction statement, and logging requirements.
+
+For WHY3, explicitly check `architecture_requirement_drift`: compare validated
+`spec.md` against HOW/PLAN artifacts (`plan.md, research.md, data-model.md, contracts/`)
+and planning artifacts. Flag any mechanism, deferral, persistence,
+ordering, consistency, security, privacy, or lifecycle behavior that changes a
+validated product invariant, even when the HOW artifacts agree with each other.
 
 #### 9. Pre-Mortem on the Spec
 
@@ -283,11 +289,13 @@ Assume the implementation will fail because of a spec deficiency. Ask:
 - All certified quality gate metrics meet thresholds
 - No CRITICAL issues found
 - Cross-artifact consistency verified
+- No `architecture_requirement_drift` from validated `spec.md` into HOW/PLAN/TASKS
 - No untestable requirements remain
 
 **FAIL** if ANY of the following are true:
 - Any quality gate metric below threshold
 - CRITICAL consistency issues between artifacts
+- Any `architecture_requirement_drift` that changes validated `spec.md` behavior
 - Untestable requirements that cannot be resolved by rewording
 - Missing requirements that would cause implementation failure
 

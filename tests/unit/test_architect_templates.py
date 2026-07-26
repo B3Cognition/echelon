@@ -86,6 +86,10 @@ class TestArchitectTemplates:
         )
         assert text.count("agent: speckit-echelon-architect (ARCHITECT)") == 2
         assert "agent: HOW" not in text
+        assert "Requirement Preservation" in text
+        assert "HOW may refine implementation mechanisms" in text
+        assert "must not reinterpret product behavior" in text
+        assert "route back to WHAT" in text
 
     def test_phase3_how_dispatch_includes_templates(self) -> None:
         text = PHASE.read_text(encoding="utf-8")
@@ -97,3 +101,5 @@ class TestArchitectTemplates:
         assert "extension/templates/contracts-template.md" in text
         assert "files in `specs/{NNN}-{feature}/`" not in text
         assert "files in `{spec_dir}/`" in text
+        assert "Requirement Preservation" in text
+        assert "must not reinterpret product behavior" in text
