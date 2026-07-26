@@ -680,6 +680,7 @@ phases:
       status: string
     state_update_enums:
       status: [blocked, killed]
+    allowed_verdicts: [PASS, KILL, DEFER]
     transitions:
       - to: phase2-feasibility-structural
         condition: always
@@ -753,6 +754,7 @@ phases:
       status: string
     state_update_enums:
       status: [blocked]
+    allowed_verdicts: [ALIGNED, DRIFT, DRIFTING, ESCALATE, STOP_AND_ASK]
     transitions:
       - to: phase2-intent-alignment-structural
         condition: always

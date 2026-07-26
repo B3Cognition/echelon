@@ -5256,7 +5256,7 @@ class SquadController:
             governance_override = None
         elif authoring_phase:
             updates = {}
-            governance_override = None
+            governance_override = node.id
         else:
             updates = {}
             governance_override = None
