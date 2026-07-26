@@ -386,6 +386,13 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
             "phase": "terminal-blocked",
             "blocked_reason": "phase_dispatch_limit",
             "spec_dir": str(spec_dir),
+            "escalation_question": "How should I proceed?",
+            "phase_dispatch_counts": {
+                "phase1-tracker": 1,
+                "phase1-what": 6,
+                "phase1-understanding": 6,
+                "phase1-why2": 5,
+            },
         }
     )
     state_path.write_text(json.dumps(state), encoding="utf-8")
@@ -415,6 +422,11 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
     assert resolved["issue_resolution_repair_baseline"]["issue_id"] == "ISS-002"
     assert resolved["issue_resolution_repair_baseline"]["repair_phase"] == "phase1-what"
     assert resolved["issue_resolution_repair_baseline"]["recorded_at"]
+    assert resolved["status"] == "running"
+    assert resolved["phase"] == "phase1-what"
+    assert "blocked_reason" not in resolved
+    assert "escalation_question" not in resolved
+    assert resolved["phase_dispatch_counts"] == {"phase1-tracker": 1}
 
 
 def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
