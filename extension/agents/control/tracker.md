@@ -137,12 +137,15 @@ Author `intent-alignment-check.md` using
 section, use valid requirement IDs from `spec.md`, and state ALIGNED, DRIFT, or
 STOP_AND_ASK unambiguously in `Alignment Verdict`.
 
-The Echelon controller selects the governance policy, validates the file after
-dispatch, records findings, and owns repair attempts and routing. On a repair
-dispatch, read the controller report supplied in the prompt and apply the
+The provider-free `phase2-intent-alignment-structural` node selects the
+governance policy, validates the file after dispatch, records findings, and
+owns repair attempts and certification routing. `STOP_AND_ASK` blocks here
+before that node; `ESCALATE` passes through certification before looping back.
+On a repair dispatch, read `intent-alignment-check-structural-report.json` and apply the
 smallest change that resolves every finding. Preserve sections that already
 pass. Do not inspect governance configuration, invoke validation commands, or
-return structural certification fields in `echelon_result.state_updates`.
+return `intent_alignment_verdict` or structural certification fields in
+`echelon_result.state_updates`.
 
 ---
 

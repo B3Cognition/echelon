@@ -79,12 +79,15 @@ The harness owns the `phase2-decide` timing window declared in
 
 ### Feasibility Structural Gate
 
-GATEKEEPER authors `feasibility.md`; the harness validates it after dispatch
-when the structural governance gate is enabled. The harness writes
-`feasibility-structural-report.json`, owns the pass and attempt state, and
-applies `governance.max_repair_attempts` plus `governance.on_exhausted`.
+GATEKEEPER authors and repairs `feasibility.md`. After a projectable verdict,
+the provider-free `phase2-feasibility-structural` node certifies it and writes
+`feasibility-structural-report.json`. That visible node owns pass, findings,
+attempt, and exhaustion state and applies `governance.max_repair_attempts` plus
+`governance.on_exhausted`.
 
 On re-dispatch, the prompt contains the report path and repair instructions.
 Repair every listed finding, preserve passing sections, and return the normal
 phase verdict. Deterministic validation and structural gate state remain
-harness-owned.
+harness-owned. GATEKEEPER must not emit `feasibility_verdict` or any
+`feasibility_structural_*` field. A manual structural run without a persisted
+verdict blocks; resume `phase2-decide` to recover.
