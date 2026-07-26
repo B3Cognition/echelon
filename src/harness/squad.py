@@ -32,6 +32,7 @@ from echelon.spec_lifecycle import (
 )
 from harness.condition_evaluator import ConditionEvaluator
 from harness.controller_state_contracts import ControllerStateContractViolation
+from harness.governance_structural_gate import run_governance_structural_gate
 from harness.echelon_result_schema import (
     EchelonResultContract,
     EchelonResultValidationError,
@@ -5143,23 +5144,7 @@ class SquadController:
         if gate_fields is None:
             return {}
 
-        artifact_key, default_name, pass_key, attempts_key, findings_key, report_key = gate_fields
-        governance = self._governance_config().get("governance", {})
-        artifacts = governance.get("artifacts", {}) if isinstance(governance, dict) else {}
-        entry = artifacts.get(artifact_key, {}) if isinstance(artifacts, dict) else {}
-        gate_enabled = (
-            isinstance(governance, dict)
-            and governance.get("enabled", False)
-            and isinstance(entry, dict)
-            and entry.get("enabled", True) is not False
-            and str(entry.get("tier") or "").lower() == "structural"
-        )
-        updates: dict[str, object] = {}
-        if not gate_enabled:
-            updates[pass_key] = True
-            updates[attempts_key] = 0
-            return updates
-
+        artifact_key, _default_name, _pass_key, attempts_key, _findings_key, _report_key = gate_fields
         spec_dir_ref = str(
             result.state_updates.get("spec_dir")
             or state.get("spec_dir")
@@ -5171,101 +5156,26 @@ class SquadController:
                 spec_dir = self._project_root / spec_dir
         else:
             spec_dir = self._project_root / "runs" / str(state.get("run_id") or "unknown") / "specs"
+            # Preserve the hidden hook's legacy fallback: report persistence
+            # created this directory before the explicit node owned spec_dir
+            # validation.
+            spec_dir.mkdir(parents=True, exist_ok=True)
 
-        artifact_name = str(entry.get("path") or default_name).strip()
-        artifact_path = spec_dir / artifact_name
-        report = self._validate_governance_structural_artifact(
+        gate = run_governance_structural_gate(
             artifact_key=artifact_key,
-            artifact_path=artifact_path,
             spec_dir=spec_dir,
-            entry=entry,
+            extension_root=self._ext_dir,
+            governance_config=self._governance_config(),
+            previous_attempts=state.get(attempts_key, 0),
+            iteration=state.get("iteration", 0),
+            max_iterations=state.get("max_iterations", self._max_iterations),
         )
-        report_path = spec_dir / str(
-            entry.get("report") or f"{artifact_key}-structural-report.json"
-        ).strip()
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        updates[report_key] = str(report_path)
-        updates[findings_key] = len(report["findings"])
-        updates[pass_key] = bool(report["ok"])
-        if report["ok"]:
-            updates[attempts_key] = 0
-            return updates
-
-        try:
-            previous_attempts = int(state.get(attempts_key, 0))
-        except (TypeError, ValueError):
-            previous_attempts = 0
-        updates[attempts_key] = max(0, previous_attempts) + 1
+        updates = gate.state_updates()
+        # The visible structural nodes own this field after graph cutover.
+        # The temporary provider-phase adapter remains on the existing closed
+        # controller contract until that migration.
+        updates.pop("structural_action", None)
         return updates
-
-    def _validate_governance_structural_artifact(
-        self,
-        *,
-        artifact_key: str,
-        artifact_path: Path,
-        spec_dir: Path,
-        entry: dict,
-    ) -> dict[str, object]:
-        findings: list[dict[str, object]] = []
-        if not artifact_path.is_file():
-            findings.append({
-                "code": "missing-structural-artifact",
-                "message": f"required governance artifact is missing: {artifact_path.name}",
-                "artifact": artifact_path.name,
-            })
-        else:
-            spec_chunks: list[str] = []
-            for cross_ref in entry.get("cross_refs") or []:
-                against = str(cross_ref.get("against") or "").strip()
-                if not against:
-                    continue
-                spec_path = spec_dir / against
-                if spec_path.is_file():
-                    spec_chunks.append(spec_path.read_text(encoding="utf-8", errors="replace"))
-                else:
-                    findings.append({
-                        "code": "missing-cross-reference",
-                        "message": f"structural reference artifact is missing: {against}",
-                        "artifact": against,
-                    })
-            try:
-                from lexicon.structural import structural_validate
-
-                validation_entry = dict(entry)
-                template = str(validation_entry.get("template") or "").strip()
-                if template:
-                    validation_entry["template"] = self._ext_dir / "templates" / template
-                validation = structural_validate(
-                    artifact_path.read_text(encoding="utf-8", errors="replace"),
-                    validation_entry,
-                    spec_text="\n\n".join(spec_chunks),
-                )
-                findings.extend(
-                    {
-                        "code": str(item.code),
-                        "message": str(item.message),
-                        "line": int(item.line),
-                        "span": str(item.span),
-                    }
-                    for item in validation.findings
-                )
-            except Exception as exc:
-                findings.append({
-                    "code": "structural-validator-error",
-                    "message": f"structural validator failed: {exc}",
-                })
-
-        return {
-            "schema_version": 1,
-            "artifact": artifact_key,
-            "path": str(artifact_path),
-            "ok": not findings,
-            "findings": findings,
-        }
 
     def _governance_exhaustion_enrichment(
         self,
