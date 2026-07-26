@@ -63,3 +63,23 @@ def test_controller_repair_context_names_governance_report():
     assert "/tmp/feasibility-report.json" in prompt
     assert "repair every listed finding" in prompt
     assert "Do not report `feasibility_structural_pass`" in prompt
+
+
+@pytest.mark.unit
+def test_issue_resolution_context_keeps_repaired_issue_available_for_retry():
+    from harness.squad_executors import _render_issue_resolution_context
+
+    prompt = _render_issue_resolution_context({
+        "selected_issue_resolution": "ISS-001",
+        "issue_resolution_ledger": {
+            "ISS-001": {
+                "status": "repaired",
+                "title": "Retry policy",
+                "guidance": "Choose retry behavior.",
+                "decision": "Use exponential backoff.",
+            }
+        },
+    })
+
+    assert "ISS-001" in prompt
+    assert "Use exponential backoff." in prompt

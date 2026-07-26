@@ -26,7 +26,7 @@ The queue contains only actionable SAGE findings. An issue marked resolved, cont
 
 ## Banzai
 
-Banzai may select only one explicitly evidence-backed, auto-eligible candidate. Its selection is normalized into the same ledger entry, repair baseline, and controller recovery edge as `echelon spec resolve`. It never clears the dispatch cap directly.
+Banzai may select only one explicitly evidence-backed, auto-eligible candidate. Its selection is normalized into the same ledger entry, repair baseline, and controller recovery edge as `echelon spec resolve`. A generic Banzai cap recovery without an issue selection retains its existing behavior.
 
 ## Verification
 
