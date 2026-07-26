@@ -3731,6 +3731,28 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
         "to_phase": "phase1-what",
         "reason": "issue_resolution",
     }
+    dispatch_counts = state.get("phase_dispatch_counts")
+    if isinstance(dispatch_counts, dict):
+        state["phase_dispatch_counts"] = {
+            phase: count
+            for phase, count in dispatch_counts.items()
+            if phase not in {"phase1-what", "phase1-understanding", "phase1-why2"}
+        }
+    state["phase"] = "phase1-what"
+    state["status"] = "running"
+    for key in (
+        "blocked_reason",
+        "escalation_question",
+        "escalation_options",
+        "blocked_decision",
+        "phase_dispatch_limit",
+        "phase_dispatch_limit_phase",
+    ):
+        state.pop(key, None)
+    state["phase_dispatch_limit_recovery"] = {
+        "phase": "phase1-what",
+        "resolver": "issue_resolution",
+    }
     store.save(state)
     print(
         f"[squad] recorded resolution for {issue_id}; the controller will validate "
