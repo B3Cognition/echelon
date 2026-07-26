@@ -253,7 +253,8 @@ echelon spec artifacts 001                 # generate specs/001-*/ARTIFACTS.md
 echelon wiki build                         # generate workspace-wide human navigation
 echelon spec continue                      # run the next no-input recovery/phase action
 echelon spec resume "your clarification"   # answer a human-input block, then continue
-echelon spec rewind <phase-id> --confirm   # recover a safe Phase 3 checkpoint, then continue
+echelon spec rewind <phase-id> --confirm   # recover the latest recorded checkpoint for a phase
+echelon spec rewind <phase-id> --commit <sha> --confirm  # select an explicit historical checkpoint
 
 # Deliberately remove a requirement or task from the landing scope, without an LLM call
 echelon spec defer 001 NFR-008 --reason "Owner decision" --dry-run
@@ -916,9 +917,9 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon wiki clean` | — | Safely remove only the manifest-owned generated vault under `.echelon/runtime/wiki/` |
 | `echelon spec continue` | — | Run the next no-input recovery action: resume an active/interrupted run, retry recoverable failed dispatches, or advance incomplete Phase A work |
 | `echelon spec resume "<answer>"` | `speckit.echelon.resume` | Provide an answer only when the squad asked for human input; after recording it, Echelon delegates back to continuation |
-| `echelon spec rewind <phase-id> [--confirm]` | — | Preview or rewind the active squad run to a safe checkpoint such as `phase3-how`, `phase3-sentinel`, or `phase3-plan`, then continue |
+| `echelon spec rewind <phase-id> [--commit <sha>] [--confirm]` | — | Preview or rewind the active squad run. Phase-only selection uses the last matching ledger row; `--commit` selects an explicit historical occurrence by full or unique abbreviated commit |
 | `echelon spec switch <spec-or-run-id> [--stash \| --discard --confirm]` | — | Select a checkpointed Phase A spec run while preserving or explicitly discarding outgoing dirty state |
-| `echelon spec checkpoint list\|accept\|commit ...` | — | Inspect, accept, or commit a named Phase A checkpoint |
+| `echelon spec checkpoint list\|accept\|commit ...` | — | Inspect checkpoints in authoritative oldest-to-newest ledger order with UTC creation time and latest-per-phase markers, or accept/commit a named Phase A checkpoint |
 | `echelon phase list` | — | List deterministic workflow phase IDs available for targeted repair/replay |
 | `echelon phase run <phase-id> [--spec <id>]` | — | Run exactly one workflow phase through the normal COMMANDER/state/journal contracts, publish artifacts to the target spec directory when resolvable, then stop |
 | `echelon benchmark list` / `echelon benchmark run <fixture> --variant <id> --baseline-ref <ref>` | — | Experimental EGR-063 artifact-quality benchmark runner. Variants compare baseline Phase A/build behavior against opt-in constitution, tasks, and ADR cleanse phases; each real run resets to the supplied committed Phase A baseline before and after execution |

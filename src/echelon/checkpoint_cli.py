@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import sys
 
@@ -122,6 +123,18 @@ def _arg_value(args: list[str], name: str) -> str:
     return args[idx + 1]
 
 
+def _format_checkpoint_created_at(value: str) -> str:
+    if not value:
+        return "-"
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
     subcommand = args[0] if args else "list"
     if subcommand in {"-h", "--help", "help"}:
@@ -185,11 +198,24 @@ def run_checkpoint_command(args: list[str], *, project_root: Path) -> None:
         print("(none)")
         return
 
-    print("ID                       PHASE                 COMMIT      SOURCE")
-    for checkpoint in ledger.checkpoints:
+    print(
+        "Order: oldest -> newest (ledger order); "
+        "phase-only rewind selects the last matching row\n"
+    )
+    print(
+        "ID                       PHASE                 COMMIT      "
+        "CREATED UTC          LATEST  SOURCE"
+    )
+    latest_by_phase = {
+        checkpoint.phase: index
+        for index, checkpoint in enumerate(ledger.checkpoints)
+    }
+    for index, checkpoint in enumerate(ledger.checkpoints):
         print(
             f"{checkpoint.id:<24} "
             f"{checkpoint.phase:<21} "
             f"{checkpoint.commit[:7]:<11} "
+            f"{_format_checkpoint_created_at(checkpoint.created_at):<20} "
+            f"{'yes' if latest_by_phase[checkpoint.phase] == index else '-':<7} "
             f"{checkpoint.source}"
         )

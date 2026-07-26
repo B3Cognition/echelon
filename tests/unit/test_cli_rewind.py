@@ -253,6 +253,22 @@ def test_rewind_reports_targets_from_the_active_ledger(
     assert "Available checkpoints: phase3-plan" in captured.err
 
 
+def test_rewind_rejects_empty_commit_selector_before_resolving_run(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _cmd_rewind(
+            ["phase1-what", "--commit", ""],
+            project_root=tmp_path,
+        )
+
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "Usage: echelon spec rewind" in captured.err
+    assert "No active squad run found" not in captured.err
+
+
 def test_rewind_accepts_and_resets_to_any_active_ledger_checkpoint(
     tmp_path: Path,
     monkeypatch,
@@ -359,6 +375,61 @@ def test_rewind_phase1_what_uses_the_active_ledger_for_preview_and_confirm(
     assert state["phase"] == "phase1-what"
     assert state["completed_phases"] == _ROADMAP_PHASES[:_ROADMAP_PHASES.index("phase1-what")]
     assert state["phase_dispatch_counts"] == {}
+
+
+def test_rewind_selects_historical_duplicate_phase_by_commit_and_truncates_there(
+    tmp_path: Path,
+) -> None:
+    _git(tmp_path, "init", "-b", "004-transform-selector")
+    _git(tmp_path, "config", "user.email", "tests@example.com")
+    _git(tmp_path, "config", "user.name", "Echelon Tests")
+    (tmp_path / ".gitignore").write_text(
+        "/runs/.current\n/runs/*/state.json\n/specs/*/.echelon/checkpoints.json\n",
+        encoding="utf-8",
+    )
+    spec_dir = tmp_path / "specs" / "004-transform-selector"
+    spec_dir.mkdir(parents=True)
+
+    checkpoints: list[PhaseCheckpoint] = []
+    for index, content in enumerate(("# First\n", "# Second\n", "# Third\n"), start=1):
+        (spec_dir / "spec.md").write_text(content, encoding="utf-8")
+        _git(tmp_path, "add", ".gitignore", "specs/004-transform-selector/spec.md")
+        _git(tmp_path, "commit", "-m", f"checkpoint {index}")
+        commit = _git(tmp_path, "rev-parse", "HEAD")
+        checkpoint = PhaseCheckpoint(
+            id="phase1-what",
+            spec_id="004-transform-selector",
+            phase="phase1-what",
+            next_phase="phase1-understanding",
+            commit=commit,
+            metadata_commit="",
+            source="auto",
+            run_id="spec-run",
+            created_at=f"2026-07-26T0{index}:00:00Z",
+            completion_id=f"{index:032x}",
+        )
+        record_checkpoint_metadata(spec_dir, checkpoint)
+        checkpoints.append(checkpoint)
+
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "spec_dir": "specs/004-transform-selector",
+            "completed_phases": ["phase1-what", "phase1-lexicon"],
+        },
+    )
+    selected = checkpoints[1]
+
+    _cmd_rewind(
+        ["phase1-what", "--commit", selected.commit[:8], "--confirm"],
+        project_root=tmp_path,
+    )
+
+    assert _git(tmp_path, "rev-parse", "HEAD") == selected.commit
+    retained = load_checkpoint_ledger(spec_dir).checkpoints
+    assert retained == checkpoints[:2]
 
 
 def test_rewind_refuses_a_run_that_is_still_running(tmp_path: Path, capsys) -> None:

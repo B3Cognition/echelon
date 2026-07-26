@@ -291,7 +291,11 @@ def record_checkpoint_metadata(
     return record_phase_checkpoint(spec_dir, checkpoint)
 
 
-def resolve_checkpoint(ledger: CheckpointLedger, target: str) -> PhaseCheckpoint:
+def resolve_checkpoint(
+    ledger: CheckpointLedger,
+    target: str,
+    commit: str = "",
+) -> PhaseCheckpoint:
     name = target.removeprefix("checkpoint:").strip()
     matches: list[PhaseCheckpoint] = []
     if target.startswith("checkpoint:"):
@@ -302,7 +306,31 @@ def resolve_checkpoint(ledger: CheckpointLedger, target: str) -> PhaseCheckpoint
             matches = [item for item in ledger.checkpoints if item.id == name]
     if not matches:
         raise KeyError(f"checkpoint not found for spec {ledger.spec_id}: {target}")
-    return matches[-1]
+    commit_prefix = commit.strip().lower()
+    if not commit_prefix:
+        return matches[-1]
+    if re.fullmatch(r"[0-9a-f]+", commit_prefix) is None:
+        raise ValueError("checkpoint commit must be hexadecimal")
+    commit_matches = [
+        item
+        for item in matches
+        if item.commit.lower().startswith(commit_prefix)
+    ]
+    candidates = ", ".join(
+        f"{item.commit} ({item.created_at})"
+        for item in matches
+    )
+    if not commit_matches:
+        raise KeyError(
+            f"checkpoint commit {commit_prefix} not found for target {target}; "
+            f"candidates: {candidates}"
+        )
+    if len({item.commit.lower() for item in commit_matches}) > 1:
+        raise ValueError(
+            f"ambiguous checkpoint commit prefix {commit_prefix} "
+            f"for target {target}; candidates: {candidates}"
+        )
+    return commit_matches[-1]
 
 
 def checkpoint_targets(ledger: CheckpointLedger) -> list[str]:

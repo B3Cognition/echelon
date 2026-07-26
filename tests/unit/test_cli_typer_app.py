@@ -67,7 +67,35 @@ def test_spec_rewind_help_declares_a_ledger_checkpoint_target():
 
     assert result.exit_code == 0
     assert "Recorded checkpoint phase or ID" in result.output
+    assert "--commit" in result.output
     assert "Safe phase id" not in result.output
+
+
+@pytest.mark.unit
+def test_spec_rewind_forwards_checkpoint_commit(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_rewind",
+        lambda args, project_root: calls.append(args),
+    )
+
+    run([
+        "spec",
+        "rewind",
+        "phase1-what",
+        "--commit",
+        "98152f1",
+        "--confirm",
+    ])
+
+    assert calls == [[
+        "phase1-what",
+        "--commit",
+        "98152f1",
+        "--confirm",
+    ]]
 
 
 @pytest.mark.unit

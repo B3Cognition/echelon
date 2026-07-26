@@ -88,6 +88,137 @@ def test_resolve_checkpoint_by_phase_uses_latest_matching_entry(tmp_path: Path) 
     assert resolve_checkpoint(ledger, "checkpoint:phase3-plan-2").commit == "new"
 
 
+def test_resolve_checkpoint_by_phase_and_commit_prefix_selects_older_entry() -> None:
+    older = "12345678" + ("a" * 32)
+    newer = "87654321" + ("b" * 32)
+    ledger = CheckpointLedger(
+        spec_id="001-demo",
+        checkpoints=[
+            PhaseCheckpoint(
+                "phase1-what",
+                "001-demo",
+                "phase1-what",
+                "phase1-understanding",
+                older,
+                "",
+                "auto",
+                "run1",
+                "2026-07-04T01:00:00Z",
+            ),
+            PhaseCheckpoint(
+                "phase1-what",
+                "001-demo",
+                "phase1-what",
+                "phase1-understanding",
+                newer,
+                "",
+                "auto",
+                "run1",
+                "2026-07-04T02:00:00Z",
+            ),
+        ],
+    )
+
+    assert (
+        resolve_checkpoint(ledger, "phase1-what", commit=older[:8]).commit
+        == older
+    )
+
+
+def test_resolve_checkpoint_commit_prefix_fails_when_missing_or_ambiguous() -> None:
+    first = "abc11111" + ("a" * 32)
+    second = "abc22222" + ("b" * 32)
+    ledger = CheckpointLedger(
+        spec_id="001-demo",
+        checkpoints=[
+            PhaseCheckpoint(
+                "phase1-what",
+                "001-demo",
+                "phase1-what",
+                "phase1-understanding",
+                first,
+                "",
+                "auto",
+                "run1",
+                "2026-07-04T01:00:00Z",
+            ),
+            PhaseCheckpoint(
+                "phase1-what",
+                "001-demo",
+                "phase1-what",
+                "phase1-understanding",
+                second,
+                "",
+                "auto",
+                "run1",
+                "2026-07-04T02:00:00Z",
+            ),
+        ],
+    )
+
+    with pytest.raises(KeyError, match="commit deadbeef not found"):
+        resolve_checkpoint(ledger, "phase1-what", commit="deadbeef")
+    with pytest.raises(ValueError, match="ambiguous checkpoint commit prefix abc"):
+        resolve_checkpoint(ledger, "phase1-what", commit="abc")
+
+
+def test_resolve_checkpoint_duplicate_exact_commit_uses_last_ledger_entry() -> None:
+    commit = "12345678" + ("a" * 32)
+    first = PhaseCheckpoint(
+        "phase1-what",
+        "001-demo",
+        "phase1-what",
+        "phase1-understanding",
+        commit,
+        "",
+        "auto",
+        "run1",
+        "2026-07-04T01:00:00Z",
+        "a" * 32,
+    )
+    last = PhaseCheckpoint(
+        "phase1-what",
+        "001-demo",
+        "phase1-what",
+        "phase1-understanding",
+        commit,
+        "",
+        "auto",
+        "run1",
+        "2026-07-04T02:00:00Z",
+        "b" * 32,
+    )
+    ledger = CheckpointLedger(spec_id="001-demo", checkpoints=[first, last])
+
+    assert resolve_checkpoint(
+        ledger,
+        "phase1-what",
+        commit=commit[:8],
+    ) is last
+
+
+def test_resolve_checkpoint_rejects_non_hex_commit_selector() -> None:
+    ledger = CheckpointLedger(
+        spec_id="001-demo",
+        checkpoints=[
+            PhaseCheckpoint(
+                "phase1-what",
+                "001-demo",
+                "phase1-what",
+                "phase1-understanding",
+                "1" * 40,
+                "",
+                "auto",
+                "run1",
+                "2026-07-04T01:00:00Z",
+            ),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="checkpoint commit must be hexadecimal"):
+        resolve_checkpoint(ledger, "phase1-what", commit="not-a-commit")
+
+
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args],

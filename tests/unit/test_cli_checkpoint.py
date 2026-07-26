@@ -44,6 +44,71 @@ def test_checkpoint_list_prints_spec_scoped_ledger(tmp_path: Path, capsys) -> No
     assert "abcdef1" in out
 
 
+def test_checkpoint_list_explains_ledger_order_and_marks_latest_phase_occurrence(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    checkpoints = [
+        PhaseCheckpoint(
+            id="phase1-what",
+            spec_id="001-demo",
+            phase="phase1-what",
+            next_phase="phase1-understanding",
+            commit="1111111" + ("a" * 33),
+            metadata_commit="",
+            source="auto",
+            run_id="squad-1",
+            created_at="2026-07-26T03:00:00+00:00",
+            completion_id="1" * 32,
+        ),
+        PhaseCheckpoint(
+            id="phase1-lexicon",
+            spec_id="001-demo",
+            phase="phase1-lexicon",
+            next_phase="checkpoint-assess",
+            commit="2222222" + ("b" * 33),
+            metadata_commit="",
+            source="auto",
+            run_id="squad-1",
+            created_at="2026-07-26T02:00:00Z",
+            completion_id="2" * 32,
+        ),
+        PhaseCheckpoint(
+            id="phase1-what",
+            spec_id="001-demo",
+            phase="phase1-what",
+            next_phase="phase1-understanding",
+            commit="3333333" + ("c" * 33),
+            metadata_commit="",
+            source="auto",
+            run_id="squad-1",
+            created_at="2026-07-26T01:00:00Z",
+            completion_id="3" * 32,
+        ),
+    ]
+    for checkpoint in checkpoints:
+        record_checkpoint_metadata(spec_dir, checkpoint)
+
+    run_checkpoint_command(["list", "--spec", "001"], project_root=tmp_path)
+
+    out = capsys.readouterr().out
+    assert "Order: oldest -> newest (ledger order)" in out
+    assert "phase-only rewind selects the last matching row" in out
+    assert "CREATED UTC" in out
+    assert "LATEST" in out
+    assert "2026-07-26 03:00:00" in out
+    assert out.index("1111111") < out.index("2222222") < out.index("3333333")
+    lines = out.splitlines()
+    first_what = next(line for line in lines if "1111111" in line)
+    lexicon = next(line for line in lines if "2222222" in line)
+    last_what = next(line for line in lines if "3333333" in line)
+    assert " yes " not in first_what
+    assert " yes " in lexicon
+    assert " yes " in last_what
+
+
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
         ["git", *args],

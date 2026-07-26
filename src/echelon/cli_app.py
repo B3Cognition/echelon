@@ -761,12 +761,18 @@ def root_continue(
 def root_rewind(
     ctx: typer.Context,
     phase_id: str = typer.Argument(..., help="Recorded checkpoint phase or ID to rewind to."),
+    checkpoint_commit: Optional[str] = typer.Option(
+        None,
+        "--commit",
+        help="Full checkpoint commit or unique abbreviated prefix.",
+    ),
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Compatibility alias for spec rewind."""
     legacy_cli = _legacy_cli()
 
     args = [phase_id, *_ctx_args(ctx)]
+    _extend_option(args, "--commit", checkpoint_commit)
     if confirm:
         args.append("--confirm")
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())
@@ -1481,6 +1487,11 @@ def spec_resolve(
 def spec_rewind(
     ctx: typer.Context,
     phase_id: str = typer.Argument(..., help="Recorded checkpoint phase or ID to rewind to."),
+    checkpoint_commit: Optional[str] = typer.Option(
+        None,
+        "--commit",
+        help="Full checkpoint commit or unique abbreviated prefix.",
+    ),
     confirm: bool = typer.Option(False, "--confirm", help="Apply the rewind instead of previewing."),
 ) -> None:
     """Rewind the active squad run to a safe checkpoint."""
@@ -1489,6 +1500,7 @@ def spec_rewind(
     from echelon import cli as legacy_cli
 
     args = [phase_id, *list(ctx.args)]
+    _extend_option(args, "--commit", checkpoint_commit)
     if confirm:
         args.append("--confirm")
     legacy_cli._cmd_rewind(args, project_root=Path.cwd())

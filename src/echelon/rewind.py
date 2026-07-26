@@ -82,12 +82,17 @@ def prepare_rewind(
     target: str,
     confirm: bool,
     spec_dir: Path | None = None,
+    checkpoint_commit: str = "",
 ) -> RewindResult:
     resolved_spec_dir = spec_dir or _find_spec_dir(project_root, spec)
     ledger = load_checkpoint_ledger(resolved_spec_dir)
     try:
-        checkpoint = resolve_checkpoint(ledger, target)
-    except KeyError as exc:
+        checkpoint = resolve_checkpoint(
+            ledger,
+            target,
+            commit=checkpoint_commit,
+        )
+    except (KeyError, ValueError) as exc:
         available = checkpoint_targets(ledger)
         message = str(exc.args[0]) if exc.args else f"checkpoint not found: {target}"
         suffix = (
@@ -130,7 +135,14 @@ def prepare_rewind(
         f"  from: {head[:7]} current HEAD\n"
         f"  to:   {checkpoint.commit[:7]} {checkpoint.phase} checkpoint\n\n"
         f"Backup branch:\n  {backup_ref}\n\n"
-        f"Continue with:\n  echelon spec rewind {checkpoint.phase} --confirm"
+        "Continue with:\n  "
+        f"echelon spec rewind {target}"
+        + (
+            f" --commit {checkpoint_commit}"
+            if checkpoint_commit
+            else ""
+        )
+        + " --confirm"
     )
     if dirty_paths:
         message += "\n\nWorkspace changes to preserve:\n  " + "\n  ".join(sorted(dirty_paths))

@@ -86,7 +86,7 @@ Commands:
   spec status                               Show current run state, artifacts, cost, and next action.
   spec continue [--mode semi|banzai|guided] Run the next no-input Phase A recovery action.
   spec resume "<answers>"                   Answer escalation questions from a blocked run.
-  spec rewind <phase-id>                    Rewind the active squad run to a safe checkpoint.
+  spec rewind <phase-id> [--commit <sha>]   Rewind the active squad run to a safe checkpoint.
   spec switch <spec-or-run-id> [--stash | --discard --confirm] [--restore-stash]
                                             Select a checkpointed Phase A spec run.
   spec drop-target <spec_id> <target> --confirm
@@ -6873,17 +6873,49 @@ def _cmd_rewind(
     args: list[str],
     project_root: Path,
 ) -> None:
-    confirm = "--confirm" in args
-    positional = [arg for arg in args if arg != "--confirm"]
-    if len(positional) != 1:
+    confirm = False
+    checkpoint_commit = ""
+    commit_seen = False
+    target = ""
+    invalid = False
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--confirm":
+            if confirm:
+                invalid = True
+                break
+            confirm = True
+            index += 1
+            continue
+        if arg == "--commit":
+            if (
+                commit_seen
+                or index + 1 >= len(args)
+                or args[index + 1].startswith("--")
+            ):
+                invalid = True
+                break
+            commit_seen = True
+            checkpoint_commit = args[index + 1].strip()
+            if not checkpoint_commit:
+                invalid = True
+                break
+            index += 2
+            continue
+        if arg.startswith("--") or target:
+            invalid = True
+            break
+        target = arg.strip()
+        index += 1
+    if invalid or not target:
         print(
-            "Usage: echelon spec rewind <checkpoint-phase-or-id> [--confirm]\n"
+            "Usage: echelon spec rewind <checkpoint-phase-or-id> "
+            "[--commit <sha>] [--confirm]\n"
             "Run `echelon spec checkpoint list` to see active-ledger targets.",
             file=sys.stderr,
         )
         sys.exit(1)
-
-    target = positional[0].strip()
 
     squad_dir = _find_current_run_dir(project_root)
     if squad_dir is None or not (squad_dir / "state.json").exists():
@@ -6917,11 +6949,18 @@ def _cmd_rewind(
 
     ledger = load_checkpoint_ledger(spec_dir)
     try:
-        checkpoint = resolve_checkpoint(ledger, target)
-    except KeyError:
+        checkpoint = resolve_checkpoint(
+            ledger,
+            target,
+            commit=checkpoint_commit,
+        )
+    except (KeyError, ValueError) as exc:
         available = checkpoint_targets(ledger)
+        reason = str(exc.args[0]) if exc.args else (
+            f"checkpoint not found for spec {ledger.spec_id}: {target}"
+        )
         detail = (
-            f"checkpoint not found for spec {ledger.spec_id}: {target}\n"
+            f"{reason}\n"
             + (
                 f"Available checkpoints: {', '.join(available)}"
                 if available
@@ -6946,6 +6985,7 @@ def _cmd_rewind(
                     spec_dir=spec_dir,
                     target=target,
                     confirm=confirm,
+                    checkpoint_commit=checkpoint_commit,
                 )
                 if not result.applied:
                     print(result.message)
@@ -8694,7 +8734,7 @@ def _cmd_spec(args: list[str]) -> None:
             "                                      Run the next no-input Phase A recovery action\n"
             "  resume <answers>                    Answer escalation questions from a blocked run\n"
             "  resolve ISS-<n> <decision>          Record one issue decision and run its targeted repair\n"
-            "  rewind <phase-id>                   Rewind the active squad run to a checkpoint\n"
+            "  rewind <phase-id> [--commit <sha>]  Rewind the active squad run to a checkpoint\n"
             "  repair-traceability [--confirm]     Remove safely-prunable contextual task references\n"
             "  switch <spec-or-run-id> [--stash | --discard --confirm]\n"
             "                    [--restore-stash] Select a checkpointed Phase A spec run\n"
