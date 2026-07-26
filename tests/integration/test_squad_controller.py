@@ -4189,6 +4189,92 @@ class TestSquadControllerBasics:
         assert store.load()["why_fail_count"] == 1
         assert store.load().get("escalation_question") is None
 
+    def test_selected_issue_repair_consumes_recovery_after_what_changes_spec(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-what", max_iterations=5)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Repaired specification\n", encoding="utf-8")
+        state = store.load()
+        state.update(
+            {
+                "spec_dir": "runs/run-test/specs/001-demo",
+                "selected_issue_resolution": "ISS-001",
+                "issue_resolution_ledger": {
+                    "ISS-001": {"issue_id": "ISS-001", "status": "selected"},
+                    "ISS-002": {"issue_id": "ISS-002", "status": "pending"},
+                },
+                "issue_resolution_repair_baseline": {
+                    "issue_id": "ISS-001",
+                    "repair_phase": "phase1-what",
+                    "recorded_at": "2020-01-01T00:00:00+00:00",
+                },
+                "issue_resolution_recovery": {"issue_id": "ISS-001"},
+            }
+        )
+        store.save(state)
+
+        _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-what"),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {"evidence_resolution_status": "not_required"},
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+        )
+
+        refreshed = store.load()
+        assert refreshed["issue_resolution_ledger"]["ISS-001"]["status"] == "repaired"
+        assert refreshed["issue_resolution_ledger"]["ISS-002"]["status"] == "pending"
+        assert refreshed["issue_resolution_recovery"]["status"] == "consumed"
+
+    def test_passing_why2_validates_only_the_repaired_selected_issue(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "selected_issue_resolution": "ISS-001",
+                "issue_resolution_ledger": {
+                    "ISS-001": {"issue_id": "ISS-001", "status": "repaired"},
+                    "ISS-002": {"issue_id": "ISS-002", "status": "pending"},
+                },
+            }
+        )
+        store.save(state)
+        node = ctrl._graph.get("phase1-why2")
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
+            node,
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "PASS",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                        "finding_routes": {"findings": []},
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+            snapshot,
+        )
+
+        override, updates = ctrl._coordinate_why_transition_state(node, prepared, snapshot)
+
+        assert override is None
+        assert updates["issue_resolution_ledger"]["ISS-001"]["status"] == "validated"
+        assert updates["issue_resolution_ledger"]["ISS-002"]["status"] == "pending"
+        assert updates["selected_issue_resolution"] is None
+
     def test_consecutive_why_escalation_gives_an_actionable_question(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
@@ -5903,7 +5989,7 @@ class TestCommanderJudgmentStateUpdates:
         assert store.load()["blocked_reason"] == "consecutive_why_fails"
         publish.assert_not_called()
 
-    def test_banzai_phase_dispatch_limit_recovery_resets_capped_phase(self, tmp_path):
+    def test_banzai_phase_dispatch_limit_without_selection_resets_capped_phase(self, tmp_path):
         provider = _mock_provider()
         provider.exec_agent.return_value = SquadAgentResult(
             exit_code=0,
@@ -5947,6 +6033,66 @@ class TestCommanderJudgmentStateUpdates:
         resumed = store.load()
         assert "phase1-what" not in resumed["phase_dispatch_counts"]
         assert resumed["phase_dispatch_limit_recovery"]["phase"] == "phase1-what"
+
+    def test_banzai_selection_uses_the_same_issue_repair_lifecycle(self, tmp_path):
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "JUDGMENT_RESOLVED",
+                "state_updates": {
+                    "escalation_question": None,
+                    "escalation_resolved": True,
+                    "escalation_resolver": "COMMANDER-banzai",
+                    "blocked_reason": None,
+                    "issue_resolution_selection": {
+                        "issue_id": "ISS-001",
+                        "decision": "Use exponential backoff.",
+                        "rationale": "The API reference documents idempotent reads.",
+                        "confidence": "high",
+                        "evidence_backed": True,
+                    },
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize("r", "banzai", "msg", 0, "terminal-blocked", max_iterations=5)
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "issues.md").write_text(
+            """### ISS-001: Retry policy
+
+### Resolution Guidance
+- **Decision required:** Retry behavior.
+- **Suggested option:** Use exponential backoff.
+- **Evidence basis:** The API reference documents idempotent reads.
+- **Banzai eligible:** yes
+""",
+            encoding="utf-8",
+        )
+        state = store.load()
+        state.update(
+            {
+                "status": "blocked",
+                "blocked_reason": "phase_dispatch_limit",
+                "phase_dispatch_limit_phase": "phase1-what",
+                "phase_dispatch_counts": {"phase1-what": 6},
+                "escalation_question": "Choose a retry policy.",
+                "spec_dir": "specs/001-demo",
+            }
+        )
+        store.save(state)
+
+        ctrl._judgment_dispatch_escalation("Choose a retry policy.", "terminal-blocked")
+
+        accepted = store.load()
+        assert accepted["phase"] == "phase1-what"
+        assert accepted["issue_resolution_ledger"]["ISS-001"]["status"] == "selected"
+        assert accepted["issue_resolution_recovery"]["to_phase"] == "phase1-what"
+        assert accepted["issue_resolution_repair_baseline"]["issue_id"] == "ISS-001"
 
     def test_banzai_escalation_invalid_cleanup_key_blocks(self, tmp_path):
         provider = _mock_provider()

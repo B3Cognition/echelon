@@ -17,6 +17,7 @@ Auto-detected from ECHELON_LLM (default: claude).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -3716,6 +3717,11 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     }
     state["issue_resolution_ledger"] = ledger
     state["selected_issue_resolution"] = issue_id
+    state["issue_resolution_repair_baseline"] = {
+        "issue_id": issue_id,
+        "repair_phase": "phase1-what",
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
     # This is a controller-owned recovery edge, not an agent instruction and
     # not a free-form phase override. It is consumed only after the controller
     # verifies that WHY2 declares the repair transition in definition.yaml.

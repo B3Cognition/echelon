@@ -412,6 +412,9 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
         "to_phase": "phase1-what",
         "reason": "issue_resolution",
     }
+    assert resolved["issue_resolution_repair_baseline"]["issue_id"] == "ISS-002"
+    assert resolved["issue_resolution_repair_baseline"]["repair_phase"] == "phase1-what"
+    assert resolved["issue_resolution_repair_baseline"]["recorded_at"]
 
 
 def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

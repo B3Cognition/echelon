@@ -5894,25 +5894,54 @@ class SquadController:
         if node.id != "phase1-what":
             return {}
         state = snapshot.state
+        updates: dict[str, object] = {}
+        selected = str(state.get("selected_issue_resolution") or "").strip()
+        ledger = state.get("issue_resolution_ledger")
+        baseline = state.get("issue_resolution_repair_baseline")
+        if (
+            selected
+            and isinstance(ledger, dict)
+            and isinstance(baseline, dict)
+            and baseline.get("issue_id") == selected
+            and isinstance(ledger.get(selected), dict)
+            and ledger[selected].get("status") == "selected"
+            and self._phase_artifacts_changed_since(
+                str(baseline.get("recorded_at") or "") or None,
+                state,
+            )
+        ):
+            repaired_ledger = dict(ledger)
+            repaired_entry = dict(ledger[selected])
+            repaired_entry["status"] = "repaired"
+            repaired_ledger[selected] = repaired_entry
+            recovery = state.get("issue_resolution_recovery")
+            consumed_recovery = dict(recovery) if isinstance(recovery, dict) else {}
+            consumed_recovery["issue_id"] = selected
+            consumed_recovery["status"] = "consumed"
+            updates["issue_resolution_ledger"] = repaired_ledger
+            updates["issue_resolution_recovery"] = consumed_recovery
         try:
             if int(state.get("why_fail_count") or 0) <= 0:
-                return {}
+                return updates
         except (TypeError, ValueError):
-            return {}
-        baseline = state.get("why_failure_baseline")
+            return updates
+        why_baseline = state.get("why_failure_baseline")
         baseline_ts = (
-            baseline.get("recorded_at")
-            if isinstance(baseline, dict)
+            why_baseline.get("recorded_at")
+            if isinstance(why_baseline, dict)
             else None
         )
         if not baseline_ts:
-            return {}
+            return updates
         if not self._phase_artifacts_changed_since(baseline_ts, state):
-            return {}
-        return {
-            "why_fail_count": 0,
-            "why2_metric_stagnation_count": 0,
-        }
+            return updates
+        updates.update(
+            {
+                "why_fail_count": 0,
+                "why2_metric_stagnation_count": 0,
+            }
+        )
+        return updates
 
     def _coordinate_why_transition_state(
         self,
@@ -5947,7 +5976,28 @@ class SquadController:
             or verdict_upper in ("FAIL", "BLOCKED")
         )
         if not is_fail:
-            return None, {"why_fail_count": 0}
+            updates: dict[str, object] = {"why_fail_count": 0}
+            selected = str(state.get("selected_issue_resolution") or "").strip()
+            ledger = state.get("issue_resolution_ledger")
+            if (
+                node.id == "phase1-why2"
+                and selected
+                and isinstance(ledger, dict)
+                and isinstance(ledger.get(selected), dict)
+                and ledger[selected].get("status") == "repaired"
+            ):
+                validated_ledger = dict(ledger)
+                validated_entry = dict(ledger[selected])
+                validated_entry["status"] = "validated"
+                validated_ledger[selected] = validated_entry
+                updates.update(
+                    {
+                        "issue_resolution_ledger": validated_ledger,
+                        "selected_issue_resolution": None,
+                        "issue_resolution_repair_baseline": None,
+                    }
+                )
+            return None, updates
 
         from datetime import datetime, timezone
 
@@ -6603,6 +6653,24 @@ class SquadController:
         ):
             validation_reason = "cleanup_intent"
 
+        issue_selection: dict[str, str] | None = None
+        if (
+            not validation_reason
+            and capped_phase
+            and cleanup.get("issue_resolution_selection") is not None
+        ):
+            issue_selection = self._validate_banzai_issue_resolution_selection(
+                cleanup.get("issue_resolution_selection"),
+                banzai_candidates,
+            )
+            if issue_selection is None:
+                self._block_banzai_issue_resolution(
+                    blocked_origin_phase,
+                    capped_phase,
+                    "COMMANDER did not select one evidence-backed SAGE issue",
+                )
+                return result
+
         from_phase = snapshot.phase
         requested_phase = str(
             result.state_updates.get("next_phase")
@@ -6635,7 +6703,7 @@ class SquadController:
             source = "commander_recovery_rejected"
         else:
             for key, value in result.state_updates.items():
-                if key in {"next_phase", "phase"}:
+                if key in {"next_phase", "phase", "issue_resolution_selection"}:
                     continue
                 if key in STORE_OWNED_TRANSACTION_KEYS:
                     valid_control_intent = (
@@ -6699,6 +6767,42 @@ class SquadController:
                         "phase": capped_phase,
                         "resolver": "COMMANDER-banzai",
                     }
+                if issue_selection is not None:
+                    from datetime import datetime, timezone
+
+                    issue_id = issue_selection["issue_id"]
+                    ledger = state.get("issue_resolution_ledger")
+                    selected_ledger = dict(ledger) if isinstance(ledger, dict) else {}
+                    selected_ledger[issue_id] = {
+                        "issue_id": issue_id,
+                        "title": issue_selection["title"],
+                        "severity": "ISSUE",
+                        "guidance": issue_selection["decision_required"],
+                        "status": "selected",
+                        "decision": issue_selection["decision"],
+                        "repair_phase": "phase1-what",
+                        "rationale": issue_selection["rationale"],
+                        "confidence": issue_selection["confidence"],
+                        "evidence_backed": issue_selection["evidence_backed"],
+                    }
+                    queued_updates.update(
+                        {
+                            "issue_resolution_ledger": selected_ledger,
+                            "selected_issue_resolution": issue_id,
+                            "issue_resolution_repair_baseline": {
+                                "issue_id": issue_id,
+                                "repair_phase": "phase1-what",
+                                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                            },
+                            "issue_resolution_recovery": {
+                                "issue_id": issue_id,
+                                "from_phase": "phase1-why2",
+                                "to_phase": "phase1-what",
+                                "reason": "issue_resolution",
+                            },
+                        }
+                    )
+                    target_phase = "phase1-what"
                 if (
                     not requested_phase
                     and from_phase == PHASE_TERMINAL_BLOCKED
@@ -6838,7 +6942,7 @@ class SquadController:
             return []
         candidates: list[dict[str, str]] = []
         for title, body in re.findall(
-            r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### |\Z)",
+            r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### ISS-\d+:|\Z)",
             issues_md,
             re.MULTILINE | re.DOTALL,
         ):

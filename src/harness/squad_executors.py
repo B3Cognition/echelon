@@ -463,7 +463,7 @@ def _render_issue_resolution_context(state: dict) -> str:
     if not selected or not isinstance(ledger, dict):
         return ""
     entry = ledger.get(selected)
-    if not isinstance(entry, dict) or entry.get("status") != "selected":
+    if not isinstance(entry, dict) or entry.get("status") not in {"selected", "repaired"}:
         return ""
     return (
         "## Selected Issue Resolution (Controller-Owned)\n"
