@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import re
 
@@ -66,6 +67,11 @@ def validate_phase_a_readiness(
     normalized_dirs = _dedupe_existing_or_referenced_dirs(candidate_spec_dirs)
     for spec_dir in normalized_dirs:
         if all((spec_dir / name).exists() for name in REQUIRED_PHASE_A_BUILD_INPUTS):
+            conformance_blocker = _plan_conformance_blocker(
+                spec_dir / "plan-conformance.json"
+            )
+            if conformance_blocker is not None:
+                continue
             constitution_blocker = _constitution_blocker(spec_dir / "constitution.md")
             if constitution_blocker is not None:
                 continue
@@ -89,6 +95,11 @@ def validate_phase_a_readiness(
             blockers.append(f"{name} absent")
 
     for spec_dir in checked_dirs:
+        conformance_blocker = _plan_conformance_blocker(
+            spec_dir / "plan-conformance.json"
+        )
+        if conformance_blocker is not None and conformance_blocker not in blockers:
+            blockers.append(conformance_blocker)
         constitution_blocker = _constitution_blocker(spec_dir / "constitution.md")
         if constitution_blocker is not None and constitution_blocker not in blockers:
             blockers.append(constitution_blocker)
@@ -123,6 +134,76 @@ def _constitution_blocker(path: Path) -> str | None:
     markers = unresolved_constitution_template_markers(text)
     if markers:
         return "constitution.md contains unresolved template markers: " + ", ".join(markers)
+    return None
+
+
+def _plan_conformance_blocker(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"plan-conformance.json invalid: {exc}"
+
+    if not isinstance(payload, dict):
+        return "plan-conformance.json invalid: root must be an object"
+
+    allowed = {"status", "findings", "sources"}
+    extra = sorted(set(payload) - allowed)
+    if extra:
+        return "plan-conformance.json invalid: unexpected keys: " + ", ".join(extra)
+
+    missing = sorted(allowed - set(payload))
+    if missing:
+        return "plan-conformance.json invalid: missing keys: " + ", ".join(missing)
+
+    status = payload.get("status")
+    if status not in {"pass", "needs_repair"}:
+        return "plan-conformance.json invalid: status must be pass or needs_repair"
+
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        return "plan-conformance.json invalid: findings must be an array"
+    for index, finding in enumerate(findings):
+        if not isinstance(finding, dict):
+            return f"plan-conformance.json invalid: findings[{index}] must be an object"
+        required_finding = {"id", "severity", "artifact", "description"}
+        missing_finding = sorted(required_finding - set(finding))
+        if missing_finding:
+            return (
+                f"plan-conformance.json invalid: findings[{index}] missing keys: "
+                + ", ".join(missing_finding)
+            )
+        severity = finding.get("severity")
+        if severity not in {"info", "warning", "repair_required"}:
+            return (
+                f"plan-conformance.json invalid: findings[{index}].severity "
+                "must be info, warning, or repair_required"
+            )
+        allowed_finding = required_finding | {"required_repair"}
+        extra_finding = sorted(set(finding) - allowed_finding)
+        if extra_finding:
+            return (
+                f"plan-conformance.json invalid: findings[{index}] unexpected keys: "
+                + ", ".join(extra_finding)
+            )
+
+    sources = payload.get("sources")
+    if not isinstance(sources, list) or not sources:
+        return "plan-conformance.json invalid: sources must be a non-empty array"
+    if not all(isinstance(source, str) and source.strip() for source in sources):
+        return "plan-conformance.json invalid: sources must contain non-empty strings"
+
+    if status == "pass" and any(
+        isinstance(finding, dict)
+        and finding.get("severity") == "repair_required"
+        for finding in findings
+    ):
+        return (
+            "plan-conformance.json invalid: pass status cannot include "
+            "repair_required findings"
+        )
+
     return None
 
 

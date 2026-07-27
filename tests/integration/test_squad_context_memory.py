@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 from pathlib import Path
 import subprocess
@@ -19,6 +20,22 @@ from harness.squad_state import SquadStateStore
 
 DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
 EXT_YML = EXT_ROOT / "extension/extension.yml"
+
+
+def _valid_plan_conformance_json() -> str:
+    return json.dumps(
+        {
+            "status": "pass",
+            "findings": [],
+            "sources": [
+                "spec.md",
+                "requirements-overview.md",
+                "plan.md",
+                "tasks.md",
+            ],
+        },
+        indent=2,
+    ) + "\n"
 
 
 def _ensure_git_repo(project_root: Path) -> None:
@@ -141,7 +158,12 @@ def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_
         "research.md", "data-model.md", "tasks.md",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (active_spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (active_spec_dir / name).write_text(content, encoding="utf-8")
 
     published_dir = tmp_path / "specs" / "001-photo-album"
     assert not published_dir.exists()
@@ -255,7 +277,12 @@ def test_phase4_publish_keeps_readiness_when_mempalace_setup_fails(tmp_path: Pat
         "research.md", "data-model.md", "tasks.md",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (active_spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (active_spec_dir / name).write_text(content, encoding="utf-8")
 
     state = store.load()
     state["spec_id"] = "001"
@@ -306,8 +333,13 @@ def test_context_metadata_publication_staging_defers_mining(
         "test-architecture.md",
         "coverage-map.md",
     ):
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else "# Photo Album\n\nFR-001: Upload a photo.\n"
+        )
         (active_spec_dir / name).write_text(
-            "# Photo Album\n\nFR-001: Upload a photo.\n",
+            content,
             encoding="utf-8",
         )
     state = store.load()

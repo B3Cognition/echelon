@@ -38,6 +38,22 @@ from harness.provider import (
 from harness import ralph
 from harness.ralph import RalphController
 from harness.state import StateStore
+
+
+def _valid_plan_conformance_json() -> str:
+    return json.dumps(
+        {
+            "status": "pass",
+            "findings": [],
+            "sources": [
+                "spec.md",
+                "requirements-overview.md",
+                "plan.md",
+                "tasks.md",
+            ],
+        },
+        indent=2,
+    ) + "\n"
 from harness.verify_result import FailureCategory, FailureEntry, VerifyResult
 
 
@@ -231,7 +247,12 @@ class TestOuterLoopConvergence:
             "research.md",
             "data-model.md",
         ):
-            (source / name).write_text(f"# {name}\n", encoding="utf-8")
+            content = (
+                _valid_plan_conformance_json()
+                if name == "plan-conformance.json"
+                else f"# {name}\n"
+            )
+            (source / name).write_text(content, encoding="utf-8")
         for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
             (source / name).write_text(f"# {name}\n", encoding="utf-8")
         (source / "tasks.md").write_text(
@@ -286,7 +307,12 @@ class TestOuterLoopConvergence:
             "research.md",
             "data-model.md",
         ):
-            (source / name).write_text(f"# {name}\n", encoding="utf-8")
+            content = (
+                _valid_plan_conformance_json()
+                if name == "plan-conformance.json"
+                else f"# {name}\n"
+            )
+            (source / name).write_text(content, encoding="utf-8")
         for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
             (source / name).write_text(f"# {name}\n", encoding="utf-8")
         (source / "tasks.md").write_text(

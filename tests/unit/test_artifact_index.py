@@ -35,7 +35,16 @@ def test_render_lists_present_known_artifacts(tmp_path: Path) -> None:
     (spec_dir / "plan-conformance.md").write_text(
         "# Plan Conformance\n", encoding="utf-8"
     )
-    (spec_dir / "plan-conformance.json").write_text("{}\n", encoding="utf-8")
+    (spec_dir / "plan-conformance.json").write_text(
+        (
+            '{\n'
+            '  "status": "pass",\n'
+            '  "findings": [],\n'
+            '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
+            '}\n'
+        ),
+        encoding="utf-8",
+    )
     (spec_dir / "requirements.lexicon.md").write_text(
         "ARTIFACT: SPEC\nTITLE: Requirements\n", encoding="utf-8"
     )

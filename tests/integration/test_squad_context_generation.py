@@ -327,8 +327,17 @@ phases:
             )
             for name in REQUIRED_PHASE_A_BUILD_INPUTS:
                 if name != "spec.md":
+                    content = (
+                        '{\n'
+                        '  "status": "pass",\n'
+                        '  "findings": [],\n'
+                        '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
+                        '}\n'
+                        if name == "plan-conformance.json"
+                        else f"# {name}\n"
+                    )
                     (run_local_spec_dir / name).write_text(
-                        f"# {name}\n", encoding="utf-8"
+                        content, encoding="utf-8"
                     )
             return SquadAgentResult(
                 exit_code=0,

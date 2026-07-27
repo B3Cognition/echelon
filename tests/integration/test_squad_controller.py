@@ -456,10 +456,16 @@ def _write_phase_a_build_inputs(
 ) -> None:
     for name in REQUIRED_PHASE_A_BUILD_INPUTS:
         body = "\nFR-001\n" if include_fr else ""
-        (spec_dir / name).write_text(
-            f"# {prefix}{name}\n{body}",
-            encoding="utf-8",
+        content = (
+            '{\n'
+            '  "status": "pass",\n'
+            '  "findings": [],\n'
+            '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
+            '}\n'
+            if name == "plan-conformance.json"
+            else f"# {prefix}{name}\n{body}"
         )
+        (spec_dir / name).write_text(content, encoding="utf-8")
 
 
 def _sealed_publication_fixture(
@@ -11733,7 +11739,15 @@ class TestControllerCompletionOrchestration:
                 "# Durable constitution\n\n"
                 "- Recovery effects are replay-safe.\n"
                 if name == "constitution.md"
-                else f"# Durable {name}\n\nFR-001\n"
+                else (
+                    '{\n'
+                    '  "status": "pass",\n'
+                    '  "findings": [],\n'
+                    '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
+                    '}\n'
+                    if name == "plan-conformance.json"
+                    else f"# Durable {name}\n\nFR-001\n"
+                )
             )
             (active / name).write_text(content, encoding="utf-8")
             (published / name).write_text(content, encoding="utf-8")

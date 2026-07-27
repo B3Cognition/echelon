@@ -67,6 +67,14 @@ def _write_phase_a_build_inputs(spec_dir: Path) -> None:
             content = "# Constitution\n\nReal project rules.\n"
         elif name == "spec.md":
             content = SPEC_WITH_LOCAL_TARGET
+        elif name == "plan-conformance.json":
+            content = (
+                '{\n'
+                '  "status": "pass",\n'
+                '  "findings": [],\n'
+                '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
+                '}\n'
+            )
         else:
             content = f"# {name}\n"
         (spec_dir / name).write_text(content, encoding="utf-8")

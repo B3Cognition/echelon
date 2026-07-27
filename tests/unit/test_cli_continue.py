@@ -38,6 +38,22 @@ def _write_real_constitution(project_root: Path) -> None:
     const.write_text("# Constitution\n\nReal project rules.\n", encoding="utf-8")
 
 
+def _valid_plan_conformance_json() -> str:
+    return json.dumps(
+        {
+            "status": "pass",
+            "findings": [],
+            "sources": [
+                "spec.md",
+                "requirements-overview.md",
+                "plan.md",
+                "tasks.md",
+            ],
+        },
+        indent=2,
+    ) + "\n"
+
+
 def _record_run_checkpoint(run_dir: Path, spec_id: str, phase: str) -> None:
     spec_dir = run_dir / "specs" / spec_id
     spec_dir.mkdir(parents=True, exist_ok=True)
@@ -285,7 +301,12 @@ def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path
         "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReal project rules.\n",
         encoding="utf-8",
@@ -559,7 +580,12 @@ def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
         "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (published_spec_dir / name).write_text(f"# published {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# published {name}\n"
+        )
+        (published_spec_dir / name).write_text(content, encoding="utf-8")
     (published_spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReal project rules.\n",
         encoding="utf-8",

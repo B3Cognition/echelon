@@ -39,7 +39,17 @@ for artifact in REQUIRED_PHASE_A_BUILD_INPUTS:
     path = spec_dir / artifact
     if path.exists() or artifact in {"spec.md", "tasks.md", "constitution.md"}:
         continue
-    path.write_text(f"# {artifact}\n", encoding="utf-8")
+    if artifact == "plan-conformance.json":
+        path.write_text(
+            '{\n'
+            '  "status": "pass",\n'
+            '  "findings": [],\n'
+            '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
+            '}\n',
+            encoding="utf-8",
+        )
+    else:
+        path.write_text(f"# {artifact}\n", encoding="utf-8")
 PY
 cat > "$tmpdir/specs/024-test/tasks.md" <<'TASKS'
 - [ ] T-001 complexity=standard phase=build req=FR-001 depends=none target=repo-a

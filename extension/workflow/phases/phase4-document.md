@@ -232,6 +232,12 @@ conformance evidence:
 - `plan-conformance.json`
 - `00-overview.md`
 
+Use these prescribed artifact contracts:
+
+- `extension/templates/plan-conformance-template.md` for `plan-conformance.md`
+- `extension/templates/plan-conformance.schema.json` for `plan-conformance.json`
+- `extension/templates/00-overview-template.md` for `00-overview.md`
+
 Read `spec.md`, `requirements-overview.md`, `mvp-scope.md`, `plan.md`,
 `tasks.md`, `dependencies.md`, `critical-path.md`, `risk-matrix.md`,
 `test-strategy.md`, `coverage-map.md`, `quality-gates.md`, `issues.md`, and
@@ -267,6 +273,8 @@ Read `spec.md`, `requirements-overview.md`, `mvp-scope.md`, `plan.md`,
   ]
 }
 ```
+
+It must conform to `extension/templates/plan-conformance.schema.json`.
 
 Use `"status": "needs_repair"` when a drift finding requires artifact repair
 before build readiness. Do not hide drift by rewriting `00-overview.md` around

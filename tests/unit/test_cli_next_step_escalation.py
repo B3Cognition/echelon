@@ -13,6 +13,22 @@ from echelon.cli import (
 )
 
 
+def _valid_plan_conformance_json() -> str:
+    return json.dumps(
+        {
+            "status": "pass",
+            "findings": [],
+            "sources": [
+                "spec.md",
+                "requirements-overview.md",
+                "plan.md",
+                "tasks.md",
+            ],
+        },
+        indent=2,
+    ) + "\n"
+
+
 def _issues_doc(title: str) -> str:
     return "\n".join(
         [
@@ -290,7 +306,12 @@ def test_ready_next_step_has_clear_subtitle_and_next_command(
         "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReady.\n",
         encoding="utf-8",
@@ -399,7 +420,12 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
         "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReady.\n",
         encoding="utf-8",
@@ -580,7 +606,12 @@ def test_done_run_uses_published_artifacts_instead_of_stale_staging_why2(
         "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReady.\n",
         encoding="utf-8",
@@ -649,7 +680,12 @@ def test_continue_phase_treats_done_published_artifacts_as_build_ready(
         "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
-        (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        content = (
+            _valid_plan_conformance_json()
+            if name == "plan-conformance.json"
+            else f"# {name}\n"
+        )
+        (spec_dir / name).write_text(content, encoding="utf-8")
     (spec_dir / "constitution.md").write_text(
         "# Constitution\n\nReady.\n",
         encoding="utf-8",

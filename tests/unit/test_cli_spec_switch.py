@@ -92,7 +92,18 @@ def test_ready_spec_can_be_preserved_while_a_different_spec_run_starts(
     spec_dir = tmp_path / "specs" / "001-first-spec"
     spec_dir.mkdir(parents=True)
     for name in REQUIRED_PHASE_A_BUILD_INPUTS:
-        content = constitution if name == "constitution.md" else f"# {name}\n"
+        if name == "constitution.md":
+            content = constitution
+        elif name == "plan-conformance.json":
+            content = (
+                '{\n'
+                '  "status": "pass",\n'
+                '  "findings": [],\n'
+                '  "sources": ["spec.md", "requirements-overview.md", "plan.md", "tasks.md"]\n'
+                '}\n'
+            )
+        else:
+            content = f"# {name}\n"
         (spec_dir / name).write_text(content, encoding="utf-8")
     (spec_dir / "quality-gates.md").write_text(
         "# Quality Gates\n\n## Verdict: PASS\n",
