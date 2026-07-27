@@ -91,6 +91,11 @@ spec_checkpoint_app = typer.Typer(
     help="Phase A/spec checkpoint commands.",
     no_args_is_help=True,
 )
+spec_memory_app = typer.Typer(
+    add_completion=False,
+    help="Mine and audit canonical spec requirements in MemPalace.",
+    no_args_is_help=True,
+)
 harness_app = typer.Typer(
     add_completion=False,
     help="Compatibility alias for delivery init/run/resume.",
@@ -136,6 +141,7 @@ app.add_typer(wiki_app, name="wiki")
 app.add_typer(admin_app, name="admin", hidden=True)
 workspace_app.add_typer(workspace_sources_app, name="sources")
 spec_app.add_typer(spec_checkpoint_app, name="checkpoint")
+spec_app.add_typer(spec_memory_app, name="memory")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
 
 
@@ -239,6 +245,20 @@ def _legacy_cli():
     from echelon import cli as legacy_cli
 
     return legacy_cli
+
+
+def _memory_exit_code(status: str) -> int:
+    if status in {"pass", "warn", "complete"}:
+        return 0
+    if status in {"fail", "partial"}:
+        return 1
+    return 2
+
+
+def _echo_json(data: dict) -> None:
+    import json
+
+    typer.echo(json.dumps(data, indent=2, sort_keys=True))
 
 
 def _dispatch_phase(args: list[str]) -> None:
@@ -1716,6 +1736,71 @@ def spec_checkpoint_commit(
     _extend_option(args, "--message", message)
     args.extend(list(ctx.args))
     run_checkpoint_command(args, project_root=Path.cwd())
+
+
+@spec_memory_app.command("mine")
+def spec_memory_mine(
+    spec_selector: str,
+    write_report: bool = typer.Option(False, "--write-report"),
+) -> None:
+    from echelon.mempalace_requirements import mine_spec_requirements
+
+    report = mine_spec_requirements(Path.cwd(), spec_selector, run_id="manual")
+    typer.echo(
+        f"MemPalace mine {report.status}: expected={report.expected_count} "
+        f"written={report.written_count} adopted={report.adopted_count} "
+        f"drifted={report.drifted_count} failed={report.failed_count}"
+    )
+    if write_report:
+        spec_dir = Path(report.spec_dir)
+        spec_dir.joinpath("mempalace-mine.json").write_text(
+            __import__("json").dumps(report.to_dict(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    raise typer.Exit(code=_memory_exit_code(report.status))
+
+
+@spec_memory_app.command("audit")
+def spec_memory_audit(
+    spec_selector: str,
+    as_json: bool = typer.Option(False, "--json"),
+    write: bool = typer.Option(False, "--write"),
+    probe_retrieval: bool = typer.Option(False, "--probe-retrieval"),
+) -> None:
+    from echelon.mempalace_audit import audit_spec_memory, render_audit_markdown, write_audit_reports
+
+    report = audit_spec_memory(Path.cwd(), spec_selector, probe_retrieval=probe_retrieval)
+    if write and report.status != "unavailable":
+        write_audit_reports(report, Path(report.spec_dir))
+    if as_json:
+        _echo_json(report.to_dict())
+    else:
+        typer.echo(render_audit_markdown(report).rstrip())
+    raise typer.Exit(code=_memory_exit_code(report.status))
+
+
+@spec_memory_app.command("refresh")
+def spec_memory_refresh(
+    spec_selector: str,
+    audit: bool = typer.Option(True, "--audit/--no-audit"),
+    write: bool = typer.Option(False, "--write"),
+) -> None:
+    from echelon.mempalace_audit import audit_spec_memory, render_audit_markdown, write_audit_reports
+    from echelon.mempalace_requirements import mine_spec_requirements
+
+    mine_report = mine_spec_requirements(Path.cwd(), spec_selector, run_id="manual")
+    typer.echo(
+        f"MemPalace mine {mine_report.status}: expected={mine_report.expected_count} "
+        f"written={mine_report.written_count} adopted={mine_report.adopted_count} "
+        f"drifted={mine_report.drifted_count} failed={mine_report.failed_count}"
+    )
+    if not audit:
+        raise typer.Exit(code=_memory_exit_code(mine_report.status))
+    audit_report = audit_spec_memory(Path.cwd(), spec_selector)
+    if write and audit_report.status != "unavailable":
+        write_audit_reports(audit_report, Path(audit_report.spec_dir))
+    typer.echo(render_audit_markdown(audit_report).rstrip())
+    raise typer.Exit(code=max(_memory_exit_code(mine_report.status), _memory_exit_code(audit_report.status)))
 
 
 @spec_app.command(
