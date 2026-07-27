@@ -35,6 +35,25 @@ from harness.state_transaction_namespace import (
 )
 
 
+def test_default_completion_miner_factory_uses_echelon_requirement_adapter(
+    monkeypatch,
+    tmp_path,
+):
+    from harness import squad_completion as completion_module
+
+    calls = []
+    sentinel = object()
+    monkeypatch.setattr(
+        "echelon.mempalace_requirements.create_requirement_memory_adapter",
+        lambda project_root, run_id: calls.append((project_root, run_id)) or sentinel,
+    )
+
+    result = completion_module._default_completion_miner_factory(tmp_path, "run-123")
+
+    assert result is sentinel
+    assert calls == [(tmp_path, "run-123")]
+
+
 COMPLETION_ID = "a" * 32
 VALID_COMPLETION_MARKER = {
     "schema_version": 1,

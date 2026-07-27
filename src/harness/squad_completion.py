@@ -3340,14 +3340,9 @@ def _default_completion_miner_factory(
     project_root: Path,
     run_id: str,
 ) -> object:
-    from codegen.memory.context import MemPalaceContext
-    from codegen.memory.requirements_miner import RequirementsMiner
+    from echelon.mempalace_requirements import create_requirement_memory_adapter
 
-    context = MemPalaceContext.from_project(
-        project_root,
-        run_id=run_id,
-    )
-    return RequirementsMiner(context, project_dir=project_root)
+    return create_requirement_memory_adapter(project_root, run_id)
 
 
 def _completion_mining_factory(
