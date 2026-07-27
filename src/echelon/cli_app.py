@@ -2413,7 +2413,7 @@ def delivery_checkpoint_list(
     legacy_cli._cmd_delivery_checkpoint(args)
 
 
-def run(argv: list[str] | None = None) -> None:
+def run(argv: list[str] | None = None) -> int | None:
     """Run the Typer CLI app with an explicit argv for tests or sys.argv[1:]."""
     if argv in (["-v"], ["--version"], ["version"]):
         legacy_cli = _legacy_cli()
@@ -2426,7 +2426,7 @@ def run(argv: list[str] | None = None) -> None:
         before = wiki_service.capture_input_snapshot(project_root)
     except Exception:
         before = None
-    app(args=argv, standalone_mode=False)
+    exit_code = app(args=argv, standalone_mode=False)
     try:
         refreshed = wiki_service.refresh_after_changed_command(project_root, before)
     except Exception as exc:
@@ -2434,3 +2434,4 @@ def run(argv: list[str] | None = None) -> None:
     else:
         if refreshed is not None:
             typer.echo(f"Wiki auto-refreshed: {refreshed.home_path}")
+    return exit_code

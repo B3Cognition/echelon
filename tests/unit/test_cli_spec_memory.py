@@ -70,6 +70,37 @@ def test_spec_memory_audit_exit_codes(monkeypatch, tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_main_preserves_unavailable_memory_audit_exit_code(monkeypatch, tmp_path: Path) -> None:
+    from echelon.mempalace_audit import SpecMemoryAuditReport
+    from echelon.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.audit_spec_memory",
+        lambda project_root, selector, probe_retrieval=False: SpecMemoryAuditReport(
+            schema_version=1,
+            spec_id="003-demo",
+            spec_dir=str(tmp_path / "specs" / "003-demo"),
+            wing=None,
+            palace_path=None,
+            status="unavailable",
+            expected_count=0,
+            present_current_count=0,
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["echelon", "spec", "memory", "audit", "003-demo", "--json"],
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 2
+
+
+@pytest.mark.unit
 def test_spec_memory_audit_json_maps_missing_legacy_config_to_unavailable(monkeypatch, tmp_path: Path) -> None:
     (tmp_path / ".echelon").mkdir()
     (tmp_path / ".echelon" / "config.yml").write_text(

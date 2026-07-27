@@ -9800,7 +9800,9 @@ def main() -> None:
         pass
 
     try:
-        run_typer_cli(args)
+        exit_code = run_typer_cli(args)
     except click_exceptions as exc:
         exc.show()
         sys.exit(exc.exit_code)
+    if exit_code:
+        sys.exit(exit_code)
