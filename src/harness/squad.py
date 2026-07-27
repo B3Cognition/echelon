@@ -65,8 +65,10 @@ from harness.quality_scores import (
     resolve_quality_gate_thresholds,
 )
 from harness.recovery_instruction import (
+    RecoveryInstruction,
     controller_contract_recovery,
     retry_phase_recovery,
+    trusted_executor_block_recovery,
 )
 from harness.published_re_context import attach_published_re_context
 from harness.run_history import append_phase_a_run
@@ -2302,6 +2304,10 @@ class SquadController:
                     result.reason,
                     result.result,
                     snapshot=snapshot,
+                    recovery_instruction=trusted_executor_block_recovery(
+                        phase,
+                        result.reason,
+                    ),
                 )
                 return SquadResult.from_state(self._state_store.load())
 
@@ -2723,6 +2729,10 @@ class SquadController:
                 result.reason,
                 result.result,
                 snapshot=snapshot,
+                recovery_instruction=trusted_executor_block_recovery(
+                    phase,
+                    result.reason,
+                ),
             )
             return SquadResult.from_state(self._state_store.load())
 
@@ -4669,6 +4679,7 @@ class SquadController:
         result: SquadAgentResult,
         *,
         snapshot: RoutingStateSnapshot,
+        recovery_instruction: RecoveryInstruction | None = None,
     ) -> bool:
         from datetime import datetime, timezone
 
@@ -4679,6 +4690,13 @@ class SquadController:
         state["phase"] = phase if retryable_analysis else PHASE_TERMINAL_BLOCKED
         state["status"] = "blocked"
         state["blocked_reason"] = reason
+        prior_phase_output_recovery = state.get("phase_output_recovery")
+        state.pop("controller_contract_error", None)
+        state.pop("recovery_instruction", None)
+        state.pop("missing_outputs", None)
+        state.pop("phase_output_recovery", None)
+        if recovery_instruction is not None:
+            state["recovery_instruction"] = recovery_instruction.to_dict()
         if reason in {"missing_phase_outputs", "invalid_evidence_inventory"}:
             updates = result.state_updates or {}
             missing_outputs = updates.get("missing_outputs")
@@ -4714,12 +4732,16 @@ class SquadController:
                     recovery["missing_outputs"] = list(missing_outputs)
                 if has_invalid:
                     recovery["invalid_outputs"] = list(invalid_outputs)
-                prior_recovery = state.get("phase_output_recovery")
-                if isinstance(prior_recovery, dict) and prior_recovery.get(
-                    "quarantined_invalid_outputs"
+                if (
+                    isinstance(prior_phase_output_recovery, dict)
+                    and prior_phase_output_recovery.get(
+                        "quarantined_invalid_outputs"
+                    )
                 ):
                     recovery["quarantined_invalid_outputs"] = list(
-                        prior_recovery["quarantined_invalid_outputs"]
+                        prior_phase_output_recovery[
+                            "quarantined_invalid_outputs"
+                        ]
                     )
                 state["phase_output_recovery"] = recovery
         if retryable_analysis:

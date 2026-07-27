@@ -1691,6 +1691,19 @@ class TestAgentResultIntegrity:
         state = store.load()
         state["spec_id"] = "001-demo"
         state["spec_dir"] = "specs/001-demo"
+        state["controller_contract_error"] = {
+            "phase_id": "phase1-what",
+            "contract": "preparation",
+            "json_path": "$.state_updates.missing_outputs",
+            "validator": "ownership",
+        }
+        state["recovery_instruction"] = {
+            "schema_version": 1,
+            "kind": "sync_runtime_then_retry",
+            "reason_code": "controller_state_contract_validation_failed",
+            "phase": "phase1-what",
+            "requires_human_input": False,
+        }
         store.save(state)
 
         result = (
@@ -1713,7 +1726,13 @@ class TestAgentResultIntegrity:
             },
         }
         assert "controller_contract_error" not in state
-        assert "recovery_instruction" not in state
+        assert state["recovery_instruction"] == {
+            "schema_version": 1,
+            "kind": "retry_phase",
+            "reason_code": "missing_phase_outputs",
+            "phase": "phase1-what",
+            "requires_human_input": False,
+        }
         assert "phase1-what" not in state.get("completed_phases", [])
 
     def test_successful_advance_clears_controller_recovery_instruction(
@@ -8110,6 +8129,13 @@ class TestFailClosedControllerPreparation:
         ctrl._executors["deterministic_understanding"] = executor
         state = store.load()
         state["controller_contract_error"] = {"prior": "diagnostic"}
+        state["recovery_instruction"] = {
+            "schema_version": 1,
+            "kind": "sync_runtime_then_retry",
+            "reason_code": "controller_state_contract_validation_failed",
+            "phase": "phase1-understanding",
+            "requires_human_input": False,
+        }
         store.save(state)
         calls: list[str] = []
         original_prepare = ctrl._prepare_phase_result_or_block
@@ -8160,9 +8186,8 @@ class TestFailClosedControllerPreparation:
         assert (
             blocked["blocked_reason"] == "temporary analysis failure"
         )
-        assert blocked["controller_contract_error"] == {
-            "prior": "diagnostic"
-        }
+        assert "controller_contract_error" not in blocked
+        assert "recovery_instruction" not in blocked
         assert blocked["understanding_evidence"]["status"] == "error"
         assert "phase1-understanding" not in blocked["completed_phases"]
 
@@ -8270,6 +8295,53 @@ class TestProductInputMappingRepair:
         events = [json.loads(line) for line in ctrl._telemetry_store.events_path.read_text().splitlines()]
         assert events[-1]["type"] == "blocker"
         assert events[-1]["reason"] == "agent_exit_code_1"
+
+    def test_new_executor_failure_clears_prior_recovery_generation(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase3-plan",
+            max_iterations=5,
+        )
+        state = store.load()
+        state["controller_contract_error"] = {"prior": "diagnostic"}
+        state["recovery_instruction"] = {
+            "schema_version": 1,
+            "kind": "retry_phase",
+            "reason_code": "missing_phase_outputs",
+            "phase": "phase1-what",
+            "requires_human_input": False,
+        }
+        state["missing_outputs"] = ["requirements-overview.md"]
+        state["phase_output_recovery"] = {
+            "phase": "phase1-what",
+            "missing_outputs": ["requirements-overview.md"],
+            "prior_state_updates": {},
+        }
+        store.save(state)
+        snapshot = store.capture_routing_snapshot(
+            expected_phase="phase3-plan"
+        )
+
+        ctrl._block_after_executor_failure(
+            "phase3-plan",
+            "agent_exit_code_1",
+            SquadAgentResult(1, None, "", 0, False),
+            snapshot=snapshot,
+        )
+
+        blocked = store.load()
+        assert blocked["blocked_reason"] == "agent_exit_code_1"
+        assert "controller_contract_error" not in blocked
+        assert "recovery_instruction" not in blocked
+        assert "missing_outputs" not in blocked
+        assert "phase_output_recovery" not in blocked
 
     def test_stale_executor_failure_cannot_erase_winning_phase_or_dispatch(
         self,

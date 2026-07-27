@@ -6,6 +6,7 @@ from harness.recovery_instruction import (
     RecoveryInstructionError,
     controller_contract_recovery,
     retry_phase_recovery,
+    trusted_executor_block_recovery,
     validate_recovery_instruction,
 )
 
@@ -35,6 +36,32 @@ def test_retry_phase_recovery_preserves_failure_reason() -> None:
         "phase": "phase1-what",
         "requires_human_input": False,
     }
+
+
+def test_trusted_executor_block_recovery_retries_recorded_phase() -> None:
+    instruction = trusted_executor_block_recovery(
+        "phase1-what",
+        "missing_phase_outputs",
+    )
+
+    assert instruction.to_dict() == {
+        "schema_version": 1,
+        "kind": "retry_phase",
+        "reason_code": "missing_phase_outputs",
+        "phase": "phase1-what",
+        "requires_human_input": False,
+    }
+
+
+def test_trusted_executor_block_recovery_rejects_unknown_reason() -> None:
+    with pytest.raises(
+        RecoveryInstructionError,
+        match="unsupported trusted executor block reason",
+    ):
+        trusted_executor_block_recovery(
+            "phase1-what",
+            "invented_recovery",
+        )
 
 
 @pytest.mark.parametrize(

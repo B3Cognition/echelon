@@ -1266,6 +1266,104 @@ def test_persisted_runtime_sync_recovery_retries_after_compatible_sync(
     assert action.command == "echelon spec continue"
 
 
+def test_stale_contract_instruction_reconciles_to_phase_output_recovery() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "missing_phase_outputs",
+            "recovery_instruction": {
+                "schema_version": 1,
+                "kind": "sync_runtime_then_retry",
+                "reason_code": "controller_state_contract_validation_failed",
+                "phase": "phase1-what",
+                "requires_human_input": False,
+            },
+            "controller_contract_error": {
+                "phase_id": "phase1-what",
+                "contract": "preparation",
+                "validator": "ownership",
+            },
+            "phase_output_recovery": {
+                "phase": "phase1-what",
+                "missing_outputs": ["requirements-overview.md"],
+                "prior_state_updates": {
+                    "spec_status": "planned",
+                    "evidence_resolution_status": "not_required",
+                },
+            },
+            "last_dispatch": {
+                "phase_id": "phase1-what",
+                "verdict": "BLOCKED",
+            },
+        }
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "missing_phase_outputs"
+    assert action.phase == "phase1-what"
+    assert action.command == "echelon spec continue"
+    assert "runtime" not in action.note
+
+
+def test_continue_prioritizes_phase_output_recovery_over_pending_issue(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "missing_phase_outputs",
+            "user_message": "Expose the supported machine-readable format",
+            "recovery_instruction": {
+                "schema_version": 1,
+                "kind": "sync_runtime_then_retry",
+                "reason_code": "controller_state_contract_validation_failed",
+                "phase": "phase1-what",
+                "requires_human_input": False,
+            },
+            "phase_output_recovery": {
+                "phase": "phase1-what",
+                "missing_outputs": ["requirements-overview.md"],
+                "prior_state_updates": {
+                    "spec_status": "planned",
+                    "evidence_resolution_status": "not_required",
+                },
+            },
+            "issue_resolution_recovery": {
+                "issue_id": "ISS-003",
+                "from_phase": "phase1-why2",
+                "to_phase": "phase1-what",
+                "reason": "issue_resolution",
+            },
+        },
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "running"
+    assert state["phase"] == "phase1-what"
+    assert state["blocked_reason"] is None
+    assert "recovery_instruction" not in state
+    assert state["phase_output_recovery"]["missing_outputs"] == [
+        "requirements-overview.md"
+    ]
+    assert state["issue_resolution_recovery"]["issue_id"] == "ISS-003"
+    assert len(calls) == 1
+
+
 def test_continue_consumes_controller_recovery_instruction(
     tmp_path: Path,
     monkeypatch,

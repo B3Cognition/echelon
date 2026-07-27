@@ -35,6 +35,7 @@ from harness.recovery_instruction import (
     RecoveryInstructionError,
     RecoveryKind,
     controller_contract_recovery,
+    retry_phase_recovery,
     validate_recovery_instruction,
 )
 from harness.runtime_surface import prune_delivery_workflow_definition
@@ -3223,11 +3224,42 @@ def _recovery_action_from_instruction(
 def _persisted_or_legacy_recovery_instruction(
     run_state: dict,
 ) -> RecoveryInstruction | None:
+    reason = str(run_state.get("blocked_reason") or "").strip()
+    phase_output_recovery = run_state.get("phase_output_recovery")
+    phase_output_instruction: RecoveryInstruction | None = None
+    if (
+        reason in {"missing_phase_outputs", "invalid_evidence_inventory"}
+        and isinstance(phase_output_recovery, dict)
+    ):
+        recovery_phase = str(
+            phase_output_recovery.get("phase") or ""
+        ).strip()
+        missing_outputs = phase_output_recovery.get("missing_outputs")
+        invalid_outputs = phase_output_recovery.get("invalid_outputs")
+        has_recovery_evidence = (
+            isinstance(missing_outputs, list) and bool(missing_outputs)
+        ) or (
+            isinstance(invalid_outputs, list) and bool(invalid_outputs)
+        )
+        if recovery_phase and has_recovery_evidence:
+            phase_output_instruction = retry_phase_recovery(
+                recovery_phase,
+                reason,
+            )
+
     raw_instruction = run_state.get("recovery_instruction")
     if raw_instruction is not None:
-        return validate_recovery_instruction(raw_instruction)
+        instruction = validate_recovery_instruction(raw_instruction)
+        if reason and instruction.reason_code != reason:
+            if phase_output_instruction is not None:
+                return phase_output_instruction
+            raise RecoveryInstructionError(
+                "recovery instruction does not match blocked reason"
+            )
+        return instruction
 
-    reason = str(run_state.get("blocked_reason") or "").strip()
+    if phase_output_instruction is not None:
+        return phase_output_instruction
     if reason != "controller_state_contract_validation_failed":
         return None
     diagnostic = run_state.get("controller_contract_error")
@@ -6958,11 +6990,13 @@ def _cmd_continue(
         )
         _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
 
+    action = _classify_run_recovery(state, project_root=project_root)
     issue_recovery = state.get("issue_resolution_recovery")
     if (
         isinstance(issue_recovery, dict)
         and issue_recovery.get("status") != "consumed"
         and str(issue_recovery.get("issue_id") or "").strip()
+        and action.reason == "issue_resolution"
     ):
         print(
             "[squad] continuing via controller-owned issue-repair workflow edge; "
@@ -6997,7 +7031,6 @@ def _cmd_continue(
         )
         return
 
-    action = _classify_run_recovery(state, project_root=project_root)
     if action.kind == "safe_rewind":
         fields = [("blocked by", action.reason)]
         if action.note:

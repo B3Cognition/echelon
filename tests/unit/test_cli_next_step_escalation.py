@@ -220,6 +220,56 @@ def test_controller_contract_failure_has_one_consistent_next_step(
     assert "echelon spec rewind" not in captured.out
 
 
+def test_stale_contract_metadata_renders_current_missing_output_recovery(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-test"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "missing_phase_outputs",
+                "recovery_instruction": {
+                    "schema_version": 1,
+                    "kind": "sync_runtime_then_retry",
+                    "reason_code": "controller_state_contract_validation_failed",
+                    "phase": "phase1-what",
+                    "requires_human_input": False,
+                },
+                "phase_output_recovery": {
+                    "phase": "phase1-what",
+                    "missing_outputs": ["requirements-overview.md"],
+                    "prior_state_updates": {},
+                },
+                "issue_resolution_recovery": {
+                    "issue_id": "ISS-003",
+                    "from_phase": "phase1-why2",
+                    "to_phase": "phase1-what",
+                    "reason": "issue_resolution",
+                },
+                "last_dispatch": {
+                    "phase_id": "phase1-what",
+                    "verdict": "BLOCKED",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _print_next_steps(tmp_path, "blocked")
+
+    output = capsys.readouterr().out
+    assert "missing_phase_outputs" in output
+    assert "phase1-what" in output
+    assert "echelon spec continue" in output
+    assert "controller_state_contract_validation_failed" not in output
+    assert "runtime contracts" not in output
+
+
 def test_ready_next_step_has_clear_subtitle_and_next_command(
     tmp_path: Path,
     capsys,

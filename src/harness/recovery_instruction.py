@@ -49,6 +49,13 @@ _FIELDS = frozenset(
         "requires_human_input",
     }
 )
+_TRUSTED_EXECUTOR_BLOCK_REASONS = frozenset(
+    {
+        "invalid_evidence_inventory",
+        "missing_consensus_prerequisite",
+        "missing_phase_outputs",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -137,3 +144,14 @@ def retry_phase_recovery(
             "requires_human_input": False,
         }
     )
+
+
+def trusted_executor_block_recovery(
+    phase: str,
+    reason_code: str,
+) -> RecoveryInstruction:
+    if reason_code not in _TRUSTED_EXECUTOR_BLOCK_REASONS:
+        raise RecoveryInstructionError(
+            "unsupported trusted executor block reason"
+        )
+    return retry_phase_recovery(phase, reason_code)
