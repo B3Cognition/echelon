@@ -58,6 +58,33 @@ The failed phase remains incomplete.
 After a successful state advance, the transaction removes the stale recovery
 instruction. A repeated failure replaces it with a fresh instruction.
 
+## Supersession
+
+`blocked_reason`, its diagnostic fields, and `recovery_instruction` are one
+recovery generation. Whenever a controller transaction records a newer block,
+it must atomically:
+
+1. remove diagnostics owned by the previous generation;
+2. write the new durable reason and any current diagnostic;
+3. replace the old instruction with one whose `reason_code` matches the new
+   durable reason.
+
+Trusted executor blocks such as `missing_phase_outputs` use `retry_phase`.
+Their phase-output repair payload remains controller-owned context and is not
+added to provider state-update allowlists.
+
+Readers validate generation consistency. For a current-format state, a
+`recovery_instruction.reason_code` that differs from `blocked_reason` is
+invalid and cannot drive routing. The read-only legacy adapter may reconcile a
+known older state when the current durable reason and its typed evidence are
+complete. In particular, a valid `phase_output_recovery` record supersedes an
+older controller-contract instruction and yields `retry_phase` for the
+recorded repair phase.
+
+Pending background workflows, including issue resolution, do not override a
+newer typed recovery instruction. They remain persisted and resume after the
+immediate recovery action succeeds.
+
 ## Compatibility
 
 Existing runs without `recovery_instruction` use a legacy adapter. The adapter
@@ -79,6 +106,7 @@ unstructured recovery commands.
 - Human input is required only for `await_human_answer` and `resolve_issue`.
 - Runtime reconciliation never rewinds artifacts.
 - Unknown or malformed instructions become `manual_diagnosis`.
+- Mismatched recovery generations never execute the stale instruction.
 - Recovery execution is idempotent: retrying clears the consumed block before
   dispatch, and a new failure writes a new instruction.
 
