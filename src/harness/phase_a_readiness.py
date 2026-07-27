@@ -7,8 +7,12 @@ import re
 
 
 REQUIRED_PHASE_A_BUILD_INPUTS = (
+    "00-overview.md",
+    "requirements-overview.md",
     "spec.md",
     "plan.md",
+    "plan-conformance.md",
+    "plan-conformance.json",
     "research.md",
     "data-model.md",
     "tasks.md",

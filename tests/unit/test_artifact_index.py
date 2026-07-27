@@ -25,9 +25,17 @@ def _make_spec_dir(tmp_path: Path) -> Path:
 @pytest.mark.unit
 def test_render_lists_present_known_artifacts(tmp_path: Path) -> None:
     spec_dir = _make_spec_dir(tmp_path)
+    (spec_dir / "00-overview.md").write_text("# Final Overview\n", encoding="utf-8")
+    (spec_dir / "requirements-overview.md").write_text(
+        "# Requirements Overview\n", encoding="utf-8"
+    )
     (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
     (spec_dir / "plan.md").write_text("# Plan\n", encoding="utf-8")
     (spec_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    (spec_dir / "plan-conformance.md").write_text(
+        "# Plan Conformance\n", encoding="utf-8"
+    )
+    (spec_dir / "plan-conformance.json").write_text("{}\n", encoding="utf-8")
     (spec_dir / "requirements.lexicon.md").write_text(
         "ARTIFACT: SPEC\nTITLE: Requirements\n", encoding="utf-8"
     )
@@ -40,6 +48,12 @@ def test_render_lists_present_known_artifacts(tmp_path: Path) -> None:
     assert "`tasks.md`" in text
     assert "`plan.md`" in text
     assert "| `spec.md` | Present |" in text
+    assert "| `00-overview.md` | Present | Final overview |" in text
+    assert "| `requirements-overview.md` | Present | Requirements orientation |" in text
+    assert "| `plan-conformance.md` | Present | Plan conformance report |" in text
+    assert "| `plan-conformance.json` | Present | Plan conformance data |" in text
+    assert "Final PM/developer brief generated after planning conformance passes." in text
+    assert "Phase 1 orientation generated with the requirements contract." in text
     assert "| `requirements.lexicon.md` | Present | Derived requirements index |" in text
     assert "Compiled from `spec.md` for deterministic Lexicon validation." in text
     assert "`requirements.lexicon.md`" not in text.partition("## Unclassified Files")[2]
@@ -54,8 +68,14 @@ def test_phase_a_stage_reports_missing_required_files(tmp_path: Path) -> None:
 
     assert "Lifecycle stage: phase_a" in text
     assert "| `spec.md` | Missing |" in text
+    assert "| `00-overview.md` | Missing |" in text
+    assert "| `requirements-overview.md` | Missing |" in text
+    assert "| `plan-conformance.md` | Missing |" in text
+    assert "| `plan-conformance.json` | Missing |" in text
     assert "| `plan.md` | Missing |" in text
     assert "| `tasks.md` | Missing |" in text
+    assert "`00-overview.md` - Final overview" in text
+    assert "`plan-conformance.md` - Plan conformance report" in text
     assert "`spec.md` - Feature contract" in text
     assert "`plan.md` - Implementation plan" in text
     assert "`tasks.md` - Task ledger" in text

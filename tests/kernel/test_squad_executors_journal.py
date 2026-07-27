@@ -1041,10 +1041,10 @@ def test_phase1_what_outputs_are_checked_by_the_executor(tmp_path):
 
     assert ex._required_phase_outputs_missing(node, state) == [
         "spec.md",
-        "00-overview.md",
+        "requirements-overview.md",
     ]
     (spec_dir / "spec.md").write_text("# Spec\n", encoding="utf-8")
-    (spec_dir / "00-overview.md").write_text("# Overview\n", encoding="utf-8")
+    (spec_dir / "requirements-overview.md").write_text("# Overview\n", encoding="utf-8")
     assert ex._required_phase_outputs_missing(node, state) == []
 
 

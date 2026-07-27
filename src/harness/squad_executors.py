@@ -659,7 +659,7 @@ def _render_published_re_context(state: dict) -> str:
 
 
 _MANDATORY_PHASE_OUTPUTS: dict[str, tuple[str, ...]] = {
-    "phase1-what": ("spec.md", "00-overview.md"),
+    "phase1-what": ("spec.md", "requirements-overview.md"),
     "phase1-lexicon-derive": ("requirements.lexicon.md",),
     "phase1-investigate": (
         "evidence-resolution.md",
@@ -1299,7 +1299,7 @@ class PhaseExecutor(ABC):
                 f"Existing spec_dir: {spec_dir}\n"
                 f"Existing feature_branch: {feature_branch}\n"
                 "Do NOT create, switch, rename, or discover a branch or spec directory. "
-                "Reuse the existing spec_dir and amend spec.md and 00-overview.md "
+                "Reuse the existing spec_dir and amend spec.md and requirements-overview.md "
                 "in place.\n\n"
             )
 

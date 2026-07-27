@@ -13,7 +13,7 @@ Every file below MUST be included (or marked `[ABSENT: <path>]` if missing). Sil
 | --- | --- | --- |
 | `spec.md` | `{spec_dir}/spec.md` | Required |
 | `glossary.md` | `{spec_dir}/glossary.md` (or `${STAGING_DIR}/glossary.md` if not yet moved) | Required |
-| `00-overview.md` | `{spec_dir}/00-overview.md` | Required |
+| `requirements-overview.md` | `{spec_dir}/requirements-overview.md` | Required — Phase 1 orientation, not final delivery overview |
 | `assumptions.md` | `{spec_dir}/assumptions.md` (or staging) | Required |
 | `issues.md` | `{spec_dir}/issues.md` | From WHY2 |
 | `calibration-profile.yaml` | `knowledge-base/calibration-profile.yaml` | Mark `[ABSENT]` on cold start |

@@ -54,6 +54,7 @@ def test_ready_state_requires_all_mandatory_sentinel_outputs(tmp_path: Path) -> 
         "data-model.md",
         "tasks.md",
         "constitution.md",
+        "requirements-overview.md",
     ):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
 
@@ -61,9 +62,28 @@ def test_ready_state_requires_all_mandatory_sentinel_outputs(tmp_path: Path) -> 
 
     assert not result.ready
     assert set(result.missing) == {
+        "00-overview.md",
+        "plan-conformance.md",
+        "plan-conformance.json",
         "test-strategy.md",
         "test-architecture.md",
         "coverage-map.md",
+    }
+
+
+def test_ready_state_requires_final_overview_and_conformance_outputs(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "runs" / "run-1" / "specs" / "001-demo"
+    _write_required(spec_dir)
+    for name in ("00-overview.md", "plan-conformance.md", "plan-conformance.json"):
+        (spec_dir / name).unlink(missing_ok=True)
+
+    result = validate_phase_a_readiness({"status": "done"}, [spec_dir])
+
+    assert not result.ready
+    assert set(result.missing) == {
+        "00-overview.md",
+        "plan-conformance.md",
+        "plan-conformance.json",
     }
 
 

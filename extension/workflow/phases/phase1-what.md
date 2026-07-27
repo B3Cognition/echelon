@@ -70,7 +70,7 @@ The active runtime dispatches this role with the following request:
 
   Always complete ALL of the following before returning. Do NOT return until they are true:
   1. `{spec_dir}/spec.md` exists and contains Given/When/Then acceptance criteria for every user story.
-  2. `{spec_dir}/00-overview.md` exists (your 1-2 page human-readable summary).
+  2. `{spec_dir}/requirements-overview.md` exists (your 1-2 page Phase 1 requirements orientation; not the final delivery overview).
   3. All discovery artifacts have been moved from `${STAGING_DIR}/` to `{spec_dir}/`; run-control files (`user-clarifications.md`, `governance-trail.json`, `escalation-request.md`) remain in staging.
   Creating an initial draft alone is NOT sufficient — enhancement with squad context is mandatory before returning.
   </instructions>
@@ -90,7 +90,7 @@ recovery.
 After CARTOGRAPHER completes, the harness checks the already-reserved `spec_dir`. The result
 contract cannot change `spec_id`, `spec_dir`, `published_spec_dir`, or the feature branch.
 
-The executor requires both `{spec_dir}/spec.md` and `{spec_dir}/00-overview.md`. A missing required
+The executor requires both `{spec_dir}/spec.md` and `{spec_dir}/requirements-overview.md`. A missing required
 artifact blocks the phase with `missing_phase_outputs`; the model must not create a substitute
 directory. The controller's constitution provenance guard independently rejects a missing or
 template constitution before this phase or any later governed phase can run.
@@ -150,7 +150,7 @@ This step is part of the `echelon_result.state_updates` block above. Skipping it
 ### Expected Outputs — BOTH REQUIRED
 
 - `spec.md` (created and enhanced by speckit-echelon-cartographer (CARTOGRAPHER) in the controller-provided directory with GWT acceptance criteria and glossary cross-references)
-- `00-overview.md` (speckit-echelon-cartographer (CARTOGRAPHER)-authored 1–2 page human summary: what the feature does, key design choices, primary constraints)
+- `requirements-overview.md` (speckit-echelon-cartographer (CARTOGRAPHER)-authored 1–2 page Phase 1 requirements orientation: what the feature does, key requirements choices, primary constraints. This is not the final PM/developer brief; finalization generates `00-overview.md` after plan/task conformance.)
 
 ### 4.4 Quality-Certified Transition
 

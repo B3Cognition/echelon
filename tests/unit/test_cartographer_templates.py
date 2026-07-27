@@ -53,7 +53,7 @@ class TestCartographerTemplates:
         assert "agents/exploration/templates/cartographer-overview-template.md" in text
         assert ".specify/..." not in text
         assert "{spec_dir}/spec.md" in text
-        assert "{spec_dir}/00-overview.md" in text
+        assert "{spec_dir}/requirements-overview.md" in text
         assert "agent: speckit-echelon-cartographer (CARTOGRAPHER)" in text
         assert "agent: WHAT" not in text
 
@@ -65,7 +65,7 @@ class TestCartographerTemplates:
             assert "speckit.specify" not in text
             assert "controller-owned Phase A identity" in text
         assert "{spec_dir}/spec.md" in agent_text
-        assert "{spec_dir}/00-overview.md" in agent_text
+        assert "{spec_dir}/requirements-overview.md" in agent_text
 
     def test_cartographer_blocked_outputs_include_echelon_result(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
@@ -116,4 +116,4 @@ class TestCartographerTemplates:
         text = DEFINITION.read_text(encoding="utf-8")
 
         assert "spec.md" in text
-        assert "00-overview.md" in text
+        assert "requirements-overview.md" in text

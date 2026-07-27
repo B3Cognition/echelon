@@ -26,7 +26,7 @@ directory.
 Never edit:
 
 - `spec.md`;
-- `00-overview.md`;
+- `requirements-overview.md`;
 - discovery, evidence, quality, issue, or planning artifacts;
 - run state, checkpoints, reports, or controller metadata.
 

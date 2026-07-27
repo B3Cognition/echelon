@@ -30,6 +30,7 @@ import harness.squad as squad_module
 import harness.squad_completion as completion_module
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.phase_checkpoints import PhaseCheckpointError
+from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
 from harness.prepared_phase_result import prepare_phase_result
 from harness.squad import (
     ControllerEnrichment,
@@ -124,10 +125,65 @@ def _mock_provider(verdict: str = "DONE") -> MagicMock:
         configured = provider.exec_agent.return_value
         if configured is not default_result:
             return configured
-        return copy.deepcopy(default_result)
+        result = copy.deepcopy(default_result)
+        contract = kwargs.get("result_contract")
+        allowed_verdicts = getattr(contract, "allowed_verdicts", frozenset())
+        if (
+            allowed_verdicts
+            and "DONE" not in allowed_verdicts
+            and "PASS" in allowed_verdicts
+        ):
+            result.echelon_result["verdict"] = "PASS"
+        allowed = getattr(contract, "allowed_state_update_keys", frozenset())
+        required = getattr(contract, "required_state_update_keys", frozenset())
+        if allowed or required:
+            updates = result.echelon_result["state_updates"]
+            retained = {
+                key: value
+                for key, value in updates.items()
+                if key in set(allowed) | set(required)
+            }
+            if "evidence_resolution_status" in required:
+                retained.setdefault(
+                    "evidence_resolution_status",
+                    "not_required",
+                )
+            if "finding_routes" in required:
+                retained.setdefault("finding_routes", {"findings": []})
+            result.echelon_result["state_updates"] = retained
+        if "quality_scores" in set(allowed) | set(required):
+            result.echelon_result["state_updates"]["quality_scores"] = [{
+                "pass": True,
+                "pass_id": "WHY2-iter-0",
+                "overall": 0.95,
+                "structure": 0.95,
+                "readability": 0.95,
+                "cognitive": 0.95,
+                "semantic": 0.95,
+                "testability": 0.95,
+                "behavioral": 0.95,
+                "depth": 0.95,
+            }]
+        return result
 
     provider.exec_agent.side_effect = default_exec_agent
     return provider
+
+
+def _why2_pass_result() -> SquadAgentResult:
+    return SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "PASS",
+            "state_updates": {
+                "evidence_resolution_status": "not_required",
+                "finding_routes": {"findings": []},
+            },
+        },
+        raw_output="",
+        duration_ms=100,
+        timed_out=False,
+    )
 
 
 def _controller(tmp_path: Path, provider=None, mode: str = "banzai", squad_dir: Path = None):
@@ -210,6 +266,20 @@ def _disable_governance_gate(tmp_path: Path) -> None:
     config_path.write_text(
         f"{prefix}governance:\n  enabled: false\n", encoding="utf-8"
     )
+
+
+def _write_phase_a_build_inputs(
+    spec_dir: Path,
+    *,
+    prefix: str = "",
+    include_fr: bool = False,
+) -> None:
+    for name in REQUIRED_PHASE_A_BUILD_INPUTS:
+        body = "\nFR-001\n" if include_fr else ""
+        (spec_dir / name).write_text(
+            f"# {prefix}{name}\n{body}",
+            encoding="utf-8",
+        )
 
 
 def _sealed_publication_fixture(
@@ -1462,11 +1532,7 @@ class TestAgentResultIntegrity:
         _mark_constitution_complete(tmp_path, store)
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
-        for name in (
-            "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
-            "test-strategy.md", "test-architecture.md", "coverage-map.md",
-        ):
-            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        _write_phase_a_build_inputs(spec_dir)
         checkpoint_ledger = spec_dir / ".echelon" / "checkpoints.json"
         checkpoint_ledger.parent.mkdir()
         checkpoint_ledger.write_text(
@@ -1514,11 +1580,7 @@ class TestAgentResultIntegrity:
 
         active_spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001"
         active_spec_dir.mkdir(parents=True)
-        for name in (
-            "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
-            "test-strategy.md", "test-architecture.md", "coverage-map.md",
-        ):
-            (active_spec_dir / name).write_text(f"# active {name}\n", encoding="utf-8")
+        _write_phase_a_build_inputs(active_spec_dir, prefix="active ")
         (active_spec_dir / "contracts").mkdir()
         (active_spec_dir / "contracts" / "api.md").write_text("# Contract\n", encoding="utf-8")
 
@@ -1560,11 +1622,7 @@ class TestAgentResultIntegrity:
 
         active_spec_dir = tmp_path / "squad" / "run-test" / "specs" / "001-demo"
         active_spec_dir.mkdir(parents=True)
-        for name in (
-            "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
-            "test-strategy.md", "test-architecture.md", "coverage-map.md",
-        ):
-            (active_spec_dir / name).write_text(f"# active {name}\n", encoding="utf-8")
+        _write_phase_a_build_inputs(active_spec_dir, prefix="active ")
         (active_spec_dir / "user-intent.md").write_text(
             "# User Intent\n\nfresh run-local artifact\n",
             encoding="utf-8",
@@ -1612,20 +1670,11 @@ class TestAgentResultIntegrity:
         _mark_constitution_complete(tmp_path, store)
         active_spec_dir = tmp_path / "squad" / "run-test" / "specs" / "001"
         active_spec_dir.mkdir(parents=True)
-        for name in (
-            "spec.md",
-            "plan.md",
-            "research.md",
-            "data-model.md",
-            "tasks.md",
-            "test-strategy.md",
-            "test-architecture.md",
-            "coverage-map.md",
-        ):
-            (active_spec_dir / name).write_text(
-                f"# active {name}\n\nFR-001\n",
-                encoding="utf-8",
-            )
+        _write_phase_a_build_inputs(
+            active_spec_dir,
+            prefix="active ",
+            include_fr=True,
+        )
         (active_spec_dir / "contracts").mkdir()
         (active_spec_dir / "contracts" / "api.md").write_text(
             "# Active API contract\n",
@@ -3427,11 +3476,7 @@ class TestAgentResultIntegrity:
 
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
-        for name in (
-            "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
-            "test-strategy.md", "test-architecture.md", "coverage-map.md",
-        ):
-            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        _write_phase_a_build_inputs(spec_dir)
         state = store.load()
         state["spec_id"] = "001-demo"
         state["spec_dir"] = "runs/run-test/specs/001-demo"
@@ -3481,6 +3526,16 @@ class TestSquadControllerBasics:
     def test_generation_change_does_not_mutate_attached_spec_context(self, tmp_path, monkeypatch):
         _disable_lexicon_gate(tmp_path)
         provider = _mock_provider()
+        default_exec = provider.exec_agent.side_effect
+        calls = {"n": 0}
+
+        def exec_with_why2_pass(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 5:
+                return _why2_pass_result()
+            return default_exec(*args, **kwargs)
+
+        provider.exec_agent.side_effect = exec_with_why2_pass
         ctrl, store = _controller(tmp_path, provider=provider)
         monkeypatch.setattr(
             ctrl,
@@ -3501,7 +3556,7 @@ class TestSquadControllerBasics:
         spec_dir = tmp_path / "specs" / "001-test"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text(_valid_lexicon_spec(), encoding="utf-8")
-        (spec_dir / "00-overview.md").write_text("# Overview\n", encoding="utf-8")
+        (spec_dir / "requirements-overview.md").write_text("# Overview\n", encoding="utf-8")
         _install_passing_understanding(monkeypatch)
         monkeypatch.setattr(
             ctrl, "_publish_terminal_phase_a_artifacts_if_available", lambda: None
@@ -3537,6 +3592,16 @@ class TestSquadControllerBasics:
     def test_legacy_generation_state_is_not_synchronized_during_spec_run(self, tmp_path, monkeypatch):
         _disable_lexicon_gate(tmp_path)
         provider = _mock_provider()
+        default_exec = provider.exec_agent.side_effect
+        calls = {"n": 0}
+
+        def exec_with_why2_pass(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 5:
+                return _why2_pass_result()
+            return default_exec(*args, **kwargs)
+
+        provider.exec_agent.side_effect = exec_with_why2_pass
         ctrl, store = _controller(tmp_path, provider=provider)
         monkeypatch.setattr(
             ctrl,
@@ -3552,7 +3617,7 @@ class TestSquadControllerBasics:
         spec_dir = tmp_path / "specs" / "001-test"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text(_valid_lexicon_spec(), encoding="utf-8")
-        (spec_dir / "00-overview.md").write_text("# Overview\n", encoding="utf-8")
+        (spec_dir / "requirements-overview.md").write_text("# Overview\n", encoding="utf-8")
         _install_passing_understanding(monkeypatch)
         monkeypatch.setattr(
             ctrl, "_publish_terminal_phase_a_artifacts_if_available", lambda: None
@@ -3797,12 +3862,11 @@ class TestSquadControllerBasics:
         _mark_constitution_complete(tmp_path, store)
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
         spec_dir.mkdir(parents=True)
-        for name in (
-            "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
-            "test-strategy.md", "test-architecture.md", "coverage-map.md",
-            "implementability-report.md",
-        ):
-            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        _write_phase_a_build_inputs(spec_dir)
+        (spec_dir / "implementability-report.md").write_text(
+            "# implementability-report.md\n",
+            encoding="utf-8",
+        )
         state = store.load()
         state["spec_id"] = "001-demo"
         state["spec_dir"] = "runs/run-test/specs/001-demo"
@@ -4400,7 +4464,7 @@ class TestSquadControllerBasics:
                 return SquadAgentResult(
                     exit_code=0,
                     echelon_result={
-                        "verdict": "DONE",
+                        "verdict": "PASS",
                         "state_updates": {
                             "evidence_resolution_status": "not_required",
                             "finding_routes": {"findings": []},
@@ -4453,7 +4517,7 @@ class TestSquadControllerBasics:
         spec_dir = tmp_path / "specs" / "001-test"
         spec_dir.mkdir(parents=True)
         (spec_dir / "spec.md").write_text(_valid_lexicon_spec(), encoding="utf-8")
-        (spec_dir / "00-overview.md").write_text("# Overview\n", encoding="utf-8")
+        (spec_dir / "requirements-overview.md").write_text("# Overview\n", encoding="utf-8")
         _install_passing_understanding(monkeypatch)
         result = ctrl.run("msg", "banzai")
         # Provider called at least twice: once for WHY1, once for COMMANDER escalation
@@ -11316,16 +11380,9 @@ class TestControllerCompletionOrchestration:
         )
         (active / "spec.md").write_bytes(spec_bytes)
         (published / "spec.md").write_bytes(spec_bytes)
-        for name in (
-            "plan.md",
-            "research.md",
-            "data-model.md",
-            "tasks.md",
-            "constitution.md",
-            "test-strategy.md",
-            "test-architecture.md",
-            "coverage-map.md",
-        ):
+        for name in REQUIRED_PHASE_A_BUILD_INPUTS:
+            if name == "spec.md":
+                continue
             content = (
                 "# Durable constitution\n\n"
                 "- Recovery effects are replay-safe.\n"

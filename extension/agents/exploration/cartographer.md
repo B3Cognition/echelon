@@ -109,7 +109,7 @@ Treat the supplied `{spec_dir}` as the only artifact location. If
 `{spec_dir}/spec.md` exists, amend it in place. If it does not exist, create a
 first-pass specification there from
 `agents/exploration/templates/cartographer-spec-template.md`. In both cases,
-write `00-overview.md` beside it using the supplied overview template.
+write `requirements-overview.md` beside it using the supplied overview template.
 
 Never create a sibling under project-root `specs/`, never inspect or change the
 current Git branch, and never return `spec_id`, `spec_dir`,
@@ -139,8 +139,8 @@ echelon_result:
 
 Read `{spec_dir}/spec.md`, then incorporate SCOUT's domain insights, add
 Given/When/Then acceptance criteria, cross-reference the glossary and relevant
-contradictions, and write `{spec_dir}/00-overview.md`. The output is the rich
-specification plus its overview; no Git or identity mutation is part of this
+contradictions, and write `{spec_dir}/requirements-overview.md`. The output is the rich
+specification plus its Phase 1 requirements orientation; no Git or identity mutation is part of this
 phase.
 
 ## Marketplace Search (Pre-Spec Check)
@@ -357,7 +357,7 @@ Base prioritization on:
 
 The primary output. Must follow the structure in `agents/exploration/templates/cartographer-spec-template.md` exactly.
 
-### 00-overview.md
+### requirements-overview.md
 
 Must follow the structure in `agents/exploration/templates/cartographer-overview-template.md` exactly.
 
@@ -389,7 +389,7 @@ When all artifacts are written and the reasoning journal is updated, output:
 
 ```
 WHAT COMPLETE — artifacts written to <spec_directory>
-Artifacts: spec.md, 00-overview.md
+Artifacts: spec.md, requirements-overview.md
 User stories: <count>
 Functional requirements: <count>
 Non-functional requirements: <count>
@@ -407,7 +407,7 @@ echelon_result:
   verdict: COMPLETE
   output_files:
     - {spec_dir}/spec.md
-    - {spec_dir}/00-overview.md
+    - {spec_dir}/requirements-overview.md
   state_updates: {}
   journal_entries:
     - type: decision

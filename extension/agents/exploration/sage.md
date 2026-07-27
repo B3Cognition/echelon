@@ -178,7 +178,7 @@ Validate the specification against deterministic quality standards and challenge
 All current artifacts:
 - All DISCOVER outputs (glossary, mental model, boundaries, assumptions, unknowns)
 - `spec.md` — the specification to validate
-- `00-overview.md` — domain overview
+- `requirements-overview.md` — Phase 1 requirements orientation
 - `assumption-review.md` (from WHY1, if it ran)
 - `reasoning-journal.jsonl`
 - `calibration-profile.yaml` (if available from knowledge base)

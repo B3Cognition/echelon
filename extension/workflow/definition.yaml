@@ -447,7 +447,7 @@ phases:
       - calibration_map entry for speckit-echelon-cartographer (CARTOGRAPHER)
     outputs:
       - spec.md
-      - 00-overview.md
+      - requirements-overview.md
     allowed_state_updates:
       - spec_status
       - evidence_resolution_status
@@ -659,7 +659,7 @@ phases:
     context_pack:
       - spec.md
       - glossary.md
-      - 00-overview.md
+      - requirements-overview.md
       - assumptions.md
       - issues.md                              # from WHY2 — per-requirement failures
       - knowledge-base/calibration-profile.yaml
@@ -764,7 +764,7 @@ phases:
     context_pack:
       - spec.md
       - constitution.md
-      - 00-overview.md
+      - requirements-overview.md
       - gatekeeper output (constraints, scope)
       - security-findings.md        # from speckit-echelon-guardian (GUARDIAN) (if exists)
       - performance-model.md        # from speckit-echelon-benchmark (BENCHMARK) (if exists)
@@ -1160,6 +1160,9 @@ phases:
       - review_evolution_signals
       - update_state_done
     outputs:
+      - 00-overview.md
+      - plan-conformance.md
+      - plan-conformance.json
       - squad-report.md
     allowed_state_updates:
       - kb_usage_status
