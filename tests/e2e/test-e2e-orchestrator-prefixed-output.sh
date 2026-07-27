@@ -29,12 +29,18 @@ git -C "$tmpdir" init -q  # workspace root must be a git repo for harness run
 mkdir -p "$tmpdir/specs/024-test"
 printf -- "---\ntargets:\n  - repo-a\n  - repo-b\n---\n# spec\n" \
   > "$tmpdir/specs/024-test/spec.md"
-for artifact in plan.md research.md data-model.md; do
-  printf '# %s\n' "$artifact" > "$tmpdir/specs/024-test/$artifact"
-done
-for artifact in test-strategy.md test-architecture.md coverage-map.md; do
-  printf '# %s\n' "$artifact" > "$tmpdir/specs/024-test/$artifact"
-done
+PYTHONPATH="$PYTHONPATH" SPEC_DIR="$tmpdir/specs/024-test" "$PYTHON" <<'PY'
+import os
+from pathlib import Path
+from harness.phase_a_readiness import REQUIRED_PHASE_A_BUILD_INPUTS
+
+spec_dir = Path(os.environ["SPEC_DIR"])
+for artifact in REQUIRED_PHASE_A_BUILD_INPUTS:
+    path = spec_dir / artifact
+    if path.exists() or artifact in {"spec.md", "tasks.md", "constitution.md"}:
+        continue
+    path.write_text(f"# {artifact}\n", encoding="utf-8")
+PY
 cat > "$tmpdir/specs/024-test/tasks.md" <<'TASKS'
 - [ ] T-001 complexity=standard phase=build req=FR-001 depends=none target=repo-a
 

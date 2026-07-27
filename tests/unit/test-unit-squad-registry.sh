@@ -47,7 +47,7 @@ if [ "$TYPES" = "ERROR" ]; then
     echo "FAIL: could not parse definition.yaml phase types"
     FAIL=$((FAIL+1))
 else
-    EXECUTORS="agent commander_internal conditional_sequential deterministic_lexicon deterministic_understanding human_gate staged_parallel terminal"
+    EXECUTORS="agent commander_internal conditional_sequential deterministic_lexicon deterministic_structural deterministic_understanding human_gate staged_parallel terminal"
     for t in $TYPES; do
         if echo "$EXECUTORS" | grep -qw "$t"; then
             echo "PASS: executor registered for type '$t'"
@@ -69,7 +69,7 @@ from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from harness.condition_evaluator import ConditionEvaluator
 from harness.phase_graph import PhaseGraph
 from harness.squad_state import SquadStateStore
-from harness.squad_executors import AgentExecutor, DeterministicUnderstandingExecutor, StagedParallelExecutor
+from harness.squad_executors import AgentExecutor, DeterministicStructuralExecutor, DeterministicUnderstandingExecutor, StagedParallelExecutor
 from harness.squad import SquadController
 print('all modules importable')
 " && echo "PASS: all squad harness modules importable" && PASS=$((PASS+1)) || { echo "FAIL: module import failed"; FAIL=$((FAIL+1)); }
