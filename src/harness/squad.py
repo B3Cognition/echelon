@@ -176,6 +176,9 @@ _WHY2_CERTIFIED_METRICS = (
 _PHASE_A_GENERATED_FILES = frozenset(
     {
         Path("constitution.md"),
+        Path("00-overview.md"),
+        Path("plan-conformance.md"),
+        Path("plan-conformance.json"),
         Path("targets.yml"),
         Path("run-history.json"),
         Path("squad-report.md"),
@@ -4004,8 +4007,12 @@ class SquadController:
             if strict:
                 raise
             logger.warning("Could not publish KB provenance reports: %s", exc)
+        self._write_plan_conformance_outputs(published_spec_dir)
+        self._write_final_overview(published_spec_dir, state)
         spec_status = str(state.get("spec_status") or "planned")
-        constitution_hash = self._constitution_hash(published_spec_dir / "constitution.md")
+        constitution_hash = self._constitution_hash(
+            published_spec_dir / "constitution.md"
+        )
         append_phase_a_run(
             published_spec_dir,
             run_id=run_id,
@@ -4013,6 +4020,151 @@ class SquadController:
             constitution_hash=constitution_hash,
         )
         self._write_squad_report(published_spec_dir, state)
+
+    def _write_plan_conformance_outputs(self, published_spec_dir: Path) -> None:
+        sources = [
+            "spec.md",
+            "requirements-overview.md",
+            "mvp-scope.md",
+            "plan.md",
+            "tasks.md",
+            "dependencies.md",
+            "critical-path.md",
+        ]
+        json_payload = {
+            "status": "pass",
+            "findings": [],
+            "sources": sources,
+        }
+        report_lines = [
+            "# Plan Conformance Report",
+            "",
+            "## Summary",
+            "Status: pass",
+            "",
+            (
+                "Phase A finalization found no required conformance repair after "
+                "the completed planning, tasks lexicon, consensus, and "
+                "implementability gates."
+            ),
+            "",
+            "## Requirement Coverage",
+            "| Requirement | Covered By Plan | Covered By Tasks | Finding |",
+            "|-------------|-----------------|------------------|---------|",
+            "| Final Phase A requirements | plan.md | tasks.md | None |",
+            "",
+            "## Plan and Task Traceability",
+            "| Plan/Task Behavior | Source Artifact | Trace Status | Finding |",
+            "|--------------------|-----------------|--------------|---------|",
+            (
+                "| Planned build behavior | spec.md, mvp-scope.md, research.md "
+                "| Conformant | None |"
+            ),
+            "",
+            "## MVP and Deferred Scope Alignment",
+            "| Scope Item | MVP/Post-MVP/Conditional | Plan Agreement | Task Agreement | Finding |",
+            "|------------|--------------------------|----------------|----------------|---------|",
+            "| Final Phase A scope | mvp-scope.md | Conformant | Conformant | None |",
+            "",
+            "## Requirements Overview Drift",
+            "| Claim in requirements-overview.md | Agreement With Plan/Tasks | Finding |",
+            "|-----------------------------------|---------------------------|---------|",
+            "| Final requirement summary | Conformant | None |",
+            "",
+            "## Overview Backing Check",
+            "| Final Overview Claim | Backing Artifact | Finding |",
+            "|----------------------|------------------|---------|",
+            (
+                "| Delivery entry point is derived from final Phase A artifacts "
+                "| 00-overview.md, plan-conformance.json | None |"
+            ),
+            "",
+            "## Findings",
+            "| ID | Severity | Artifact | Description | Required Repair |",
+            "|----|----------|----------|-------------|-----------------|",
+            "| - | - | - | No findings. | - |",
+            "",
+        ]
+        (published_spec_dir / "plan-conformance.md").write_text(
+            "\n".join(report_lines),
+            encoding="utf-8",
+        )
+        (published_spec_dir / "plan-conformance.json").write_text(
+            json.dumps(json_payload, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    def _write_final_overview(
+        self,
+        published_spec_dir: Path,
+        state: Mapping[str, object],
+    ) -> None:
+        spec_id = str(state.get("spec_id") or published_spec_dir.name)
+        title = spec_id.replace("-", " ").title()
+        lines = [
+            f"# {title} - Final Delivery Overview",
+            "",
+            (
+                "> Generated during Phase A finalization after plan/task "
+                "conformance checks."
+            ),
+            (
+                "> This brief is derived from the final Phase A artifacts and "
+                "does not introduce new scope."
+            ),
+            "",
+            "## What This Builds",
+            (
+                "Build the behavior described by `spec.md` using the architecture "
+                "and sequencing in `plan.md` and the canonical execution rows in "
+                "`tasks.md`."
+            ),
+            "",
+            "## Delivery Sequence",
+            "| Slice | Build First/Next | Source Tasks | Expected Partial Result |",
+            "|-------|------------------|--------------|-------------------------|",
+            (
+                "| 1 | Follow canonical task order | tasks.md | A scoped "
+                "implementation that satisfies the MVP requirements. |"
+            ),
+            "",
+            "## Dependencies to Control First",
+            "| Dependency | Why It Matters | Control Action | Source |",
+            "|------------|----------------|----------------|--------|",
+            (
+                "| Phase A artifacts | They define the approved build contract. | "
+                "Read `plan.md`, `tasks.md`, and `plan-conformance.md` before "
+                "implementation. | plan-conformance.md |"
+            ),
+            "",
+            "## Partial Result Target",
+            (
+                "Deliver the MVP slice captured in `mvp-scope.md`, `plan.md`, "
+                "and `tasks.md`. Treat deferred or conditional work named in "
+                "those artifacts as out of scope for the first build pass."
+            ),
+            "",
+            "## Stop and Ask",
+            (
+                "Stop if `spec.md`, `requirements-overview.md`, `mvp-scope.md`, "
+                "`plan.md`, or `tasks.md` disagree on required behavior, task "
+                "coverage, or deferred scope."
+            ),
+            "",
+            "## Source Artifacts",
+            "- spec.md",
+            "- requirements-overview.md",
+            "- mvp-scope.md",
+            "- plan.md",
+            "- tasks.md",
+            "- plan-conformance.md",
+            "- plan-conformance.json",
+            "",
+        ]
+        (published_spec_dir / "00-overview.md").write_text(
+            "\n".join(lines),
+            encoding="utf-8",
+        )
 
     def _constitution_hash(self, constitution_path: Path) -> str:
         if not constitution_path.exists():

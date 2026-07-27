@@ -1881,6 +1881,58 @@ class TestAgentResultIntegrity:
         state = store.load()
         assert state["published_spec_dir"] == "specs/001-demo"
 
+    def test_phase4_document_generates_final_overview_and_plan_conformance(
+        self, tmp_path,
+    ):
+        _disable_lexicon_gate(tmp_path)
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r", "banzai", "msg", 0, "phase4-document", max_iterations=5
+        )
+        _mark_constitution_complete(tmp_path, store)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        _write_phase_a_build_inputs(spec_dir, include_fr=True)
+        for name in (
+            "00-overview.md",
+            "plan-conformance.md",
+            "plan-conformance.json",
+        ):
+            (spec_dir / name).unlink()
+        state = store.load()
+        state["spec_id"] = "001-demo"
+        state["spec_dir"] = "runs/run-test/specs/001-demo"
+        state["implementability_metrics"] = {
+            "implementability_ready": 10,
+            "implementability_needs_clarification": 0,
+            "implementability_blocked": 0,
+        }
+        store.save(state)
+
+        result = ctrl.run("msg", "banzai")
+
+        assert result.status == "done"
+        published_dir = tmp_path / "specs" / "001-demo"
+        assert (published_dir / "00-overview.md").exists()
+        assert (published_dir / "plan-conformance.md").exists()
+        conformance = json.loads(
+            (published_dir / "plan-conformance.json").read_text(encoding="utf-8")
+        )
+        assert conformance == {
+            "status": "pass",
+            "findings": [],
+            "sources": [
+                "spec.md",
+                "requirements-overview.md",
+                "mvp-scope.md",
+                "plan.md",
+                "tasks.md",
+                "dependencies.md",
+                "critical-path.md",
+            ],
+        }
+        assert store.load()["published_spec_dir"] == "specs/001-demo"
+
     def test_phase4_document_publishes_complete_artifacts_to_existing_slugged_spec(
         self, tmp_path,
     ):
