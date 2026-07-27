@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1207,6 +1208,161 @@ def test_recovery_retries_completed_phase_after_state_update_validation_failure(
     assert action.kind == "retry_phase"
     assert action.phase == "phase3-consensus"
     assert action.command == "echelon spec continue"
+
+
+def test_legacy_controller_contract_failure_retries_current_phase_without_rewind() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "phase1-why2",
+            "blocked_reason": "controller_state_contract_validation_failed",
+            "last_dispatch": {"phase_id": "phase1-understanding"},
+            "controller_contract_error": {
+                "phase_id": "phase1-why2",
+                "contract": "preparation",
+                "validator": "ownership",
+            },
+        }
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.phase == "phase1-why2"
+    assert action.command == "echelon spec continue"
+    assert "rewind" not in action.command
+
+
+def test_persisted_runtime_sync_recovery_retries_after_compatible_sync(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "echelon.cli._runtime_extension_compatibility",
+        lambda _project_root: SimpleNamespace(
+            compatible=True,
+            command="",
+            note="runtime extension is compatible",
+        ),
+        raising=False,
+    )
+
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "phase1-why2",
+            "blocked_reason": "controller_state_contract_validation_failed",
+            "recovery_instruction": {
+                "schema_version": 1,
+                "kind": "sync_runtime_then_retry",
+                "reason_code": "controller_state_contract_validation_failed",
+                "phase": "phase1-why2",
+                "requires_human_input": False,
+            },
+        },
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.phase == "phase1-why2"
+    assert action.command == "echelon spec continue"
+
+
+def test_continue_consumes_controller_recovery_instruction(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "phase1-why2",
+            "blocked_reason": "controller_state_contract_validation_failed",
+            "user_message": "Expose the supported machine-readable format",
+            "recovery_instruction": {
+                "schema_version": 1,
+                "kind": "sync_runtime_then_retry",
+                "reason_code": "controller_state_contract_validation_failed",
+                "phase": "phase1-why2",
+                "requires_human_input": False,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "echelon.cli._runtime_extension_compatibility",
+        lambda _project_root: SimpleNamespace(
+            compatible=True,
+            command="",
+            note="runtime extension is compatible",
+        ),
+        raising=False,
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "running"
+    assert state["phase"] == "phase1-why2"
+    assert "recovery_instruction" not in state
+    assert state["blocked_reason"] is None
+    assert len(calls) == 1
+
+
+def test_continue_requires_runtime_sync_before_retry(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "phase1-why2",
+            "blocked_reason": "controller_state_contract_validation_failed",
+            "user_message": "Expose the supported machine-readable format",
+            "recovery_instruction": {
+                "schema_version": 1,
+                "kind": "sync_runtime_then_retry",
+                "reason_code": "controller_state_contract_validation_failed",
+                "phase": "phase1-why2",
+                "requires_human_input": False,
+            },
+        },
+    )
+    update_command = (
+        "specify extension update echelon --dev /checkout/echelon/extension"
+    )
+    monkeypatch.setattr(
+        "echelon.cli._runtime_extension_compatibility",
+        lambda _project_root: SimpleNamespace(
+            compatible=False,
+            command=update_command,
+            note="installed runtime is missing shipped files",
+        ),
+        raising=False,
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    captured = capsys.readouterr()
+    assert update_command in captured.out
+    assert calls == []
 
 
 def test_continue_manual_block_does_not_claim_human_resume(

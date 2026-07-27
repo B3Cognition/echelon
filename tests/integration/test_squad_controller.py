@@ -1608,6 +1608,13 @@ class TestAgentResultIntegrity:
                 "$.echelon_result (echelon_result)"
             ),
         }
+        assert state["recovery_instruction"] == {
+            "schema_version": 1,
+            "kind": "retry_phase",
+            "reason_code": "controller_state_contract_validation_failed",
+            "phase": "phase1-what",
+            "requires_human_input": False,
+        }
         assert "provider_limit_message" not in state
         assert "blocked_context" not in state
         assert "session limit" not in json.dumps(
@@ -1645,6 +1652,42 @@ class TestAgentResultIntegrity:
             == "provider"
         )
         assert "phase1-what" not in state.get("completed_phases", [])
+
+    def test_successful_advance_clears_controller_recovery_instruction(
+        self,
+        tmp_path,
+    ):
+        ctrl, store = _controller(tmp_path)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase1-what",
+            max_iterations=5,
+        )
+        state = store.load()
+        state["status"] = "running"
+        state["controller_contract_error"] = {"phase_id": "phase1-what"}
+        state["recovery_instruction"] = {
+            "schema_version": 1,
+            "kind": "sync_runtime_then_retry",
+            "reason_code": "controller_state_contract_validation_failed",
+            "phase": "phase1-what",
+            "requires_human_input": False,
+        }
+        store.save(state)
+
+        _install_empty_routed_completion(
+            ctrl,
+            store,
+            from_phase="phase1-what",
+            to_phase="phase1-why1",
+        )
+
+        advanced = store.load()
+        assert "controller_contract_error" not in advanced
+        assert "recovery_instruction" not in advanced
 
     def test_phase1_what_missing_result_does_not_apply_recovery_state(self, tmp_path):
         provider = _mock_provider()

@@ -64,6 +64,10 @@ from harness.quality_scores import (
     normalize_why_quality_scores,
     resolve_quality_gate_thresholds,
 )
+from harness.recovery_instruction import (
+    controller_contract_recovery,
+    retry_phase_recovery,
+)
 from harness.published_re_context import attach_published_re_context
 from harness.run_history import append_phase_a_run
 from harness.spec_frontmatter import find_spec_dir, write_targets
@@ -5693,6 +5697,18 @@ class SquadController:
             and re.fullmatch(r"[a-zA-Z0-9_.-]+", error.validator)
             else "state_advance"
         )
+        runtime_contract_mismatch = (
+            diagnostic_contract == "preparation"
+            and validator == "ownership"
+        )
+        recovery = (
+            controller_contract_recovery(from_phase)
+            if runtime_contract_mismatch
+            else retry_phase_recovery(
+                from_phase,
+                "controller_state_contract_validation_failed",
+            )
+        )
         persisted = self._state_store.merge_advance_failure_diagnostic(
             from_phase=from_phase,
             expected_state_revision=(
@@ -5734,6 +5750,7 @@ class SquadController:
                         f"{json_path} ({validator})"
                     ),
                 },
+                "recovery_instruction": recovery.to_dict(),
             },
             token_usage_delta=token_usage_delta,
         )

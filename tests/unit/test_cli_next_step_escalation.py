@@ -173,6 +173,53 @@ def test_blocked_squad_escalation_displays_executable_options(
     assert "Answer with A/B, the option id, or the option label." in captured.out
 
 
+def test_controller_contract_failure_has_one_consistent_next_step(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260726-075512-129608"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "phase1-why2",
+                "blocked_reason": "controller_state_contract_validation_failed",
+                "last_dispatch": {"phase_id": "phase1-understanding"},
+                "controller_contract_error": {
+                    "phase_id": "phase1-why2",
+                    "contract": "preparation",
+                    "validator": "ownership",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "echelon.cli._runtime_extension_compatibility",
+        lambda _project_root: type(
+            "Compatibility",
+            (),
+            {
+                "compatible": True,
+                "command": "",
+                "note": "runtime extension is compatible",
+            },
+        )(),
+        raising=False,
+    )
+
+    _print_next_steps(tmp_path, "blocked")
+
+    captured = capsys.readouterr()
+    assert "phase1-why2" in captured.out
+    assert "echelon spec continue" in captured.out
+    assert 'echelon spec resume "<your answer>"' not in captured.out
+    assert "echelon spec rewind" not in captured.out
+
+
 def test_ready_next_step_has_clear_subtitle_and_next_command(
     tmp_path: Path,
     capsys,

@@ -1814,6 +1814,7 @@ class SquadStateStore:
                 + decision.token_usage_delta
             )
             next_state.pop("controller_contract_error", None)
+            next_state.pop("recovery_instruction", None)
 
             try:
                 saved_state = self._save_unlocked(next_state)

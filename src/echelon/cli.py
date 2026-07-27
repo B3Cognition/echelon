@@ -30,6 +30,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from harness.gitops import copy_runtime_extension
+from harness.recovery_instruction import (
+    RecoveryInstruction,
+    RecoveryInstructionError,
+    RecoveryKind,
+    controller_contract_recovery,
+    validate_recovery_instruction,
+)
 from harness.runtime_surface import prune_delivery_workflow_definition
 from harness.phase_a_readiness import validate_phase_a_readiness
 
@@ -3064,6 +3071,175 @@ class _RunRecoveryAction:
     note: str = ""
 
 
+@dataclass(frozen=True)
+class _RuntimeExtensionCompatibility:
+    compatible: bool
+    command: str = ""
+    note: str = ""
+
+
+def _runtime_extension_compatibility(
+    project_root: Path,
+) -> _RuntimeExtensionCompatibility:
+    """Check whether controller-owned runtime contracts match this CLI."""
+    from harness.extension_drift import (
+        assess_extension_drift,
+        resolve_extension_source_dir,
+    )
+
+    installed_dir = project_root / ".specify" / "extensions" / "echelon"
+    source_dir = resolve_extension_source_dir(
+        installed_dir,
+        inferred_source_dir=_inferred_source_extension_dir(),
+    )
+    if source_dir is None:
+        return _RuntimeExtensionCompatibility(
+            compatible=False,
+            command=(
+                "set ECHELON_EXTENSION_SOURCE to the Echelon checkout, "
+                "then run echelon spec continue"
+            ),
+            note="the source extension could not be identified for compatibility validation",
+        )
+
+    report = assess_extension_drift(source_dir, installed_dir)
+    update_command = (
+        f"specify extension update echelon --dev {shlex.quote(str(source_dir))}"
+    )
+    incompatible = (
+        report.status in {"source_missing", "installed_missing"}
+        or bool(report.changed_files)
+        or bool(report.missing_files)
+    )
+    if incompatible:
+        return _RuntimeExtensionCompatibility(
+            compatible=False,
+            command=update_command,
+            note=(
+                "the installed runtime has changed or missing shipped files; "
+                "sync it before retrying the blocked phase"
+            ),
+        )
+    return _RuntimeExtensionCompatibility(
+        compatible=True,
+        note=(
+            "runtime contracts are compatible"
+            if not report.extra_files
+            else "runtime contracts are compatible; installed-only extra files are retained"
+        ),
+    )
+
+
+def _recovery_action_from_instruction(
+    instruction: RecoveryInstruction,
+    *,
+    run_state: dict,
+    project_root: Path | None,
+) -> _RunRecoveryAction:
+    kind = instruction.kind
+    reason = instruction.reason_code
+    phase = instruction.phase
+
+    if kind == RecoveryKind.SYNC_RUNTIME_THEN_RETRY:
+        compatibility = (
+            _runtime_extension_compatibility(project_root)
+            if project_root is not None
+            else _RuntimeExtensionCompatibility(compatible=True)
+        )
+        if not compatibility.compatible:
+            return _RunRecoveryAction(
+                "manual_recovery",
+                reason=reason,
+                phase=phase,
+                command=compatibility.command,
+                note=compatibility.note,
+            )
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason=reason,
+            phase=phase,
+            command="echelon spec continue",
+            note="runtime contracts are compatible; the blocked phase will retry without rewind",
+        )
+    if kind in {RecoveryKind.RETRY_PHASE, RecoveryKind.WAIT_FOR_PROVIDER}:
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason=reason,
+            phase=phase,
+            command="echelon spec continue",
+            note=(
+                "wait for the provider reset, then retry the blocked phase"
+                if kind == RecoveryKind.WAIT_FOR_PROVIDER
+                else "will retry the blocked phase without rewind"
+            ),
+        )
+    if kind == RecoveryKind.AWAIT_HUMAN_ANSWER:
+        return _RunRecoveryAction(
+            "human_resume",
+            reason=reason,
+            phase=phase,
+            command='echelon spec resume "<your answer>"',
+            note=str(run_state.get("escalation_question") or "").strip(),
+        )
+    if kind == RecoveryKind.RESOLVE_ISSUE:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            phase=phase,
+            command='echelon spec resolve ISS-<n> "<project decision>"',
+            note="resolve the first unresolved issue before continuing",
+        )
+    if kind == RecoveryKind.SAFE_REWIND:
+        return _RunRecoveryAction(
+            "safe_rewind",
+            reason=reason,
+            phase=phase,
+            command=f"echelon spec rewind {phase}",
+            note="safe checkpoint cleanup is required before retry",
+        )
+    if kind == RecoveryKind.INCREASE_BUDGET:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            command="increase analysis.token_budget_k, then echelon spec continue",
+            note="the run cannot continue until the configured budget is higher",
+        )
+    if kind == RecoveryKind.MANUAL_REPAIR:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            phase=phase,
+            command=f"echelon phase run {phase}",
+            note="run the recorded deterministic repair before continuing",
+        )
+    return _RunRecoveryAction(
+        "manual_recovery",
+        reason=reason,
+        command="inspect echelon spec status, then choose a recovery action",
+        note="the controller recorded that automatic recovery is unsafe",
+    )
+
+
+def _persisted_or_legacy_recovery_instruction(
+    run_state: dict,
+) -> RecoveryInstruction | None:
+    raw_instruction = run_state.get("recovery_instruction")
+    if raw_instruction is not None:
+        return validate_recovery_instruction(raw_instruction)
+
+    reason = str(run_state.get("blocked_reason") or "").strip()
+    if reason != "controller_state_contract_validation_failed":
+        return None
+    diagnostic = run_state.get("controller_contract_error")
+    diagnostic_phase = (
+        str(diagnostic.get("phase_id") or "").strip()
+        if isinstance(diagnostic, dict)
+        else ""
+    )
+    phase = diagnostic_phase or str(run_state.get("phase") or "").strip()
+    return controller_contract_recovery(phase)
+
+
 def _render_escalation_options(options: object) -> str:
     """Render the same selectable choices that ``spec resume`` accepts.
 
@@ -3230,6 +3406,22 @@ def _classify_run_recovery(
 
     if status != "blocked":
         return _RunRecoveryAction("advance")
+
+    try:
+        instruction = _persisted_or_legacy_recovery_instruction(run_state)
+    except RecoveryInstructionError as exc:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason or "invalid_recovery_instruction",
+            command="inspect echelon spec status, then repair the run state",
+            note=f"persisted recovery instruction is invalid: {exc}",
+        )
+    if instruction is not None:
+        return _recovery_action_from_instruction(
+            instruction,
+            run_state=run_state,
+            project_root=project_root,
+        )
 
     recovery = run_state.get("issue_resolution_recovery")
     if (
@@ -6607,22 +6799,12 @@ def _cmd_status(project_root: Path) -> None:
         if run_status in ("running", "in_progress"):
             fields.append(("Next", "echelon spec continue"))
         elif run_status == "blocked":
-            if str(state.get("blocked_reason") or "") == "phase_dispatch_limit":
-                requests = _issue_resolution_requests(project_root, run_dir, state)
-                first = requests[0] if requests else None
-                fields.append(
-                    (
-                        "Next",
-                        f'echelon spec resolve {first["issue_id"]} "<decision>"'
-                        if first
-                        else 'echelon spec resolve ISS-<n> "<decision>"',
-                    )
-                )
+            action = _classify_run_recovery(state, project_root=project_root)
+            fields.append(("Next", action.command))
+            if action.reason == "phase_dispatch_limit":
                 guidance = _issue_resolution_guidance_recap(project_root, run_dir, state)
                 if guidance:
                     fields.append(("Issue guidance", guidance))
-            else:
-                fields.append(("Next", 'echelon spec resume "<your answer>"'))
 
         _banner("RUN STATE", fields)
 
@@ -6765,6 +6947,7 @@ def _cmd_continue(
             state["blocked_reason"] = None
             state["escalation_question"] = None
             state["escalation_options"] = None
+            state.pop("recovery_instruction", None)
         (squad_dir / "state.json").write_text(_json.dumps(state, indent=2, ensure_ascii=False))
         label = phase_labels.get(next_phase, next_phase)
         print(

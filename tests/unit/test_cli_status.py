@@ -426,3 +426,44 @@ def test_status_does_not_warn_without_trusted_extension_source(
 
     captured = capsys.readouterr()
     assert "EXTENSION DRIFT" not in captured.out
+
+
+def test_status_uses_controller_recovery_instruction_for_next_command(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-20260726-075512-129608"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "status": "blocked",
+                "phase": "phase1-why2",
+                "blocked_reason": "controller_state_contract_validation_failed",
+                "controller_contract_error": {
+                    "phase_id": "phase1-why2",
+                    "contract": "preparation",
+                    "validator": "ownership",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    compatibility = SimpleNamespace(
+        compatible=True,
+        command="",
+        note="runtime extension is compatible",
+    )
+
+    with patch(
+        "echelon.cli._runtime_extension_compatibility",
+        return_value=compatibility,
+    ):
+        _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "phase1-why2" in output
+    assert "echelon spec continue" in output
+    assert 'echelon spec resume "<your answer>"' not in output
+    assert "echelon spec rewind" not in output
