@@ -1743,9 +1743,13 @@ def spec_memory_mine(
     spec_selector: str,
     write_report: bool = typer.Option(False, "--write-report"),
 ) -> None:
-    from echelon.mempalace_requirements import mine_spec_requirements
+    from echelon.mempalace_requirements import SpecMemoryError, mine_spec_requirements
 
-    report = mine_spec_requirements(Path.cwd(), spec_selector, run_id="manual")
+    try:
+        report = mine_spec_requirements(Path.cwd(), spec_selector, run_id="manual")
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
     typer.echo(
         f"MemPalace mine {report.status}: expected={report.expected_count} "
         f"written={report.written_count} adopted={report.adopted_count} "
@@ -1768,8 +1772,13 @@ def spec_memory_audit(
     probe_retrieval: bool = typer.Option(False, "--probe-retrieval"),
 ) -> None:
     from echelon.mempalace_audit import audit_spec_memory, render_audit_markdown, write_audit_reports
+    from echelon.mempalace_requirements import SpecMemoryError
 
-    report = audit_spec_memory(Path.cwd(), spec_selector, probe_retrieval=probe_retrieval)
+    try:
+        report = audit_spec_memory(Path.cwd(), spec_selector, probe_retrieval=probe_retrieval)
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
     if write and report.status != "unavailable":
         write_audit_reports(report, Path(report.spec_dir))
     if as_json:
@@ -1787,8 +1796,13 @@ def spec_memory_refresh(
 ) -> None:
     from echelon.mempalace_audit import audit_spec_memory, render_audit_markdown, write_audit_reports
     from echelon.mempalace_requirements import mine_spec_requirements
+    from echelon.mempalace_requirements import SpecMemoryError
 
-    mine_report = mine_spec_requirements(Path.cwd(), spec_selector, run_id="manual")
+    try:
+        mine_report = mine_spec_requirements(Path.cwd(), spec_selector, run_id="manual")
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
     typer.echo(
         f"MemPalace mine {mine_report.status}: expected={mine_report.expected_count} "
         f"written={mine_report.written_count} adopted={mine_report.adopted_count} "
@@ -1796,7 +1810,11 @@ def spec_memory_refresh(
     )
     if not audit:
         raise typer.Exit(code=_memory_exit_code(mine_report.status))
-    audit_report = audit_spec_memory(Path.cwd(), spec_selector)
+    try:
+        audit_report = audit_spec_memory(Path.cwd(), spec_selector)
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
     if write and audit_report.status != "unavailable":
         write_audit_reports(audit_report, Path(audit_report.spec_dir))
     typer.echo(render_audit_markdown(audit_report).rstrip())

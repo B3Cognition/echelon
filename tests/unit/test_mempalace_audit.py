@@ -296,3 +296,19 @@ def test_audit_marks_exact_verification_backend_failure_unavailable(tmp_path: Pa
 
     assert report.status == "unavailable"
     assert report.errors == ["SpecMemoryError"]
+
+
+@pytest.mark.unit
+def test_unavailable_audit_reports_error_class_without_traceback(tmp_path: Path, monkeypatch) -> None:
+    spec_dir = make_spec(tmp_path)
+
+    def boom(project_root, run_id):
+        raise RuntimeError("backend details")
+
+    monkeypatch.setattr("echelon.mempalace_audit.create_requirement_memory_adapter", boom)
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "unavailable"
+    assert report.errors == ["RuntimeError"]
