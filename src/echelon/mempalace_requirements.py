@@ -196,7 +196,7 @@ def _read_str_list(result: object, name: str) -> list[str]:
     value = getattr(result, name, [])
     if type(value) is not list or any(type(item) is not str for item in value):
         return []
-    return list(dict.fromkeys(value))
+    return sorted(set(value))
 
 
 def mine_spec_requirements(

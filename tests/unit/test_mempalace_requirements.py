@@ -61,7 +61,7 @@ def test_snapshot_contains_canonical_artifact_metadata(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_adapter_plan_matches_existing_canonical_miner(tmp_path: Path, monkeypatch) -> None:
+def test_adapter_plan_matches_existing_canonical_miner(tmp_path: Path) -> None:
     spec_dir = write_workspace(tmp_path)
     from codegen.memory.requirements_miner import plan_canonical_requirement_drawer_ids
     from echelon.mempalace_requirements import (
@@ -95,8 +95,8 @@ def test_mine_spec_requirements_maps_drift_without_overwrite(tmp_path: Path, mon
         skipped = 0
         failed = 1
         unavailable = 0
-        drawer_ids = ["drawer-ok"]
-        expected_drawer_ids = ["drawer-ok", "drawer-drift"]
+        drawer_ids = ["drawer-ok", "drawer-ok"]
+        expected_drawer_ids = ["drawer-ok", "drawer-drift", "drawer-ok"]
         errors = ["deterministic_write_failed"]
 
     class FakeAdapter:
@@ -117,4 +117,5 @@ def test_mine_spec_requirements_maps_drift_without_overwrite(tmp_path: Path, mon
     assert report.status == "partial"
     assert report.written_count == 1
     assert report.drifted_count == 1
-    assert report.expected_drawer_ids == ["drawer-ok", "drawer-drift"]
+    assert report.drawer_ids == ["drawer-ok"]
+    assert report.expected_drawer_ids == ["drawer-drift", "drawer-ok"]
