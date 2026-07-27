@@ -88,3 +88,28 @@ implementation.
 ## Concerns
 
 None.
+
+## Final Fix Follow-up
+
+Status: DONE
+
+- Canonical planning now bounds all local planner exceptions as deterministic
+  audit `fail` reports rather than handling only `ValueError`.
+- `reconcile_drawers()` now runs inside a local deterministic-failure
+  boundary. Reconciliation faults preserve the spec identity and expected
+  count, report only the exception class, and add the
+  `reconciliation_failed` recommendation.
+- Exact drawer validation now requires both `scope: canonical` and
+  `canonical: true`. An otherwise exact drawer with run-local scope is
+  classified as non-canonical and fails the audit.
+- Added regressions for non-`ValueError` planner faults, reconciliation
+  exceptions, and run-local scope false-passes.
+
+Verification:
+
+- `python -m pytest tests/unit/test_mempalace_requirements.py tests/unit/test_mempalace_audit.py tests/unit/test_requirements_miner_ctx.py tests/unit/test_mempalace_writer.py tests/unit/test_mempalace_context.py tests/unit/test_mempalace_collision.py tests/unit/test_mempalace_reader.py tests/unit/test_cli_spec_memory.py tests/unit/test_cli_typer_app.py tests/unit/test_squad_completion.py tests/integration/test_mempalace_mine_search.py tests/integration/test_squad_context_memory.py -q`
+  -> 360 passed.
+- `python -m compileall -q src/echelon/mempalace_audit.py` -> exit 0.
+- `git diff --check` -> exit 0.
+
+Concerns: None.

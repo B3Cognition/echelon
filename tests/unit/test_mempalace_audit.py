@@ -148,6 +148,30 @@ def test_audit_passes_matching_exact_drawer(tmp_path: Path, monkeypatch) -> None
 
 
 @pytest.mark.unit
+def test_audit_rejects_run_local_scope_on_otherwise_exact_drawer(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_dir = make_spec(tmp_path)
+    from echelon.mempalace_requirements import load_canonical_spec_snapshot
+
+    row = current_row(load_canonical_spec_snapshot(tmp_path, spec_dir))
+    row["metadata"]["scope"] = "run-local"
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(
+            FakeCollection({"drawer-fr-001": row})
+        ),
+    )
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert report.present_current_count == 0
+    assert report.non_canonical == ["drawer-fr-001"]
+
+
+@pytest.mark.unit
 def test_audit_uses_only_non_creating_collection_path(tmp_path: Path, monkeypatch) -> None:
     spec_dir = make_spec(tmp_path)
     collection = FakeCollection({})
@@ -429,6 +453,39 @@ def test_audit_excludes_lifecycle_status_via_reconciliation(tmp_path: Path, monk
 
 
 @pytest.mark.unit
+def test_audit_bounds_reconciliation_fault_as_deterministic_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_dir = make_spec(tmp_path)
+    from echelon.mempalace_requirements import load_canonical_spec_snapshot
+
+    row = current_row(load_canonical_spec_snapshot(tmp_path, spec_dir))
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(
+            FakeCollection({"drawer-fr-001": row})
+        ),
+    )
+
+    def fail_reconciliation(drawers, project_root):
+        raise RuntimeError("internal reconciliation fault")
+
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.reconcile_drawers",
+        fail_reconciliation,
+    )
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert report.expected_count == 1
+    assert report.present_current_count == 0
+    assert report.errors == ["RuntimeError"]
+    assert report.recommendations == ["reconciliation_failed"]
+
+
+@pytest.mark.unit
 def test_audit_marks_malformed_collection_response_unavailable(tmp_path: Path, monkeypatch) -> None:
     spec_dir = make_spec(tmp_path)
 
@@ -554,14 +611,15 @@ def test_audit_uses_canonical_config_without_legacy_config(
 
 
 @pytest.mark.unit
-def test_audit_bounds_planner_value_error_as_deterministic_failure(
-    tmp_path: Path, monkeypatch
+@pytest.mark.parametrize("fault_type", (ValueError, RuntimeError))
+def test_audit_bounds_planner_fault_as_deterministic_failure(
+    tmp_path: Path, monkeypatch, fault_type: type[Exception]
 ) -> None:
     spec_dir = make_spec(tmp_path)
 
     class FaultyPlannerAdapter(FakeAdapter):
         def plan_canonical_rows(self, content, *, source, artifact_metadata):
-            raise ValueError("canonical planner fault")
+            raise fault_type("canonical planner fault")
 
     monkeypatch.setattr(
         "echelon.mempalace_audit.create_requirement_memory_adapter",
@@ -572,4 +630,4 @@ def test_audit_bounds_planner_value_error_as_deterministic_failure(
     report = audit_spec_memory(tmp_path, spec_dir)
 
     assert report.status == "fail"
-    assert report.errors == ["ValueError"]
+    assert report.errors == [fault_type.__name__]

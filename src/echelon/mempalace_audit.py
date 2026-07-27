@@ -136,7 +136,9 @@ def _failure_report(
     *,
     snapshot: object,
     adapter: object | None,
-    error: Exception,
+    error: Exception | SystemExit,
+    expected_count: int = 0,
+    recommendations: list[str] | None = None,
 ) -> SpecMemoryAuditReport:
     return SpecMemoryAuditReport(
         schema_version=1,
@@ -145,8 +147,9 @@ def _failure_report(
         wing=str(getattr(adapter, "wing", "")) or None,
         palace_path=str(getattr(adapter, "palace_path", "")) or None,
         status="fail",
-        expected_count=0,
+        expected_count=expected_count,
         present_current_count=0,
+        recommendations=list(recommendations or []),
         errors=[type(error).__name__],
     )
 
@@ -274,7 +277,7 @@ def audit_spec_memory(
             source=snapshot.source,
             artifact_metadata=snapshot.artifact_metadata,
         )
-    except ValueError as exc:
+    except (Exception, SystemExit) as exc:
         return _failure_report(snapshot=snapshot, adapter=adapter, error=exc)
     expected = [row.drawer_id for row in expected_rows]
     try:
@@ -315,7 +318,16 @@ def audit_spec_memory(
         _CollectionDrawer(drawer_id=drawer_id, content=document, metadata=metadata)
         for drawer_id, (document, metadata) in rows.items()
     ]
-    reconciliation = reconcile_drawers(drawers, project_root)
+    try:
+        reconciliation = reconcile_drawers(drawers, project_root)
+    except (Exception, SystemExit) as exc:
+        return _failure_report(
+            snapshot=snapshot,
+            adapter=adapter,
+            error=exc,
+            expected_count=len(expected),
+            recommendations=["reconciliation_failed"],
+        )
     accepted_ids = {drawer.drawer_id for drawer in reconciliation.accepted}
     rejected_reasons = {
         rejection["drawer_id"]: rejection["reason"]
@@ -339,7 +351,10 @@ def audit_spec_memory(
             _append_unique(wrong_wing, drawer_id)
         if metadata.get("room") != planned.room:
             _append_unique(wrong_room, drawer_id)
-        if metadata.get("canonical") is not True:
+        if (
+            metadata.get("scope") != "canonical"
+            or metadata.get("canonical") is not True
+        ):
             _append_unique(non_canonical, drawer_id)
         if (
             metadata.get("artifact_hash") != planned.artifact_hash
