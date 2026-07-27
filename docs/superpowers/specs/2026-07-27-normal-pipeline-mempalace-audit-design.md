@@ -41,6 +41,12 @@ The implementation reuses existing Echelon and MemPalace foundations:
 The new normal-pipeline feature should move reusable memory operations behind
 Echelon-owned service APIs instead of having normal operators invoke `codegen`.
 
+The current normal pipeline already performs canonical best-effort mining
+during Phase A publication and through the completion outbox mining effect. The
+new service must reuse that exact deterministic planning and verification path.
+It must not introduce a second parser, drawer identity algorithm, or independent
+Phase A mining side effect.
+
 ## Scope
 
 This change adds:
@@ -85,8 +91,9 @@ commands resolve a spec:
   durable memory;
 - a future `--run-local` option can be added if a separate workflow needs it.
 
-`mine` writes or adopts deterministic canonical drawers for the resolved spec.
-It must not require `codegen` on PATH. It may reuse lower-level parsing, secret
+`mine` writes or adopts deterministic canonical drawers for the resolved spec
+by calling the same Echelon-owned service used by Phase A finalization. It must
+not require `codegen` on PATH. It may reuse lower-level parsing, secret
 scrubbing, deterministic drawer IDs, and MemPalace SDK helpers while keeping
 the public behavior under `echelon`.
 
@@ -98,7 +105,10 @@ beside the spec:
 - `mempalace-audit.md`
 
 `refresh` runs `mine` followed by `audit`. It is the operator-friendly command
-for "make memory current and prove it."
+for "make memory current and prove it." Refresh is additive and idempotent: it
+writes missing exact drawers and adopts existing exact drawers, but it never
+overwrites a drifted deterministic drawer. Drift remains an audit failure and
+requires an explicit cleanup or repair command outside this slice.
 
 `--probe-retrieval` runs semantic searches in addition to exact drawer checks.
 The default audit must remain fast and deterministic enough for ordinary use.
@@ -118,15 +128,18 @@ The default audit must remain fast and deterministic enough for ordinary use.
 - `adopted_count`
 - `skipped_count`
 - `failed_count`
+- `drifted_count`
 - `drawers`
 - `errors`
 
-A drawer is `written` when the command creates or replaces the exact
-deterministic canonical drawer. A drawer is `adopted` when the exact drawer
-already exists and passes readback verification. A drawer is `skipped` only
-when the expected requirement is intentionally not mineable, for example
-because its prefix is unsupported in the first slice. A drawer is `failed` when
-it should have been written but was not.
+A drawer is `written` when the command creates the exact deterministic
+canonical drawer. A drawer is `adopted` when the exact drawer already exists
+and passes readback verification. A drawer is `drifted` when the deterministic
+ID exists but the stored document or stable metadata does not match the
+expected postimage. Drift is never overwritten by `mine` or `refresh`. A drawer
+is `skipped` only when the expected requirement is intentionally not mineable,
+for example because its prefix is unsupported in the first slice. A drawer is
+`failed` when it should have been written but was not.
 
 `mine` must write metadata sufficient for `audit` to prove canonical identity:
 
@@ -142,6 +155,12 @@ it should have been written but was not.
 - `lifecycle_status`
 - `provenance_type`
 - `added_by`
+
+`added_by` is descriptive provenance, not proof. Existing drawers stamped by
+older code as `codegen` can still pass audit when canonical identity, wing,
+artifact path, artifact hash, requirement ID, and content hash all match. New
+normal-pipeline writes should stamp `added_by: echelon` and a spec lifecycle
+phase value, but audit must not rely on those fields alone.
 
 The command should print counts, not full drawer content.
 
@@ -185,8 +204,10 @@ memory is fail-open or fail-closed.
 The audit computes expected drawers from canonical disk artifacts, not from
 what MemPalace already contains.
 
-For the first implementation, expected drawers are canonical requirements from
-`FeatureMetadata.from_spec_dir(spec_dir)`. Each expected row contains:
+For the first implementation, expected drawers are the output of the same
+canonical requirement planner used before mining. The planner input is the
+snapshotted canonical `spec.md` bytes, canonical artifact metadata, configured
+wing, and the shared requirement parser. Each expected row contains:
 
 - requirement ID;
 - canonical artifact path;
@@ -194,6 +215,11 @@ For the first implementation, expected drawers are canonical requirements from
 - inferred room;
 - deterministic drawer ID;
 - expected content fingerprint.
+
+`FeatureMetadata.from_spec_dir()` remains useful for feature registry and
+context summaries, but it is not the authority for expected MemPalace drawers.
+Audit and mining must share one parser and one deterministic ID algorithm, or
+the audit can pass while normal mining is incomplete.
 
 Room inference should reuse the current requirement prefix mapping where
 possible:
@@ -266,9 +292,10 @@ Probe failures produce `warn` when storage is exact and current. They produce
 
 ## Normal Pipeline Integration
 
-Phase A finalization should be able to call the same audit service after
-MemPalace mining completes. Mining and audit results should be recorded as
-completion effects, not as external publication transactions.
+Phase A finalization already has a mining effect. The new work should refactor
+that effect to call the shared service, then call audit against the same
+planned drawer set. Mining and audit results should be recorded as completion
+effects, not as external publication transactions.
 
 Initial behavior:
 
@@ -295,8 +322,10 @@ Allowed modes:
 - `block`: fail the transition when current canonical drawers are missing or
   stale.
 
-The default for the first release should be `warn` for manual visibility and
-no automatic blocking.
+Automatic integration defaults to `off` for the first release. If a workspace
+opts into automatic audit later, the first automatic mode should be `warn`.
+`block` should wait until the report format and cleanup workflow have proven
+stable.
 
 ## Ownership Boundary
 
@@ -309,6 +338,20 @@ These modules may import lower-level MemPalace SDK helpers and may reuse
 existing codegen memory primitives temporarily. The public normal-pipeline API
 must live under `echelon`, so future graph engineering can build on Echelon
 semantics rather than SOAR/codegen semantics.
+
+The boundary is functional, not merely a module rename:
+
+- `echelon.mempalace_requirements` owns canonical spec selection, canonical
+  artifact metadata, expected-drawer planning, mining, and postimage
+  verification for normal Echelon.
+- Phase A completion mining and `echelon spec memory mine/refresh` must call
+  this service.
+- The service may delegate to the existing lower-level `RequirementsMiner`
+  implementation until that code is moved, but no caller may reimplement the
+  parser or drawer ID algorithm.
+- `echelon.mempalace_audit` consumes planned expected drawers and actual
+  MemPalace collection rows; it does not derive expectations through a separate
+  parser.
 
 `codegen requirements mine/search/clean` remains compatibility surface for the
 alternate pipeline. It can later be refactored to call the shared lower-level
@@ -336,6 +379,7 @@ The command should never print full drawer documents by default.
 Unit tests:
 
 - expected drawer rows are derived from canonical spec metadata;
+- expected drawer planning matches the shared canonical miner exactly;
 - spec selectors reject run-local paths by default;
 - room inference is deterministic;
 - missing wing produces a bounded error;
@@ -348,6 +392,8 @@ Integration tests with an isolated MemPalace palace:
 - mine a canonical spec, audit passes;
 - change `spec.md`, audit reports stale drawers;
 - remove one drawer, audit reports missing;
+- add a drifted deterministic drawer, refresh refuses to overwrite it and audit
+  fails;
 - add a run-local drawer, audit reports non-canonical and excludes it;
 - semantic probe warns when exact storage passes but retrieval misses top N;
 - `--write` writes stable JSON and Markdown reports.
@@ -364,17 +410,20 @@ CLI tests:
 ## Migration Path
 
 1. Add the shared expectation/report model and read-only audit service.
-2. Add Echelon-owned `mine`, `audit`, and `refresh` CLI commands.
-3. Document the manual workflow:
+2. Extract an Echelon-owned canonical requirement memory service and route the
+   existing Phase A completion mining through it without changing observed
+   drawer IDs.
+3. Add Echelon-owned `mine`, `audit`, and `refresh` CLI commands.
+4. Document the manual workflow:
 
    ```bash
    echelon spec memory refresh 003-my-feature --write
    ```
 
-4. Refactor Phase A finalization to record mine and audit reports, still
+5. Refactor Phase A finalization to record mine and audit reports, still
    fail-open.
-5. Add config-controlled warn/block modes after the report proves stable.
-6. Only then begin Spec Artifact Graph work, using audited MemPalace drawers as
+6. Add config-controlled warn/block modes after the report proves stable.
+7. Only then begin Spec Artifact Graph work, using audited MemPalace drawers as
    the semantic retrieval layer.
 
 ## Non-Goals For This Slice
@@ -385,3 +434,4 @@ CLI tests:
 - Do not remove `codegen requirements` commands.
 - Do not use semantic search as storage proof.
 - Do not auto-clean drawers during audit.
+- Do not overwrite drifted deterministic drawers during refresh.
