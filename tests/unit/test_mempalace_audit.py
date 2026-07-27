@@ -254,3 +254,45 @@ def test_audit_marks_malformed_collection_response_unavailable(tmp_path: Path, m
 
     assert report.status == "unavailable"
     assert report.errors == ["SpecMemoryError"]
+
+
+@pytest.mark.unit
+def test_audit_marks_exact_verification_backend_failure_unavailable(tmp_path: Path, monkeypatch) -> None:
+    spec_dir = make_spec(tmp_path)
+    from echelon.mempalace_requirements import load_canonical_spec_snapshot
+
+    class SecondReadFailureCollection(FakeCollection):
+        def __init__(self, rows):
+            super().__init__(rows)
+            self.calls = 0
+
+        def get(self, ids=None, where=None, include=None):
+            self.calls += 1
+            if self.calls > 1:
+                raise OSError("MemPalace is unavailable")
+            return super().get(ids=ids, where=where, include=include)
+
+    class VerificationBackendFailureAdapter(FakeAdapter):
+        def verify_canonical_bytes(self, content, *, source, artifact_metadata, drawer_ids):
+            return False
+
+        def verify_canonical_bytes_outcome(self, content, *, source, artifact_metadata, drawer_ids):
+            try:
+                self.collection.get(ids=drawer_ids, include=["documents", "metadatas"])
+            except OSError:
+                return "unavailable"
+            return "exact"
+
+    row = current_row(load_canonical_spec_snapshot(tmp_path, spec_dir))
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: VerificationBackendFailureAdapter(
+            SecondReadFailureCollection({"drawer-fr-001": row})
+        ),
+    )
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "unavailable"
+    assert report.errors == ["SpecMemoryError"]

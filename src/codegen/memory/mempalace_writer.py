@@ -367,7 +367,7 @@ class MemPalaceWriter:
         except ImportError:
             return ExactDrawerWriteResult("unavailable", None)
         except Exception:
-            return ExactDrawerWriteResult("failed", None)
+            return ExactDrawerWriteResult("unavailable", None)
 
     def backfill_run_outcome(self, outcome: str) -> int:
         """Update run_outcome for all drawers written during this run."""

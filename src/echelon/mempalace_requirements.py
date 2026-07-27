@@ -180,6 +180,21 @@ class RequirementMemoryAdapter:
             drawer_ids=drawer_ids,
         )
 
+    def verify_canonical_bytes_outcome(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+        drawer_ids: list[str],
+    ) -> str:
+        return self.miner.verify_canonical_bytes_outcome(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+            drawer_ids=drawer_ids,
+        )
+
 
 def create_requirement_memory_adapter(project_root: Path, run_id: str) -> RequirementMemoryAdapter:
     return RequirementMemoryAdapter(project_root, run_id)

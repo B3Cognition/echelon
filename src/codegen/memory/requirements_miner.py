@@ -483,6 +483,22 @@ class RequirementsMiner:
         drawer_ids: list[str],
     ) -> bool:
         """Verify selected exact drawers from canonical bytes without writing."""
+        return self.verify_canonical_bytes_outcome(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+            drawer_ids=drawer_ids,
+        ) == "exact"
+
+    def verify_canonical_bytes_outcome(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+        drawer_ids: list[str],
+    ) -> str:
+        """Verify exact drawers while preserving backend unavailability."""
         digest, requirements = self._canonical_requirements_from_bytes(
             content,
             source=source,
@@ -493,7 +509,7 @@ class RequirementsMiner:
             or any(type(value) is not str for value in drawer_ids)
             or drawer_ids != sorted(set(drawer_ids))
         ):
-            return False
+            return "drift"
         from codegen.memory.mempalace_writer import (
             deterministic_requirement_drawer_id,
         )
@@ -509,14 +525,14 @@ class RequirementsMiner:
                 content=scrubbed,
             )
             if drawer_id in planned:
-                return False
+                return "drift"
             planned[drawer_id] = requirement
         if any(drawer_id not in planned for drawer_id in drawer_ids):
-            return False
+            return "drift"
         writer = self._get_writer()
         verify = getattr(writer, "verify_exact", None)
         if not callable(verify):
-            return False
+            return "unavailable"
         for drawer_id in drawer_ids:
             requirement = planned[drawer_id]
             result = verify(
@@ -526,13 +542,15 @@ class RequirementsMiner:
                 spec_sha256=digest,
                 requirement_id=requirement.req_id,
             )
+            if getattr(result, "outcome", None) == "unavailable":
+                return "unavailable"
             if (
                 getattr(result, "outcome", None)
                 != "already_present"
                 or getattr(result, "drawer_id", None) != drawer_id
             ):
-                return False
-        return True
+                return "drift"
+        return "exact"
 
     def mine_directory(self, directory: Path, glob: str = "**/*.md") -> MineResult:
         """Mine all matching files in a directory tree."""

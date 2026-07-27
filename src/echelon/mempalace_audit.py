@@ -203,12 +203,29 @@ def audit_spec_memory(
         if drawer_id in stale or drawer_id in wrong_wing or drawer_id in wrong_room or drawer_id in non_canonical or drawer_id in lifecycle_excluded:
             continue
         try:
-            exact = adapter.verify_canonical_bytes(
-                snapshot.content,
-                source=snapshot.source,
-                artifact_metadata=snapshot.artifact_metadata,
-                drawer_ids=[drawer_id],
-            )
+            verify_outcome = getattr(adapter, "verify_canonical_bytes_outcome", None)
+            if callable(verify_outcome):
+                outcome = verify_outcome(
+                    snapshot.content,
+                    source=snapshot.source,
+                    artifact_metadata=snapshot.artifact_metadata,
+                    drawer_ids=[drawer_id],
+                )
+                if outcome == "unavailable":
+                    return _unavailable_report(
+                        snapshot=snapshot,
+                        adapter=adapter,
+                        expected=expected,
+                        error=SpecMemoryError("MemPalace exact verification is unavailable"),
+                    )
+                exact = outcome == "exact"
+            else:
+                exact = adapter.verify_canonical_bytes(
+                    snapshot.content,
+                    source=snapshot.source,
+                    artifact_metadata=snapshot.artifact_metadata,
+                    drawer_ids=[drawer_id],
+                )
         except (ImportError, OSError, RuntimeError, SpecMemoryError) as exc:
             return _unavailable_report(snapshot=snapshot, adapter=adapter, expected=expected, error=exc)
         if exact:
