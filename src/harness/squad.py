@@ -2086,6 +2086,35 @@ class SquadController:
                 flush=True,
             )
 
+        elif existing_status == "blocked" and next_phase_override:
+            valid_phases = self._graph.all_phase_ids()
+            if next_phase_override not in valid_phases:
+                from echelon.ui import banner as _banner
+                _banner(
+                    "SQUAD — INVALID PHASE ID",
+                    [
+                        ("given", next_phase_override),
+                        ("valid phase IDs", "\n".join(f"  {p}" for p in valid_phases)),
+                    ],
+                )
+                return SquadResult(
+                    status="blocked",
+                    phase=existing.get("phase", "unknown"),
+                    run_id=existing.get("run_id", ""),
+                )
+            state = self._state_store.load()
+            state["status"] = "running"
+            state["blocked_reason"] = None
+            state["phase"] = next_phase_override
+            state.pop("phase_a_readiness_blockers", None)
+            self._state_store.save(state)
+            existing_status = "running"
+            force_resume = True
+            print(
+                f"[squad] manual recovery → advancing to {next_phase_override!r}",
+                flush=True,
+            )
+
         # (keep all recovery blocks exactly as-is above this point)
 
         if existing and existing_status == "done" and str(existing.get("phase") or "") in TERMINAL_PHASES:

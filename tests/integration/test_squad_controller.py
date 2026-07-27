@@ -1933,6 +1933,66 @@ class TestAgentResultIntegrity:
         }
         assert store.load()["published_spec_dir"] == "specs/001-demo"
 
+    def test_manual_phase4_recovery_preserves_blocked_run_state(
+        self, tmp_path,
+    ):
+        _disable_lexicon_gate(tmp_path)
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "banzai", "msg", 0, "terminal-blocked")
+        _mark_constitution_complete(tmp_path, store)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        _write_phase_a_build_inputs(spec_dir, include_fr=True)
+        for name in (
+            "00-overview.md",
+            "plan-conformance.md",
+            "plan-conformance.json",
+        ):
+            (spec_dir / name).unlink()
+        state = store.load()
+        completed_before = [
+            "phase1-constitution",
+            "phase1-what",
+            "phase1-understanding",
+            "phase1-why2",
+            "phase1-lexicon-derive",
+            "phase1-lexicon",
+            "phase3-plan",
+            "phase3-consensus",
+        ]
+        state.update(
+            {
+                "status": "blocked",
+                "phase": "terminal-blocked",
+                "blocked_reason": "phase_a_readiness_failed",
+                "phase_a_readiness_blockers": [
+                    "plan-conformance.md absent",
+                    "plan-conformance.json absent",
+                ],
+                "spec_id": "001-demo",
+                "spec_dir": "runs/run-test/specs/001-demo",
+                "completed_phases": completed_before.copy(),
+                "phase_dispatch_counts": {"phase3-consensus": 2},
+                "token_usage": 12_345,
+                "cost_usd": 9.25,
+            }
+        )
+        store.save(state)
+
+        result = ctrl.run(
+            "msg",
+            "banzai",
+            next_phase_override="phase4-document",
+        )
+
+        assert result.status == "done"
+        recovered = store.load()
+        assert recovered["token_usage"] == 12_345
+        assert recovered["cost_usd"] == 9.25
+        assert "phase3-consensus" in recovered["completed_phases"]
+        assert "phase_a_readiness_blockers" not in recovered
+        assert recovered["published_spec_dir"] == "specs/001-demo"
+
     def test_phase4_document_publishes_complete_artifacts_to_existing_slugged_spec(
         self, tmp_path,
     ):
