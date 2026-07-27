@@ -15,6 +15,7 @@ from harness.controller_state_contracts import (
 from harness.controller_state_contract_requirements import (
     is_controller_producing_phase,
     required_controller_contract_name,
+    structural_phase_definition_errors,
 )
 
 
@@ -54,6 +55,7 @@ class PhaseNode:
     agent: Optional[str] = None        # dash-notation dispatch id
     understanding_target: Optional[str] = None
     lexicon_artifact: Optional[str] = None
+    structural_artifact: Optional[str] = None
     timing_window_start: Optional[str] = None
     budget_seconds: Optional[float] = None
     timing_window_transition: dict = field(default_factory=dict)
@@ -162,6 +164,11 @@ class PhaseGraph:
             )
         self._phases: dict[str, PhaseNode] = {}
         for p in phases:
+            structural_errors = structural_phase_definition_errors(p)
+            if structural_errors:
+                raise ControllerContractRegistryError(
+                    f"phase {p.get('id')!r}: {structural_errors[0]}"
+                )
             expected_contract = required_controller_contract_name(p)
             contract_name = p.get("controller_state_contract")
             if is_controller_producing_phase(p):
@@ -219,6 +226,7 @@ class PhaseGraph:
                 agent=p.get("agent"),
                 understanding_target=p.get("understanding_target"),
                 lexicon_artifact=p.get("lexicon_artifact"),
+                structural_artifact=p.get("structural_artifact"),
                 timing_window_start=p.get("timing_window_start"),
                 budget_seconds=p.get("budget_seconds"),
                 timing_window_transition=p.get("timing_window_transition", {}),

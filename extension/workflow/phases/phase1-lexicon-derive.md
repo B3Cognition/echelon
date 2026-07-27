@@ -31,8 +31,8 @@ No other artifact is writable in this phase.
    source.
 5. Return the single output using the declared result contract.
 
-Do not execute validation. The provider-free `phase1-lexicon` node validates
-the artifact after this dispatch.
+The provider-free `phase1-lexicon` node performs structural certification after
+this dispatch.
 
 ## Failure
 

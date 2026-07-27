@@ -32,6 +32,9 @@ from echelon.spec_lifecycle import (
 )
 from harness.condition_evaluator import ConditionEvaluator
 from harness.controller_state_contracts import ControllerStateContractViolation
+from harness.controller_state_contract_requirements import (
+    required_controller_contract_name,
+)
 from harness.echelon_result_schema import (
     EchelonResultContract,
     EchelonResultValidationError,
@@ -70,6 +73,7 @@ from harness.squad_executors import (
     CommanderInternalExecutor,
     ConditionalSequentialExecutor,
     DeterministicLexiconExecutor,
+    DeterministicStructuralExecutor,
     DeterministicUnderstandingExecutor,
     HumanGateExecutor,
     PhaseExecutor,
@@ -438,6 +442,37 @@ class ControllerEnrichment:
         )
 
 
+def project_authoring_verdict(
+    *, phase_id: str, provider_verdict: str
+) -> Mapping[str, str]:
+    """Project an exact provider verdict into controller-owned durable state."""
+    mapping = {
+        "phase2-decide": {
+            "PASS": "feasibility_verdict",
+            "KILL": "feasibility_verdict",
+            "DEFER": "feasibility_verdict",
+        },
+        "phase2-tracker-alignment": {
+            "ALIGNED": "intent_alignment_verdict",
+            "DRIFT": "intent_alignment_verdict",
+            "DRIFTING": "intent_alignment_verdict",
+            "ESCALATE": "intent_alignment_verdict",
+        },
+    }
+    key = mapping.get(phase_id, {}).get(provider_verdict)
+    if key is None:
+        raise ControllerStateContractViolation(
+            "provider verdict cannot be projected for authoring phase",
+            contract=required_controller_contract_name(
+                {"id": phase_id, "type": "agent"}
+            )
+            or "authoring_verdict",
+            json_path="$.verdict",
+            validator="projection",
+        )
+    return MappingProxyType({key: provider_verdict})
+
+
 @dataclass(frozen=True)
 class CompletionRecoveryOutcome:
     """Structured proof of one completion recovered before phase work."""
@@ -541,6 +576,7 @@ class SquadController:
             "agent": AgentExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "commander_internal": CommanderInternalExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "deterministic_lexicon": DeterministicLexiconExecutor(phase_graph, ext_dir, project_root, self._squad_dir),
+            "deterministic_structural": DeterministicStructuralExecutor(phase_graph, ext_dir, project_root, self._squad_dir),
             "deterministic_understanding": DeterministicUnderstandingExecutor(phase_graph, ext_dir, project_root, self._squad_dir),
             "staged_parallel": StagedParallelExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "conditional_sequential": ConditionalSequentialExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
@@ -4928,9 +4964,21 @@ class SquadController:
             raw_recommended,
             self._graph.all_phase_ids(),
         )
-        if not recommended or recommended == phase:
+        mandatory_successor = {
+            "phase2-decide": "phase2-feasibility-structural",
+            "phase2-tracker-alignment": (
+                "phase2-intent-alignment-structural"
+            ),
+        }.get(recommended)
+        if (
+            not recommended
+            or recommended == phase
+            or mandatory_successor == phase
+        ):
             # We've arrived at the recommended phase (or there's no recommendation).
-            # Clear the flags so they don't override the next forward transition.
+            # A mandatory deterministic successor is part of completing the
+            # recommended authoring phase and must not be redirected back to
+            # another provider dispatch.
             state["convergence_forced"] = False
             state["convergence_detected"] = False
             state["phase_recommendation"] = None
@@ -5114,211 +5162,6 @@ class SquadController:
         self._gov_config_cache = cfg
         return cfg
 
-    def _governance_structural_gate_updates(
-        self,
-        node: PhaseNode,
-        state: dict,
-        result: SquadAgentResult,
-    ) -> dict[str, object]:
-        """Validate governance artifacts and return controller-owned updates."""
-        gates = {
-            "phase2-decide": (
-                "feasibility",
-                "feasibility.md",
-                "feasibility_structural_pass",
-                "feasibility_structural_attempts",
-                "feasibility_structural_findings",
-                "feasibility_structural_report",
-            ),
-            "phase2-tracker-alignment": (
-                "intent-alignment-check",
-                "intent-alignment-check.md",
-                "intent_alignment_check_structural_pass",
-                "intent_alignment_check_structural_attempts",
-                "intent_alignment_check_structural_findings",
-                "intent_alignment_check_structural_report",
-            ),
-        }
-        gate_fields = gates.get(node.id)
-        if gate_fields is None:
-            return {}
-
-        artifact_key, default_name, pass_key, attempts_key, findings_key, report_key = gate_fields
-        governance = self._governance_config().get("governance", {})
-        artifacts = governance.get("artifacts", {}) if isinstance(governance, dict) else {}
-        entry = artifacts.get(artifact_key, {}) if isinstance(artifacts, dict) else {}
-        gate_enabled = (
-            isinstance(governance, dict)
-            and governance.get("enabled", False)
-            and isinstance(entry, dict)
-            and entry.get("enabled", True) is not False
-            and str(entry.get("tier") or "").lower() == "structural"
-        )
-        updates: dict[str, object] = {}
-        if not gate_enabled:
-            updates[pass_key] = True
-            updates[attempts_key] = 0
-            return updates
-
-        spec_dir_ref = str(
-            result.state_updates.get("spec_dir")
-            or state.get("spec_dir")
-            or ""
-        ).strip()
-        if spec_dir_ref:
-            spec_dir = Path(spec_dir_ref)
-            if not spec_dir.is_absolute():
-                spec_dir = self._project_root / spec_dir
-        else:
-            spec_dir = self._project_root / "runs" / str(state.get("run_id") or "unknown") / "specs"
-
-        artifact_name = str(entry.get("path") or default_name).strip()
-        artifact_path = spec_dir / artifact_name
-        report = self._validate_governance_structural_artifact(
-            artifact_key=artifact_key,
-            artifact_path=artifact_path,
-            spec_dir=spec_dir,
-            entry=entry,
-        )
-        report_path = spec_dir / str(
-            entry.get("report") or f"{artifact_key}-structural-report.json"
-        ).strip()
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        updates[report_key] = str(report_path)
-        updates[findings_key] = len(report["findings"])
-        updates[pass_key] = bool(report["ok"])
-        if report["ok"]:
-            updates[attempts_key] = 0
-            return updates
-
-        try:
-            previous_attempts = int(state.get(attempts_key, 0))
-        except (TypeError, ValueError):
-            previous_attempts = 0
-        updates[attempts_key] = max(0, previous_attempts) + 1
-        return updates
-
-    def _validate_governance_structural_artifact(
-        self,
-        *,
-        artifact_key: str,
-        artifact_path: Path,
-        spec_dir: Path,
-        entry: dict,
-    ) -> dict[str, object]:
-        findings: list[dict[str, object]] = []
-        if not artifact_path.is_file():
-            findings.append({
-                "code": "missing-structural-artifact",
-                "message": f"required governance artifact is missing: {artifact_path.name}",
-                "artifact": artifact_path.name,
-            })
-        else:
-            spec_chunks: list[str] = []
-            for cross_ref in entry.get("cross_refs") or []:
-                against = str(cross_ref.get("against") or "").strip()
-                if not against:
-                    continue
-                spec_path = spec_dir / against
-                if spec_path.is_file():
-                    spec_chunks.append(spec_path.read_text(encoding="utf-8", errors="replace"))
-                else:
-                    findings.append({
-                        "code": "missing-cross-reference",
-                        "message": f"structural reference artifact is missing: {against}",
-                        "artifact": against,
-                    })
-            try:
-                from lexicon.structural import structural_validate
-
-                validation_entry = dict(entry)
-                template = str(validation_entry.get("template") or "").strip()
-                if template:
-                    validation_entry["template"] = self._ext_dir / "templates" / template
-                validation = structural_validate(
-                    artifact_path.read_text(encoding="utf-8", errors="replace"),
-                    validation_entry,
-                    spec_text="\n\n".join(spec_chunks),
-                )
-                findings.extend(
-                    {
-                        "code": str(item.code),
-                        "message": str(item.message),
-                        "line": int(item.line),
-                        "span": str(item.span),
-                    }
-                    for item in validation.findings
-                )
-            except Exception as exc:
-                findings.append({
-                    "code": "structural-validator-error",
-                    "message": f"structural validator failed: {exc}",
-                })
-
-        return {
-            "schema_version": 1,
-            "artifact": artifact_key,
-            "path": str(artifact_path),
-            "ok": not findings,
-            "findings": findings,
-        }
-
-    def _governance_exhaustion_enrichment(
-        self,
-        node: PhaseNode,
-        state: dict,
-        controller_updates: Mapping[str, object],
-    ) -> tuple[dict[str, object], str | None]:
-        gate_fields = {
-            "phase2-decide": (
-                "feasibility",
-                "feasibility_structural_pass",
-                "feasibility_structural_attempts",
-            ),
-            "phase2-tracker-alignment": (
-                "intent-alignment-check",
-                "intent_alignment_check_structural_pass",
-                "intent_alignment_check_structural_attempts",
-            ),
-        }.get(node.id)
-        if gate_fields is None:
-            return {}, None
-        artifact_key, pass_key, attempts_key = gate_fields
-        governance = self._governance_config().get("governance", {})
-        if (
-            not isinstance(governance, dict)
-            or controller_updates.get(pass_key) is True
-        ):
-            return {}, None
-        try:
-            repair_cap = int(governance.get("max_repair_attempts", 3))
-        except (TypeError, ValueError):
-            repair_cap = 3
-        try:
-            attempts = int(
-                controller_updates.get(
-                    attempts_key,
-                    state.get(attempts_key, 0),
-                )
-            )
-        except (TypeError, ValueError):
-            attempts = 0
-        iterations_exhausted = int(state.get("iteration") or 0) >= int(
-            state.get("max_iterations") or self._max_iterations
-        )
-        if not ((repair_cap > 0 and attempts >= repair_cap) or iterations_exhausted):
-            return {}, None
-
-        updates = {"governance_gate_exhausted": artifact_key}
-        if str(governance.get("on_exhausted") or "warn").lower() != "block":
-            return updates, None
-
-        return updates, PHASE_TERMINAL_BLOCKED
-
     def _lexicon_repair_no_progress_enrichment(
         self,
         node: PhaseNode,
@@ -5395,19 +5238,28 @@ class SquadController:
     ) -> ControllerEnrichment:
         """Build controller-owned updates without mutating result or state."""
         state_copy = deepcopy(dict(state))
-        updates = self._governance_structural_gate_updates(
-            node,
-            state_copy,
-            result,
+        authoring_phase = node.id in {
+            "phase2-decide",
+            "phase2-tracker-alignment",
+        }
+        stop_and_ask = (
+            node.id == "phase2-tracker-alignment"
+            and result.verdict == "STOP_AND_ASK"
         )
-        governance_updates, governance_override = (
-            self._governance_exhaustion_enrichment(
-                node,
-                state_copy,
-                updates,
+        if authoring_phase and not stop_and_ask:
+            updates = dict(
+                project_authoring_verdict(
+                    phase_id=node.id,
+                    provider_verdict=result.verdict or "",
+                )
             )
-        )
-        updates.update(governance_updates)
+            governance_override = None
+        elif authoring_phase:
+            updates = {}
+            governance_override = node.id
+        else:
+            updates = {}
+            governance_override = None
         lexicon_updates, lexicon_override = self._lexicon_gate_enrichment(
             node,
             state_copy,
@@ -5435,6 +5287,42 @@ class SquadController:
             else:
                 updates["spec_quality_certificate"] = certificate
         state_removals: set[str] = set()
+        if node.id == "phase2-decide":
+            state_removals.update(
+                {
+                    "feasibility_structural_pass",
+                    "feasibility_structural_findings",
+                    "feasibility_structural_report",
+                    "governance_gate_exhausted",
+                    "blocked_reason",
+                }
+            )
+        if node.id == "phase2-tracker-alignment":
+            if stop_and_ask:
+                state_removals.add("intent_alignment_verdict")
+            else:
+                state_removals.update(
+                    {
+                        "intent_alignment_check_structural_pass",
+                        "intent_alignment_check_structural_findings",
+                        "intent_alignment_check_structural_report",
+                        "governance_gate_exhausted",
+                        "blocked_reason",
+                    }
+                )
+        if node.type == "deterministic_structural":
+            report_key = {
+                "feasibility": "feasibility_structural_report",
+                "intent-alignment-check": (
+                    "intent_alignment_check_structural_report"
+                ),
+            }.get(node.structural_artifact)
+            if report_key and report_key not in result.state_updates:
+                state_removals.add(report_key)
+            if "governance_gate_exhausted" not in result.state_updates:
+                state_removals.add("governance_gate_exhausted")
+            if result.state_updates.get("structural_action") != "block":
+                state_removals.add("blocked_reason")
         lexicon_certification_fields = {
             "lexicon_evaluation",
             "lexicon_pass",
@@ -5501,7 +5389,11 @@ class SquadController:
             updates=updates,
             routing_override=routing_override,
             controller_owns_result_updates=node.type
-            in {"deterministic_lexicon", "deterministic_understanding"},
+            in {
+                "deterministic_lexicon",
+                "deterministic_structural",
+                "deterministic_understanding",
+            },
             state_removals=frozenset(state_removals),
             control_updates=control_updates,
         )
@@ -5545,6 +5437,16 @@ class SquadController:
             **provider_control_intents,
             **dict(enrichment.control_updates),
         }
+        if (
+            node.type == "deterministic_structural"
+            and candidate.state_updates.get("structural_action") == "block"
+        ):
+            control_updates["status"] = "blocked"
+            control_updates["blocked_reason"] = self._structural_blocked_reason(
+                node,
+                snapshot.state,
+                candidate.state_updates,
+            )
         return prepare_phase_result(
             node,
             candidate,
@@ -5563,6 +5465,46 @@ class SquadController:
             ),
             control_updates=control_updates,
         )
+
+    def _structural_blocked_reason(
+        self,
+        node: PhaseNode,
+        state: Mapping[str, object],
+        updates: Mapping[str, object],
+    ) -> str:
+        """Derive the sealed reason from attested structural state shape."""
+        artifact = node.structural_artifact
+        verdict_key = {
+            "feasibility": "feasibility_verdict",
+            "intent-alignment-check": "intent_alignment_verdict",
+        }.get(artifact)
+        if verdict_key is None:
+            return "governance_structural_artifact_unknown"
+        if state.get(verdict_key) is None:
+            return "governance_structural_authoring_verdict_missing"
+        if updates.get("governance_gate_exhausted") == artifact:
+            return "governance_structural_exhausted"
+        findings_key = {
+            "feasibility": "feasibility_structural_findings",
+            "intent-alignment-check": (
+                "intent_alignment_check_structural_findings"
+            ),
+        }[artifact]
+        report_key = {
+            "feasibility": "feasibility_structural_report",
+            "intent-alignment-check": (
+                "intent_alignment_check_structural_report"
+            ),
+        }[artifact]
+        if int(updates.get(findings_key) or 0) > 0 and not updates.get(report_key):
+            return "governance_structural_evidence_write_failed"
+        spec_ref = str(state.get("spec_dir") or "").strip()
+        spec_dir = Path(spec_ref) if spec_ref else None
+        if spec_dir is not None and not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        if spec_dir is None or not spec_dir.is_dir():
+            return "governance_structural_spec_dir_invalid"
+        return "governance_structural_config_invalid"
 
     def _block_after_executor_contract_failure(
         self,

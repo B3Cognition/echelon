@@ -220,7 +220,7 @@ contracts:
                     path: {type: string, minLength: 1}
                     pass: {type: boolean}
 
-  feasibility_structural:
+  phase1_quality_certificate:
     $schema: https://json-schema.org/draft/2020-12/schema
     type: object
     additionalProperties: false
@@ -231,6 +231,93 @@ contracts:
         type: object
         additionalProperties: false
         properties:
+          spec_quality_certificate:
+            type: object
+            additionalProperties: false
+            required:
+              - schema_version
+              - status
+              - source_path
+              - source_sha256
+              - understanding_evidence
+              - understanding_evidence_sha256
+              - sage_phase
+            properties:
+              schema_version: {const: 1}
+              status: {const: passed}
+              source_path: {type: string, minLength: 1}
+              source_sha256:
+                type: string
+                pattern: "^[0-9a-f]{64}$"
+              understanding_evidence:
+                {type: string, minLength: 1}
+              understanding_evidence_sha256:
+                type: string
+                pattern: "^[0-9a-f]{64}$"
+              sage_phase: {const: phase1-why2}
+
+  feasibility_authoring_verdict:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    additionalProperties: false
+    required: [verdict, state_updates]
+    properties:
+      verdict: {type: string, enum: [PASS, KILL, DEFER]}
+      state_updates:
+        type: object
+        additionalProperties: false
+        required: [feasibility_verdict]
+        properties:
+          feasibility_verdict:
+            {type: string, enum: [PASS, KILL, DEFER]}
+
+  intent_alignment_authoring_verdict:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    additionalProperties: false
+    required: [verdict, state_updates]
+    properties:
+      verdict:
+        type: string
+        enum: [ALIGNED, DRIFT, DRIFTING, ESCALATE, STOP_AND_ASK]
+      state_updates:
+        type: object
+        additionalProperties: false
+        properties:
+          intent_alignment_verdict:
+            {type: string, enum: [ALIGNED, DRIFT, DRIFTING, ESCALATE]}
+    allOf:
+      - if:
+          properties:
+            verdict: {const: STOP_AND_ASK}
+        then:
+          properties:
+            state_updates:
+              not: {required: [intent_alignment_verdict]}
+        else:
+          properties:
+            state_updates:
+              required: [intent_alignment_verdict]
+
+  feasibility_structural:
+    $schema: https://json-schema.org/draft/2020-12/schema
+    type: object
+    additionalProperties: false
+    required: [verdict, state_updates]
+    properties:
+      verdict: {type: string}
+      state_updates:
+        type: object
+        additionalProperties: false
+        required:
+          - structural_action
+          - feasibility_structural_pass
+          - feasibility_structural_attempts
+          - feasibility_structural_findings
+        properties:
+          structural_action:
+            type: string
+            enum: [proceed, repair, proceed_with_warning, block]
           feasibility_structural_pass: {type: boolean}
           feasibility_structural_attempts: {type: integer, minimum: 0}
           feasibility_structural_findings: {type: integer, minimum: 0}
@@ -239,6 +326,62 @@ contracts:
             type: string
             enum: [feasibility]
     allOf:
+      - if:
+          properties:
+            state_updates:
+              properties:
+                structural_action: {const: proceed}
+        then:
+          properties:
+            verdict: {const: PASS}
+            state_updates:
+              not: {required: [governance_gate_exhausted]}
+              properties:
+                feasibility_structural_pass: {const: true}
+                feasibility_structural_attempts: {const: 0}
+                feasibility_structural_findings: {const: 0}
+      - if:
+          properties:
+            state_updates:
+              properties:
+                structural_action: {const: repair}
+        then:
+          properties:
+            verdict: {const: REPAIR}
+            state_updates:
+              required: [feasibility_structural_report]
+              not: {required: [governance_gate_exhausted]}
+              properties:
+                feasibility_structural_pass: {const: false}
+                feasibility_structural_attempts: {minimum: 1}
+                feasibility_structural_findings: {minimum: 1}
+      - if:
+          properties:
+            state_updates:
+              properties:
+                structural_action: {const: proceed_with_warning}
+        then:
+          properties:
+            verdict: {const: WARN}
+            state_updates:
+              required:
+                - feasibility_structural_report
+                - governance_gate_exhausted
+              properties:
+                feasibility_structural_pass: {const: false}
+                feasibility_structural_attempts: {minimum: 1}
+                feasibility_structural_findings: {minimum: 1}
+      - if:
+          properties:
+            state_updates:
+              properties:
+                structural_action: {const: block}
+        then:
+          properties:
+            verdict: {const: FAIL}
+            state_updates:
+              properties:
+                feasibility_structural_pass: {const: false}
       - if:
           properties:
             verdict:
@@ -252,8 +395,12 @@ contracts:
       - if:
           properties:
             state_updates:
-              required: [feasibility_structural_findings]
+              required:
+                - structural_action
+                - feasibility_structural_findings
               properties:
+                structural_action:
+                  not: {const: block}
                 feasibility_structural_findings: {minimum: 1}
         then:
           properties:
@@ -280,7 +427,15 @@ contracts:
       state_updates:
         type: object
         additionalProperties: false
+        required:
+          - structural_action
+          - intent_alignment_check_structural_pass
+          - intent_alignment_check_structural_attempts
+          - intent_alignment_check_structural_findings
         properties:
+          structural_action:
+            type: string
+            enum: [proceed, repair, proceed_with_warning, block]
           intent_alignment_check_structural_pass: {type: boolean}
           intent_alignment_check_structural_attempts:
             {type: integer, minimum: 0}
@@ -294,6 +449,62 @@ contracts:
     allOf:
       - if:
           properties:
+            state_updates:
+              properties:
+                structural_action: {const: proceed}
+        then:
+          properties:
+            verdict: {const: PASS}
+            state_updates:
+              not: {required: [governance_gate_exhausted]}
+              properties:
+                intent_alignment_check_structural_pass: {const: true}
+                intent_alignment_check_structural_attempts: {const: 0}
+                intent_alignment_check_structural_findings: {const: 0}
+      - if:
+          properties:
+            state_updates:
+              properties:
+                structural_action: {const: repair}
+        then:
+          properties:
+            verdict: {const: REPAIR}
+            state_updates:
+              required: [intent_alignment_check_structural_report]
+              not: {required: [governance_gate_exhausted]}
+              properties:
+                intent_alignment_check_structural_pass: {const: false}
+                intent_alignment_check_structural_attempts: {minimum: 1}
+                intent_alignment_check_structural_findings: {minimum: 1}
+      - if:
+          properties:
+            state_updates:
+              properties:
+                structural_action: {const: proceed_with_warning}
+        then:
+          properties:
+            verdict: {const: WARN}
+            state_updates:
+              required:
+                - intent_alignment_check_structural_report
+                - governance_gate_exhausted
+              properties:
+                intent_alignment_check_structural_pass: {const: false}
+                intent_alignment_check_structural_attempts: {minimum: 1}
+                intent_alignment_check_structural_findings: {minimum: 1}
+      - if:
+          properties:
+            state_updates:
+              properties:
+                structural_action: {const: block}
+        then:
+          properties:
+            verdict: {const: FAIL}
+            state_updates:
+              properties:
+                intent_alignment_check_structural_pass: {const: false}
+      - if:
+          properties:
             verdict:
               not: {const: BLOCKED}
         then:
@@ -305,8 +516,12 @@ contracts:
       - if:
           properties:
             state_updates:
-              required: [intent_alignment_check_structural_findings]
+              required:
+                - structural_action
+                - intent_alignment_check_structural_findings
               properties:
+                structural_action:
+                  not: {const: block}
                 intent_alignment_check_structural_findings: {minimum: 1}
         then:
           properties:

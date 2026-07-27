@@ -1673,6 +1673,8 @@ def prepare_phase_result(
         normalized_controller = normalized_enrichment.updates
         normalized_paths = normalized_enrichment.normalized_paths
         provider_updates_candidate = effective_raw_updates
+    if not normalized_controller:
+        normalized_paths = ()
 
     candidate_payload = {
         key: value

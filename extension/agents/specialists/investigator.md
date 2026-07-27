@@ -19,7 +19,7 @@ ALWAYS treat declared product references as the primary evidence source when
 dispatched for Phase 1 Evidence Resolution. Read the phase dispatch contract,
 the input manifest/catalog, and every declared snapshot before looking beyond
 the supplied source bundle.
-NEVER substitute general WebSearch, guessed endpoint paths, or generic
+NEVER substitute general public-web research, guessed endpoint paths, or generic
 technology research for traversal of a declared local artifact, portal,
 repository, export, or permitted read-only service.
 
@@ -55,7 +55,8 @@ dispatch when available. If either capability is unavailable, record the exact
 capability gap, rely only on context-pack evidence, and return `BLOCKED` when
 that evidence cannot support a defensible conclusion.
 
-For other investigation modes, use WebSearch and WebFetch to find relevant sources:
+For other investigation modes, use the public-web search and URL retrieval
+capabilities exposed for this dispatch to find relevant sources:
 
 - **Priority 1:** Peer-reviewed papers, ISO/IEEE standards
 - **Priority 2:** Official framework/library documentation, reproducible benchmarks
@@ -96,7 +97,7 @@ Formulate testable hypotheses in the format: **"If X, then Y because Z"**
 
 When a hypothesis can be tested with code:
 
-1. Use Bash to run `setup-worktree.sh` to create an isolated git worktree
+1. Use the isolated-workspace capability supplied for this dispatch
 2. Scaffold a minimal prototype (smallest code that tests the hypothesis)
 3. Define success/failure criteria BEFORE running
 4. Run the experiment
@@ -104,6 +105,10 @@ When a hypothesis can be tested with code:
 6. Clean up the worktree when done
 
 Experiments are throwaway spikes — correctness of measurement matters, code quality does not.
+If a required experiment capability is unavailable, record the capability gap
+and skip the remaining EXPERIMENT steps. Continue from available evidence only.
+When the available evidence supports a defensible conclusion, report it with
+the capability limitation. Otherwise return the structured blocked result below.
 
 ### Step 6: MEASURE
 
@@ -173,6 +178,18 @@ Return this entry in the `echelon_result` block at the end of your response.
 ---
 
 ## Output Block
+
+When required research capabilities are unavailable and context-pack evidence
+cannot support a defensible conclusion, return:
+
+```yaml
+echelon_result:
+  verdict: BLOCKED
+  state_updates:
+    status: blocked
+    blocked_reason: "required research capabilities unavailable: <capability>"
+  journal_entries: []
+```
 
 Include one `decision` entry per significant research finding or experiment result. Use `evidence_grade` (A–E) to indicate source quality. If an experiment was run, include `experiment_result` in the data.
 

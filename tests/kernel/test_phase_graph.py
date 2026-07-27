@@ -13,6 +13,9 @@ from harness.controller_state_contracts import (
     ControllerContractRegistryError,
     validate_controller_result,
 )
+from harness.controller_state_contract_requirements import (
+    required_controller_contract_name,
+)
 from harness.phase_graph import PhaseGraph
 
 DEFINITION = EXT_ROOT / "extension/workflow/definition.yaml"
@@ -20,12 +23,142 @@ EXT_YML = EXT_ROOT / "extension/extension.yml"
 REQUIRED_CONTROLLER_CONTRACTS = {
     "phase1-lexicon": "spec_lexicon",
     "phase1-understanding": "understanding",
-    "phase2-decide": "feasibility_structural",
-    "phase2-tracker-alignment": "intent_alignment_structural",
+    "phase1-why2": "phase1_quality_certificate",
+    "phase2-decide": "feasibility_authoring_verdict",
+    "phase2-tracker-alignment": "intent_alignment_authoring_verdict",
     "phase3-tasks-lexicon": "tasks_lexicon",
     "phase3-understanding": "understanding",
     "phase3-consensus-tasks-lexicon": "tasks_lexicon",
 }
+
+
+@pytest.mark.parametrize(
+    ("artifact", "contract"),
+    [
+        ("feasibility", "feasibility_structural"),
+        ("intent-alignment-check", "intent_alignment_structural"),
+    ],
+)
+def test_structural_contract_is_derived_from_artifact(
+    artifact: str, contract: str
+) -> None:
+    assert required_controller_contract_name(
+        {
+            "id": f"custom-{artifact}",
+            "type": "deterministic_structural",
+            "structural_artifact": artifact,
+        }
+    ) == contract
+
+
+def test_unknown_structural_artifact_has_no_contract() -> None:
+    assert required_controller_contract_name(
+        {
+            "id": "custom-structural",
+            "type": "deterministic_structural",
+            "structural_artifact": "unknown",
+        }
+    ) is None
+
+
+def _write_structural_graph(
+    tmp_path: Path, mutation: str | None = None
+) -> tuple[Path, Path]:
+    registry = tmp_path / "contracts.yaml"
+    registry.write_bytes(
+        (
+            EXT_ROOT / "extension/workflow/controller-state-contracts.yaml"
+        ).read_bytes()
+    )
+    phase: dict[str, object] = {
+        "id": "custom-structural",
+        "type": "deterministic_structural",
+        "structural_artifact": "feasibility",
+        "allowed_state_updates": [],
+        "controller_state_contract": "feasibility_structural",
+        "transitions": [
+            {"to": "author", "condition": "structural_action = repair"},
+            {"to": "blocked", "condition": "structural_action = block"},
+            {
+                "to": "done",
+                "condition": (
+                    "structural_action in [proceed, proceed_with_warning] "
+                    "AND feasibility_verdict = PASS"
+                ),
+            },
+        ],
+    }
+    if mutation == "missing_artifact":
+        phase.pop("structural_artifact")
+    elif mutation == "unknown_artifact":
+        phase["structural_artifact"] = "unknown"
+    elif mutation == "agent":
+        phase["agent"] = "provider"
+    elif mutation == "agents":
+        phase["agents"] = [{"id": "provider"}]
+    elif mutation == "allowlist":
+        phase["allowed_state_updates"] = ["provider_field"]
+    elif mutation == "wrong_contract":
+        phase["controller_state_contract"] = "intent_alignment_structural"
+    elif mutation == "missing_repair":
+        phase["transitions"] = phase["transitions"][1:]
+    elif mutation == "missing_block":
+        phase["transitions"] = [
+            phase["transitions"][0],
+            phase["transitions"][2],
+        ]
+    elif mutation == "missing_forward":
+        phase["transitions"] = phase["transitions"][:2]
+    definition = tmp_path / "definition.yaml"
+    definition.write_text(
+        yaml.safe_dump(
+            {
+                "controller_state_contracts_file": registry.name,
+                "phases": [
+                    phase,
+                    {"id": "author", "type": "terminal"},
+                    {"id": "blocked", "type": "terminal"},
+                    {"id": "done", "type": "terminal"},
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    extension = tmp_path / "extension.yml"
+    extension.write_text("provides: {commands: []}\n", encoding="utf-8")
+    return definition, extension
+
+
+def test_phase_graph_parses_explicit_structural_artifact(tmp_path: Path) -> None:
+    definition, extension = _write_structural_graph(tmp_path)
+
+    node = PhaseGraph(definition, extension).get("custom-structural")
+
+    assert node.structural_artifact == "feasibility"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_artifact",
+        "unknown_artifact",
+        "agent",
+        "agents",
+        "allowlist",
+        "wrong_contract",
+        "missing_repair",
+        "missing_block",
+        "missing_forward",
+    ],
+)
+def test_phase_graph_rejects_malformed_structural_node(
+    tmp_path: Path, mutation: str
+) -> None:
+    definition, extension = _write_structural_graph(tmp_path, mutation)
+
+    with pytest.raises(ControllerContractRegistryError):
+        PhaseGraph(definition, extension)
 
 
 class TestPhaseGraph:
@@ -565,15 +698,15 @@ def test_phase3_consensus_declares_per_agent_result_contracts():
 def test_phase2_governance_verdicts_are_controller_owned():
     graph = PhaseGraph(DEFINITION, EXT_YML)
     gates = {
-        "phase2-decide": "feasibility_structural_pass",
-        "phase2-tracker-alignment": "intent_alignment_check_structural_pass",
+        "phase2-decide": "feasibility_verdict",
+        "phase2-tracker-alignment": "intent_alignment_verdict",
     }
 
     for phase_id, pass_key in gates.items():
         node = graph.get(phase_id)
         assert pass_key not in (node.allowed_state_updates or [])
         assert pass_key in node.controller_state_update_keys
-        assert "governance_gate_exhausted" in node.controller_state_update_keys
+        assert "governance_gate_exhausted" not in node.controller_state_update_keys
 
 
 def test_phase1_lexicon_reserves_verdict_fields_for_the_controller():
@@ -677,7 +810,11 @@ def test_production_contracts_own_exact_existing_controller_field_inventory() ->
             "understanding_evidence",
             "blocked_reason",
         },
+        "phase1_quality_certificate": {
+            "spec_quality_certificate",
+        },
         "feasibility_structural": {
+            "structural_action",
             "feasibility_structural_pass",
             "feasibility_structural_attempts",
             "feasibility_structural_findings",
@@ -685,6 +822,7 @@ def test_production_contracts_own_exact_existing_controller_field_inventory() ->
             "governance_gate_exhausted",
         },
         "intent_alignment_structural": {
+            "structural_action",
             "intent_alignment_check_structural_pass",
             "intent_alignment_check_structural_attempts",
             "intent_alignment_check_structural_findings",
@@ -697,7 +835,7 @@ def test_production_contracts_own_exact_existing_controller_field_inventory() ->
         name: graph.controller_contract(name).state_update_keys
         for name in expected
     } == expected
-    assert len(set().union(*expected.values())) == 23
+    assert len(set().union(*expected.values())) == 25
 
 
 def test_production_contracts_reject_incomplete_success_results() -> None:
@@ -784,14 +922,17 @@ def test_production_contracts_reject_incomplete_success_results() -> None:
             "feasibility_structural",
             "PASS",
             {
+                "structural_action": "proceed",
                 "feasibility_structural_pass": True,
                 "feasibility_structural_attempts": 0,
+                "feasibility_structural_findings": 0,
             },
         ),
         (
             "intent_alignment_structural",
-            "DRIFT",
+            "WARN",
             {
+                "structural_action": "proceed_with_warning",
                 "intent_alignment_check_structural_pass": False,
                 "intent_alignment_check_structural_attempts": 1,
                 "intent_alignment_check_structural_findings": 2,

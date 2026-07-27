@@ -16,7 +16,7 @@ The controller supplies a `Controller Configuration` section plus:
 - `spec-lexicon-report.json` findings on a repair dispatch.
 
 Treat those paths and findings as authoritative. Do not discover configuration
-from project files and do not execute a validator.
+from project files or certify the derived artifact.
 
 ## Output Boundary
 
@@ -74,7 +74,7 @@ artifacts.
 
 ALWAYS use controller findings as repair instructions and regenerate the
 affected blocks from canonical source.
-NEVER execute the Lexicon validator or claim a gate verdict or waiver.
+NEVER claim a Lexicon gate verdict or waiver.
 
 ALWAYS return `FAIL` with the exact source location when faithful translation is
 impossible.

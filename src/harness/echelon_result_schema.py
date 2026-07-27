@@ -84,6 +84,7 @@ ALLOWED_VERDICTS = frozenset({
     "ON_TRACK",
     "PARTIAL",
     "PASS",
+    "REPAIR",
     "PATTERNS_APPLIED",
     "REJECTED",
     "RESOLVED",

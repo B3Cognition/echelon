@@ -349,12 +349,14 @@ Author `feasibility.md` using `extension/templates/feasibility-template.md` and
 make every required section substantive. State the PASS, DEFER, or KILL decision
 unambiguously in `Kill / Defer / Pass Decision`.
 
-The Echelon controller selects the governance policy, validates the file after
-dispatch, records findings, and owns repair attempts and routing. On a repair
-dispatch, read the controller report supplied in the prompt and apply the
+The provider-free `phase2-feasibility-structural` node selects the governance
+policy, validates the file after dispatch, records findings, and owns repair
+attempts and certification routing. On a repair dispatch, read
+`feasibility-structural-report.json` supplied in the prompt and apply the
 smallest change that resolves every finding. Preserve sections that already
 pass. Do not inspect governance configuration, invoke validation commands, or
-return structural certification fields in `echelon_result.state_updates`.
+return `feasibility_verdict` or structural certification fields in
+`echelon_result.state_updates`.
 
 ---
 

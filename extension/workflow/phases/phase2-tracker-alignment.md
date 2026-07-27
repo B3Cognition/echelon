@@ -55,12 +55,16 @@ dispatch. Do not run a shell check or rediscover the spec directory.
 
 ### Intent Alignment Structural Gate
 
-TRACKER authors `intent-alignment-check.md`; the harness validates it after
-dispatch when the structural governance gate is enabled. The harness writes
-`intent-alignment-check-structural-report.json`, owns the pass and attempt
-state, and applies the configured repair and exhaustion policy.
+TRACKER authors and repairs `intent-alignment-check.md`. Projectable verdicts
+continue through the provider-free `phase2-intent-alignment-structural` node,
+which writes `intent-alignment-check-structural-report.json` and owns pass,
+findings, attempt, and exhaustion state.
 
 On re-dispatch, the prompt contains the report path and repair instructions.
 Repair every listed finding, preserve passing sections, and return the normal
 alignment verdict. Deterministic validation and structural gate state remain
-harness-owned.
+harness-owned. `STOP_AND_ASK` blocks at TRACKER before certification;
+`ESCALATE` is certified and then loops back through the explicit node. TRACKER
+must not emit `intent_alignment_verdict` or structural state. A manual
+structural run without a persisted verdict recovers by resuming
+`phase2-tracker-alignment`.

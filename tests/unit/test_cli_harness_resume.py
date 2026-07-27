@@ -71,7 +71,16 @@ def _make_phase_a_spec(base: Path, spec_dir_name: str = "001-demo", *, canonical
     """Create minimal published Phase A build inputs for harness preflight."""
     spec_dir = base / "specs" / spec_dir_name
     spec_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("spec.md", "plan.md", "research.md", "data-model.md"):
+    for name in (
+        "00-overview.md",
+        "requirements-overview.md",
+        "spec.md",
+        "plan.md",
+        "plan-conformance.md",
+        "plan-conformance.json",
+        "research.md",
+        "data-model.md",
+    ):
         content = "---\ntargets:\n  - .\n---\n# Spec\n" if name == "spec.md" else f"# {name}\n"
         (spec_dir / name).write_text(content, encoding="utf-8")
     for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):

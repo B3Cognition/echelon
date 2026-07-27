@@ -221,7 +221,16 @@ class TestOuterLoopConvergence:
         gitops.base_dir = project
         source = project / "specs" / "spec-001-demo"
         source.mkdir(parents=True)
-        for name in ("spec.md", "plan.md", "research.md", "data-model.md"):
+        for name in (
+            "00-overview.md",
+            "requirements-overview.md",
+            "spec.md",
+            "plan.md",
+            "plan-conformance.md",
+            "plan-conformance.json",
+            "research.md",
+            "data-model.md",
+        ):
             (source / name).write_text(f"# {name}\n", encoding="utf-8")
         for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
             (source / name).write_text(f"# {name}\n", encoding="utf-8")
@@ -267,7 +276,16 @@ class TestOuterLoopConvergence:
         gitops.base_dir = project
         source = project / "specs" / "spec-001-demo"
         source.mkdir(parents=True)
-        for name in ("spec.md", "plan.md", "research.md", "data-model.md"):
+        for name in (
+            "00-overview.md",
+            "requirements-overview.md",
+            "spec.md",
+            "plan.md",
+            "plan-conformance.md",
+            "plan-conformance.json",
+            "research.md",
+            "data-model.md",
+        ):
             (source / name).write_text(f"# {name}\n", encoding="utf-8")
         for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
             (source / name).write_text(f"# {name}\n", encoding="utf-8")

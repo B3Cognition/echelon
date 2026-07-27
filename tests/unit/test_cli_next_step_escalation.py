@@ -189,6 +189,8 @@ def test_ready_next_step_has_clear_subtitle_and_next_command(
     )
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
@@ -296,6 +298,8 @@ def test_blocked_non_escalation_run_does_not_claim_ready_to_build(
     spec_dir.mkdir(parents=True)
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
@@ -475,6 +479,8 @@ def test_done_run_uses_published_artifacts_instead_of_stale_staging_why2(
     spec_dir.mkdir(parents=True)
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
@@ -542,6 +548,8 @@ def test_continue_phase_treats_done_published_artifacts_as_build_ready(
     spec_dir.mkdir(parents=True)
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")

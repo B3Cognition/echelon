@@ -24,12 +24,17 @@ def test_gatekeeper_leaves_structural_validation_to_controller():
 
 
 @pytest.mark.unit
-def test_phase2_decide_redispatch_transition():
+def test_phase2_decide_routes_only_to_structural_node():
     d = yaml.safe_load(pathlib.Path("extension/workflow/definition.yaml").read_text())
     node = next(n for n in d["phases"] if n["id"] == "phase2-decide")
-    conds = " ".join(t.get("condition", "") for t in node["transitions"])
-    assert "governance.enabled AND NOT feasibility_structural_pass" in conds
-    assert "artifacts.feasibility.enabled" not in conds  # keep the guard evaluable
+    assert node["transitions"] == [
+        {"to": "phase2-feasibility-structural", "condition": "always"}
+    ]
+    gate = next(
+        n for n in d["phases"] if n["id"] == "phase2-feasibility-structural"
+    )
+    assert gate.get("agent") is None
+    assert gate["structural_artifact"] == "feasibility"
 
 
 @pytest.mark.unit
@@ -42,12 +47,22 @@ def test_tracker_leaves_structural_validation_to_controller():
 
 
 @pytest.mark.unit
-def test_phase2_tracker_alignment_redispatch_transition():
+def test_phase2_tracker_alignment_routes_only_to_structural_node():
     d = yaml.safe_load(pathlib.Path("extension/workflow/definition.yaml").read_text())
     node = next(n for n in d["phases"] if n["id"] == "phase2-tracker-alignment")
-    conds = " ".join(t.get("condition", "") for t in node["transitions"])
-    assert "governance.enabled AND NOT intent_alignment_check_structural_pass" in conds
-    assert "artifacts.intent" not in conds  # keep the guard evaluable
+    assert node["transitions"] == [
+        {
+            "to": "phase2-intent-alignment-structural",
+            "condition": "always",
+        }
+    ]
+    gate = next(
+        n
+        for n in d["phases"]
+        if n["id"] == "phase2-intent-alignment-structural"
+    )
+    assert gate.get("agent") is None
+    assert gate["structural_artifact"] == "intent-alignment-check"
 
 
 @pytest.mark.unit

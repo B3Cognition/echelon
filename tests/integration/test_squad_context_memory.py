@@ -136,7 +136,9 @@ def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_
     spec_text = "# Photo Album\n\nFR-001: Upload a photo.\n"
     (active_spec_dir / "spec.md").write_text(spec_text, encoding="utf-8")
     for name in (
-        "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md", "plan.md",
+        "plan-conformance.md", "plan-conformance.json",
+        "research.md", "data-model.md", "tasks.md",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
         (active_spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
@@ -234,7 +236,9 @@ def test_phase4_publish_keeps_readiness_when_mempalace_setup_fails(tmp_path: Pat
     spec_text = "# Photo Album\n\nFR-001: Upload a photo.\n"
     (active_spec_dir / "spec.md").write_text(spec_text, encoding="utf-8")
     for name in (
-        "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md", "plan.md",
+        "plan-conformance.md", "plan-conformance.json",
+        "research.md", "data-model.md", "tasks.md",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
         (active_spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
@@ -275,8 +279,12 @@ def test_context_metadata_publication_staging_defers_mining(
     active_spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001"
     active_spec_dir.mkdir(parents=True)
     for name in (
+        "00-overview.md",
+        "requirements-overview.md",
         "spec.md",
         "plan.md",
+        "plan-conformance.md",
+        "plan-conformance.json",
         "research.md",
         "data-model.md",
         "tasks.md",

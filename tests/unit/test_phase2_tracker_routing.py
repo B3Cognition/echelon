@@ -56,7 +56,14 @@ def _route_tracker_verdict(tmp_path: Path, phase_id: str, verdict: str) -> str:
     node = graph.get(phase_id)
     snapshot = store.capture_routing_snapshot(expected_phase=phase_id)
     prepared = ctrl._prepare_phase_result(node, result, snapshot)
-    return ctrl._evaluate_transitions(node, prepared, snapshot)
+    if ctrl._blocked_executor_reason(
+        prepared.as_squad_agent_result(),
+        prepared.control_updates,
+    ):
+        return phase_id
+    return ctrl._coordinate_transition_routing(
+        node, prepared, snapshot
+    ).to_phase
 
 
 def _route_phase2_tracker_verdict(tmp_path: Path, verdict: str) -> str:
@@ -68,15 +75,21 @@ def _route_phase1_tracker_verdict(tmp_path: Path, verdict: str) -> str:
 
 
 def test_tracker_aligned_verdict_routes_to_specialists(tmp_path: Path) -> None:
-    assert _route_phase2_tracker_verdict(tmp_path, "ALIGNED") == "phase3-specialists"
+    assert _route_phase2_tracker_verdict(
+        tmp_path, "ALIGNED"
+    ) == "phase2-intent-alignment-structural"
 
 
 def test_tracker_drift_verdict_routes_to_specialists(tmp_path: Path) -> None:
-    assert _route_phase2_tracker_verdict(tmp_path, "DRIFT") == "phase3-specialists"
+    assert _route_phase2_tracker_verdict(
+        tmp_path, "DRIFT"
+    ) == "phase2-intent-alignment-structural"
 
 
 def test_tracker_legacy_drifting_verdict_routes_to_specialists(tmp_path: Path) -> None:
-    assert _route_phase2_tracker_verdict(tmp_path, "DRIFTING") == "phase3-specialists"
+    assert _route_phase2_tracker_verdict(
+        tmp_path, "DRIFTING"
+    ) == "phase2-intent-alignment-structural"
 
 
 def test_tracker_stop_and_ask_verdict_stays_on_alignment_phase(tmp_path: Path) -> None:
@@ -84,7 +97,9 @@ def test_tracker_stop_and_ask_verdict_stays_on_alignment_phase(tmp_path: Path) -
 
 
 def test_tracker_legacy_escalate_verdict_stays_on_alignment_phase(tmp_path: Path) -> None:
-    assert _route_phase2_tracker_verdict(tmp_path, "ESCALATE") == "phase2-tracker-alignment"
+    assert _route_phase2_tracker_verdict(
+        tmp_path, "ESCALATE"
+    ) == "phase2-intent-alignment-structural"
 
 
 def test_phase1_tracker_clear_intent_routes_to_why1(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ import yaml
 from harness.controller_state_contract_requirements import (
     is_controller_producing_phase,
     required_controller_contract_name,
+    structural_phase_definition_errors,
 )
 from harness.echelon_result_schema import ALLOWED_VERDICTS, SUPPORTED_STATE_UPDATE_TYPES
 from harness.phase_graph import PhaseGraph, PhaseNode
@@ -43,6 +44,8 @@ KNOWN_CONDITION_FIELDS = frozenset({
     # Loop counters and limits managed by the harness/commander.
     "assess_defer_loop_limit",
     "defer_count",
+    "feasibility_verdict",
+    "intent_alignment_verdict",
     "fix_cycle",
     "iteration",
     "max_iterations",
@@ -481,6 +484,14 @@ def _validate_required_controller_contracts(
         phase_id = phase_id if isinstance(phase_id, str) else None
         expected = required_controller_contract_name(phase)
         actual = phase.get("controller_state_contract")
+        for message in structural_phase_definition_errors(phase):
+            issues.append(
+                WorkflowValidationIssue(
+                    message,
+                    phase_id=phase_id,
+                    path=path,
+                )
+            )
         if expected is None:
             issues.append(
                 WorkflowValidationIssue(

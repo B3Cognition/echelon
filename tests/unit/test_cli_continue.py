@@ -280,6 +280,8 @@ def test_continue_allows_ready_spec_after_constitution_provenance(tmp_path: Path
     (spec_dir / "quality-gates.md").write_text("# Quality Gates\n\n## Verdict: PASS\n")
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
         (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
@@ -320,6 +322,8 @@ def test_continue_ignores_stale_ready_files_when_solution_phases_were_skipped(
     (spec_dir / "constitution.md").write_text("# Constitution\n\nReal project rules.\n")
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
         (spec_dir / name).write_text(f"# stale {name}\n", encoding="utf-8")
@@ -550,6 +554,8 @@ def test_continue_does_not_honor_stale_recommendation_when_build_is_ready(
     published_spec_dir.mkdir(parents=True)
     for name in (
         "spec.md", "plan.md", "research.md", "data-model.md", "tasks.md",
+        "00-overview.md", "requirements-overview.md",
+        "plan-conformance.md", "plan-conformance.json",
         "test-strategy.md", "test-architecture.md", "coverage-map.md",
     ):
         (published_spec_dir / name).write_text(f"# published {name}\n", encoding="utf-8")
