@@ -75,6 +75,19 @@ class MinedRequirement:
     source: str  # file path or Jira/Confluence URL
 
 
+@dataclass(frozen=True)
+class CanonicalRequirementDrawerPlan:
+    """One canonical requirement row planned without backend access."""
+
+    drawer_id: str
+    requirement_id: str
+    room: str
+    source: str
+    artifact_hash: str
+    canonical_spec_sha256: str
+    requirement_content_sha256: str
+
+
 @dataclass
 class MineResult:
     wing: str
@@ -83,6 +96,7 @@ class MineResult:
     skipped: int
     failed: int
     already_present: int = 0
+    drifted: int = 0
     unavailable: int = 0
     requirements: list[MinedRequirement] = field(default_factory=list)
     drawer_ids: list[str] = field(default_factory=list)
@@ -304,22 +318,18 @@ def _parse_jira_issue(issue: dict, source: str) -> Optional[MinedRequirement]:
     return MinedRequirement(req_id=key, room=room, content=content, source=source)
 
 
-def plan_canonical_requirement_drawer_ids(
+def _canonical_requirements_from_bytes(
     content: bytes,
     *,
     source: str,
     artifact_metadata: dict[str, Any],
-    wing: str,
-) -> list[str]:
-    """Plan canonical IDs without constructing or accessing a backend."""
+) -> tuple[str, list[MinedRequirement]]:
     if (
         type(content) is not bytes
         or type(source) is not str
         or not source
         or type(artifact_metadata) is not dict
         or artifact_metadata.get("canonical") is not True
-        or type(wing) is not str
-        or not wing
     ):
         raise ValueError("invalid canonical mining input")
     digest = hashlib.sha256(content).hexdigest()
@@ -329,24 +339,72 @@ def plan_canonical_requirement_drawer_ids(
         text = content.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError("canonical spec is not UTF-8") from exc
-    requirements = _parse_markdown(text, source=source)
+    return digest, _parse_markdown(text, source=source)
+
+
+def plan_canonical_requirement_drawers(
+    content: bytes,
+    *,
+    source: str,
+    artifact_metadata: dict[str, Any],
+    wing: str,
+) -> list[CanonicalRequirementDrawerPlan]:
+    """Plan structured canonical rows through the shared parser and ID logic."""
+    if type(wing) is not str or not wing:
+        raise ValueError("invalid canonical mining input")
+    digest, requirements = _canonical_requirements_from_bytes(
+        content,
+        source=source,
+        artifact_metadata=artifact_metadata,
+    )
     from codegen.memory.mempalace_writer import (
         deterministic_requirement_drawer_id,
     )
 
-    result = [
-        deterministic_requirement_drawer_id(
-            wing=wing,
-            room=requirement.room,
-            spec_sha256=digest,
-            requirement_id=requirement.req_id,
-            content=scrub_secrets(requirement.content),
+    result: list[CanonicalRequirementDrawerPlan] = []
+    for requirement in requirements:
+        scrubbed_content = scrub_secrets(requirement.content)
+        result.append(
+            CanonicalRequirementDrawerPlan(
+                drawer_id=deterministic_requirement_drawer_id(
+                    wing=wing,
+                    room=requirement.room,
+                    spec_sha256=digest,
+                    requirement_id=requirement.req_id,
+                    content=scrubbed_content,
+                ),
+                requirement_id=requirement.req_id,
+                room=requirement.room,
+                source=requirement.source,
+                artifact_hash=f"sha256:{digest}",
+                canonical_spec_sha256=digest,
+                requirement_content_sha256=hashlib.sha256(
+                    scrubbed_content.encode("utf-8")
+                ).hexdigest(),
+            )
         )
-        for requirement in requirements
-    ]
-    if len(set(result)) != len(result):
+    if len({row.drawer_id for row in result}) != len(result):
         raise ValueError("deterministic drawer identity collision")
     return result
+
+
+def plan_canonical_requirement_drawer_ids(
+    content: bytes,
+    *,
+    source: str,
+    artifact_metadata: dict[str, Any],
+    wing: str,
+) -> list[str]:
+    """Plan canonical IDs without constructing or accessing a backend."""
+    return [
+        row.drawer_id
+        for row in plan_canonical_requirement_drawers(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+            wing=wing,
+        )
+    ]
 
 
 class RequirementsMiner:
@@ -414,22 +472,36 @@ class RequirementsMiner:
         source: str,
         artifact_metadata: dict[str, Any],
     ) -> tuple[str, list[MinedRequirement]]:
-        if (
-            type(content) is not bytes
-            or type(source) is not str
-            or not source
-            or type(artifact_metadata) is not dict
-            or artifact_metadata.get("canonical") is not True
-        ):
-            raise ValueError("invalid canonical mining input")
-        digest = hashlib.sha256(content).hexdigest()
-        if artifact_metadata.get("artifact_hash") != f"sha256:{digest}":
-            raise ValueError("canonical spec digest mismatch")
-        try:
-            text = content.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise ValueError("canonical spec is not UTF-8") from exc
-        return digest, _parse_markdown(text, source=source)
+        return _canonical_requirements_from_bytes(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+        )
+
+    def plan_canonical_rows(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> list[CanonicalRequirementDrawerPlan]:
+        """Compute structured expected rows without reading or writing."""
+        return plan_canonical_requirement_drawers(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+            wing=self.wing,
+        )
+
+    def open_collection_read_only(self) -> object:
+        """Open existing storage for inspection without creating it."""
+        writer = self._get_writer()
+        opener = getattr(writer, "get_collection_read_only", None)
+        if not callable(opener):
+            raise RuntimeError(
+                "installed MemPalace does not support read-only collection access"
+            )
+        return opener()
 
     def plan_canonical_bytes(
         self,
@@ -483,6 +555,22 @@ class RequirementsMiner:
         drawer_ids: list[str],
     ) -> bool:
         """Verify selected exact drawers from canonical bytes without writing."""
+        return self.verify_canonical_bytes_outcome(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+            drawer_ids=drawer_ids,
+        ) == "exact"
+
+    def verify_canonical_bytes_outcome(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+        drawer_ids: list[str],
+    ) -> str:
+        """Verify exact drawers while preserving backend unavailability."""
         digest, requirements = self._canonical_requirements_from_bytes(
             content,
             source=source,
@@ -493,7 +581,7 @@ class RequirementsMiner:
             or any(type(value) is not str for value in drawer_ids)
             or drawer_ids != sorted(set(drawer_ids))
         ):
-            return False
+            return "drift"
         from codegen.memory.mempalace_writer import (
             deterministic_requirement_drawer_id,
         )
@@ -509,14 +597,14 @@ class RequirementsMiner:
                 content=scrubbed,
             )
             if drawer_id in planned:
-                return False
+                return "drift"
             planned[drawer_id] = requirement
         if any(drawer_id not in planned for drawer_id in drawer_ids):
-            return False
+            return "drift"
         writer = self._get_writer()
         verify = getattr(writer, "verify_exact", None)
         if not callable(verify):
-            return False
+            return "unavailable"
         for drawer_id in drawer_ids:
             requirement = planned[drawer_id]
             result = verify(
@@ -526,13 +614,15 @@ class RequirementsMiner:
                 spec_sha256=digest,
                 requirement_id=requirement.req_id,
             )
+            if getattr(result, "outcome", None) == "unavailable":
+                return "unavailable"
             if (
                 getattr(result, "outcome", None)
                 != "already_present"
                 or getattr(result, "drawer_id", None) != drawer_id
             ):
-                return False
-        return True
+                return "drift"
+        return "exact"
 
     def mine_directory(self, directory: Path, glob: str = "**/*.md") -> MineResult:
         """Mine all matching files in a directory tree."""
@@ -699,12 +789,15 @@ class RequirementsMiner:
                         outcome == "already_present"
                         and drawer_id == expected_id
                     ):
-                        result.skipped += 1
                         result.already_present += 1
                         result.drawer_ids.append(expected_id)
                     elif outcome == "unavailable" and drawer_id is None:
-                        result.skipped += 1
                         result.unavailable += 1
+                    elif outcome == "drift" and drawer_id is None:
+                        result.drifted += 1
+                        result.errors.append(
+                            "deterministic_write_drift"
+                        )
                     else:
                         result.failed += 1
                         result.errors.append(

@@ -1,6 +1,7 @@
 """Unit tests for RequirementsMiner with MemPalaceContext."""
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +10,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codegen.memory.context import MemPalaceContext
-from codegen.memory.requirements_miner import RequirementsMiner
+from codegen.memory.requirements_miner import (
+    RequirementsMiner,
+    plan_canonical_requirement_drawers,
+)
 
 
 def _make_ctx(wing="my-app", run_id="run-1", palace_path="/fake/palace"):
@@ -116,6 +120,69 @@ def test_mine_file_passes_artifact_metadata(monkeypatch, tmp_path):
 
     assert calls[0]["extra_metadata"]["artifact_hash"] == "sha256:" + "2" * 64
     assert calls[0]["extra_metadata"]["canonical"] is True
+
+
+def test_structured_canonical_plan_uses_shared_parser_room_and_identity() -> None:
+    content = b"SEC-001: Encrypt uploaded photos.\nADR-002: Use envelope encryption.\n"
+    digest = hashlib.sha256(content).hexdigest()
+
+    rows = plan_canonical_requirement_drawers(
+        content,
+        source="specs/003-demo/spec.md",
+        artifact_metadata={
+            "canonical": True,
+            "artifact_hash": f"sha256:{digest}",
+        },
+        wing="demo",
+    )
+
+    assert [(row.requirement_id, row.room) for row in rows] == [
+        ("SEC-001", "security-requirements"),
+        ("ADR-002", "domain-decisions"),
+    ]
+    assert all(row.artifact_hash == f"sha256:{digest}" for row in rows)
+    assert all(len(row.requirement_content_sha256) == 64 for row in rows)
+
+
+def test_canonical_miner_preserves_exact_writer_outcomes(monkeypatch, tmp_path) -> None:
+    content = (
+        b"FR-001: Written.\n"
+        b"FR-002: Adopted.\n"
+        b"FR-003: Drifted.\n"
+        b"FR-004: Backend unavailable.\n"
+        b"FR-005: Invalid write.\n"
+    )
+    digest = hashlib.sha256(content).hexdigest()
+    outcomes = iter(("written", "already_present", "drift", "unavailable", "failed"))
+
+    class Writer:
+        def write_exact(self, **kwargs):
+            outcome = next(outcomes)
+            drawer_id = kwargs["drawer_id"] if outcome in {"written", "already_present"} else None
+            return SimpleNamespace(outcome=outcome, drawer_id=drawer_id)
+
+    miner = RequirementsMiner(_make_ctx(wing="demo"), project_dir=tmp_path)
+    miner._writer = Writer()
+    monkeypatch.setattr(
+        "codegen.memory.requirements_miner.check_wing_collision",
+        lambda *args, **kwargs: [],
+    )
+
+    result = miner.mine_canonical_bytes(
+        content,
+        source="specs/003-demo/spec.md",
+        artifact_metadata={
+            "canonical": True,
+            "artifact_hash": f"sha256:{digest}",
+        },
+    )
+
+    assert result.written == 1
+    assert result.already_present == 1
+    assert result.drifted == 1
+    assert result.unavailable == 1
+    assert result.failed == 1
+    assert result.skipped == 0
 
 
 def test_canonical_mining_uses_unique_stable_ids_for_same_room_requirements(

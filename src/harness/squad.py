@@ -4109,8 +4109,9 @@ class SquadController:
         metadata: object,
     ) -> str:
         try:
-            from codegen.memory.context import MemPalaceContext
-            from codegen.memory.requirements_miner import RequirementsMiner
+            from echelon.mempalace_requirements import (
+                create_requirement_memory_adapter,
+            )
         except Exception:
             return "unavailable"
 
@@ -4126,8 +4127,7 @@ class SquadController:
             return "failed"
 
         try:
-            ctx = MemPalaceContext.from_project(self._project_root, run_id=run_id)
-            miner = RequirementsMiner(ctx, project_dir=self._project_root)
+            miner = create_requirement_memory_adapter(self._project_root, run_id)
         except (Exception, SystemExit):
             return "unavailable"
         try:
