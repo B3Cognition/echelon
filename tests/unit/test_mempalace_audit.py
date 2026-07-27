@@ -1,5 +1,6 @@
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,16 +20,26 @@ def make_spec(tmp_path: Path) -> Path:
 class FakeCollection:
     def __init__(self, rows):
         self.rows = rows
+        self.calls = []
 
-    def get(self, ids=None, where=None, include=None):
+    def get(self, ids=None, where=None, include=None, limit=None):
+        self.calls.append(
+            {"ids": ids, "where": where, "include": include, "limit": limit}
+        )
         if ids is not None:
             found = [(drawer_id, self.rows[drawer_id]) for drawer_id in ids if drawer_id in self.rows]
-            return {
-                "ids": [drawer_id for drawer_id, _row in found],
-                "documents": [row["document"] for _drawer_id, row in found],
-                "metadatas": [row["metadata"] for _drawer_id, row in found],
-            }
-        return {"ids": [], "documents": [], "metadatas": []}
+        else:
+            found = [
+                (drawer_id, row)
+                for drawer_id, row in self.rows.items()
+                if where is None
+                or all(row.get("metadata", {}).get(key) == value for key, value in where.items())
+            ][:limit]
+        return {
+            "ids": [drawer_id for drawer_id, _row in found],
+            "documents": [row["document"] for _drawer_id, row in found],
+            "metadatas": [row["metadata"] for _drawer_id, row in found],
+        }
 
 
 class FakeAdapter:
@@ -38,8 +49,24 @@ class FakeAdapter:
     def __init__(self, collection):
         self.collection = collection
 
-    def plan_canonical_bytes(self, content, *, source, artifact_metadata):
-        return ["drawer-fr-001"]
+    def plan_canonical_rows(self, content, *, source, artifact_metadata):
+        document = "FR-001: Upload a photo."
+        return [
+            SimpleNamespace(
+                drawer_id="drawer-fr-001",
+                requirement_id="FR-001",
+                room="functional-requirements",
+                source=source,
+                artifact_hash=artifact_metadata["artifact_hash"],
+                canonical_spec_sha256=hashlib.sha256(content).hexdigest(),
+                requirement_content_sha256=hashlib.sha256(
+                    document.encode("utf-8")
+                ).hexdigest(),
+            )
+        ]
+
+    def open_collection_read_only(self):
+        return self.collection
 
     def verify_canonical_bytes(self, content, *, source, artifact_metadata, drawer_ids):
         raw = self.collection.get(ids=drawer_ids, include=["documents", "metadatas"])
@@ -121,6 +148,32 @@ def test_audit_passes_matching_exact_drawer(tmp_path: Path, monkeypatch) -> None
 
 
 @pytest.mark.unit
+def test_audit_uses_only_non_creating_collection_path(tmp_path: Path, monkeypatch) -> None:
+    spec_dir = make_spec(tmp_path)
+    collection = FakeCollection({})
+
+    class ReadOnlyAdapter(FakeAdapter):
+        def __init__(self):
+            super().__init__(collection)
+            self.miner = SimpleNamespace(
+                _get_writer=lambda: SimpleNamespace(
+                    _get_collection=lambda: pytest.fail("creating path called")
+                )
+            )
+
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: ReadOnlyAdapter(),
+    )
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert collection.calls[0]["ids"] == ["drawer-fr-001"]
+
+
+@pytest.mark.unit
 def test_audit_classifies_wrong_wing_and_stale_hash(tmp_path: Path, monkeypatch) -> None:
     spec_dir = make_spec(tmp_path)
     rows = {
@@ -148,6 +201,145 @@ def test_audit_classifies_wrong_wing_and_stale_hash(tmp_path: Path, monkeypatch)
     assert report.status == "fail"
     assert report.wrong_wing == ["drawer-fr-001"]
     assert report.stale == ["drawer-fr-001"]
+
+
+@pytest.mark.unit
+def test_audit_accepts_exact_security_requirement_room(tmp_path: Path, monkeypatch) -> None:
+    spec_dir = make_spec(tmp_path)
+    spec_dir.joinpath("spec.md").write_text(
+        "SEC-001: Encrypt uploaded photos.\n",
+        encoding="utf-8",
+    )
+    from codegen.memory.requirements_miner import plan_canonical_requirement_drawers
+    from echelon.mempalace_requirements import load_canonical_spec_snapshot
+
+    snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
+    planned = plan_canonical_requirement_drawers(
+        snapshot.content,
+        source=snapshot.source,
+        artifact_metadata=snapshot.artifact_metadata,
+        wing="demo-wing",
+    )[0]
+    row = {
+        "document": "SEC-001: Encrypt uploaded photos.",
+        "metadata": {
+            "deterministic_identity_schema_version": 1,
+            "wing": "demo-wing",
+            "room": planned.room,
+            "scope": "canonical",
+            "canonical": True,
+            "artifact_path": snapshot.source,
+            "artifact_hash": snapshot.artifact_metadata["artifact_hash"],
+            "canonical_spec_sha256": snapshot.spec_sha256,
+            "requirement_id": planned.requirement_id,
+            "requirement_content_sha256": planned.requirement_content_sha256,
+            "lifecycle_status": "active",
+        },
+    }
+
+    class SecurityAdapter(FakeAdapter):
+        def plan_canonical_rows(self, content, *, source, artifact_metadata):
+            return [planned]
+
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: SecurityAdapter(
+            FakeCollection({planned.drawer_id: row})
+        ),
+    )
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "pass"
+    assert report.wrong_room == []
+
+
+@pytest.mark.unit
+def test_audit_reports_security_requirement_in_wrong_room(tmp_path: Path, monkeypatch) -> None:
+    spec_dir = make_spec(tmp_path)
+    spec_dir.joinpath("spec.md").write_text(
+        "SEC-001: Encrypt uploaded photos.\n",
+        encoding="utf-8",
+    )
+    from codegen.memory.requirements_miner import plan_canonical_requirement_drawers
+    from echelon.mempalace_requirements import load_canonical_spec_snapshot
+
+    snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
+    planned = plan_canonical_requirement_drawers(
+        snapshot.content,
+        source=snapshot.source,
+        artifact_metadata=snapshot.artifact_metadata,
+        wing="demo-wing",
+    )[0]
+    row = {
+        "document": "SEC-001: Encrypt uploaded photos.",
+        "metadata": {
+            "deterministic_identity_schema_version": 1,
+            "wing": "demo-wing",
+            "room": "functional-requirements",
+            "scope": "canonical",
+            "canonical": True,
+            "artifact_path": snapshot.source,
+            "artifact_hash": snapshot.artifact_metadata["artifact_hash"],
+            "canonical_spec_sha256": snapshot.spec_sha256,
+            "requirement_id": planned.requirement_id,
+            "requirement_content_sha256": planned.requirement_content_sha256,
+            "lifecycle_status": "active",
+        },
+    }
+
+    class SecurityAdapter(FakeAdapter):
+        def plan_canonical_rows(self, content, *, source, artifact_metadata):
+            return [planned]
+
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: SecurityAdapter(
+            FakeCollection({planned.drawer_id: row})
+        ),
+    )
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert report.wrong_room == [planned.drawer_id]
+
+
+@pytest.mark.unit
+def test_audit_reports_duplicate_stale_and_run_local_extras(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_dir = make_spec(tmp_path)
+    from echelon.mempalace_requirements import load_canonical_spec_snapshot
+
+    snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
+    current = current_row(snapshot)
+    duplicate = current_row(snapshot)
+    stale = current_row(snapshot)
+    stale["metadata"]["requirement_id"] = "FR-REMOVED"
+    stale["metadata"]["artifact_hash"] = "sha256:" + "0" * 64
+    run_local = current_row(snapshot)
+    run_local["metadata"]["canonical"] = False
+    run_local["metadata"]["artifact_path"] = "runs/run-1/specs/003-demo/spec.md"
+    rows = {
+        "drawer-fr-001": current,
+        "drawer-duplicate": duplicate,
+        "drawer-stale": stale,
+        "drawer-run-local": run_local,
+    }
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(FakeCollection(rows)),
+    )
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.duplicate == ["drawer-duplicate"]
+    assert "drawer-stale" in report.stale
+    assert "drawer-run-local" in report.non_canonical
 
 
 @pytest.mark.unit
@@ -257,20 +449,49 @@ def test_audit_marks_malformed_collection_response_unavailable(tmp_path: Path, m
 
 
 @pytest.mark.unit
-def test_audit_marks_exact_verification_backend_failure_unavailable(tmp_path: Path, monkeypatch) -> None:
+def test_audit_classifies_malformed_row_fields_without_backend_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_dir = make_spec(tmp_path)
+    malformed = {
+        "drawer-fr-001": {
+            "document": None,
+            "metadata": {"wing": "demo-wing"},
+        }
+    }
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(FakeCollection(malformed)),
+    )
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert report.stale == ["drawer-fr-001"]
+    assert "drawer-fr-001:invalid_document" in report.errors
+
+
+@pytest.mark.unit
+def test_audit_marks_bounded_scan_backend_failure_unavailable(tmp_path: Path, monkeypatch) -> None:
     spec_dir = make_spec(tmp_path)
     from echelon.mempalace_requirements import load_canonical_spec_snapshot
 
     class SecondReadFailureCollection(FakeCollection):
         def __init__(self, rows):
             super().__init__(rows)
-            self.calls = 0
+            self.call_count = 0
 
-        def get(self, ids=None, where=None, include=None):
-            self.calls += 1
-            if self.calls > 1:
+        def get(self, ids=None, where=None, include=None, limit=None):
+            self.call_count += 1
+            if self.call_count > 1:
                 raise OSError("MemPalace is unavailable")
-            return super().get(ids=ids, where=where, include=include)
+            return super().get(
+                ids=ids,
+                where=where,
+                include=include,
+                limit=limit,
+            )
 
     class VerificationBackendFailureAdapter(FakeAdapter):
         def verify_canonical_bytes(self, content, *, source, artifact_metadata, drawer_ids):
@@ -295,7 +516,7 @@ def test_audit_marks_exact_verification_backend_failure_unavailable(tmp_path: Pa
     report = audit_spec_memory(tmp_path, spec_dir)
 
     assert report.status == "unavailable"
-    assert report.errors == ["SpecMemoryError"]
+    assert report.errors == ["OSError"]
 
 
 @pytest.mark.unit
@@ -315,11 +536,40 @@ def test_unavailable_audit_reports_error_class_without_traceback(tmp_path: Path,
 
 
 @pytest.mark.unit
-def test_audit_maps_missing_legacy_config_to_unavailable(tmp_path: Path) -> None:
+def test_audit_uses_canonical_config_without_legacy_config(
+    tmp_path: Path, monkeypatch
+) -> None:
     spec_dir = make_spec(tmp_path)
+    monkeypatch.setattr(
+        "echelon.mempalace_requirements.RequirementMemoryAdapter.open_collection_read_only",
+        lambda self: FakeCollection({}),
+    )
     from echelon.mempalace_audit import audit_spec_memory
 
     report = audit_spec_memory(tmp_path, spec_dir)
 
-    assert report.status == "unavailable"
-    assert report.errors == ["SystemExit"]
+    assert report.status == "fail"
+    assert report.wing == "demo-wing"
+    assert report.missing
+
+
+@pytest.mark.unit
+def test_audit_bounds_planner_value_error_as_deterministic_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_dir = make_spec(tmp_path)
+
+    class FaultyPlannerAdapter(FakeAdapter):
+        def plan_canonical_rows(self, content, *, source, artifact_metadata):
+            raise ValueError("canonical planner fault")
+
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FaultyPlannerAdapter(FakeCollection({})),
+    )
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert report.errors == ["ValueError"]

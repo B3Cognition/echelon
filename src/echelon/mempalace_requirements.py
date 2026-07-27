@@ -25,10 +25,12 @@ class CanonicalSpecSnapshot:
 @dataclass(frozen=True)
 class PlannedRequirementDrawer:
     drawer_id: str
-    requirement_id: str | None
-    room: str | None
+    requirement_id: str
+    room: str
     source: str
     artifact_hash: str
+    canonical_spec_sha256: str
+    requirement_content_sha256: str
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,7 @@ class SpecMemoryMineReport:
     skipped_count: int
     failed_count: int
     drifted_count: int
+    unavailable_count: int = 0
     drawer_ids: list[str] = field(default_factory=list)
     expected_drawer_ids: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -63,6 +66,7 @@ class SpecMemoryMineReport:
             "skipped_count": self.skipped_count,
             "failed_count": self.failed_count,
             "drifted_count": self.drifted_count,
+            "unavailable_count": self.unavailable_count,
             "drawer_ids": list(self.drawer_ids),
             "expected_drawer_ids": list(self.expected_drawer_ids),
             "errors": list(self.errors),
@@ -129,12 +133,46 @@ def load_canonical_spec_snapshot(project_root: Path, spec_dir: Path) -> Canonica
     )
 
 
+def _read_mempalace_wing(project_root: Path) -> str:
+    canonical = project_root / ".echelon" / "config.yml"
+    legacy = (
+        project_root
+        / ".specify"
+        / "extensions"
+        / "echelon"
+        / "echelon-config.yml"
+    )
+    config_path = canonical if canonical.exists() else legacy
+    if not config_path.exists():
+        raise SpecMemoryError(
+            "Echelon config is missing; run 'echelon workspace init'"
+        )
+    try:
+        import yaml
+
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        raise SpecMemoryError(
+            f"cannot parse Echelon config at {config_path}"
+        ) from exc
+    if not isinstance(config, dict):
+        raise SpecMemoryError(f"invalid Echelon config at {config_path}")
+    mempalace = config.get("mempalace")
+    wing = mempalace.get("wing") if isinstance(mempalace, dict) else None
+    if not isinstance(wing, str) or not wing.strip():
+        raise SpecMemoryError(
+            f"mempalace.wing is not set in {config_path}"
+        )
+    return wing.strip()
+
+
 class RequirementMemoryAdapter:
     def __init__(self, project_root: Path, run_id: str) -> None:
         from codegen.memory.context import MemPalaceContext
         from codegen.memory.requirements_miner import RequirementsMiner
 
-        self.context = MemPalaceContext.from_project(project_root, run_id=run_id)
+        wing = _read_mempalace_wing(project_root)
+        self.context = MemPalaceContext.from_wing(wing, run_id=run_id)
         self.miner = RequirementsMiner(self.context, project_dir=project_root)
         self.wing = self.context.wing
         self.palace_path = self.context.palace_path
@@ -151,6 +189,38 @@ class RequirementMemoryAdapter:
             source=source,
             artifact_metadata=artifact_metadata,
         )
+
+    def plan_canonical_rows(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> list[PlannedRequirementDrawer]:
+        return [
+            PlannedRequirementDrawer(
+                drawer_id=row.drawer_id,
+                requirement_id=row.requirement_id,
+                room=row.room,
+                source=row.source,
+                artifact_hash=row.artifact_hash,
+                canonical_spec_sha256=row.canonical_spec_sha256,
+                requirement_content_sha256=row.requirement_content_sha256,
+            )
+            for row in self.miner.plan_canonical_rows(
+                content,
+                source=source,
+                artifact_metadata=artifact_metadata,
+            )
+        ]
+
+    def open_collection_read_only(self) -> object:
+        opener = getattr(self.miner, "open_collection_read_only", None)
+        if not callable(opener):
+            raise SpecMemoryError(
+                "installed MemPalace does not support read-only collection access"
+            )
+        return opener()
 
     def mine_canonical_bytes(
         self,
@@ -224,6 +294,8 @@ def mine_spec_requirements(
     snapshot = load_canonical_spec_snapshot(project_root, spec_dir)
     try:
         adapter = create_requirement_memory_adapter(project_root, run_id)
+    except SpecMemoryError:
+        raise
     except (Exception, SystemExit) as exc:
         return SpecMemoryMineReport(
             schema_version=1,
@@ -245,6 +317,22 @@ def mine_spec_requirements(
             snapshot.content,
             source=snapshot.source,
             artifact_metadata=snapshot.artifact_metadata,
+        )
+    except ValueError as exc:
+        return SpecMemoryMineReport(
+            schema_version=1,
+            spec_id=snapshot.spec_id,
+            spec_dir=str(snapshot.spec_dir),
+            wing=str(getattr(adapter, "wing", "")) or None,
+            palace_path=str(getattr(adapter, "palace_path", "")) or None,
+            status="partial",
+            expected_count=0,
+            written_count=0,
+            adopted_count=0,
+            skipped_count=0,
+            failed_count=1,
+            drifted_count=0,
+            errors=[type(exc).__name__],
         )
     except (ImportError, OSError, RuntimeError, SpecMemoryError, SystemExit) as exc:
         return SpecMemoryMineReport(
@@ -268,8 +356,8 @@ def mine_spec_requirements(
     adopted = _read_int(result, "already_present")
     skipped = _read_int(result, "skipped")
     failed = _read_int(result, "failed")
+    drifted = _read_int(result, "drifted")
     unavailable = _read_int(result, "unavailable")
-    drifted = max(0, len(expected) - len(drawer_ids) - unavailable)
     status = "complete"
     if unavailable:
         status = "unavailable"
@@ -288,6 +376,7 @@ def mine_spec_requirements(
         skipped_count=skipped,
         failed_count=failed,
         drifted_count=drifted,
+        unavailable_count=unavailable,
         drawer_ids=drawer_ids,
         expected_drawer_ids=expected,
         errors=[str(error) for error in getattr(result, "errors", []) if isinstance(error, str)],

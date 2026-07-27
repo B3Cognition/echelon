@@ -299,9 +299,12 @@ class MemPalaceWriter:
             return ExactDrawerWriteResult("written", drawer_id)
         except ImportError:
             return ExactDrawerWriteResult("unavailable", None)
-        except Exception:
+        except (OSError, RuntimeError):
             self.write_failures += 1
             return ExactDrawerWriteResult("unavailable", None)
+        except Exception:
+            self.write_failures += 1
+            return ExactDrawerWriteResult("failed", None)
 
     def verify_exact(
         self,
@@ -430,6 +433,16 @@ class MemPalaceWriter:
         """Get the MemPalace ChromaDB collection."""
         from mempalace.miner import get_collection  # type: ignore[import]
         return get_collection(self.ctx.palace_path)
+
+    def get_collection_read_only(self):
+        """Open the existing MemPalace collection without creating storage."""
+        from mempalace.miner import get_collection  # type: ignore[import]
+        try:
+            return get_collection(self.ctx.palace_path, create=False)
+        except (KeyError, ValueError) as exc:
+            raise RuntimeError(
+                "MemPalace collection does not exist"
+            ) from exc
 
     def _write_drawer(
         self,

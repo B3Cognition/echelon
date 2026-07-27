@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
+import hashlib
 import json
+from pathlib import Path
 from typing import Any
 
 from echelon.context_reconciliation import reconcile_drawers
 from echelon.mempalace_requirements import (
     SpecMemoryError,
+    PlannedRequirementDrawer,
     create_requirement_memory_adapter,
     load_canonical_spec_snapshot,
     resolve_spec_dir,
 )
+
+MAX_AUDIT_SCAN_ROWS = 1_000
 
 
 @dataclass(frozen=True)
@@ -19,6 +23,12 @@ class _CollectionDrawer:
     drawer_id: str
     content: str
     metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _ParsedCollectionRows:
+    rows: dict[str, tuple[str, dict[str, Any]]]
+    malformed: dict[str, tuple[str, ...]]
 
 
 @dataclass(frozen=True)
@@ -66,18 +76,13 @@ class SpecMemoryAuditReport:
 
 
 def _collection_from_adapter(adapter: object) -> object:
-    collection = getattr(adapter, "collection", None)
-    if collection is not None:
-        return collection
-    miner = getattr(adapter, "miner", None)
-    writer = getattr(miner, "_get_writer", lambda: None)()
-    getter = getattr(writer, "_get_collection", None)
-    if callable(getter):
-        return getter()
+    opener = getattr(adapter, "open_collection_read_only", None)
+    if callable(opener):
+        return opener()
     raise SpecMemoryError("MemPalace collection is unavailable")
 
 
-def _as_collection_rows(raw: object) -> dict[str, tuple[str, dict[str, Any]]]:
+def _as_collection_rows(raw: object) -> _ParsedCollectionRows:
     if type(raw) is not dict:
         raise SpecMemoryError("invalid MemPalace collection response")
     ids = raw.get("ids")
@@ -88,19 +93,30 @@ def _as_collection_rows(raw: object) -> dict[str, tuple[str, dict[str, Any]]]:
     if len(ids) != len(documents) or len(ids) != len(metadatas):
         raise SpecMemoryError("invalid MemPalace collection response")
     result: dict[str, tuple[str, dict[str, Any]]] = {}
+    malformed: dict[str, tuple[str, ...]] = {}
     for drawer_id, document, metadata in zip(ids, documents, metadatas):
-        if type(drawer_id) is str and type(document) is str and type(metadata) is dict:
-            result[drawer_id] = (document, metadata)
-        else:
+        if type(drawer_id) is not str or not drawer_id:
             raise SpecMemoryError("invalid MemPalace collection response")
-    return result
+        reasons: list[str] = []
+        if type(document) is not str:
+            reasons.append("invalid_document")
+        if type(metadata) is not dict:
+            reasons.append("invalid_metadata")
+        if drawer_id in result or drawer_id in malformed:
+            reasons.append("duplicate_response_id")
+        if reasons:
+            malformed[drawer_id] = tuple(reasons)
+            result.pop(drawer_id, None)
+        else:
+            result[drawer_id] = (document, metadata)
+    return _ParsedCollectionRows(rows=result, malformed=malformed)
 
 
 def _unavailable_report(
     *,
     snapshot: object,
     adapter: object | None,
-    expected: list[str],
+    expected: list[object],
     error: Exception | SystemExit,
 ) -> SpecMemoryAuditReport:
     return SpecMemoryAuditReport(
@@ -111,6 +127,25 @@ def _unavailable_report(
         palace_path=str(getattr(adapter, "palace_path", "")) or None,
         status="unavailable",
         expected_count=len(expected),
+        present_current_count=0,
+        errors=[type(error).__name__],
+    )
+
+
+def _failure_report(
+    *,
+    snapshot: object,
+    adapter: object | None,
+    error: Exception,
+) -> SpecMemoryAuditReport:
+    return SpecMemoryAuditReport(
+        schema_version=1,
+        spec_id=getattr(snapshot, "spec_id"),
+        spec_dir=str(getattr(snapshot, "spec_dir")),
+        wing=str(getattr(adapter, "wing", "")) or None,
+        palace_path=str(getattr(adapter, "palace_path", "")) or None,
+        status="fail",
+        expected_count=0,
         present_current_count=0,
         errors=[type(error).__name__],
     )
@@ -127,9 +162,96 @@ def _status_for_failures(report: SpecMemoryAuditReport) -> str:
     )
     if any(fail_lists):
         return "fail"
-    if report.duplicate or (report.retrieval_probe or {}).get("status") == "warn":
+    if (
+        report.duplicate
+        or report.recommendations
+        or (report.retrieval_probe or {}).get("status") == "warn"
+    ):
         return "warn"
     return "pass"
+
+
+def _append_unique(values: list[str], value: str) -> None:
+    if value not in values:
+        values.append(value)
+
+
+def _points_to_spec(metadata: dict[str, Any], snapshot: object) -> bool:
+    raw_path = metadata.get("artifact_path") or metadata.get("source_file")
+    if not isinstance(raw_path, str):
+        return False
+    normalized = raw_path.replace("\\", "/").lstrip("./")
+    marker = f"specs/{getattr(snapshot, 'spec_id')}/"
+    return marker in normalized
+
+
+def _scan_spec_extras(
+    collection: object,
+    *,
+    adapter: object,
+    snapshot: object,
+    expected_rows: list[PlannedRequirementDrawer],
+) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
+    try:
+        raw = collection.get(  # type: ignore[attr-defined]
+            where={"wing": getattr(adapter, "wing")},
+            include=["documents", "metadatas"],
+            limit=MAX_AUDIT_SCAN_ROWS,
+        )
+    except TypeError:
+        return [], [], [], [], [], ["bounded_extra_scan_unsupported"]
+    parsed = _as_collection_rows(raw)
+    expected_ids = {row.drawer_id for row in expected_rows}
+    expected_requirement_ids = {
+        row.requirement_id for row in expected_rows
+    }
+    stale: list[str] = []
+    duplicate: list[str] = []
+    non_canonical: list[str] = []
+    lifecycle_excluded: list[str] = []
+    errors: list[str] = []
+    for drawer_id, reasons in parsed.malformed.items():
+        if drawer_id in expected_ids:
+            continue
+        errors.extend(f"{drawer_id}:{reason}" for reason in reasons)
+    for drawer_id, (_document, metadata) in parsed.rows.items():
+        if drawer_id in expected_ids or not _points_to_spec(metadata, snapshot):
+            continue
+        artifact_path = metadata.get("artifact_path") or metadata.get(
+            "source_file"
+        )
+        current_hash = getattr(snapshot, "artifact_metadata")["artifact_hash"]
+        status = metadata.get(
+            "lifecycle_status",
+            metadata.get("status", "active"),
+        )
+        if status in {"deprecated", "superseded", "removed", "delivered"}:
+            _append_unique(lifecycle_excluded, drawer_id)
+        if (
+            metadata.get("canonical") is not True
+            or artifact_path != getattr(snapshot, "source")
+        ):
+            _append_unique(non_canonical, drawer_id)
+        if metadata.get("artifact_hash") != current_hash:
+            _append_unique(stale, drawer_id)
+        requirement_id = metadata.get("requirement_id")
+        if (
+            requirement_id in expected_requirement_ids
+            and drawer_id not in stale
+            and drawer_id not in non_canonical
+            and drawer_id not in lifecycle_excluded
+        ):
+            _append_unique(duplicate, drawer_id)
+        elif requirement_id not in expected_requirement_ids:
+            _append_unique(stale, drawer_id)
+    return (
+        stale,
+        duplicate,
+        non_canonical,
+        lifecycle_excluded,
+        errors,
+        [],
+    )
 
 
 def audit_spec_memory(
@@ -142,25 +264,52 @@ def audit_spec_memory(
     snapshot = load_canonical_spec_snapshot(project_root, spec_dir)
     try:
         adapter = create_requirement_memory_adapter(project_root, run_id="audit")
-    except (ImportError, OSError, RuntimeError, SpecMemoryError, SystemExit) as exc:
+    except SpecMemoryError:
+        raise
+    except (Exception, SystemExit) as exc:
         return _unavailable_report(snapshot=snapshot, adapter=None, expected=[], error=exc)
-    expected = adapter.plan_canonical_bytes(
-        snapshot.content,
-        source=snapshot.source,
-        artifact_metadata=snapshot.artifact_metadata,
-    )
+    try:
+        expected_rows = adapter.plan_canonical_rows(
+            snapshot.content,
+            source=snapshot.source,
+            artifact_metadata=snapshot.artifact_metadata,
+        )
+    except ValueError as exc:
+        return _failure_report(snapshot=snapshot, adapter=adapter, error=exc)
+    expected = [row.drawer_id for row in expected_rows]
     try:
         collection = _collection_from_adapter(adapter)
-        raw = collection.get(ids=expected, include=["documents", "metadatas"])
-        rows = _as_collection_rows(raw)
-    except (ImportError, OSError, RuntimeError, SpecMemoryError, SystemExit) as exc:
+        raw = (
+            collection.get(
+                ids=expected,
+                include=["documents", "metadatas"],
+            )
+            if expected
+            else {"ids": [], "documents": [], "metadatas": []}
+        )
+        parsed = _as_collection_rows(raw)
+    except (Exception, SystemExit) as exc:
         return _unavailable_report(snapshot=snapshot, adapter=adapter, expected=expected, error=exc)
-    missing = [drawer_id for drawer_id in expected if drawer_id not in rows]
+    rows = parsed.rows
+    missing = [
+        drawer_id
+        for drawer_id in expected
+        if drawer_id not in rows and drawer_id not in parsed.malformed
+    ]
     stale: list[str] = []
     wrong_wing: list[str] = []
     wrong_room: list[str] = []
+    duplicate: list[str] = []
     non_canonical: list[str] = []
     lifecycle_excluded: list[str] = []
+    errors: list[str] = []
+    recommendations: list[str] = []
+    for drawer_id, reasons in parsed.malformed.items():
+        errors.extend(f"{drawer_id}:{reason}" for reason in reasons)
+        if "invalid_document" in reasons:
+            _append_unique(stale, drawer_id)
+        if "invalid_metadata" in reasons or "duplicate_response_id" in reasons:
+            _append_unique(non_canonical, drawer_id)
     present = 0
     drawers = [
         _CollectionDrawer(drawer_id=drawer_id, content=document, metadata=metadata)
@@ -172,66 +321,82 @@ def audit_spec_memory(
         rejection["drawer_id"]: rejection["reason"]
         for rejection in reconciliation.rejected
     }
+    expected_by_id = {row.drawer_id: row for row in expected_rows}
     for drawer_id in expected:
+        planned = expected_by_id[drawer_id]
         row = rows.get(drawer_id)
         if row is None:
             continue
-        _document, metadata = row
+        document, metadata = row
         rejection_reason = rejected_reasons.get(drawer_id)
         if rejection_reason == "lifecycle_excluded":
             lifecycle_excluded.append(drawer_id)
         elif rejection_reason == "hash_mismatch":
             stale.append(drawer_id)
         elif rejection_reason is not None or drawer_id not in accepted_ids:
-            non_canonical.append(drawer_id)
+            _append_unique(non_canonical, drawer_id)
         if metadata.get("wing") != getattr(adapter, "wing", None):
-            wrong_wing.append(drawer_id)
-        if metadata.get("room") not in {"functional-requirements", "non-functional-requirements", "acceptance-criteria", "user-stories"}:
-            wrong_room.append(drawer_id)
+            _append_unique(wrong_wing, drawer_id)
+        if metadata.get("room") != planned.room:
+            _append_unique(wrong_room, drawer_id)
         if metadata.get("canonical") is not True:
-            non_canonical.append(drawer_id)
+            _append_unique(non_canonical, drawer_id)
         if (
-            metadata.get("artifact_hash") != snapshot.artifact_metadata["artifact_hash"]
+            metadata.get("artifact_hash") != planned.artifact_hash
             and drawer_id not in stale
         ):
-            stale.append(drawer_id)
+            _append_unique(stale, drawer_id)
         if metadata.get("lifecycle_status", metadata.get("status", "active")) in {"deprecated", "superseded", "removed", "delivered"}:
             if drawer_id not in lifecycle_excluded:
-                lifecycle_excluded.append(drawer_id)
+                _append_unique(lifecycle_excluded, drawer_id)
         if metadata.get("artifact_path") != snapshot.source and drawer_id not in non_canonical:
-            non_canonical.append(drawer_id)
+            _append_unique(non_canonical, drawer_id)
+        if (
+            metadata.get("deterministic_identity_schema_version") != 1
+            or metadata.get("requirement_id") != planned.requirement_id
+        ):
+            _append_unique(non_canonical, drawer_id)
+        if (
+            metadata.get("canonical_spec_sha256")
+            != planned.canonical_spec_sha256
+            or metadata.get("requirement_content_sha256")
+            != planned.requirement_content_sha256
+            or hashlib.sha256(document.encode("utf-8")).hexdigest()
+            != planned.requirement_content_sha256
+        ):
+            _append_unique(stale, drawer_id)
         if drawer_id in stale or drawer_id in wrong_wing or drawer_id in wrong_room or drawer_id in non_canonical or drawer_id in lifecycle_excluded:
             continue
-        try:
-            verify_outcome = getattr(adapter, "verify_canonical_bytes_outcome", None)
-            if callable(verify_outcome):
-                outcome = verify_outcome(
-                    snapshot.content,
-                    source=snapshot.source,
-                    artifact_metadata=snapshot.artifact_metadata,
-                    drawer_ids=[drawer_id],
-                )
-                if outcome == "unavailable":
-                    return _unavailable_report(
-                        snapshot=snapshot,
-                        adapter=adapter,
-                        expected=expected,
-                        error=SpecMemoryError("MemPalace exact verification is unavailable"),
-                    )
-                exact = outcome == "exact"
-            else:
-                exact = adapter.verify_canonical_bytes(
-                    snapshot.content,
-                    source=snapshot.source,
-                    artifact_metadata=snapshot.artifact_metadata,
-                    drawer_ids=[drawer_id],
-                )
-        except (ImportError, OSError, RuntimeError, SpecMemoryError, SystemExit) as exc:
-            return _unavailable_report(snapshot=snapshot, adapter=adapter, expected=expected, error=exc)
-        if exact:
-            present += 1
-        else:
-            stale.append(drawer_id)
+        present += 1
+    try:
+        (
+            extra_stale,
+            duplicate,
+            extra_non_canonical,
+            extra_lifecycle,
+            scan_errors,
+            scan_recommendations,
+        ) = _scan_spec_extras(
+            collection,
+            adapter=adapter,
+            snapshot=snapshot,
+            expected_rows=expected_rows,
+        )
+    except (Exception, SystemExit) as exc:
+        return _unavailable_report(
+            snapshot=snapshot,
+            adapter=adapter,
+            expected=expected,
+            error=exc,
+        )
+    for value in extra_stale:
+        _append_unique(stale, value)
+    for value in extra_non_canonical:
+        _append_unique(non_canonical, value)
+    for value in extra_lifecycle:
+        _append_unique(lifecycle_excluded, value)
+    errors.extend(scan_errors)
+    recommendations.extend(scan_recommendations)
     report = SpecMemoryAuditReport(
         schema_version=1,
         spec_id=snapshot.spec_id,
@@ -242,12 +407,15 @@ def audit_spec_memory(
         expected_count=len(expected),
         present_current_count=present,
         missing=missing,
-        stale=stale,
-        wrong_wing=wrong_wing,
-        wrong_room=wrong_room,
-        non_canonical=non_canonical,
-        lifecycle_excluded=lifecycle_excluded,
+        stale=sorted(stale),
+        wrong_wing=sorted(wrong_wing),
+        wrong_room=sorted(wrong_room),
+        duplicate=sorted(duplicate),
+        non_canonical=sorted(non_canonical),
+        lifecycle_excluded=sorted(lifecycle_excluded),
         retrieval_probe={"status": "skipped"} if not probe_retrieval else {"status": "warn", "checked": 0},
+        recommendations=sorted(set(recommendations)),
+        errors=sorted(set(errors)),
     )
     return SpecMemoryAuditReport(**{**report.to_dict(), "status": _status_for_failures(report)})
 

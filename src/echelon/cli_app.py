@@ -1755,7 +1755,7 @@ def spec_memory_mine(
         f"written={report.written_count} adopted={report.adopted_count} "
         f"drifted={report.drifted_count} failed={report.failed_count}"
     )
-    if write_report:
+    if write_report and report.status != "unavailable":
         spec_dir = Path(report.spec_dir)
         spec_dir.joinpath("mempalace-mine.json").write_text(
             __import__("json").dumps(report.to_dict(), indent=2, sort_keys=True) + "\n",

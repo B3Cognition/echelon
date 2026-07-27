@@ -484,3 +484,45 @@ def test_write_exact_classifies_backend_failure_as_unavailable() -> None:
 
     assert unavailable.outcome == "unavailable"
     assert failed.outcome == "unavailable"
+
+
+def test_read_only_collection_open_never_requests_creation() -> None:
+    writer = MemPalaceWriter(_make_ctx())
+
+    with patch("mempalace.miner.get_collection", return_value=object()) as get_collection:
+        writer.get_collection_read_only()
+
+    get_collection.assert_called_once_with("/fake/palace", create=False)
+
+
+def test_write_exact_classifies_non_backend_write_error_as_failed() -> None:
+    writer = MemPalaceWriter(_make_ctx(wing="demo"))
+    digest = "5" * 64
+    content = "FR-001: Upload."
+    drawer_id = writer_module.deterministic_requirement_drawer_id(
+        wing="demo",
+        room="functional-requirements",
+        spec_sha256=digest,
+        requirement_id="FR-001",
+        content=content,
+    )
+
+    class InvalidCollection:
+        def get(self, **kwargs):
+            return {"ids": [], "documents": [], "metadatas": []}
+
+        def add(self, **kwargs):
+            raise ValueError("invalid metadata")
+
+    with patch("codegen.memory.mempalace_writer.add_drawer", object()):
+        with patch.object(writer, "_get_collection", return_value=InvalidCollection()):
+            result = writer.write_exact(
+                room="functional-requirements",
+                content=content,
+                phase="RE",
+                drawer_id=drawer_id,
+                spec_sha256=digest,
+                requirement_id="FR-001",
+            )
+
+    assert result.outcome == "failed"
