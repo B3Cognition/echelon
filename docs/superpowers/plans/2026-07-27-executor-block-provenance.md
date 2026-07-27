@@ -26,7 +26,7 @@
 - Consumes: real `SquadController.run`, `AgentExecutor`, and `SquadStateStore`.
 - Produces: a regression asserting the durable `missing_phase_outputs` recovery state.
 
-- [ ] **Step 1: Add an end-to-end missing-output regression**
+- [x] **Step 1: Add an end-to-end missing-output regression**
 
 Create a `phase1-what` controller run whose provider returns valid
 `spec_status` and `evidence_resolution_status` updates while only `spec.md`
@@ -34,7 +34,7 @@ exists. Assert that the desired durable reason is `missing_phase_outputs`, the
 missing list contains `requirements-overview.md`, and no controller contract
 diagnostic is present.
 
-- [ ] **Step 2: Run the regression and verify the current ownership failure**
+- [x] **Step 2: Run the regression and verify the current ownership failure**
 
 Run:
 
@@ -57,24 +57,24 @@ Expected: FAIL because the durable reason is
 - Produces: `ExecutorBlockedResult(reason: str, result: SquadAgentResult)`.
 - Consumes: `_block_after_executor_failure(phase, reason, result, snapshot=...)`.
 
-- [ ] **Step 1: Define the immutable envelope**
+- [x] **Step 1: Define the immutable envelope**
 
 Add a frozen dataclass whose constructor validates a non-empty supported reason
 and a concrete `SquadAgentResult`.
 
-- [ ] **Step 2: Wrap controller-generated executor blocks**
+- [x] **Step 2: Wrap controller-generated executor blocks**
 
 Return the envelope for `missing_phase_outputs`,
 `invalid_evidence_inventory`, and `missing_consensus_prerequisite` after the
 provider result has already passed its phase contract.
 
-- [ ] **Step 3: Consume the envelope before provider preparation**
+- [x] **Step 3: Consume the envelope before provider preparation**
 
 In both normal squad execution and manual phase replay, capture a routing
 snapshot and call `_block_after_executor_failure` directly for the envelope.
 Ordinary results must retain the existing preparation path.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run:
 
@@ -94,7 +94,7 @@ Expected: PASS.
 - Produces: an installed CLI that classifies the next missing-output block
   correctly.
 
-- [ ] **Step 1: Run the full Python suite**
+- [x] **Step 1: Run the full Python suite**
 
 Run:
 
@@ -102,7 +102,7 @@ Run:
 python -m pytest -q
 ```
 
-- [ ] **Step 2: Install from the feature worktree**
+- [x] **Step 2: Install from the feature worktree**
 
 Run:
 
@@ -110,13 +110,13 @@ Run:
 bash scripts/install.sh
 ```
 
-- [ ] **Step 3: Verify recovery without dispatch**
+- [x] **Step 3: Verify recovery without dispatch**
 
 Use an isolated copy of the active run state and recorded provider result to
 verify the controller persists `missing_phase_outputs`. Do not launch the real
 provider during verification.
 
-- [ ] **Step 4: Commit and integrate**
+- [x] **Step 4: Commit and integrate**
 
 Commit the design, implementation, and regression tests. Merge only after the
 merged-result suite passes.

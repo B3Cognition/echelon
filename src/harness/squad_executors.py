@@ -7,6 +7,7 @@ import inspect
 import shutil
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -36,6 +37,56 @@ _STAGED_VERDICT_STATE_KEYS = {
     "WHY3": "why3_verdict",
     "ASSESS2": "assess2_verdict",
 }
+_EXECUTOR_BLOCK_REASONS = frozenset(
+    {
+        "invalid_evidence_inventory",
+        "missing_consensus_prerequisite",
+        "missing_phase_outputs",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ExecutorBlockedResult:
+    """Trusted executor recovery produced after provider validation."""
+
+    reason: str
+    result: "SquadAgentResult"
+
+    def __post_init__(self) -> None:
+        from harness.prepared_phase_result import detach_squad_agent_result
+        from harness.squad_provider import SquadAgentResult
+
+        if self.reason not in _EXECUTOR_BLOCK_REASONS:
+            raise ControllerStateContractViolation(
+                "unsupported executor block reason",
+                contract="executor",
+                json_path="$.executor_block.reason",
+                validator="provenance",
+            )
+        if type(self.result) is not SquadAgentResult:
+            raise ControllerStateContractViolation(
+                "executor block result has an invalid type",
+                contract="executor",
+                json_path="$.executor_block.result",
+                validator="provenance",
+            )
+        detached = detach_squad_agent_result(self.result)
+        if detached.verdict != "BLOCKED":
+            raise ControllerStateContractViolation(
+                "executor block result must have a BLOCKED verdict",
+                contract="executor",
+                json_path="$.executor_block.result.verdict",
+                validator="provenance",
+            )
+        if detached.state_updates.get("blocked_reason") != self.reason:
+            raise ControllerStateContractViolation(
+                "executor block reason does not match result state",
+                contract="executor",
+                json_path="$.executor_block.result.state_updates.blocked_reason",
+                validator="provenance",
+            )
+        object.__setattr__(self, "result", detached)
 
 
 def _shared_agent_contract() -> str:
@@ -1144,7 +1195,7 @@ class PhaseExecutor(ABC):
     @abstractmethod
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
-    ) -> "SquadAgentResult":
+    ) -> "SquadAgentResult | ExecutorBlockedResult":
         ...
 
     def _write_journal_entries(
@@ -1514,7 +1565,7 @@ class AgentExecutor(PhaseExecutor):
 
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
-    ) -> "SquadAgentResult":
+    ) -> "SquadAgentResult | ExecutorBlockedResult":
         from harness.squad_provider import SquadAgentResult
 
         state = state_store.load()
@@ -1570,7 +1621,7 @@ class AgentExecutor(PhaseExecutor):
                 }
                 if isinstance(prior_invalid_outputs, list) and prior_invalid_outputs:
                     recovery_updates["invalid_outputs"] = prior_invalid_outputs
-                result = SquadAgentResult(
+                blocked_result = SquadAgentResult(
                     exit_code=0,
                     echelon_result={
                         "verdict": "BLOCKED",
@@ -1580,6 +1631,10 @@ class AgentExecutor(PhaseExecutor):
                     duration_ms=result.duration_ms,
                     timed_out=result.timed_out,
                     cost_usd=result.cost_usd,
+                )
+                return ExecutorBlockedResult(
+                    reason="missing_phase_outputs",
+                    result=blocked_result,
                 )
             elif node.id == "phase1-investigate":
                 spec_dir = self._canonical_spec_dir(state)
@@ -1593,7 +1648,7 @@ class AgentExecutor(PhaseExecutor):
                 )
                 if inventory_error:
                     recovery_state_updates = dict(result.state_updates)
-                    result = SquadAgentResult(
+                    blocked_result = SquadAgentResult(
                         exit_code=0,
                         echelon_result={
                             "verdict": "BLOCKED",
@@ -1610,6 +1665,10 @@ class AgentExecutor(PhaseExecutor):
                         duration_ms=result.duration_ms,
                         timed_out=result.timed_out,
                         cost_usd=result.cost_usd,
+                    )
+                    return ExecutorBlockedResult(
+                        reason="invalid_evidence_inventory",
+                        result=blocked_result,
                     )
         return result
 
@@ -1702,7 +1761,7 @@ class DeterministicUnderstandingExecutor(PhaseExecutor):
 
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
-    ) -> "SquadAgentResult":
+    ) -> "SquadAgentResult | ExecutorBlockedResult":
         from harness.config import get_full_resolved_config
         from harness.squad_provider import SquadAgentResult
 
@@ -2059,7 +2118,7 @@ class StagedParallelExecutor(PhaseExecutor):
 
     def execute(
         self, node: "PhaseNode", state_store: "SquadStateStore"
-    ) -> "SquadAgentResult":
+    ) -> "SquadAgentResult | ExecutorBlockedResult":
         from harness.squad_provider import SquadAgentResult
 
         stage1_agents = [a for a in node.agents if a.get("stage", 1) == 1]
@@ -2137,19 +2196,22 @@ class StagedParallelExecutor(PhaseExecutor):
                 if impl_report_path is not None
                 else Path(spec_dir_ref or "{spec_dir}") / "implementability-report.md"
             )
-            return SquadAgentResult(
-                exit_code=0,
-                echelon_result={
-                    "verdict": "BLOCKED",
-                    "state_updates": {
-                        "blocked_reason": "missing_consensus_prerequisite",
-                        "missing_outputs": [str(expected)],
+            return ExecutorBlockedResult(
+                reason="missing_consensus_prerequisite",
+                result=SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "BLOCKED",
+                        "state_updates": {
+                            "blocked_reason": "missing_consensus_prerequisite",
+                            "missing_outputs": [str(expected)],
+                        },
+                        "journal_entries": [],
                     },
-                    "journal_entries": [],
-                },
-                raw_output=f"required PLAN2 input is missing: {expected}",
-                duration_ms=0,
-                timed_out=False,
+                    raw_output=f"required PLAN2 input is missing: {expected}",
+                    duration_ms=0,
+                    timed_out=False,
+                ),
             )
 
         state = state_store.load()

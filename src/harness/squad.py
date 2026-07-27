@@ -79,6 +79,7 @@ from harness.squad_executors import (
     DeterministicLexiconExecutor,
     DeterministicStructuralExecutor,
     DeterministicUnderstandingExecutor,
+    ExecutorBlockedResult,
     HumanGateExecutor,
     PhaseExecutor,
     StagedParallelExecutor,
@@ -2292,6 +2293,18 @@ class SquadController:
                 self._block_after_executor_contract_failure(node, exc)
                 return SquadResult.from_state(self._state_store.load())
 
+            if isinstance(result, ExecutorBlockedResult):
+                snapshot = self._state_store.capture_routing_snapshot(
+                    expected_phase=node.id,
+                )
+                self._block_after_executor_failure(
+                    phase,
+                    result.reason,
+                    result.result,
+                    snapshot=snapshot,
+                )
+                return SquadResult.from_state(self._state_store.load())
+
             snapshot = self._state_store.capture_routing_snapshot(
                 expected_phase=node.id
             )
@@ -2699,6 +2712,18 @@ class SquadController:
                     result = executor.execute(node, self._state_store)
         except ControllerStateContractViolation as exc:
             self._block_after_executor_contract_failure(node, exc)
+            return SquadResult.from_state(self._state_store.load())
+
+        if isinstance(result, ExecutorBlockedResult):
+            snapshot = self._state_store.capture_routing_snapshot(
+                expected_phase=node.id,
+            )
+            self._block_after_executor_failure(
+                phase,
+                result.reason,
+                result.result,
+                snapshot=snapshot,
+            )
             return SquadResult.from_state(self._state_store.load())
 
         snapshot = self._state_store.capture_routing_snapshot(

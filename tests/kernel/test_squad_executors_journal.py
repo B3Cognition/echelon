@@ -24,6 +24,7 @@ from harness.squad_executors import (
     AgentExecutor,
     ConditionalSequentialExecutor,
     DeterministicLexiconExecutor,
+    ExecutorBlockedResult,
     StagedParallelExecutor,
     _MANDATORY_PHASE_OUTPUTS,
     _canonical_echelon_result_contract,
@@ -65,6 +66,25 @@ def _result(entries=None, verdict="DONE") -> SquadAgentResult:
         duration_ms=0,
         timed_out=False,
     )
+
+
+def test_executor_block_rejects_unknown_internal_reason_as_contract_failure() -> None:
+    blocked = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "BLOCKED",
+            "state_updates": {"blocked_reason": "invented_recovery"},
+        },
+        raw_output="",
+        duration_ms=0,
+        timed_out=False,
+    )
+
+    with pytest.raises(ControllerStateContractViolation) as raised:
+        ExecutorBlockedResult(reason="invented_recovery", result=blocked)
+
+    assert raised.value.contract == "executor"
+    assert raised.value.validator == "provenance"
 
 
 def test_phase1_investigate_requires_evidence_artifacts() -> None:
@@ -288,12 +308,13 @@ def test_phase1_investigate_preserves_valid_evidence_result_when_grade_artifact_
 
     result = executor.execute(node, store)
 
-    assert result.verdict == "BLOCKED"
-    assert result.state_updates["missing_outputs"] == [
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "missing_phase_outputs"
+    assert result.result.state_updates["missing_outputs"] == [
         "evidence-grades.md",
         "evidence-inventory.json",
     ]
-    assert result.state_updates["recovery_state_updates"] == {
+    assert result.result.state_updates["recovery_state_updates"] == {
         "evidence_resolution_status": "conflicting"
     }
 
@@ -2186,9 +2207,9 @@ def test_staged_parallel_blocks_plan2_when_implementability_report_is_missing(tm
 
     result = executor.execute(node, state_store)
 
-    assert result.verdict == "BLOCKED"
-    assert result.state_updates["blocked_reason"] == "missing_consensus_prerequisite"
-    assert result.state_updates["missing_outputs"] == [
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "missing_consensus_prerequisite"
+    assert result.result.state_updates["missing_outputs"] == [
         str(spec_dir / "implementability-report.md")
     ]
     assert provider.exec_agent.call_count == 1
@@ -2612,9 +2633,9 @@ def test_phase3_sentinel_blocks_when_required_outputs_missing(tmp_path):
 
     result = ex.execute(node, store)
 
-    assert result.verdict == "BLOCKED"
-    assert result.state_updates["blocked_reason"] == "missing_phase_outputs"
-    assert result.state_updates["missing_outputs"] == [
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "missing_phase_outputs"
+    assert result.result.state_updates["missing_outputs"] == [
         "test-strategy.md",
         "test-architecture.md",
         "coverage-map.md",
@@ -2662,9 +2683,9 @@ def test_phase3_plan_blocks_when_required_outputs_missing(tmp_path):
 
     result = ex.execute(node, store)
 
-    assert result.verdict == "BLOCKED"
-    assert result.state_updates["blocked_reason"] == "missing_phase_outputs"
-    assert result.state_updates["missing_outputs"] == [
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "missing_phase_outputs"
+    assert result.result.state_updates["missing_outputs"] == [
         "tasks.md",
         "critical-path.md",
         "risk-matrix.md",
@@ -2931,6 +2952,6 @@ def test_phase3_sentinel_does_not_recover_shadow_outputs_without_explicit_output
 
     result = ex.execute(node, store)
 
-    assert result.verdict == "BLOCKED"
-    assert result.state_updates["blocked_reason"] == "missing_phase_outputs"
+    assert isinstance(result, ExecutorBlockedResult)
+    assert result.reason == "missing_phase_outputs"
     assert not (spec_dir / "test-strategy.md").exists()

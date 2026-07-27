@@ -1653,6 +1653,69 @@ class TestAgentResultIntegrity:
         )
         assert "phase1-what" not in state.get("completed_phases", [])
 
+    @pytest.mark.parametrize("manual_phase_run", [False, True])
+    def test_executor_missing_output_uses_recovery_block(
+        self,
+        tmp_path: Path,
+        manual_phase_run: bool,
+    ) -> None:
+        provider = _mock_provider()
+        provider.exec_agent.return_value = SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "output_files": ["specs/001-demo/spec.md"],
+                "state_updates": {
+                    "spec_status": "planned",
+                    "evidence_resolution_status": "not_required",
+                },
+                "journal_entries": [],
+            },
+            raw_output="",
+            duration_ms=100,
+            timed_out=False,
+        )
+        ctrl, store = _controller(tmp_path, provider=provider)
+        store.initialize(
+            "r",
+            "banzai",
+            "msg",
+            0,
+            "phase1-what",
+            max_iterations=5,
+        )
+        _mark_constitution_complete(tmp_path, store)
+        spec_dir = tmp_path / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text("# Demo\n", encoding="utf-8")
+        state = store.load()
+        state["spec_id"] = "001-demo"
+        state["spec_dir"] = "specs/001-demo"
+        store.save(state)
+
+        result = (
+            ctrl.run_single_phase("phase1-what", "msg", "banzai")
+            if manual_phase_run
+            else ctrl.run("msg", "banzai")
+        )
+        state = store.load()
+
+        assert result.status == "blocked"
+        assert state["phase"] == "terminal-blocked"
+        assert state["blocked_reason"] == "missing_phase_outputs"
+        assert state["missing_outputs"] == ["requirements-overview.md"]
+        assert state["phase_output_recovery"] == {
+            "phase": "phase1-what",
+            "missing_outputs": ["requirements-overview.md"],
+            "prior_state_updates": {
+                "spec_status": "planned",
+                "evidence_resolution_status": "not_required",
+            },
+        }
+        assert "controller_contract_error" not in state
+        assert "recovery_instruction" not in state
+        assert "phase1-what" not in state.get("completed_phases", [])
+
     def test_successful_advance_clears_controller_recovery_instruction(
         self,
         tmp_path,
