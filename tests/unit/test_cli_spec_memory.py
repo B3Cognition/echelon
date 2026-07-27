@@ -126,3 +126,27 @@ def test_spec_memory_audit_invalid_selector_is_bounded(monkeypatch, tmp_path: Pa
     assert result.exit_code == 2
     assert "run-local specs are not supported" in result.output
     assert "Traceback" not in result.output
+
+
+@pytest.mark.unit
+def test_spec_memory_mine_invalid_selector_is_bounded(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["spec", "memory", "mine", "runs/x/specs/003-demo"])
+
+    assert result.exit_code == 2
+    assert "run-local specs are not supported" in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.unit
+def test_spec_memory_refresh_invalid_selector_is_bounded(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.chdir(tmp_path)
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["spec", "memory", "refresh", "runs/x/specs/003-demo"])
+
+    assert result.exit_code == 2
+    assert "run-local specs are not supported" in result.output
+    assert "Traceback" not in result.output

@@ -442,7 +442,7 @@ def test_write_exact_does_not_overwrite_racing_same_id_drift() -> None:
     assert collection.records[drawer_id][0] == "FR-001: Racing drift"
 
 
-def test_write_exact_distinguishes_unavailable_from_write_failure() -> None:
+def test_write_exact_classifies_backend_failure_as_unavailable() -> None:
     ctx = _make_ctx(wing="demo")
     writer = MemPalaceWriter(ctx)
     digest = "4" * 64
@@ -483,4 +483,4 @@ def test_write_exact_distinguishes_unavailable_from_write_failure() -> None:
             )
 
     assert unavailable.outcome == "unavailable"
-    assert failed.outcome == "failed"
+    assert failed.outcome == "unavailable"

@@ -240,11 +240,28 @@ def mine_spec_requirements(
             drifted_count=0,
             errors=[type(exc).__name__],
         )
-    result = adapter.mine_canonical_bytes(
-        snapshot.content,
-        source=snapshot.source,
-        artifact_metadata=snapshot.artifact_metadata,
-    )
+    try:
+        result = adapter.mine_canonical_bytes(
+            snapshot.content,
+            source=snapshot.source,
+            artifact_metadata=snapshot.artifact_metadata,
+        )
+    except (ImportError, OSError, RuntimeError, SpecMemoryError) as exc:
+        return SpecMemoryMineReport(
+            schema_version=1,
+            spec_id=snapshot.spec_id,
+            spec_dir=str(snapshot.spec_dir),
+            wing=str(getattr(adapter, "wing", "")) or None,
+            palace_path=str(getattr(adapter, "palace_path", "")) or None,
+            status="unavailable",
+            expected_count=0,
+            written_count=0,
+            adopted_count=0,
+            skipped_count=0,
+            failed_count=0,
+            drifted_count=0,
+            errors=[type(exc).__name__],
+        )
     expected = _read_str_list(result, "expected_drawer_ids")
     drawer_ids = _read_str_list(result, "drawer_ids")
     written = _read_int(result, "written")
@@ -254,7 +271,7 @@ def mine_spec_requirements(
     unavailable = _read_int(result, "unavailable")
     drifted = max(0, len(expected) - len(drawer_ids) - unavailable)
     status = "complete"
-    if unavailable and not drawer_ids:
+    if unavailable:
         status = "unavailable"
     elif failed or drifted or unavailable:
         status = "partial"

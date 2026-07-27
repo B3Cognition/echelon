@@ -119,3 +119,61 @@ def test_mine_spec_requirements_maps_drift_without_overwrite(tmp_path: Path, mon
     assert report.drifted_count == 1
     assert report.drawer_ids == ["drawer-ok"]
     assert report.expected_drawer_ids == ["drawer-drift", "drawer-ok"]
+
+
+@pytest.mark.unit
+def test_mine_spec_requirements_maps_runtime_backend_failure_to_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_dir = write_workspace(tmp_path)
+
+    class FakeAdapter:
+        def mine_canonical_bytes(self, content, *, source, artifact_metadata):
+            raise RuntimeError("backend details")
+
+    monkeypatch.setattr(
+        "echelon.mempalace_requirements.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    from echelon.mempalace_requirements import mine_spec_requirements
+
+    report = mine_spec_requirements(tmp_path, spec_dir, run_id="manual")
+
+    assert report.status == "unavailable"
+    assert report.errors == ["RuntimeError"]
+
+
+@pytest.mark.unit
+def test_mine_spec_requirements_maps_partial_unavailable_result_to_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_dir = write_workspace(tmp_path)
+
+    class FakeResult:
+        written = 1
+        already_present = 0
+        skipped = 1
+        failed = 0
+        unavailable = 1
+        drawer_ids = ["drawer-ok"]
+        expected_drawer_ids = ["drawer-ok", "drawer-unavailable"]
+        errors = []
+
+    class FakeAdapter:
+        wing = "demo-wing"
+        palace_path = tmp_path / ".mempalace"
+
+        def mine_canonical_bytes(self, content, *, source, artifact_metadata):
+            return FakeResult()
+
+    monkeypatch.setattr(
+        "echelon.mempalace_requirements.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    from echelon.mempalace_requirements import mine_spec_requirements
+
+    report = mine_spec_requirements(tmp_path, spec_dir, run_id="manual")
+
+    assert report.status == "unavailable"
+    assert report.drawer_ids == ["drawer-ok"]
+    assert report.expected_drawer_ids == ["drawer-ok", "drawer-unavailable"]

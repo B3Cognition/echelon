@@ -301,7 +301,7 @@ class MemPalaceWriter:
             return ExactDrawerWriteResult("unavailable", None)
         except Exception:
             self.write_failures += 1
-            return ExactDrawerWriteResult("failed", None)
+            return ExactDrawerWriteResult("unavailable", None)
 
     def verify_exact(
         self,
