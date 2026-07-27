@@ -224,7 +224,7 @@ def mine_spec_requirements(
     snapshot = load_canonical_spec_snapshot(project_root, spec_dir)
     try:
         adapter = create_requirement_memory_adapter(project_root, run_id)
-    except Exception as exc:
+    except (Exception, SystemExit) as exc:
         return SpecMemoryMineReport(
             schema_version=1,
             spec_id=snapshot.spec_id,
@@ -246,7 +246,7 @@ def mine_spec_requirements(
             source=snapshot.source,
             artifact_metadata=snapshot.artifact_metadata,
         )
-    except (ImportError, OSError, RuntimeError, SpecMemoryError) as exc:
+    except (ImportError, OSError, RuntimeError, SpecMemoryError, SystemExit) as exc:
         return SpecMemoryMineReport(
             schema_version=1,
             spec_id=snapshot.spec_id,

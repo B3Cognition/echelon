@@ -312,3 +312,14 @@ def test_unavailable_audit_reports_error_class_without_traceback(tmp_path: Path,
 
     assert report.status == "unavailable"
     assert report.errors == ["RuntimeError"]
+
+
+@pytest.mark.unit
+def test_audit_maps_missing_legacy_config_to_unavailable(tmp_path: Path) -> None:
+    spec_dir = make_spec(tmp_path)
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "unavailable"
+    assert report.errors == ["SystemExit"]

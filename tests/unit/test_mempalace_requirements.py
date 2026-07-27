@@ -144,6 +144,18 @@ def test_mine_spec_requirements_maps_runtime_backend_failure_to_unavailable(
 
 
 @pytest.mark.unit
+def test_mine_spec_requirements_maps_missing_legacy_config_to_unavailable(tmp_path: Path) -> None:
+    spec_dir = write_workspace(tmp_path)
+    (tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml").unlink()
+    from echelon.mempalace_requirements import mine_spec_requirements
+
+    report = mine_spec_requirements(tmp_path, spec_dir, run_id="manual")
+
+    assert report.status == "unavailable"
+    assert report.errors == ["SystemExit"]
+
+
+@pytest.mark.unit
 def test_mine_spec_requirements_maps_partial_unavailable_result_to_unavailable(
     tmp_path: Path, monkeypatch
 ) -> None:

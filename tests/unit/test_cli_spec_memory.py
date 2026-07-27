@@ -70,6 +70,26 @@ def test_spec_memory_audit_exit_codes(monkeypatch, tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_spec_memory_audit_json_maps_missing_legacy_config_to_unavailable(monkeypatch, tmp_path: Path) -> None:
+    (tmp_path / ".echelon").mkdir()
+    (tmp_path / ".echelon" / "config.yml").write_text(
+        "mempalace:\n  wing: demo-wing\n",
+        encoding="utf-8",
+    )
+    spec_dir = tmp_path / "specs" / "003-demo"
+    spec_dir.mkdir(parents=True)
+    spec_dir.joinpath("spec.md").write_text("FR-001: Upload a photo.\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["spec", "memory", "audit", "003-demo", "--json"])
+
+    assert result.exit_code == 2
+    assert '"status": "unavailable"' in result.output
+    assert '"errors": [\n    "SystemExit"\n  ]' in result.output
+
+
+@pytest.mark.unit
 def test_spec_memory_refresh_runs_mine_then_audit(monkeypatch, tmp_path: Path) -> None:
     from echelon.mempalace_audit import SpecMemoryAuditReport
     from echelon.mempalace_requirements import SpecMemoryMineReport

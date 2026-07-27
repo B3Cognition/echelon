@@ -101,7 +101,7 @@ def _unavailable_report(
     snapshot: object,
     adapter: object | None,
     expected: list[str],
-    error: Exception,
+    error: Exception | SystemExit,
 ) -> SpecMemoryAuditReport:
     return SpecMemoryAuditReport(
         schema_version=1,
@@ -142,7 +142,7 @@ def audit_spec_memory(
     snapshot = load_canonical_spec_snapshot(project_root, spec_dir)
     try:
         adapter = create_requirement_memory_adapter(project_root, run_id="audit")
-    except (ImportError, OSError, RuntimeError, SpecMemoryError) as exc:
+    except (ImportError, OSError, RuntimeError, SpecMemoryError, SystemExit) as exc:
         return _unavailable_report(snapshot=snapshot, adapter=None, expected=[], error=exc)
     expected = adapter.plan_canonical_bytes(
         snapshot.content,
@@ -153,7 +153,7 @@ def audit_spec_memory(
         collection = _collection_from_adapter(adapter)
         raw = collection.get(ids=expected, include=["documents", "metadatas"])
         rows = _as_collection_rows(raw)
-    except (ImportError, OSError, RuntimeError, SpecMemoryError) as exc:
+    except (ImportError, OSError, RuntimeError, SpecMemoryError, SystemExit) as exc:
         return _unavailable_report(snapshot=snapshot, adapter=adapter, expected=expected, error=exc)
     missing = [drawer_id for drawer_id in expected if drawer_id not in rows]
     stale: list[str] = []
@@ -226,7 +226,7 @@ def audit_spec_memory(
                     artifact_metadata=snapshot.artifact_metadata,
                     drawer_ids=[drawer_id],
                 )
-        except (ImportError, OSError, RuntimeError, SpecMemoryError) as exc:
+        except (ImportError, OSError, RuntimeError, SpecMemoryError, SystemExit) as exc:
             return _unavailable_report(snapshot=snapshot, adapter=adapter, expected=expected, error=exc)
         if exact:
             present += 1
