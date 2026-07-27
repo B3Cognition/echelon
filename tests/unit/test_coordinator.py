@@ -667,6 +667,43 @@ class TestSmartResumeDetection:
         ]
         assert final_state["target_task_ids"] == ["T-011", "T-012"]
 
+    def test_target_task_ids_are_derived_from_tasks_when_env_is_missing(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Targeted dispatch recovers task scope from canonical tasks.md."""
+        target = tmp_path / "sources" / "prosaic"
+        target.mkdir(parents=True)
+        spec_dir = tmp_path / "specs" / "spec-001-demo"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=foundation req=FR-001 depends=none target=sources/prosaic\n"
+            "- [ ] T-002 complexity=standard phase=verify req=FR-002 depends=T-001 target=sources/prosaic\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("ECHELON_TARGET_REPO_NAME", "prosaic")
+        monkeypatch.setenv("ECHELON_TARGET_REPO_PATH", str(target))
+        monkeypatch.setenv("ECHELON_POLYREPO_ROOT", str(tmp_path))
+        monkeypatch.setenv("ECHELON_IMPLEMENTATION_TARGET", "sources/prosaic")
+        monkeypatch.setenv("ECHELON_DECLARED_TARGETS", "sources/prosaic")
+        monkeypatch.delenv("ECHELON_TARGET_TASK_IDS", raising=False)
+
+        coord = _make_coordinator(tmp_path, should_pass=True)
+        intent = RunIntent(spec_id="spec-001", max_outer=5, max_inner=1, reset=True)
+
+        with patch("harness.coordinator.RalphController") as MockRalph:
+            mock_controller = MagicMock()
+            mock_controller.run_loop.return_value = LoopResult(
+                status="converged", termination_reason="converged",
+                outer_iterations=1, inner_iterations=1,
+                pr_url=None, tokens_used=0, final_verify=None,
+            )
+            MockRalph.return_value = mock_controller
+
+            coord.start(intent)
+
+        store = StateStore(tmp_path / "runs" / "state", "spec-001", "default")
+        assert store.read()["target_task_ids"] == ["T-001", "T-002"]
+
     def test_spec_artifact_paths_are_recorded_in_state(self, tmp_path: Path) -> None:
         """Harness Context must be populated from Python-owned spec paths."""
         spec_dir = tmp_path / "specs" / "spec-001-demo"

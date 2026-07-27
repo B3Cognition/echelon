@@ -58,6 +58,28 @@ def _split_env_list(raw: str | None) -> list[str]:
     return [item.strip() for item in (raw or "").split(",") if item.strip()]
 
 
+def _derive_target_task_ids(
+    *,
+    tasks_file: Path | None,
+    declared_targets: list[str],
+    implementation_target: str | None,
+) -> list[str]:
+    """Recover target-owned task IDs from canonical task ownership metadata."""
+    target = (implementation_target or "").strip()
+    if not target or tasks_file is None or not tasks_file.is_file():
+        return []
+
+    from harness.task_targets import validate_task_targets
+
+    result = validate_task_targets(
+        tasks_file.read_text(encoding="utf-8", errors="replace"),
+        declared_targets=declared_targets or [target],
+    )
+    if not result.valid:
+        return []
+    return list(result.target_tasks.get(target, ()))
+
+
 
 class StrategyCoordinator:
     """Coordinates multiple strategy runs.
@@ -306,6 +328,12 @@ class StrategyCoordinator:
         spec_dir = find_spec_dir(intent.spec_id, spec_search_root)
         spec_file = spec_dir / "spec.md" if spec_dir is not None else None
         tasks_file = spec_dir / "tasks.md" if spec_dir is not None else None
+        if not target_task_ids:
+            target_task_ids = _derive_target_task_ids(
+                tasks_file=tasks_file,
+                declared_targets=declared_targets,
+                implementation_target=implementation_target,
+            )
         state_store.acquire_lock(run_id)
 
         try:

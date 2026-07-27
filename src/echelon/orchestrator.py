@@ -198,11 +198,7 @@ def _target_execution_plan(
     command: str,
 ) -> tuple[List[Path], dict[str, tuple[str, ...]]]:
     """Return dependency-ordered targets and their canonical task IDs."""
-    if (
-        len(targets) <= 1
-        or command not in {"run", "resume", "continue"}
-        or workspace_root is None
-    ):
+    if command not in {"run", "resume", "continue"} or workspace_root is None:
         return targets, {}
     spec_dir = find_spec_dir(spec_id, workspace_root)
     tasks_path = spec_dir / "tasks.md" if spec_dir is not None else None
