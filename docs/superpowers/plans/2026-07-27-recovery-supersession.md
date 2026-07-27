@@ -80,4 +80,4 @@
 - [x] Confirm the installed classifier repairs the legacy state, then run
   read-only `echelon spec status` against the active workspace.
 - [x] Commit through the normal branch workflow.
-- [ ] Integrate using the selected branch-completion option.
+- [x] Integrate using the selected branch-completion option.
