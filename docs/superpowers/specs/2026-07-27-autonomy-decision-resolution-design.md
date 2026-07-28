@@ -211,13 +211,22 @@ of `phase`, `pre_dispatch`, `stage_agent`, or `sequential_agent`.
 `stage_index` is a non-negative integer only for `stage_agent` and is null
 otherwise. A simple phase uses its phase id as `entry_id`; every nested entry
 must declare a non-empty `id`, and fallback from `id` to agent name is removed.
+`declaration_index` is zero for a simple phase or pre-dispatch entry and is the
+zero-based position in the phase's complete YAML `agents` list for staged and
+sequential entries; it is never renumbered within a stage. Thus two peers in one
+stage and two entries in different stages cannot acquire the same ordering
+identity by local renumbering.
 The canonical key is
 `<phase_id>/<dispatch_kind>/<stage-index-or-zero>/<entry_id>`. The workflow
 validator rejects duplicate nested ids or dispatch keys and inconsistent stage
 metadata.
 
 `PhaseGraph` attaches the descriptor, exact result contract, compiled
-`decision_policy`, and static `policy_digest` to the dispatch. A nested executor
+`decision_policy`, normalized dependency dispatch keys, and static
+`policy_digest` to the dispatch. Every `depends_on` value must resolve to the
+exact id of another entry in the same phase, must target a lower stage, and is
+compiled to that entry's `dispatch_key`; unknown ids, same-stage dependencies,
+cycles, and dependencies on later stages are workflow errors. A nested executor
 that returns a decision-bearing result wraps it in trusted
 `ExecutorDecisionResult`, analogous to the existing `ExecutorBlockedResult`.
 The wrapper contains the detached `SquadAgentResult`, complete descriptor, and
@@ -225,15 +234,17 @@ The wrapper contains the detached `SquadAgentResult`, complete descriptor, and
 executors use the same wrapper.
 
 Preparation verifies the wrapper against the compiled graph and seals
-`dispatch_key` and `policy_digest` into `PreparedPhaseResult` attestation. The
-controller selects policy only from this attested identity, never by trying to
-infer which nested entry returned a plain result. A mismatch is an executor
-contract failure and uses the existing non-decision recovery path.
+the complete descriptor, normalized dependency dispatch keys, and
+`policy_digest` into `PreparedPhaseResult` attestation. The controller selects
+policy only from this attested identity, never by trying to infer which nested
+entry returned a plain result. A mismatch is an executor contract failure and
+uses the existing non-decision recovery path.
 
 `policy_digest` is SHA-256 over canonical JSON containing only recomputable
-static authority: the dispatch key, normalized cases, operation-family
-templates, context paths, exact declared transition metadata, verifier ids,
-registered recovery-route ids and mappings, and a controller-owned
+static authority: the complete dispatch descriptor, normalized dependency
+dispatch keys, normalized cases, operation-family templates, context paths,
+exact declared transition metadata, verifier ids, registered recovery-route ids
+and mappings, and a controller-owned
 `decision_operation_semantics_version`. It never contains provider options,
 issue candidates, answers, or other dispatch-time material. Controller-
 safeguard registry entries use the same canonical form. Mapping keys are
@@ -424,16 +435,24 @@ question or a decision-related recovery loop.
 ## Interception Order
 
 Decision interception is part of result preparation and precedes all ordinary
-routing. For every full-run and manual-phase dispatch, the controller performs
-these steps in order:
+routing. A `PhaseAttemptTransaction` is required for every full-run or
+manual-phase attempt that executes at least one provider. It covers every
+provider-executing pre-dispatch, staged, sequential, or simple entry in that
+phase. Pure deterministic controller phases and human gates do not create child
+provider workspaces; they remain on the existing prepared-result and
+publication/recovery path, but their decision results still enter at step 4
+before ordinary routing. For each provider-executing attempt, the controller
+performs these steps in order:
 
 1. create one attempt-local `PhaseAttemptTransaction` for the entire phase,
-   capture the begin-time preimages of every declared canonical output
-   destination, and create a child workspace for each executable dispatch;
+   capture the begin-time preimages of every declared canonical artifact-effect
+   destination, and create a child workspace for each provider-executing
+   dispatch;
 2. execute providers only through the child workspace and accumulate detached
-   results, journal proposals, controller-measured token deltas, product-input
-   proposals, state-update proposals, certificate updates, and staged artifact
-   manifests in the parent transaction;
+   results, journal proposals, controller-measured usage charges containing both
+   token and USD deltas, product-input proposals, state-update proposals,
+   certificate updates, and staged artifact manifests in the parent
+   transaction;
 3. join every concurrent stage, then detach and validate all results in declared
    dispatch order against their exact contracts and descriptors;
 4. collect question-bearing results for that stage in declared order. Exactly
@@ -450,24 +469,50 @@ these steps in order:
    accumulated artifacts and non-artifact effects into the existing
    external-effects and routing pipeline.
 
-Executors do not call `SquadStateStore`, append journals, charge durable
-token counters, update product-input state, or prepare controller
-completion while a `PhaseAttemptTransaction` is open. They return proposals to
-the transaction. This applies to pre-dispatch, staged, sequential, simple, and
-gate execution. The controller is the only component that may commit the
+Provider-executing entries do not call `SquadStateStore`, append journals,
+charge durable token or USD counters, update product-input state, or prepare
+controller completion while a `PhaseAttemptTransaction` is open. They return
+proposals to the transaction. Pure deterministic controller phases retain their
+existing store/publication APIs and cannot be nested inside a provider attempt.
+The controller is the only component that may commit a provider attempt's
 validated aggregate after it proves that the complete attempt contains no
 decision request.
 
-Controller-measured token usage is accounting, not a provider phase effect. It
-remains deferred until outcome classification, then joins the authoritative
-success, decision-seal, or failure state operation. If that snapshot-bound
-operation loses its CAS race, the existing deferred-usage fallback records the
-delta separately. Workspace cleanup never drops or reapplies the delta.
+Controller-measured usage is accounting, not a provider phase effect. Every
+provider or resolver call receives a controller-generated `usage_id` of
+`<attempt-or-decision-id>/<dispatch-key-or-resolver>/<call-index>`. After a call
+returns, the controller fsyncs an exact usage-spool record below the Squad run
+directory before interpreting the result. `schema_version` is exactly `1`;
+`usage_id` is a non-empty ASCII string of at most 512 characters; `token_delta`
+is a non-negative integer; and `cost_usd_delta` is a finite non-negative decimal
+rounded to six places. The controller hashes `usage_id` for the spool filename,
+so provider identity never selects a path. Usage remains deferred until outcome
+classification, then joins the authoritative success, decision-seal, or failure
+state operation.
+
+The store owns an exact `applied_usage_receipts` list and one
+`_apply_usage_unlocked` primitive. Each receipt has exactly `schema_version: 1`,
+`usage_id`, `token_delta`, and `cost_usd_delta`, matching the fsynced source
+record. Every outcome API and the deferred-usage fallback pass the same records
+through that primitive: a new id applies both deltas and appends its receipt, an
+existing identical id is an idempotent success, and an existing id with
+different deltas is corruption and enters `manual_diagnosis`. The ledger permits
+at most 4,096 entries and 512 KiB of canonical JSON; receipts are never evicted
+within a run. Before starting a provider or resolver call, the controller checks
+that one receipt slot remains while holding the run execution lock; startup
+drains every fsynced unreceipted
+usage record before another call, so the slot cannot be consumed by competing
+work. Exhaustion blocks before billable work. After an ambiguous state-write or
+fsync exception, authority reload determines whether the authoritative outcome
+already owns the usage ids; only absent ids go through deferred fallback.
+Attempt and decision-workspace cleanup preserve every fsynced usage record until
+its id has a durable receipt, so cleanup can neither drop nor reapply token or
+USD usage.
 
 The same ordering applies to `BLOCKED` and `STOP_AND_ASK`. The pre-dispatch
 `phase_dispatch_limit` safeguard enters at sealing step 5 without a provider
 attempt. Consecutive-WHY and WHY2-stagnation safeguards are post-result guards:
-they inspect the attested prepared result and attempt-local declared outputs,
+they inspect the attested prepared result and attempt-local declared effects,
 seal exact triggering counters, baselines, and issue candidates into
 controller-owned descriptors, and then abandon the attempt. They never reread a
 previously persisted `issues.md` or quality state as evidence for the current
@@ -486,39 +531,79 @@ contracts again.
 
 `PhaseAttemptTransaction` is a controller-owned effect boundary, not a
 best-effort cleanup pass. Artifact ownership uses a new exact
-`artifact_outputs` contract; the existing descriptive `outputs` list remains
+`artifact_effects` contract; the existing descriptive `outputs` list remains
 documentation and grants no write authority. The controller assigns a random
 attempt id and creates the parent and child workspaces below the Squad run
 directory using the existing no-follow and real-directory checks; workflow or
 provider data never selects their paths:
 
 ```yaml
-artifact_outputs:
+artifact_effects:
   - id: issues
-    owner_dispatch_id: sage
+    owner_dispatch_id: speckit-echelon-sage
+    operation: upsert
     destination_root: spec
     destination_path: issues.md
     kind: file
+    tree_mode: null
     required: true
+    move_group: null
 ```
 
-Every descriptor has exactly `id`, `owner_dispatch_id`, `destination_root`,
-`destination_path`, `kind`, and `required`. `destination_root` is one of
-`project`, `spec`, or `staging`; `kind` is `file` or `tree`; `required` is a
-boolean. `destination_path` is a normalized relative path. A `tree` owns all
-descendants and is the only way to declare variable file sets; glob ownership
-is not supported. Prompts reference outputs only through
-`{artifact_output.<id>}` placeholders. Because the attempt boundary exists
+Every descriptor has exactly `id`, `owner_dispatch_id`, `operation`,
+`destination_root`, `destination_path`, `kind`, `tree_mode`, `required`, and
+`move_group`. `operation` is `upsert` or `delete`. An `upsert` publishes the
+complete postimage and covers create, amend, or replace; an existing owned
+destination is seeded into the child so in-place tools can amend it. A `delete`
+grants no writable path and publishes removal after validating the begin-time
+preimage. `destination_root` is one of the controller-resolved aliases `spec`,
+`staging`, `squad`, or `memory`; broad `project` authority is forbidden. `kind`
+is `file` or `tree`; `required` means an upsert postimage or delete preimage must
+exist. `destination_path` is a normalized relative path.
+
+`tree_mode` is null for files and deletes and is `additive` or `replace` for an
+upsert tree. An additive tree publishes only staged child-manifest changes and
+does not delete absent canonical descendants. A replacement tree publishes its
+complete child manifest and deletes canonical descendants absent from that
+manifest. A `tree` owns all descendants and is the only way to declare variable
+file sets; glob ownership is not supported.
+
+`move_group` is null except for a controller-owned move. A move is exactly one
+upsert and one delete owned by the same dispatch, with matching non-empty
+`move_group`, equal `kind`, and distinct resolved destinations. The controller
+copies the source preimage into the child's upsert location before dispatch and
+later publishes both effects atomically; the provider never renames across
+canonical roots. This represents CARTOGRAPHER's staging-to-spec promotion
+without granting canonical staging writes.
+
+Before overlap validation, every root alias is resolved through trusted run
+state and normalized to a physical no-follow path. Root aliases may be nested,
+as `staging` is normally below `squad`, but two aliases may not resolve to the
+same physical directory. The validator resolves each complete effect
+destination before checking overlap, so a `squad` tree cannot conceal a
+collision with a `staging` effect. It rejects absolute paths, parent traversal,
+duplicate ids, overlapping file/tree effect destinations after physical
+resolution, undeclared roots, owner mismatch, malformed move groups, unresolved
+placeholders, and any provider dispatch whose effects cannot be redirected.
+Prompts reference writable destinations only through
+`{artifact_effect.<id>}` placeholders. Because the attempt boundary exists
 before a result is known, every Phase A provider-executing dispatch, marked or
-unmarked, declares every writable output through this schema. The decision
-marker controls ingress authority, not filesystem isolation.
-`workflow_validator` rejects absolute paths, parent traversal, duplicate ids,
-overlapping file/tree ownership, undeclared roots, owner mismatch, unresolved
-placeholders, and any provider dispatch whose outputs cannot be redirected.
+unmarked, declares every writable or deleted artifact through this schema. The
+decision marker controls ingress authority, not filesystem isolation.
+
+The controller creates one immutable `AttemptPathMap` per child. It has exactly
+the visible roots `project_root`, `spec_dir`, `staging_dir`, `squad_dir`, and
+`memory_dir`, plus the exact `artifact_effect` paths. `project_root` is always
+read-only. The other visible roots are an overlay of the parent-attempt snapshot
+and that child's owned writable postimages; unowned paths remain read-only.
+Prompt construction, context-pack resolution, environment variables including
+`SQUAD_DIR` and `STAGING_DIR`, phase documents, and extra-file checks all use
+this map. No executor may reconstruct a path from canonical `state.spec_dir`,
+`state.staging_dir`, `_project_root`, or `_squad_dir` while an attempt is open.
 
 Provider execution uses an exact controller-created `ProviderExecutionRequest`
-containing the `DispatchDescriptor`, private child CWD, read-only input roots,
-exact writable roots, placeholder mapping, and
+containing the `DispatchDescriptor`, private child CWD, `AttemptPathMap`,
+read-only input roots, exact writable postimages, placeholder mapping, and
 `containment_required: true`. The provider registry exposes
 `ENFORCED_WRITE_CONTAINMENT` only when its backend applies an OS-enforced
 filesystem boundary; CLI permission flags, prompts, CWD selection, and provider
@@ -526,6 +611,34 @@ claims are insufficient. A provider dispatch fails closed before provider
 execution when the selected provider lacks that capability. `SquadCliProvider`,
 `AICodingCliProvider`, and every backend adapter must preserve and attest the
 request rather than reducing it to `project_root`.
+
+The first supported enforced backend is `oci_brokered_cli`. It executes the
+provider CLI in a controller-selected, digest-pinned OCI image through a
+Docker- or Podman-compatible runtime on Linux or macOS. Windows and a host-only
+CLI backend are unsupported for v2 provider dispatches. The broker bind-mounts
+the parent snapshot and source/config inputs read-only, mounts only the exact
+child postimage paths writable, and supplies controller-created writable
+`HOME`, cache, and temporary directories below the attempt. Each provider
+adapter declares a closed runtime profile naming its image digest, command,
+authentication/config roots, a `credential_mode` of `readonly_mount` or
+`ephemeral_copy`, and ephemeral cache paths; workflow and provider output cannot
+add mounts. `readonly_mount` exposes the host credential root read-only.
+`ephemeral_copy` copies only the adapter-declared credential files into a
+private writable credential directory below the attempt for CLIs that must
+refresh tokens; it is excluded from artifact manifests, scrubbed after its usage
+receipt is durable, and never copied back to the host. Secrets and token-refresh
+files are never copied into artifact postimages. Network behavior remains the
+selected provider's existing network policy and is independent of filesystem
+containment.
+
+Containment ships before v2 workflow activation. Provider/backend support,
+request attestation, OCI preflight, and attempt overlays land first while the v1
+workflow remains active. The policy and `artifact_effects` migration then bumps
+the workflow schema to v2. Starting a new v2 run performs backend preflight
+before creating run state and reports `provider_containment_unavailable` when
+the required image, runtime, or profile is missing. Existing v1 runs remain on
+their compatibility path; the validator never silently downgrades a v2 dispatch
+to host execution.
 
 Concurrent child dispatches are seeded from the same parent-attempt snapshot and
 cannot read or write peer child workspaces. After a stage joins and all results
@@ -536,8 +649,21 @@ dispatches receive the merged parent-attempt snapshot as read-only input plus
 their own writable child workspace. Nothing is promoted to canonical roots
 between stages.
 
+Non-artifact proposal merging is equally deterministic. Parallel dispatches
+must have disjoint declared state-update and certificate ownership; the
+validator rejects overlapping allowlists. Product-input proposals use normalized
+`input_unit_id` as their identity. Proposals for the same input unit collapse
+only when their complete canonical objects are identical; divergent values fail
+the attempt as
+`ambiguous_parallel_product_input`. Journal entries and detached results append
+in `declaration_index` order, never `as_completed` order. After a stage is
+validated and merged, a later stage or sequential entry may supersede an earlier
+state, certificate, or product-input proposal; the exact later value wins in
+stage order and then `declaration_index` order. No same-stage peer may use this
+sequential supersession rule.
+
 After a complete non-question phase passes result, artifact, and
-controller-contract validation, provider-staged writes are imported into the
+controller-contract validation, provider-staged effects are imported into the
 same `SquadPublicationTransaction` builder used by controller-owned external
 effects. The builder seals one combined manifest and one existing
 `pending_external_publication` marker containing begin-time destination
@@ -715,10 +841,11 @@ decision_continuation:
   schema_version: 1
   id: "cont-<random-token>"
   decision_id: "dec-<random-token>"
-  operation_id: approve
+  operation_id: record-clarification
   invocation_kind: full_run | manual_phase
   kind: replay_source | route_and_finish
-  stage: awaiting_completion | ready | dispatching | consumed
+  disposition: dispatch_source | dispatch_target | finish_without_dispatch
+  stage: awaiting_completion | ready | dispatching | blocked | consumed
   completion_id: "<controller completion id>"
   source_phase: phase1-why1
   target_phase: phase1-why1
@@ -727,14 +854,22 @@ decision_continuation:
   consumed_at: null
 ```
 
-The record has exactly these thirteen fields. Lease fields are non-null only in
-`dispatching`; `consumed_at` is non-null only in `consumed`. It is bound to the
-resolved active decision, selected operation, completion marker, source, target,
-and durable invocation kind. A resolved decision with an unconsumed
-continuation cannot be replaced, except when the continuation's own real
-dispatch atomically consumes it while sealing a new decision from that
-dispatch. A consumed record remains until the associated resolved decision is
-archived, so restart can distinguish completed work from work still owed.
+The record has exactly these fourteen fields. Lease fields are non-null only in
+`dispatching`; `consumed_at` is non-null only in `consumed`. A replay-source
+operation has `disposition: dispatch_source`. A route-and-finish operation has
+`dispatch_target` only for a full run whose target is an executable graph phase;
+manual routes, terminal targets, and controller-only targets use
+`finish_without_dispatch`. The disposition is computed and attested during
+application preparation, never inferred from current status after restart.
+
+The record is bound to the resolved active decision, selected operation,
+completion marker, source, target, disposition, and durable invocation kind. A
+resolved decision with an unconsumed continuation cannot be replaced, except
+when the continuation's own real dispatch atomically consumes it while sealing
+a new decision from that dispatch. A `blocked` continuation has no lease and
+retains the exact invocation scope owed after a retryable real-dispatch failure.
+A consumed record remains until the associated resolved decision is archived,
+so restart can distinguish completed work from work still owed.
 
 `legacy_decision_history` is a separate bounded compatibility ledger for a
 terminal v1 active decision that cannot be reconstructed as v2:
@@ -758,14 +893,17 @@ new decision.
 
 `state_transaction_namespace` registers `decision_history`,
 `legacy_decision_history`, `decision_clarifications`, `decision_continuation`,
-`blocked_decision`, and `recovery_instruction` as store-owned transaction keys.
+`applied_usage_receipts`, `blocked_decision`, and `recovery_instruction` as
+store-owned transaction keys.
 `why2_metric_stagnation_count` is added to atomic store control keys and trusted
 routing effects before safeguard migration. These keys may be changed only by
 the exact `SquadStateStore` decision methods below, controller-completion
 finalization, or an attested prepared routing decision applying a resolved
 operation. They are never added to provider control intents, generic queued
 updates, or phase `allowed_state_updates`. Gate outcomes do not require another
-state key.
+state key. `applied_usage_receipts` may additionally change through ordinary
+prepared outcome methods or deferred-usage recovery, but only through
+`_apply_usage_unlocked`.
 
 ## Durable Store Operations
 
@@ -776,16 +914,23 @@ expected status, and lease identity as applicable, increments
 `state_revision`, and uses the existing atomic state-file replacement. A CAS
 mismatch returns a stale outcome without mutation.
 
+The existing ordinary prepared phase-advance and prepared failure-settlement
+APIs also accept `usage_charges` and call `_apply_usage_unlocked` in their
+authoritative state operation. No success, decision, or failure path calls
+`increment_cost` or increments `token_usage` separately.
+
 - `seal_decision(snapshot, prepared_identity, decision, instruction,
-  token_usage_delta)` accepts only a newly validated decision-bearing prepared
-  result or a registered controller safeguard. It archives an existing
-  resolved/failed active record only after validating its history and
-  continuation preconditions, then writes the new active decision, recovery
-  instruction, blocked lifecycle state, and non-negative controller-measured
-  source token delta.
-  A decision produced by the exact dispatch that owns a `dispatching`
-  continuation consumes and archives that continuation in the same
-  transaction. It does not update `last_dispatch` or phase completion.
+  continuation_receipt, usage_charges)` accepts only a newly validated
+  decision-bearing prepared result or a registered controller safeguard.
+  `continuation_receipt` is null for an ordinary source and must be the exact
+  current claim receipt when the producer is a continuation dispatch. The method
+  archives an existing resolved/failed active record only after validating its
+  history and continuation preconditions, then writes the new active decision,
+  recovery instruction, blocked lifecycle state, and idempotent controller-
+  measured source token and USD charges. A decision produced by the exact
+  dispatch that owns a `dispatching` continuation consumes and archives that
+  continuation in the same transaction before installing the new decision. It
+  does not update `last_dispatch` or phase completion.
 - `claim_decision(snapshot, decision_id)` accepts only `pending` or an expired
   `resolving` decision below its attempt limit. It writes `resolving`,
   increments attempts, and installs a new random lease and expiry. It returns an
@@ -795,43 +940,55 @@ mismatch returns a stale outcome without mutation.
   every later settle/apply CAS use that receipt; callers never reconstruct
   lease identity from a stale pre-claim snapshot. It does not route.
 - `settle_decision(snapshot, decision_id, lease_id, outcome,
-  token_usage_delta)` handles state-only transitions to `pending`,
+  usage_charges)` handles state-only transitions to `pending`,
   `awaiting_human`, or `failed`, including recovery-generation replacement,
   lease clearing, audit append, idempotent history append for failure, and the
-  non-negative controller-measured resolver token delta. It cannot change
-  phase.
+  idempotent controller-measured resolver token and USD charges. It cannot
+  change phase.
 - `apply_decision(snapshot, decision_id, expected_lease_id, operation,
-  prepared_route, completion_marker, continuation, token_usage_delta)` accepts only
+  prepared_route, completion_marker, continuation, usage_charges)` accepts only
   controller-prepared, mutually attested application artifacts. It revalidates
   the sealed operation, static policy digest, concrete operations digest,
   current workflow edge or registered recovery route, exact transaction
-  effects, completion-marker and continuation binding, and absence of an older
-  pending publication, completion, or unconsumed continuation under the state
-  lock. It then records the replay-source route, gate edge, or safeguard repair
-  through the single state-advance commit primitive while atomically resolving
-  the decision, adding the non-negative controller-measured resolver token
-  delta, applying the operation-specific run-status effect, installing the
-  pending completion marker, and writing
+  effects, completion-marker and continuation binding, disposition, and absence
+  of an older pending publication, completion, or unconsumed continuation under
+  the state lock. It then records the replay-source route, gate edge, or
+  safeguard repair through the single state-advance commit primitive while
+  atomically resolving the decision, applying the idempotent controller-measured
+  resolver token and USD charges, applying the operation-specific run-status
+  effect, installing the pending completion marker, and writing
   `decision_continuation.stage: awaiting_completion`.
   Human resolutions use `expected_lease_id: null` and require
   `awaiting_human`; COMMANDER resolutions require the current lease. A commit
   returns an exact six-field `DecisionApplyReceipt` containing
   `schema_version: 1`, `decision_id`, `continuation_id`, `completion_id`,
   committed `state_revision`, and `last_dispatch_sha256`.
-- `claim_decision_continuation(snapshot, continuation_id)` accepts only `ready`,
-  verifies the active resolved decision and invocation kind, and writes
-  `dispatching` with a random dispatch lease and expiry. It returns an exact
-  nine-field `ContinuationClaimReceipt` containing `schema_version: 1`,
-  `continuation_id`, `dispatch_lease_id`, `dispatch_lease_expires_at`, committed
-  `state_revision`, `invocation_kind`, `source_phase`, `target_phase`, and
+- `claim_decision_continuation(snapshot, continuation_id,
+  recovery_attestation)` accepts `ready`, or `blocked` only when the shared
+  recovery classifier attests that the exact previous continuation dispatch has
+  a retryable phase failure and names the same dispatch phase. It rejects
+  `finish_without_dispatch`. It verifies the active resolved decision,
+  disposition, and invocation kind, then writes `dispatching` with a random
+  dispatch lease and expiry. It returns an exact ten-field
+  `ContinuationClaimReceipt` containing `schema_version: 1`, `continuation_id`,
+  `dispatch_lease_id`, `dispatch_lease_expires_at`, committed `state_revision`,
+  `invocation_kind`, `disposition`, `source_phase`, `target_phase`, and
   `previous_dispatch_sha256`. An expired `dispatching` lease may be reclaimed
   under the same execution-lock and CAS rules.
-- `consume_decision_continuation(snapshot, continuation_id,
-  dispatch_lease_id, prepared_outcome)` runs inside the first authoritative
-  state advance produced by the real source/target dispatch. It writes
-  `consumed`, clears the dispatch lease, and records `consumed_at`. If that
-  outcome seals a new decision, it archives the old resolved decision and
-  continuation in the same transaction before installing the new records.
+- `settle_decision_continuation(snapshot, continuation_id,
+  dispatch_lease_id, prepared_outcome, usage_charges)` runs inside the first
+  authoritative state advance produced by the real source/target dispatch. The
+  controller-prepared outcome is exactly `success`, `retryable_failure`, or
+  `terminal_failure`; a `new_decision` outcome uses `seal_decision` above so
+  there is only one active-decision replacement transaction. Failure
+  classification and its recovery instruction come from the same standard
+  failure-preparation helper consumed by the shared recovery classifier; the
+  continuation method does not invent a second retry policy.
+  `retryable_failure` writes `blocked`, clears the lease, retains null
+  `consumed_at`, installs that prepared standard recovery instruction, and
+  preserves invocation kind and disposition. Every other outcome writes
+  `consumed`, clears the lease, and records `consumed_at`. Both paths apply the
+  same idempotent token and USD charges.
 - `migrate_legacy_squad_decision(snapshot, compiled_policy,
   invocation_attestation)` is the only v1-to-v2 migration API. It may reconstruct
   a pending v1 decision only from the supplied current graph policy and exact
@@ -898,11 +1055,13 @@ valid pending completion as the highest-priority shared recovery action,
 regardless of run status or blocked reason; `resume` refuses decision input
 until it drains. Successful drain marks the dispatch complete through the
 current completion protocol. In the same completion-finalization state
-transaction it advances replay-source continuations to `ready`, advances
-full-run route-and-finish continuations to `ready`, and marks manual
-route-and-finish continuations `consumed`. Source-phase completion follows the
-route's sealed `record_completion` value: true only for gate outcomes and false
-for replay and safeguard operations.
+transaction it advances `dispatch_source` and `dispatch_target` continuations to
+`ready` and marks `finish_without_dispatch` continuations `consumed` with
+`consumed_at`. This consumes full-run gate rejection at `terminal-blocked`, as
+well as manual route-and-finish, without waiting for a target executor that will
+never run. Source-phase completion follows the route's sealed
+`record_completion` value: true only for gate outcomes and false for replay and
+safeguard operations.
 
 A completion failure uses the existing standard controller-completion recovery
 generation. It does not reopen the resolved decision or dispatch COMMANDER a
@@ -913,35 +1072,41 @@ Operation application has two closed continuation behaviors:
 
 - Replay-source operations are `continue_current_phase`,
   `record_clarification`, and `record_prerequisite`. Their synthetic route has
-  `record_completion: false` and `manual_phase_run: false`. After completion
-  drain and clarification projection, the controller claims the `ready`
-  continuation. `full_run` re-enters the normal loop at `source_phase`;
-  `manual_phase` calls a dedicated
+  `record_completion: false`, `manual_phase_run: false`, and
+  `disposition: dispatch_source`. After completion drain and clarification
+  projection, the controller claims the `ready` continuation. `full_run`
+  re-enters the normal loop at `source_phase`; `manual_phase` calls a dedicated
   `run_prepared_decision_continuation` entrypoint for `source_phase`. That
   entrypoint requires the continuation receipt, skips the existing
-  single-phase initialization/reset save, runs one real phase attempt, consumes
-  the continuation in that attempt's first authoritative state outcome, and
-  returns.
+  single-phase initialization/reset save, runs one real phase attempt, and
+  returns after its authoritative state outcome. A retryable failure leaves the
+  continuation `blocked`; a later claim uses the same dedicated manual
+  entrypoint rather than `_cmd_run`.
 - Route-and-finish operations are `approve_gate`, `reject_gate`,
   `route_declared_transition`, and `select_evidence_backed_issue`. They do not
   redispatch the source. Gate operations use `record_completion: true`;
   safeguard route operations use `record_completion: false`. Their synthetic
   route uses `manual_phase_run: true` only when the durable invocation kind is
   `manual_phase`, because that operation is the real conclusion of the manual
-  control point. A full run claims the `ready` continuation and continues from
-  the applied target; the target dispatch consumes it with its first
-  authoritative outcome. A manual run returns after completion drain, which
-  already marked the continuation consumed.
+  control point. A full run targeting an executable graph phase uses
+  `dispatch_target`, claims the `ready` continuation, and continues from the
+  applied target; the target dispatch settles it with its first authoritative
+  outcome. A full run targeting a terminal or controller-only phase and every
+  manual route use `finish_without_dispatch`; completion drain marks the
+  continuation consumed and returns.
 
 Restart, `continue`, and `resume` derive this behavior from the persisted
-continuation, not by reinterpreting the resolved operation. A `ready` or expired
-`dispatching` continuation is a shared recovery action even when run status is
-`running` and no decision recovery instruction remains. Process interruption
-therefore cannot turn a one-phase request into a full run, lose an owed source
-replay, or replay a gate that has already been decided. Exactly-once here means
-one committed continuation outcome; an interrupted provider attempt with no
-authoritative outcome may be retried under the existing phase-attempt recovery
-rules.
+continuation, not by reinterpreting the resolved operation. A `ready`,
+`blocked`, or expired `dispatching` continuation is a shared recovery action
+even when run status is `running` and no decision recovery instruction remains.
+The classifier handles continuation authority before its generic
+`retry_phase` action. A blocked manual continuation can only invoke
+`run_prepared_decision_continuation`; it cannot call `_cmd_run`. Process
+interruption therefore cannot turn a one-phase request into a full run, lose an
+owed source replay, strand a terminal route, or replay a gate that has already
+been decided. Exactly-once here means one committed continuation outcome; an
+interrupted provider attempt with no authoritative outcome may be retried under
+the existing phase-attempt recovery rules.
 
 Migration rules:
 
@@ -962,7 +1127,14 @@ Migration rules:
    the explicit API appends the exact sanitized `legacy_decision_history` entry
    and only then replaces the active record. Terminal v1 records are never
    reconstructed into authoritative v2 operations. Pending v1 records are
-   nonreplaceable.
+   nonreplaceable. The history projection sets `source_phase` from exact
+   `blocked_decision.blocked_phase`; if that value is absent, it may use
+   `resume_metadata.blocked_phase` only when resume metadata has
+   `schema_version: 1`, its `answered_at` equals the decision's `resolved_at`,
+   its `answer_text` equals the decision's `answer_text`, and any selected option
+   ids are either both absent or equal. If neither source is valid,
+   migration stops with `legacy_decision_source_missing` manual diagnosis. It
+   never substitutes current `state.phase` or `resumed_phase`.
 4. The state helper validates and preserves all v2 and continuation fields; it
    must not rebuild a v2 record from `escalation_*` fields on later saves.
 5. Legacy `escalation_*` fields remain ingress and terminal-display
@@ -1149,14 +1321,16 @@ Continuation transitions are also closed:
 
 | Event | Required pre-state | Continuation post-state |
 |---|---|---|
-| successful decision apply | no older unconsumed continuation | `awaiting_completion` with exact completion binding |
-| successful completion drain for replay-source or full-run route-and-finish | matching pending completion and `awaiting_completion` | `ready` |
-| successful completion drain for manual route-and-finish | matching pending completion and `awaiting_completion` | `consumed` |
-| continuation claim | `ready` | `dispatching` with new lease |
+| successful decision apply | no older unconsumed continuation | `awaiting_completion` with exact completion and disposition binding |
+| successful completion drain for `dispatch_source` or `dispatch_target` | matching pending completion and `awaiting_completion` | `ready` |
+| successful completion drain for `finish_without_dispatch` | matching pending completion and `awaiting_completion` | `consumed` |
+| initial continuation claim | `ready`, dispatching disposition | `dispatching` with new lease |
+| retry continuation claim | `blocked`, matching standard retry attestation and dispatch phase | `dispatching` with new lease |
 | expired continuation reclaim | expired `dispatching` | `dispatching` with replacement lease |
-| first authoritative outcome of the exact real dispatch | matching `dispatching` lease | `consumed`, including an ordinary failure block or newly sealed decision |
+| successful, terminal-failure, or new-decision outcome of exact real dispatch | matching `dispatching` lease | `consumed` |
+| retryable-failure outcome of exact real dispatch | matching `dispatching` lease | `blocked`, invocation kind and disposition retained |
 | process loss before authoritative dispatch outcome | `dispatching` | unchanged until lease expiry, then reclaimable |
-| stale continuation result | id, stage, lease, source, or target mismatch | unchanged |
+| stale continuation result | id, stage, lease, disposition, source, or target mismatch | unchanged |
 
 The operation-specific status effect is closed: `approve_gate`,
 `continue_current_phase`, `route_declared_transition`,
@@ -1333,9 +1507,12 @@ the controller supplies its approve/reject operations and context pack.
   Its controller drain first performs any standard pending-publication recovery
   required by that completion. `status` displays `spec continue`; `continue`
   invokes the controller; `resume` refuses input until the completion drains.
-- After completion authority, the classifier recognizes `ready` or expired
-  `dispatching` `decision_continuation` before ordinary running dispatch. It
-  resumes only the persisted source/target and invocation kind.
+- After completion authority, the classifier recognizes `ready`, `blocked`, or
+  expired `dispatching` `decision_continuation` before generic `retry_phase` or
+  ordinary running dispatch. A `blocked` continuation is claimable only with a
+  matching standard retry attestation. The controller resumes only the
+  persisted disposition, source/target, and invocation kind; manual continuation
+  retries use the dedicated one-phase entrypoint.
 - `status` classifies valid recovery instructions before legacy prose.
 - `continue` invokes `resolve_pending_decision` without pre-clearing its state.
 - `resume` accepts input only for a matching v2 `await_human_answer`
@@ -1411,50 +1588,73 @@ move together:
   validation for trusted non-question controller envelopes.
 - `harness.phase_graph` and `harness.workflow_validator`: parse, compile, hash,
   and validate static policy cases, reason codes, concrete-operation digest
-  inputs, immutable `DispatchDescriptor` identity, exact `artifact_outputs`
-  ownership, and gate outcome edges.
+  inputs, the complete immutable `DispatchDescriptor`, normalized dependency
+  dispatch keys, disjoint parallel proposal ownership, exact
+  `artifact_effects`, physical-root overlap, and gate outcome edges.
 - `harness.squad_provider`, `harness.llm_provider`,
-  `harness.llm_tool_policy`, `harness.provider_capability`, and every AI CLI
-  backend adapter: preserve the exact `ProviderExecutionRequest`, expose
-  `ENFORCED_WRITE_CONTAINMENT` only for an OS-enforced backend, fail closed for
-  unsupported provider dispatches, and return typed provider-validation failures
-  instead of fabricated provider-shaped blocks.
+  `harness.llm_tool_policy`, `harness.provider_capability`, the new
+  controller-owned OCI execution broker, and every AI CLI backend adapter:
+  preserve and attest the exact `ProviderExecutionRequest` and
+  `AttemptPathMap`; implement closed digest-pinned runtime profiles and
+  read-only auth/config plus ephemeral home/cache/tmp mounts; expose
+  `ENFORCED_WRITE_CONTAINMENT` only for the OCI backend; run v2 preflight before
+  state creation; fail closed for unsupported provider dispatches; and return
+  typed provider-validation failures instead of fabricated provider-shaped
+  blocks.
 - `harness.squad_executors` and `harness.prepared_phase_result`: introduce the
   trusted decision envelope, remove provider blocking-contract bypasses, attest
-  the complete dispatch descriptor without giving it state authority, and
-  accumulate all child artifacts, results, journals, usage, and state proposals
-  inside one phase-scoped `PhaseAttemptTransaction`.
+  the complete dispatch descriptor without giving it state authority, route
+  prompt/context/extra-file resolution only through `AttemptPathMap`, remove
+  provider-attempt direct state/journal/cost writes, and accumulate all child
+  artifact effects, results, journals, usage, product-input, certificate, and
+  state proposals inside one phase-scoped `PhaseAttemptTransaction`.
 - `harness.squad_publication` and `harness.state_transaction_namespace`: import
-  provider-staged writes into the existing single publication builder, bind
-  begin-time preimages and aggregate effect identity to its one durable marker,
-  and register decision, continuation, legacy-history, and safeguard-counter
+  provider-staged upserts, deletes, atomic move pairs, and additive/replacement
+  trees into the existing single publication builder; bind begin-time preimages
+  and aggregate effect identity to its one durable marker; and register
+  decision, continuation, legacy-history, usage-receipt, and safeguard-counter
   ownership.
 - `harness.blocked_decision`, `harness.recovery_instruction`,
   `harness.state_transaction_namespace`, and `harness.squad_state`: implement
   exact v2 records, dual digests, invocation kind, recovery-generation equality,
   clarification and legacy-ledger ownership, exact continuation state,
   `DecisionClaimReceipt`, dedicated decision/migration/continuation CAS methods,
-  generic-save mutation guards, the shared unlocked advance primitive,
-  operation-specific status effects, authority-aware cleanup, and
-  completion-bound application.
+  blocked continuation retry scope, exact v1 source-phase projection, generic-
+  save mutation guards, the shared unlocked advance and idempotent usage
+  primitives, bounded usage receipts, operation-specific status effects,
+  authority-aware cleanup, and completion-bound application.
 - `harness.squad`: centralize interception, autonomy resolution, completion
   preparation/drain and authority ownership, phase-attempt aggregation,
   deterministic parallel-question arbitration, dedicated prepared continuation
-  dispatch, invocation-aware redispatch, safeguard trigger sealing and resets,
-  clarification projection, and the exact split COMMANDER contracts.
+  dispatch, disposition-aware terminal completion, invocation-preserving retry,
+  declared-order proposal merge, usage-journal recovery, safeguard trigger
+  sealing and resets, clarification projection, and the exact split COMMANDER
+  contracts.
   Safeguards seal before legacy terminal-phase writes.
 - `echelon.cli`: consume v2 instructions through the existing shared recovery
-  classifier, prioritize pending completion and continuation authority, guard
-  every full/manual/override entrypoint, implement exact
+  classifier, prioritize pending completion and ready/blocked/expired
+  continuation authority before generic phase retry, keep manual retries on the
+  dedicated one-phase path, guard every full/manual/override entrypoint,
+  implement exact
   `--operation`/`--answer` syntax, and route `status`, `continue`, and `resume`
   through controller APIs rather than direct state/file writes.
 - `extension/workflow/definition.yaml`: declare the complete producer matrix,
-  policies, result contracts, explicit nested ids, exact `artifact_outputs` for
-  every provider dispatch, question-bearing verdict migration, and gate
-  outcomes.
+  policies, result contracts, explicit nested ids, valid exact dependencies,
+  exact `artifact_effects` for every provider dispatch, question-bearing verdict
+  migration, and gate outcomes. In particular, PLAN2's current
+  `speckit-echelon-gatekeeper-assess2` dependency is corrected to the declared
+  `speckit-echelon-gatekeeper` id before dependency validation is enabled.
+- every Phase A document under `extension/workflow/phases/*.md` and every agent
+  document referenced by a Phase A provider dispatch under
+  `extension/agents/**/*.md`: replace canonical write/move instructions with
+  exact `{artifact_effect.<id>}` destinations, retain canonical-looking
+  `{spec_dir}`, `{staging_dir}`, `SQUAD_DIR`, and `STAGING_DIR` only as
+  controller-mapped attempt roots, and remove any instruction that reconstructs
+  a writable project or run path. Build, RE, and verify-spec documents remain
+  outside this Phase A attempt migration.
 - `extension/echelon-config.yml` and `extension/config-template.yml`: ship the
-  bounded `analysis.decision_resolution` defaults consumed by the shared strict
-  parser.
+  bounded `analysis.decision_resolution` defaults and closed OCI provider
+  runtime-profile selection consumed by the shared strict parser.
 - `extension/agents/control/commander.md`: remove recursive/existential human
   escalation and legacy file ownership from v2 instructions; document the
   exact routing, decision-resolution, and explicitly labeled legacy contracts.
@@ -1472,11 +1672,16 @@ non-evicting clarification-ledger append and capacity failure, decision-case
 selection from detached result state with no persisted-state fallback, the
 complete existing-producer policy matrix, policy reason codes, static policy
 drift, concrete operations drift, immutable dispatch-key derivation and
-uniqueness, every tagged operation and trigger descriptor, fixed/generated
-effective answer selection, immutable issue snapshots and exact ledger
-projection, registered recovery routes, strict artifact-output descriptors,
-begin-time preimage capture, child-workspace merge, one combined publication
-manifest, clarification projection, prerequisite verifier behavior,
+uniqueness, declaration-index derivation, dependency-key compilation and
+rejection of the current mismatched dependency id, every tagged operation and
+trigger descriptor, fixed/generated effective answer selection, immutable issue
+snapshots and exact ledger projection, registered recovery routes, strict
+artifact-effect descriptors, physical alias overlap, upsert/delete/move and
+additive/replacement tree semantics, begin-time preimage capture,
+`AttemptPathMap` resolution, deterministic child-workspace and non-artifact
+proposal merge, one combined publication manifest, idempotent token-and-USD
+usage receipts and pre-call capacity checks, clarification projection,
+prerequisite verifier behavior,
 recovery-instruction v1/v2 validation and reason equality, valid and invalid
 config parsing with no mutation, every decision, continuation, and Squad status
 transition, decision and continuation lease claiming and expiry, retry
@@ -1496,11 +1701,15 @@ occurs before all artifact and non-artifact effects and ordinary routing,
 parallel peers are joined and arbitrated in declaration order, multiple peer
 questions fail as `ambiguous_parallel_decision`, a nested question abandons all
 peer/stage work from that phase attempt, later stages see only validated parent-
-attempt output, providers without enforced containment fail before execution,
-and discarded phase effects are recomputed after redispatch. They also assert
-that one publication marker owns provider and controller effects, changed
-begin-time preimages never overwrite newer files, and an ambiguous state-write
-exception preserves any stage that gained durable authority.
+attempt output through mapped `{spec_dir}` and extra-file paths, providers
+without enforced containment fail before execution, missing OCI runtime/profile
+blocks before run-state creation, host fallback is impossible, and discarded
+phase effects are recomputed after redispatch. They also assert that
+CARTOGRAPHER's staging-to-spec promotion publishes one atomic move without a
+canonical provider write, KB proposal trees merge additively, one publication
+marker owns provider and controller effects, changed begin-time preimages never
+overwrite newer files, ambiguous state-write exceptions never duplicate token
+or USD charges, and authority-aware cleanup drains every fsynced usage record.
 
 Lifecycle integration asserts that generic `save` is never used, public
 `advance` is not called recursively under the exclusive state lock, every
@@ -1512,9 +1721,11 @@ outcomes cannot leak across checkpoints. Clarification projection survives
 audit-history eviction and repairs a post-commit crash. Pending controller
 completion drains before every other decision/continuation action; each
 continuation stage survives interruption; a manual replay uses the dedicated
-prepared entrypoint and produces one committed real-source outcome; a manual
-route-and-finish returns after its consumed continuation; and a full route
-continues only at its persisted target. Completion failure does not repeat
+prepared entrypoint, a retryable failure leaves it blocked, and `continue`
+retries only that phase; a manual route-and-finish returns after its consumed
+continuation; a full executable route continues only at its persisted target;
+and a full gate rejection consumes at completion without trying to dispatch
+`terminal-blocked`. Completion failure does not repeat
 COMMANDER resolution, either digest drift fails closed, malformed config does
 not claim or mutate a decision, and exact CLI resume syntax cannot mutate
 decision state outside the controller. Static contract tests prove generic
