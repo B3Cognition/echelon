@@ -191,7 +191,7 @@ operations because their prepared phase effects are deliberately not
 persisted.
 
 `PhaseGraph` parses `decision_policy` into an immutable compiled policy with a
-stable `dispatch_key` and `policy_digest`, attached to the exact dispatch
+stable `dispatch_key` and static `policy_digest`, attached to the exact dispatch
 contract. A nested executor that returns a decision-bearing result wraps it in
 trusted `ExecutorDecisionResult`, analogous to the existing
 `ExecutorBlockedResult`. The wrapper contains the detached
@@ -204,12 +204,24 @@ controller selects policy only from this attested identity, never by trying to
 infer which nested entry returned a plain result. A mismatch is an executor
 contract failure and uses the existing non-decision recovery path.
 
-`policy_digest` is SHA-256 over canonical JSON containing the dispatch key,
-all normalized cases, all sealed operation templates, context paths,
-verifier ids, and a controller-owned `decision_operation_semantics_version`.
-Controller-safeguard registry entries use the same canonical form. Mapping keys
-are sorted, arrays preserve declared order, and paths and enum strings are
+`policy_digest` is SHA-256 over canonical JSON containing only recomputable
+static authority: the dispatch key, normalized cases, operation-family
+templates, context paths, exact declared transition metadata, verifier ids,
+registered recovery-route ids and mappings, and a controller-owned
+`decision_operation_semantics_version`. It never contains provider options,
+issue candidates, answers, or other dispatch-time material. Controller-
+safeguard registry entries use the same canonical form. Mapping keys are
+sorted, arrays preserve declared order, and paths and enum strings are
 normalized before hashing.
+
+After validating a decision-bearing result, the controller materializes the
+exact concrete operation descriptors once and computes `operations_digest` as
+SHA-256 over their canonical JSON array in sealed order. This second digest
+binds fixed provider options, generated-operation descriptors, verifier
+arguments, and immutable issue evidence. It is stored with the active decision
+and its history summary. Recomputing `operations_digest` uses only the sealed
+descriptors; it never rereads provider output, `issues.md`, or another mutable
+source.
 
 Decision ingress has a dedicated validation preflight inside
 `validate_echelon_result_contract`. It runs after the base envelope and verdict
@@ -234,15 +246,26 @@ state-update quarantine:
 validated by this preflight; ordinary top-level provider extras do not become
 decision authority.
 
+Every provider-originated result, including direct and nested `BLOCKED` and
+`STOP_AND_ASK`, must pass `validate_echelon_result_contract` with its exact
+compiled dispatch contract. The current raw `validate_echelon_result` blocking
+branch in `PhaseExecutor._validate_result_state_updates` is removed. Base-
+envelope-only validation remains available solely for a controller-created
+non-question `ExecutorBlockedResult`; that trusted envelope rejects every
+`escalation_*` field and cannot enter decision sealing.
+
 Before every claim, human confirmation, prerequisite submission, and apply,
 the controller recompiles the current workflow or registry entry and compares
-its digest with the active decision. A missing producer, digest mismatch, or
+its static `policy_digest` with the active decision. It separately recomputes
+`operations_digest` from the persisted descriptors and validates every selected
+descriptor against the current edge, verifier, and recovery-route registries.
+A missing producer, either digest mismatch, incompatible descriptor, or
 operation-semantics version change atomically fails the v2 decision with audit
-code `decision_policy_changed` and decision-related v2
-`manual_diagnosis`. It never executes the old descriptor under new handler
-semantics. Existing extension drift warnings remain informational for runs
-without an active v2 decision; an active decision always uses this fail-closed
-check.
+code `decision_policy_changed` and decision-related v2 `manual_diagnosis`. It
+never executes an old descriptor under new handler semantics and never rereads
+mutable evidence to make an old decision current. Existing extension drift
+warnings remain informational for runs without an active v2 decision; an active
+decision always uses this fail-closed check.
 
 `workflow_validator` rejects a `human_gate`, a marked dispatch, or a registered
 controller producer with a missing/malformed policy, unknown operation,
@@ -254,21 +277,21 @@ marker, the marker without a policy, and `escalation_question` in ordinary
 The existing generic COMMANDER routing judgment is not a decision producer and
 cannot recursively escalate. Its current static contract is split:
 
-- `ROUTING_JUDGMENT_RESULT_CONTRACT` retains only routing and non-question
-  block intent. It has `allows_human_decision: false`, rejects every
-  `escalation_*` field, and may return `BLOCKED` only with `status: blocked`
-  and a non-empty reason.
+- `ROUTING_JUDGMENT_RESULT_CONTRACT` retains routing intent only. It has
+  `allows_human_decision: false`, rejects every `escalation_*` field, and
+  accepts only `JUDGMENT_RESOLVED`.
 - `DecisionResolutionContract` owns all v2 decision resolution.
 - `LEGACY_BANZAI_ESCALATION_RESULT_CONTRACT` retains the old cleanup fields only
   when resuming a pre-v2 active decision.
 
 The COMMANDER instructions remove the rule that existential routing judgments
 may preserve `escalation_question`. If an ordinary routing judgment cannot
-select a contract-valid route, it returns a non-question block or fails its
-contract and enters standard manual diagnosis. A v2 COMMANDER resolver must
-select one sealed operation or fail boundedly; it cannot request another
-COMMANDER or a human. The sole banzai-to-human exception remains a decision
-already classified `execution_blocked` by its source policy and verifier.
+select a contract-valid route, its result fails the routing contract and the
+controller atomically installs non-decision v1 `manual_diagnosis`; there is no
+second generic `BLOCKED` interpretation. A v2 COMMANDER resolver must select one
+sealed operation or fail boundedly; it cannot request another COMMANDER or a
+human. The sole banzai-to-human exception remains a decision already classified
+`execution_blocked` by its source policy and verifier.
 
 `execution_blocked` policies require a named `prerequisite_verifier`. YAML may
 contain only an enum-like verifier id. A closed Python registry maps that id to
@@ -349,9 +372,10 @@ transition to `terminal-blocked`; no unmatched reject result is permitted.
 non-gate transitions, and rejects autonomy or `human_approved` conditions on a
 gate.
 Rejection marks the decision resolved, appends its history entry, sets run
-status to `blocked`, advances to `terminal-blocked`, and clears the
-decision-related recovery instruction atomically. It does not create another
-question or a decision-related recovery loop.
+status to `blocked`, writes terminal `blocked_reason: gate_rejected`, advances
+to `terminal-blocked`, and clears the decision-related recovery instruction
+atomically. It does not create another question or a decision-related recovery
+loop.
 
 ## Interception Order
 
@@ -359,29 +383,59 @@ Decision interception is part of result preparation and precedes all ordinary
 routing. For every full-run and manual-phase dispatch, the controller performs
 these steps in order:
 
-1. detach and validate the result against its exact dispatch contract;
-2. verify and attest its executor-supplied dispatch identity;
-3. if the validated result contains a non-empty `escalation_question`, seal the
+1. create one attempt-local `ProviderArtifactTransaction` for the entire phase
+   execution, including its nested and staged dispatches;
+2. detach and validate each result against its exact dispatch contract;
+3. verify and attest its executor-supplied dispatch identity;
+4. if a validated result contains a non-empty `escalation_question`, seal the
    v2 decision and matching recovery instruction in one CAS state advance;
-4. return to the autonomy resolver without preparing external publication,
+5. discard the complete phase artifact transaction and return to the autonomy
+   resolver without preparing external publication,
    evaluating ordinary transitions, recording phase completion, or applying
    provider or controller-certificate state updates;
-5. only results with no decision request enter the existing external-effects
-   and routing pipeline.
+6. only a complete phase execution with no decision request may seal its
+   artifact transaction into the existing external-effects and routing
+   pipeline.
 
 The same ordering applies to `BLOCKED` and `STOP_AND_ASK`. Controller safeguards
-enter at step 3 through their closed registry. No transition may advance around
+enter at sealing step 4 through their closed registry and use no provider
+artifact transaction. No transition may advance around
 the resolver because a question-bearing prepared result never reaches ordinary
 transition evaluation.
 
 A question-bearing agent result is a proposal to stop, not a partially
-committable phase result. All of its ordinary provider updates,
-controller-contract updates, output certification, publication preparation,
-and completion intent are discarded after the decision ingress fields and
-case discriminator have been sealed. They are never serialized into
-`blocked_decision`. After a clarification or prerequisite resolves, the
-controller projects the answer, redispatches the exact source phase, and
-requires the new result and artifacts to pass their contracts again.
+committable phase result. All ordinary provider updates, controller-contract
+updates, output certification, publication preparation, completion intent, and
+all peer or earlier-stage artifacts from the same phase attempt are discarded
+after the decision ingress fields and case discriminator have been sealed.
+They are never serialized into `blocked_decision`. After a clarification or
+prerequisite resolves, the controller projects the answer, redispatches the
+exact source phase, and requires the new result and artifacts to pass their
+contracts again.
+
+`ProviderArtifactTransaction` is a controller-owned output boundary, not a
+best-effort cleanup pass. A marked phase and every marked nested dispatch must
+have a complete normalized `outputs` declaration. The workflow validator
+rejects absolute paths, parent traversal, overlapping ownership, undeclared
+write roots, and a marked dispatch whose outputs cannot be redirected. Before
+provider execution, the controller creates a private attempt workspace under
+the run directory, seeds declared inputs, substitutes output placeholders with
+attempt-local paths, and gives provider tools write access only to that
+workspace. Canonical Squad, spec, and source-root artifacts are read-only to the
+attempt. Nested and staged dispatches share the phase transaction so no peer
+output is promoted early.
+
+After a complete non-question phase result passes result, artifact, and
+controller-contract validation, the transaction prepares an exact promotion
+manifest containing destination paths, preimage hashes, staged hashes, and the
+dispatch identity. Promotion joins the existing prepared external-effects
+protocol and occurs only under its state/publication binding. A changed
+destination preimage is stale state and rejects promotion without overwriting
+the newer artifact. A decision request, provider failure, invalid result, stale
+state, or abandoned prepared route calls `discard()` and removes the private
+workspace. No provider process in a marked phase receives a writable canonical
+output path, so a discarded decision attempt cannot influence later context
+reconciliation or redispatch.
 
 Consequently, agent-originated policies cannot route directly from the stopped
 result. Gates have no provider effects and may route through their exact gate
@@ -404,6 +458,8 @@ blocked_decision:
   source_reason_code: human_clarification_required
   dispatch_key: "phase1-what/agents/chief-product-owner"
   policy_digest: "<sha256>"
+  operations_digest: "<sha256>"
+  invocation_kind: full_run | manual_phase
   classification: operational | material | execution_blocked
   created_at: "<UTC timestamp>"
   question: "..."
@@ -431,10 +487,13 @@ The controller assigns a cryptographically random id and the source,
 `source_reason_code`, classification, operations, attempt count, and audit
 fields. The source reason comes only from the selected compiled policy case.
 Phase and gate decisions require the attested `dispatch_key` and
-`policy_digest`. Controller-safeguard decisions use a registry key and registry
-digest in the same fields. The controller may derive question text and legacy
-display options from provider input, but it never treats provider-provided
-`blocked_reason` or `next_phase` as lifecycle or operation authority.
+`policy_digest`. `operations_digest` binds the exact materialized
+`allowed_operations`. `invocation_kind` comes from the controller entrypoint,
+never provider state. Controller-safeguard decisions use a registry key and
+registry digest in the dispatch and policy fields. The controller may derive
+question text and legacy display options from provider input, but it never
+treats provider-provided `blocked_reason` or `next_phase` as lifecycle or
+operation authority.
 
 All shown v2 fields are exact and required; nullable fields use explicit null
 rather than omission. Status-specific validation controls which nullable
@@ -452,21 +511,24 @@ decision_history:
     source_reason_code: human_clarification_required
     dispatch_key: "phase1-what/agents/chief-product-owner"
     policy_digest: "<sha256>"
+    operations_digest: "<sha256>"
+    invocation_kind: full_run | manual_phase
     classification: operational | material | execution_blocked
     final_status: resolved | failed
     resolver: COMMANDER-banzai | COMMANDER-semi | human | controller
     selected_operation_id: approve | null
     selected_operation_kind: approve_gate | record_clarification | null
     question: "sanitized question"
-    answer_text: "sanitized answer" | null
-    failure_code: null | decision_policy_changed | resolution_attempts_exhausted | operation_precondition_failed
+    answer_preview: "sanitized audit preview" | null
+    failure_code: null | decision_policy_changed | resolution_attempts_exhausted | operation_precondition_failed | clarification_ledger_full
     completed_at: "<UTC timestamp>"
     audit: []
 ```
 
-Every history entry has exactly these seventeen fields. String enums and digest
-formats use the active-decision validators. `question`, `answer_text`, and
+Every history entry has exactly these nineteen fields. String enums and digest
+formats use the active-decision validators. `question`, `answer_preview`, and
 every audit free-text value are sanitized and truncated to 2,000 characters;
+history is an audit summary and is never authoritative clarification context.
 `audit` contains at most 20 entries with exactly:
 
 ```yaml
@@ -485,7 +547,8 @@ diagnostic_code: "<closed code>" | null
 diagnostic codes are `invalid_contract`, `provider_timeout`,
 `provider_failure`, `prerequisite_missing`, `decision_policy_changed`,
 `resolution_attempts_exhausted`, `operation_precondition_failed`, and
-`history_integrity_failed`. A stale result has no authority to append audit.
+`history_integrity_failed`, plus `clarification_ledger_full`. A stale result
+has no authority to append audit.
 
 Successful or failed terminal resolution appends one history entry in the same
 transaction that updates the active decision. Append is idempotent by
@@ -498,13 +561,38 @@ blocks all decision methods. The existing snapshot-bound failure recovery path
 preserves the malformed value byte-for-byte and persists non-decision v1
 `manual_diagnosis`; history is never silently repaired or dropped.
 
-`state_transaction_namespace` registers `decision_history` beside
-`blocked_decision` and `recovery_instruction` as a store-owned transaction
-key. These keys may be changed only by the exact `SquadStateStore` decision
-methods below or by an attested prepared routing decision applying a resolved
-operation. They are never added to provider control intents, generic queued
-updates, or phase `allowed_state_updates`. Gate outcomes do not require a new
-state key.
+`decision_clarifications` is a separate controller/store-owned semantic ledger:
+
+```yaml
+decision_clarifications:
+  - schema_version: 1
+    decision_id: dec-<random-token>
+    source_phase: phase1-what
+    question: "sanitized question"
+    answer_text: "sanitized effective answer"
+    resolver: COMMANDER-banzai | COMMANDER-semi | human
+    completed_at: "<UTC timestamp>"
+```
+
+Each entry has exactly the seven shown fields, is unique by `decision_id`, and
+preserves sanitized question and effective answer text up to the decision
+limits of 4,000 characters. Only a successful `record_clarification`
+application appends it, in the same transaction that resolves the decision.
+The semantic sanitizer applies the same secret-replacement rules as audit but
+uses the 4,000-character decision bounds; it does not apply the 2,000-character
+audit-preview truncation.
+The ledger permits at most 500 entries and 2 MiB of canonical JSON. An append
+that would exceed either bound fails the decision with
+`clarification_ledger_full` and matching manual diagnosis; entries are never
+evicted or truncated to make room.
+
+`state_transaction_namespace` registers `decision_history`,
+`decision_clarifications`, `blocked_decision`, and `recovery_instruction` as
+store-owned transaction keys. These keys may be changed only by the exact
+`SquadStateStore` decision methods below or by an attested prepared routing
+decision applying a resolved operation. They are never added to provider
+control intents, generic queued updates, or phase `allowed_state_updates`. Gate
+outcomes do not require a new state key.
 
 ## Durable Store Operations
 
@@ -532,12 +620,13 @@ mismatch returns a stale outcome without mutation.
 - `apply_decision(snapshot, decision_id, expected_lease_id, operation,
   prepared_route, completion_marker)` accepts only controller-prepared,
   mutually attested application artifacts. It revalidates the sealed operation,
-  policy digest, current workflow edge or registered recovery route, exact
-  transaction effects, completion-marker binding, and absence of an older
-  pending publication or completion under the state lock. It then performs the
-  same-phase redispatch, gate edge, or safeguard repair through the existing
-  advance machinery while atomically resolving the decision and installing the
-  pending completion marker.
+  static policy digest, concrete operations digest, current workflow edge or
+  registered recovery route, exact transaction effects, completion-marker
+  binding, and absence of an older pending publication or completion under the
+  state lock. It then performs the same-phase redispatch, gate edge, or
+  safeguard repair through the single state-advance commit primitive while
+  atomically resolving the decision, applying the operation-specific run-status
+  effect, and installing the pending completion marker.
   Human resolutions use `expected_lease_id: null` and require
   `awaiting_human`; COMMANDER resolutions require the current lease.
 
@@ -547,12 +636,25 @@ use the existing prepared-routing attestation and advance path. Failed
 application preconditions settle the decision as failed rather than falling
 back to an inferred route.
 
+There is exactly one routing commit implementation. The existing body of
+`SquadStateStore.advance` is factored into private
+`_advance_unlocked(current_state, prepared_route, transaction_effects)`.
+Public `advance` performs its existing input validation, acquires the exclusive
+lock, performs its current CAS checks, and calls that primitive. `apply_decision`
+performs its stricter decision validation, acquires the same lock once, checks
+decision and lease preconditions against that loaded state, and calls the same
+primitive with controller-owned lifecycle effects. The private method neither
+locks nor accepts provider-controlled transaction keys. No decision method
+calls public `advance` while holding the lock and no second implementation may
+construct `last_dispatch`.
+
 Before `apply_decision`, `SquadController` performs a visible-effect-free
 `prepare_decision_application` staging step:
 
 1. Build a synthetic controller result containing no provider state effects.
 2. Build an attested `PreparedRoutingDecision` with
-   `record_completion: false` and routing source `decision_resolution`.
+   routing source `decision_resolution`, `increment_iteration: false`, and the
+   operation-specific completion flags below.
 3. Call the existing `_prepare_controller_completion` before the authorizing
    state write. Its route retains the current exact
    `from_phase`/`to_phase`/`manual_phase_run`/`record_completion` shape. The
@@ -565,31 +667,65 @@ Before `apply_decision`, `SquadController` performs a visible-effect-free
 4. Pass the prepared route and marker to `apply_decision`, which rejects any
    mismatch rather than rebuilding either artifact under the lock.
 
+The prepared completion remains caller-owned until `apply_decision` returns a
+committed receipt. Every stale outcome, validation exception, failed operation
+precondition, or state-write failure calls
+`PreparedControllerCompletion.discard()` in `finally`. A committed receipt
+transfers ownership to the durable pending marker, after which normal completion
+drain owns cleanup.
+
 The state advance writes `pending_controller_completion` and a
 `last_dispatch` with `post_dispatch_complete: false` in the same transaction
 that resolves the decision. The controller drains that completion before
 clarification projection or redispatch. Restart and `spec continue` drain an
 existing completion before claiming another decision or dispatching an agent.
 Successful drain marks the dispatch complete through the current completion
-protocol; it does not mark the source phase complete because
-`record_completion` is false.
+protocol. Source-phase completion follows the route's sealed
+`record_completion` value: true only for gate outcomes and false for replay and
+safeguard operations.
 
 A completion failure uses the existing standard controller-completion recovery
 generation. It does not reopen the resolved decision or dispatch COMMANDER a
-second time. After completion recovery succeeds, clarification projection and
-source redispatch continue from the already resolved operation.
+second time. After completion recovery succeeds, the controller follows the
+operation-specific continuation behavior below.
+
+Operation application has two closed continuation behaviors:
+
+- Replay-source operations are `continue_current_phase`,
+  `record_clarification`, and `record_prerequisite`. Their synthetic route has
+  `record_completion: false` and `manual_phase_run: false`. After completion
+  drain and clarification projection, `full_run` re-enters the normal loop at
+  `source_phase`; `manual_phase` calls the locked single-phase path for
+  `source_phase` exactly once and returns after that real dispatch.
+- Route-and-finish operations are `approve_gate`, `reject_gate`,
+  `route_declared_transition`, and `select_evidence_backed_issue`. They do not
+  redispatch the source. Gate operations use `record_completion: true`;
+  safeguard route operations use `record_completion: false`. Their synthetic
+  route uses `manual_phase_run: true` only when the durable invocation kind is
+  `manual_phase`, because that operation is the real conclusion of the manual
+  control point. A full run continues from the applied target; a manual run
+  returns after completion drain.
+
+Restart, `continue`, and `resume` derive this behavior from the persisted
+operation and `invocation_kind`. Process interruption therefore cannot turn a
+one-phase request into a full run, stop before a required source replay, or
+replay a gate that has already been decided.
 
 Migration rules:
 
 1. Existing v1 records remain valid and are consumed unchanged by RE.
 2. On a Squad write, a v1 pending decision is normalized once to v2 only when
-   its original source phase or blocked reason resolves to a declared policy.
-   The conversion preserves its question, options, recommendation, blocked
-   phase, timestamps, and v1 resume metadata, but takes
-   `source_reason_code` from the reconstructed compiled policy case. The same
+   its original source phase or blocked reason resolves to a declared policy
+   and its invocation kind is proven by the current sealing entrypoint or
+   matching persisted manual-dispatch metadata. The conversion preserves its
+   question, options, recommendation, blocked phase, timestamps, and v1 resume
+   metadata, computes both digests from reconstructed static policy and
+   concrete operations, but takes `source_reason_code` from the reconstructed
+   compiled policy case. The same
    transaction replaces durable `blocked_reason` and recovery instruction with
-   that controller-owned code. A v1 decision without a reconstructable policy
-   remains on the existing legacy compatibility path.
+   that controller-owned code. A v1 decision without reconstructable policy or
+   invocation authority remains on the existing legacy compatibility path;
+   conversion never guesses `full_run`.
 3. The state helper must validate and preserve all v2 fields; it must not
    rebuild a v2 record from `escalation_*` fields on later saves.
 4. Legacy `escalation_*` fields remain ingress and terminal-display
@@ -633,21 +769,24 @@ The controller computes one `effective_answer_text` and uses it everywhere:
 - generated semi recommendation replaced by the human: the validated
   replacement text.
 
-The effective value, never the raw nullable resolver field, is written to the
-active decision, history, audit projection, and
-`staging/user-clarifications.md`.
+The effective value, never the raw nullable resolver field, is written in full
+to the active decision and `decision_clarifications`; history stores only its
+bounded `answer_preview`. The clarification projection is rebuilt from
+`decision_clarifications`.
 
 Issue candidates and their evidence are read once when the decision is sealed.
 `evidence_sha256` covers canonical JSON containing the issue id, exact
 suggested decision, evidence basis, repair phase, and recovery route id.
 `recovery_route_id` is resolved through the closed controller-safeguard
-registry and is included in `policy_digest`. This preserves the current
-controller-override pattern for dispatch caps, whose source phase may not have
-a workflow edge to the issue repair phase. Apply recomputes the evidence digest
-from the sealed descriptor, not from mutable `issues.md`, and verifies that the
-current registry maps the route id to the same repair phase. A descriptor is
-rejected at seal time if any target, verifier, candidate, workflow edge, or
-registered recovery route is invalid.
+registry. The static registry id and mapping are included in `policy_digest`;
+the selected route id and concrete evidence are included in
+`operations_digest`. This preserves the current controller-override pattern for
+dispatch caps, whose source phase may not have a workflow edge to the issue
+repair phase. Apply recomputes the evidence digest from the sealed descriptor,
+not from mutable `issues.md`, and verifies that the current registry maps the
+route id to the same repair phase. A descriptor is rejected at seal time if any
+target, verifier, candidate, workflow edge, or registered recovery route is
+invalid.
 
 No operation may contain a free-form `next_phase`, arbitrary state update,
 shell command, module path, or unsealed issue decision. `answer_text` is
@@ -670,8 +809,19 @@ bounded COMMANDER recommendation or, only for a generated clarification,
 provide a bounded replacement answer for that same recommended operation id.
 A fixed clarification accepts the exact recommended operation and rejects
 replacement text.
-Free-text `resume` is otherwise valid only for `record_clarification` or the
-verifier-confirmed `record_prerequisite` operation.
+
+CLI selection is deterministic. An explicit selection resolves by exact
+operation id. An exact label is compatibility input only and is accepted when
+it identifies exactly one allowed operation; zero or multiple matches are
+invalid input. Bare free text is accepted only when the active decision has
+exactly one generated `record_clarification`, or exactly one
+`record_prerequisite`; it binds to that operation. Fixed clarification options
+require an explicit id or unique exact label. For semi material clarification,
+acceptance or replacement always binds to `recommended_operation_id`. No input
+order, fuzzy label match, or first-operation fallback selects authority.
+Prerequisite free text is a non-authoritative acknowledgment recorded only as
+sanitized audit rationale; it is never an operation parameter and cannot make a
+verifier pass.
 
 ## Recovery Instruction v2 and Idempotency
 
@@ -691,7 +841,7 @@ recovery_instruction:
 
 The only v2 kinds are `resolve_pending_decision`, `await_human_answer`, and
 `manual_diagnosis`. All require a non-empty `decision_id` matching the v2
-record. For every blocked v2 state,
+record. For every unresolved or failed decision-related blocked v2 state,
 `recovery_instruction.reason_code == state.blocked_reason`; a mismatch is an
 invalid recovery generation and cannot drive routing.
 
@@ -715,27 +865,37 @@ durable reason and decision diagnostic, and replace the instruction in one
 state transaction. Provider `blocked_reason` text may appear only as sanitized
 audit context and never participates in the generation equality check.
 
-The status, lease, and recovery state machine is exhaustive:
+The status, lease, recovery, and Squad run-status state machine is exhaustive:
 
-| Event | Required pre-state | Post-state | Durable `blocked_reason` | Lease fields | Recovery instruction |
-|---|---|---|---|---|---|
-| seal guided operational/material | no unresolved active decision | `awaiting_human` | source reason | null | `await_human_answer` |
-| seal semi operational or semi material | no unresolved active decision | `pending` | source reason | null | `resolve_pending_decision` |
-| seal banzai operational/material | no unresolved active decision | `pending` | source reason | null | `resolve_pending_decision` |
-| seal execution-blocked in any mode | no unresolved active decision | `awaiting_human` | source reason | null | `await_human_answer` |
-| claim | `pending`, attempts below maximum | `resolving`, attempts + 1 | source reason | new lease and expiry | `resolve_pending_decision` |
-| reclaim expired lease | expired `resolving`, attempts below maximum | `resolving`, attempts + 1 | source reason | replace lease and expiry | `resolve_pending_decision` |
-| valid COMMANDER operational or banzai material result | matching `resolving` lease | `resolved` through apply | clear | clear | clear |
-| valid semi material recommendation | matching `resolving` lease | `awaiting_human` with recommendation | source reason | clear | `await_human_answer` |
-| invalid result, timeout, or provider failure below maximum | matching `resolving` lease | `pending` | source reason | clear | `resolve_pending_decision` |
-| invalid result, timeout, or provider failure at maximum | matching `resolving` lease | `failed` | `decision_resolution_failed` | clear | `manual_diagnosis` |
-| policy digest mismatch | `pending`, `resolving`, or `awaiting_human` | `failed` | `decision_resolution_failed` | clear | `manual_diagnosis` |
-| valid human choice/clarification | matching `awaiting_human` decision | `resolved` through apply | clear | null | clear |
-| valid prerequisite submission and verifier pass | matching `awaiting_human` prerequisite | `resolved` through apply | clear | null | clear |
-| invalid human input | matching `awaiting_human` decision | unchanged | source reason | null | unchanged |
-| prerequisite verifier still reports missing | matching `awaiting_human` prerequisite | unchanged with sanitized audit entry | source reason | null | unchanged |
-| operation precondition or edge failure | matching `resolving` lease or `awaiting_human` decision | `failed` | `decision_resolution_failed` | clear | `manual_diagnosis` |
-| stale COMMANDER result | decision id, status, or lease does not match | unchanged | unchanged | unchanged | unchanged |
+| Event | Required pre-state | Decision post-state | Squad `status` | Durable `blocked_reason` | Lease fields | Recovery instruction |
+|---|---|---|---|---|---|---|
+| seal guided operational/material | no unresolved active decision | `awaiting_human` | `blocked` | source reason | null | `await_human_answer` |
+| seal semi operational or semi material | no unresolved active decision | `pending` | `blocked` | source reason | null | `resolve_pending_decision` |
+| seal banzai operational/material | no unresolved active decision | `pending` | `blocked` | source reason | null | `resolve_pending_decision` |
+| seal execution-blocked in any mode | no unresolved active decision | `awaiting_human` | `blocked` | source reason | null | `await_human_answer` |
+| claim | `pending`, attempts below maximum | `resolving`, attempts + 1 | `blocked` | source reason | new lease and expiry | `resolve_pending_decision` |
+| reclaim expired lease | expired `resolving`, attempts below maximum | `resolving`, attempts + 1 | `blocked` | source reason | replace lease and expiry | `resolve_pending_decision` |
+| valid COMMANDER operational or banzai material result | matching `resolving` lease | `resolved` through apply | operation-specific | operation-specific | clear | clear |
+| valid semi material recommendation | matching `resolving` lease | `awaiting_human` with recommendation | `blocked` | source reason | clear | `await_human_answer` |
+| invalid result, timeout, or provider failure below maximum | matching `resolving` lease | `pending` | `blocked` | source reason | clear | `resolve_pending_decision` |
+| invalid result, timeout, or provider failure at maximum | matching `resolving` lease | `failed` | `blocked` | `decision_resolution_failed` | clear | `manual_diagnosis` |
+| policy or operations digest mismatch | `pending`, `resolving`, or `awaiting_human` | `failed` | `blocked` | `decision_resolution_failed` | clear | `manual_diagnosis` |
+| valid human choice/clarification | matching `awaiting_human` decision | `resolved` through apply | operation-specific | operation-specific | null | clear |
+| valid prerequisite submission and verifier pass | matching `awaiting_human` prerequisite | `resolved` through apply | `running` | clear | null | clear |
+| invalid human input | matching `awaiting_human` decision | unchanged | `blocked` | source reason | null | unchanged |
+| prerequisite verifier still reports missing | matching `awaiting_human` prerequisite | unchanged with sanitized audit entry | `blocked` | source reason | null | unchanged |
+| operation precondition, edge, or clarification-ledger failure | matching `resolving` lease or `awaiting_human` decision | `failed` | `blocked` | `decision_resolution_failed` | clear | `manual_diagnosis` |
+| stale COMMANDER result | decision id, status, or lease does not match | unchanged | unchanged | unchanged | unchanged | unchanged |
+
+The operation-specific status effect is closed: `approve_gate`,
+`continue_current_phase`, `route_declared_transition`,
+`record_clarification`, `record_prerequisite`, and
+`select_evidence_backed_issue` require and atomically apply
+`blocked -> running`. `reject_gate` requires `blocked`, keeps it `blocked`, and
+routes to `terminal-blocked` with terminal `blocked_reason: gate_rejected`.
+Every other successful operation clears the durable blocked reason. No
+successful non-rejection operation may leave a resolved decision attached to a
+blocked run.
 
 Every transition to `pending`, `awaiting_human`, `resolved`, or `failed`
 clears both lease fields. `resolution_attempts` counts only successful durable
@@ -764,9 +924,10 @@ controller reads them through `get_full_resolved_config`, not `HarnessConfig`.
 A dedicated parser applies defaults, rejects non-mappings and booleans used as
 integers, and enforces the stated numeric bounds before a resolver claim.
 
-A result applies only if its decision id, status, lease id, policy digest, and
-operation preconditions still match. Stale results are discarded. Expired
-leases are reclaimable on the next inline attempt or `continue`.
+A result applies only if its decision id, status, lease id, static policy
+digest, concrete operations digest, and operation preconditions still match.
+Stale results are discarded. Expired leases are reclaimable on the next inline
+attempt or `continue`.
 
 Inline resolution uses the same claim-and-apply path, so its crash behavior is
 identical to `spec continue`.
@@ -825,16 +986,16 @@ nullable `answer_text` field is null.
 
 The controller, not COMMANDER, maintains
 `staging/user-clarifications.md` as an idempotent projection of resolved
-`record_clarification` entries in `decision_history`, plus the active resolved
-entry when it has not yet been archived. After decision apply, the controller
-first drains `pending_controller_completion`; only then may the pre-dispatch
-reconciler write the projection from authoritative state using an atomic file
-replacement. Before every later agent dispatch, the same reconciler repairs
-any missing projection. Entries are ordered by completion time then decision id
-and deduplicated by decision id. Repeating the projection produces identical
-content. A crash after state apply but before completion drain or projection is
-therefore repaired before redispatch; COMMANDER never owns or edits this file
-as part of decision resolution.
+`record_clarification` entries in `decision_clarifications`. After decision
+apply, the controller first drains `pending_controller_completion`; only then
+may the pre-dispatch reconciler write the projection from authoritative state
+using an atomic file replacement. Before every later agent dispatch, the same
+reconciler repairs any missing projection. Entries are ordered by completion
+time then decision id and deduplicated by decision id. Repeating the projection
+produces identical content. Bounded audit-history eviction cannot remove
+clarification context. A crash after state apply but before completion drain or
+projection is therefore repaired before redispatch; COMMANDER never owns or
+edits this file as part of decision resolution.
 
 ## Specialized Safeguards
 
@@ -845,6 +1006,28 @@ and registered recovery routes. COMMANDER may select only one supplied
 operation id. If none is eligible, sealing fails into non-decision v1
 `manual_diagnosis`; it must not invent a scope, policy, security, or
 quality-waiver decision.
+
+Each safeguard registry entry also defines one exact controller-owned effect
+template, covered by the static policy digest and operation-semantics version.
+The selected descriptor and its evidence remain covered by
+`operations_digest`. Successful apply performs the common issue-ledger updates
+and these source-reason-specific effects atomically:
+
+- `phase_dispatch_limit`: remove only `source_phase` from
+  `phase_dispatch_counts`; remove `phase_dispatch_limit_phase` and
+  `phase_dispatch_limit`; and write the existing exact
+  `phase_dispatch_limit_recovery` record with that phase and resolver.
+- `consecutive_why_fails`: set `why_fail_count` to `0`.
+- `why2_metric_stagnation`: set both `why_fail_count` and
+  `why2_metric_stagnation_count` to `0`.
+
+The v2 safeguard is sealed before any legacy forced terminal transition. Its
+authoritative `source_phase` equals the persisted current phase, and sealing
+leaves `state.phase` there while setting `status: blocked`. In particular,
+dispatch-cap and WHY guard code must not first write `terminal-blocked`.
+`apply_decision` therefore satisfies the existing `from_phase` CAS and the
+registered recovery route is the only phase change. Pre-v2 compatibility paths
+retain their current terminal-phase reconstruction.
 
 `human_gate` becomes a controller decision producer. Its existing automatic
 semi/banzai path is removed. Each gate must declare its `decision_policy` and
@@ -864,9 +1047,11 @@ the controller supplies its approve/reject operations and context pack.
   operation, and optional answer to one controller method. They do not write
   `blocked_decision`, `recovery_instruction`, phase, status, or clarification
   files directly.
-- A structured decision accepts only an allowed operation id/label.
-  `record_clarification` accepts bounded answer text. A verified prerequisite
-  accepts bounded free text and re-runs its verifier before continuation.
+- Structured input accepts an exact operation id, or a unique exact label only
+  for compatibility. Free text follows the sole-operation and semi-
+  recommendation binding rules above. `record_clarification` accepts bounded
+  answer text; `record_prerequisite` accepts bounded prerequisite text and
+  reruns its sealed verifier before continuation.
 - Old runs without v2 records retain the existing escalation and recovery
   compatibility paths.
 
@@ -893,10 +1078,14 @@ All diagnostics are redacted. No such failure auto-approves a gate or routes
 to another phase.
 
 After a successful operation, the controller marks the decision resolved and
-appends its sanitized `decision_history` summary, clears the matching recovery
-instruction, durable `blocked_reason`, and legacy escalation display fields in
-the same state transaction. The active resolved record remains available until
-a later decision replaces it under the history-before-replacement rule.
+appends its sanitized `decision_history` summary, appends a clarification ledger
+entry when applicable, applies the operation-specific `running` or `blocked`
+status, and clears the matching recovery instruction, durable `blocked_reason`,
+and legacy escalation display fields in the same state transaction. A rejected
+gate replaces the decision-generation reason with terminal
+`blocked_reason: gate_rejected` rather than clearing it. The active resolved
+record remains available until a later decision replaces it under the
+history-before-replacement rule.
 
 ## Implementation Migration Surface
 
@@ -904,25 +1093,31 @@ The implementation change is incomplete unless all of these existing surfaces
 move together:
 
 - `harness.echelon_result_schema`: add the producer marker and decision-ingress
-  preflight before the `BLOCKED` fast path.
+  preflight before the `BLOCKED` fast path; reserve base-envelope-only blocking
+  validation for trusted non-question controller envelopes.
 - `harness.phase_graph` and `harness.workflow_validator`: parse, compile, hash,
-  and validate policy cases, reason codes, nested dispatch identity, and gate
+  and validate static policy cases, reason codes, concrete-operation digest
+  inputs, nested dispatch identity, redirectable output ownership, and gate
   outcome edges.
 - `harness.squad_executors` and `harness.prepared_phase_result`: introduce the
-  trusted decision envelope and attest its dispatch identity without giving it
-  state authority.
+  trusted decision envelope, remove provider blocking-contract bypasses, attest
+  dispatch identity without giving it state authority, and execute marked
+  phases inside one phase-scoped `ProviderArtifactTransaction`.
 - `harness.blocked_decision`, `harness.recovery_instruction`,
   `harness.state_transaction_namespace`, and `harness.squad_state`: implement
-  exact v2 records, recovery-generation equality, dedicated CAS methods,
-  history ownership, and completion-bound application.
+  exact v2 records, dual digests, invocation kind, recovery-generation equality,
+  clarification-ledger ownership, dedicated CAS methods, the shared unlocked
+  advance primitive, operation-specific status effects, and completion-bound
+  application.
 - `harness.squad`: centralize interception, autonomy resolution, completion
-  preparation/drain, clarification projection, and the split COMMANDER
-  contracts.
+  preparation/drain and discard ownership, invocation-aware redispatch,
+  safeguard resets, clarification projection, and the split COMMANDER
+  contracts. Safeguards seal before legacy terminal-phase writes.
 - `echelon.cli`: consume v2 instructions through the existing shared recovery
   classifier and route `status`, `continue`, and `resume` through controller
   APIs rather than direct state/file writes.
 - `extension/workflow/definition.yaml`: declare the complete producer matrix,
-  policies, result contracts, and gate outcomes.
+  policies, result contracts, redirectable output sets, and gate outcomes.
 - `extension/agents/control/commander.md`: remove recursive/existential human
   escalation and legacy file ownership from v2 instructions; document the
   exact routing, decision-resolution, and explicitly labeled legacy contracts.
@@ -932,18 +1127,20 @@ move together:
 
 ## Verification
 
-Unit tests cover v1-to-v2 migration, v2 preservation across save, exact history
-and audit validation, idempotent bounded history append, decision-case
-selection from detached result state with no persisted-state fallback, the
-complete existing-producer policy matrix, policy reason codes, policy and
-operation-semantics drift, exact nested dispatch identity, every tagged
-operation descriptor, fixed/generated effective answer selection, immutable
-issue evidence and registered recovery routes, discarded question-bearing
-phase effects, clarification projection, prerequisite verifier behavior,
-recovery-instruction v1/v2 validation and reason equality, config parsing,
-every state-machine transition, lease claiming and expiry, retry exhaustion,
-and stale-result rejection. Validator regressions prove malformed
-question-bearing `BLOCKED` results cannot use the legacy fast path.
+Unit tests cover v1-to-v2 migration and non-migration when invocation authority
+is absent, v2 preservation across save, exact history and audit validation,
+idempotent bounded history append, non-evicting clarification-ledger append and
+capacity failure, decision-case selection from detached result state with no
+persisted-state fallback, the complete existing-producer policy matrix, policy
+reason codes, static policy drift, concrete operations drift, exact nested
+dispatch identity, every tagged operation descriptor, fixed/generated
+effective answer selection, immutable issue evidence and registered recovery
+routes, phase-scoped artifact promotion/discard, clarification projection,
+prerequisite verifier behavior, recovery-instruction v1/v2 validation and
+reason equality, config parsing, every decision and Squad status transition,
+lease claiming and expiry, retry exhaustion, prepared-completion discard, and
+stale-result rejection. Validator regressions prove malformed question-bearing
+`BLOCKED` results cannot use a base-validator fast path.
 
 Integration tests cover each producer path in guided, semi, and banzai:
 `STOP_AND_ASK` escalation, `BLOCKED` escalation, nested-agent escalation, both
@@ -951,17 +1148,23 @@ investigator decision cases, human gates, phase-dispatch cap from a phase
 without a direct issue-repair edge, consecutive WHY block, metric stagnation,
 manual single-phase execution, `status`, `continue`, process interruption at
 each durable state, and `resume`. Tests assert that decision interception
-occurs before external effects and ordinary routing, discarded phase effects
-are recomputed after redispatch, generic `save` is never used, gate outcomes
-cannot leak across checkpoints, clarification projection repairs a
-post-commit crash, pending controller completion drains before redispatch,
-completion failure does not repeat COMMANDER resolution, policy drift fails
-closed, and CLI resume does not mutate decision state outside the controller.
-Static contract tests prove generic routing COMMANDER cannot emit a human
-question, v2 COMMANDER cannot write clarification files or cleanup fields, and
-the installed COMMANDER/resume documentation no longer advertises legacy
-behavior as the v2 path. RE regression tests prove that v1 records and existing
-RE resume behavior remain unchanged.
+occurs before external effects and ordinary routing, a nested question discards
+all peer/stage artifacts from that phase attempt, discarded phase effects are
+recomputed after redispatch, generic `save` is never used, public `advance` is
+not called recursively under the decision lock, successful non-rejection
+operations restore `running`, gate rejection remains terminal-blocked,
+safeguard counters reset exactly once, gate outcomes cannot leak across
+checkpoints, clarification projection survives audit-history eviction and
+repairs a post-commit crash, pending controller completion drains before
+invocation-aware redispatch, a manual replay operation reruns one real source
+phase and stops, a manual route-and-finish operation returns after its applied
+route, completion failure does not repeat COMMANDER resolution, either digest
+drift fails closed, and CLI resume does not mutate decision state outside the
+controller. Static contract tests prove generic routing COMMANDER can emit
+neither a human question nor `BLOCKED`, v2 COMMANDER cannot write clarification
+files or cleanup fields, and the installed COMMANDER/resume documentation no
+longer advertises legacy behavior as the v2 path. RE regression tests prove
+that v1 records and existing RE resume behavior remain unchanged.
 
 The primary invariant is: every Squad decision with a declared policy records
 either a controller-validated human or COMMANDER operation, or a bounded
