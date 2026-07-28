@@ -164,6 +164,16 @@ def test_phase_graph_rejects_malformed_structural_node(
 class TestPhaseGraph:
     graph = PhaseGraph(DEFINITION, EXT_YML)
 
+    def test_real_workflow_compiles_empty_migration_registry_with_safeguards(self):
+        registry = self.graph.human_input_policy_registry()
+
+        assert self.graph.get("phase1-tracker").human_input_policies == ()
+        assert registry.lookup(
+            "controller_safeguard",
+            "consecutive_why_fails",
+            "consecutive_why_fails",
+        ).allowed_phase_ids == frozenset({"phase1-why2"})
+
     def test_loads_init_phase(self):
         node = self.graph.get("init")
         assert node.id == "init"
