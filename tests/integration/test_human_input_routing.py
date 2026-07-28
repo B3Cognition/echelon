@@ -8,6 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import harness.squad as squad_module
+from harness.ai_cli_backend import CliRunRequest, CliRunResult
+from harness.config import HarnessConfig, LlmConfig
 from harness.human_input import (
     HumanInputOption,
     HumanInputPolicy,
@@ -16,7 +19,7 @@ from harness.human_input import (
 )
 from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController, _ProviderHumanInputAdvance
-from harness.squad_provider import SquadAgentResult
+from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from harness.squad_state import SquadStateStore
 
 
@@ -123,7 +126,8 @@ def _controller(
     autonomy_mode: str,
     policy: HumanInputPolicy,
     provider_result: object | None = None,
-) -> tuple[SquadController, SquadStateStore, MagicMock]:
+    provider: object | None = None,
+) -> tuple[SquadController, SquadStateStore, object]:
     squad_dir = tmp_path / "squad" / "run-test"
     squad_dir.mkdir(parents=True)
     (squad_dir / "staging").mkdir()
@@ -142,8 +146,9 @@ def _controller(
     state["spec_dir"] = str(tmp_path / "spec")
     store.save(state)
 
-    provider = MagicMock()
-    provider.exec_agent.return_value = provider_result or _decision_result()
+    if provider is None:
+        provider = MagicMock()
+        provider.exec_agent.return_value = provider_result or _decision_result()
     controller = SquadController(
         provider=provider,
         state_store=store,
@@ -427,6 +432,129 @@ def test_commander_context_rejects_symlink_escape_from_declared_root(
         )
 
 
+def test_commander_context_rejects_parent_symlink_swap_during_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = _free_text_policy(
+        context_paths=("{staging_dir}/parent/evidence.md",),
+        source_kind="legacy_recovery",
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    staging = Path(store.load()["staging_dir"])
+    parent = staging / "parent"
+    parent.mkdir()
+    (parent / "evidence.md").write_text("IN-ROOT", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "evidence.md").write_text("OUTSIDE", encoding="utf-8")
+    request = _request(controller, store, policy)
+    store.set_human_input_decision(request, initial_status="pending")
+    state = store.load()
+    original_open = squad_module.os.open
+    swapped = False
+
+    def racing_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if path == "parent" and dir_fd is not None and not swapped:
+            parent.rename(staging / "parent-original")
+            parent.symlink_to(outside, target_is_directory=True)
+            swapped = True
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(squad_module.os, "open", racing_open)
+
+    with pytest.raises(HumanInputPolicyError, match="symlink|context"):
+        controller._render_commander_decision_prompt(
+            state["blocked_decision"],
+            policy,
+            state,
+        )
+    assert swapped
+
+
+def test_commander_context_reads_only_the_remaining_aggregate_file_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = _free_text_policy(
+        context_paths=("{staging_dir}/oversized.md",),
+        source_kind="legacy_recovery",
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    staging = Path(store.load()["staging_dir"])
+    (staging / "oversized.md").write_bytes(b"x" * 1_000_000)
+    request = _request(controller, store, policy)
+    store.set_human_input_decision(request, initial_status="pending")
+    state = store.load()
+    original_read = squad_module.os.read
+    requested_sizes: list[int] = []
+
+    def bounded_read(fd: int, size: int) -> bytes:
+        requested_sizes.append(size)
+        return original_read(fd, size)
+
+    monkeypatch.setattr(squad_module.os, "read", bounded_read)
+
+    prompt = controller._render_commander_decision_prompt(
+        state["blocked_decision"],
+        policy,
+        state,
+    )
+
+    assert requested_sizes
+    assert sum(requested_sizes) <= 32_768
+    assert len(prompt.encode("utf-8")) <= 32_768
+
+
+def test_commander_context_bounds_state_before_full_json_materialization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = _free_text_policy(
+        context_state_keys=("user_message",),
+        source_kind="legacy_recovery",
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    request = _request(controller, store, policy)
+    store.set_human_input_decision(request, initial_status="pending")
+    state = store.load()
+    huge_state_value = "s" * 1_000_000
+    state["user_message"] = huge_state_value
+    original_dumps = squad_module.json.dumps
+
+    def guarded_dumps(value, *args, **kwargs):
+        if (
+            isinstance(value, dict)
+            and value.get("user_message") is huge_state_value
+        ):
+            raise AssertionError("unbounded state JSON was materialized")
+        return original_dumps(value, *args, **kwargs)
+
+    monkeypatch.setattr(squad_module.json, "dumps", guarded_dumps)
+
+    prompt = controller._render_commander_decision_prompt(
+        state["blocked_decision"],
+        policy,
+        state,
+    )
+
+    assert len(prompt.encode("utf-8")) <= 32_768
+    assert huge_state_value not in prompt
+
+
 def test_commander_context_bounds_the_complete_utf8_prompt(
     tmp_path: Path,
 ) -> None:
@@ -454,6 +582,37 @@ def test_commander_context_bounds_the_complete_utf8_prompt(
     assert len(prompt.encode("utf-8")) <= 32_768
     prompt.encode("utf-8").decode("utf-8")
     assert "DECISION_RESOLVED" in prompt
+
+
+def test_commander_runtime_prompt_contains_the_complete_strict_contract(
+    tmp_path: Path,
+) -> None:
+    policy = _choice_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    controller.apply_human_input_resolution = MagicMock(return_value=True)
+
+    assert controller.handle_human_input(_request(controller, store, policy))
+
+    prompt = provider.exec_agent.call_args.args[1]
+    assert (
+        "echelon_result:\n"
+        "  verdict: DECISION_RESOLVED\n"
+        "  state_updates: {}\n"
+        "  journal_entries: []\n"
+        "  decision:\n"
+        '    selected_option_id: "<exact allowed option id>"\n'
+        "    answer_text: null\n"
+        '    rationale: "<non-empty explanation, at most 2,000 characters>"\n'
+        "    confidence: high\n"
+    ) in prompt
+    assert "confidence must be exactly high, medium, or low" in prompt
+    assert "exactly one of selected_option_id or answer_text" in prompt
+    assert "Do not ask another question" in prompt
+    assert "Do not write files or mutate state" in prompt
 
 
 def test_commander_invalid_result_retries_once_after_a_fresh_claim(
@@ -501,6 +660,78 @@ def test_commander_invalid_result_retries_once_after_a_fresh_claim(
     assert store.load()["blocked_decision"]["attempts"] == 2
     assert store.load()["token_usage"] == 18
     controller.apply_human_input_resolution.assert_called_once()
+
+
+def test_commander_real_provider_has_one_physical_call_per_durable_claim(
+    tmp_path: Path,
+) -> None:
+    class FakeBackend:
+        def __init__(self) -> None:
+            self.requests: list[CliRunRequest] = []
+
+        def run_prompt(self, request: CliRunRequest) -> CliRunResult:
+            raise AssertionError("decision resolution must use run_agent")
+
+        def run_agent(self, request: CliRunRequest) -> CliRunResult:
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                return CliRunResult(
+                    exit_code=0,
+                    stdout="Clean output without an echelon_result block.\n",
+                    stderr="",
+                    token_usage=3,
+                )
+            return CliRunResult(
+                exit_code=0,
+                stdout=(
+                    "echelon_result:\n"
+                    "  verdict: DECISION_RESOLVED\n"
+                    "  state_updates: {}\n"
+                    "  journal_entries: []\n"
+                    "  decision:\n"
+                    "    selected_option_id: approve\n"
+                    "    answer_text: null\n"
+                    "    rationale: Best exact allowed option.\n"
+                    "    confidence: high\n"
+                ),
+                stderr="",
+                token_usage=5,
+            )
+
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="codex"),
+    )
+    provider = SquadCliProvider(config)
+    backend = FakeBackend()
+    provider._backend = backend
+    policy = _choice_policy()
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+        provider=provider,
+    )
+    claims: list[int] = []
+    original_claim = store.claim_human_input_decision
+
+    def claim(*args, **kwargs):
+        claimed = original_claim(*args, **kwargs)
+        claims.append(claimed["blocked_decision"]["attempts"])
+        return claimed
+
+    store.claim_human_input_decision = MagicMock(side_effect=claim)
+    controller.apply_human_input_resolution = MagicMock(return_value=True)
+
+    assert controller.handle_human_input(_request(controller, store, policy))
+
+    state = store.load()
+    assert len(backend.requests) == 2
+    assert claims == [1, 2]
+    assert state["blocked_decision"]["attempts"] == 2
+    assert state["token_usage"] == 8
 
 
 def test_commander_second_failure_persists_manual_diagnosis_without_human_fallback(

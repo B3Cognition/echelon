@@ -350,6 +350,7 @@ class SquadCliProvider(AICodingCliProvider):
         timeout_ms: Optional[int] = None,
         result_contract: EchelonResultContract | None = None,
         prompt_metadata: Optional[dict[str, object]] = None,
+        allow_result_repair: bool = True,
     ) -> SquadAgentResult:
         start = time.monotonic()
         git_before = _git_boundary_snapshot(project_root)
@@ -390,7 +391,8 @@ class SquadCliProvider(AICodingCliProvider):
         repair_ended_at = ""
 
         if (
-            echelon_result is None
+            allow_result_repair
+            and echelon_result is None
             and exit_code == 0
             and not timed_out
             and validation_reason

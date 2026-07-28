@@ -1,6 +1,7 @@
 """SquadController — deterministic phase routing for the pre-code squad run."""
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import logging
@@ -175,6 +176,8 @@ PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
 WHY2_METRIC_STAGNATION_LIMIT = 2
 WHY2_METRIC_MIN_DELTA = 0.01
 COMMANDER_DECISION_PROMPT_MAX_BYTES = 32_768
+_BOUNDED_TEXT_CHUNK_CHARS = 1_024
+_CONTEXT_FILE_READ_CHUNK_BYTES = 8_192
 _WHY2_CERTIFIED_METRICS = (
     "overall",
     "structure",
@@ -185,6 +188,105 @@ _WHY2_CERTIFIED_METRICS = (
     "readability",
     "depth",
 )
+
+
+class _BoundedUtf8Builder:
+    """Accumulate text without encoding or retaining more than one byte budget."""
+
+    def __init__(self, byte_limit: int) -> None:
+        self._byte_limit = byte_limit
+        self._byte_size = 0
+        self._parts: list[str] = []
+        self.truncated = False
+
+    @property
+    def remaining(self) -> int:
+        return self._byte_limit - self._byte_size
+
+    def append(self, value: str) -> bool:
+        offset = 0
+        while offset < len(value):
+            if self.remaining <= 0:
+                self.truncated = True
+                return False
+            segment = value[
+                offset:offset + _BOUNDED_TEXT_CHUNK_CHARS
+            ]
+            encoded = segment.encode("utf-8")
+            if len(encoded) <= self.remaining:
+                self._parts.append(segment)
+                self._byte_size += len(encoded)
+                offset += len(segment)
+                continue
+            prefix = encoded[:self.remaining].decode(
+                "utf-8",
+                errors="ignore",
+            )
+            if prefix:
+                self._parts.append(prefix)
+                self._byte_size += len(prefix.encode("utf-8"))
+            self.truncated = True
+            return False
+        return True
+
+    def build(self) -> str:
+        return "".join(self._parts)
+
+
+def _append_bounded_json(
+    builder: _BoundedUtf8Builder,
+    value: object,
+    *,
+    depth: int = 0,
+) -> None:
+    """Write JSON-shaped durable state incrementally into a bounded builder."""
+    if builder.remaining <= 0:
+        builder.truncated = True
+        return
+    if depth > 64:
+        builder.append('"<depth-limit>"')
+        return
+    if value is None or type(value) in {bool, int, float}:
+        builder.append(json.dumps(value, ensure_ascii=False))
+        return
+    if isinstance(value, str):
+        if not builder.append('"'):
+            return
+        for offset in range(0, len(value), _BOUNDED_TEXT_CHUNK_CHARS):
+            escaped = json.dumps(
+                value[offset:offset + _BOUNDED_TEXT_CHUNK_CHARS],
+                ensure_ascii=False,
+            )[1:-1]
+            if not builder.append(escaped):
+                return
+        builder.append('"')
+        return
+    if isinstance(value, Mapping):
+        if not builder.append("{"):
+            return
+        for index, (key, item) in enumerate(value.items()):
+            if index and not builder.append(","):
+                return
+            _append_bounded_json(builder, str(key), depth=depth + 1)
+            if not builder.append(":"):
+                return
+            _append_bounded_json(builder, item, depth=depth + 1)
+            if builder.remaining <= 0:
+                return
+        builder.append("}")
+        return
+    if isinstance(value, (list, tuple)):
+        if not builder.append("["):
+            return
+        for index, item in enumerate(value):
+            if index and not builder.append(","):
+                return
+            _append_bounded_json(builder, item, depth=depth + 1)
+            if builder.remaining <= 0:
+                return
+        builder.append("]")
+        return
+    builder.append('"<unsupported-state-value>"')
 _PHASE_A_GENERATED_FILES = frozenset(
     {
         Path("constitution.md"),
@@ -2081,20 +2183,11 @@ class SquadController:
             )
         return None
 
-    @staticmethod
-    def _truncate_utf8(value: str, byte_limit: int) -> str:
-        if byte_limit <= 0:
-            return ""
-        encoded = value.encode("utf-8")
-        if len(encoded) <= byte_limit:
-            return value
-        return encoded[:byte_limit].decode("utf-8", errors="ignore")
-
     def _resolve_human_input_context_path(
         self,
         template: str,
         state: Mapping[str, object],
-    ) -> tuple[Path, Path]:
+    ) -> tuple[Path, tuple[str, ...]]:
         roots = {
             "{staging_dir}": state.get("staging_dir")
             or self._squad_dir / "staging",
@@ -2113,19 +2206,104 @@ class SquadController:
             root = Path(raw_root)
             if not root.is_absolute():
                 root = self._project_root / root
-            root = root.resolve()
             suffix = template[len(marker):].lstrip("/")
-            candidate = (root / suffix).resolve()
-            try:
-                candidate.relative_to(root)
-            except ValueError as exc:
+            components = tuple(suffix.split("/")) if suffix else ()
+            if not components or any(
+                component in {"", ".", ".."} for component in components
+            ):
                 raise HumanInputPolicyError(
-                    "context path cannot escape its declared root"
-                ) from exc
-            return root, candidate
+                    "registered context path must name an in-root file"
+                )
+            return root, components
         raise HumanInputPolicyError(
             "context path does not use a registered root"
         )
+
+    def _read_human_input_context_file(
+        self,
+        template: str,
+        state: Mapping[str, object],
+        *,
+        byte_limit: int,
+    ) -> str:
+        """Read one regular UTF-8 file through descriptor-bound no-follow opens."""
+        if byte_limit <= 0:
+            return ""
+        no_follow = getattr(os, "O_NOFOLLOW", None)
+        if no_follow is None:
+            raise HumanInputPolicyError(
+                "context no-follow traversal is unavailable"
+            )
+        root, components = self._resolve_human_input_context_path(
+            template,
+            state,
+        )
+        directory_flags = (
+            os.O_RDONLY
+            | no_follow
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        file_flags = (
+            os.O_RDONLY
+            | no_follow
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        opened: list[int] = []
+        try:
+            current_fd = os.open(root, directory_flags)
+            opened.append(current_fd)
+            for component in components[:-1]:
+                current_fd = os.open(
+                    component,
+                    directory_flags,
+                    dir_fd=current_fd,
+                )
+                opened.append(current_fd)
+            file_fd = os.open(
+                components[-1],
+                file_flags,
+                dir_fd=current_fd,
+            )
+            opened.append(file_fd)
+            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                raise HumanInputPolicyError(
+                    "registered context path must be a regular file"
+                )
+
+            chunks: list[bytes] = []
+            remaining = byte_limit
+            reached_eof = False
+            while remaining > 0:
+                chunk = os.read(
+                    file_fd,
+                    min(remaining, _CONTEXT_FILE_READ_CHUNK_BYTES),
+                )
+                if not chunk:
+                    reached_eof = True
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            decoder = codecs.getincrementaldecoder("utf-8")("strict")
+            return decoder.decode(
+                b"".join(chunks),
+                final=reached_eof,
+            )
+        except FileNotFoundError:
+            return "<missing>"
+        except HumanInputPolicyError:
+            raise
+        except (OSError, UnicodeError) as exc:
+            raise HumanInputPolicyError(
+                "context path cannot escape through a symlink or invalid file"
+            ) from exc
+        finally:
+            for descriptor in reversed(opened):
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
 
     def _render_commander_decision_prompt(
         self,
@@ -2154,12 +2332,23 @@ class SquadController:
         }
         instructions = (
             "# COMMANDER DECISION RESOLUTION\n\n"
-            "Return exactly one echelon_result with verdict DECISION_RESOLVED, "
-            "empty state_updates, empty journal_entries, and one decision. "
-            "For choices, set one exact selected_option_id and null answer_text. "
-            "For free text, set a non-empty answer_text and null "
-            "selected_option_id. Do not ask another question. Do not write "
-            "files or mutate state, counters, recovery, or routing.\n\n"
+            "Return exactly this envelope for a choice:\n\n"
+            "echelon_result:\n"
+            "  verdict: DECISION_RESOLVED\n"
+            "  state_updates: {}\n"
+            "  journal_entries: []\n"
+            "  decision:\n"
+            '    selected_option_id: "<exact allowed option id>"\n'
+            "    answer_text: null\n"
+            '    rationale: "<non-empty explanation, at most 2,000 characters>"\n'
+            "    confidence: high\n\n"
+            "For free text, selected_option_id must be null and answer_text "
+            "must be a non-empty string. Set exactly one of selected_option_id "
+            "or answer_text; the other must be null. Rationale is required and "
+            "confidence must be exactly high, medium, or low. Do not add "
+            "fields, state updates, journal entries, files, or another "
+            "envelope. Do not ask another question. Do not write files or "
+            "mutate state, counters, recovery, or routing.\n\n"
             "## Prepared Request\n"
             f"{json.dumps(request_payload, ensure_ascii=False, sort_keys=True)}\n\n"
             "## Registered Context\n"
@@ -2170,41 +2359,36 @@ class SquadController:
                 "COMMANDER prepared request exceeds the prompt byte limit"
             )
 
+        prompt = _BoundedUtf8Builder(
+            COMMANDER_DECISION_PROMPT_MAX_BYTES
+        )
+        if not prompt.append(instructions):
+            raise HumanInputPolicyError(
+                "COMMANDER prepared request exceeds the prompt byte limit"
+            )
         context_state = {
             key: state.get(key)
             for key in policy.context_state_keys
         }
-        sections = [
-            "### State\n"
-            f"{json.dumps(context_state, ensure_ascii=False, sort_keys=True)}\n"
-        ]
+        prompt.append("### State\n")
+        _append_bounded_json(prompt, context_state)
+        prompt.append("\n")
         for template in policy.context_paths:
-            _root, path = self._resolve_human_input_context_path(
+            if prompt.remaining <= 0:
+                break
+            if not prompt.append(f"\n### File {template}\n"):
+                break
+            content = self._read_human_input_context_file(
                 template,
                 state,
+                byte_limit=prompt.remaining,
             )
-            if not path.exists():
-                content = "<missing>"
-            elif not path.is_file():
-                raise HumanInputPolicyError(
-                    "registered context path must be a file"
-                )
-            else:
-                try:
-                    content = path.read_text(encoding="utf-8")
-                except (OSError, UnicodeError) as exc:
-                    raise HumanInputPolicyError(
-                        "registered context file is not readable UTF-8"
-                    ) from exc
-            sections.append(
-                f"\n### File {template}\n{content}\n"
-            )
-        context = "".join(sections)
-        remaining = COMMANDER_DECISION_PROMPT_MAX_BYTES - base_size
-        prompt = instructions + self._truncate_utf8(context, remaining)
-        if len(prompt.encode("utf-8")) > COMMANDER_DECISION_PROMPT_MAX_BYTES:
+            prompt.append(content)
+            prompt.append("\n")
+        rendered = prompt.build()
+        if len(rendered.encode("utf-8")) > COMMANDER_DECISION_PROMPT_MAX_BYTES:
             raise AssertionError("COMMANDER prompt byte bound was exceeded")
-        return prompt
+        return rendered
 
     def _dispatch_commander_human_input(
         self,
@@ -2246,6 +2430,7 @@ class SquadController:
                         raw_result = self._telemetry_provider.exec_agent(
                             str(self._project_root),
                             prompt,
+                            allow_result_repair=False,
                         )
                     if (
                         type(raw_result) is not SquadAgentResult
