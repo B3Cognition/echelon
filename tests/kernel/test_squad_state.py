@@ -23,6 +23,14 @@ from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.controller_state_contracts import (
     ControllerStateContractViolation,
 )
+from harness.human_input import (
+    HumanInputOption,
+    HumanInputPolicy,
+    HumanInputPolicyRegistry,
+    HumanInputResolution,
+    PreparedHumanInput,
+    controller_safeguard_policies,
+)
 from harness.prepared_phase_result import PreparedPhaseResult, prepare_phase_result
 from harness.squad_completion import (
     PreparedControllerCompletion,
@@ -127,6 +135,8 @@ def _advance(
     dispatch_id: str | None = None,
     transaction_state_updates: dict[str, object] | None = None,
     transaction_state_removals: object = (),
+    human_input: PreparedHumanInput | None = None,
+    human_input_initial_status: str | None = None,
 ):
     snapshot = store.capture_routing_snapshot(expected_phase=from_phase)
     decision = store.prepare_routing_decision(
@@ -142,7 +152,93 @@ def _advance(
         transaction_state_updates=transaction_state_updates,
         transaction_state_removals=transaction_state_removals,
     )
-    return store.advance(from_phase, to_phase, decision)
+    return store.advance(
+        from_phase,
+        to_phase,
+        decision,
+        human_input=human_input,
+        human_input_initial_status=human_input_initial_status,
+    )
+
+
+def _human_input_request(
+    *,
+    source_kind: str,
+    source_state_revision: int,
+    phase_id: str = "init",
+) -> PreparedHumanInput:
+    if source_kind == "controller_safeguard":
+        policy = next(
+            item
+            for item in controller_safeguard_policies()
+            if item.producer_id == "consecutive_why_fails"
+        )
+        return HumanInputPolicyRegistry((policy,)).prepare(
+            source_kind=source_kind,
+            producer_id="consecutive_why_fails",
+            phase_id=phase_id,
+            reason_code="consecutive_why_fails",
+            question="WHY convergence failed twice. Choose how to proceed.",
+            recommended_answer="Retry WHY with the existing evidence.",
+            risk_level="low",
+            source_state_revision=source_state_revision,
+        )
+    options = (
+        (
+            HumanInputOption(
+                id="approve",
+                label="Approve",
+                description="Continue to the next phase.",
+                recommended=True,
+                risk_level="low",
+                next_phase="next",
+                outcome="approve",
+            ),
+            HumanInputOption(
+                id="reject",
+                label="Reject",
+                description="Stop for plan revision.",
+                recommended=False,
+                risk_level="medium",
+                next_phase="terminal-blocked",
+                outcome="reject",
+            ),
+        )
+        if source_kind == "human_gate"
+        else ()
+    )
+    policy = HumanInputPolicy(
+        source_kind=source_kind,
+        producer_id="init",
+        reason_code="approval_required",
+        classification="operational",
+        semi_policy="require_human",
+        resolution_handler=(
+            "gate_outcome"
+            if source_kind == "human_gate"
+            else "clarification_resume"
+        ),
+        allow_free_text=source_kind != "human_gate",
+        allowed_phase_ids=frozenset({"init", "next"}),
+        allowed_target_phases=frozenset({"next", "terminal-blocked"}),
+        context_state_keys=("phase",),
+        context_paths=(),
+        options=options,
+    )
+    return HumanInputPolicyRegistry((policy,)).prepare(
+        source_kind=source_kind,
+        producer_id="init",
+        phase_id=phase_id,
+        reason_code="approval_required",
+        question="May the squad continue?",
+        recommended_answer=(
+            "Continue with the attested provider result."
+            if source_kind != "human_gate"
+            else None
+        ),
+        risk_level="low" if source_kind != "human_gate" else None,
+        source_state_revision=source_state_revision,
+    )
 
 
 def _prepare_completion(
@@ -3353,3 +3449,592 @@ class TestUpdatedAt:
         t0 = self._ts(store)
         _advance(store, "init", "phase1-discover", _result())
         assert self._ts(store) >= t0
+
+
+class TestHumanInputDecisionStateCAS:
+    def test_human_input_non_provider_seal_commits_one_v2_pair(self, tmp_path):
+        store = _store(tmp_path)
+        store.initialize(
+            "r1",
+            "greenfield",
+            "msg",
+            0,
+            "init",
+            autonomy_mode="guided",
+        )
+        before = store.load()
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=before["state_revision"],
+        )
+
+        sealed = store.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
+
+        assert sealed == store.load()
+        assert sealed["state_revision"] == before["state_revision"] + 1
+        assert sealed["status"] == "blocked"
+        assert sealed["blocked_reason"] == "approval_required"
+        assert sealed["escalation_question"] == "May the squad continue?"
+        assert [item["id"] for item in sealed["escalation_options"]] == [
+            "approve",
+            "reject",
+        ]
+        decision = sealed["blocked_decision"]
+        assert decision["schema_version"] == 2
+        assert decision["status"] == "awaiting_human"
+        assert decision["source_kind"] == "human_gate"
+        assert decision["producer_id"] == "init"
+        assert decision["source_phase"] == "init"
+        assert decision["autonomy_mode"] == "guided"
+        assert decision["source_state_revision"] == before["state_revision"]
+        assert decision["attempts"] == 0
+        assert decision["selected_option_id"] is None
+        assert decision["answer_text"] is None
+        assert decision["resolved_by"] is None
+        assert decision["failure_code"] is None
+        assert decision["resolved_at"] is None
+        assert sealed["recovery_instruction"] == {
+            "schema_version": 2,
+            "kind": "await_human_answer",
+            "reason_code": "approval_required",
+            "phase": "init",
+            "requires_human_input": True,
+            "decision_id": decision["id"],
+        }
+
+    def test_human_input_non_provider_seal_rejects_stale_existing_and_bad_status(
+        self,
+        tmp_path,
+    ):
+        stale_store = SquadStateStore(tmp_path / "stale")
+        stale_store.initialize("r1", "greenfield", "msg", 0, "init")
+        stale_before = stale_store.load()
+        stale_request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=stale_before["state_revision"] - 1,
+        )
+        with pytest.raises(StateAdvanceError):
+            stale_store.set_human_input_decision(
+                stale_request,
+                initial_status="awaiting_human",
+            )
+        assert stale_store.load() == stale_before
+
+        active_store = SquadStateStore(tmp_path / "active")
+        active_store.initialize("r2", "greenfield", "msg", 0, "init")
+        active_request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=active_store.load()["state_revision"],
+        )
+        active_store.set_human_input_decision(
+            active_request,
+            initial_status="awaiting_human",
+        )
+        active_before = active_store.load()
+        replacement = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=active_before["state_revision"],
+        )
+        with pytest.raises(StateAdvanceError):
+            active_store.set_human_input_decision(
+                replacement,
+                initial_status="awaiting_human",
+            )
+        assert active_store.load() == active_before
+
+        invalid_store = SquadStateStore(tmp_path / "invalid")
+        invalid_store.initialize("r3", "greenfield", "msg", 0, "init")
+        invalid_before = invalid_store.load()
+        invalid_request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=invalid_before["state_revision"],
+        )
+        with pytest.raises(StateAdvanceError):
+            invalid_store.set_human_input_decision(
+                invalid_request,
+                initial_status="resolving",
+            )
+        assert invalid_store.load() == invalid_before
+
+    @pytest.mark.parametrize(
+        ("source_kind", "phase_id", "save_then_raise"),
+        [
+            ("provider_escalation", "init", False),
+            ("provider_escalation", "init", True),
+            ("controller_safeguard", "phase1-why2", False),
+            ("controller_safeguard", "phase1-why2", True),
+        ],
+    )
+    def test_human_input_provider_advance_is_preimage_or_complete_v2_postimage(
+        self,
+        tmp_path,
+        source_kind,
+        phase_id,
+        save_then_raise,
+    ):
+        store = SquadStateStore(
+            tmp_path / f"{source_kind}-{save_then_raise}"
+        )
+        store.initialize(
+            "r1",
+            "greenfield",
+            "msg",
+            0,
+            phase_id,
+            autonomy_mode="banzai",
+        )
+        before = store.load()
+        request = _human_input_request(
+            source_kind=source_kind,
+            source_state_revision=before["state_revision"],
+            phase_id=phase_id,
+        )
+        snapshot = store.capture_routing_snapshot(expected_phase=phase_id)
+        prepared = _result(
+            "DONE",
+            {"provider_fact": "attested"},
+            phase_id=phase_id,
+        )
+        decision = store.prepare_routing_decision(
+            prepared,
+            snapshot=snapshot,
+            from_phase=phase_id,
+            to_phase="next",
+            dispatch_id="d" * 32,
+        )
+        original_save = store._save_unlocked
+
+        def injected_save(state, **kwargs):
+            if save_then_raise:
+                original_save(state, **kwargs)
+            raise OSError("injected human-input save ambiguity")
+
+        with patch.object(
+            store,
+            "_save_unlocked",
+            side_effect=injected_save,
+        ):
+            if save_then_raise:
+                receipt = store.advance(
+                    phase_id,
+                    "next",
+                    decision,
+                    human_input=request,
+                    human_input_initial_status="pending",
+                )
+            else:
+                with pytest.raises(StateAdvanceError):
+                    store.advance(
+                        phase_id,
+                        "next",
+                        decision,
+                        human_input=request,
+                        human_input_initial_status="pending",
+                    )
+
+        after = store.load()
+        if not save_then_raise:
+            assert after == before
+            return
+        assert receipt.state_revision == before["state_revision"] + 1
+        assert after["state_revision"] == receipt.state_revision
+        assert after["phase"] == "next"
+        assert after["provider_fact"] == "attested"
+        assert after["last_dispatch"]["dispatch_id"] == "d" * 32
+        assert after["last_dispatch"]["state_revision"] == receipt.state_revision
+        assert after["blocked_decision"]["schema_version"] == 2
+        assert after["blocked_decision"]["source_kind"] == source_kind
+        assert after["blocked_decision"]["source_state_revision"] == (
+            before["state_revision"]
+        )
+        assert after["recovery_instruction"]["schema_version"] == 2
+        assert after["recovery_instruction"]["decision_id"] == (
+            after["blocked_decision"]["id"]
+        )
+
+    def test_human_input_claim_failure_retry_and_exhaustion_are_cas_transitions(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="provider_escalation",
+            source_state_revision=store.load()["state_revision"],
+        )
+        pending = store.set_human_input_decision(
+            request,
+            initial_status="pending",
+        )
+        decision_id = pending["blocked_decision"]["id"]
+
+        claimed_once = store.claim_human_input_decision(
+            decision_id,
+            expected_state_revision=pending["state_revision"],
+        )
+        assert claimed_once["blocked_decision"]["status"] == "resolving"
+        assert claimed_once["blocked_decision"]["attempts"] == 1
+        assert claimed_once["recovery_instruction"]["kind"] == "resolve_decision"
+
+        retry = store.record_human_input_resolution_failure(
+            decision_id,
+            expected_state_revision=claimed_once["state_revision"],
+            failure_code="provider_failed",
+        )
+        assert retry["blocked_decision"]["status"] == "pending"
+        assert retry["blocked_decision"]["attempts"] == 1
+        assert retry["blocked_decision"]["failure_code"] is None
+
+        claimed_twice = store.claim_human_input_decision(
+            decision_id,
+            expected_state_revision=retry["state_revision"],
+        )
+        assert claimed_twice["blocked_decision"]["status"] == "resolving"
+        assert claimed_twice["blocked_decision"]["attempts"] == 2
+
+        failed = store.record_human_input_resolution_failure(
+            decision_id,
+            expected_state_revision=claimed_twice["state_revision"],
+            failure_code="provider_failed",
+        )
+        assert failed["blocked_decision"]["status"] == "failed"
+        assert failed["blocked_decision"]["attempts"] == 2
+        assert failed["blocked_decision"]["failure_code"] == "provider_failed"
+        assert failed["recovery_instruction"]["kind"] == "manual_diagnosis"
+        assert failed["recovery_instruction"]["phase"] == ""
+        assert "escalation_question" not in failed
+
+    @pytest.mark.parametrize("second_attempt", [False, True])
+    def test_human_input_interrupted_resolution_recovers_or_exhausts(
+        self,
+        tmp_path,
+        second_attempt,
+    ):
+        store = SquadStateStore(tmp_path / str(second_attempt))
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="provider_escalation",
+            source_state_revision=store.load()["state_revision"],
+        )
+        pending = store.set_human_input_decision(
+            request,
+            initial_status="pending",
+        )
+        decision_id = pending["blocked_decision"]["id"]
+        resolving = store.claim_human_input_decision(
+            decision_id,
+            expected_state_revision=pending["state_revision"],
+        )
+        if second_attempt:
+            pending = store.record_human_input_resolution_failure(
+                decision_id,
+                expected_state_revision=resolving["state_revision"],
+                failure_code="validation_failed",
+            )
+            resolving = store.claim_human_input_decision(
+                decision_id,
+                expected_state_revision=pending["state_revision"],
+            )
+
+        recovered = store.recover_interrupted_human_input_decision()
+
+        if second_attempt:
+            assert recovered["blocked_decision"]["status"] == "failed"
+            assert recovered["blocked_decision"]["failure_code"] == (
+                "resolution_attempts_exhausted"
+            )
+            assert recovered["recovery_instruction"]["kind"] == (
+                "manual_diagnosis"
+            )
+            assert "escalation_question" not in recovered
+        else:
+            assert recovered["blocked_decision"]["status"] == "pending"
+            assert recovered["blocked_decision"]["attempts"] == 1
+            assert recovered["recovery_instruction"]["kind"] == (
+                "resolve_decision"
+            )
+
+    def test_human_input_wrong_id_and_stale_revision_write_nothing(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="provider_escalation",
+            source_state_revision=store.load()["state_revision"],
+        )
+        pending = store.set_human_input_decision(
+            request,
+            initial_status="pending",
+        )
+        before = store.load()
+
+        with pytest.raises(StateAdvanceError):
+            store.claim_human_input_decision(
+                "dec-wrong",
+                expected_state_revision=pending["state_revision"],
+            )
+        assert store.load() == before
+
+        with pytest.raises(StateAdvanceError):
+            store.claim_human_input_decision(
+                pending["blocked_decision"]["id"],
+                expected_state_revision=pending["state_revision"] - 1,
+            )
+        assert store.load() == before
+
+    def test_human_input_resolution_retains_audit_and_removes_instruction(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=store.load()["state_revision"],
+        )
+        awaiting = store.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
+        original_decision = deepcopy(awaiting["blocked_decision"])
+
+        resolved = store.apply_human_input_state_resolution(
+            original_decision["id"],
+            expected_state_revision=awaiting["state_revision"],
+            resolution=HumanInputResolution(
+                selected_option_id="approve",
+                answer_text=None,
+                resolved_by="user",
+            ),
+            state_updates={
+                "status": "running",
+                "phase": "next",
+                "resolution_effect": "applied",
+            },
+            state_removals=("why_fail_count",),
+        )
+
+        decision = resolved["blocked_decision"]
+        for field in (
+            "id",
+            "source_kind",
+            "producer_id",
+            "source_phase",
+            "reason_code",
+            "classification",
+            "question",
+            "options",
+            "resolution_handler",
+            "autonomy_mode",
+            "source_state_revision",
+            "created_at",
+        ):
+            assert decision[field] == original_decision[field]
+        assert decision["status"] == "resolved"
+        assert decision["selected_option_id"] == "approve"
+        assert decision["answer_text"] is None
+        assert decision["resolved_by"] == "user"
+        assert decision["resolved_at"]
+        assert resolved["status"] == "running"
+        assert resolved["phase"] == "next"
+        assert resolved["resolution_effect"] == "applied"
+        assert "why_fail_count" not in resolved
+        assert "recovery_instruction" not in resolved
+        assert "blocked_reason" not in resolved
+        assert "escalation_question" not in resolved
+        assert "escalation_options" not in resolved
+
+    def test_generic_save_preserves_active_decision_v2_authority_exactly(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=store.load()["state_revision"],
+        )
+        sealed = store.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
+        candidate = deepcopy(sealed)
+        candidate["unrelated_note"] = "preserved"
+
+        store.save(candidate)
+
+        saved = store.load()
+        assert saved["state_revision"] == sealed["state_revision"] + 1
+        assert saved["unrelated_note"] == "preserved"
+        for field in (
+            "blocked_decision",
+            "recovery_instruction",
+            "phase",
+            "status",
+            "blocked_reason",
+            "escalation_question",
+            "escalation_options",
+        ):
+            assert saved[field] == sealed[field]
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "blocked_decision",
+            "recovery_instruction",
+            "phase",
+            "status",
+            "blocked_reason",
+            "escalation_question",
+            "escalation_options",
+        ],
+    )
+    def test_generic_save_rejects_active_decision_v2_authority_changes(
+        self,
+        tmp_path,
+        field,
+    ):
+        store = SquadStateStore(tmp_path / field)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=store.load()["state_revision"],
+        )
+        sealed = store.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
+        candidate = deepcopy(sealed)
+        if field == "blocked_decision":
+            candidate[field]["question"] = "Mutated"
+        elif field == "recovery_instruction":
+            candidate[field]["reason_code"] = "mutated"
+        elif field == "phase":
+            candidate[field] = "next"
+        elif field == "status":
+            candidate[field] = "running"
+        elif field == "blocked_reason":
+            candidate[field] = "mutated"
+        elif field == "escalation_question":
+            candidate.pop(field)
+        else:
+            candidate[field] = []
+
+        with pytest.raises(StateAdvanceError):
+            store.save(candidate)
+
+        assert store.load() == sealed
+
+    def test_generic_save_cannot_create_or_clear_decision_v2_authority(
+        self,
+        tmp_path,
+    ):
+        source = SquadStateStore(tmp_path / "source")
+        source.initialize("source", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=source.load()["state_revision"],
+        )
+        sealed = source.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
+
+        target = SquadStateStore(tmp_path / "target")
+        target.initialize("target", "greenfield", "msg", 0, "init")
+        target_before = target.load()
+        candidate = deepcopy(target_before)
+        for field in (
+            "blocked_decision",
+            "recovery_instruction",
+            "blocked_reason",
+            "escalation_question",
+            "escalation_options",
+        ):
+            candidate[field] = deepcopy(sealed[field])
+        candidate["status"] = "blocked"
+        with pytest.raises(StateAdvanceError):
+            target.save(candidate)
+        assert target.load() == target_before
+
+        cleared = deepcopy(sealed)
+        cleared.pop("blocked_decision")
+        cleared.pop("recovery_instruction")
+        with pytest.raises(StateAdvanceError):
+            source.save(cleared)
+        assert source.load() == sealed
+
+    @pytest.mark.parametrize("terminal_status", ["resolved", "failed"])
+    def test_generic_save_cannot_replace_terminal_decision_v2_but_seal_can(
+        self,
+        tmp_path,
+        terminal_status,
+    ):
+        store = SquadStateStore(tmp_path / terminal_status)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=store.load()["state_revision"],
+        )
+        sealed = store.set_human_input_decision(
+            request,
+            initial_status=(
+                "awaiting_human" if terminal_status == "resolved" else "pending"
+            ),
+        )
+        decision_id = sealed["blocked_decision"]["id"]
+        if terminal_status == "resolved":
+            terminal = store.apply_human_input_state_resolution(
+                decision_id,
+                expected_state_revision=sealed["state_revision"],
+                resolution=HumanInputResolution(
+                    selected_option_id="approve",
+                    answer_text=None,
+                    resolved_by="user",
+                ),
+                state_updates={"status": "running", "phase": "next"},
+                state_removals=(),
+            )
+        else:
+            first_claim = store.claim_human_input_decision(
+                decision_id,
+                expected_state_revision=sealed["state_revision"],
+            )
+            retry = store.record_human_input_resolution_failure(
+                decision_id,
+                expected_state_revision=first_claim["state_revision"],
+                failure_code="provider_failed",
+            )
+            second_claim = store.claim_human_input_decision(
+                decision_id,
+                expected_state_revision=retry["state_revision"],
+            )
+            terminal = store.record_human_input_resolution_failure(
+                decision_id,
+                expected_state_revision=second_claim["state_revision"],
+                failure_code="provider_failed",
+            )
+
+        candidate = deepcopy(terminal)
+        candidate.pop("blocked_decision")
+        candidate.pop("recovery_instruction", None)
+        with pytest.raises(StateAdvanceError):
+            store.save(candidate)
+        assert store.load() == terminal
+
+        replacement = _human_input_request(
+            source_kind="provider_escalation",
+            source_state_revision=terminal["state_revision"],
+            phase_id=terminal["phase"],
+        )
+        resealed = store.set_human_input_decision(
+            replacement,
+            initial_status="pending",
+        )
+        assert resealed["blocked_decision"]["id"] != decision_id
+        assert resealed["blocked_decision"]["status"] == "pending"
