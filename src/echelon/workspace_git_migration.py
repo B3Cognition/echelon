@@ -145,6 +145,8 @@ def build_migration_plan(workspace_root: Path) -> WorkspaceGitMigrationPlan:
         "/.echelon/runtime/",
         "/.echelon/cache/",
         "/.echelon/recovery-backups/",
+        ".DS_Store",
+        "node_modules/",
         "/sources/*",
         "!/sources/README.md",
     )
