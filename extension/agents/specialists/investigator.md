@@ -179,17 +179,29 @@ Return this entry in the `echelon_result` block at the end of your response.
 
 ## Output Block
 
-When required research capabilities are unavailable and context-pack evidence
-cannot support a defensible conclusion, return:
+For Phase A evidence resolution, every question-bearing result uses
+`STOP_AND_ASK`. Use `investigation_access_required` only when authority or
+credentials unavailable to Echelon are required. Use
+`human_clarification_required` only when reachable evidence is inconclusive
+and the remaining gap is a project decision that cannot be inferred:
 
 ```yaml
 echelon_result:
-  verdict: BLOCKED
+  verdict: STOP_AND_ASK
   state_updates:
+    evidence_resolution_status: "<access_required | inconclusive>"
     status: blocked
-    blocked_reason: "required research capabilities unavailable: <capability>"
+    blocked_reason: "<investigation_access_required | human_clarification_required>"
+    escalation_question: "<one concrete access request or project decision>"
+    escalation_recommended_answer: "<evidence-backed recommendation>"
+    escalation_risk_level: "<low | medium | high | critical>"
   journal_entries: []
 ```
+
+Include `escalation_recommended_answer` and `escalation_risk_level` together
+only when evidence supports a recommendation; otherwise omit both. Do not use
+the access reason for a source reachable under current authority. The
+controller owns clarification writes and state cleanup.
 
 Include one `decision` entry per significant research finding or experiment result. Use `evidence_grade` (A–E) to indicate source quality. If an experiment was run, include `experiment_result` in the data.
 

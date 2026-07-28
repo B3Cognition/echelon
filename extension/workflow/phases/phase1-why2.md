@@ -165,13 +165,30 @@ best practice or an unsupported inference.
 
 ## User-Gated Critical Issues
 
-Set `escalation_question`, `blocked_reason`, and `status: blocked` only when all
-of these are true:
+Return a question only when all of these are true:
 
 1. No squad agent can resolve the issue.
 2. The answer requires information only the user holds.
 3. Proceeding would require an arbitrary decision that binds downstream work.
 
 Route squad-solvable issues back to WHAT without user escalation.
+
+Every question-bearing result uses this exact controller input:
+
+```yaml
+echelon_result:
+  verdict: STOP_AND_ASK
+  state_updates:
+    status: blocked
+    blocked_reason: human_clarification_required
+    escalation_question: "<one concrete project decision>"
+    escalation_recommended_answer: "<evidence-backed recommendation>"
+    escalation_risk_level: "<low | medium | high | critical>"
+```
+
+Include `escalation_recommended_answer` and `escalation_risk_level` together
+only when evidence supports a recommendation; otherwise omit both. Never put a
+question on `FAIL`, `BLOCKED`, or `ESCALATE`. The controller owns
+clarification writes and state cleanup.
 
 **Transition:** `phases[phase1-why2]` in `workflow/definition.yaml`.

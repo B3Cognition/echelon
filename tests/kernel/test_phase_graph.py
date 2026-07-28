@@ -164,10 +164,99 @@ def test_phase_graph_rejects_malformed_structural_node(
 class TestPhaseGraph:
     graph = PhaseGraph(DEFINITION, EXT_YML)
 
-    def test_real_workflow_compiles_empty_migration_registry_with_safeguards(self):
+    def test_real_workflow_compiles_exact_initial_human_input_registry(self):
         registry = self.graph.human_input_policy_registry()
 
-        assert self.graph.get("phase1-tracker").human_input_policies == ()
+        assert {
+            (policy.source_kind, policy.producer_id, policy.reason_code)
+            for policy in registry.policies
+        } == {
+            (
+                "provider_escalation",
+                "phase1-tracker",
+                "human_clarification_required",
+            ),
+            (
+                "provider_escalation",
+                "phase1-why1",
+                "human_clarification_required",
+            ),
+            (
+                "provider_escalation",
+                "phase1-why2",
+                "human_clarification_required",
+            ),
+            (
+                "provider_escalation",
+                "phase1-investigate",
+                "human_clarification_required",
+            ),
+            (
+                "provider_escalation",
+                "phase1-investigate",
+                "investigation_access_required",
+            ),
+            (
+                "provider_escalation",
+                "phase2-tracker-alignment",
+                "human_clarification_required",
+            ),
+            (
+                "human_gate",
+                "checkpoint-assess",
+                "checkpoint_assess_decision_required",
+            ),
+            (
+                "human_gate",
+                "checkpoint-plan",
+                "checkpoint_plan_decision_required",
+            ),
+            (
+                "controller_safeguard",
+                "phase_dispatch_limit",
+                "phase_dispatch_limit",
+            ),
+            (
+                "controller_safeguard",
+                "consecutive_why_fails",
+                "consecutive_why_fails",
+            ),
+            (
+                "controller_safeguard",
+                "why2_metric_stagnation",
+                "why2_metric_stagnation",
+            ),
+        }
+
+        assess = registry.lookup(
+            "human_gate",
+            "checkpoint-assess",
+            "checkpoint_assess_decision_required",
+        )
+        assert assess.classification == "material"
+        assert assess.semi_policy == "require_human"
+
+        plan = registry.lookup(
+            "human_gate",
+            "checkpoint-plan",
+            "checkpoint_plan_decision_required",
+        )
+        assert plan.classification == "operational"
+        assert plan.semi_policy == "auto_if_recommended_low_risk"
+        assert [
+            (
+                option.id,
+                option.recommended,
+                option.risk_level,
+                option.next_phase,
+                option.outcome,
+            )
+            for option in plan.options
+        ] == [
+            ("approve", True, "low", "phase4-document", "approved"),
+            ("reject", False, "low", "terminal-blocked", "rejected"),
+        ]
+
         dispatch_limit_policy = registry.lookup(
             "controller_safeguard",
             "phase_dispatch_limit",
@@ -197,6 +286,34 @@ class TestPhaseGraph:
             "consecutive_why_fails",
             "consecutive_why_fails",
         ).allowed_phase_ids == frozenset({"phase1-why2"})
+
+    def test_question_provider_allowlists_match_declared_policies(self):
+        question_fields = {
+            "escalation_question",
+            "escalation_recommended_answer",
+            "escalation_risk_level",
+        }
+        declared_producers = {
+            "phase1-tracker",
+            "phase1-why1",
+            "phase1-why2",
+            "phase1-investigate",
+            "phase2-tracker-alignment",
+        }
+
+        for phase_id in self.graph.all_phase_ids():
+            node = self.graph.get(phase_id)
+            allowed = set(node.allowed_state_updates or [])
+            if phase_id in declared_producers:
+                assert question_fields <= allowed
+            else:
+                assert not (
+                    allowed
+                    & {
+                        "escalation_recommended_answer",
+                        "escalation_risk_level",
+                    }
+                )
 
     def test_loads_init_phase(self):
         node = self.graph.get("init")

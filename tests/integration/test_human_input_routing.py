@@ -165,6 +165,26 @@ def _controller(
     return controller, store, provider
 
 
+def _workflow_gate_controller(
+    tmp_path: Path,
+    *,
+    gate_id: str,
+    autonomy_mode: str,
+    provider_result: SquadAgentResult | None = None,
+) -> tuple[SquadController, SquadStateStore, object]:
+    graph = PhaseGraph(DEFINITION, EXTENSION)
+    policy = graph.get(gate_id).human_input_policies[0]
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode=autonomy_mode,
+        policy=policy,
+        provider_result=provider_result,
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    return controller, store, provider
+
+
 def _request(
     controller: SquadController,
     store: SquadStateStore,
@@ -546,6 +566,116 @@ def test_human_input_handler_gate_applies_declared_outcome(
     assert state["status"] == expected_status
     assert state.get("blocked_reason") == expected_reason
     store.apply_human_input_state_resolution.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    (
+        "gate_id",
+        "mode",
+        "commander_option",
+        "expected_phase",
+        "expected_status",
+        "expected_resolver",
+    ),
+    [
+        (
+            "checkpoint-assess",
+            "guided",
+            None,
+            "checkpoint-assess",
+            "awaiting_human",
+            None,
+        ),
+        (
+            "checkpoint-plan",
+            "guided",
+            None,
+            "checkpoint-plan",
+            "awaiting_human",
+            None,
+        ),
+        (
+            "checkpoint-assess",
+            "semi",
+            None,
+            "checkpoint-assess",
+            "awaiting_human",
+            None,
+        ),
+        (
+            "checkpoint-plan",
+            "semi",
+            None,
+            "phase4-document",
+            "resolved",
+            "semi",
+        ),
+        (
+            "checkpoint-assess",
+            "banzai",
+            "approve",
+            "phase2-decide",
+            "resolved",
+            "COMMANDER",
+        ),
+        (
+            "checkpoint-assess",
+            "banzai",
+            "reject",
+            "terminal-blocked",
+            "resolved",
+            "COMMANDER",
+        ),
+        (
+            "checkpoint-plan",
+            "banzai",
+            "approve",
+            "phase4-document",
+            "resolved",
+            "COMMANDER",
+        ),
+        (
+            "checkpoint-plan",
+            "banzai",
+            "reject",
+            "terminal-blocked",
+            "resolved",
+            "COMMANDER",
+        ),
+    ],
+)
+def test_real_workflow_gate_mode_matrix_uses_controller_decisions(
+    tmp_path: Path,
+    gate_id: str,
+    mode: str,
+    commander_option: str | None,
+    expected_phase: str,
+    expected_status: str,
+    expected_resolver: str | None,
+) -> None:
+    provider_result = (
+        _decision_result(selected_option_id=commander_option)
+        if commander_option is not None
+        else None
+    )
+    controller, store, provider = _workflow_gate_controller(
+        tmp_path,
+        gate_id=gate_id,
+        autonomy_mode=mode,
+        provider_result=provider_result,
+    )
+
+    controller._intercept_human_gate(controller._graph.get(gate_id))
+
+    state = store.load()
+    decision = state["blocked_decision"]
+    assert state["phase"] == expected_phase
+    assert decision["status"] == expected_status
+    assert decision["resolved_by"] == expected_resolver
+    assert "human_input_outcome" not in state
+    assert provider.exec_agent.call_count == (
+        1 if mode == "banzai" else 0
+    )
 
 
 def test_human_input_handler_phase_dispatch_limit_reuses_issue_lifecycle(

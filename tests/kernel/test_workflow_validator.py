@@ -76,6 +76,36 @@ def test_real_workflow_definition_is_valid() -> None:
     assert report.ok, report.format()
 
 
+def test_real_workflow_gate_edges_match_declared_outcomes() -> None:
+    definition = yaml.safe_load(DEFINITION.read_text(encoding="utf-8"))
+    phases = {phase["id"]: phase for phase in definition["phases"]}
+
+    assert phases["checkpoint-assess"]["transitions"] == [
+        {
+            "to": "phase2-decide",
+            "condition": "human_input_outcome = approved",
+            "outcome": "approved",
+        },
+        {
+            "to": "terminal-blocked",
+            "condition": "human_input_outcome = rejected",
+            "outcome": "rejected",
+        },
+    ]
+    assert phases["checkpoint-plan"]["transitions"] == [
+        {
+            "to": "phase4-document",
+            "condition": "human_input_outcome = approved",
+            "outcome": "approved",
+        },
+        {
+            "to": "terminal-blocked",
+            "condition": "human_input_outcome = rejected",
+            "outcome": "rejected",
+        },
+    ]
+
+
 def _human_input_provider_policy(*, reason_code: str = "human_clarification_required") -> dict:
     return {
         "reason_code": reason_code,

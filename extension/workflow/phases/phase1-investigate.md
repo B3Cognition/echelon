@@ -158,20 +158,36 @@ Produce in `{spec_dir}`:
 
 ## Routing Contract
 
-Return `verdict: COMPLETE` and one of these exact state updates:
+Return `verdict: COMPLETE` for these exact state updates:
 
 - `evidence_resolution_status: validated` when every requested fact is
   sufficiently established;
 - `evidence_resolution_status: conflicting` when evidence establishes facts
-  that contradict the current specification;
-- `evidence_resolution_status: inconclusive` when declared sources were reached
-  but cannot establish the fact;
-- `evidence_resolution_status: access_required` when declared sources cannot be
-  accessed with the available authority.
+  that contradict the current specification.
 
-For `inconclusive` or `access_required`, also return `status: blocked`, a
-specific `blocked_reason`, and an `escalation_question` that identifies the
-needed source or authority. Never retry the same evidence request without new
-evidence.
+Use `STOP_AND_ASK` only after exhausting Echelon-accessible evidence:
+
+```yaml
+echelon_result:
+  verdict: STOP_AND_ASK
+  state_updates:
+    evidence_resolution_status: "<inconclusive | access_required>"
+    status: blocked
+    blocked_reason: "<human_clarification_required | investigation_access_required>"
+    escalation_question: "<one concrete decision or access request>"
+    escalation_recommended_answer: "<evidence-backed recommendation>"
+    escalation_risk_level: "<low | medium | high | critical>"
+```
+
+Use `human_clarification_required` with `inconclusive` only when the remaining
+gap is a project decision that cannot be inferred. Use
+`investigation_access_required` with `access_required` only when authority or
+credentials unavailable to Echelon are required. Do not use the access reason
+for an unread source that remains reachable with current authority.
+
+Include `escalation_recommended_answer` and `escalation_risk_level` together
+only when evidence supports a recommendation; otherwise omit both. Never retry
+the same evidence request without new evidence. The controller owns
+clarification writes and state cleanup.
 
 **Transition:** `phases[phase1-investigate]` in `workflow/definition.yaml`.

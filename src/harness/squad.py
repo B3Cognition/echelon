@@ -95,7 +95,6 @@ from harness.squad_executors import (
     DeterministicStructuralExecutor,
     DeterministicUnderstandingExecutor,
     ExecutorBlockedResult,
-    HumanGateExecutor,
     PhaseExecutor,
     StagedParallelExecutor,
     _MANDATORY_PHASE_OUTPUTS,
@@ -708,7 +707,6 @@ class SquadController:
             "deterministic_understanding": DeterministicUnderstandingExecutor(phase_graph, ext_dir, project_root, self._squad_dir),
             "staged_parallel": StagedParallelExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "conditional_sequential": ConditionalSequentialExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
-            "human_gate": HumanGateExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
         }
         self._cancelled = False
         self._phase_a_published_this_run = False
@@ -2191,6 +2189,30 @@ class SquadController:
             in {"consecutive_why_fails", "why2_metric_stagnation"}
         )
 
+    def _intercept_human_gate(self, node: PhaseNode) -> bool:
+        """Prepare and route one compiled gate without an executor result."""
+        if node.type != "human_gate" or len(node.human_input_policies) != 1:
+            raise HumanInputPolicyError(
+                "human gate requires exactly one compiled policy"
+            )
+        policy = node.human_input_policies[0]
+        snapshot = self._state_store.capture_routing_snapshot(
+            expected_phase=node.id,
+        )
+        spec_dir = str(snapshot.state.get("spec_dir") or "the active spec")
+        request = self._human_input_registry.prepare(
+            source_kind=policy.source_kind,
+            producer_id=policy.producer_id,
+            phase_id=node.id,
+            reason_code=policy.reason_code,
+            question=(
+                f"Review {node.label or node.id} artifacts in {spec_dir}. "
+                "Approve to continue or reject to stop for revision."
+            ),
+            source_state_revision=snapshot.state_revision,
+        )
+        return self.handle_human_input(request)
+
     def handle_human_input(
         self,
         request: PreparedHumanInput,
@@ -3480,6 +3502,11 @@ class SquadController:
                 flush=True,
             )
 
+            if node.type == "human_gate":
+                if self._intercept_human_gate(node):
+                    continue
+                return SquadResult.from_state(self._state_store.load())
+
             executor = self._executors.get(node.type)
             try:
                 if executor is None:
@@ -3938,6 +3965,10 @@ class SquadController:
             ),
             flush=True,
         )
+
+        if node.type == "human_gate":
+            self._intercept_human_gate(node)
+            return SquadResult.from_state(self._state_store.load())
 
         executor = self._executors.get(node.type)
         try:
