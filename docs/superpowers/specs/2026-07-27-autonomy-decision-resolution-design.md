@@ -1,7 +1,7 @@
 # Design: Autonomy Decision Resolution
 
 **Date:** 2026-07-27
-**Status:** Corrected draft - implementation contracts reconciled with recovery and completion
+**Status:** Corrected draft - phase-attempt authority and durable continuation specified
 
 ## Problem
 
@@ -40,6 +40,10 @@ how it is classified, and whether COMMANDER or a human resolves it.
 4. `status`, `continue`, and `resume` consume the same typed recovery action.
 5. Dispatch-cap and SAGE issue recovery retain their current evidence-backed
    safeguards.
+6. No provider artifact or non-artifact effect becomes durable before the
+   complete phase attempt is known not to require a decision.
+7. Full-run, manual, override, restart, and recovery entrypoints cannot bypass
+   an unresolved decision or unconsumed continuation.
 
 ## Non-goals
 
@@ -48,6 +52,8 @@ how it is classified, and whether COMMANDER or a human resolves it.
 - Treating unavailable credentials, external resources, or legal authority as
   decisions COMMANDER may invent or assume.
 - Broadening RE behavior through the shared `blocked_decision` helper.
+- Providing a general network or process-security sandbox. The new provider
+  capability enforces only the declared Phase A filesystem read/write boundary.
 
 ## Architecture
 
@@ -69,13 +75,21 @@ human resume             COMMANDER decision resolver
        +------------+------------+
                     v
       controller-validated operation + audit
+                    |
+                    v
+       pending completion + continuation
+                    |
+                    v
+       exact redispatch, route, or return
 ```
 
 There is exactly one active `blocked_decision` per Squad run. Resolved
 decisions are appended to bounded controller-owned `decision_history` before
-the active record may be replaced. A decision is not completed by writing a
-route, clearing a question, or setting a status field. It is completed only
-when the controller validates and atomically applies a permitted operation.
+the active record may be replaced, and any associated continuation must be
+consumed or atomically superseded by its own real dispatch. A decision is not
+completed by writing a route, clearing a question, or setting a status field.
+It is completed only when the controller validates and atomically applies a
+permitted operation.
 
 ## Provider Ingress and Controller Ownership
 
@@ -190,13 +204,25 @@ may expose only `record_clarification`, `continue_current_phase`, or
 operations because their prepared phase effects are deliberately not
 persisted.
 
-`PhaseGraph` parses `decision_policy` into an immutable compiled policy with a
-stable `dispatch_key` and static `policy_digest`, attached to the exact dispatch
-contract. A nested executor that returns a decision-bearing result wraps it in
-trusted `ExecutorDecisionResult`, analogous to the existing
-`ExecutorBlockedResult`. The wrapper contains the detached
-`SquadAgentResult`, `dispatch_key`, and `policy_digest`; provider output cannot
-set these fields. Simple phase and gate executors use the same wrapper.
+`PhaseGraph` compiles every executable entry into an immutable
+`DispatchDescriptor` with exactly `phase_id`, `dispatch_kind`, `entry_id`,
+`stage_index`, `declaration_index`, and `dispatch_key`. `dispatch_kind` is one
+of `phase`, `pre_dispatch`, `stage_agent`, or `sequential_agent`.
+`stage_index` is a non-negative integer only for `stage_agent` and is null
+otherwise. A simple phase uses its phase id as `entry_id`; every nested entry
+must declare a non-empty `id`, and fallback from `id` to agent name is removed.
+The canonical key is
+`<phase_id>/<dispatch_kind>/<stage-index-or-zero>/<entry_id>`. The workflow
+validator rejects duplicate nested ids or dispatch keys and inconsistent stage
+metadata.
+
+`PhaseGraph` attaches the descriptor, exact result contract, compiled
+`decision_policy`, and static `policy_digest` to the dispatch. A nested executor
+that returns a decision-bearing result wraps it in trusted
+`ExecutorDecisionResult`, analogous to the existing `ExecutorBlockedResult`.
+The wrapper contains the detached `SquadAgentResult`, complete descriptor, and
+`policy_digest`; provider output cannot set these fields. Simple phase and gate
+executors use the same wrapper.
 
 Preparation verifies the wrapper against the compiled graph and seals
 `dispatch_key` and `policy_digest` into `PreparedPhaseResult` attestation. The
@@ -230,11 +256,11 @@ state-update quarantine:
 
 1. With `allows_human_decision: false`, any non-empty
    `escalation_question` is rejected for every verdict.
-2. With `allows_human_decision: true`, a question-bearing result requires exact
-   `status: blocked`, a non-empty diagnostic `blocked_reason`, a non-empty
-   bounded question, valid bounded options, and all case discriminator fields.
-   Every decision-ingress state key must be present in that dispatch's explicit
-   allowlist.
+2. With `allows_human_decision: true`, a question-bearing result requires
+   verdict exactly `BLOCKED` or `STOP_AND_ASK`, exact `status: blocked`, a
+   non-empty diagnostic `blocked_reason`, a non-empty bounded question, valid
+   bounded options, and all case discriminator fields. Every decision-ingress
+   state key must be present in that dispatch's explicit allowlist.
 3. The preflight validates the discriminator types and enums, selects exactly
    one policy case from the detached decision-case view, then validates
    `escalation_prerequisite` against that case.
@@ -254,6 +280,13 @@ envelope-only validation remains available solely for a controller-created
 non-question `ExecutorBlockedResult`; that trusted envelope rejects every
 `escalation_*` field and cannot enter decision sealing.
 
+`SquadCliProvider` and every provider adapter return a typed
+`ProviderResultValidationFailure` after exact-contract repair is exhausted.
+They never fabricate a provider-shaped `BLOCKED` result. Only the executor may
+translate that typed failure into the trusted, non-question
+`ExecutorBlockedResult`, preserving the distinction between provider ingress
+and controller failure recovery.
+
 Before every claim, human confirmation, prerequisite submission, and apply,
 the controller recompiles the current workflow or registry entry and compares
 its static `policy_digest` with the active decision. It separately recomputes
@@ -272,14 +305,25 @@ controller producer with a missing/malformed policy, unknown operation,
 invalid context path, or operation that cannot apply to one of the source
 phase's declared transitions. It also rejects `STOP_AND_ASK` without the
 marker, the marker without a policy, and `escalation_question` in ordinary
-`allowed_state_updates` when the marker is false.
+`allowed_state_updates` when the marker is false. Existing question producers
+that currently allow `ESCALATE` migrate to `STOP_AND_ASK`; `ESCALATE` may not
+carry a human question.
 
 The existing generic COMMANDER routing judgment is not a decision producer and
-cannot recursively escalate. Its current static contract is split:
+cannot recursively escalate. Its static contract is split:
 
-- `ROUTING_JUDGMENT_RESULT_CONTRACT` retains routing intent only. It has
-  `allows_human_decision: false`, rejects every `escalation_*` field, and
-  accepts only `JUDGMENT_RESOLVED`.
+- `ROUTING_JUDGMENT_RESULT_CONTRACT` has
+  `allows_human_decision: false` and accepts only `JUDGMENT_RESOLVED`, empty
+  `state_updates`, empty `journal_entries`, and one exact `routing_judgment`
+  object with fields `schema_version: 1`, `source_phase`,
+  `transition_index`, `outcome`, `target_phase`, and `rationale`. `outcome` is
+  `select_transition` or `condition_false`. `select_transition` requires
+  `target_phase` to equal the indexed declared edge target;
+  `condition_false` requires null `target_phase` and means that the controller
+  may evaluate the next transition in declared order. The source and transition
+  index must match the unresolved routing request. Arbitrary graph phases,
+  omitted intent, extra fields, lifecycle fields, and every `escalation_*`
+  field are rejected.
 - `DecisionResolutionContract` owns all v2 decision resolution.
 - `LEGACY_BANZAI_ESCALATION_RESULT_CONTRACT` retains the old cleanup fields only
   when resuming a pre-v2 active decision.
@@ -371,11 +415,11 @@ transition to `terminal-blocked`; no unmatched reject result is permitted.
 `decision_outcome` edge for every human gate, rejects this metadata on
 non-gate transitions, and rejects autonomy or `human_approved` conditions on a
 gate.
-Rejection marks the decision resolved, appends its history entry, sets run
-status to `blocked`, writes terminal `blocked_reason: gate_rejected`, advances
-to `terminal-blocked`, and clears the decision-related recovery instruction
-atomically. It does not create another question or a decision-related recovery
-loop.
+Rejection marks the decision resolved, appends its history entry, preserves run
+status `blocked` without a status update, writes terminal
+`blocked_reason: gate_rejected`, advances to `terminal-blocked`, and clears the
+decision-related recovery instruction atomically. It does not create another
+question or a decision-related recovery loop.
 
 ## Interception Order
 
@@ -383,25 +427,52 @@ Decision interception is part of result preparation and precedes all ordinary
 routing. For every full-run and manual-phase dispatch, the controller performs
 these steps in order:
 
-1. create one attempt-local `ProviderArtifactTransaction` for the entire phase
-   execution, including its nested and staged dispatches;
-2. detach and validate each result against its exact dispatch contract;
-3. verify and attest its executor-supplied dispatch identity;
-4. if a validated result contains a non-empty `escalation_question`, seal the
-   v2 decision and matching recovery instruction in one CAS state advance;
-5. discard the complete phase artifact transaction and return to the autonomy
-   resolver without preparing external publication,
-   evaluating ordinary transitions, recording phase completion, or applying
-   provider or controller-certificate state updates;
-6. only a complete phase execution with no decision request may seal its
-   artifact transaction into the existing external-effects and routing
-   pipeline.
+1. create one attempt-local `PhaseAttemptTransaction` for the entire phase,
+   capture the begin-time preimages of every declared canonical output
+   destination, and create a child workspace for each executable dispatch;
+2. execute providers only through the child workspace and accumulate detached
+   results, journal proposals, controller-measured token deltas, product-input
+   proposals, state-update proposals, certificate updates, and staged artifact
+   manifests in the parent transaction;
+3. join every concurrent stage, then detach and validate all results in declared
+   dispatch order against their exact contracts and descriptors;
+4. collect question-bearing results for that stage in declared order. Exactly
+   one may continue to decision sealing. More than one produces trusted
+   non-decision `ambiguous_parallel_decision` manual diagnosis and discards the
+   attempt; scheduler completion order never selects authority;
+5. if one validated result contains a non-empty `escalation_question`, seal the
+   v2 decision, matching recovery instruction, and any registry-owned safeguard
+   seal effects in one CAS state advance;
+6. abandon the complete phase attempt and return to the autonomy resolver
+   without preparing external publication, evaluating ordinary transitions,
+   recording phase completion, or applying accumulated ordinary effects;
+7. only a complete phase execution with no decision request may seal its
+   accumulated artifacts and non-artifact effects into the existing
+   external-effects and routing pipeline.
 
-The same ordering applies to `BLOCKED` and `STOP_AND_ASK`. Controller safeguards
-enter at sealing step 4 through their closed registry and use no provider
-artifact transaction. No transition may advance around
-the resolver because a question-bearing prepared result never reaches ordinary
-transition evaluation.
+Executors do not call `SquadStateStore`, append journals, charge durable
+token counters, update product-input state, or prepare controller
+completion while a `PhaseAttemptTransaction` is open. They return proposals to
+the transaction. This applies to pre-dispatch, staged, sequential, simple, and
+gate execution. The controller is the only component that may commit the
+validated aggregate after it proves that the complete attempt contains no
+decision request.
+
+Controller-measured token usage is accounting, not a provider phase effect. It
+remains deferred until outcome classification, then joins the authoritative
+success, decision-seal, or failure state operation. If that snapshot-bound
+operation loses its CAS race, the existing deferred-usage fallback records the
+delta separately. Workspace cleanup never drops or reapplies the delta.
+
+The same ordering applies to `BLOCKED` and `STOP_AND_ASK`. The pre-dispatch
+`phase_dispatch_limit` safeguard enters at sealing step 5 without a provider
+attempt. Consecutive-WHY and WHY2-stagnation safeguards are post-result guards:
+they inspect the attested prepared result and attempt-local declared outputs,
+seal exact triggering counters, baselines, and issue candidates into
+controller-owned descriptors, and then abandon the attempt. They never reread a
+previously persisted `issues.md` or quality state as evidence for the current
+trigger. No transition may advance around the resolver because a
+question-bearing prepared result never reaches ordinary transition evaluation.
 
 A question-bearing agent result is a proposal to stop, not a partially
 committable phase result. All ordinary provider updates, controller-contract
@@ -413,29 +484,77 @@ prerequisite resolves, the controller projects the answer, redispatches the
 exact source phase, and requires the new result and artifacts to pass their
 contracts again.
 
-`ProviderArtifactTransaction` is a controller-owned output boundary, not a
-best-effort cleanup pass. A marked phase and every marked nested dispatch must
-have a complete normalized `outputs` declaration. The workflow validator
-rejects absolute paths, parent traversal, overlapping ownership, undeclared
-write roots, and a marked dispatch whose outputs cannot be redirected. Before
-provider execution, the controller creates a private attempt workspace under
-the run directory, seeds declared inputs, substitutes output placeholders with
-attempt-local paths, and gives provider tools write access only to that
-workspace. Canonical Squad, spec, and source-root artifacts are read-only to the
-attempt. Nested and staged dispatches share the phase transaction so no peer
-output is promoted early.
+`PhaseAttemptTransaction` is a controller-owned effect boundary, not a
+best-effort cleanup pass. Artifact ownership uses a new exact
+`artifact_outputs` contract; the existing descriptive `outputs` list remains
+documentation and grants no write authority. The controller assigns a random
+attempt id and creates the parent and child workspaces below the Squad run
+directory using the existing no-follow and real-directory checks; workflow or
+provider data never selects their paths:
 
-After a complete non-question phase result passes result, artifact, and
-controller-contract validation, the transaction prepares an exact promotion
-manifest containing destination paths, preimage hashes, staged hashes, and the
-dispatch identity. Promotion joins the existing prepared external-effects
-protocol and occurs only under its state/publication binding. A changed
-destination preimage is stale state and rejects promotion without overwriting
-the newer artifact. A decision request, provider failure, invalid result, stale
-state, or abandoned prepared route calls `discard()` and removes the private
-workspace. No provider process in a marked phase receives a writable canonical
-output path, so a discarded decision attempt cannot influence later context
-reconciliation or redispatch.
+```yaml
+artifact_outputs:
+  - id: issues
+    owner_dispatch_id: sage
+    destination_root: spec
+    destination_path: issues.md
+    kind: file
+    required: true
+```
+
+Every descriptor has exactly `id`, `owner_dispatch_id`, `destination_root`,
+`destination_path`, `kind`, and `required`. `destination_root` is one of
+`project`, `spec`, or `staging`; `kind` is `file` or `tree`; `required` is a
+boolean. `destination_path` is a normalized relative path. A `tree` owns all
+descendants and is the only way to declare variable file sets; glob ownership
+is not supported. Prompts reference outputs only through
+`{artifact_output.<id>}` placeholders. Because the attempt boundary exists
+before a result is known, every Phase A provider-executing dispatch, marked or
+unmarked, declares every writable output through this schema. The decision
+marker controls ingress authority, not filesystem isolation.
+`workflow_validator` rejects absolute paths, parent traversal, duplicate ids,
+overlapping file/tree ownership, undeclared roots, owner mismatch, unresolved
+placeholders, and any provider dispatch whose outputs cannot be redirected.
+
+Provider execution uses an exact controller-created `ProviderExecutionRequest`
+containing the `DispatchDescriptor`, private child CWD, read-only input roots,
+exact writable roots, placeholder mapping, and
+`containment_required: true`. The provider registry exposes
+`ENFORCED_WRITE_CONTAINMENT` only when its backend applies an OS-enforced
+filesystem boundary; CLI permission flags, prompts, CWD selection, and provider
+claims are insufficient. A provider dispatch fails closed before provider
+execution when the selected provider lacks that capability. `SquadCliProvider`,
+`AICodingCliProvider`, and every backend adapter must preserve and attest the
+request rather than reducing it to `project_root`.
+
+Concurrent child dispatches are seeded from the same parent-attempt snapshot and
+cannot read or write peer child workspaces. After a stage joins and all results
+pass validation with no question, child manifests are merged into the parent in
+declared dispatch order. Overlapping ownership is already a workflow error, so
+merge never resolves last-writer-wins conflicts. Later stages and sequential
+dispatches receive the merged parent-attempt snapshot as read-only input plus
+their own writable child workspace. Nothing is promoted to canonical roots
+between stages.
+
+After a complete non-question phase passes result, artifact, and
+controller-contract validation, provider-staged writes are imported into the
+same `SquadPublicationTransaction` builder used by controller-owned external
+effects. The builder seals one combined manifest and one existing
+`pending_external_publication` marker containing begin-time destination
+preimage hashes, staged hashes, dispatch identities, aggregate effect digest,
+and completion intent. There is never a second provider-publication marker.
+A destination changed since phase-attempt begin is stale state and rejects
+publication without overwriting the newer artifact.
+
+Cleanup is authority-aware. After any CAS, replacement, or fsync exception, the
+controller reloads state. It preserves or reloads a transaction referenced by
+the exact durable decision, routing, publication, or completion marker and
+removes a workspace only after proving that no durable record references it.
+Provider failure, invalid result, stale state, or an abandoned uncommitted route
+therefore requests cleanup but does not unconditionally call `discard()`.
+No Phase A provider process receives a writable canonical output path, so an
+abandoned decision attempt cannot influence later context reconciliation or
+redispatch.
 
 Consequently, agent-originated policies cannot route directly from the stopped
 result. Gates have no provider effects and may route through their exact gate
@@ -555,11 +674,13 @@ transaction that updates the active decision. Append is idempotent by
 `decision_id`: an identical existing entry is a no-op, while a different entry
 with the same id is a controller integrity failure. Appending the fifty-first
 removes the oldest. A later decision may replace the active resolved record
-only after its summary is present in `decision_history`; pending, resolving,
-or awaiting-human records may never be replaced. Malformed persisted history
-blocks all decision methods. The existing snapshot-bound failure recovery path
-preserves the malformed value byte-for-byte and persists non-decision v1
-`manual_diagnosis`; history is never silently repaired or dropped.
+only after its summary is present in `decision_history` and its continuation is
+consumed or is being consumed by the same real-dispatch transaction; pending,
+resolving, or awaiting-human records may never be replaced. Malformed persisted
+history blocks all decision methods. The existing snapshot-bound failure
+recovery path preserves the malformed value byte-for-byte and persists
+non-decision v1 `manual_diagnosis`; history is never silently repaired or
+dropped.
 
 `decision_clarifications` is a separate controller/store-owned semantic ledger:
 
@@ -586,55 +707,146 @@ that would exceed either bound fails the decision with
 `clarification_ledger_full` and matching manual diagnosis; entries are never
 evicted or truncated to make room.
 
+`decision_continuation` is the store-owned durable record of work owed after a
+successful decision apply:
+
+```yaml
+decision_continuation:
+  schema_version: 1
+  id: "cont-<random-token>"
+  decision_id: "dec-<random-token>"
+  operation_id: approve
+  invocation_kind: full_run | manual_phase
+  kind: replay_source | route_and_finish
+  stage: awaiting_completion | ready | dispatching | consumed
+  completion_id: "<controller completion id>"
+  source_phase: phase1-why1
+  target_phase: phase1-why1
+  dispatch_lease_id: null
+  dispatch_lease_expires_at: null
+  consumed_at: null
+```
+
+The record has exactly these thirteen fields. Lease fields are non-null only in
+`dispatching`; `consumed_at` is non-null only in `consumed`. It is bound to the
+resolved active decision, selected operation, completion marker, source, target,
+and durable invocation kind. A resolved decision with an unconsumed
+continuation cannot be replaced, except when the continuation's own real
+dispatch atomically consumes it while sealing a new decision from that
+dispatch. A consumed record remains until the associated resolved decision is
+archived, so restart can distinguish completed work from work still owed.
+
+`legacy_decision_history` is a separate bounded compatibility ledger for a
+terminal v1 active decision that cannot be reconstructed as v2:
+
+```yaml
+legacy_decision_history:
+  - schema_version: 1
+    legacy_fingerprint: "<sha256 of canonical exact v1 record>"
+    source_phase: phase1-why1
+    final_status: resolved | failed
+    question: "sanitized question"
+    selected_option: "sanitized option" | null
+    completed_at: "<UTC timestamp>" | null
+```
+
+Every entry has exactly these seven fields, is idempotent by
+`legacy_fingerprint`, and follows the same 50-entry oldest-first bound and
+2,000-character audit sanitization as `decision_history`. It has no routing or
+operation authority. A pending v1 record is never archived to make room for a
+new decision.
+
 `state_transaction_namespace` registers `decision_history`,
-`decision_clarifications`, `blocked_decision`, and `recovery_instruction` as
-store-owned transaction keys. These keys may be changed only by the exact
-`SquadStateStore` decision methods below or by an attested prepared routing
-decision applying a resolved operation. They are never added to provider
-control intents, generic queued updates, or phase `allowed_state_updates`. Gate
-outcomes do not require a new state key.
+`legacy_decision_history`, `decision_clarifications`, `decision_continuation`,
+`blocked_decision`, and `recovery_instruction` as store-owned transaction keys.
+`why2_metric_stagnation_count` is added to atomic store control keys and trusted
+routing effects before safeguard migration. These keys may be changed only by
+the exact `SquadStateStore` decision methods below, controller-completion
+finalization, or an attested prepared routing decision applying a resolved
+operation. They are never added to provider control intents, generic queued
+updates, or phase `allowed_state_updates`. Gate outcomes do not require another
+state key.
 
 ## Durable Store Operations
 
-Decision lifecycle writes use four dedicated store APIs. Each validates exact
+Decision lifecycle writes use dedicated store APIs. Each validates exact
 input types before locking, acquires the existing exclusive state lock,
 matches phase, `state_revision`, previous-dispatch digest, active decision id,
 expected status, and lease identity as applicable, increments
 `state_revision`, and uses the existing atomic state-file replacement. A CAS
 mismatch returns a stale outcome without mutation.
 
-- `seal_decision(snapshot, prepared_identity, decision, instruction)` accepts
-  only a newly validated decision-bearing prepared result or a registered
-  controller safeguard. It archives an existing resolved/failed active record
-  if necessary, then writes the new active decision, recovery instruction, and
-  blocked lifecycle state. It does not update `last_dispatch` or phase
-  completion.
+- `seal_decision(snapshot, prepared_identity, decision, instruction,
+  token_usage_delta)` accepts only a newly validated decision-bearing prepared
+  result or a registered controller safeguard. It archives an existing
+  resolved/failed active record only after validating its history and
+  continuation preconditions, then writes the new active decision, recovery
+  instruction, blocked lifecycle state, and non-negative controller-measured
+  source token delta.
+  A decision produced by the exact dispatch that owns a `dispatching`
+  continuation consumes and archives that continuation in the same
+  transaction. It does not update `last_dispatch` or phase completion.
 - `claim_decision(snapshot, decision_id)` accepts only `pending` or an expired
   `resolving` decision below its attempt limit. It writes `resolving`,
-  increments attempts, and installs a new random lease and expiry. It does not
-  route.
-- `settle_decision(snapshot, decision_id, lease_id, outcome)` handles
-  state-only transitions to `pending`, `awaiting_human`, or `failed`, including
-  recovery-generation replacement, lease clearing, audit append, and
-  idempotent history append for failure. It cannot change phase.
+  increments attempts, and installs a new random lease and expiry. It returns an
+  exact seven-field `DecisionClaimReceipt` containing `schema_version: 1`,
+  `decision_id`, `lease_id`, `lease_expires_at`, committed `state_revision`,
+  `phase`, and `previous_dispatch_sha256`. Resolver prompt construction and
+  every later settle/apply CAS use that receipt; callers never reconstruct
+  lease identity from a stale pre-claim snapshot. It does not route.
+- `settle_decision(snapshot, decision_id, lease_id, outcome,
+  token_usage_delta)` handles state-only transitions to `pending`,
+  `awaiting_human`, or `failed`, including recovery-generation replacement,
+  lease clearing, audit append, idempotent history append for failure, and the
+  non-negative controller-measured resolver token delta. It cannot change
+  phase.
 - `apply_decision(snapshot, decision_id, expected_lease_id, operation,
-  prepared_route, completion_marker)` accepts only controller-prepared,
-  mutually attested application artifacts. It revalidates the sealed operation,
-  static policy digest, concrete operations digest, current workflow edge or
-  registered recovery route, exact transaction effects, completion-marker
-  binding, and absence of an older pending publication or completion under the
-  state lock. It then performs the same-phase redispatch, gate edge, or
-  safeguard repair through the single state-advance commit primitive while
-  atomically resolving the decision, applying the operation-specific run-status
-  effect, and installing the pending completion marker.
+  prepared_route, completion_marker, continuation, token_usage_delta)` accepts only
+  controller-prepared, mutually attested application artifacts. It revalidates
+  the sealed operation, static policy digest, concrete operations digest,
+  current workflow edge or registered recovery route, exact transaction
+  effects, completion-marker and continuation binding, and absence of an older
+  pending publication, completion, or unconsumed continuation under the state
+  lock. It then records the replay-source route, gate edge, or safeguard repair
+  through the single state-advance commit primitive while atomically resolving
+  the decision, adding the non-negative controller-measured resolver token
+  delta, applying the operation-specific run-status effect, installing the
+  pending completion marker, and writing
+  `decision_continuation.stage: awaiting_completion`.
   Human resolutions use `expected_lease_id: null` and require
-  `awaiting_human`; COMMANDER resolutions require the current lease.
+  `awaiting_human`; COMMANDER resolutions require the current lease. A commit
+  returns an exact six-field `DecisionApplyReceipt` containing
+  `schema_version: 1`, `decision_id`, `continuation_id`, `completion_id`,
+  committed `state_revision`, and `last_dispatch_sha256`.
+- `claim_decision_continuation(snapshot, continuation_id)` accepts only `ready`,
+  verifies the active resolved decision and invocation kind, and writes
+  `dispatching` with a random dispatch lease and expiry. It returns an exact
+  nine-field `ContinuationClaimReceipt` containing `schema_version: 1`,
+  `continuation_id`, `dispatch_lease_id`, `dispatch_lease_expires_at`, committed
+  `state_revision`, `invocation_kind`, `source_phase`, `target_phase`, and
+  `previous_dispatch_sha256`. An expired `dispatching` lease may be reclaimed
+  under the same execution-lock and CAS rules.
+- `consume_decision_continuation(snapshot, continuation_id,
+  dispatch_lease_id, prepared_outcome)` runs inside the first authoritative
+  state advance produced by the real source/target dispatch. It writes
+  `consumed`, clears the dispatch lease, and records `consumed_at`. If that
+  outcome seals a new decision, it archives the old resolved decision and
+  continuation in the same transaction before installing the new records.
+- `migrate_legacy_squad_decision(snapshot, compiled_policy,
+  invocation_attestation)` is the only v1-to-v2 migration API. It may reconstruct
+  a pending v1 decision only from the supplied current graph policy and exact
+  full/manual invocation proof. It archives a terminal v1 record only through
+  `legacy_decision_history` and never reconstructs terminal operation authority.
+  Generic save has no migration authority.
 
-No decision path calls generic `SquadStateStore.save`. State-only methods do
-not fabricate `last_dispatch`; phase-changing or redispatch operations always
-use the existing prepared-routing attestation and advance path. Failed
-application preconditions settle the decision as failed rather than falling
-back to an inferred route.
+No decision or continuation path calls generic `SquadStateStore.save`.
+State-only methods do not fabricate `last_dispatch`; phase-changing or
+redispatch operations always use the existing prepared-routing attestation and
+advance path. Generic save validates and preserves v1 and v2 records byte-for-
+byte and rejects phase, status, recovery, or escalation mutations while an
+unresolved v2 decision or unconsumed continuation exists. Failed application
+preconditions settle the decision as failed rather than falling back to an
+inferred route.
 
 There is exactly one routing commit implementation. The existing body of
 `SquadStateStore.advance` is factored into private
@@ -668,21 +880,29 @@ Before `apply_decision`, `SquadController` performs a visible-effect-free
    mismatch rather than rebuilding either artifact under the lock.
 
 The prepared completion remains caller-owned until `apply_decision` returns a
-committed receipt. Every stale outcome, validation exception, failed operation
-precondition, or state-write failure calls
-`PreparedControllerCompletion.discard()` in `finally`. A committed receipt
-transfers ownership to the durable pending marker, after which normal completion
-drain owns cleanup.
+committed receipt. A stale outcome, validation exception, or failed operation
+precondition proven to occur before any state replacement may discard it
+directly. After any state-write, replacement, or durability exception, the
+caller reloads state under the existing authority-check helper. The completion
+is preserved when the exact pending marker or matching incomplete
+`last_dispatch` is durable and is discarded only after both are proven absent.
+A committed receipt or reloaded durable authority transfers ownership to the
+pending marker, after which normal completion drain owns cleanup.
 
 The state advance writes `pending_controller_completion` and a
 `last_dispatch` with `post_dispatch_complete: false` in the same transaction
-that resolves the decision. The controller drains that completion before
-clarification projection or redispatch. Restart and `spec continue` drain an
-existing completion before claiming another decision or dispatching an agent.
-Successful drain marks the dispatch complete through the current completion
-protocol. Source-phase completion follows the route's sealed
-`record_completion` value: true only for gate outcomes and false for replay and
-safeguard operations.
+that resolves the decision and writes an `awaiting_completion` continuation.
+The controller drains that completion before clarification projection or
+redispatch. Restart, every controller entrypoint, and `spec continue` treat a
+valid pending completion as the highest-priority shared recovery action,
+regardless of run status or blocked reason; `resume` refuses decision input
+until it drains. Successful drain marks the dispatch complete through the
+current completion protocol. In the same completion-finalization state
+transaction it advances replay-source continuations to `ready`, advances
+full-run route-and-finish continuations to `ready`, and marks manual
+route-and-finish continuations `consumed`. Source-phase completion follows the
+route's sealed `record_completion` value: true only for gate outcomes and false
+for replay and safeguard operations.
 
 A completion failure uses the existing standard controller-completion recovery
 generation. It does not reopen the resolved decision or dispatch COMMANDER a
@@ -694,41 +914,58 @@ Operation application has two closed continuation behaviors:
 - Replay-source operations are `continue_current_phase`,
   `record_clarification`, and `record_prerequisite`. Their synthetic route has
   `record_completion: false` and `manual_phase_run: false`. After completion
-  drain and clarification projection, `full_run` re-enters the normal loop at
-  `source_phase`; `manual_phase` calls the locked single-phase path for
-  `source_phase` exactly once and returns after that real dispatch.
+  drain and clarification projection, the controller claims the `ready`
+  continuation. `full_run` re-enters the normal loop at `source_phase`;
+  `manual_phase` calls a dedicated
+  `run_prepared_decision_continuation` entrypoint for `source_phase`. That
+  entrypoint requires the continuation receipt, skips the existing
+  single-phase initialization/reset save, runs one real phase attempt, consumes
+  the continuation in that attempt's first authoritative state outcome, and
+  returns.
 - Route-and-finish operations are `approve_gate`, `reject_gate`,
   `route_declared_transition`, and `select_evidence_backed_issue`. They do not
   redispatch the source. Gate operations use `record_completion: true`;
   safeguard route operations use `record_completion: false`. Their synthetic
   route uses `manual_phase_run: true` only when the durable invocation kind is
   `manual_phase`, because that operation is the real conclusion of the manual
-  control point. A full run continues from the applied target; a manual run
-  returns after completion drain.
+  control point. A full run claims the `ready` continuation and continues from
+  the applied target; the target dispatch consumes it with its first
+  authoritative outcome. A manual run returns after completion drain, which
+  already marked the continuation consumed.
 
 Restart, `continue`, and `resume` derive this behavior from the persisted
-operation and `invocation_kind`. Process interruption therefore cannot turn a
-one-phase request into a full run, stop before a required source replay, or
-replay a gate that has already been decided.
+continuation, not by reinterpreting the resolved operation. A `ready` or expired
+`dispatching` continuation is a shared recovery action even when run status is
+`running` and no decision recovery instruction remains. Process interruption
+therefore cannot turn a one-phase request into a full run, lose an owed source
+replay, or replay a gate that has already been decided. Exactly-once here means
+one committed continuation outcome; an interrupted provider attempt with no
+authoritative outcome may be retried under the existing phase-attempt recovery
+rules.
 
 Migration rules:
 
-1. Existing v1 records remain valid and are consumed unchanged by RE.
-2. On a Squad write, a v1 pending decision is normalized once to v2 only when
-   its original source phase or blocked reason resolves to a declared policy
-   and its invocation kind is proven by the current sealing entrypoint or
-   matching persisted manual-dispatch metadata. The conversion preserves its
-   question, options, recommendation, blocked phase, timestamps, and v1 resume
-   metadata, computes both digests from reconstructed static policy and
-   concrete operations, but takes `source_reason_code` from the reconstructed
-   compiled policy case. The same
-   transaction replaces durable `blocked_reason` and recovery instruction with
-   that controller-owned code. A v1 decision without reconstructable policy or
-   invocation authority remains on the existing legacy compatibility path;
-   conversion never guesses `full_run`.
-3. The state helper must validate and preserve all v2 fields; it must not
-   rebuild a v2 record from `escalation_*` fields on later saves.
-4. Legacy `escalation_*` fields remain ingress and terminal-display
+1. Existing v1 records remain valid and are consumed unchanged by RE. Generic
+   load/save validates and preserves them but never migrates them.
+2. The explicit Squad migration API normalizes a pending v1 decision once to v2
+   only when its original source phase or blocked reason resolves to the
+   supplied compiled policy and its invocation kind is proven by an attested
+   full-run entrypoint or matching persisted manual-dispatch metadata. The
+   conversion preserves its question, options, recommendation, blocked phase,
+   timestamps, and v1 resume metadata, computes both digests from reconstructed
+   static policy and concrete operations, and takes `source_reason_code` from
+   the reconstructed policy case. The same transaction replaces durable
+   `blocked_reason` and recovery instruction with that controller-owned code.
+   Missing policy or invocation authority leaves the pending record on the
+   existing legacy compatibility path; conversion never guesses `full_run`.
+3. Before sealing a new v2 decision over a resolved or failed v1 active record,
+   the explicit API appends the exact sanitized `legacy_decision_history` entry
+   and only then replaces the active record. Terminal v1 records are never
+   reconstructed into authoritative v2 operations. Pending v1 records are
+   nonreplaceable.
+4. The state helper validates and preserves all v2 and continuation fields; it
+   must not rebuild a v2 record from `escalation_*` fields on later saves.
+5. Legacy `escalation_*` fields remain ingress and terminal-display
    compatibility projections until old active runs are no longer supported.
 
 ## Closed Controller Operations
@@ -744,7 +981,7 @@ kind:
 | `continue_current_phase` | `target_phase` equal to `source_phase` | clear a recoverable block and redispatch the source |
 | `route_declared_transition` | `transition_index`, `target_phase` | follow one exact declared controller-safeguard edge |
 | `record_clarification` | `answer_mode: generated \| fixed`, optional `fixed_answer_text` | record an answer and redispatch the exact source phase |
-| `select_evidence_backed_issue` | `issue_id`, `exact_decision`, `evidence_sha256`, `repair_phase`, `recovery_route_id` | apply one controller-read, evidence-backed SAGE suggestion and its exact registered repair route |
+| `select_evidence_backed_issue` | `issue_snapshot`, `trigger_snapshot`, `evidence_sha256` | apply one controller-read, evidence-backed SAGE suggestion and its exact registered repair route |
 | `record_prerequisite` | `verifier_id`, `capability_key`, `diagnostic_code` | accept human prerequisite input, rerun that exact verifier, and redispatch the source only after it passes |
 
 All strings are trimmed and bounded by the general decision limits.
@@ -775,8 +1012,19 @@ bounded `answer_preview`. The clarification projection is rebuilt from
 `decision_clarifications`.
 
 Issue candidates and their evidence are read once when the decision is sealed.
-`evidence_sha256` covers canonical JSON containing the issue id, exact
-suggested decision, evidence basis, repair phase, and recovery route id.
+`issue_snapshot` is an exact immutable object containing `issue_id`, `title`,
+`decision_required`, `suggested_decision`, `evidence_basis`, `repair_phase`, and
+`recovery_route_id`; all fields are non-empty bounded strings.
+`evidence_sha256` covers canonical JSON of that complete object.
+`trigger_snapshot` is an exact reason-tagged object. `phase_dispatch_limit`
+contains `kind`, `source_phase`, `phase_dispatch_count`, and
+`phase_dispatch_limit`; `consecutive_why_fails` contains `kind`,
+`source_phase`, `why_fail_count`, `why_failure_baseline_recorded_at`, and
+`artifact_progress: false`; `why2_metric_stagnation` contains `kind`,
+`source_phase`, `why_fail_count`, `why2_metric_stagnation_count`, and
+`certified_metrics_improved: false`. Counts are non-negative integers and the
+baseline is a normalized UTC timestamp. The trigger snapshot is included in
+`operations_digest`.
 `recovery_route_id` is resolved through the closed controller-safeguard
 registry. The static registry id and mapping are included in `policy_digest`;
 the selected route id and concrete evidence are included in
@@ -787,6 +1035,16 @@ not from mutable `issues.md`, and verifies that the current registry maps the
 route id to the same repair phase. A descriptor is rejected at seal time if any
 target, verifier, candidate, workflow edge, or registered recovery route is
 invalid.
+
+Successful apply projects the snapshot into the existing issue-resolution
+state shape exactly: the selected ledger entry copies `issue_id`, `title`,
+`decision_required` to `guidance`, `suggested_decision` to `decision`, and
+`repair_phase`; sets `severity: ISSUE`, `status: selected`,
+`evidence_backed: true`, and `confidence: controller-validated`; and uses the
+sanitized resolver rationale. It also writes `selected_issue_resolution`, the
+existing repair baseline with controller timestamp, and the existing recovery
+record with source phase, repair phase, and `reason: issue_resolution`.
+Apply never reconstructs these fields from mutable `issues.md`.
 
 No operation may contain a free-form `next_phase`, arbitrary state update,
 shell command, module path, or unsealed issue decision. `answer_text` is
@@ -887,12 +1145,27 @@ The status, lease, recovery, and Squad run-status state machine is exhaustive:
 | operation precondition, edge, or clarification-ledger failure | matching `resolving` lease or `awaiting_human` decision | `failed` | `blocked` | `decision_resolution_failed` | clear | `manual_diagnosis` |
 | stale COMMANDER result | decision id, status, or lease does not match | unchanged | unchanged | unchanged | unchanged | unchanged |
 
+Continuation transitions are also closed:
+
+| Event | Required pre-state | Continuation post-state |
+|---|---|---|
+| successful decision apply | no older unconsumed continuation | `awaiting_completion` with exact completion binding |
+| successful completion drain for replay-source or full-run route-and-finish | matching pending completion and `awaiting_completion` | `ready` |
+| successful completion drain for manual route-and-finish | matching pending completion and `awaiting_completion` | `consumed` |
+| continuation claim | `ready` | `dispatching` with new lease |
+| expired continuation reclaim | expired `dispatching` | `dispatching` with replacement lease |
+| first authoritative outcome of the exact real dispatch | matching `dispatching` lease | `consumed`, including an ordinary failure block or newly sealed decision |
+| process loss before authoritative dispatch outcome | `dispatching` | unchanged until lease expiry, then reclaimable |
+| stale continuation result | id, stage, lease, source, or target mismatch | unchanged |
+
 The operation-specific status effect is closed: `approve_gate`,
 `continue_current_phase`, `route_declared_transition`,
 `record_clarification`, `record_prerequisite`, and
 `select_evidence_backed_issue` require and atomically apply
-`blocked -> running`. `reject_gate` requires `blocked`, keeps it `blocked`, and
-routes to `terminal-blocked` with terminal `blocked_reason: gate_rejected`.
+`blocked -> running`. `reject_gate` requires existing `blocked` state and omits
+the status transaction effect, thereby preserving `blocked` without requesting
+an unsupported `blocked -> blocked` transition. It routes to
+`terminal-blocked` with terminal `blocked_reason: gate_rejected`.
 Every other successful operation clears the durable blocked reason. No
 successful non-rejection operation may leave a resolved decision attached to a
 blocked run.
@@ -923,6 +1196,15 @@ These values belong to the existing top-level `analysis:` section. The
 controller reads them through `get_full_resolved_config`, not `HarnessConfig`.
 A dedicated parser applies defaults, rejects non-mappings and booleans used as
 integers, and enforces the stated numeric bounds before a resolver claim.
+`lease_ttl_seconds` governs both decision-resolution and continuation-dispatch
+leases; only decision-resolution claims consume `max_attempts`.
+Malformed configuration is a non-mutating pre-claim failure: decision status,
+instruction, lease, attempt count, phase, and run status remain unchanged; the
+CLI reports the exact config path and `continue` may retry after correction.
+The parser never broadly catches an error and substitutes defaults. Full-run,
+manual-phase, `continue`, and `resume` controller construction all use this one
+parser. Both `extension/echelon-config.yml` and
+`extension/config-template.yml` ship the same default section and bounds.
 
 A result applies only if its decision id, status, lease id, static policy
 digest, concrete operations digest, and operation preconditions still match.
@@ -935,8 +1217,11 @@ identical to `spec continue`.
 ## COMMANDER Contract
 
 For non-human outcomes, COMMANDER receives only the sealed v2 decision, its
-declared context pack, the user request, and its allowed operations. It returns
-an exact top-level `decision_resolution` object:
+declared context pack, the user request, its allowed operations, and identity
+from the committed `DecisionClaimReceipt`. Prompt construction uses the
+receipt's lease, phase, revision, and previous-dispatch digest and rejects a
+state reload that no longer matches it. COMMANDER returns an exact top-level
+`decision_resolution` object:
 
 ```yaml
 echelon_result:
@@ -1010,8 +1295,15 @@ quality-waiver decision.
 Each safeguard registry entry also defines one exact controller-owned effect
 template, covered by the static policy digest and operation-semantics version.
 The selected descriptor and its evidence remain covered by
-`operations_digest`. Successful apply performs the common issue-ledger updates
-and these source-reason-specific effects atomically:
+`operations_digest`. Decision sealing applies only the registry-owned trigger
+effects needed to preserve the triggering observation: the dispatch-cap count
+and capped phase for `phase_dispatch_limit`; the computed `why_fail_count` and
+`why_failure_baseline` for `consecutive_why_fails`; and the computed
+`why_fail_count` and `why2_metric_stagnation_count` for
+`why2_metric_stagnation`. Those values must equal the sealed
+`trigger_snapshot`. No ordinary provider or certificate update is retained.
+Successful apply performs the common issue-ledger updates and these
+source-reason-specific reset effects atomically:
 
 - `phase_dispatch_limit`: remove only `source_phase` from
   `phase_dispatch_counts`; remove `phase_dispatch_limit_phase` and
@@ -1035,6 +1327,15 @@ the controller supplies its approve/reject operations and context pack.
 
 ## CLI Behavior
 
+- The shared recovery classifier recognizes a valid
+  `pending_controller_completion` as `drain_controller_completion` before run
+  status, blocked-reason, decision-instruction, or legacy-prose classification.
+  Its controller drain first performs any standard pending-publication recovery
+  required by that completion. `status` displays `spec continue`; `continue`
+  invokes the controller; `resume` refuses input until the completion drains.
+- After completion authority, the classifier recognizes `ready` or expired
+  `dispatching` `decision_continuation` before ordinary running dispatch. It
+  resumes only the persisted source/target and invocation kind.
 - `status` classifies valid recovery instructions before legacy prose.
 - `continue` invokes `resolve_pending_decision` without pre-clearing its state.
 - `resume` accepts input only for a matching v2 `await_human_answer`
@@ -1047,6 +1348,12 @@ the controller supplies its approve/reject operations and context pack.
   operation, and optional answer to one controller method. They do not write
   `blocked_decision`, `recovery_instruction`, phase, status, or clarification
   files directly.
+- V2 structured syntax is
+  `echelon spec resume --operation <exact-id> [--answer <text>]`.
+  Positional text remains compatibility input only when there is exactly one
+  generated clarification or exactly one prerequisite operation. `status` and
+  `continue` display every exact operation id and label; positional letters and
+  list order never carry v2 authority.
 - Structured input accepts an exact operation id, or a unique exact label only
   for compatibility. Free text follows the sole-operation and semi-
   recommendation binding rules above. `record_clarification` accepts bounded
@@ -1054,6 +1361,13 @@ the controller supplies its approve/reject operations and context pack.
   reruns its sealed verifier before continuation.
 - Old runs without v2 records retain the existing escalation and recovery
   compatibility paths.
+- Before `spec run`, `phase run`, `spec run --next-phase`, `continue`, `resume`,
+  or any override mutates phase or dispatches a provider, the shared controller
+  guard validates active decision, completion, and continuation authority.
+  While a decision is `pending`, `resolving`, or `awaiting_human`, manual phase
+  changes and provider dispatch are rejected and only its matching recovery
+  action is exposed. An unconsumed continuation similarly permits only its
+  exact prepared continuation entrypoint.
 
 ## Audit, Errors, and Cleanup
 
@@ -1097,27 +1411,50 @@ move together:
   validation for trusted non-question controller envelopes.
 - `harness.phase_graph` and `harness.workflow_validator`: parse, compile, hash,
   and validate static policy cases, reason codes, concrete-operation digest
-  inputs, nested dispatch identity, redirectable output ownership, and gate
-  outcome edges.
+  inputs, immutable `DispatchDescriptor` identity, exact `artifact_outputs`
+  ownership, and gate outcome edges.
+- `harness.squad_provider`, `harness.llm_provider`,
+  `harness.llm_tool_policy`, `harness.provider_capability`, and every AI CLI
+  backend adapter: preserve the exact `ProviderExecutionRequest`, expose
+  `ENFORCED_WRITE_CONTAINMENT` only for an OS-enforced backend, fail closed for
+  unsupported provider dispatches, and return typed provider-validation failures
+  instead of fabricated provider-shaped blocks.
 - `harness.squad_executors` and `harness.prepared_phase_result`: introduce the
   trusted decision envelope, remove provider blocking-contract bypasses, attest
-  dispatch identity without giving it state authority, and execute marked
-  phases inside one phase-scoped `ProviderArtifactTransaction`.
+  the complete dispatch descriptor without giving it state authority, and
+  accumulate all child artifacts, results, journals, usage, and state proposals
+  inside one phase-scoped `PhaseAttemptTransaction`.
+- `harness.squad_publication` and `harness.state_transaction_namespace`: import
+  provider-staged writes into the existing single publication builder, bind
+  begin-time preimages and aggregate effect identity to its one durable marker,
+  and register decision, continuation, legacy-history, and safeguard-counter
+  ownership.
 - `harness.blocked_decision`, `harness.recovery_instruction`,
   `harness.state_transaction_namespace`, and `harness.squad_state`: implement
   exact v2 records, dual digests, invocation kind, recovery-generation equality,
-  clarification-ledger ownership, dedicated CAS methods, the shared unlocked
-  advance primitive, operation-specific status effects, and completion-bound
-  application.
+  clarification and legacy-ledger ownership, exact continuation state,
+  `DecisionClaimReceipt`, dedicated decision/migration/continuation CAS methods,
+  generic-save mutation guards, the shared unlocked advance primitive,
+  operation-specific status effects, authority-aware cleanup, and
+  completion-bound application.
 - `harness.squad`: centralize interception, autonomy resolution, completion
-  preparation/drain and discard ownership, invocation-aware redispatch,
-  safeguard resets, clarification projection, and the split COMMANDER
-  contracts. Safeguards seal before legacy terminal-phase writes.
+  preparation/drain and authority ownership, phase-attempt aggregation,
+  deterministic parallel-question arbitration, dedicated prepared continuation
+  dispatch, invocation-aware redispatch, safeguard trigger sealing and resets,
+  clarification projection, and the exact split COMMANDER contracts.
+  Safeguards seal before legacy terminal-phase writes.
 - `echelon.cli`: consume v2 instructions through the existing shared recovery
-  classifier and route `status`, `continue`, and `resume` through controller
-  APIs rather than direct state/file writes.
+  classifier, prioritize pending completion and continuation authority, guard
+  every full/manual/override entrypoint, implement exact
+  `--operation`/`--answer` syntax, and route `status`, `continue`, and `resume`
+  through controller APIs rather than direct state/file writes.
 - `extension/workflow/definition.yaml`: declare the complete producer matrix,
-  policies, result contracts, redirectable output sets, and gate outcomes.
+  policies, result contracts, explicit nested ids, exact `artifact_outputs` for
+  every provider dispatch, question-bearing verdict migration, and gate
+  outcomes.
+- `extension/echelon-config.yml` and `extension/config-template.yml`: ship the
+  bounded `analysis.decision_resolution` defaults consumed by the shared strict
+  parser.
 - `extension/agents/control/commander.md`: remove recursive/existential human
   escalation and legacy file ownership from v2 instructions; document the
   exact routing, decision-resolution, and explicitly labeled legacy contracts.
@@ -1127,20 +1464,27 @@ move together:
 
 ## Verification
 
-Unit tests cover v1-to-v2 migration and non-migration when invocation authority
-is absent, v2 preservation across save, exact history and audit validation,
-idempotent bounded history append, non-evicting clarification-ledger append and
-capacity failure, decision-case selection from detached result state with no
-persisted-state fallback, the complete existing-producer policy matrix, policy
-reason codes, static policy drift, concrete operations drift, exact nested
-dispatch identity, every tagged operation descriptor, fixed/generated
-effective answer selection, immutable issue evidence and registered recovery
-routes, phase-scoped artifact promotion/discard, clarification projection,
-prerequisite verifier behavior, recovery-instruction v1/v2 validation and
-reason equality, config parsing, every decision and Squad status transition,
-lease claiming and expiry, retry exhaustion, prepared-completion discard, and
-stale-result rejection. Validator regressions prove malformed question-bearing
-`BLOCKED` results cannot use a base-validator fast path.
+Unit tests cover explicit v1-to-v2 migration, generic-save non-migration,
+terminal v1 legacy-history archival, non-migration when invocation authority is
+absent, v2 and continuation preservation across save, generic-save mutation
+guards, exact history and audit validation, idempotent bounded history append,
+non-evicting clarification-ledger append and capacity failure, decision-case
+selection from detached result state with no persisted-state fallback, the
+complete existing-producer policy matrix, policy reason codes, static policy
+drift, concrete operations drift, immutable dispatch-key derivation and
+uniqueness, every tagged operation and trigger descriptor, fixed/generated
+effective answer selection, immutable issue snapshots and exact ledger
+projection, registered recovery routes, strict artifact-output descriptors,
+begin-time preimage capture, child-workspace merge, one combined publication
+manifest, clarification projection, prerequisite verifier behavior,
+recovery-instruction v1/v2 validation and reason equality, valid and invalid
+config parsing with no mutation, every decision, continuation, and Squad status
+transition, decision and continuation lease claiming and expiry, retry
+exhaustion, authority-aware prepared-completion cleanup, and stale-result
+rejection. Validator regressions prove malformed question-bearing `BLOCKED`
+results cannot use a base-validator fast path, question-bearing `ESCALATE` is
+rejected, and provider validation repair failure becomes the typed controller
+failure path.
 
 Integration tests cover each producer path in guided, semi, and banzai:
 `STOP_AND_ASK` escalation, `BLOCKED` escalation, nested-agent escalation, both
@@ -1148,23 +1492,37 @@ investigator decision cases, human gates, phase-dispatch cap from a phase
 without a direct issue-repair edge, consecutive WHY block, metric stagnation,
 manual single-phase execution, `status`, `continue`, process interruption at
 each durable state, and `resume`. Tests assert that decision interception
-occurs before external effects and ordinary routing, a nested question discards
-all peer/stage artifacts from that phase attempt, discarded phase effects are
-recomputed after redispatch, generic `save` is never used, public `advance` is
-not called recursively under the decision lock, successful non-rejection
-operations restore `running`, gate rejection remains terminal-blocked,
-safeguard counters reset exactly once, gate outcomes cannot leak across
-checkpoints, clarification projection survives audit-history eviction and
-repairs a post-commit crash, pending controller completion drains before
-invocation-aware redispatch, a manual replay operation reruns one real source
-phase and stops, a manual route-and-finish operation returns after its applied
-route, completion failure does not repeat COMMANDER resolution, either digest
-drift fails closed, and CLI resume does not mutate decision state outside the
-controller. Static contract tests prove generic routing COMMANDER can emit
-neither a human question nor `BLOCKED`, v2 COMMANDER cannot write clarification
-files or cleanup fields, and the installed COMMANDER/resume documentation no
-longer advertises legacy behavior as the v2 path. RE regression tests prove
-that v1 records and existing RE resume behavior remain unchanged.
+occurs before all artifact and non-artifact effects and ordinary routing,
+parallel peers are joined and arbitrated in declaration order, multiple peer
+questions fail as `ambiguous_parallel_decision`, a nested question abandons all
+peer/stage work from that phase attempt, later stages see only validated parent-
+attempt output, providers without enforced containment fail before execution,
+and discarded phase effects are recomputed after redispatch. They also assert
+that one publication marker owns provider and controller effects, changed
+begin-time preimages never overwrite newer files, and an ambiguous state-write
+exception preserves any stage that gained durable authority.
+
+Lifecycle integration asserts that generic `save` is never used, public
+`advance` is not called recursively under the exclusive state lock, every
+manual/full/override entrypoint refuses to bypass an unresolved decision,
+successful non-rejection operations restore `running`, gate rejection preserves
+blocked status without a blocked-to-blocked transition, safeguard trigger
+counters and issue evidence survive sealing and reset exactly once, and gate
+outcomes cannot leak across checkpoints. Clarification projection survives
+audit-history eviction and repairs a post-commit crash. Pending controller
+completion drains before every other decision/continuation action; each
+continuation stage survives interruption; a manual replay uses the dedicated
+prepared entrypoint and produces one committed real-source outcome; a manual
+route-and-finish returns after its consumed continuation; and a full route
+continues only at its persisted target. Completion failure does not repeat
+COMMANDER resolution, either digest drift fails closed, malformed config does
+not claim or mutate a decision, and exact CLI resume syntax cannot mutate
+decision state outside the controller. Static contract tests prove generic
+routing COMMANDER emits one exact edge-bound outcome and can emit neither a
+human question nor `BLOCKED`, v2 COMMANDER cannot write clarification files or
+cleanup fields, and the installed COMMANDER/resume documentation no longer
+advertises legacy behavior as the v2 path. RE regression tests prove that v1
+records and existing RE resume behavior remain unchanged.
 
 The primary invariant is: every Squad decision with a declared policy records
 either a controller-validated human or COMMANDER operation, or a bounded
