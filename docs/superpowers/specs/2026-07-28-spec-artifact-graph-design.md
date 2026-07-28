@@ -307,6 +307,8 @@ requirement-level evidence.
   "schema_version": 1,
   "generator_version": "echelon-version",
   "spec_id": "042-normal-mempalace-audit",
+  "source_set_digest": "sha256:...",
+  "memory_state_digest": "sha256:...",
   "inputs": [],
   "nodes": [],
   "edges": []
@@ -333,15 +335,42 @@ source `Artifact` node.
 code/subject findings are merged. `graph_hash` is the SHA-256 of the exact
 graph JSON bytes.
 
-## Input Hash Manifest
+## Input Hashes and Stage Receipts
 
-Every graph build writes a manifest of the exact artifacts and reports used to
-build the graph:
+Every graph build embeds a manifest of the exact artifacts and memory audit
+reports used to build the graph. The manifest is also the receipt chain from
+canonical sources, through reconciled MemPalace state, to the graph:
+
+```text
+canonical source set
+    -> successful native MemPalace audits
+    -> graph build
+```
+
+`source_set_digest` is the SHA-256 of canonical JSON for the sorted current
+source records. Each record contains path, role, required/applicable state, and
+content hash. The set is produced by the same native discovery and policy used
+for a fresh build, not copied from the previous graph. Consequently, adding or
+removing an artifact, or changing whether a memory domain is applicable,
+changes the digest even when every previously recorded file is unchanged.
+
+Each applicable memory domain contributes a receipt containing its domain-local
+`source_set_digest`, normalized audit payload hash, and audit status.
+`memory_state_digest` is the SHA-256 of canonical JSON for those sorted receipts.
+The receipt is proof only when its audit status is `pass`; matching hashes alone
+do not prove that memory refresh or reconciliation succeeded. Receipts are
+embedded graph inputs, not additional sidecar files.
+
+V1 proves reconciled state, not command history. It does not record whether an
+operator literally ran `refresh`; a passing audit for the current source-set
+digest proves that refresh is either unnecessary or completed successfully.
 
 ```json
 {
   "schema_version": 1,
   "spec_id": "042-normal-mempalace-audit",
+  "source_set_digest": "sha256:...",
+  "memory_state_digest": "sha256:...",
   "inputs": [
     {
       "path": "specs/042-normal-mempalace-audit/spec.md",
@@ -366,6 +395,7 @@ build the graph:
       "hash": "sha256:...",
       "role": "memory_audit_report",
       "required": true,
+      "source_set_digest": "sha256:...",
       "status": "pass"
     },
     {
@@ -373,6 +403,7 @@ build the graph:
       "hash": "sha256:...",
       "role": "memory_audit_report",
       "required": false,
+      "source_set_digest": "sha256:...",
       "status": "pass"
     },
     {
@@ -380,15 +411,35 @@ build the graph:
       "hash": "sha256:...",
       "role": "memory_audit_report",
       "required": false,
+      "source_set_digest": "sha256:...",
       "status": "pass"
     }
   ]
 }
 ```
 
-Graph audit recomputes file hashes from disk and reruns applicable native
-MemPalace audits, normalizing and hashing their returned payloads. If any
-recorded input or audit payload changed, the graph is stale.
+Graph audit first rediscovers the complete current input set and recomputes
+`source_set_digest`. It then reruns applicable native MemPalace audits and
+recomputes their receipts and `memory_state_digest`. It compares these current
+digests with the graph receipts before checking individual inputs for
+artifact-specific diagnostics.
+
+The comparisons answer two independent questions:
+
+- MemPalace is current only when each applicable native audit passes for the
+  current domain source-set digest.
+- The graph is current only when its `source_set_digest` and
+  `memory_state_digest` match the current values.
+
+Therefore:
+
+- changed sources plus a failed memory audit mean MemPalace and the graph are
+  stale;
+- changed sources plus passing memory audits mean MemPalace has been refreshed
+  but the graph must be rebuilt;
+- unchanged sources plus a changed or failed memory receipt mean MemPalace
+  changed or drifted after graph build, so the graph must be rebuilt after
+  reconciliation.
 
 Audit payload normalization uses canonical JSON with sorted keys and compact
 separators. It includes audit schema, wing, status, artifact/expected/present
@@ -403,9 +454,10 @@ applicability rule is met.
 
 This separates two kinds of staleness:
 
-- MemPalace stale: a drawer's stored `artifact_hash` no longer matches the
-  canonical artifact on disk.
-- Graph stale: `spec-artifact-graph.json` was built from older input hashes.
+- MemPalace stale: an applicable native audit does not pass for its current
+  domain source-set digest.
+- Graph stale: `spec-artifact-graph.json` records a different source-set or
+  memory-state digest from the current values.
 
 The graph audit must report both independently. A fresh graph can expose stale
 MemPalace. A stale graph cannot be trusted even if MemPalace currently passes.
@@ -419,6 +471,8 @@ Graph audit reports stale or unsafe state for:
 - `tasks.md` changed after graph build.
 - `deferred-scope.json` changed after graph build.
 - amendment artifacts changed after graph build.
+- the discovered input set or a memory domain's applicability changed after
+  graph build.
 - an applicable canonical-spec, RE, or spec-evidence audit payload changed
   after graph build.
 - MemPalace drawer metadata has stale `artifact_hash`, wrong identity, room,
@@ -525,6 +579,7 @@ Errors must be bounded and artifact-specific:
 
 - missing canonical spec: report the selector and expected `specs/` shape;
 - malformed graph JSON: report the file and schema version issue;
+- changed input set: report added, removed, or applicability-changed identities;
 - changed input hash: report old hash, current hash, and path;
 - stale MemPalace drawer: report drawer ID and source artifact path, not drawer
   content;
@@ -538,6 +593,11 @@ Unit tests:
 
 - graph node IDs are deterministic and spec-scoped;
 - graph manifest records hashes for all required inputs;
+- source-set digest changes for added, removed, modified, or newly applicable
+  inputs;
+- memory-state digest changes when a native audit result or domain source set
+  changes;
+- passing refreshed memory with an older graph reports graph-only staleness;
 - audit detects changed `spec.md`, `tasks.md`, `deferred-scope.json`, and a
   changed native canonical-memory audit payload;
 - audit distinguishes graph staleness from MemPalace staleness;
@@ -578,6 +638,8 @@ Integration tests:
 - build graph for a canonical spec and audit passes;
 - edit `spec.md` after graph build and audit reports graph stale;
 - edit `spec.md` after memory mining and memory audit reports stale drawers;
+- refresh MemPalace after changing `spec.md` without rebuilding the graph and
+  verify memory is current while the graph remains stale;
 - edit published RE named by `re-context.json` or curated spec evidence after
   memory mining and verify the appropriate stale findings;
 - defer a requirement and verify graph audit warns instead of failing the
@@ -601,7 +663,8 @@ Integration tests:
 ## Rollout
 
 1. Publish canonical `re-context.json` during normal Phase A finalization.
-2. Add graph models, source manifest, and deterministic JSON renderer.
+2. Add graph models, source manifest, stage receipts, and deterministic JSON
+   renderer.
 3. Add read-only graph audit for existing graph files.
 4. Add graph build from canonical spec artifacts.
 5. Wire `echelon spec graph build/audit/refresh`.
