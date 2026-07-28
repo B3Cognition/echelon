@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from echelon.cli import _cmd_status, _find_converged_harness_build, _print_next_steps
+from harness.blocked_decision import build_blocked_decision_v2
+from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
 
 
 def _write_build_state(
@@ -58,6 +60,83 @@ def _write_switchable_spec_run(
         encoding="utf-8",
     )
     return run_dir
+
+
+def _v2_decision(
+    *,
+    status: str,
+    classification: str = "material",
+    autonomy_mode: str = "guided",
+) -> dict[str, object]:
+    return build_blocked_decision_v2(
+        decision_id="dec-cli-status",
+        status=status,
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="phase1-what",
+        reason_code="checkpoint_assessment",
+        classification=classification,
+        question="Which release boundary should be used?",
+        options=[
+            {
+                "id": "ship-current",
+                "label": "Ship the current boundary",
+                "description": "Use the reviewed scope.",
+                "recommended": True,
+                "risk_level": "medium",
+                "next_phase": "phase2-decide",
+                "outcome": "approved",
+            }
+        ],
+        recommended_answer=None,
+        risk_level="medium",
+        resolution_handler="gate_outcome",
+        autonomy_mode=autonomy_mode,
+        source_state_revision=0,
+        now="2026-07-28T10:00:00+00:00",
+    )
+
+
+def test_status_renders_active_v2_awaiting_human_decision_read_only(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-decision"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    decision = _v2_decision(status="awaiting_human")
+    (run_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "blocked",
+                "phase": "phase1-what",
+                "blocked_decision": decision,
+                "recovery_instruction": RecoveryInstruction(
+                    kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+                    reason_code="checkpoint_assessment",
+                    phase="phase1-what",
+                    requires_human_input=True,
+                    schema_version=2,
+                    decision_id="dec-cli-status",
+                ).to_dict(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _cmd_status(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "Decision mode" in output
+    assert "guided" in output
+    assert "Classification" in output
+    assert "material" in output
+    assert "Which release boundary should be used?" in output
+    assert "ship-current: Ship the current boundary" in output
+    assert "Recommendation" in output
+    assert "Risk" in output
+    assert 'echelon spec resume "<your answer>"' in output
 
 
 def test_newer_blocked_harness_build_masks_older_converged_build(

@@ -2103,3 +2103,59 @@ def test_commander_resume_recovers_interrupted_resolution_before_claim(
 
     assert controller.resume_pending_human_input()
     assert events[:2] == ["recover", "claim"]
+
+
+@pytest.mark.parametrize("entrypoint", ("next_phase", "manual_phase"))
+def test_unresolved_v2_decision_blocks_controller_phase_bypass(
+    tmp_path: Path,
+    entrypoint: str,
+) -> None:
+    policy = _choice_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    request = _request(controller, store, policy)
+    store.set_human_input_decision(request, initial_status="pending")
+    state = store.load()
+    decision_id = state["blocked_decision"]["id"]
+    revision = state["state_revision"]
+    claimed = store.claim_human_input_decision(
+        decision_id,
+        expected_state_revision=revision,
+    )
+    retry = store.record_human_input_resolution_failure(
+        decision_id,
+        expected_state_revision=claimed["state_revision"],
+        failure_code="provider_failed",
+    )
+    claimed = store.claim_human_input_decision(
+        decision_id,
+        expected_state_revision=retry["state_revision"],
+    )
+    failed = store.record_human_input_resolution_failure(
+        decision_id,
+        expected_state_revision=claimed["state_revision"],
+        failure_code="provider_failed",
+    )
+    assert failed["blocked_decision"]["status"] == "failed"
+    assert "escalation_question" not in failed
+    before = store.load()
+
+    if entrypoint == "next_phase":
+        result = controller.run(
+            user_message="registered user message",
+            mode="guided",
+            next_phase_override="phase4-document",
+        )
+    else:
+        result = controller.run_single_phase(
+            "phase4-document",
+            user_message="registered user message",
+            mode="guided",
+        )
+
+    assert result.status == "blocked"
+    assert store.load() == before
+    provider.exec_agent.assert_not_called()

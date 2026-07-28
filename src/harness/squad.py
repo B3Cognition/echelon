@@ -3086,6 +3086,89 @@ class SquadController:
             )
         return False
 
+    def resume_with_human_input(self, answer: str) -> bool:
+        """Apply one sealed awaiting-human answer through the registered handler."""
+        if not isinstance(answer, str) or not answer.strip():
+            raise HumanInputPolicyError("human-input answer is required")
+        state = self._state_store.load()
+        raw_decision = state.get("blocked_decision")
+        if not isinstance(raw_decision, Mapping):
+            raise HumanInputPolicyError("human-input decision is missing")
+        decision = validate_blocked_decision_v2(raw_decision)
+        from harness.recovery_instruction import validate_decision_recovery_pair
+
+        validate_decision_recovery_pair(
+            decision,
+            state.get("recovery_instruction"),
+        )
+        if decision["status"] != "awaiting_human":
+            raise HumanInputPolicyError(
+                "human-input decision is not awaiting a human answer"
+            )
+        if (
+            decision["autonomy_mode"] == "banzai"
+            and decision["classification"] != "external_prerequisite"
+        ):
+            raise HumanInputPolicyError(
+                "Banzai project decisions cannot be submitted as human input"
+            )
+
+        answer = answer.strip()
+        options = self._human_input_options_from_decision(decision)
+        if options:
+            selected = next(
+                (
+                    option
+                    for option in options
+                    if answer in {option.id, option.label}
+                ),
+                None,
+            )
+            if selected is None:
+                raise HumanInputPolicyError(
+                    "human-input answer must exactly match an offered option id or label"
+                )
+            resolution = HumanInputResolution(
+                selected_option_id=selected.id,
+                answer_text=None,
+                resolved_by="user",
+            )
+        else:
+            resolution = HumanInputResolution(
+                selected_option_id=None,
+                answer_text=answer,
+                resolved_by="user",
+            )
+        return self.apply_human_input_resolution(
+            str(decision["id"]),
+            expected_state_revision=int(state["state_revision"]),
+            resolution=resolution,
+        )
+
+    def _unresolved_human_input_decision(
+        self,
+        state: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        raw_decision = state.get("blocked_decision")
+        if not isinstance(raw_decision, Mapping) or raw_decision.get("schema_version") != 2:
+            return None
+        decision = validate_blocked_decision_v2(raw_decision)
+        from harness.recovery_instruction import validate_decision_recovery_pair
+
+        validate_decision_recovery_pair(
+            decision,
+            state.get("recovery_instruction"),
+        )
+        return decision if decision["status"] != "resolved" else None
+
+    @staticmethod
+    def _unresolved_human_input_result(state: Mapping[str, object]) -> SquadResult:
+        return SquadResult(
+            status="blocked",
+            phase=str(state.get("phase") or "unknown"),
+            run_id=str(state.get("run_id") or ""),
+        )
+
     def run(
         self,
         user_message: str = "",
@@ -3110,6 +3193,22 @@ class SquadController:
         existing_status = existing.get("status") if existing else None
         blocked_reason = (existing.get("blocked_reason") or "") if existing else ""
         force_resume = False  # set True by recovery paths to bypass message check
+
+        unresolved_decision = self._unresolved_human_input_decision(existing)
+        if unresolved_decision is not None:
+            if next_phase_override:
+                return self._unresolved_human_input_result(existing)
+            if unresolved_decision["status"] in {"pending", "resolving"}:
+                if self.resume_pending_human_input():
+                    existing = self._state_store.load()
+                    existing_status = existing.get("status")
+                    force_resume = True
+                else:
+                    return self._unresolved_human_input_result(
+                        self._state_store.load()
+                    )
+            else:
+                return self._unresolved_human_input_result(existing)
 
         # ── Recovery: token budget bumped ─────────────────────────────────
         if existing_status == "blocked" and blocked_reason == "token_budget_exhausted":
@@ -3903,6 +4002,8 @@ class SquadController:
             raise KeyError(f"Phase not found in definition.yaml: {phase_id!r}")
 
         existing = self._state_store.load()
+        if self._unresolved_human_input_decision(existing) is not None:
+            return self._unresolved_human_input_result(existing)
         if not existing:
             run_id = f"squad-{int(time.time())}"
             project_mode = self._detect_project_mode(mode)

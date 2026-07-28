@@ -10,6 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from harness.blocked_decision import build_blocked_decision_v2
+from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
+
 
 def _write_blocked_run(tmp_path: Path, options: list[dict]) -> Path:
     run_dir = tmp_path / "runs" / "spec-20260619-111111-000001"
@@ -95,6 +98,78 @@ def _patch_resume_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "harness.phase_graph", phase_graph_mod)
     monkeypatch.setitem(sys.modules, "harness.squad_provider", provider_mod)
     monkeypatch.setitem(sys.modules, "harness.squad", squad_mod)
+
+
+def test_resume_submits_a_valid_v2_answer_only_through_controller(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_resume
+
+    run_dir = _write_blocked_run(
+        tmp_path,
+        [
+            {
+                "id": "approve",
+                "label": "Approve the reviewed boundary",
+                "next_phase": "phase2-decide",
+            }
+        ],
+    )
+    decision = build_blocked_decision_v2(
+        decision_id="dec-cli-resume",
+        status="awaiting_human",
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="checkpoint-assess",
+        reason_code="checkpoint_assessment",
+        classification="material",
+        question="Approve the reviewed boundary?",
+        options=[
+            {
+                "id": "approve",
+                "label": "Approve the reviewed boundary",
+                "description": "Accept the reviewed scope.",
+                "recommended": True,
+                "risk_level": "medium",
+                "next_phase": "phase2-decide",
+                "outcome": "approved",
+            }
+        ],
+        recommended_answer=None,
+        risk_level="medium",
+        resolution_handler="gate_outcome",
+        autonomy_mode="guided",
+        source_state_revision=0,
+        now="2026-07-28T10:00:00+00:00",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+                reason_code="checkpoint_assessment",
+                phase="checkpoint-assess",
+                requires_human_input=True,
+                schema_version=2,
+                decision_id="dec-cli-resume",
+            ).to_dict(),
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    answers: list[str] = []
+    _patch_resume_dependencies(monkeypatch)
+    controller = sys.modules["harness.squad"].SquadController
+    controller.resume_with_human_input = lambda self, answer: answers.append(answer) or True
+
+    _cmd_resume(["approve"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+
+    assert answers == ["approve"]
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["blocked_decision"] == decision
 
 
 def test_resume_option_a_routes_to_offered_next_phase(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

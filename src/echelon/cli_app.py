@@ -835,7 +835,11 @@ def root_status() -> None:
 )
 def root_continue(
     ctx: typer.Context,
-    mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode override."),
+    mode: Optional[str] = typer.Option(
+        None,
+        "--mode",
+        help="Autonomy mode override for legacy runs; sealed decisions keep their persisted mode.",
+    ),
 ) -> None:
     """Compatibility alias for spec continue."""
     legacy_cli = _legacy_cli()
@@ -877,7 +881,10 @@ def root_rewind(
 )
 def root_resume(
     ctx: typer.Context,
-    answer: Optional[str] = typer.Argument(None, help="Answer for the blocked Phase A run."),
+    answer: Optional[str] = typer.Argument(
+        None,
+        help="Answer for an awaiting-human Phase A decision.",
+    ),
 ) -> None:
     """Compatibility alias for spec resume."""
     legacy_cli = _legacy_cli()
@@ -1515,7 +1522,11 @@ def spec_status() -> None:
 )
 def spec_continue(
     ctx: typer.Context,
-    mode: Optional[str] = typer.Option(None, "--mode", help="Autonomy mode override."),
+    mode: Optional[str] = typer.Option(
+        None,
+        "--mode",
+        help="Autonomy mode override for legacy runs; sealed decisions keep their persisted mode.",
+    ),
 ) -> None:
     """Run the next no-input Phase A recovery action."""
     from echelon import cli as legacy_cli
@@ -1531,7 +1542,10 @@ def spec_continue(
 )
 def spec_resume(
     ctx: typer.Context,
-    answer: Optional[str] = typer.Argument(None, help="Answer for the blocked Phase A run."),
+    answer: Optional[str] = typer.Argument(
+        None,
+        help="Answer for an awaiting-human Phase A decision.",
+    ),
 ) -> None:
     """Answer escalation questions from a blocked run."""
     from echelon import cli as legacy_cli

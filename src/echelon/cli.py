@@ -3175,6 +3175,14 @@ def _recovery_action_from_instruction(
                 else "will retry the blocked phase without rewind"
             ),
         )
+    if kind == RecoveryKind.RESOLVE_DECISION:
+        return _RunRecoveryAction(
+            "resolve_decision",
+            reason=reason,
+            phase=phase,
+            command="echelon spec continue",
+            note="the controller will resolve the persisted decision using its sealed autonomy mode",
+        )
     if kind == RecoveryKind.AWAIT_HUMAN_ANSWER:
         return _RunRecoveryAction(
             "human_resume",
@@ -3214,12 +3222,52 @@ def _recovery_action_from_instruction(
             command=f"echelon phase run {phase}",
             note="run the recorded deterministic repair before continuing",
         )
+    if kind == RecoveryKind.MANUAL_DIAGNOSIS:
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            command="inspect echelon spec status, then diagnose the failed decision",
+            note="the controller exhausted automatic decision resolution",
+        )
     return _RunRecoveryAction(
         "manual_recovery",
         reason=reason,
         command="inspect echelon spec status, then choose a recovery action",
         note="the controller recorded that automatic recovery is unsafe",
     )
+
+
+def _active_v2_decision(state: dict) -> dict[str, object] | None:
+    """Return the validated unresolved v2 decision without changing persisted state."""
+    from harness.blocked_decision import validate_blocked_decision_v2
+    from harness.recovery_instruction import validate_decision_recovery_pair
+
+    raw_decision = state.get("blocked_decision")
+    if not isinstance(raw_decision, dict) or raw_decision.get("schema_version") != 2:
+        return None
+    decision = validate_blocked_decision_v2(raw_decision)
+    validate_decision_recovery_pair(decision, state.get("recovery_instruction"))
+    return decision if decision["status"] != "resolved" else None
+
+
+def _render_v2_decision_options(decision: dict[str, object]) -> str:
+    options = decision.get("options")
+    if not isinstance(options, list) or not options:
+        return "Free text"
+    return "\n".join(
+        f"{option['id']}: {option['label']}"
+        for option in options
+        if isinstance(option, dict)
+    )
+
+
+def _v2_decision_recommendation(decision: dict[str, object]) -> str:
+    options = decision.get("options")
+    if isinstance(options, list):
+        for option in options:
+            if isinstance(option, dict) and option.get("recommended") is True:
+                return f"{option['id']}: {option['label']}"
+    return str(decision.get("recommended_answer") or "(none)")
 
 
 def _persisted_or_legacy_recovery_instruction(
@@ -6839,6 +6887,26 @@ def _cmd_status(project_root: Path) -> None:
                 if guidance:
                     fields.append(("Issue guidance", guidance))
 
+        try:
+            decision = _active_v2_decision(state)
+        except (RecoveryInstructionError, ValueError) as exc:
+            fields.append(("Decision", f"invalid persisted decision: {exc}"))
+        else:
+            if decision is not None:
+                action = _classify_run_recovery(state, project_root=project_root)
+                fields.extend(
+                    [
+                        ("Decision status", str(decision["status"])),
+                        ("Decision mode", str(decision["autonomy_mode"])),
+                        ("Classification", str(decision["classification"])),
+                        ("Question", str(decision["question"])),
+                        ("Options", _render_v2_decision_options(decision)),
+                        ("Recommendation", _v2_decision_recommendation(decision)),
+                        ("Risk", str(decision.get("risk_level") or "(none)")),
+                        ("Decision action", action.command),
+                    ]
+                )
+
         _banner("RUN STATE", fields)
 
         # ── Pipeline roadmap ────────────────────────────────────────────────
@@ -6918,6 +6986,15 @@ def _cmd_continue(
     state = _json.loads((squad_dir / "state.json").read_text())
     user_message = state.get("user_message", "")
     mode = mode_override or state.get("autonomy_mode") or state.get("mode", "semi")
+    try:
+        decision = _active_v2_decision(state)
+    except (RecoveryInstructionError, ValueError) as exc:
+        print(f"✗ Invalid persisted decision: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    if decision is not None:
+        # A sealed decision owns its autonomy policy.  A continue-time flag may
+        # still apply to legacy runs, but cannot reclassify this decision.
+        mode = str(decision["autonomy_mode"])
     status = state.get("status", "")
     cur_phase = state.get("phase", "")
     if not _workspace_git_present(project_root):
@@ -7048,6 +7125,13 @@ def _cmd_continue(
         return
     if action.kind == "retry_phase":
         start_phase(action.phase, verb="Retrying incomplete phase", clear_recovery=True)
+        return
+    if action.kind == "resolve_decision":
+        print(
+            "[squad] continuing through the controller-owned decision resolver.",
+            flush=True,
+        )
+        _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
         return
     if action.kind == "human_resume":
         fields = [
@@ -7910,6 +7994,69 @@ def _cmd_resume(
         )
         print("  Nothing to resume.", file=sys.stderr)
         sys.exit(1)
+
+    raw_decision = state.get("blocked_decision")
+    if isinstance(raw_decision, dict) and raw_decision.get("schema_version") == 2:
+        from harness.config import get_full_resolved_config, load_config
+        from harness.human_input import HumanInputPolicyError
+        from harness.phase_graph import PhaseGraph
+        from harness.squad import SquadController
+        from harness.squad_provider import SquadCliProvider
+
+        try:
+            _active_v2_decision(state)
+        except (RecoveryInstructionError, ValueError) as exc:
+            print(f"✗ Invalid persisted decision: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+
+        graph = PhaseGraph(
+            ext_dir / "workflow/definition.yaml",
+            ext_dir / "extension.yml",
+        )
+        config = load_config(project_root, squad_only=True)
+        provider = SquadCliProvider(config)
+        token_budget = 0
+        max_iterations = 5
+        try:
+            full_config = get_full_resolved_config(project_root)
+            analysis = full_config.get("analysis") or {}
+            token_budget_k = int(analysis.get("token_budget_k") or 0)
+            token_budget = token_budget_k * 1000 if token_budget_k else 0
+            max_iterations = int(analysis.get("max_iterations") or 5)
+        except Exception:
+            pass
+        controller = SquadController(
+            provider=provider,
+            state_store=store,
+            phase_graph=graph,
+            ext_dir=ext_dir,
+            project_root=project_root,
+            token_budget=token_budget,
+            max_iterations=max_iterations,
+            squad_dir=squad_dir,
+            ignore_re=(state.get("published_re_context") or {}).get("status") == "ignored",
+            implementation_targets=[
+                str(value)
+                for value in (state.get("implementation_targets") or [])
+                if str(value).strip()
+            ],
+        )
+        try:
+            controller.resume_with_human_input(answer)
+        except HumanInputPolicyError as exc:
+            print(f"✗ Cannot resume decision: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+
+        current = store.load()
+        _banner(
+            "HUMAN DECISION SUBMITTED",
+            [
+                ("Run ID", current.get("run_id", squad_dir.name)),
+                ("Answer", answer),
+                ("Next", "echelon spec continue"),
+            ],
+        )
+        return
 
     # A cap is not an ordinary clarification gate.  Do not record a free-text
     # answer as though it authorised progress: a concrete issue decision must

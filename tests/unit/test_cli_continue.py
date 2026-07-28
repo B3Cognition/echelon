@@ -17,6 +17,8 @@ from echelon.cli import (
     _phase_a_readiness_candidate_dirs,
 )
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
+from harness.blocked_decision import build_blocked_decision_v2
+from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
 
 
 @pytest.fixture(autouse=True)
@@ -71,6 +73,78 @@ def _record_run_checkpoint(run_dir: Path, spec_id: str, phase: str) -> None:
             created_at="2026-07-18T12:00:00Z",
         ),
     )
+
+
+def _pending_v2_decision(*, autonomy_mode: str) -> dict[str, object]:
+    return build_blocked_decision_v2(
+        decision_id="dec-cli-continue",
+        status="pending",
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="phase1-what",
+        reason_code="checkpoint_assessment",
+        classification="operational",
+        question="Should the reviewed boundary be accepted?",
+        options=[
+            {
+                "id": "accept",
+                "label": "Accept the reviewed boundary",
+                "description": "Continue with the reviewed scope.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "phase2-decide",
+                "outcome": "approved",
+            }
+        ],
+        recommended_answer=None,
+        risk_level="low",
+        resolution_handler="gate_outcome",
+        autonomy_mode=autonomy_mode,
+        source_state_revision=0,
+        now="2026-07-28T10:00:00+00:00",
+    )
+
+
+def test_continue_uses_sealed_v2_decision_mode_not_cli_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "run_id": "spec-test",
+            "status": "blocked",
+            "phase": "phase1-what",
+            "user_message": "prepare the release",
+            "autonomy_mode": "banzai",
+            "blocked_decision": _pending_v2_decision(autonomy_mode="banzai"),
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code="checkpoint_assessment",
+                phase="phase1-what",
+                requires_human_input=False,
+                schema_version=2,
+                decision_id="dec-cli-continue",
+            ).to_dict(),
+        },
+    )
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, project_root, ext_dir: calls.append(args),
+    )
+
+    _cmd_continue(
+        ["--mode", "guided"],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    assert calls == [["prepare the release", "--mode", "banzai"]]
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["blocked_decision"]["status"] == "pending"
+    assert state["recovery_instruction"]["kind"] == "resolve_decision"
 
 
 def test_continue_prefers_specify_feature_directory_over_stale_short_spec_id(
