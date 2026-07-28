@@ -107,7 +107,9 @@ eight fields:
 
 - `schema_version: 1`;
 - `source_identity`: the exact tagged identity below;
-- `source_phase`: the controller-attested producing phase;
+- `source_phase`: the controller-attested producing phase, duplicated only for
+  indexed state queries and required to equal the phase derived from
+  `source_identity`;
 - `reason_code`: a closed producer-policy or recovery-bridge reason;
 - `classification`: `operational`, `material`, or `execution_blocked`;
 - `question`: a non-empty bounded string;
@@ -125,7 +127,11 @@ recovery_request`, `registry_kind`, `registry_key`,
 `registry_semantics_version`, and `policy_digest`. Registry kind and key are
 closed controller enums, and the positive semantics version selects the exact
 registry implementation. There is no nullable dispatch key, untyped source id,
-or source-kind inference.
+or source-kind inference. For `workflow_dispatch`, `source_phase` must equal
+the compiled descriptor's `phase_id`. For `controller_registry`, the selected
+registry entry carries one exact `source_phase` projection rule and the
+persisted value must equal its result. A mismatch fails before decision
+sealing.
 
 The controller constructs this value. Provider output may supply only the
 question, option facts, and prerequisite ingress already allowed by its exact
@@ -160,6 +166,17 @@ recovery-bridge registry into `PreparedHumanInput` before persistence. An
 unmapped reason is manual diagnosis. Their current direct behavior remains
 available only to a run whose authoritative workflow bundle records the v1
 contract and supported v1 runtime semantics.
+
+The initial v2 recovery-bridge registry is intentionally empty: current source
+does not construct either human-input recovery kind, and every migrated v2
+producer enters through `prepare_human_input(...)` before a recovery
+instruction exists. A future bridge is unsupported until the workflow bundle
+adds one exact row containing `RecoveryKind`, `reason_code`, registry key,
+registry semantics version, source-phase projection rule, classification,
+policy-digest inputs, and allowed operation families. Wildcard kinds or reason
+codes are forbidden. Consequently, an arbitrary persisted v1
+`await_human_answer` or `resolve_issue` instruction cannot acquire v2 decision
+authority merely because its kind is human-facing.
 
 Deterministic operator prerequisites that cannot be chosen or assumed, such as
 missing credentials, legal authority, external access, or manual state repair,
@@ -604,11 +621,16 @@ overwritten by a new turn.
 Parallel stage workers may share a run execution lease, so that lease is not
 treated as serialization for budget or ledger capacity. Lock ordering is outer
 execution lock, then usage lock, then the short state lock when a receipt
-snapshot is needed; no state transaction acquires the usage lock. Under the usage lock, startup
-drain, outstanding-debit calculation, receipt-capacity calculation, index
-allocation, and started-record creation form one atomic reservation. Parallel
-near-budget callers therefore have one winner rather than both observing the
-same remaining budget.
+snapshot is needed; no state transaction acquires the usage lock.
+`harness.controller_lock_order.CONTROLLER_LOCK_RANKS` is extended to the exact
+order `phase_a: 1`, `spec_run: 2`, `publication: 3`, `completion: 4`,
+`checkpoint: 5`, `journal: 6`, `telemetry: 7`, `usage: 8`, and `state: 9`.
+Every usage-lock acquisition enters `controller_lock_order("usage",
+<canonical-lock-path>)`; a state-locked path may never call the broker. Under
+the usage lock, startup drain, outstanding-debit calculation, receipt-capacity
+calculation, index allocation, and started-record creation form one atomic
+reservation. Parallel near-budget callers therefore have one winner rather
+than both observing the same remaining budget.
 
 The twelve fields are exactly `schema_version: 1`, `usage_id`,
 `billing_scope_id`, `call_index`, `call_status`, `provider_id`, `model_id`,
@@ -642,6 +664,10 @@ immutable controller-owned runtime profile declares exactly one
   including hidden retries or tool rounds. The broker reserves that full cap in
   one record before launch. Such an invocation is one accounting unit only
   because no additional model request can exceed the declared aggregate cap.
+- `unbounded_unknown`: the adapter cannot expose every model turn or enforce a
+  total-token cap. It is valid only when the run's token budget is exactly `0`;
+  the invocation reserves zero, produces one unknown-usage accounting record,
+  and may not be selected after a positive budget is configured.
 
 For `per_turn_reported`, a returned record replaces `token_budget_debit` with
 the exact reported `token_delta`; a return above the reserved bound is an
@@ -656,7 +682,58 @@ an aggregate cap. `max_tokens` that limits output only is not a total-token
 bound. With token budgeting disabled, unknown usage may run with zero budget
 debit, but its unknown counter and audit record remain mandatory.
 
-On startup, the broker first terminates or proves absent every orphaned OCI call.
+The initial adapter matrix does not pretend that the existing black-box CLIs
+have a hard aggregate cap. `OciOpenAICompatibleWorker` uses
+`per_turn_reported`. `OciCliExecutionAdapter` profiles for `claude`, `codex`,
+`copilot`, and `opencode` use `unbounded_unknown` unless a later adapter
+supplies an independently tested total-token enforcement mechanism;
+post-hoc usage, an output-only flag, or provider documentation is insufficient.
+Those CLI profiles therefore require token budget `0`. The v2 configuration
+migration changes the shipped CLI-profile default to `0`; an explicitly
+positive existing value fails preflight with
+`provider_token_bound_unavailable` and directs the operator either to select a
+per-turn worker profile or explicitly set the run unlimited before
+authoritative state creation. A future `aggregate_reserved` profile must name
+its closed enforcement implementation in `token_bound`, and backend-matrix
+tests must prove that hidden retries and tool rounds cannot exceed its cap.
+
+Every OCI invocation also has a durable controller-owned execution record at
+`<squad_dir>/.controller/ai-executions/<execution-id>.json`. It has exactly
+`schema_version: 1`, `execution_id`, `billing_scope_id`,
+`provider_profile_digest`, `execution_identity_sha256`, `runtime_kind`,
+`container_name`, `container_id`, `active_usage_id`, `status`, `created_at`,
+`started_at`, and `finished_at`. `runtime_kind` is `docker` or `podman`;
+`status` is `planned`, `created`, `running`, or `finished`; status-dependent
+nullable fields are explicit nulls. The execution id and deterministic
+container name are random controller values, never provider input. The OCI
+container is created with exact labels for execution id, billing scope, run id,
+and provider-profile digest.
+
+Launch ordering is exact: the controller exclusive-creates and fsyncs the
+`planned` execution record; creates the labeled container; atomically records
+and fsyncs its inspected container id and `created` status; and only then starts
+the container. Before each underlying model request, `start_turn(...)` fsyncs
+the usage record and the adapter atomically binds its `usage_id` as
+`active_usage_id` before request bytes may leave the worker. A contained worker
+uses authenticated controller IPC for this handshake and never receives the
+usage directory as a mount. On return, `finish_turn(...)` settles usage before
+the execution record clears `active_usage_id`; normal process exit records
+`finished`. Creation and updates use no-follow atomic replacement and fsync the
+file and parent directory. Unique record files permit parallel calls; registry
+reconciliation itself requires the outer exclusive execution lock.
+
+On startup, the controller reconciles the execution registry before usage
+drain. For every non-finished record it inspects both the recorded container id
+and the exact execution label, rejects conflicting or multiply matching
+containers as `manual_diagnosis`, terminates and removes one matching live
+container, proves it absent, atomically records `finished`, and only then lets
+the broker settle its bound `started` usage record. A live container with an
+Echelon execution label but no valid record is also manual diagnosis rather
+than guessed ownership. Thus the broker never infers process authority from a
+usage record alone.
+
+After execution reconciliation, the broker finalizes each remaining
+interrupted `started` record.
 A remaining `started` record is finalized as `returned` with both statuses
 unknown and its reservation unchanged, applied through deferred usage recovery,
 and associated with the ordinary interrupted-attempt failure path; the same
@@ -981,13 +1058,15 @@ Phase A configuration into a canonical controller-owned workflow bundle at
 `<squad_dir>/.controller/workflows/<workflow_digest>/`. The
 `.controller/workflows` tree is never provider-mounted.
 
-`manifest.json` has exactly these eight fields:
+`manifest.json` has exactly these ten fields:
 
 - `schema_version: 1`;
 - `workflow_contract_version`;
 - `workflow_runtime_semantics_version`;
 - `prompt_assembly_semantics_version`;
 - `result_repair_semantics_version`;
+- `projection_semantics_version`;
+- `decision_operation_semantics_version`;
 - `source_manifest_sha256`;
 - `workflow_config_sha256`; and
 - `workflow_digest`.
@@ -1007,7 +1086,7 @@ provider profile, and credentials, whose separate authority is defined below.
 bytes, and `workflow_config_sha256` is SHA-256 of the exact canonical
 `workflow-config.json` bytes.
 `workflow_digest` is SHA-256 over one canonical JSON object with exactly
-`manifest`, `sources`, and `workflow_config`: `manifest` contains the seven
+`manifest`, `sources`, and `workflow_config`: `manifest` contains the nine
 manifest fields other than `workflow_digest`, while the other members contain
 the parsed values whose canonical encodings are the two hashed files. Contract
 and semantics versions are positive integers; every digest is lowercase
@@ -1024,8 +1103,11 @@ runtime loader for phase prompts, agent prompts, result templates, extension
 mappings, and controller contracts. It selects controller-generated shared
 agent/result-contract fragments with the recorded
 `prompt_assembly_semantics_version`; result extraction and the controller-owned
-repair prompt use the recorded `result_repair_semantics_version`. Unsupported
-compiler, prompt, or repair semantics fail closed before provider execution.
+repair prompt use the recorded `result_repair_semantics_version`; projection
+construction uses `projection_semantics_version`; and concrete operation
+validation and application use `decision_operation_semantics_version`.
+Unsupported compiler, prompt, repair, projection, or operation semantics fail
+closed before provider execution.
 No runtime prompt or repair path reads the currently installed extension.
 
 An explicit immutable-config consumer registry identifies every Phase A
