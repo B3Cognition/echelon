@@ -362,7 +362,15 @@ def select_initial_decision_status(
         raise HumanInputPolicyError("mode must be guided, semi, or banzai")
     if request.source_kind != policy.source_kind or request.producer_id != policy.producer_id or request.reason_code != policy.reason_code:
         raise HumanInputPolicyError("request does not match the selected policy")
-    if mode == "guided" or policy.classification != "operational":
+    if mode == "guided":
+        return "awaiting_human"
+    if mode == "banzai":
+        return (
+            "awaiting_human"
+            if policy.classification == "external_prerequisite"
+            else "pending"
+        )
+    if policy.classification != "operational":
         return "awaiting_human"
     if mode == "semi":
         if policy.semi_policy != "auto_if_recommended_low_risk":

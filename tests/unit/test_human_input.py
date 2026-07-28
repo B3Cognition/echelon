@@ -217,6 +217,34 @@ def test_semi_requires_an_operational_low_risk_recommendation() -> None:
     assert select_initial_decision_status("semi", material_policy, request) == "awaiting_human"
 
 
+@pytest.mark.parametrize(
+    "classification, expected_status",
+    [
+        ("operational", "pending"),
+        ("material", "pending"),
+        ("external_prerequisite", "awaiting_human"),
+    ],
+)
+def test_banzai_routes_project_decisions_but_not_external_prerequisites(
+    classification: str,
+    expected_status: str,
+) -> None:
+    policy = HumanInputPolicy(
+        **{**_provider_policy().__dict__, "classification": classification}
+    )
+    registry = HumanInputPolicyRegistry((policy,))
+    request = registry.prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        phase_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        question="Choose the next investigation step.",
+        source_state_revision=9,
+    )
+
+    assert select_initial_decision_status("banzai", policy, request) == expected_status
+
+
 def test_registry_prepares_gate_options_from_the_exact_policy() -> None:
     registry = HumanInputPolicyRegistry((_gate_policy(),))
 
