@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable, Iterator, Literal, Mapping
 
 from harness.blocked_decision import (
+    BlockedDecisionError,
     build_blocked_decision_v2,
     ensure_blocked_decision,
     normalize_escalation_options,
@@ -38,6 +39,7 @@ from harness.prepared_phase_result import (
 from harness.human_input import HumanInputResolution, PreparedHumanInput
 from harness.recovery_instruction import (
     RecoveryInstruction,
+    RecoveryInstructionError,
     RecoveryKind,
     validate_decision_recovery_pair,
 )
@@ -867,10 +869,23 @@ def _validate_human_input_authority_write(
     candidate_is_v2 = _is_human_input_decision_v2(candidate_decision)
 
     if candidate_is_v2:
-        validate_decision_recovery_pair(
-            candidate_decision,
-            candidate.get("recovery_instruction"),
-        )
+        try:
+            validate_decision_recovery_pair(
+                candidate_decision,
+                candidate.get("recovery_instruction"),
+            )
+        except BlockedDecisionError as exc:
+            raise StateAdvanceError(
+                f"invalid schema-v2 decision authority: {exc}",
+                json_path="$.blocked_decision",
+                validator="human_input_authority",
+            ) from exc
+        except RecoveryInstructionError as exc:
+            raise StateAdvanceError(
+                f"invalid schema-v2 recovery authority: {exc}",
+                json_path="$.recovery_instruction",
+                validator="human_input_authority",
+            ) from exc
     if allow_update:
         return
     if current_is_v2 != candidate_is_v2:

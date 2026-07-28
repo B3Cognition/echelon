@@ -4416,8 +4416,12 @@ class TestHumanInputDecisionStateCAS:
         else:
             candidate[field] = []
 
-        with pytest.raises(StateAdvanceError):
+        with pytest.raises(StateAdvanceError) as exc:
             store.save(candidate)
+
+        if field == "recovery_instruction":
+            assert exc.value.json_path == "$.recovery_instruction"
+            assert exc.value.validator == "human_input_authority"
 
         assert store.load() == sealed
 
