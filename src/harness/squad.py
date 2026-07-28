@@ -382,20 +382,6 @@ JUDGMENT_RESULT_CONTRACT = EchelonResultContract(
 logger = logging.getLogger(__name__)
 
 
-def _phase_dispatch_limit_phase(state: dict, fallback: str = "") -> str:
-    """Identify the phase to retry after a human-authorized dispatch-cap recovery."""
-    phase = str(state.get("phase_dispatch_limit_phase") or "").strip()
-    if phase:
-        return phase
-
-    question = str(state.get("escalation_question") or "")
-    match = re.search(r"Phase ['\"]([^'\"]+)['\"] has been dispatched", question)
-    if match:
-        return match.group(1)
-
-    return fallback if fallback not in TERMINAL_PHASES else ""
-
-
 def _spec_id_from_phase_a_dir(spec_dir: Path) -> str:
     if spec_dir.name.startswith("spec-"):
         return spec_dir.name.removeprefix("spec-")
@@ -2034,6 +2020,93 @@ class SquadController:
                 "sealed decision options are invalid"
             ) from exc
 
+    @staticmethod
+    def _is_dynamic_dispatch_cap_policy(policy: HumanInputPolicy) -> bool:
+        return (
+            policy.source_kind == "controller_safeguard"
+            and policy.producer_id == "phase_dispatch_limit"
+            and policy.reason_code == "phase_dispatch_limit"
+            and policy.resolution_handler == "phase_dispatch_limit"
+        )
+
+    @staticmethod
+    def _dispatch_cap_candidate_from_option(
+        option: HumanInputOption,
+    ) -> dict[str, str]:
+        try:
+            raw_candidate = json.loads(option.description)
+        except (TypeError, ValueError) as exc:
+            raise HumanInputPolicyError(
+                "dispatch-cap option authority is invalid"
+            ) from exc
+        fields = {
+            "issue_id",
+            "title",
+            "decision_required",
+            "suggested_option",
+            "evidence_basis",
+        }
+        if (
+            not isinstance(raw_candidate, dict)
+            or set(raw_candidate) != fields
+            or not all(
+                isinstance(raw_candidate[field], str)
+                and raw_candidate[field].strip()
+                for field in fields
+            )
+        ):
+            raise HumanInputPolicyError(
+                "dispatch-cap option authority is invalid"
+            )
+        candidate = {
+            field: raw_candidate[field].strip()
+            for field in sorted(fields)
+        }
+        canonical = json.dumps(
+            candidate,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if (
+            option.id != candidate["issue_id"]
+            or option.label
+            != f"{candidate['issue_id']}: {candidate['title']}"
+            or option.description != canonical
+            or option.recommended
+            or option.risk_level != "medium"
+            or option.next_phase != "phase1-what"
+            or option.outcome is not None
+        ):
+            raise HumanInputPolicyError(
+                "dispatch-cap option authority is invalid"
+            )
+        return candidate
+
+    @classmethod
+    def _dispatch_cap_options(
+        cls,
+        candidates: list[dict[str, str]],
+    ) -> tuple[HumanInputOption, ...]:
+        options = tuple(
+            HumanInputOption(
+                id=candidate["issue_id"],
+                label=f"{candidate['issue_id']}: {candidate['title']}",
+                description=json.dumps(
+                    candidate,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                recommended=False,
+                risk_level="medium",
+                next_phase="phase1-what",
+                outcome=None,
+            )
+            for candidate in candidates
+        )
+        for option in options:
+            cls._dispatch_cap_candidate_from_option(option)
+        return options
+
     def _policy_for_human_input_decision(
         self,
         decision: Mapping[str, object],
@@ -2052,7 +2125,14 @@ class SquadController:
                 "sealed decision does not match its registered policy"
             )
         options = self._human_input_options_from_decision(decision)
-        if policy.source_kind != "provider_escalation" and options != policy.options:
+        dynamic_dispatch_cap = self._is_dynamic_dispatch_cap_policy(policy)
+        if dynamic_dispatch_cap:
+            for option in options:
+                self._dispatch_cap_candidate_from_option(option)
+        elif (
+            policy.source_kind != "provider_escalation"
+            and options != policy.options
+        ):
             raise HumanInputPolicyError(
                 "sealed decision options do not match their registered policy"
             )
@@ -2064,7 +2144,7 @@ class SquadController:
             raise HumanInputPolicyError(
                 "sealed decision option escapes registered targets"
             )
-        if bool(options) == policy.allow_free_text:
+        if not dynamic_dispatch_cap and bool(options) == policy.allow_free_text:
             raise HumanInputPolicyError(
                 "sealed decision answer shape does not match its registered policy"
             )
@@ -2091,7 +2171,10 @@ class SquadController:
             raise HumanInputPolicyError(
                 "prepared request does not match its registered policy"
             )
-        if (
+        if self._is_dynamic_dispatch_cap_policy(policy):
+            for option in request.options:
+                self._dispatch_cap_candidate_from_option(option)
+        elif (
             request.source_kind != "provider_escalation"
             and request.options != policy.options
         ):
@@ -2324,14 +2407,15 @@ class SquadController:
         selected: HumanInputOption | None,
         resolution: HumanInputResolution,
     ) -> _HumanInputResolutionEffects:
+        source_phase = str(decision["source_phase"])
         route = self._validate_human_input_route(
             (
                 selected.next_phase
-                if selected is not None
-                else decision["source_phase"]
+                if selected is not None and selected.next_phase is not None
+                else source_phase
             ),
             policy,
-            allow_source_phase=str(decision["source_phase"]),
+            allow_source_phase=source_phase,
         )
         answer = (
             selected.label
@@ -2349,18 +2433,36 @@ class SquadController:
             existing = path.read_text(encoding="utf-8")
         except FileNotFoundError:
             existing = ""
-        if marker not in {
-            line.strip()
-            for line in existing.splitlines()
-            if line.startswith("## Decision ")
-        }:
+        section = (
+            f"{marker}\n\n"
+            f"**Question:** {decision['question']}\n\n"
+            f"**Answer:** {answer}\n"
+        )
+        marker_matches = tuple(
+            re.finditer(
+                rf"^{re.escape(marker)}[ \t]*(?:\r?\n|\Z)",
+                existing,
+                re.MULTILINE,
+            )
+        )
+        if marker_matches:
+            start = marker_matches[0].start()
+            end = start + len(section)
+            remainder = existing[end:]
+            if (
+                len(marker_matches) != 1
+                or existing[start:end] != section
+                or (
+                    remainder
+                    and not remainder.startswith("\n## Decision ")
+                )
+            ):
+                raise HumanInputPolicyError(
+                    "clarification receipt conflicts with the resolution"
+                )
+        else:
             separator = "" if not existing or existing.endswith("\n\n") else (
                 "\n" if existing.endswith("\n") else "\n\n"
-            )
-            section = (
-                f"{marker}\n\n"
-                f"**Question:** {decision['question']}\n\n"
-                f"**Answer:** {answer}\n"
             )
             self._atomic_replace_text(
                 path,
@@ -2418,29 +2520,42 @@ class SquadController:
         self,
         state: Mapping[str, object],
         decision: Mapping[str, object],
-        _policy: HumanInputPolicy,
-        _selected: HumanInputOption | None,
+        policy: HumanInputPolicy,
+        selected: HumanInputOption | None,
         resolution: HumanInputResolution,
     ) -> _HumanInputResolutionEffects:
-        try:
-            raw_selection = json.loads(str(resolution.answer_text))
-        except (TypeError, ValueError) as exc:
+        if selected is None:
             raise HumanInputPolicyError(
-                "dispatch-cap resolution must be one issue selection"
-            ) from exc
-        candidates = self._banzai_issue_resolution_candidates(dict(state))
+                "dispatch-cap resolution must select one sealed issue option"
+            )
+        candidate = self._dispatch_cap_candidate_from_option(selected)
+        raw_selection = {
+            "issue_id": candidate["issue_id"],
+            "decision": candidate["suggested_option"],
+            "rationale": candidate["evidence_basis"],
+            "confidence": "high",
+            "evidence_backed": True,
+        }
         selection = self._validate_banzai_issue_resolution_selection(
             raw_selection,
-            candidates,
+            [candidate],
         )
         if selection is None:
             raise HumanInputPolicyError(
                 "dispatch-cap resolution is not evidence-backed"
             )
-        capped_phase = (
-            _phase_dispatch_limit_phase(dict(state))
-            or str(decision["source_phase"])
-        )
+        capped_phase = str(decision["source_phase"])
+        legacy_phase = state.get("phase_dispatch_limit_phase")
+        if legacy_phase is not None and (
+            not isinstance(legacy_phase, str)
+            or (
+                legacy_phase.strip()
+                and legacy_phase.strip() != capped_phase
+            )
+        ):
+            raise HumanInputPolicyError(
+                "dispatch-cap legacy phase conflicts with sealed source phase"
+            )
         if (
             not capped_phase
             or capped_phase not in self._graph.all_phase_ids()
@@ -2452,6 +2567,10 @@ class SquadController:
         counts = state.get("phase_dispatch_counts")
         next_counts = dict(counts) if isinstance(counts, dict) else {}
         next_counts.pop(capped_phase, None)
+        route = self._validate_human_input_route(
+            selected.next_phase,
+            policy,
+        )
         updates = self._issue_resolution_state_updates(
             dict(state),
             selection,
@@ -2459,7 +2578,7 @@ class SquadController:
         updates.update(
             {
                 "status": "running",
-                "phase": "phase1-what",
+                "phase": route,
                 "phase_dispatch_counts": next_counts,
                 "phase_dispatch_limit_recovery": {
                     "phase": capped_phase,
@@ -2470,7 +2589,7 @@ class SquadController:
         return _HumanInputResolutionEffects(
             state_updates=updates,
             state_removals=frozenset(),
-            route="phase1-what",
+            route=route,
         )
 
     def _reset_why_fail_count_resolution(
@@ -2524,11 +2643,16 @@ class SquadController:
         *,
         expected_state_revision: int,
         resolution: HumanInputResolution,
+        token_usage_delta: int = 0,
     ) -> bool:
         """Validate and apply one decision through its closed controller handler."""
         if type(resolution) is not HumanInputResolution:
             raise HumanInputPolicyError(
                 "human-input resolution is invalid"
+            )
+        if type(token_usage_delta) is not int or token_usage_delta < 0:
+            raise HumanInputPolicyError(
+                "human-input token usage delta is invalid"
             )
         state = self._state_store.load()
         if (
@@ -2595,6 +2719,7 @@ class SquadController:
             resolution=resolution,
             state_updates=effects.state_updates,
             state_removals=effects.state_removals,
+            token_usage_delta=token_usage_delta,
         )
         return (
             resolved.get("status") == "running"
@@ -2874,10 +2999,8 @@ class SquadController:
                     str(claimed_decision["id"]),
                     expected_state_revision=int(claimed["state_revision"]),
                     failure_code=failure_code,
+                    token_usage_delta=usage["tokens"],
                 )
-                if usage["tokens"]:
-                    self._state_store.increment_token_usage(usage["tokens"])
-                    failed = self._state_store.load()
                 current_state = failed
                 current_decision = validate_blocked_decision_v2(
                     failed["blocked_decision"]
@@ -2892,11 +3015,20 @@ class SquadController:
                         selected_option_id=resolved.selected_option_id,
                         answer_text=resolved.answer_text,
                         resolved_by="COMMANDER",
-                    )
+                    ),
+                    token_usage_delta=usage["tokens"],
                 )
-            finally:
-                if usage["tokens"]:
-                    self._state_store.increment_token_usage(usage["tokens"])
+            except HumanInputPolicyError:
+                failed = self._state_store.record_human_input_resolution_failure(
+                    str(claimed_decision["id"]),
+                    expected_state_revision=int(claimed["state_revision"]),
+                    failure_code="invalid_resolution_result",
+                    token_usage_delta=usage["tokens"],
+                )
+                current_state = failed
+                current_decision = validate_blocked_decision_v2(
+                    failed["blocked_decision"]
+                )
         return False
 
     def resume_pending_human_input(self) -> bool:
@@ -3318,11 +3450,7 @@ class SquadController:
                 escalation_q = (
                     f"Phase {phase!r} has been dispatched {dispatch_count} times "
                     f"(limit {phase_limit}) without converging or advancing. "
-                    "Select exactly one evidence-backed issue resolution. "
-                    "Answer with one JSON object containing issue_id, decision, "
-                    "rationale, confidence, and evidence_backed=true.\n\n"
-                    f"Eligible issue resolutions:\n"
-                    f"{json.dumps(candidates, sort_keys=True)}"
+                    "Select exactly one sealed evidence-backed issue resolution."
                 )
                 cap_state = self._state_store.load()
                 request = self._human_input_registry.prepare(
@@ -3332,6 +3460,10 @@ class SquadController:
                     reason_code="phase_dispatch_limit",
                     question=escalation_q,
                     source_state_revision=cap_state["state_revision"],
+                )
+                request = replace(
+                    request,
+                    options=self._dispatch_cap_options(candidates),
                 )
                 self._record_blocker_event(phase, "phase_dispatch_limit")
                 print(

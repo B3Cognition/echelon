@@ -24,7 +24,7 @@ from harness.human_input import (
 from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController, _ProviderHumanInputAdvance
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
-from harness.squad_state import SquadStateStore
+from harness.squad_state import SquadStateStore, StateAdvanceError
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -231,6 +231,62 @@ def _safeguard_policy(
     )
 
 
+def _dispatch_cap_candidate(
+    issue_id: str = "ISS-001",
+    *,
+    title: str = "Retry policy",
+    suggested_option: str = "Use exponential backoff.",
+) -> dict[str, str]:
+    return {
+        "issue_id": issue_id,
+        "title": title,
+        "decision_required": "Retry behavior.",
+        "suggested_option": suggested_option,
+        "evidence_basis": "The API reference documents idempotent reads.",
+    }
+
+
+def _dispatch_cap_option(candidate: dict[str, str]) -> HumanInputOption:
+    return HumanInputOption(
+        id=candidate["issue_id"],
+        label=f"{candidate['issue_id']}: {candidate['title']}",
+        description=json.dumps(
+            candidate,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
+        recommended=False,
+        risk_level="medium",
+        next_phase="phase1-what",
+        outcome=None,
+    )
+
+
+def _seal_dispatch_cap_decision(
+    controller: SquadController,
+    store: SquadStateStore,
+    policy: HumanInputPolicy,
+    candidates: tuple[dict[str, str], ...],
+    *,
+    initial_status: str = "awaiting_human",
+) -> tuple[str, int]:
+    request = controller._human_input_registry.prepare(
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id="phase1-what",
+        reason_code=policy.reason_code,
+        question="Select one sealed evidence-backed issue resolution.",
+        source_state_revision=store.load()["state_revision"],
+    )
+    request = replace(
+        request,
+        options=tuple(_dispatch_cap_option(item) for item in candidates),
+    )
+    store.set_human_input_decision(request, initial_status=initial_status)
+    state = store.load()
+    return state["blocked_decision"]["id"], state["state_revision"]
+
+
 def test_human_input_handler_clarification_appends_decision_section_atomically(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -320,6 +376,20 @@ def test_clarification_idempotent_after_state_save_interruption(
         f"## Decision {decision_id}"
     ) == 1
 
+    conflicting = HumanInputResolution(
+        selected_option_id=None,
+        answer_text="Use a different product boundary.",
+        resolved_by="user",
+    )
+    before = store.load()
+    with pytest.raises(HumanInputPolicyError, match="clarification"):
+        controller.apply_human_input_resolution(
+            decision_id,
+            expected_state_revision=revision,
+            resolution=conflicting,
+        )
+    assert store.load() == before
+
     store.apply_human_input_state_resolution = MagicMock(
         wraps=apply_state_resolution,
     )
@@ -332,6 +402,103 @@ def test_clarification_idempotent_after_state_save_interruption(
         f"## Decision {decision_id}"
     ) == 1
     store.apply_human_input_state_resolution.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "existing_section",
+    [
+        "## Decision {decision_id}\n",
+        "## Decision {decision_id} \n",
+        (
+            "## Decision {decision_id}\n\n"
+            "**Question:** Which product boundary should be used?\n\n"
+            "**Answer:** A conflicting answer.\n"
+        ),
+    ],
+)
+def test_task6_fix_round1_clarification_rejects_conflicting_owned_section(
+    tmp_path: Path,
+    existing_section: str,
+) -> None:
+    policy = _free_text_policy(source_kind="legacy_recovery")
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    decision_id, revision = _seal_awaiting_human(
+        controller,
+        store,
+        policy,
+        question="Which product boundary should be used?",
+    )
+    clarification_path = (
+        Path(store.load()["staging_dir"]) / "user-clarifications.md"
+    )
+    clarification_path.write_text(
+        existing_section.format(decision_id=decision_id),
+        encoding="utf-8",
+    )
+    before = store.load()
+
+    with pytest.raises(HumanInputPolicyError, match="clarification"):
+        controller.apply_human_input_resolution(
+            decision_id,
+            expected_state_revision=revision,
+            resolution=HumanInputResolution(
+                selected_option_id=None,
+                answer_text="Use the existing product boundary.",
+                resolved_by="user",
+            ),
+        )
+
+    assert store.load() == before
+    assert clarification_path.read_text(encoding="utf-8") == (
+        existing_section.format(decision_id=decision_id)
+    )
+
+
+def test_task6_fix_round1_clarification_option_without_route_resumes_source(
+    tmp_path: Path,
+) -> None:
+    source_phase = "phase1-investigate"
+    policy = replace(
+        _free_text_policy(source_kind="legacy_recovery"),
+        allow_free_text=False,
+        options=(
+            HumanInputOption(
+                id="use-answer",
+                label="Use the supplied answer",
+                description="Resume from the sealed source phase.",
+                recommended=False,
+                risk_level="low",
+                next_phase=None,
+                outcome=None,
+            ),
+        ),
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    decision_id, revision = _seal_awaiting_human(
+        controller,
+        store,
+        policy,
+        question="Which product boundary should be used?",
+    )
+
+    assert controller.apply_human_input_resolution(
+        decision_id,
+        expected_state_revision=revision,
+        resolution=HumanInputResolution(
+            selected_option_id="use-answer",
+            answer_text=None,
+            resolved_by="user",
+        ),
+    )
+    assert store.load()["phase"] == source_phase
 
 
 @pytest.mark.parametrize(
@@ -384,9 +551,13 @@ def test_human_input_handler_gate_applies_declared_outcome(
 def test_human_input_handler_phase_dispatch_limit_reuses_issue_lifecycle(
     tmp_path: Path,
 ) -> None:
-    policy = _safeguard_policy(
-        "phase_dispatch_limit",
-        phase_id="phase1-what",
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase1-what",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-what"}),
     )
     controller, store, _provider = _controller(
         tmp_path,
@@ -409,30 +580,24 @@ def test_human_input_handler_phase_dispatch_limit_reuses_issue_lifecycle(
     state = store.load()
     state.update(
         {
-            "phase_dispatch_limit_phase": "phase1-what",
             "phase_dispatch_counts": {"phase1-what": 6, "phase1-why1": 2},
         }
     )
     store.save(state)
-    decision_id, revision = _seal_awaiting_human(
+    candidate = _dispatch_cap_candidate()
+    decision_id, revision = _seal_dispatch_cap_decision(
         controller,
         store,
         policy,
+        (candidate,),
     )
-    selection = {
-        "issue_id": "ISS-001",
-        "decision": "Use exponential backoff.",
-        "rationale": "The documented API behavior supports it.",
-        "confidence": "high",
-        "evidence_backed": True,
-    }
 
     assert controller.apply_human_input_resolution(
         decision_id,
         expected_state_revision=revision,
         resolution=HumanInputResolution(
-            selected_option_id=None,
-            answer_text=json.dumps(selection),
+            selected_option_id="ISS-001",
+            answer_text=None,
             resolved_by="user",
         ),
     )
@@ -444,6 +609,144 @@ def test_human_input_handler_phase_dispatch_limit_reuses_issue_lifecycle(
     assert state["issue_resolution_ledger"]["ISS-001"]["status"] == "selected"
     assert state["issue_resolution_recovery"]["to_phase"] == "phase1-what"
     assert state["issue_resolution_repair_baseline"]["issue_id"] == "ISS-001"
+
+
+def test_task6_fix_round1_dispatch_cap_uses_sealed_options_after_evidence_drift(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase1-what",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-what"}),
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    issues_path = spec_dir / "issues.md"
+    issues_path.write_text(
+        """### ISS-001: Retry policy
+
+### Resolution Guidance
+- **Decision required:** Retry behavior.
+- **Suggested option:** Use exponential backoff.
+- **Evidence basis:** The API reference documents idempotent reads.
+- **Banzai eligible:** yes
+""",
+        encoding="utf-8",
+    )
+    state = store.load()
+    state["phase_dispatch_counts"] = {"phase1-what": 6}
+    store.save(state)
+    sealed_candidate = _dispatch_cap_candidate()
+    decision_id, revision = _seal_dispatch_cap_decision(
+        controller,
+        store,
+        policy,
+        (sealed_candidate,),
+    )
+    issues_path.write_text(
+        """### ISS-002: New issue
+
+### Resolution Guidance
+- **Decision required:** New behavior.
+- **Suggested option:** Use a new answer.
+- **Evidence basis:** New evidence appeared after sealing.
+- **Banzai eligible:** yes
+""",
+        encoding="utf-8",
+    )
+    before = store.load()
+    with pytest.raises(HumanInputPolicyError, match="unknown option"):
+        controller.apply_human_input_resolution(
+            decision_id,
+            expected_state_revision=revision,
+            resolution=HumanInputResolution(
+                selected_option_id="ISS-002",
+                answer_text=None,
+                resolved_by="user",
+            ),
+        )
+    assert store.load() == before
+
+    assert controller.apply_human_input_resolution(
+        decision_id,
+        expected_state_revision=revision,
+        resolution=HumanInputResolution(
+            selected_option_id="ISS-001",
+            answer_text=None,
+            resolved_by="user",
+        ),
+    )
+
+    state = store.load()
+    assert state["selected_issue_resolution"] == "ISS-001"
+    assert "ISS-002" not in state["issue_resolution_ledger"]
+
+
+def test_task6_fix_round1_dispatch_cap_rejects_conflicting_legacy_phase(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase1-what",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-what"}),
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: Retry policy
+
+### Resolution Guidance
+- **Decision required:** Retry behavior.
+- **Suggested option:** Use exponential backoff.
+- **Evidence basis:** The API reference documents idempotent reads.
+- **Banzai eligible:** yes
+""",
+        encoding="utf-8",
+    )
+    state = store.load()
+    state.update(
+        {
+            "phase_dispatch_limit_phase": "phase1-why1",
+            "phase_dispatch_counts": {"phase1-what": 6, "phase1-why1": 2},
+        }
+    )
+    store.save(state)
+    decision_id, revision = _seal_dispatch_cap_decision(
+        controller,
+        store,
+        policy,
+        (_dispatch_cap_candidate(),),
+    )
+    before = store.load()
+
+    with pytest.raises(HumanInputPolicyError, match="phase"):
+        controller.apply_human_input_resolution(
+            decision_id,
+            expected_state_revision=revision,
+            resolution=HumanInputResolution(
+                selected_option_id="ISS-001",
+                answer_text=None,
+                resolved_by="user",
+            ),
+        )
+
+    assert store.load() == before
 
 
 @pytest.mark.parametrize(
@@ -611,9 +914,13 @@ def test_human_input_handler_invalid_resolution_writes_nothing(
 def test_phase_dispatch_limit_uses_human_input_setter_path(
     tmp_path: Path,
 ) -> None:
-    policy = _safeguard_policy(
-        "phase_dispatch_limit",
-        phase_id="phase1-what",
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase1-what",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-what"}),
     )
     controller, store, provider = _controller(
         tmp_path,
@@ -632,6 +939,19 @@ def test_phase_dispatch_limit_uses_human_input_setter_path(
         "phase1-what": controller._max_iterations + 1,
     }
     store.save(state)
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: Retry policy
+
+### Resolution Guidance
+- **Decision required:** Retry behavior.
+- **Suggested option:** Use exponential backoff.
+- **Evidence basis:** The API reference documents idempotent reads.
+- **Banzai eligible:** yes
+""",
+        encoding="utf-8",
+    )
     controller.handle_human_input = MagicMock(return_value=False)
 
     result = controller.run("message", "guided")
@@ -645,6 +965,9 @@ def test_phase_dispatch_limit_uses_human_input_setter_path(
     assert request.reason_code == "phase_dispatch_limit"
     assert request.phase_id == "phase1-what"
     assert request.source_state_revision == store.load()["state_revision"]
+    assert request.options == (
+        _dispatch_cap_option(_dispatch_cap_candidate()),
+    )
     assert call.kwargs == {}
     provider.exec_agent.assert_not_called()
 
@@ -1229,14 +1552,181 @@ def test_commander_invalid_result_retries_once_after_a_fresh_claim(
         return next(results)
 
     provider.exec_agent.side_effect = execute
-    controller.apply_human_input_resolution = MagicMock(return_value=True)
 
     assert controller.handle_human_input(_request(controller, store, policy))
     assert events == ["claim", "model", "claim", "model"]
     assert provider.exec_agent.call_count == 2
     assert store.load()["blocked_decision"]["attempts"] == 2
     assert store.load()["token_usage"] == 18
-    controller.apply_human_input_resolution.assert_called_once()
+
+
+@pytest.mark.parametrize("invalid_second_answer", [False, True])
+def test_task6_fix_round1_commander_invalid_dispatch_cap_answer_consumes_attempt(
+    tmp_path: Path,
+    invalid_second_answer: bool,
+) -> None:
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase1-what",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-what"}),
+    )
+    first = _decision_result(selected_option_id="ISS-999")
+    first.token_usage = 7
+    second = _decision_result(
+        selected_option_id=(
+            "ISS-998" if invalid_second_answer else "ISS-001"
+        )
+    )
+    second.token_usage = 11
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    provider.exec_agent.side_effect = (first, second)
+    state = store.load()
+    state["phase_dispatch_counts"] = {"phase1-what": 6}
+    store.save(state)
+    request = controller._human_input_registry.prepare(
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id="phase1-what",
+        reason_code=policy.reason_code,
+        question="Select one sealed evidence-backed issue resolution.",
+        source_state_revision=store.load()["state_revision"],
+    )
+    request = replace(
+        request,
+        options=(_dispatch_cap_option(_dispatch_cap_candidate()),),
+    )
+
+    assert controller.handle_human_input(request) is (not invalid_second_answer)
+
+    state = store.load()
+    assert provider.exec_agent.call_count == 2
+    assert state["blocked_decision"]["attempts"] == 2
+    assert state["token_usage"] == 18
+    if invalid_second_answer:
+        assert state["blocked_decision"]["status"] == "failed"
+        assert state["blocked_decision"]["failure_code"] == (
+            "invalid_resolution_result"
+        )
+    else:
+        assert state["blocked_decision"]["status"] == "resolved"
+        assert state["selected_issue_resolution"] == "ISS-001"
+
+
+def test_task6_fix_round1_commander_semantic_apply_error_consumes_attempts(
+    tmp_path: Path,
+) -> None:
+    policy = HumanInputPolicy(
+        source_kind="legacy_recovery",
+        producer_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        classification="material",
+        semi_policy="require_human",
+        resolution_handler="clarification_resume",
+        allow_free_text=False,
+        allowed_phase_ids=frozenset({"phase1-investigate"}),
+        allowed_target_phases=frozenset({"missing-phase"}),
+        context_state_keys=("phase",),
+        context_paths=(),
+        options=(
+            HumanInputOption(
+                id="missing",
+                label="Missing route",
+                description="A strictly shaped but semantically invalid route.",
+                recommended=False,
+                risk_level="medium",
+                next_phase="missing-phase",
+                outcome=None,
+            ),
+        ),
+    )
+    first = _decision_result(selected_option_id="missing")
+    first.token_usage = 3
+    second = _decision_result(selected_option_id="missing")
+    second.token_usage = 5
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    provider.exec_agent.side_effect = (first, second)
+
+    assert controller.handle_human_input(
+        _request(controller, store, policy)
+    ) is False
+
+    state = store.load()
+    assert provider.exec_agent.call_count == 2
+    assert state["blocked_decision"]["status"] == "failed"
+    assert state["blocked_decision"]["attempts"] == 2
+    assert state["blocked_decision"]["failure_code"] == (
+        "invalid_resolution_result"
+    )
+    assert state["token_usage"] == 8
+
+
+def test_task6_fix_round1_commander_resolution_accounts_usage_in_resolution_cas(
+    tmp_path: Path,
+) -> None:
+    policy = _choice_policy()
+    result = _decision_result()
+    result.token_usage = 37
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+        provider_result=result,
+    )
+    store.apply_human_input_state_resolution = MagicMock(
+        wraps=store.apply_human_input_state_resolution,
+    )
+    store.increment_token_usage = MagicMock(
+        wraps=store.increment_token_usage,
+    )
+
+    assert controller.handle_human_input(_request(controller, store, policy))
+
+    state = store.load()
+    assert state["blocked_decision"]["status"] == "resolved"
+    assert state["token_usage"] == 37
+    assert (
+        store.apply_human_input_state_resolution.call_args.kwargs[
+            "token_usage_delta"
+        ]
+        == 37
+    )
+    store.increment_token_usage.assert_not_called()
+
+
+def test_task6_fix_round1_commander_resolution_save_error_preserves_recovery(
+    tmp_path: Path,
+) -> None:
+    policy = _choice_policy()
+    result = _decision_result()
+    result.token_usage = 37
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+        provider_result=result,
+    )
+    store.apply_human_input_state_resolution = MagicMock(
+        side_effect=StateAdvanceError("injected resolution save failure"),
+    )
+
+    with pytest.raises(StateAdvanceError, match="resolution save failure"):
+        controller.handle_human_input(_request(controller, store, policy))
+
+    state = store.load()
+    assert state["blocked_decision"]["status"] == "resolving"
+    assert state["blocked_decision"]["attempts"] == 1
+    assert state["token_usage"] == 0
 
 
 def test_commander_real_provider_has_one_physical_call_per_durable_claim(
@@ -1300,7 +1790,6 @@ def test_commander_real_provider_has_one_physical_call_per_durable_claim(
         return claimed
 
     store.claim_human_input_decision = MagicMock(side_effect=claim)
-    controller.apply_human_input_resolution = MagicMock(return_value=True)
 
     assert controller.handle_human_input(_request(controller, store, policy))
 

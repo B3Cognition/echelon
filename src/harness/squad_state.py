@@ -1911,7 +1911,14 @@ class SquadStateStore:
         *,
         expected_state_revision: int,
         failure_code: str,
+        token_usage_delta: int = 0,
     ) -> dict[str, Any]:
+        if type(token_usage_delta) is not int or token_usage_delta < 0:
+            raise StateAdvanceError(
+                "human-input token usage delta is invalid",
+                json_path="$.token_usage_delta",
+                validator="type",
+            )
         with self._lock(exclusive=True):
             before = self._load_unlocked()
             decision = self._human_input_decision_for_cas_unlocked(
@@ -1929,6 +1936,9 @@ class SquadStateStore:
             }
             if exhausted:
                 desired.pop("escalation_question", None)
+            desired["token_usage"] = (
+                int(desired.get("token_usage") or 0) + token_usage_delta
+            )
             self._replace_human_input_decision_unlocked(desired, failed)
             return self._commit_human_input_state_unlocked(before, desired)
 
@@ -1940,11 +1950,18 @@ class SquadStateStore:
         resolution: HumanInputResolution,
         state_updates: Mapping[str, Any],
         state_removals: Iterable[str],
+        token_usage_delta: int = 0,
     ) -> dict[str, Any]:
         if type(resolution) is not HumanInputResolution:
             raise StateAdvanceError(
                 "human-input resolution is invalid",
                 json_path="$.resolution",
+                validator="type",
+            )
+        if type(token_usage_delta) is not int or token_usage_delta < 0:
+            raise StateAdvanceError(
+                "human-input token usage delta is invalid",
+                json_path="$.token_usage_delta",
                 validator="type",
             )
         if not isinstance(state_updates, Mapping):
@@ -2032,6 +2049,9 @@ class SquadStateStore:
                     self._transition_status(desired, value)
                 else:
                     desired[key] = value
+            desired["token_usage"] = (
+                int(desired.get("token_usage") or 0) + token_usage_delta
+            )
             self._replace_human_input_decision_unlocked(desired, resolved)
             return self._commit_human_input_state_unlocked(before, desired)
 

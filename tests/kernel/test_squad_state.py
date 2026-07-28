@@ -3974,6 +3974,81 @@ class TestHumanInputDecisionStateCAS:
         assert failed["recovery_instruction"]["phase"] == ""
         assert "escalation_question" not in failed
 
+    @pytest.mark.parametrize("transition", ["resolution", "failure"])
+    @pytest.mark.parametrize("save_then_raise", [False, True])
+    def test_task6_fix_round1_human_input_usage_is_in_exact_attempt_cas(
+        self,
+        tmp_path,
+        transition,
+        save_then_raise,
+    ):
+        store = SquadStateStore(
+            tmp_path / f"{transition}-{save_then_raise}"
+        )
+        store.initialize(
+            "r1",
+            "greenfield",
+            "msg",
+            0,
+            "init",
+            autonomy_mode="banzai",
+        )
+        pending = _seal_provider_human_input_via_advance(store)
+        decision_id = pending["blocked_decision"]["id"]
+        claimed = store.claim_human_input_decision(
+            decision_id,
+            expected_state_revision=pending["state_revision"],
+        )
+        before = deepcopy(claimed)
+        original_save = store._save_unlocked
+
+        def injected_save(state, **kwargs):
+            if save_then_raise:
+                original_save(state, **kwargs)
+            raise OSError("injected human-input attempt save ambiguity")
+
+        with patch.object(
+            store,
+            "_save_unlocked",
+            side_effect=injected_save,
+        ):
+            if transition == "resolution":
+                operation = lambda: store.apply_human_input_state_resolution(
+                    decision_id,
+                    expected_state_revision=claimed["state_revision"],
+                    resolution=HumanInputResolution(
+                        selected_option_id=None,
+                        answer_text="Use the durable answer.",
+                        resolved_by="COMMANDER",
+                    ),
+                    state_updates={"status": "running", "phase": "next"},
+                    state_removals=(),
+                    token_usage_delta=17,
+                )
+            else:
+                operation = lambda: store.record_human_input_resolution_failure(
+                    decision_id,
+                    expected_state_revision=claimed["state_revision"],
+                    failure_code="invalid_resolution_result",
+                    token_usage_delta=17,
+                )
+            if save_then_raise:
+                result = operation()
+            else:
+                with pytest.raises(StateAdvanceError):
+                    operation()
+
+        after = store.load()
+        if not save_then_raise:
+            assert after == before
+            return
+        assert result == after
+        assert after["token_usage"] == 17
+        assert after["state_revision"] == before["state_revision"] + 1
+        assert after["blocked_decision"]["status"] == (
+            "resolved" if transition == "resolution" else "pending"
+        )
+
     @pytest.mark.parametrize("second_attempt", [False, True])
     def test_human_input_interrupted_resolution_recovers_or_exhausts(
         self,
