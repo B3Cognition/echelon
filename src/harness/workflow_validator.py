@@ -19,6 +19,7 @@ from harness.human_input import (
     HumanInputPolicy,
     HumanInputPolicyError,
     compile_workflow_human_input_policies,
+    gate_outcome_route_error,
 )
 from harness.state_transaction_namespace import (
     PROVIDER_CONTROL_INTENT_KEYS,
@@ -948,6 +949,16 @@ def _validate_human_gate_outcomes(
                         path=path,
                     ))
                 option_outcomes[option.outcome] = option.next_phase
+                route_error = gate_outcome_route_error(
+                    option.outcome,
+                    option.next_phase,
+                )
+                if route_error is not None:
+                    issues.append(WorkflowValidationIssue(
+                        route_error,
+                        phase_id=phase_id,
+                        path=path,
+                    ))
         if len(policy.options) != 2 or set(option_outcomes) != expected_outcomes:
             issues.append(WorkflowValidationIssue(
                 "human_gate options require exact approved/rejected outcomes",

@@ -52,6 +52,7 @@ from harness.human_input import (
     HumanInputPolicyRegistry,
     HumanInputResolution,
     PreparedHumanInput,
+    gate_outcome_route_error,
     select_initial_decision_status,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
@@ -2512,16 +2513,9 @@ class SquadController:
             selected.next_phase,
             policy,
         )
-        if (
-            selected.outcome == "approved"
-            and route == PHASE_TERMINAL_BLOCKED
-        ) or (
-            selected.outcome == "rejected"
-            and route != PHASE_TERMINAL_BLOCKED
-        ):
-            raise HumanInputPolicyError(
-                "human gate outcome does not match its route"
-            )
+        route_error = gate_outcome_route_error(selected.outcome, route)
+        if route_error is not None:
+            raise HumanInputPolicyError(route_error)
         updates: dict[str, object] = {
             "phase": route,
             "status": (

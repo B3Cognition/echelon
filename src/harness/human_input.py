@@ -21,6 +21,15 @@ HumanInputRisk = Literal["low", "medium", "high", "critical"]
 SemiPolicy = Literal["require_human", "auto_if_recommended_low_risk"]
 
 
+def gate_outcome_route_error(outcome: str, route: str) -> str | None:
+    """Return the closed gate outcome/route violation shared by all consumers."""
+    if outcome == "approved" and route == "terminal-blocked":
+        return "approved human gate outcome cannot target terminal-blocked"
+    if outcome == "rejected" and route != "terminal-blocked":
+        return "rejected human gate outcome must target terminal-blocked"
+    return None
+
+
 class HumanInputPolicyError(ValueError):
     """Raised when a policy declaration or request is outside the closed contract."""
 

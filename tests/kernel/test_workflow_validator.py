@@ -445,6 +445,72 @@ def test_workflow_validator_rejects_gate_target_mismatch(tmp_path: Path) -> None
     assert any("target must match" in issue.message for issue in report.issues)
 
 
+def test_workflow_validator_rejects_approved_route_to_terminal_blocked(
+    tmp_path: Path,
+) -> None:
+    policy = _human_input_gate_policy()
+    policy["options"][0]["next_phase"] = "terminal-blocked"
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(
+            tmp_path,
+            policies=[policy],
+            transitions=[
+                {
+                    "to": "terminal-blocked",
+                    "condition": "human_input_outcome = approved",
+                    "outcome": "approved",
+                },
+                {
+                    "to": "terminal-blocked",
+                    "condition": "human_input_outcome = rejected",
+                    "outcome": "rejected",
+                },
+            ],
+        ),
+    )
+
+    assert not report.ok
+    assert any(
+        "approved human gate outcome cannot target terminal-blocked"
+        in issue.message
+        for issue in report.issues
+    )
+
+
+def test_workflow_validator_requires_rejected_route_to_terminal_blocked(
+    tmp_path: Path,
+) -> None:
+    policy = _human_input_gate_policy()
+    policy["options"][1]["next_phase"] = "done"
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(
+            tmp_path,
+            policies=[policy],
+            transitions=[
+                {
+                    "to": "done",
+                    "condition": "human_input_outcome = approved",
+                    "outcome": "approved",
+                },
+                {
+                    "to": "done",
+                    "condition": "human_input_outcome = rejected",
+                    "outcome": "rejected",
+                },
+            ],
+        ),
+    )
+
+    assert not report.ok
+    assert any(
+        "rejected human gate outcome must target terminal-blocked"
+        in issue.message
+        for issue in report.issues
+    )
+
+
 def test_workflow_validator_rejects_gate_condition_mismatch(tmp_path: Path) -> None:
     transitions = [
         {
