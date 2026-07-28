@@ -12,6 +12,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import threading
 import uuid
@@ -629,6 +630,23 @@ class _ProviderHumanInputAdvance:
     from_phase: str
     to_phase: str
     decision: PreparedRoutingDecision
+
+
+@dataclass(frozen=True)
+class _PreparedControllerRouting:
+    """One attested route and an optional safeguard discovered while routing."""
+
+    decision: PreparedRoutingDecision
+    human_input: PreparedHumanInput | None = None
+
+
+@dataclass(frozen=True)
+class _HumanInputResolutionEffects:
+    """Controller-owned effects returned by one closed resolution handler."""
+
+    state_updates: Mapping[str, object]
+    state_removals: frozenset[str]
+    route: str
 
 
 class SquadController:
@@ -2183,6 +2201,406 @@ class SquadController:
             )
         return None
 
+    @staticmethod
+    def _validate_human_input_resolver(
+        decision: Mapping[str, object],
+        resolution: HumanInputResolution,
+    ) -> None:
+        resolver_contract = {
+            "user": ("awaiting_human", None),
+            "semi": ("pending", "semi"),
+            "COMMANDER": ("resolving", "banzai"),
+        }
+        contract = resolver_contract.get(resolution.resolved_by)
+        if contract is None:
+            raise HumanInputPolicyError(
+                "human-input resolver is not registered"
+            )
+        expected_status, expected_mode = contract
+        if decision.get("status") != expected_status:
+            raise HumanInputPolicyError(
+                "human-input resolver is not permitted for decision status"
+            )
+        if (
+            expected_mode is not None
+            and decision.get("autonomy_mode") != expected_mode
+        ):
+            raise HumanInputPolicyError(
+                "human-input resolver is not permitted by autonomy mode"
+            )
+
+    def _validate_human_input_resolution_answer(
+        self,
+        decision: Mapping[str, object],
+        resolution: HumanInputResolution,
+    ) -> HumanInputOption | None:
+        options = self._human_input_options_from_decision(decision)
+        if options:
+            if (
+                not isinstance(resolution.selected_option_id, str)
+                or not resolution.selected_option_id
+                or resolution.answer_text is not None
+            ):
+                raise HumanInputPolicyError(
+                    "human-input resolution must select one registered option"
+                )
+            selected = next(
+                (
+                    option
+                    for option in options
+                    if option.id == resolution.selected_option_id
+                ),
+                None,
+            )
+            if selected is None:
+                raise HumanInputPolicyError(
+                    "human-input resolution selected an unknown option"
+                )
+            return selected
+        if (
+            resolution.selected_option_id is not None
+            or not isinstance(resolution.answer_text, str)
+            or not resolution.answer_text.strip()
+        ):
+            raise HumanInputPolicyError(
+                "human-input resolution requires one non-empty answer"
+            )
+        return None
+
+    def _validate_human_input_route(
+        self,
+        route: object,
+        policy: HumanInputPolicy,
+        *,
+        allow_source_phase: str | None = None,
+    ) -> str:
+        if not isinstance(route, str) or not route:
+            raise HumanInputPolicyError(
+                "human-input resolution route is invalid"
+            )
+        if route not in self._graph.all_phase_ids():
+            raise HumanInputPolicyError(
+                "human-input resolution route is outside the phase graph"
+            )
+        if (
+            route not in policy.allowed_target_phases
+            and route != allow_source_phase
+        ):
+            raise HumanInputPolicyError(
+                "human-input resolution route is not registered"
+            )
+        return route
+
+    @staticmethod
+    def _atomic_replace_text(path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(
+            dir=str(path.parent),
+            prefix=f".{path.name}-",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+    def _clarification_resume_resolution(
+        self,
+        state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        selected: HumanInputOption | None,
+        resolution: HumanInputResolution,
+    ) -> _HumanInputResolutionEffects:
+        route = self._validate_human_input_route(
+            (
+                selected.next_phase
+                if selected is not None
+                else decision["source_phase"]
+            ),
+            policy,
+            allow_source_phase=str(decision["source_phase"]),
+        )
+        answer = (
+            selected.label
+            if selected is not None
+            else str(resolution.answer_text)
+        )
+        staging_dir = Path(
+            str(state.get("staging_dir") or self._squad_dir / "staging")
+        )
+        if not staging_dir.is_absolute():
+            staging_dir = self._project_root / staging_dir
+        path = staging_dir / "user-clarifications.md"
+        marker = f"## Decision {decision['id']}"
+        try:
+            existing = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            existing = ""
+        if marker not in {
+            line.strip()
+            for line in existing.splitlines()
+            if line.startswith("## Decision ")
+        }:
+            separator = "" if not existing or existing.endswith("\n\n") else (
+                "\n" if existing.endswith("\n") else "\n\n"
+            )
+            section = (
+                f"{marker}\n\n"
+                f"**Question:** {decision['question']}\n\n"
+                f"**Answer:** {answer}\n"
+            )
+            self._atomic_replace_text(
+                path,
+                f"{existing}{separator}{section}",
+            )
+        return _HumanInputResolutionEffects(
+            state_updates={"status": "running", "phase": route},
+            state_removals=frozenset(),
+            route=route,
+        )
+
+    def _gate_outcome_resolution(
+        self,
+        _state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        selected: HumanInputOption | None,
+        _resolution: HumanInputResolution,
+    ) -> _HumanInputResolutionEffects:
+        if selected is None or selected.outcome not in {"approved", "rejected"}:
+            raise HumanInputPolicyError(
+                "human gate outcome is not registered"
+            )
+        route = self._validate_human_input_route(
+            selected.next_phase,
+            policy,
+        )
+        if (
+            selected.outcome == "approved"
+            and route == PHASE_TERMINAL_BLOCKED
+        ) or (
+            selected.outcome == "rejected"
+            and route != PHASE_TERMINAL_BLOCKED
+        ):
+            raise HumanInputPolicyError(
+                "human gate outcome does not match its route"
+            )
+        updates: dict[str, object] = {
+            "phase": route,
+            "status": (
+                "blocked"
+                if selected.outcome == "rejected"
+                else "running"
+            ),
+        }
+        if selected.outcome == "rejected":
+            updates["blocked_reason"] = "gate_rejected"
+        return _HumanInputResolutionEffects(
+            state_updates=updates,
+            state_removals=frozenset(),
+            route=route,
+        )
+
+    def _phase_dispatch_limit_resolution(
+        self,
+        state: Mapping[str, object],
+        decision: Mapping[str, object],
+        _policy: HumanInputPolicy,
+        _selected: HumanInputOption | None,
+        resolution: HumanInputResolution,
+    ) -> _HumanInputResolutionEffects:
+        try:
+            raw_selection = json.loads(str(resolution.answer_text))
+        except (TypeError, ValueError) as exc:
+            raise HumanInputPolicyError(
+                "dispatch-cap resolution must be one issue selection"
+            ) from exc
+        candidates = self._banzai_issue_resolution_candidates(dict(state))
+        selection = self._validate_banzai_issue_resolution_selection(
+            raw_selection,
+            candidates,
+        )
+        if selection is None:
+            raise HumanInputPolicyError(
+                "dispatch-cap resolution is not evidence-backed"
+            )
+        capped_phase = (
+            _phase_dispatch_limit_phase(dict(state))
+            or str(decision["source_phase"])
+        )
+        if (
+            not capped_phase
+            or capped_phase not in self._graph.all_phase_ids()
+            or capped_phase in TERMINAL_PHASES
+        ):
+            raise HumanInputPolicyError(
+                "dispatch-cap recovery target is invalid"
+            )
+        counts = state.get("phase_dispatch_counts")
+        next_counts = dict(counts) if isinstance(counts, dict) else {}
+        next_counts.pop(capped_phase, None)
+        updates = self._issue_resolution_state_updates(
+            dict(state),
+            selection,
+        )
+        updates.update(
+            {
+                "status": "running",
+                "phase": "phase1-what",
+                "phase_dispatch_counts": next_counts,
+                "phase_dispatch_limit_recovery": {
+                    "phase": capped_phase,
+                    "resolver": resolution.resolved_by,
+                },
+            }
+        )
+        return _HumanInputResolutionEffects(
+            state_updates=updates,
+            state_removals=frozenset(),
+            route="phase1-what",
+        )
+
+    def _reset_why_fail_count_resolution(
+        self,
+        _state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        _selected: HumanInputOption | None,
+        _resolution: HumanInputResolution,
+    ) -> _HumanInputResolutionEffects:
+        route = self._validate_human_input_route(
+            decision["source_phase"],
+            policy,
+        )
+        return _HumanInputResolutionEffects(
+            state_updates={
+                "status": "running",
+                "phase": route,
+                "why_fail_count": 0,
+            },
+            state_removals=frozenset(),
+            route=route,
+        )
+
+    def _reset_why2_stagnation_resolution(
+        self,
+        _state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        _selected: HumanInputOption | None,
+        _resolution: HumanInputResolution,
+    ) -> _HumanInputResolutionEffects:
+        route = self._validate_human_input_route(
+            decision["source_phase"],
+            policy,
+        )
+        return _HumanInputResolutionEffects(
+            state_updates={
+                "status": "running",
+                "phase": route,
+                "why_fail_count": 0,
+                "why2_metric_stagnation_count": 0,
+            },
+            state_removals=frozenset(),
+            route=route,
+        )
+
+    def apply_human_input_resolution(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+        resolution: HumanInputResolution,
+    ) -> bool:
+        """Validate and apply one decision through its closed controller handler."""
+        if type(resolution) is not HumanInputResolution:
+            raise HumanInputPolicyError(
+                "human-input resolution is invalid"
+            )
+        state = self._state_store.load()
+        if (
+            not isinstance(decision_id, str)
+            or not decision_id
+            or type(expected_state_revision) is not int
+            or state.get("state_revision") != expected_state_revision
+        ):
+            raise HumanInputPolicyError(
+                "human-input decision id or revision is stale"
+            )
+        raw_decision = state.get("blocked_decision")
+        if not isinstance(raw_decision, Mapping):
+            raise HumanInputPolicyError(
+                "human-input decision is missing"
+            )
+        decision = validate_blocked_decision_v2(raw_decision)
+        if decision["id"] != decision_id:
+            raise HumanInputPolicyError(
+                "human-input decision id or revision is stale"
+            )
+        if decision["status"] not in {
+            "pending",
+            "resolving",
+            "awaiting_human",
+        }:
+            raise HumanInputPolicyError(
+                "human-input decision is not active"
+            )
+        policy = self._policy_for_human_input_decision(decision)
+        self._validate_human_input_resolver(decision, resolution)
+        selected = self._validate_human_input_resolution_answer(
+            decision,
+            resolution,
+        )
+        handlers = {
+            "clarification_resume": self._clarification_resume_resolution,
+            "gate_outcome": self._gate_outcome_resolution,
+            "phase_dispatch_limit": self._phase_dispatch_limit_resolution,
+            "reset_why_fail_count": self._reset_why_fail_count_resolution,
+            "reset_why2_stagnation": (
+                self._reset_why2_stagnation_resolution
+            ),
+        }
+        handler = handlers.get(str(decision["resolution_handler"]))
+        if handler is None:
+            raise HumanInputPolicyError(
+                "human-input resolution handler is not registered"
+            )
+        effects = handler(
+            state,
+            decision,
+            policy,
+            selected,
+            resolution,
+        )
+        if effects.route not in self._graph.all_phase_ids():
+            raise HumanInputPolicyError(
+                "human-input handler returned an invalid route"
+            )
+        resolved = self._state_store.apply_human_input_state_resolution(
+            decision_id,
+            expected_state_revision=expected_state_revision,
+            resolution=resolution,
+            state_updates=effects.state_updates,
+            state_removals=effects.state_removals,
+        )
+        return (
+            resolved.get("status") == "running"
+            and resolved.get("phase") not in TERMINAL_PHASES
+        )
+
     def _resolve_human_input_context_path(
         self,
         template: str,
@@ -2894,27 +3312,35 @@ class SquadController:
                 else MAX_PHASE_DISPATCHES
             )
             if dispatch_count > phase_limit:
+                candidates = self._banzai_issue_resolution_candidates(
+                    self._state_store.load()
+                )
                 escalation_q = (
                     f"Phase {phase!r} has been dispatched {dispatch_count} times "
                     f"(limit {phase_limit}) without converging or advancing. "
-                    f"Possible routing loop. How should I proceed?"
+                    "Select exactly one evidence-backed issue resolution. "
+                    "Answer with one JSON object containing issue_id, decision, "
+                    "rationale, confidence, and evidence_backed=true.\n\n"
+                    f"Eligible issue resolutions:\n"
+                    f"{json.dumps(candidates, sort_keys=True)}"
                 )
-                s = self._state_store.load()
-                s["escalation_question"] = escalation_q
-                s["blocked_reason"] = "phase_dispatch_limit"
-                s["phase_dispatch_limit_phase"] = phase
-                s["phase_dispatch_limit"] = phase_limit
-                s["status"] = "blocked"
-                self._state_store.save(s)
+                cap_state = self._state_store.load()
+                request = self._human_input_registry.prepare(
+                    source_kind="controller_safeguard",
+                    producer_id="phase_dispatch_limit",
+                    phase_id=phase,
+                    reason_code="phase_dispatch_limit",
+                    question=escalation_q,
+                    source_state_revision=cap_state["state_revision"],
+                )
                 self._record_blocker_event(phase, "phase_dispatch_limit")
                 print(
                     f"[squad] ✗ phase dispatch limit: {phase!r} dispatched "
                     f"{dispatch_count}× (limit {phase_limit}) — forcing escalation",
                     flush=True,
                 )
-                s = self._state_store.load()
-                s["phase"] = PHASE_TERMINAL_BLOCKED
-                self._state_store.save(s)
+                if self.handle_human_input(request):
+                    continue
                 return SquadResult.from_state(self._state_store.load())
 
             print(
@@ -3036,21 +3462,22 @@ class SquadController:
                 routing_updates[PENDING_EXTERNAL_PUBLICATION_KEY] = (
                     prepared_publication.marker.to_dict()
                 )
-            decision = self._construct_routing_decision_or_block(
+            routing = self._construct_routing_decision_or_block(
                 node,
                 prepared,
                 snapshot,
                 additional_state_updates=routing_updates,
             )
-            if decision is None:
+            if routing is None:
                 self._discard_publication_without_authority(
                     prepared_publication,
                 )
                 return SquadResult.from_state(self._state_store.load())
+            decision = routing.decision
             next_phase = decision.to_phase
 
             try:
-                human_input = self._prepare_provider_human_input(
+                provider_human_input = self._prepare_provider_human_input(
                     node,
                     prepared,
                     snapshot,
@@ -3073,6 +3500,14 @@ class SquadController:
                 )
                 return SquadResult.from_state(self._state_store.load())
 
+            if (
+                provider_human_input is not None
+                and routing.human_input is not None
+            ):
+                raise HumanInputPolicyError(
+                    "provider question and controller safeguard overlap"
+                )
+            human_input = provider_human_input or routing.human_input
             if human_input is not None:
                 if self.handle_human_input(
                     human_input,
@@ -3481,20 +3916,31 @@ class SquadController:
             routing_updates[PENDING_EXTERNAL_PUBLICATION_KEY] = (
                 prepared_publication.marker.to_dict()
             )
-        decision = self._construct_routing_decision_or_block(
+        routing = self._construct_routing_decision_or_block(
             node,
             prepared,
             snapshot,
             additional_state_updates=routing_updates,
             manual_phase_run=True,
         )
-        if decision is None:
+        if routing is None:
             self._discard_publication_without_authority(
                 prepared_publication,
             )
             return SquadResult.from_state(self._state_store.load())
+        decision = routing.decision
         next_phase = decision.to_phase
 
+        if routing.human_input is not None:
+            self.handle_human_input(
+                routing.human_input,
+                provider_advance=_ProviderHumanInputAdvance(
+                    from_phase=decision.from_phase,
+                    to_phase=decision.to_phase,
+                    decision=decision,
+                ),
+            )
+            return SquadResult.from_state(self._state_store.load())
         receipt = self._advance_prepared_result_or_block(
             node,
             decision,
@@ -3558,14 +4004,25 @@ class SquadController:
             )
             if prepared is None:
                 return True
-            decision = self._construct_routing_decision_or_block(
+            routing = self._construct_routing_decision_or_block(
                 node,
                 prepared,
                 snapshot,
                 manual_phase_run=manual_phase_run,
                 conditional_skip=True,
             )
-            if decision is None:
+            if routing is None:
+                return True
+            decision = routing.decision
+            if routing.human_input is not None:
+                self.handle_human_input(
+                    routing.human_input,
+                    provider_advance=_ProviderHumanInputAdvance(
+                        from_phase=decision.from_phase,
+                        to_phase=decision.to_phase,
+                        decision=decision,
+                    ),
+                )
                 return True
             next_phase = decision.to_phase
             receipt = self._advance_prepared_result_or_block(
@@ -6301,6 +6758,14 @@ class SquadController:
                     "BLOCKED",
                     "STOP_AND_ASK",
                 }
+                quarantined = candidate.quarantined_state_updates
+                if (
+                    candidate.verdict == "STOP_AND_ASK"
+                    and quarantined == {"status": "blocked"}
+                ):
+                    provider_control_intents["status"] = "blocked"
+                    updates["status"] = "blocked"
+                    candidate.quarantined_state_updates = {}
                 sanitized_updates = dict(updates)
                 for key in ("status", "blocked_reason"):
                     if key in sanitized_updates and (
@@ -6831,10 +7296,14 @@ class SquadController:
         node: PhaseNode,
         prepared: PreparedPhaseResult,
         snapshot: RoutingStateSnapshot,
-    ) -> tuple[str | None, dict[str, object]]:
-        """Return WHY routing and state effects without persisting them."""
+    ) -> tuple[
+        str | None,
+        dict[str, object],
+        PreparedHumanInput | None,
+    ]:
+        """Return WHY routing, state effects, and any routed safeguard."""
         if node.id not in WHY_PHASES:
-            return None, {}
+            return None, {}, None
 
         result, state, eval_state = self._transition_evaluation_inputs(
             node,
@@ -6846,7 +7315,7 @@ class SquadController:
             updates: dict[str, object] = {"status": "blocked"}
             if "blocked_reason" not in prepared.control_updates:
                 updates["blocked_reason"] = "WHY phase: agent escalation"
-            return node.id, updates
+            return node.id, updates, None
 
         verdict_upper = (result.verdict or "").upper()
         is_fail = (
@@ -6880,7 +7349,7 @@ class SquadController:
                         "issue_resolution_repair_baseline": None,
                     }
                 )
-            return None, updates
+            return None, updates, None
 
         from datetime import datetime, timezone
 
@@ -6905,9 +7374,9 @@ class SquadController:
                 "phase_id": node.id,
                 "recorded_at": datetime.now(timezone.utc).isoformat(),
             }
-            return None, updates
+            return None, updates, None
         if node.id != "phase1-why2":
-            return None, updates
+            return None, updates, None
 
         metrics_improved = _why2_certified_metrics_improved(
             eval_state.get("quality_scores")
@@ -6923,20 +7392,26 @@ class SquadController:
                 stagnation_count = 1
             updates["why2_metric_stagnation_count"] = stagnation_count
             if stagnation_count >= WHY2_METRIC_STAGNATION_LIMIT:
-                updates["escalation_question"] = (
+                question = (
                     "WHY2 certified metrics did not improve across "
                     f"{stagnation_count} consecutive repair cycles. "
                     "Provide new evidence, narrow scope, or authorize a "
                     "different repair strategy."
                 )
-                updates["blocked_reason"] = "why2_metric_stagnation"
-                updates["status"] = "blocked"
-                return PHASE_TERMINAL_BLOCKED, updates
+                request = self._human_input_registry.prepare(
+                    source_kind="controller_safeguard",
+                    producer_id="why2_metric_stagnation",
+                    phase_id=node.id,
+                    reason_code="why2_metric_stagnation",
+                    question=question,
+                    source_state_revision=snapshot.state_revision,
+                )
+                return PHASE_TERMINAL_BLOCKED, updates, request
 
         if fail_count < 2 or state.get("escalation_question"):
-            return None, updates
+            return None, updates, None
         if self._phase_artifacts_changed_since(baseline_ts, snapshot.state):
-            return None, updates
+            return None, updates, None
 
         print(
             f"[squad] ✗ consecutive-fail guard: {fail_count} {node.id} "
@@ -6951,16 +7426,22 @@ class SquadController:
             issues_hint = str(issues_path / "issues.md")
         else:
             issues_hint = "issues.md was not available"
-        updates["escalation_question"] = (
+        question = (
             f"{node.id} still fails after {fail_count} assessments without "
             "a spec artifact change. No retry is authorized. Resolve the "
             f"first unresolved SAGE issue from {issues_hint} with "
             "`echelon spec resolve ISS-<n> '<decision>'`; the controller "
             "will run and revalidate only that issue's declared repair edge."
         )
-        updates["blocked_reason"] = "consecutive_why_fails"
-        updates["status"] = "blocked"
-        return PHASE_TERMINAL_BLOCKED, updates
+        request = self._human_input_registry.prepare(
+            source_kind="controller_safeguard",
+            producer_id="consecutive_why_fails",
+            phase_id=node.id,
+            reason_code="consecutive_why_fails",
+            question=question,
+            source_state_revision=snapshot.state_revision,
+        )
+        return PHASE_TERMINAL_BLOCKED, updates, request
 
     def _construct_routing_decision_or_block(
         self,
@@ -6971,17 +7452,27 @@ class SquadController:
         additional_state_updates: Mapping[str, object] | None = None,
         manual_phase_run: bool = False,
         conditional_skip: bool = False,
-    ) -> PreparedRoutingDecision | None:
+    ) -> _PreparedControllerRouting | None:
         """Construct one route or record a redacted snapshot-bound failure."""
         with self._defer_routing_provider_usage() as usage:
             try:
-                return self._coordinate_transition_routing(
+                routed_human_input: list[PreparedHumanInput] = []
+                decision = self._coordinate_transition_routing(
                     node,
                     prepared,
                     snapshot,
                     additional_state_updates=additional_state_updates,
                     manual_phase_run=manual_phase_run,
                     conditional_skip=conditional_skip,
+                    human_input_collector=routed_human_input,
+                )
+                return _PreparedControllerRouting(
+                    decision=decision,
+                    human_input=(
+                        routed_human_input[0]
+                        if routed_human_input
+                        else None
+                    ),
                 )
             except (
                 ControllerStateContractViolation,
@@ -7034,6 +7525,7 @@ class SquadController:
         additional_state_updates: Mapping[str, object] | None = None,
         manual_phase_run: bool = False,
         conditional_skip: bool = False,
+        human_input_collector: list[PreparedHumanInput] | None = None,
     ) -> PreparedRoutingDecision:
         """Select and seal one route without mutating live success state."""
         self._matched_transition = None
@@ -7111,6 +7603,7 @@ class SquadController:
         judgment_results: list[SquadAgentResult] = []
         source = "transition"
         transition_index: int | None = None
+        routed_human_input: PreparedHumanInput | None = None
         if prepared.routing_override:
             next_phase = self._evaluate_transitions(
                 node,
@@ -7119,7 +7612,7 @@ class SquadController:
             )
             source = "controller_override"
         else:
-            why_override, why_updates = (
+            why_override, why_updates, routed_human_input = (
                 self._coordinate_why_transition_state(
                     node,
                     prepared,
@@ -7278,7 +7771,7 @@ class SquadController:
             completion.marker.to_dict()
         )
         try:
-            return self._state_store.prepare_routing_decision(
+            decision = self._state_store.prepare_routing_decision(
                 prepared,
                 snapshot=snapshot,
                 from_phase=node.id,
@@ -7297,6 +7790,16 @@ class SquadController:
                 )["tokens"],
                 dispatch_id=completion.marker.completion_id,
             )
+            if human_input_collector is not None and human_input_collector:
+                raise HumanInputPolicyError(
+                    "routing human-input collector is not empty"
+                )
+            if (
+                human_input_collector is not None
+                and routed_human_input is not None
+            ):
+                human_input_collector.append(routed_human_input)
+            return decision
         except BaseException:
             try:
                 completion.discard()
@@ -7377,439 +7880,6 @@ class SquadController:
         judgment = self._canonicalize_judgment_result(raw_judgment)
         return judgment
 
-    def _judgment_dispatch_escalation(
-        self,
-        escalation_question: str,
-        blocked_phase: str,
-        recovery_reason: str = "",
-    ) -> SquadAgentResult:
-        """Dispatch COMMANDER to resolve a user-gated escalation in banzai mode.
-
-        COMMANDER produces staging/user-clarifications.md with BANZAI-AUTO-RESOLVED
-        answers and returns state_updates that clear the block.
-        """
-        commander_path = self._ext_dir / "agents/control/commander.md"
-        snapshot = self._state_store.capture_routing_snapshot()
-        state = snapshot.state
-        # Recovery arguments are observational hints from an earlier caller
-        # load.  The captured immutable snapshot is the only routing authority.
-        snapshot_question = str(state.get("escalation_question") or "")
-        blocked_reason = str(state.get("blocked_reason") or "")
-        if (
-            not blocked_reason
-            and str(state.get("phase_dispatch_limit_phase") or "").strip()
-        ):
-            blocked_reason = "phase_dispatch_limit"
-        snapshot_phase = snapshot.phase
-        last_dispatch = state.get("last_dispatch")
-        last_dispatch_phase = (
-            str(last_dispatch.get("phase_id") or "").strip()
-            if isinstance(last_dispatch, dict)
-            else ""
-        )
-        dispatch_limit_phase = _phase_dispatch_limit_phase(state)
-        blocked_origin_phase = snapshot_phase
-        if snapshot_phase == PHASE_TERMINAL_BLOCKED:
-            if (
-                dispatch_limit_phase
-                and dispatch_limit_phase in self._graph.all_phase_ids()
-                and dispatch_limit_phase not in TERMINAL_PHASES
-            ):
-                blocked_origin_phase = dispatch_limit_phase
-            elif (
-                last_dispatch_phase
-                and last_dispatch_phase in self._graph.all_phase_ids()
-                and last_dispatch_phase not in TERMINAL_PHASES
-            ):
-                blocked_origin_phase = last_dispatch_phase
-        reset_why_fail_count = blocked_reason == "consecutive_why_fails"
-        capped_phase = (
-            _phase_dispatch_limit_phase(state)
-            if blocked_reason == "phase_dispatch_limit"
-            else ""
-        )
-        banzai_candidates = self._banzai_issue_resolution_candidates(state)
-
-        staging_dir = Path(state.get("staging_dir", str(self._squad_dir / "staging")))
-        staging_context = ""
-        for f in sorted(staging_dir.glob("*.md"))[:8]:
-            try:
-                staging_context += f"\n---\n# {f.name}\n{f.read_text()[:3000]}\n"
-            except Exception:
-                pass
-
-        context = (
-            f"# COMMANDER BANZAI ESCALATION JUDGMENT\n\n"
-            f"**Mode:** banzai — produce best-judgment answers and continue. "
-            f"Do NOT stop the run.\n\n"
-            f"**Phase blocked:** {blocked_origin_phase}\n\n"
-            f"**Blocking questions:**\n{snapshot_question}\n\n"
-            f"**Your task:**\n"
-            f"1. For each blocking question, produce a best-judgment answer.\n"
-            f"2. Write `{staging_dir}/user-clarifications.md` using the "
-            f"BANZAI-AUTO-RESOLVED format from commander.md §Banzai Escalation.\n"
-            f"3. Return echelon_result state_updates that clear the block:\n"
-            f"   escalation_question: null\n"
-            f"   escalation_resolved: true\n"
-            f"   escalation_resolver: COMMANDER-banzai\n"
-            f"   blocked_reason: null\n\n"
-            f"Do NOT return `why_fail_count`; it is controller-owned and the "
-            f"harness resets it after a valid consecutive-fail recovery.\n\n"
-            f"**Staging context:**\n{staging_context}"
-        )
-        if capped_phase:
-            candidate_text = json.dumps(banzai_candidates, indent=2) if banzai_candidates else "(none)"
-            context += (
-                "\n\n## Dispatch-cap recovery: issue-level decision required\n\n"
-                "You may clear this cap only by selecting exactly one candidate below. "
-                "Never invent a product, scope, policy, security, or quality-waiver decision. "
-                "If no candidate is present, or none is safe to accept, return no "
-                "`issue_resolution_selection`; the controller will keep the run blocked "
-                "for a human decision.\n\n"
-                "For a selection, return exactly:\n"
-                "```yaml\n"
-                "issue_resolution_selection:\n"
-                "  issue_id: ISS-001\n"
-                "  decision: <copy the candidate suggested_option exactly>\n"
-                "  rationale: <why its cited evidence supports this choice>\n"
-                "  confidence: high | medium\n"
-                "  evidence_backed: true\n"
-                "```\n\n"
-                f"**Eligible candidates:**\n```json\n{candidate_text}\n```"
-            )
-        if commander_path.exists():
-            context = commander_path.read_text() + "\n\n" + context
-        else:
-            print(
-                f"[squad] warning: commander.md not found at {commander_path} — "
-                f"dispatching COMMANDER without preamble",
-                flush=True,
-            )
-
-        with self._defer_routing_provider_usage() as usage:
-            with self._telemetry_provider.dispatch(
-                DispatchContext(
-                    blocked_origin_phase,
-                    "COMMANDER",
-                    "escalation",
-                    1,
-                )
-            ):
-                raw_result = self._telemetry_provider.exec_agent(
-                    str(self._project_root),
-                    context,
-                )
-
-        validation_reason = ""
-        try:
-            result = self._canonicalize_judgment_result(raw_result)
-        except ControllerStateContractViolation:
-            validation_reason = "contract"
-            result = SquadAgentResult(
-                exit_code=0,
-                echelon_result={
-                    "verdict": "JUDGMENT_RESOLVED",
-                    "state_updates": {},
-                },
-                raw_output="",
-                duration_ms=0,
-                timed_out=False,
-            )
-        if result.quarantined_state_updates:
-            validation_reason = sorted(
-                result.quarantined_state_updates
-            )[0]
-        if not validation_reason and result.verdict != "JUDGMENT_RESOLVED":
-            validation_reason = "verdict"
-        cleanup = result.state_updates
-        if not validation_reason and not (
-            "escalation_question" in cleanup
-            and cleanup["escalation_question"] is None
-            and cleanup.get("escalation_resolved") is True
-            and cleanup.get("escalation_resolver") == "COMMANDER-banzai"
-            and "blocked_reason" in cleanup
-            and cleanup["blocked_reason"] is None
-            and (
-                "status" not in cleanup
-                or cleanup.get("status") == "running"
-            )
-        ):
-            validation_reason = "cleanup_intent"
-
-        issue_selection: dict[str, str] | None = None
-        if (
-            not validation_reason
-            and capped_phase
-            and cleanup.get("issue_resolution_selection") is not None
-        ):
-            issue_selection = self._validate_banzai_issue_resolution_selection(
-                cleanup.get("issue_resolution_selection"),
-                banzai_candidates,
-            )
-            if issue_selection is None:
-                self._block_banzai_issue_resolution(
-                    blocked_origin_phase,
-                    capped_phase,
-                    "COMMANDER did not select one evidence-backed SAGE issue",
-                )
-                return result
-
-        from_phase = snapshot.phase
-        requested_phase = str(
-            result.state_updates.get("next_phase")
-            or result.state_updates.get("phase")
-            or ""
-        ).strip()
-        if (
-            requested_phase
-            and requested_phase not in self._graph.all_phase_ids()
-        ):
-            validation_reason = "next_phase"
-
-        queued_updates: dict[str, object] = {}
-        removals: set[str] = set()
-        transaction_updates: dict[str, object] = {}
-        transaction_removals: set[str] = set()
-        target_phase = requested_phase or from_phase
-        source = "commander_recovery"
-        if validation_reason:
-            target_phase = PHASE_TERMINAL_BLOCKED
-            transaction_updates.update(
-                {
-                    "status": "blocked",
-                    "blocked_reason": (
-                        "judgment state_updates validation failed: "
-                        f"{validation_reason}"
-                    ),
-                }
-            )
-            source = "commander_recovery_rejected"
-        else:
-            for key, value in result.state_updates.items():
-                if key in {"next_phase", "phase", "issue_resolution_selection"}:
-                    continue
-                if key in STORE_OWNED_TRANSACTION_KEYS:
-                    valid_control_intent = (
-                        (key == "status" and value == "running")
-                        or (key == "blocked_reason" and value is None)
-                        or (
-                            key == "escalation_resolved"
-                            and value is True
-                        )
-                        or (
-                            key == "escalation_resolver"
-                            and value == "COMMANDER-banzai"
-                        )
-                    )
-                    if not valid_control_intent:
-                        validation_reason = "ownership"
-                        break
-                    continue
-                if value is None:
-                    removals.add(key)
-                else:
-                    queued_updates[key] = value
-            if validation_reason:
-                queued_updates.clear()
-                removals.clear()
-                transaction_updates.clear()
-                transaction_removals.clear()
-                target_phase = PHASE_TERMINAL_BLOCKED
-                transaction_updates.update(
-                    {
-                        "status": "blocked",
-                        "blocked_reason": (
-                            "judgment state_updates validation failed: "
-                            f"{validation_reason}"
-                        ),
-                    }
-                )
-                source = "commander_recovery_rejected"
-            else:
-                transaction_updates.update(
-                    {
-                        "status": "running",
-                        "escalation_resolved": True,
-                        "escalation_resolver": "COMMANDER-banzai",
-                    }
-                )
-                transaction_removals.add("blocked_reason")
-                removals.add("escalation_question")
-                if reset_why_fail_count:
-                    transaction_updates["why_fail_count"] = 0
-                if capped_phase:
-                    counts = state.get("phase_dispatch_counts")
-                    next_counts = (
-                        dict(counts) if isinstance(counts, dict) else {}
-                    )
-                    next_counts.pop(capped_phase, None)
-                    transaction_updates["phase_dispatch_counts"] = (
-                        next_counts
-                    )
-                    transaction_updates["phase_dispatch_limit_recovery"] = {
-                        "phase": capped_phase,
-                        "resolver": "COMMANDER-banzai",
-                    }
-                if issue_selection is not None:
-                    from datetime import datetime, timezone
-
-                    issue_id = issue_selection["issue_id"]
-                    ledger = state.get("issue_resolution_ledger")
-                    selected_ledger = dict(ledger) if isinstance(ledger, dict) else {}
-                    selected_ledger[issue_id] = {
-                        "issue_id": issue_id,
-                        "title": issue_selection["title"],
-                        "severity": "ISSUE",
-                        "guidance": issue_selection["decision_required"],
-                        "status": "selected",
-                        "decision": issue_selection["decision"],
-                        "repair_phase": "phase1-what",
-                        "rationale": issue_selection["rationale"],
-                        "confidence": issue_selection["confidence"],
-                        "evidence_backed": issue_selection["evidence_backed"],
-                    }
-                    queued_updates.update(
-                        {
-                            "issue_resolution_ledger": selected_ledger,
-                            "selected_issue_resolution": issue_id,
-                            "issue_resolution_repair_baseline": {
-                                "issue_id": issue_id,
-                                "repair_phase": "phase1-what",
-                                "recorded_at": datetime.now(timezone.utc).isoformat(),
-                            },
-                            "issue_resolution_recovery": {
-                                "issue_id": issue_id,
-                                "from_phase": "phase1-why2",
-                                "to_phase": "phase1-what",
-                                "reason": "issue_resolution",
-                            },
-                        }
-                    )
-                    target_phase = "phase1-what"
-                if (
-                    not requested_phase
-                    and from_phase == PHASE_TERMINAL_BLOCKED
-                    and blocked_origin_phase
-                    and blocked_origin_phase != PHASE_TERMINAL_BLOCKED
-                ):
-                    target_phase = blocked_origin_phase
-
-        payload = deepcopy(result.echelon_result or {})
-        payload["state_updates"] = {}
-        synthetic_result = detach_squad_agent_result(result)
-        synthetic_result.echelon_result = payload
-        recovery_node = PhaseNode(
-            id=from_phase,
-            type="commander_recovery",
-            allowed_state_updates=[],
-        )
-        completion: PreparedControllerCompletion | None = None
-        try:
-            prepared = prepare_phase_result(
-                recovery_node,
-                synthetic_result,
-                controller_updates={},
-                routing_override=target_phase,
-                state_removals=removals,
-            )
-            completion = self._prepare_controller_completion(
-                from_phase=from_phase,
-                to_phase=target_phase,
-                snapshot=snapshot,
-                manual_phase_run=False,
-                conditional_skip=False,
-                record_completion=False,
-                publication_marker=None,
-                judgments=(result,),
-            )
-            transaction_updates[
-                PENDING_CONTROLLER_COMPLETION_KEY
-            ] = completion.marker.to_dict()
-            decision = self._state_store.prepare_routing_decision(
-                prepared,
-                snapshot=snapshot,
-                from_phase=from_phase,
-                to_phase=target_phase,
-                queued_state_updates=queued_updates,
-                transaction_state_updates=transaction_updates,
-                transaction_state_removals=transaction_removals,
-                token_usage_delta=usage["tokens"],
-                judgment_payloads=(
-                    [result.echelon_result]
-                    if isinstance(result.echelon_result, dict)
-                    else []
-                ),
-                source=source,
-                record_completion=False,
-                dispatch_id=completion.marker.completion_id,
-            )
-            receipt = self._state_store.advance(
-                from_phase,
-                target_phase,
-                decision,
-            )
-            if not isinstance(receipt, AdvanceReceipt):
-                raise StateAdvanceError(
-                    "recovery state advance did not return a receipt",
-                    json_path="$.advance_receipt",
-                    validator="receipt",
-                )
-            recovery = self._drain_pending_controller_completion()
-            if (
-                not recovery.recovered
-                or recovery.completion_id
-                != completion.marker.completion_id
-            ):
-                return result
-        except (
-            ControllerStateContractViolation,
-            StateAdvanceError,
-        ) as exc:
-            if (
-                isinstance(exc, StateAdvanceError)
-                and exc.validator == "checkpoint_prestate"
-            ):
-                if usage["tokens"]:
-                    self._state_store.increment_token_usage(
-                        usage["tokens"]
-                    )
-                if completion is not None:
-                    self._discard_controller_completion_without_authority(
-                        completion.marker.to_dict()
-                    )
-                return result
-            error = (
-                StateAdvanceError(
-                    "recovery routing decision construction failed",
-                    json_path=exc.json_path,
-                    validator=exc.validator,
-                )
-                if isinstance(exc, ControllerStateContractViolation)
-                else exc
-            )
-            self._block_after_state_advance_failure(
-                recovery_node,
-                from_phase,
-                error,
-                snapshot=snapshot,
-                token_usage_delta=usage["tokens"],
-                diagnostic_contract=(
-                    exc.contract
-                    if isinstance(
-                        exc,
-                        ControllerStateContractViolation,
-                    )
-                    else "commander_recovery"
-                ),
-                diagnostic_subject="recovery routing decision",
-            )
-            if completion is not None:
-                self._discard_controller_completion_without_authority(
-                    completion.marker.to_dict()
-                )
-            return result
-        return result
-
     def _banzai_issue_resolution_candidates(self, state: dict) -> list[dict[str, str]]:
         """Read only explicitly auto-eligible SAGE suggestions from issues.md."""
         spec_ref = str(state.get("published_spec_dir") or state.get("spec_dir") or "").strip()
@@ -7874,21 +7944,44 @@ class SquadController:
             "evidence_backed": "true",
         }
 
-    def _block_banzai_issue_resolution(
-        self, blocked_phase: str, capped_phase: str, reason: str
-    ) -> None:
-        """Keep a capped run blocked when Banzai cannot safely choose for the user."""
-        state = self._state_store.load()
-        state["status"] = "blocked"
-        state["phase"] = PHASE_TERMINAL_BLOCKED
-        state["blocked_reason"] = "phase_dispatch_limit"
-        state["phase_dispatch_limit_phase"] = capped_phase
-        state["escalation_question"] = (
-            f"{reason}. Resolve one issue explicitly before retrying {capped_phase}: "
-            'echelon spec resolve ISS-<n> "<project decision>".'
-        )
-        self._state_store.save(state)
-        self._record_blocker_event(blocked_phase, "phase_dispatch_limit")
+    @staticmethod
+    def _issue_resolution_state_updates(
+        state: dict,
+        selection: dict[str, str],
+    ) -> dict[str, object]:
+        """Apply the existing selected-issue repair lifecycle in memory."""
+        from datetime import datetime, timezone
+
+        issue_id = selection["issue_id"]
+        ledger = state.get("issue_resolution_ledger")
+        selected_ledger = dict(ledger) if isinstance(ledger, dict) else {}
+        selected_ledger[issue_id] = {
+            "issue_id": issue_id,
+            "title": selection["title"],
+            "severity": "ISSUE",
+            "guidance": selection["decision_required"],
+            "status": "selected",
+            "decision": selection["decision"],
+            "repair_phase": "phase1-what",
+            "rationale": selection["rationale"],
+            "confidence": selection["confidence"],
+            "evidence_backed": selection["evidence_backed"],
+        }
+        return {
+            "issue_resolution_ledger": selected_ledger,
+            "selected_issue_resolution": issue_id,
+            "issue_resolution_repair_baseline": {
+                "issue_id": issue_id,
+                "repair_phase": "phase1-what",
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            },
+            "issue_resolution_recovery": {
+                "issue_id": issue_id,
+                "from_phase": "phase1-why2",
+                "to_phase": "phase1-what",
+                "reason": "issue_resolution",
+            },
+        }
 
     def _write_journal_entries(self, result: SquadAgentResult, phase_id: str) -> None:
         """Mirror executor journal writes through the shared durable store."""

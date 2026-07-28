@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -16,6 +18,8 @@ from harness.human_input import (
     HumanInputPolicy,
     HumanInputPolicyError,
     HumanInputPolicyRegistry,
+    HumanInputResolution,
+    controller_safeguard_policies,
 )
 from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController, _ProviderHumanInputAdvance
@@ -179,6 +183,579 @@ def _request(
         risk_level=risk_level,
         source_state_revision=store.load()["state_revision"],
     )
+
+
+def _seal_awaiting_human(
+    controller: SquadController,
+    store: SquadStateStore,
+    policy: HumanInputPolicy,
+    *,
+    question: str = "Which valid resolution should be applied?",
+) -> tuple[str, int]:
+    request = controller._human_input_registry.prepare(
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id=next(iter(policy.allowed_phase_ids)),
+        reason_code=policy.reason_code,
+        question=question,
+        source_state_revision=store.load()["state_revision"],
+    )
+    store.set_human_input_decision(
+        request,
+        initial_status="awaiting_human",
+    )
+    state = store.load()
+    return state["blocked_decision"]["id"], state["state_revision"]
+
+
+def _safeguard_policy(
+    producer_id: str,
+    *,
+    phase_id: str,
+    setter_compatible: bool = False,
+) -> HumanInputPolicy:
+    policy = next(
+        item
+        for item in controller_safeguard_policies()
+        if item.producer_id == producer_id
+    )
+    return replace(
+        policy,
+        source_kind=(
+            "legacy_recovery"
+            if setter_compatible
+            and producer_id != "phase_dispatch_limit"
+            else policy.source_kind
+        ),
+        allowed_phase_ids=frozenset({phase_id}),
+    )
+
+
+def test_human_input_handler_clarification_appends_decision_section_atomically(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = _free_text_policy(source_kind="legacy_recovery")
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    decision_id, revision = _seal_awaiting_human(
+        controller,
+        store,
+        policy,
+        question="Which product boundary should be used?",
+    )
+    real_replace = os.replace
+    replacements: list[Path] = []
+
+    def recording_replace(source: object, destination: object) -> None:
+        replacements.append(Path(destination))
+        real_replace(source, destination)
+
+    monkeypatch.setattr(squad_module.os, "replace", recording_replace)
+
+    assert controller.apply_human_input_resolution(
+        decision_id,
+        expected_state_revision=revision,
+        resolution=HumanInputResolution(
+            selected_option_id=None,
+            answer_text="Use the existing product boundary.",
+            resolved_by="user",
+        ),
+    )
+
+    state = store.load()
+    clarification_path = Path(state["staging_dir"]) / "user-clarifications.md"
+    assert clarification_path in replacements
+    assert clarification_path.read_text(encoding="utf-8") == (
+        f"## Decision {decision_id}\n\n"
+        "**Question:** Which product boundary should be used?\n\n"
+        "**Answer:** Use the existing product boundary.\n"
+    )
+    assert state["blocked_decision"]["status"] == "resolved"
+    assert state["phase"] == policy.producer_id
+    assert state["status"] == "running"
+    assert "recovery_instruction" not in state
+    assert "escalation_question" not in state
+
+
+def test_clarification_idempotent_after_state_save_interruption(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy(source_kind="legacy_recovery")
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    decision_id, revision = _seal_awaiting_human(
+        controller,
+        store,
+        policy,
+        question="Which product boundary should be used?",
+    )
+    apply_state_resolution = store.apply_human_input_state_resolution
+    store.apply_human_input_state_resolution = MagicMock(
+        side_effect=RuntimeError("simulated state-save interruption"),
+    )
+    resolution = HumanInputResolution(
+        selected_option_id=None,
+        answer_text="Use the existing product boundary.",
+        resolved_by="user",
+    )
+
+    with pytest.raises(RuntimeError, match="state-save interruption"):
+        controller.apply_human_input_resolution(
+            decision_id,
+            expected_state_revision=revision,
+            resolution=resolution,
+        )
+
+    clarification_path = (
+        Path(store.load()["staging_dir"]) / "user-clarifications.md"
+    )
+    assert clarification_path.read_text(encoding="utf-8").count(
+        f"## Decision {decision_id}"
+    ) == 1
+
+    store.apply_human_input_state_resolution = MagicMock(
+        wraps=apply_state_resolution,
+    )
+    assert controller.apply_human_input_resolution(
+        decision_id,
+        expected_state_revision=revision,
+        resolution=resolution,
+    )
+    assert clarification_path.read_text(encoding="utf-8").count(
+        f"## Decision {decision_id}"
+    ) == 1
+    store.apply_human_input_state_resolution.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("option_id", "expected_phase", "expected_status", "expected_reason"),
+    [
+        ("approve", "phase4-document", "running", None),
+        ("reject", "terminal-blocked", "blocked", "gate_rejected"),
+    ],
+)
+def test_human_input_handler_gate_applies_declared_outcome(
+    tmp_path: Path,
+    option_id: str,
+    expected_phase: str,
+    expected_status: str,
+    expected_reason: str | None,
+) -> None:
+    policy = _choice_policy()
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    decision_id, revision = _seal_awaiting_human(
+        controller,
+        store,
+        policy,
+    )
+    store.apply_human_input_state_resolution = MagicMock(
+        wraps=store.apply_human_input_state_resolution,
+    )
+
+    resolved = controller.apply_human_input_resolution(
+        decision_id,
+        expected_state_revision=revision,
+        resolution=HumanInputResolution(
+            selected_option_id=option_id,
+            answer_text=None,
+            resolved_by="user",
+        ),
+    )
+
+    state = store.load()
+    assert resolved is (expected_status == "running")
+    assert state["phase"] == expected_phase
+    assert state["status"] == expected_status
+    assert state.get("blocked_reason") == expected_reason
+    store.apply_human_input_state_resolution.assert_called_once()
+
+
+def test_human_input_handler_phase_dispatch_limit_reuses_issue_lifecycle(
+    tmp_path: Path,
+) -> None:
+    policy = _safeguard_policy(
+        "phase_dispatch_limit",
+        phase_id="phase1-what",
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    spec_dir = tmp_path / "spec"
+    spec_dir.mkdir()
+    (spec_dir / "issues.md").write_text(
+        """### ISS-001: Retry policy
+
+### Resolution Guidance
+- **Decision required:** Retry behavior.
+- **Suggested option:** Use exponential backoff.
+- **Evidence basis:** The API reference documents idempotent reads.
+- **Banzai eligible:** yes
+""",
+        encoding="utf-8",
+    )
+    state = store.load()
+    state.update(
+        {
+            "phase_dispatch_limit_phase": "phase1-what",
+            "phase_dispatch_counts": {"phase1-what": 6, "phase1-why1": 2},
+        }
+    )
+    store.save(state)
+    decision_id, revision = _seal_awaiting_human(
+        controller,
+        store,
+        policy,
+    )
+    selection = {
+        "issue_id": "ISS-001",
+        "decision": "Use exponential backoff.",
+        "rationale": "The documented API behavior supports it.",
+        "confidence": "high",
+        "evidence_backed": True,
+    }
+
+    assert controller.apply_human_input_resolution(
+        decision_id,
+        expected_state_revision=revision,
+        resolution=HumanInputResolution(
+            selected_option_id=None,
+            answer_text=json.dumps(selection),
+            resolved_by="user",
+        ),
+    )
+
+    state = store.load()
+    assert state["phase"] == "phase1-what"
+    assert state["phase_dispatch_counts"] == {"phase1-why1": 2}
+    assert state["phase_dispatch_limit_recovery"]["phase"] == "phase1-what"
+    assert state["issue_resolution_ledger"]["ISS-001"]["status"] == "selected"
+    assert state["issue_resolution_recovery"]["to_phase"] == "phase1-what"
+    assert state["issue_resolution_repair_baseline"]["issue_id"] == "ISS-001"
+
+
+@pytest.mark.parametrize(
+    ("producer_id", "initial_counters", "expected_counters"),
+    [
+        (
+            "consecutive_why_fails",
+            {"why_fail_count": 2, "why2_metric_stagnation_count": 1},
+            {"why_fail_count": 0, "why2_metric_stagnation_count": 1},
+        ),
+        (
+            "why2_metric_stagnation",
+            {"why_fail_count": 3, "why2_metric_stagnation_count": 2},
+            {"why_fail_count": 0, "why2_metric_stagnation_count": 0},
+        ),
+    ],
+)
+def test_human_input_handler_why_safeguards_reset_owned_counters(
+    tmp_path: Path,
+    producer_id: str,
+    initial_counters: dict[str, int],
+    expected_counters: dict[str, int],
+) -> None:
+    policy = _safeguard_policy(
+        producer_id,
+        phase_id="phase1-why2",
+        setter_compatible=True,
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    state = store.load()
+    state.update(initial_counters)
+    store.save(state)
+    decision_id, revision = _seal_awaiting_human(
+        controller,
+        store,
+        policy,
+    )
+
+    assert controller.apply_human_input_resolution(
+        decision_id,
+        expected_state_revision=revision,
+        resolution=HumanInputResolution(
+            selected_option_id=None,
+            answer_text="Retry the declared WHY2 assessment.",
+            resolved_by="user",
+        ),
+    )
+
+    state = store.load()
+    assert state["phase"] == "phase1-why2"
+    assert state["status"] == "running"
+    for key, value in expected_counters.items():
+        assert state[key] == value
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "answer",
+        "handler",
+        "id",
+        "option",
+        "outcome",
+        "resolver",
+        "revision",
+        "target",
+    ],
+)
+def test_human_input_handler_invalid_resolution_writes_nothing(
+    tmp_path: Path,
+    fault: str,
+) -> None:
+    case_root = tmp_path / fault
+    if fault == "target":
+        policy = HumanInputPolicy(
+            source_kind="legacy_recovery",
+            producer_id="phase1-investigate",
+            reason_code="human_clarification_required",
+            classification="material",
+            semi_policy="require_human",
+            resolution_handler="clarification_resume",
+            allow_free_text=False,
+            allowed_phase_ids=frozenset({"phase1-investigate"}),
+            allowed_target_phases=frozenset({"missing-phase"}),
+            context_state_keys=("phase",),
+            context_paths=(),
+            options=(
+                HumanInputOption(
+                    id="missing",
+                    label="Missing",
+                    description="Route outside the graph.",
+                    recommended=False,
+                    risk_level="low",
+                    next_phase="missing-phase",
+                    outcome=None,
+                ),
+            ),
+        )
+    elif fault == "outcome":
+        base = _choice_policy()
+        policy = replace(
+            base,
+            options=(
+                replace(base.options[0], outcome="deferred"),
+                base.options[1],
+            ),
+        )
+    else:
+        policy = _choice_policy()
+    controller, store, _provider = _controller(
+        case_root,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    decision_id, revision = _seal_awaiting_human(
+        controller,
+        store,
+        policy,
+    )
+    if fault == "handler":
+        with store._lock(exclusive=True):
+            before_tamper = store._load_unlocked()
+            state = json.loads(json.dumps(before_tamper))
+            decision = dict(state["blocked_decision"])
+            decision["resolution_handler"] = "unknown_handler"
+            store._replace_human_input_decision_unlocked(state, decision)
+            store._commit_human_input_state_unlocked(
+                before_tamper,
+                state,
+            )
+        revision = store.load()["state_revision"]
+    selected_option_id = (
+        "missing"
+        if fault == "target"
+        else "not-registered"
+        if fault == "option"
+        else "approve"
+    )
+    resolution = HumanInputResolution(
+        selected_option_id=selected_option_id,
+        answer_text="also supplied" if fault == "answer" else None,
+        resolved_by="root" if fault == "resolver" else "user",
+    )
+    before = store.load()
+
+    with pytest.raises(HumanInputPolicyError):
+        controller.apply_human_input_resolution(
+            "dec-wrong" if fault == "id" else decision_id,
+            expected_state_revision=(
+                revision + 1 if fault == "revision" else revision
+            ),
+            resolution=resolution,
+        )
+
+    assert store.load() == before
+    assert not (
+        Path(before["staging_dir"]) / "user-clarifications.md"
+    ).exists()
+
+
+def test_phase_dispatch_limit_uses_human_input_setter_path(
+    tmp_path: Path,
+) -> None:
+    policy = _safeguard_policy(
+        "phase_dispatch_limit",
+        phase_id="phase1-what",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    for guard_name in (
+        "_guard_constitution_provenance",
+        "_guard_spec_lexicon_evidence",
+        "_guard_phase1_quality_evidence",
+        "_guard_understanding_evidence",
+    ):
+        setattr(controller, guard_name, MagicMock(side_effect=lambda phase: phase))
+    state = store.load()
+    state["phase_dispatch_counts"] = {
+        "phase1-what": controller._max_iterations + 1,
+    }
+    store.save(state)
+    controller.handle_human_input = MagicMock(return_value=False)
+
+    result = controller.run("message", "guided")
+
+    assert result.status == "running"
+    controller.handle_human_input.assert_called_once()
+    call = controller.handle_human_input.call_args
+    request = call.args[0]
+    assert request.source_kind == "controller_safeguard"
+    assert request.producer_id == "phase_dispatch_limit"
+    assert request.reason_code == "phase_dispatch_limit"
+    assert request.phase_id == "phase1-what"
+    assert request.source_state_revision == store.load()["state_revision"]
+    assert call.kwargs == {}
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("producer_id", "stagnation_count", "expected_updates"),
+    [
+        (
+            "consecutive_why_fails",
+            0,
+            {
+                "why_fail_count": 2,
+            },
+        ),
+        (
+            "why2_metric_stagnation",
+            1,
+            {
+                "why_fail_count": 2,
+                "why2_metric_stagnation_count": 2,
+            },
+        ),
+    ],
+)
+def test_consecutive_fail_and_why2_metric_stagnation_return_safeguard_request(
+    tmp_path: Path,
+    producer_id: str,
+    stagnation_count: int,
+    expected_updates: dict[str, int],
+) -> None:
+    policy = _safeguard_policy(
+        producer_id,
+        phase_id="phase1-why2",
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    state = store.load()
+    state.update(
+        {
+            "why_fail_count": 1,
+            "why2_metric_stagnation_count": stagnation_count,
+            "why_failure_baseline": {
+                "phase_id": "phase1-why2",
+                "recorded_at": "2999-01-01T00:00:00+00:00",
+            },
+        }
+    )
+    if stagnation_count:
+        score = {
+            "pass_id": "WHY2-1",
+            "overall": 0.5,
+            "structure": 0.5,
+            "testability": 0.5,
+            "behavioral": 0.5,
+            "semantic": 0.5,
+            "cognitive": 0.5,
+            "readability": 0.5,
+            "depth": 0.5,
+        }
+        state["quality_scores"] = [
+            score,
+            {**score, "pass_id": "WHY2-2"},
+        ]
+    store.save(state)
+    node = controller._graph.get("phase1-why2")
+    snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+    prepared = controller._prepare_phase_result(
+        node,
+        SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "FAIL",
+                "state_updates": {
+                    "evidence_resolution_status": "not_required",
+                    "finding_routes": {
+                        "findings": [{
+                            "issue_id": "ISS-BLOCKED",
+                            "route": "spec_repair",
+                            "rationale": "The specification needs repair.",
+                        }]
+                    },
+                },
+            },
+            raw_output="",
+            duration_ms=0,
+            timed_out=False,
+        ),
+        snapshot,
+    )
+
+    route, updates, request = controller._coordinate_why_transition_state(
+        node,
+        prepared,
+        snapshot,
+    )
+
+    assert route == "terminal-blocked"
+    assert {
+        key: updates[key]
+        for key in expected_updates
+    } == expected_updates
+    assert "escalation_question" not in updates
+    assert "blocked_reason" not in updates
+    assert request.source_kind == "controller_safeguard"
+    assert request.producer_id == producer_id
+    assert request.reason_code == producer_id
+    assert request.phase_id == "phase1-why2"
+    assert request.source_state_revision == snapshot.state_revision
 
 
 @pytest.mark.parametrize(
