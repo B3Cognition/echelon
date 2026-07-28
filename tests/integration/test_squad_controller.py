@@ -339,6 +339,17 @@ def _mock_quality_first_flow_provider() -> MagicMock:
 
     def phase_aware_exec_agent(*args, **kwargs):
         prompt = str(args[1])
+        if "# Phase: phase1-tracker" in prompt:
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "ALIGNED",
+                    "state_updates": {},
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
         if "# COMMANDER DECISION RESOLUTION" in prompt:
             return SquadAgentResult(
                 exit_code=0,
@@ -3989,7 +4000,7 @@ class TestSquadControllerBasics:
         assert provider.exec_agent.called
 
     def test_generation_change_does_not_block_manual_spec_phase(self, tmp_path):
-        provider = _mock_provider()
+        provider = _mock_provider("ALIGNED")
         ctrl, store = _controller(tmp_path, provider=provider)
         store.initialize("r", "brownfield", "msg", 0, "phase1-tracker")
         _mark_constitution_complete(tmp_path, store)

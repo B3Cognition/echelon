@@ -10,6 +10,7 @@ import pytest
 
 from echelon.phase_a_start import PhaseAStartError, start_phase_a_spec
 from echelon.spec_lifecycle import PhaseAExecutionLock
+from harness.human_input import HumanInputPolicyRegistry
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -226,6 +227,9 @@ def test_controller_preserves_prepared_git_identity_without_provider(tmp_path: P
 
         def all_phase_ids(self) -> set[str]:
             return {"DONE"}
+
+        def human_input_policy_registry(self) -> HumanInputPolicyRegistry:
+            return HumanInputPolicyRegistry(())
 
     repo = _repo(tmp_path)
     outcome = start_phase_a_spec(repo, "run-b", "Build audit logging")

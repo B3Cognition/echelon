@@ -361,11 +361,12 @@ phases:
       status: string
     state_update_enums:
       status: [blocked]
+    allowed_verdicts: [ALIGNED, DRIFT, STOP_AND_ASK]
     transitions:
       - to: phase1-tracker
         condition: "verdict = STOP_AND_ASK"
       - to: phase1-why1
-        condition: "verdict = DONE OR verdict = ALIGNED OR verdict = DRIFT OR verdict = DRIFTING"
+        condition: "verdict = ALIGNED OR verdict = DRIFT"
 
   # --------------------------------------------------------------------------
   - id: phase1-why1
@@ -851,7 +852,7 @@ phases:
       status: string
     state_update_enums:
       status: [blocked]
-    allowed_verdicts: [ALIGNED, DRIFT, DRIFTING, STOP_AND_ASK]
+    allowed_verdicts: [ALIGNED, DRIFT, STOP_AND_ASK]
     transitions:
       - to: phase2-intent-alignment-structural
         condition: always
@@ -869,9 +870,7 @@ phases:
       - to: terminal-blocked
         condition: "structural_action = block"
       - to: phase3-specialists
-        condition: "structural_action in [proceed, proceed_with_warning] AND intent_alignment_verdict in [ALIGNED, DRIFT, DRIFTING]"
-      - to: phase2-tracker-alignment
-        condition: "structural_action in [proceed, proceed_with_warning] AND intent_alignment_verdict = ESCALATE"
+        condition: "structural_action in [proceed, proceed_with_warning] AND intent_alignment_verdict in [ALIGNED, DRIFT]"
 
   # --------------------------------------------------------------------------
   - id: phase3-how

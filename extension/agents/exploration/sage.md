@@ -445,7 +445,7 @@ When analysis is complete and all artifacts are written, output:
 ```
 WHY<1|2|3> COMPLETE — artifacts written to <spec_directory>
 Mode: <assumption-challenge | spec-validation>
-Verdict: <PASS | FAIL | BLOCKED>
+Verdict: <PASS | FAIL | STOP_AND_ASK | BLOCKED>
 Issues: <critical_count> CRITICAL, <high_count> HIGH, <medium_count> MEDIUM, <low_count> LOW
 Quality gates: <met_count>/<total_count> passing (spec-validation only)
 Blocking: <YES — must fix before proceeding | NO — can proceed with warnings>
