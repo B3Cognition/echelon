@@ -59,6 +59,18 @@ Product inputs and verification evidence are `Artifact` nodes with
 `role: product-input` or `role: verification-evidence`. V1 does not extract
 plan decisions or Lexicon terms as separate nodes.
 
+Minimum node properties are:
+
+| Node | Properties | Authority |
+| --- | --- | --- |
+| `Spec` | `spec_id`, `path`, `lifecycle` | Canonical spec path and `echelon.artifact_index`. |
+| `Requirement` | `requirement_id`, `category`, `source_path` | Canonical `spec.md` parser; category uses the existing ID-prefix mapping. |
+| `Task` | `task_id`, `status`, `phase`, `target` | `kernel.task_contract` plus `harness.task_progress`. |
+| `Artifact` | `path`, `role`, `hash`, `mining_status` | Existing artifact and mining policy. |
+| `MemPalaceDrawer` | Properties defined under Drawer Nodes. | Native planner and audit. |
+| `Amendment` | `revision`, `path`, `status` | Canonical amendment directory; status is `promoted`. |
+| `Deferral` | `entry_id`, `status`, `selected_ids`, `derived_task_ids`, `reason` | `harness.deferred_scope`. |
+
 Node IDs must be stable and scoped so they can later roll up into a workspace
 graph without changing identity:
 
@@ -66,7 +78,7 @@ graph without changing identity:
 spec:<spec-id>
 req:<spec-id>:<requirement-id>
 task:<spec-id>:<task-id>
-artifact:<spec-id>:<relative-path>
+artifact:<spec-id>:<workspace-relative-path>
 drawer:<spec-id>:<drawer-id>
 deferral:<spec-id>:<entry-id>
 amendment:<spec-id>:<revision>
@@ -78,22 +90,32 @@ V1 supports:
 
 - `HAS_REQUIREMENT`
 - `DERIVED_FROM`
-- `REPRESENTED_IN`
-- `PLANNED_BY`
 - `IMPLEMENTS`
-- `MODIFIES`
 - `VERIFIED_BY`
 - `STORED_AS`
 - `AMENDED_BY`
 - `DEFERRED_BY`
-- `PAUSES`
 
-Example edges:
+Each edge has one deterministic authority:
+
+| Edge | Source | Target | Authority |
+| --- | --- | --- | --- |
+| `HAS_REQUIREMENT` | `Spec` | `Requirement` | Canonical `spec.md` parser. |
+| `DERIVED_FROM` | `Requirement` | product-input `Artifact` | `inputs/traceability.json`; input-unit ID is an edge property. |
+| `IMPLEMENTS` | `Task` | `Requirement` | Canonical `tasks.md` `req=` metadata. |
+| `VERIFIED_BY` | `Requirement` | verified-ledger `Artifact` | `verified-fulfillment-ledger.json`. |
+| `STORED_AS` | `Requirement` or `Artifact` | `MemPalaceDrawer` | Native memory planner plus native audit. |
+| `AMENDED_BY` | `Spec` | `Amendment` | Promoted canonical amendment directory. |
+| `DEFERRED_BY` | `Requirement` or `Task` | `Deferral` | Active `deferred-scope.json` entry. |
+
+Edges without properties defined in this design use an empty `properties`
+object.
+
+Examples:
 
 ```text
 spec:042 -> HAS_REQUIREMENT -> req:042:FR-001
 req:042:FR-001 -> DERIVED_FROM {input_unit_id: input-003} -> artifact:042:inputs/catalog.json
-req:042:FR-001 -> PLANNED_BY -> task:042:T-004
 task:042:T-004 -> IMPLEMENTS -> req:042:FR-001
 req:042:FR-001 -> STORED_AS {reconciliation_status: pass} -> drawer:042:<deterministic-drawer-id>
 req:042:FR-006 -> DEFERRED_BY -> deferral:042:defer-001
@@ -122,17 +144,16 @@ but not interchangeable authorities:
   outputs.
 - `tasks.md` through the existing task contract parser and task-requirement
   mapping helpers.
-- `inputs/` product input manifests, snapshots, and traceability ledgers.
+- `inputs/manifest.json`, `inputs/catalog.json`, and
+  `inputs/traceability.json`.
 - `plan.md`, `coverage-map.md`, `quality-gates.md`, and related planning
   artifacts as artifact nodes in v1; structured decision extraction can follow
   after the core graph is stable.
 - Published curated `re/` artifacts through the RE snapshot discovery and
   `echelon re memory audit`. RE never reads run-local state or unpublished RE
   worktrees. Because RE is workspace-scoped, a spec graph creates RE artifact
-  nodes and records RE audit input only for artifacts linked to the selected
-  spec by canonical product-input or traceability metadata.
-  Linking uses an exact normalized workspace-relative source path; fuzzy or
-  semantic similarity never creates a provenance edge.
+  nodes and records RE audit input only for artifacts named by the selected
+  spec's canonical `re-context.json`.
 - Curated per-spec verification and fulfillment artifacts through the spec
   evidence snapshot discovery and `echelon spec evidence memory audit <spec>`.
   These include the currently supported evidence allowlist; their rooms and
@@ -142,16 +163,36 @@ but not interchangeable authorities:
 - `echelon.artifact_index` for expected artifact presence. `ARTIFACTS.md` is a
   generated navigation artifact, not an authority.
 
-Each policy-known artifact is classified as `mined`,
-`not-mined-by-policy`, `missing`, or `unrecognized`. The last two states are
-findings, not invitations to crawl arbitrary files. A project may introduce
-new rooms, kinds, and curated artifact classes without changing graph schema:
-they remain typed artifact metadata until Echelon adds structured edges for
-them.
+Existing policy-known artifacts are classified as `mined` or
+`not-mined-by-policy`. Missing expected artifacts are audit findings, not
+nodes. Files outside existing artifact and mining policy are ignored by v1;
+the graph does not recursively discover arbitrary workspace files.
 
 If a native parser or audit is unavailable, graph audit reports that exact
 domain as unavailable or invalid. It must not guess around malformed
 authoritative files.
+
+### Artifact Node Boundary
+
+V1 creates `Artifact` nodes only for:
+
+- existing top-level canonical spec files registered by
+  `echelon.artifact_index`;
+- `inputs/manifest.json`, `inputs/catalog.json`, and
+  `inputs/traceability.json`;
+- curated spec-evidence files returned by native evidence discovery;
+- canonical `re-context.json` and its valid named published RE files;
+- canonical amendment `change-request.md`, `impact.md`, and amendment
+  `inputs/manifest.json`, `inputs/catalog.json`, and
+  `inputs/traceability.json`.
+
+Product-input snapshots, arbitrary files beneath canonical directories, and
+evidence reference paths do not become v1 nodes. Their identities and hashes
+remain properties of their owning control artifact or verification edge.
+
+Every artifact node has `path`, `role`, `hash`, and `mining_status`. Role is
+assigned by the existing artifact/evidence policy. `mining_status` is `mined`
+or `not-mined-by-policy`.
 
 ### MemPalace Audit Domains
 
@@ -161,22 +202,101 @@ and exact audit implementation:
 | Domain | Scope | Audit command | Graph policy |
 | --- | --- | --- | --- |
 | Canonical spec memory | `spec.md` and supported canonical spec artifacts | `echelon spec memory audit <spec>` | Required for canonical drawer evidence. |
-| Published RE memory | Curated, published `re/` artifacts | `echelon re memory audit` | Applicable when a canonical product-input or traceability link resolves to at least one published RE artifact. |
+| Published RE memory | Curated, published `re/` artifacts | `echelon re memory audit` | Applicable when canonical `re-context.json` has status `attached` and names at least one artifact. |
 | Spec evidence memory | Curated verification/fulfillment artifacts for the selected spec | `echelon spec evidence memory audit <spec>` | Applicable when native evidence snapshot discovery returns at least one artifact. |
 
 An audit report is a graph input in its own right. The graph records its
-normalized report payload, status, expected and present counts, findings, and
-SHA-256 digest. Each `STORED_AS` edge records the native audit status for its
-domain. Only `reconciliation_status: pass` is completeness proof. `warn`,
-`fail`, and `unavailable` remain visible as findings.
+normalized status, expected and present counts, and SHA-256 digest. Each
+`STORED_AS` edge records its drawer's row-level reconciliation result. Only
+`reconciliation_status: pass` is completeness proof.
 
 The RE audit is workspace-wide, so the graph hashes only its deterministic
 projection for linked RE artifacts: the planned drawer IDs and audit findings
 whose drawer IDs match that set. Unrelated RE findings do not stale or fail a
 spec graph.
 
+### Drawer Nodes
+
+Native memory planners define the complete expected drawer set for each
+applicable domain. V1 creates one `MemPalaceDrawer` node for every expected
+planner row with:
+
+- `drawer_id`;
+- `source_path`;
+- `room`;
+- `artifact_kind`;
+- expected artifact and content hashes;
+- `presence`: `present`, `missing`, `invalid`, or `unavailable`;
+- `reconciliation_status`: `pass`, `fail`, or `unavailable`;
+- sorted row-level issue codes.
+
+An exact present row with no native audit finding is `pass`. Missing, stale,
+wrong-wing, wrong-room, non-canonical, or lifecycle-excluded rows are `fail`.
+If the collection cannot be read, all expected rows are `unavailable`.
+
+`STORED_AS` edges are emitted for all expected nodes and repeat `presence` and
+`reconciliation_status` for convenient traversal. Unexpected extra or
+duplicate drawers remain audit findings and do not become graph nodes.
+
+### Canonical RE Provenance
+
+Normal spec runs already attach an immutable run-local snapshot of the latest
+published RE context. During canonical Phase A finalization, Echelon writes a
+small provenance artifact beside `spec.md`:
+
+```json
+{
+  "schema_version": 1,
+  "status": "attached",
+  "generation": 7,
+  "artifacts": [
+    {
+      "path": "re/workspace/overview.md",
+      "hash": "sha256:..."
+    }
+  ]
+}
+```
+
+`status` is `attached`, `ignored`, or `absent`. Attached artifact paths are
+derived from their path relative to the immutable run snapshot root and must
+resolve beneath the published `re/` registry. Hashes are computed from the
+snapshot bytes, and rows sort by path. The record contains no copied RE content
+and no timestamps.
+
+The graph includes only named RE artifacts whose current published bytes match
+the recorded hash. A missing or changed artifact produces an `re_context_stale`
+audit finding and no RE provenance or storage edge for that artifact.
+
+For canonical specs created before this artifact exists, RE is not applicable.
+Graph audit emits a non-blocking `re_context_unrecorded` warning and creates no
+RE nodes or edges.
+
 Requirement-level verification completeness is enforced only when the existing
 artifact-index lifecycle is `verified` or `landed`.
+
+### Verification Semantics
+
+V1 reads `verified-fulfillment-ledger.json` through
+`harness.verified_fulfillment_ledger.read_verified_ledger`. It emits one
+`VERIFIED_BY` edge per ledger row whose requirement exists in current
+`spec.md`. The edge targets the ledger `Artifact` node and records:
+
+- `verification_status`;
+- `evidence_refs`;
+- `verified_commit`;
+- `verify_scope`;
+- `complete`.
+
+`complete` is true only when the row status is not `MISSING`, `PARTIAL`,
+`DEVIATED`, or `UNVERIFIED`, and the native spec-evidence memory audit passes.
+Unresolved rows still appear but have `complete: false`. Ledger rows for a
+requirement absent from current `spec.md` are audit failures.
+
+The graph does not recompute implementation-input hashes or verifier reuse.
+Those remain owned by the existing fulfillment lifecycle. The graph hashes the
+canonical ledger as an input and reports whether its current rows provide
+requirement-level evidence.
 
 ## JSON Contract
 
@@ -189,27 +309,29 @@ artifact-index lifecycle is `verified` or `landed`.
   "spec_id": "042-normal-mempalace-audit",
   "inputs": [],
   "nodes": [],
-  "edges": [],
-  "findings": []
+  "edges": []
 }
 ```
 
 Each node has `id`, `type`, and `properties`. Each edge has `source`, `type`,
-`target`, and `properties`. Each finding has stable `id`, `severity`, `code`,
-`message`, and optional `subject_id`.
+`target`, and `properties`.
 
-Nodes sort by `id`; edges sort by `(source, type, target)`; findings sort by
-`id`; object keys are serialized with `sort_keys=True`. Duplicate node IDs or
-duplicate `(source, type, target)` edges fail graph build. All edge endpoints
-must identify existing nodes.
+Nodes sort by `id`; edges sort by `(source, type, target)`; object keys are
+serialized with `sort_keys=True`. Duplicate node IDs or duplicate
+`(source, type, target)` edges fail graph build. All edge endpoints must
+identify existing nodes.
 
 For `STORED_AS`, the source is the matching `Requirement` node for canonical
 requirement drawers. Supporting-context, RE, and evidence drawers use their
 source `Artifact` node.
 
 `spec-artifact-graph-audit.json` has `schema_version`, `spec_id`, `graph_hash`,
-`status`, `findings`, and `recommendations`. It uses the same deterministic
-finding schema and ordering as the graph.
+`status`, `findings`, and `recommendations`. Each finding has stable `id`,
+`severity`, `code`, `message`, and optional `subject_id`. Findings sort by
+`id`. Severity is `warning` or `error`. Finding ID is
+`finding:<code>:<subject_id>`, using `graph` when there is no subject; duplicate
+code/subject findings are merged. `graph_hash` is the SHA-256 of the exact
+graph JSON bytes.
 
 ## Input Hash Manifest
 
@@ -310,17 +432,16 @@ Graph audit reports stale or unsafe state for:
   `verified` or `landed`.
 - deferred requirement has active task work that was not paused by the deferral
   ledger.
-- verification evidence references a missing artifact.
 
 Status rules:
 
-- `pass`: graph inputs are current and active nodes are coherent.
-- `warn`: graph is usable but has deferrals, duplicate inactive memory,
-  optional missing artifacts, an applicable native audit warning, or
-  non-blocking cleanup recommendations.
-- `fail`: graph is stale, malformed, has an applicable audit failure, is
-  missing required active coverage, or contradicts canonical lifecycle state.
+- `pass`: no findings.
+- `warn`: one or more warning findings and no error findings.
+- `fail`: one or more error findings, including stale or malformed graph state.
 - `unavailable`: required source services or required artifacts cannot be read.
+
+CLI exit codes are `0` for `pass` and `warn`, `1` for `fail`, and `2` for
+`unavailable`.
 
 ## Amendments
 
@@ -328,28 +449,18 @@ Spec amendments are first-class graph nodes, not silent edits.
 
 V1 reads only promoted canonical
 `specs/<id>/amendments/<revision>/` artifacts. Runtime amendment worktrees are
-excluded, just like other run-local state. Each amendment node records:
+excluded, just like other run-local state. Each canonical revision produces one
+`Amendment` node with revision, path, and status `promoted`. `change-request.md`
+and `impact.md` remain hashed `Artifact` nodes; v1 does not parse their prose
+into amendment properties.
 
-- amendment ID and revision;
-- baseline branch and commit;
-- description;
-- product input count;
-- status `promoted`, because unpromoted amendments are excluded.
-
-If an amendment changes `spec.md`, graph audit warns or fails until derived
-artifacts are rebuilt:
-
-- `requirements.lexicon.md` must reflect current requirements.
-- `tasks.md` must map current active requirements.
-- the current canonical spec-memory audit must pass against current drawer
-  expectations.
-- `traceability-matrix.md` and verification artifacts must not claim removed
-  or superseded requirements as active.
+Each amendment control artifact is a graph input with its own hash. A changed
+amendment makes an existing graph stale. After rebuild, the normal current-spec
+requirement, task, evidence, and memory checks detect any downstream
+inconsistency. There are no amendment-specific coverage rules in v1.
 
 V1 does not reconstruct historical requirement nodes. References to a
-requirement absent from current `spec.md` are findings. A later version may add
-historical nodes when canonical amendment metadata exposes explicit
-supersession.
+requirement absent from current `spec.md` are ordinary audit findings.
 
 Amendment promotion remains owned by `echelon.spec_amendment`, including its
 compare-and-swap baseline conflict check. The graph records promoted amendment
@@ -362,7 +473,6 @@ Deferrals are read from `deferred-scope.json`.
 Graph behavior:
 
 - A deferred requirement or task receives a `DEFERRED_BY` edge.
-- A deferral receives `PAUSES` edges to derived tasks.
 - Deferred active coverage gaps are warnings by default, not failures.
 - Restored deferrals with `status: planned` re-enter normal active coverage
   checks.
@@ -378,12 +488,15 @@ Add normal lifecycle commands:
 
 ```bash
 echelon spec graph build <spec-id-or-path> [--write]
-echelon spec graph audit <spec-id-or-path> [--json] [--write] [--strict]
+echelon spec graph audit <spec-id-or-path> [--json] [--write]
 echelon spec graph refresh <spec-id-or-path> [--write]
 ```
 
 `build` creates an in-memory graph and writes graph artifacts only with
-`--write`.
+`--write`. It calls the native planner and audit APIs directly; it does not
+shell out to memory CLI commands. MemPalace unavailability produces expected
+drawer nodes with `presence: unavailable` but does not prevent structural graph
+construction. Malformed authoritative disk artifacts still fail build.
 
 `audit` is read-only unless `--write` is set. It validates graph freshness,
 source coherence, lifecycle rules, deferrals, amendments, and MemPalace audit
@@ -392,15 +505,13 @@ status.
 `refresh` runs:
 
 ```text
-echelon spec memory audit <spec>
-echelon re memory audit              # when published RE is present
-echelon spec evidence memory audit <spec>  # when curated evidence is present
 echelon spec graph build <spec> --write
 echelon spec graph audit <spec> --write
 ```
 
-It does not mine MemPalace. Operators use existing reconciled memory commands
-for the relevant domain:
+Build and audit each use the applicable native memory audit APIs. `refresh`
+does not mine MemPalace. Operators use existing reconciled memory commands for
+the relevant domain:
 
 ```bash
 echelon spec memory refresh <spec> --write
@@ -430,16 +541,23 @@ Unit tests:
 - audit detects changed `spec.md`, `tasks.md`, `deferred-scope.json`, and a
   changed native canonical-memory audit payload;
 - audit distinguishes graph staleness from MemPalace staleness;
-- graph records and re-hashes all three applicable native audit reports;
+- graph records and re-hashes every applicable native audit report, up to
+  three;
 - each storage edge reflects only its native audit domain's reconciliation
   status;
 - derived artifact references cannot create requirement nodes;
 - workspace RE artifacts appear in a spec graph only through canonical
-  product-input or traceability links;
-- unknown rooms, kinds, and artifact classes are preserved as metadata without
+  `re-context.json`;
+- legacy specs without `re-context.json` warn without creating RE edges;
+- attached RE paths and hashes are normalized from the immutable run snapshot;
+- unknown MemPalace rooms and kinds are preserved as drawer metadata without
   becoming implicit mining targets;
+- files outside artifact policy are ignored;
+- expected missing drawers remain bounded graph nodes while extra drawers
+  remain audit findings;
+- verified-ledger rows produce resolved or unresolved `VERIFIED_BY` edges
+  without reimplementing fulfillment invalidation;
 - deferred requirements warn instead of fail by default;
-- strict mode can fail deferred active coverage gaps;
 - unknown deferral IDs fail;
 - task mappings to requirements absent from current `spec.md` fail;
 - active requirements without task mappings warn before build and fail from
@@ -450,8 +568,8 @@ CLI tests:
 
 - `echelon spec graph build <id> --write` writes stable graph JSON;
 - `echelon spec graph audit <id> --json` emits valid JSON only;
-- `echelon spec graph refresh <id> --write` runs every applicable native memory
-  audit before graph build;
+- `echelon spec graph refresh <id> --write` builds and audits without mining
+  MemPalace;
 - stale input hashes produce exit code 1;
 - unavailable required inputs produce exit code 2.
 
@@ -460,8 +578,8 @@ Integration tests:
 - build graph for a canonical spec and audit passes;
 - edit `spec.md` after graph build and audit reports graph stale;
 - edit `spec.md` after memory mining and memory audit reports stale drawers;
-- edit published RE or curated spec evidence after memory mining and the
-  appropriate audit reports stale drawers;
+- edit published RE named by `re-context.json` or curated spec evidence after
+  memory mining and verify the appropriate stale findings;
 - defer a requirement and verify graph audit warns instead of failing the
   missing implementation edge;
 - restore the deferral and verify the requirement is checked normally;
@@ -482,11 +600,12 @@ Integration tests:
 
 ## Rollout
 
-1. Add graph models, source manifest, and deterministic JSON renderer.
-2. Add read-only graph audit for existing graph files.
-3. Add graph build from canonical spec artifacts.
-4. Wire `echelon spec graph build/audit/refresh`.
-5. Add hash staleness, deferral, amendment, and MemPalace audit tests.
-6. Keep automatic lifecycle integration off until manual reports are stable.
-7. Later, allow GraphRAG features to consume the audited graph as discovery
+1. Publish canonical `re-context.json` during normal Phase A finalization.
+2. Add graph models, source manifest, and deterministic JSON renderer.
+3. Add read-only graph audit for existing graph files.
+4. Add graph build from canonical spec artifacts.
+5. Wire `echelon spec graph build/audit/refresh`.
+6. Add hash staleness, deferral, amendment, RE, and MemPalace audit tests.
+7. Keep automatic lifecycle integration off until manual reports are stable.
+8. Later, allow GraphRAG features to consume the audited graph as discovery
    context, not as correctness proof.
