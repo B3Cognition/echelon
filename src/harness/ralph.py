@@ -4617,19 +4617,21 @@ class RalphController:
                     build_prompt=build_prompt,
                 )
             else:
-                _print_blocked_banner(
-                    spec_id=self._spec_id,
-                    strategy_id=self._strategy_id,
-                    escalation_file=escalation_file,
+                resumed_state = self._state_store.transition("running")
+                resumed_state["escalation_file"] = None
+                self._state_store.write(resumed_state)
+                print(
+                    "[harness] continuing without escalation answer",
+                    file=sys.stderr,
+                    flush=True,
                 )
-                return LoopResult(
-                    status="blocked",
-                    termination_reason="blocker_escalation",
-                    outer_iterations=state.get("outer_iter", 0),
-                    inner_iterations=state.get("inner_iter", 0),
-                    tokens_used=state.get("tokens_used", 0),
-                    pr_url=state.get("pr_url"),
-                    final_verify=None,
+                return self._run_loop_inner(
+                    max_outer=max_outer,
+                    max_inner=max_inner,
+                    token_budget=token_budget,
+                    build_command=build_command,
+                    strategy_context=strategy_context,
+                    build_prompt=build_prompt,
                 )
         else:
             # Blocked without escalation file (e.g., guided mode pause)

@@ -133,6 +133,7 @@ class StrategyCoordinator:
                 existing.get("status") == "blocked"
                 and existing.get("escalation_file")
                 and not intent.reset
+                and not intent.resume
             ):
                 escalation_handler = EscalationHandler(str(self._escalation_dir))
                 answer = escalation_handler.check_resume(str(existing["escalation_file"]))

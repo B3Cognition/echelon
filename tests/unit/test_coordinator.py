@@ -474,6 +474,28 @@ class TestStickyEscalationBlock:
         results = coord.start(intent)
         assert results[0].status == "converged"
 
+    def test_sticky_escalation_block_allows_explicit_continue_intent(
+        self, tmp_path: Path
+    ) -> None:
+        """delivery continue must not be rejected as still needing an answer."""
+        esc_path = tmp_path / "escalations" / "spec-001-default-20260101T000000Z.md"
+        esc_path.parent.mkdir(parents=True, exist_ok=True)
+        esc_path.write_text("# Escalation\n", encoding="utf-8")
+        self._make_state_file(tmp_path, str(esc_path))
+
+        coord = _make_coordinator(tmp_path, should_pass=True)
+        intent = RunIntent(
+            spec_id="spec-001",
+            max_outer=3,
+            max_inner=1,
+            reset=False,
+            resume=True,
+        )
+
+        results = coord.start(intent)
+
+        assert results[0].status == "converged"
+
 
 @pytest.mark.unit
 class TestSmartResumeDetection:
