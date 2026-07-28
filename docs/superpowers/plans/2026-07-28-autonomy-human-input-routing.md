@@ -2,8 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Tasks 1-9 implemented and reviewed. Full-suite unrelated failures
-are recorded in the Task 9 report.
+**Status:** Tasks 1-9 implemented. The 25 branch-caused verification failures
+were corrected at the 6148-passed baseline; Task 9 review fix round 1 is green
+at 6163 passed, 9 skipped, and 4 deselected.
 
 **Goal:** Route every Phase A Squad request for human input through one typed controller boundary so Guided asks the human, Semi auto-applies only explicit low-risk recommendations, Banzai delegates project decisions to COMMANDER, and external prerequisites always remain human-owned.
 
@@ -166,6 +167,7 @@ def record_human_input_resolution_failure(
     *,
     expected_state_revision: int,
     failure_code: str,
+    token_usage_delta: int = 0,
 ) -> dict[str, Any]: ...
 
 def apply_human_input_state_resolution(
@@ -176,6 +178,7 @@ def apply_human_input_state_resolution(
     resolution: HumanInputResolution,
     state_updates: Mapping[str, Any],
     state_removals: Iterable[str],
+    token_usage_delta: int = 0,
 ) -> dict[str, Any]: ...
 ```
 
@@ -218,9 +221,10 @@ def apply_human_input_resolution(
     *,
     expected_state_revision: int,
     resolution: HumanInputResolution,
+    token_usage_delta: int = 0,
 ) -> bool: ...
 
-def resume_with_human_input(self, answer: str) -> SquadResult: ...
+def resume_with_human_input(self, answer: str) -> bool: ...
 ```
 
 `handle_human_input(...)` returns `True` only when the request was resolved and
@@ -232,9 +236,13 @@ It is required for provider requests and for
 routing that provider result. It is forbidden for gates, legacy adaptation,
 and the pre-dispatch `phase_dispatch_limit` safeguard.
 
-`resume_with_human_input(...)` obtains the existing execution leases through
-`_run_with_execution_lease`, validates the awaiting decision, calls
-`apply_human_input_resolution(...)`, then resumes `_run_locked(...)`.
+`resume_with_human_input(...)` requires its command/controller caller to own
+the existing execution leases. It validates and applies one awaiting answer,
+returns whether the resulting route remains runnable, and does not continue
+the controller loop. The CLI acquires `PhaseAExecutionLock` followed by
+`SpecRunExecutionLock` before loading the v2 state and holds both through file
+and state application; it then leaves `echelon spec continue` as an explicit
+operator action.
 
 ---
 
@@ -254,7 +262,7 @@ and the pre-dispatch `phase_dispatch_limit` safeguard.
 - Consumes: workflow phase ids and transition targets only; no controller or
   state-store dependency.
 
-- [ ] **Step 1: Write failing type and registry tests**
+- [x] **Step 1: Write failing type and registry tests**
 
 Cover a valid free-text provider policy, a valid gate policy, the two
 `phase1-investigate` reason variants, duplicate exact keys, unknown lookups,
@@ -273,20 +281,20 @@ policy = registry.lookup(
 assert policy.classification == "external_prerequisite"
 ```
 
-- [ ] **Step 2: Run the new unit test and verify import/behavior failures**
+- [x] **Step 2: Run the new unit test and verify import/behavior failures**
 
 Run:
 `python -m pytest tests/unit/test_human_input.py -q`
 
 Expected: failure because `harness.human_input` and its types do not exist.
 
-- [ ] **Step 3: Implement immutable validation and exact lookup**
+- [x] **Step 3: Implement immutable validation and exact lookup**
 
 Normalize strings once, reject bool-as-int revisions, enforce the 4,000
 character question bound, and require option `next_phase`/`outcome` to match
 the selected exact policy. Do not accept a missing lookup.
 
-- [ ] **Step 4: Write failing graph and workflow validation tests**
+- [x] **Step 4: Write failing graph and workflow validation tests**
 
 Test that:
 
@@ -303,21 +311,21 @@ Test that:
   Task 7 adds the complete declaration set;
 - the real workflow compiles.
 
-- [ ] **Step 5: Compile policies into `PhaseNode` and add safeguard entries**
+- [x] **Step 5: Compile policies into `PhaseNode` and add safeguard entries**
 
 Declare exact safeguard policy records in `human_input.py` for
 `phase_dispatch_limit`, `consecutive_why_fails`, and
 `why2_metric_stagnation`. Enumerate allowed non-terminal source phases from
 their current controller call sites; do not use `"*"` or all graph phases.
 
-- [ ] **Step 6: Run focused policy and workflow tests**
+- [x] **Step 6: Run focused policy and workflow tests**
 
 Run:
 `python -m pytest tests/unit/test_human_input.py tests/kernel/test_phase_graph.py tests/kernel/test_workflow_validator.py -q`
 
 Expected: all pass.
 
-- [ ] **Step 7: Commit the policy compiler**
+- [x] **Step 7: Commit the policy compiler**
 
 Run:
 `git add src/harness/human_input.py src/harness/phase_graph.py src/harness/workflow_validator.py tests/unit/test_human_input.py tests/kernel/test_phase_graph.py tests/kernel/test_workflow_validator.py && git commit -m "feat: compile human input policies"`
@@ -337,7 +345,7 @@ Run:
 - Consumes: immutable options from Task 1 and existing `SquadAgentResult`
   detachment/attestation.
 
-- [ ] **Step 1: Write failing provider-ingress tests**
+- [x] **Step 1: Write failing provider-ingress tests**
 
 Require:
 
@@ -349,7 +357,7 @@ Require:
 - recommendation/risk values to survive prepared-result detachment without
   becoming controller-owned policy fields.
 
-- [ ] **Step 2: Write failing strict decision-result tests**
+- [x] **Step 2: Write failing strict decision-result tests**
 
 Test the exact envelope:
 
@@ -369,25 +377,25 @@ Reject extra fields, non-empty state updates, journal entries, unknown option
 ids, both answer fields, neither answer field, invalid confidence, `BLOCKED`,
 and rationale over the chosen 2,000-character bound.
 
-- [ ] **Step 3: Run focused tests and verify contract failures**
+- [x] **Step 3: Run focused tests and verify contract failures**
 
 Run:
 `python -m pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_prepared_phase_result.py tests/unit/test_human_input_resolution_contract.py -q -k 'human_input or question or decision_resolution'`
 
-- [ ] **Step 4: Implement canonical ingress and decision validation**
+- [x] **Step 4: Implement canonical ingress and decision validation**
 
 Add `DECISION_RESOLVED` to the global verdict vocabulary but accept it only
 through the strict decision contract for this path. Keep general phase result
 contracts from using it accidentally.
 
-- [ ] **Step 5: Run the complete affected kernel tests**
+- [x] **Step 5: Run the complete affected kernel tests**
 
 Run:
 `python -m pytest tests/kernel/test_echelon_result_schema.py tests/kernel/test_prepared_phase_result.py tests/unit/test_human_input_resolution_contract.py -q`
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit ingress contracts**
+- [x] **Step 6: Commit ingress contracts**
 
 Run:
 `git add src/harness/echelon_result_schema.py src/harness/prepared_phase_result.py tests/kernel/test_echelon_result_schema.py tests/kernel/test_prepared_phase_result.py tests/unit/test_human_input_resolution_contract.py && git commit -m "feat: validate human input result contracts"`
@@ -407,13 +415,13 @@ Run:
   schema-v2 recovery validation with required `decision_id`.
 - Preserves: every existing schema-v1 factory and RE assertion unchanged.
 
-- [ ] **Step 1: Write failing exact-shape v2 tests**
+- [x] **Step 1: Write failing exact-shape v2 tests**
 
 Assert all required fields from the design, including explicit nulls. Reject
 unknown fields, unknown status, malformed ids, mismatched option/answer shape,
 negative attempts, invalid timestamps, and missing source revision.
 
-- [ ] **Step 2: Write failing decision/instruction pairing tests**
+- [x] **Step 2: Write failing decision/instruction pairing tests**
 
 Cover:
 
@@ -426,25 +434,25 @@ Cover:
 
 Also prove schema-v1 rejects `decision_id` and schema-v2 requires it.
 
-- [ ] **Step 3: Run focused tests and verify schema failures**
+- [x] **Step 3: Run focused tests and verify schema failures**
 
 Run:
 `python -m pytest tests/unit/test_blocked_decision.py tests/unit/test_recovery.py tests/unit/test_re_lifecycle.py -q`
 
-- [ ] **Step 4: Implement v2 alongside v1**
+- [x] **Step 4: Implement v2 alongside v1**
 
 Dispatch validation by exact integer `schema_version`. Update
 `ensure_blocked_decision(...)` to leave every schema-v2 mapping untouched,
 regardless of state display fields.
 
-- [ ] **Step 5: Run the schema and RE lifecycle tests**
+- [x] **Step 5: Run the schema and RE lifecycle tests**
 
 Run:
 `python -m pytest tests/unit/test_blocked_decision.py tests/unit/test_recovery.py tests/unit/test_re_lifecycle.py -q`
 
 Expected: all pass, including unchanged RE schema-v1 tests.
 
-- [ ] **Step 6: Commit durable schemas**
+- [x] **Step 6: Commit durable schemas**
 
 Run:
 `git add src/harness/blocked_decision.py src/harness/recovery_instruction.py tests/unit/test_blocked_decision.py tests/unit/test_recovery.py tests/unit/test_re_lifecycle.py && git commit -m "feat: add durable squad decision schema"`
@@ -461,7 +469,7 @@ Run:
 - Consumes: validated `PreparedHumanInput`, v2 decision builders, and v2
   recovery builders.
 
-- [ ] **Step 1: Write failing non-provider seal tests**
+- [x] **Step 1: Write failing non-provider seal tests**
 
 Assert one state revision increment writes:
 
@@ -479,7 +487,7 @@ Assert one state revision increment writes:
 Prove stale source revision, an existing unresolved v2 decision, and an
 invalid initial status write nothing.
 
-- [ ] **Step 2: Write failing provider-advance atomicity tests**
+- [x] **Step 2: Write failing provider-advance atomicity tests**
 
 Start from a provider snapshot and call `advance(...)` with a matching request.
 Assert provider phase effects, dispatch receipt, v2 decision, and instruction
@@ -489,7 +497,7 @@ Repeat the atomic assertion with a `controller_safeguard` request representing
 `consecutive_why_fails`, since that safeguard is discovered inside the same
 provider routing transaction.
 
-- [ ] **Step 3: Write failing claim, recovery, failure, and resolve tests**
+- [x] **Step 3: Write failing claim, recovery, failure, and resolve tests**
 
 Cover:
 
@@ -500,37 +508,39 @@ Cover:
 - interrupted `resolving -> pending` when attempts are below two;
 - interrupted second attempt -> `failed` with
   `resolution_attempts_exhausted`;
+- each COMMANDER attempt commits its `token_usage_delta` in the same success or
+  failure CAS, including the second-attempt terminal failure;
 - wrong decision id and stale revision are side-effect free;
 - failed decisions clear legacy `escalation_question`;
 - resolved decisions retain audit data and remove the instruction.
 
-- [ ] **Step 4: Write failing generic-save protection tests**
+- [x] **Step 4: Write failing generic-save protection tests**
 
 An unrelated generic save may preserve an unresolved v2 pair exactly. It must
 reject removal or mutation of the decision, instruction, phase, status,
 blocked reason, question, or options. Resolved/failed decisions may be
 replaced only by the dedicated seal path.
 
-- [ ] **Step 5: Run focused state tests and verify failures**
+- [x] **Step 5: Run focused state tests and verify failures**
 
 Run:
 `python -m pytest tests/kernel/test_squad_state.py -q -k 'human_input or decision_v2 or generic_save'`
 
-- [ ] **Step 6: Implement the single unlocked seal primitive and CAS methods**
+- [x] **Step 6: Implement the single unlocked seal primitive and CAS methods**
 
 Call `_seal_human_input_decision_unlocked(...)` only while the state lock is
 already held. In `advance(...)`, seal after applying attested provider and
 controller effects but before `_save_unlocked(...)`; skip the existing
 unconditional recovery-instruction removal when a request is being sealed.
 
-- [ ] **Step 7: Run the complete state kernel**
+- [x] **Step 7: Run the complete state kernel**
 
 Run:
 `python -m pytest tests/kernel/test_squad_state.py -q`
 
 Expected: all pass.
 
-- [ ] **Step 8: Commit state authority**
+- [x] **Step 8: Commit state authority**
 
 Run:
 `git add src/harness/squad_state.py tests/kernel/test_squad_state.py && git commit -m "feat: seal human decisions through state CAS"`
@@ -550,7 +560,7 @@ Run:
 - Consumes: registry, state CAS methods, existing provider dispatch telemetry,
   and existing execution leases.
 
-- [ ] **Step 1: Write the failing autonomy matrix tests**
+- [x] **Step 1: Write the failing autonomy matrix tests**
 
 Parametrize:
 
@@ -564,13 +574,13 @@ Parametrize:
 Assert the sealed decision's `autonomy_mode` comes from state, not the current
 CLI argument.
 
-- [ ] **Step 2: Write failing Semi selection tests**
+- [x] **Step 2: Write failing Semi selection tests**
 
 Cover option-level risk overriding request risk, missing risk, multiple
 recommendations rejected during preparation, free-text recommendation,
 `require_human`, and material classification always awaiting human.
 
-- [ ] **Step 3: Write failing COMMANDER retry and context tests**
+- [x] **Step 3: Write failing COMMANDER retry and context tests**
 
 Assert:
 
@@ -582,12 +592,12 @@ Assert:
 - no question or direct-write instruction appears in COMMANDER output
   authority.
 
-- [ ] **Step 4: Run the focused routing tests and verify failures**
+- [x] **Step 4: Run the focused routing tests and verify failures**
 
 Run:
 `python -m pytest tests/integration/test_human_input_routing.py tests/unit/test_commander_escalation_options_contract.py -q -k 'mode or semi or commander or context'`
 
-- [ ] **Step 5: Implement mode selection and strict COMMANDER dispatch**
+- [x] **Step 5: Implement mode selection and strict COMMANDER dispatch**
 
 Use `claim_human_input_decision(...)` immediately before each model call.
 Validate the response before invoking any handler. After an invalid result,
@@ -595,7 +605,7 @@ call `record_human_input_resolution_failure(...)`; retry only when it returns a
 `pending` decision. On process restart, `resume_pending_human_input()` first calls
 `recover_interrupted_human_input_decision()`.
 
-- [ ] **Step 6: Wire provider questions before the existing advance**
+- [x] **Step 6: Wire provider questions before the existing advance**
 
 After `PreparedPhaseResult` validation and routing-decision construction, detect
 the canonical question fields, prepare the request from the exact node/reason
@@ -604,27 +614,27 @@ policy and captured routing snapshot, and call `handle_human_input(...)` with
 decision to `SquadStateStore.advance(...)`; do not reconstruct or replay the
 provider result.
 
-- [ ] **Step 7: Replace the two duplicated Banzai branches**
+- [x] **Step 7: Replace the two duplicated Banzai branches**
 
 At controller entry and after provider decision sealing, call
 `resume_pending_human_input()` only. Remove direct mode checks and calls to
 `_judgment_dispatch_escalation(...)`. Retire that method after its handler
 logic is moved in Task 6.
 
-- [ ] **Step 8: Update the COMMANDER prompt contract**
+- [x] **Step 8: Update the COMMANDER prompt contract**
 
 Document `DECISION_RESOLVED`, exact choice/free-text rules, no recursive human
 request, and no direct state/file mutation. Remove the old Banzai instruction
 to write `user-clarifications.md` or return cleanup state updates.
 
-- [ ] **Step 9: Run focused controller routing tests**
+- [x] **Step 9: Run focused controller routing tests**
 
 Run:
 `python -m pytest tests/integration/test_human_input_routing.py tests/unit/test_commander_escalation_options_contract.py -q`
 
 Expected: all pass.
 
-- [ ] **Step 10: Commit the controller boundary**
+- [x] **Step 10: Commit the controller boundary**
 
 Run:
 `git add src/harness/squad.py extension/agents/control/commander.md tests/integration/test_human_input_routing.py tests/unit/test_commander_escalation_options_contract.py && git commit -m "feat: centralize autonomy decision routing"`
@@ -641,7 +651,7 @@ Run:
 - Reuses: current issue-resolution ledger validation, dispatch-count reset,
   WHY counters, and routing targets. It does not duplicate those algorithms.
 
-- [ ] **Step 1: Write failing clarification-handler tests**
+- [x] **Step 1: Write failing clarification-handler tests**
 
 Verify an answer appends:
 
@@ -657,7 +667,7 @@ to `staging/user-clarifications.md` through atomic replacement. Applying the
 same decision after a simulated state-save interruption must not append a
 second section.
 
-- [ ] **Step 2: Write failing gate and safeguard-handler tests**
+- [x] **Step 2: Write failing gate and safeguard-handler tests**
 
 Cover:
 
@@ -670,12 +680,12 @@ Cover:
 - invalid option, target, outcome, handler, resolver, id, or revision writes
   nothing.
 
-- [ ] **Step 3: Run focused handler tests and verify failures**
+- [x] **Step 3: Run focused handler tests and verify failures**
 
 Run:
 `python -m pytest tests/integration/test_human_input_routing.py tests/integration/test_squad_controller.py -q -k 'human_input_handler or clarification_idempotent or banzai_escalation or consecutive_fail or phase_dispatch_limit'`
 
-- [ ] **Step 4: Implement the closed handler dispatch**
+- [x] **Step 4: Implement the closed handler dispatch**
 
 Use an exact dictionary from handler id to private controller method. Handler
 methods return only controller-owned `state_updates`, `state_removals`, and
@@ -686,7 +696,7 @@ call `apply_human_input_state_resolution(...)` once so decision resolution,
 display cleanup, instruction removal, status, phase, and counters share one
 state replacement.
 
-- [ ] **Step 5: Wire all three safeguard producers**
+- [x] **Step 5: Wire all three safeguard producers**
 
 At the pre-dispatch cap, prepare a `controller_safeguard` request from the
 captured revision and call `handle_human_input(...)` without a provider
@@ -699,13 +709,13 @@ commits those counters and provider effects. Remove direct question rendering
 and raw decision-state writes while preserving the evidence consumed by the
 handlers.
 
-- [ ] **Step 6: Remove the retired escalation cleanup path**
+- [x] **Step 6: Remove the retired escalation cleanup path**
 
 Delete `_judgment_dispatch_escalation(...)` after migrating its dispatch-cap
 and WHY reset behavior. Keep unrelated `_judgment_dispatch(...)` routing
 judgments intact.
 
-- [ ] **Step 7: Run focused and existing escalation regressions**
+- [x] **Step 7: Run focused and existing escalation regressions**
 
 Run:
 `python -m pytest tests/integration/test_human_input_routing.py tests/integration/test_squad_controller.py -q -k 'human_input or escalation or phase_dispatch_limit or consecutive_why or why2_metric_stagnation'`
@@ -713,7 +723,7 @@ Run:
 Expected: all pass after updating obsolete direct-cleanup assertions to the v2
 decision contract.
 
-- [ ] **Step 8: Commit shared resolution handlers**
+- [x] **Step 8: Commit shared resolution handlers**
 
 Run:
 `git add src/harness/squad.py tests/integration/test_human_input_routing.py tests/integration/test_squad_controller.py && git commit -m "feat: apply human decisions through shared handlers"`
@@ -742,7 +752,7 @@ Run:
 - Removes: `HumanGateExecutor`, `_executors["human_gate"]`, all Phase A
   executor `input()`, gate autonomy stanzas, and question-bearing `ESCALATE`.
 
-- [ ] **Step 1: Write failing real-workflow registry assertions**
+- [x] **Step 1: Write failing real-workflow registry assertions**
 
 Assert all eleven initial reason entries, including both
 `phase1-investigate` variants. Assert:
@@ -753,14 +763,14 @@ Assert all eleven initial reason entries, including both
 - all question-capable provider allowlists include risk/recommendation fields
   only where declared.
 
-- [ ] **Step 2: Write failing gate mode integration tests**
+- [x] **Step 2: Write failing gate mode integration tests**
 
 For both gates in Guided, Semi, and Banzai, assert the mode matrix. For Banzai,
 provide COMMANDER approve and reject results separately. Prove
 `checkpoint-plan` remains Semi-auto and `checkpoint-assess` remains
 Semi-human.
 
-- [ ] **Step 3: Write failing static guard tests**
+- [x] **Step 3: Write failing static guard tests**
 
 Read source and workflow text and assert:
 
@@ -771,12 +781,12 @@ Read source and workflow text and assert:
 - no provider transition accepts `ESCALATE` when it can carry a question;
 - no old COMMANDER direct clarification/state-cleanup instruction.
 
-- [ ] **Step 4: Run workflow/gate/static tests and verify failures**
+- [x] **Step 4: Run workflow/gate/static tests and verify failures**
 
 Run:
 `python -m pytest tests/kernel/test_phase_graph.py tests/kernel/test_workflow_validator.py tests/integration/test_human_input_routing.py tests/unit/test_human_input_static_contract.py -q`
 
-- [ ] **Step 5: Add exact workflow policy lists**
+- [x] **Step 5: Add exact workflow policy lists**
 
 Use these reason codes and handlers:
 
@@ -795,27 +805,27 @@ Declare gate edges as `outcome: approved` or `outcome: rejected` with matching
 `human_input_outcome = approved|rejected` conditions. The handler uses the
 compiled edge target directly and does not persist `human_input_outcome`.
 
-- [ ] **Step 6: Intercept gates before executor lookup**
+- [x] **Step 6: Intercept gates before executor lookup**
 
 Build the request from the node's sole gate policy and current state snapshot.
 Do not construct a provider result for a gate. Remove `HumanGateExecutor` and
 its registration.
 
-- [ ] **Step 7: Update phase and shared agent prompts**
+- [x] **Step 7: Update phase and shared agent prompts**
 
 Require exact reason codes, `STOP_AND_ASK`, and risk/recommendation shape.
 For investigation, use `investigation_access_required` only when authority or
 credentials unavailable to Echelon are required; use
 `human_clarification_required` for an inconclusive project decision.
 
-- [ ] **Step 8: Run workflow, gate, and static tests**
+- [x] **Step 8: Run workflow, gate, and static tests**
 
 Run:
 `python -m pytest tests/kernel/test_phase_graph.py tests/kernel/test_workflow_validator.py tests/integration/test_human_input_routing.py tests/unit/test_human_input_static_contract.py -q`
 
 Expected: all pass.
 
-- [ ] **Step 9: Commit producer and gate migration**
+- [x] **Step 9: Commit producer and gate migration**
 
 Run:
 `git add extension/workflow/definition.yaml extension/workflow/phases/phase1-tracker.md extension/workflow/phases/phase1-why1.md extension/workflow/phases/phase1-why2.md extension/workflow/phases/phase1-investigate.md extension/workflow/phases/phase2-tracker-alignment.md extension/agents/control/tracker.md extension/agents/exploration/sage.md extension/agents/specialists/investigator.md src/harness/squad.py src/harness/squad_executors.py tests/kernel/test_phase_graph.py tests/kernel/test_workflow_validator.py tests/integration/test_human_input_routing.py tests/unit/test_human_input_static_contract.py && git commit -m "feat: route workflow questions through controller"`
@@ -837,7 +847,7 @@ Run:
 - Removes: direct CLI writes to `user-clarifications.md`, decision state,
   escalation cleanup fields, phase, and recovery instruction.
 
-- [ ] **Step 1: Write failing status tests**
+- [x] **Step 1: Write failing status tests**
 
 For a v2 active decision, show mode, classification, question, exact options,
 recommendation, risk, and:
@@ -846,14 +856,14 @@ recommendation, risk, and:
 - `echelon spec resume "<your answer>"` for `awaiting_human`;
 - manual diagnosis for `failed`.
 
-- [ ] **Step 2: Write failing continue tests**
+- [x] **Step 2: Write failing continue tests**
 
 Assert Banzai and eligible Semi call the controller with the persisted
 decision and persisted autonomy mode. Guided, ineligible Semi, and external
 prerequisites remain blocked without state cleanup. A `--mode` override cannot
 claim or reclassify the decision.
 
-- [ ] **Step 3: Rewrite resume regression fixtures around schema v2**
+- [x] **Step 3: Rewrite resume regression fixtures around schema v2**
 
 Assert exact option id/label parsing and free text call
 `SquadController.resume_with_human_input(answer)`. Reject:
@@ -867,42 +877,45 @@ Assert exact option id/label parsing and free text call
 Allow a Banzai external prerequisite because its decision is
 `awaiting_human`.
 
-- [ ] **Step 4: Write failing bypass-guard tests**
+- [x] **Step 4: Write failing bypass-guard tests**
 
 An unresolved v2 decision must reject `--next-phase` and
 `echelon phase run`. The guard belongs in controller entry/manual phase entry
 as well as CLI rendering, so direct Python invocation cannot bypass it.
 
-- [ ] **Step 5: Run focused CLI tests and verify failures**
+- [x] **Step 5: Run focused CLI tests and verify failures**
 
 Run:
 `python -m pytest tests/unit/test_cli_status.py tests/unit/test_cli_continue.py tests/unit/test_cli_resume_escalation_options.py tests/integration/test_human_input_routing.py -q -k 'decision or human_input or resume or bypass'`
 
-- [ ] **Step 6: Implement read-only CLI routing**
+- [x] **Step 6: Implement read-only CLI routing**
 
 Teach `_recovery_action_from_instruction(...)` about schema-v2
 `resolve_decision`. Make `_cmd_resume(...)` construct the existing graph,
 provider, store, and controller, then call only
-`resume_with_human_input(answer)`.
+`resume_with_human_input(answer)`. Acquire `PhaseAExecutionLock` and then
+`SpecRunExecutionLock` before loading the v2 state, and hold both through the
+clarification receipt and decision application. The controller method returns
+`bool`; it does not acquire leases or continue the run.
 
 Preserve the existing Typer wrappers in `cli_app.py`; update only descriptions
 or argument help that still says generic escalation rather than active
 decision.
 
-- [ ] **Step 7: Update resume command documentation**
+- [x] **Step 7: Update resume command documentation**
 
 Describe awaiting-human decisions, exact option matching, Banzai external
 prerequisites, and the shared controller apply path. Remove direct file/state
 instructions.
 
-- [ ] **Step 8: Run complete CLI decision tests**
+- [x] **Step 8: Run complete CLI decision tests**
 
 Run:
 `python -m pytest tests/unit/test_cli_status.py tests/unit/test_cli_continue.py tests/unit/test_cli_resume_escalation_options.py tests/integration/test_human_input_routing.py -q`
 
 Expected: all pass.
 
-- [ ] **Step 9: Commit CLI migration**
+- [x] **Step 9: Commit CLI migration**
 
 Before staging, inspect and preserve unrelated `cli_app.py` edits:
 `git diff -- src/echelon/cli_app.py`
@@ -961,13 +974,16 @@ then prepare the tagged request through that alias. Unknown legacy state falls
 through to the existing manual recovery classifier.
 
 The implemented adapter accepts only an active schema-v1 Squad decision whose
-question, display phase, normalized reason, answer shape, and optional
-schema-v1 recovery instruction agree. A terminal safeguard display phase also
-requires the exact non-terminal source in `phase_dispatch_limit_phase` or
-`last_dispatch.phase_id`; the instruction, when present, must bind that same
-source and resume kind. It rejects RE, resolved, malformed, ambiguous, and
-unregistered states. A fresh process re-derives the same exact alias from the
-sealed producer, reason, and source phase, preserving the durable decision id.
+exact pending field set and types, UTC timestamp, question, display phase,
+normalized reason, answer shape, options, recommendation/default, risk, and
+optional schema-v1 recovery instruction agree with the top-level projections.
+A terminal safeguard display phase also requires the exact non-terminal source
+in `phase_dispatch_limit_phase` or `last_dispatch.phase_id`; the instruction,
+when present, must bind that same source and resume kind. It rejects RE,
+resolved, malformed, ambiguous, legacy-only-registry, and unregistered states.
+A fresh process re-derives the same ephemeral alias from one exact current
+provider/safeguard policy, preserving the durable decision id without
+installing the alias in the controller registry.
 
 - [x] **Step 5: Run the complete focused suite**
 
@@ -984,8 +1000,12 @@ Run:
 Run:
 `python -m pytest -q`
 
-Expected: all pass. If unrelated pre-existing failures exist, record the exact
-test ids and prove the focused suite remains green before proceeding.
+Baseline result: `6148 passed, 9 skipped, 4 deselected`. The earlier 25 failures
+were branch-caused compatibility and stale-contract regressions and were
+corrected; none are classified as unrelated. Task 9 review fix round 1 added
+15 collected regressions (11 from the initial review response and four strict
+envelope-shape cases from self-review) and finished at
+`6163 passed, 9 skipped, 4 deselected`.
 
 - [x] **Step 8: Run static boundary checks**
 

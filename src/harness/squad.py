@@ -2139,33 +2139,6 @@ class SquadController:
             )
         return legacy_recovery_policy_alias(candidates[0])
 
-    def _registered_or_current_legacy_policy_alias(
-        self,
-        *,
-        phase_id: str,
-        reason_code: str,
-        producer_id: str,
-    ) -> HumanInputPolicy:
-        registered = [
-            policy
-            for policy in self._human_input_registry.policies
-            if policy.source_kind == "legacy_recovery"
-            and policy.producer_id == producer_id
-            and policy.reason_code == reason_code
-            and phase_id in policy.allowed_phase_ids
-        ]
-        if len(registered) == 1:
-            return registered[0]
-        if registered:
-            raise HumanInputPolicyError(
-                "legacy recovery policy identity is ambiguous"
-            )
-        return self._legacy_policy_alias(
-            phase_id=phase_id,
-            producer_id=producer_id,
-            reason_code=reason_code,
-        )
-
     @classmethod
     def _legacy_escalation_options(
         cls,
@@ -2218,6 +2191,202 @@ class SquadController:
             options.append(option)
         return tuple(options)
 
+    def _validate_active_legacy_squad_decision(
+        self,
+        state: Mapping[str, object],
+        raw_decision: Mapping[str, object],
+        *,
+        phase_id: str,
+        reason_code: str,
+        question: str,
+        policy: HumanInputPolicy,
+    ) -> None:
+        from datetime import datetime, timedelta
+
+        required_fields = {
+            "schema_version",
+            "status",
+            "answer_type",
+            "question",
+            "blocked_reason",
+            "blocked_phase",
+            "blocked_at",
+        }
+        optional_fields = {
+            "risk_level",
+            "options",
+            "recommended_answer",
+            "default_answer",
+        }
+        if not all(isinstance(key, str) for key in raw_decision):
+            raise HumanInputPolicyError(
+                "legacy recovery decision field names must be strings"
+            )
+        unknown = set(raw_decision) - required_fields - optional_fields
+        missing = required_fields - set(raw_decision)
+        if unknown or missing:
+            raise HumanInputPolicyError(
+                "legacy recovery decision shape is invalid"
+            )
+        if (
+            type(raw_decision["schema_version"]) is not int
+            or raw_decision["schema_version"] != 1
+            or raw_decision["status"] != "pending"
+        ):
+            raise HumanInputPolicyError(
+                "legacy recovery decision is not an active schema-v1 decision"
+            )
+        if any(
+            not isinstance(raw_decision[field], str)
+            or not str(raw_decision[field]).strip()
+            for field in (
+                "answer_type",
+                "question",
+                "blocked_reason",
+                "blocked_phase",
+                "blocked_at",
+            )
+        ):
+            raise HumanInputPolicyError(
+                "legacy recovery decision strings are invalid"
+            )
+        if (
+            raw_decision["question"].strip() != question
+            or raw_decision["blocked_reason"].strip() != reason_code
+            or raw_decision["blocked_phase"].strip() != phase_id
+        ):
+            raise HumanInputPolicyError(
+                "legacy recovery decision projections do not match state"
+            )
+        try:
+            blocked_at = datetime.fromisoformat(
+                raw_decision["blocked_at"].replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            raise HumanInputPolicyError(
+                "legacy recovery blocked_at must be a UTC timestamp"
+            ) from exc
+        if blocked_at.tzinfo is None or blocked_at.utcoffset() != timedelta(0):
+            raise HumanInputPolicyError(
+                "legacy recovery blocked_at must be a UTC timestamp"
+            )
+
+        options = self._legacy_escalation_options(
+            state.get("escalation_options"),
+            policy,
+        )
+        expected_options = [
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": option.recommended,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+            }
+            for option in options
+        ]
+        answer_type = "choice" if expected_options else "free_text"
+        if raw_decision["answer_type"] != answer_type:
+            raise HumanInputPolicyError(
+                "legacy recovery answer shape does not match the current policy"
+            )
+        if expected_options:
+            if raw_decision.get("options") != expected_options:
+                raise HumanInputPolicyError(
+                    "legacy recovery option projections do not match state"
+                )
+        elif "options" in raw_decision:
+            raise HumanInputPolicyError(
+                "legacy free-text recovery cannot declare options"
+            )
+
+        recommended = state.get("escalation_recommended_answer")
+        recommended = (
+            recommended.strip()
+            if isinstance(recommended, str) and recommended.strip()
+            else None
+        )
+        if recommended is None:
+            recommended_option = next(
+                (option for option in expected_options if option["recommended"]),
+                None,
+            )
+            if recommended_option is not None:
+                recommended = str(
+                    recommended_option["id"] or recommended_option["label"]
+                )
+        if (
+            recommended is None
+            and "recommended_answer" in raw_decision
+        ) or (
+            recommended is not None
+            and raw_decision.get("recommended_answer") != recommended
+        ):
+            raise HumanInputPolicyError(
+                "legacy recovery recommendation projection does not match state"
+            )
+        if recommended is not None and expected_options:
+            matches = [
+                option
+                for option in expected_options
+                if recommended in {option["id"], option["label"]}
+            ]
+            if len(matches) != 1:
+                raise HumanInputPolicyError(
+                    "legacy recovery recommendation is not one exact option"
+                )
+
+        default_answer = state.get("escalation_default_answer")
+        default_answer = (
+            default_answer.strip()
+            if isinstance(default_answer, str) and default_answer.strip()
+            else recommended
+        )
+        if (
+            default_answer is None
+            and "default_answer" in raw_decision
+        ) or (
+            default_answer is not None
+            and raw_decision.get("default_answer") != default_answer
+        ):
+            raise HumanInputPolicyError(
+                "legacy recovery default projection does not match state"
+            )
+        if default_answer is not None and expected_options:
+            matches = [
+                option
+                for option in expected_options
+                if default_answer in {option["id"], option["label"]}
+            ]
+            if len(matches) != 1:
+                raise HumanInputPolicyError(
+                    "legacy recovery default is not one exact option"
+                )
+
+        risk_level = state.get("escalation_risk_level")
+        if not isinstance(risk_level, str) or not risk_level.strip():
+            risk_level = state.get("risk_level")
+        risk_level = (
+            risk_level.strip().lower()
+            if isinstance(risk_level, str) and risk_level.strip()
+            else None
+        )
+        if risk_level not in {None, "low", "medium", "high", "critical"}:
+            raise HumanInputPolicyError(
+                "legacy recovery risk projection is invalid"
+            )
+        if (
+            risk_level is None
+            and "risk_level" in raw_decision
+        ) or (
+            risk_level is not None
+            and raw_decision.get("risk_level") != risk_level
+        ):
+            raise HumanInputPolicyError(
+                "legacy recovery risk projection does not match state"
+            )
+
     def _prepare_legacy_human_input(
         self,
         state: Mapping[str, object],
@@ -2240,16 +2409,7 @@ class SquadController:
         question = str(question).strip()
 
         raw_decision = state.get("blocked_decision")
-        if (
-            not isinstance(raw_decision, Mapping)
-            or raw_decision.get("schema_version") != 1
-            or raw_decision.get("status") != "pending"
-            or str(raw_decision.get("question") or "").strip() != question
-            or str(raw_decision.get("blocked_reason") or "").strip()
-            != reason_code
-            or str(raw_decision.get("blocked_phase") or "").strip()
-            != phase_id
-        ):
+        if not isinstance(raw_decision, Mapping):
             return None
 
         try:
@@ -2283,6 +2443,14 @@ class SquadController:
             policy = self._legacy_policy_alias(
                 phase_id=source_phase,
                 reason_code=reason_code,
+            )
+            self._validate_active_legacy_squad_decision(
+                state,
+                raw_decision,
+                phase_id=phase_id,
+                reason_code=reason_code,
+                question=question,
+                policy=policy,
             )
             if (
                 phase_id in TERMINAL_PHASES
@@ -2346,7 +2514,7 @@ class SquadController:
         decision: Mapping[str, object],
     ) -> HumanInputPolicy:
         if decision.get("source_kind") == "legacy_recovery":
-            policy = self._registered_or_current_legacy_policy_alias(
+            policy = self._legacy_policy_alias(
                 phase_id=str(decision.get("source_phase") or ""),
                 producer_id=str(decision.get("producer_id") or ""),
                 reason_code=str(decision.get("reason_code") or ""),
@@ -2400,7 +2568,7 @@ class SquadController:
                 "controller requires a prepared human-input request"
             )
         if request.source_kind == "legacy_recovery":
-            policy = self._registered_or_current_legacy_policy_alias(
+            policy = self._legacy_policy_alias(
                 phase_id=request.phase_id,
                 producer_id=request.producer_id,
                 reason_code=request.reason_code,

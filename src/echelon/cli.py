@@ -6916,6 +6916,7 @@ def _cmd_status(project_root: Path) -> None:
                 action = _classify_run_recovery(state, project_root=project_root)
                 fields.extend(
                     [
+                        ("Decision ID", str(decision["id"])),
                         ("Decision status", str(decision["status"])),
                         ("Decision mode", str(decision["autonomy_mode"])),
                         ("Classification", str(decision["classification"])),
@@ -7045,7 +7046,10 @@ def _cmd_continue(
             _cmd_run(run_args, project_root=project_root, ext_dir=ext_dir)
             return
         if action.kind == "human_resume":
-            fields = [("decision needed", action.note or str(decision["question"]))]
+            fields = [
+                ("decision id", str(decision["id"])),
+                ("decision needed", action.note or str(decision["question"])),
+            ]
             fields.append(("options", _render_v2_decision_options(decision)))
             fields.append(("resume with", action.command))
             _banner("CHECKPOINT", fields, subtitle="Run paused. Human decision required.")
@@ -8003,6 +8007,80 @@ def _cmd_phase(
     )
 
 
+def _resume_v2_human_input(
+    *,
+    answer: str,
+    project_root: Path,
+    ext_dir: Path,
+    squad_dir: Path,
+    store,
+    state: dict,
+) -> None:
+    from harness.config import get_full_resolved_config, load_config
+    from harness.human_input import HumanInputPolicyError
+    from harness.phase_graph import PhaseGraph
+    from harness.squad import SquadController
+    from harness.squad_provider import SquadCliProvider
+
+    try:
+        decision = _active_v2_decision(state)
+    except (RecoveryInstructionError, ValueError) as exc:
+        print(f"✗ Invalid persisted decision: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    if decision is None:
+        print("✗ Active schema-v2 decision is missing.", file=sys.stderr)
+        raise SystemExit(1)
+
+    graph = PhaseGraph(
+        ext_dir / "workflow/definition.yaml",
+        ext_dir / "extension.yml",
+    )
+    config = load_config(project_root, squad_only=True)
+    provider = SquadCliProvider(config)
+    token_budget = 0
+    max_iterations = 5
+    try:
+        full_config = get_full_resolved_config(project_root)
+        analysis = full_config.get("analysis") or {}
+        token_budget_k = int(analysis.get("token_budget_k") or 0)
+        token_budget = token_budget_k * 1000 if token_budget_k else 0
+        max_iterations = int(analysis.get("max_iterations") or 5)
+    except Exception:
+        pass
+    controller = SquadController(
+        provider=provider,
+        state_store=store,
+        phase_graph=graph,
+        ext_dir=ext_dir,
+        project_root=project_root,
+        token_budget=token_budget,
+        max_iterations=max_iterations,
+        squad_dir=squad_dir,
+        ignore_re=(state.get("published_re_context") or {}).get("status") == "ignored",
+        implementation_targets=[
+            str(value)
+            for value in (state.get("implementation_targets") or [])
+            if str(value).strip()
+        ],
+    )
+    try:
+        controller.resume_with_human_input(answer)
+    except HumanInputPolicyError as exc:
+        print(f"✗ Cannot resume decision: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    current = store.load()
+    _banner(
+        "HUMAN DECISION SUBMITTED",
+        [
+            ("Run ID", current.get("run_id", squad_dir.name)),
+            ("Decision ID", decision["id"]),
+            ("Answer", answer),
+            ("Next", "echelon spec continue"),
+        ],
+    )
+
+
 def _cmd_resume(
     args: list[str],
     project_root: Path,
@@ -8018,6 +8096,13 @@ def _cmd_resume(
     from harness.squad import SquadController
     from harness.squad_provider import SquadCliProvider
     from harness.squad_state import SquadStateStore
+    from echelon.spec_lifecycle import (
+        PhaseAExecutionLock,
+        SpecLifecycleLocked,
+        SpecRunExecutionLock,
+    )
+    from threading import get_ident
+    from uuid import uuid4
 
     _print_extension_drift_warning(project_root, ext_dir)
 
@@ -8038,7 +8123,39 @@ def _cmd_resume(
         sys.exit(1)
 
     store = SquadStateStore(squad_dir)
-    state = store.load()
+    operation_id = f"resume-{os.getpid()}-{get_ident()}-{uuid4().hex}"
+    try:
+        with PhaseAExecutionLock.acquire(project_root, operation_id):
+            with SpecRunExecutionLock.acquire(squad_dir, operation_id):
+                state = store.load()
+                raw_decision = state.get("blocked_decision")
+                if (
+                    isinstance(raw_decision, dict)
+                    and raw_decision.get("schema_version") == 2
+                ):
+                    if state.get("status") != "blocked":
+                        print(
+                            "✗ Run is not blocked "
+                            f"(status: {state.get('status', 'unknown')}).",
+                            file=sys.stderr,
+                        )
+                        print("  Nothing to resume.", file=sys.stderr)
+                        raise SystemExit(1)
+                    _resume_v2_human_input(
+                        answer=answer,
+                        project_root=project_root,
+                        ext_dir=ext_dir,
+                        squad_dir=squad_dir,
+                        store=store,
+                        state=state,
+                    )
+                    return
+    except SpecLifecycleLocked as exc:
+        print(
+            f"✗ Cannot resume while execution lease is owned by {exc.operation_id}.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
 
     if state.get("status") != "blocked":
         print(
@@ -8047,69 +8164,6 @@ def _cmd_resume(
         )
         print("  Nothing to resume.", file=sys.stderr)
         sys.exit(1)
-
-    raw_decision = state.get("blocked_decision")
-    if isinstance(raw_decision, dict) and raw_decision.get("schema_version") == 2:
-        from harness.config import get_full_resolved_config, load_config
-        from harness.human_input import HumanInputPolicyError
-        from harness.phase_graph import PhaseGraph
-        from harness.squad import SquadController
-        from harness.squad_provider import SquadCliProvider
-
-        try:
-            _active_v2_decision(state)
-        except (RecoveryInstructionError, ValueError) as exc:
-            print(f"✗ Invalid persisted decision: {exc}", file=sys.stderr)
-            raise SystemExit(1) from exc
-
-        graph = PhaseGraph(
-            ext_dir / "workflow/definition.yaml",
-            ext_dir / "extension.yml",
-        )
-        config = load_config(project_root, squad_only=True)
-        provider = SquadCliProvider(config)
-        token_budget = 0
-        max_iterations = 5
-        try:
-            full_config = get_full_resolved_config(project_root)
-            analysis = full_config.get("analysis") or {}
-            token_budget_k = int(analysis.get("token_budget_k") or 0)
-            token_budget = token_budget_k * 1000 if token_budget_k else 0
-            max_iterations = int(analysis.get("max_iterations") or 5)
-        except Exception:
-            pass
-        controller = SquadController(
-            provider=provider,
-            state_store=store,
-            phase_graph=graph,
-            ext_dir=ext_dir,
-            project_root=project_root,
-            token_budget=token_budget,
-            max_iterations=max_iterations,
-            squad_dir=squad_dir,
-            ignore_re=(state.get("published_re_context") or {}).get("status") == "ignored",
-            implementation_targets=[
-                str(value)
-                for value in (state.get("implementation_targets") or [])
-                if str(value).strip()
-            ],
-        )
-        try:
-            controller.resume_with_human_input(answer)
-        except HumanInputPolicyError as exc:
-            print(f"✗ Cannot resume decision: {exc}", file=sys.stderr)
-            raise SystemExit(1) from exc
-
-        current = store.load()
-        _banner(
-            "HUMAN DECISION SUBMITTED",
-            [
-                ("Run ID", current.get("run_id", squad_dir.name)),
-                ("Answer", answer),
-                ("Next", "echelon spec continue"),
-            ],
-        )
-        return
 
     # A cap is not an ordinary clarification gate.  Do not record a free-text
     # answer as though it authorised progress: a concrete issue decision must

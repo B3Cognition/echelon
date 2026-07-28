@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
+from threading import Event, Thread
 from unittest.mock import MagicMock
 
 import pytest
@@ -28,6 +30,7 @@ from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
 from harness.squad import SquadController, _ProviderHumanInputAdvance
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from harness.squad_state import SquadStateStore, StateAdvanceError
+from echelon.spec_lifecycle import PhaseAExecutionLock, SpecRunExecutionLock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -176,10 +179,7 @@ def _controller(
             in safeguard_identities
             else "provider_escalation"
         )
-        policies = (
-            replace(policy, source_kind=current_source_kind),
-            policy,
-        )
+        policies = (replace(policy, source_kind=current_source_kind),)
     controller._human_input_registry = HumanInputPolicyRegistry(policies)
     return controller, store, provider
 
@@ -212,7 +212,12 @@ def _request(
     recommended_answer: str | None = None,
     risk_level: str | None = None,
 ):
-    return controller._human_input_registry.prepare(
+    registry = (
+        HumanInputPolicyRegistry((policy,))
+        if policy.source_kind == "legacy_recovery"
+        else controller._human_input_registry
+    )
+    return registry.prepare(
         source_kind=policy.source_kind,
         producer_id=policy.producer_id,
         phase_id=next(iter(policy.allowed_phase_ids)),
@@ -231,7 +236,12 @@ def _seal_awaiting_human(
     *,
     question: str = "Which valid resolution should be applied?",
 ) -> tuple[str, int]:
-    request = controller._human_input_registry.prepare(
+    registry = (
+        HumanInputPolicyRegistry((policy,))
+        if policy.source_kind == "legacy_recovery"
+        else controller._human_input_registry
+    )
+    request = registry.prepare(
         source_kind=policy.source_kind,
         producer_id=policy.producer_id,
         phase_id=next(iter(policy.allowed_phase_ids)),
@@ -522,11 +532,9 @@ def test_provider_v2_seal_survives_process_restart_with_same_decision_id(
     provider.exec_agent.assert_called_once()
 
 
-def test_status_continue_and_resume_observe_one_durable_decision_id(
+def _cli_awaiting_human_controller(
     tmp_path: Path,
-) -> None:
-    from echelon.cli import _active_v2_decision, _classify_run_recovery
-
+) -> tuple[SquadController, SquadStateStore, object, str]:
     graph = PhaseGraph(DEFINITION, EXTENSION)
     policy = graph.human_input_policy_registry().lookup(
         "provider_escalation",
@@ -547,27 +555,189 @@ def test_status_continue_and_resume_observe_one_durable_decision_id(
         human_input=request,
         human_input_initial_status="awaiting_human",
     )
+    (tmp_path / ".git").mkdir(exist_ok=True)
+    (tmp_path / "squad" / ".current").write_text(
+        store.squad_dir.name,
+        encoding="utf-8",
+    )
+    return controller, store, provider, store.load()["blocked_decision"]["id"]
 
-    status_state = store.load()
-    status_decision = _active_v2_decision(status_state)
-    assert status_decision is not None
-    decision_id = status_decision["id"]
-    continue_action = _classify_run_recovery(
-        status_state,
+
+def test_status_continue_and_resume_commands_observe_one_durable_decision_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_continue, _cmd_resume, _cmd_status
+
+    _controller_instance, store, provider, decision_id = (
+        _cli_awaiting_human_controller(tmp_path)
+    )
+    monkeypatch.setattr(
+        "harness.squad_provider.SquadCliProvider",
+        lambda _config: provider,
+    )
+
+    _cmd_status(tmp_path)
+    assert decision_id in capsys.readouterr().out
+    assert store.load()["blocked_decision"]["id"] == decision_id
+
+    _cmd_continue(
+        [],
         project_root=tmp_path,
+        ext_dir=ROOT / "extension",
     )
-    continue_decision = _active_v2_decision(store.load())
-    assert continue_action.kind == "human_resume"
-    assert continue_decision is not None
-    assert continue_decision["id"] == decision_id
+    assert decision_id in capsys.readouterr().out
+    assert store.load()["blocked_decision"]["id"] == decision_id
 
-    assert controller.resume_with_human_input(
-        "Credentials are now available."
+    answer = "Credentials are now available."
+    _cmd_resume(
+        [answer],
+        project_root=tmp_path,
+        ext_dir=ROOT / "extension",
     )
-    resumed = store.load()["blocked_decision"]
+    assert decision_id in capsys.readouterr().out
+    resumed_state = store.load()
+    resumed = resumed_state["blocked_decision"]
     assert resumed["id"] == decision_id
     assert resumed["status"] == "resolved"
     assert resumed["resolved_by"] == "user"
+    clarification = Path(resumed_state["staging_dir"]) / "user-clarifications.md"
+    assert answer in clarification.read_text(encoding="utf-8")
+    provider.exec_agent.assert_not_called()
+
+
+@contextmanager
+def _external_resume_lease(lock_type, lock_root: Path):
+    acquired = Event()
+    release = Event()
+    failures: list[BaseException] = []
+
+    def hold() -> None:
+        try:
+            with lock_type.acquire(lock_root, "external-resume-owner"):
+                acquired.set()
+                assert release.wait(timeout=5)
+        except BaseException as error:
+            failures.append(error)
+            acquired.set()
+
+    owner = Thread(target=hold)
+    owner.start()
+    assert acquired.wait(timeout=5)
+    assert not failures
+    try:
+        yield
+    finally:
+        release.set()
+        owner.join(timeout=5)
+        assert not failures
+        assert not owner.is_alive()
+
+
+@pytest.mark.parametrize(
+    ("lock_type", "root_selector"),
+    [
+        (PhaseAExecutionLock, lambda project_root, _run_dir: project_root),
+        (SpecRunExecutionLock, lambda _project_root, run_dir: run_dir),
+    ],
+    ids=("phase_a_owner", "run_owner"),
+)
+def test_cli_resume_refuses_external_execution_owner_without_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    lock_type,
+    root_selector,
+) -> None:
+    from echelon.cli import _cmd_resume
+
+    _controller_instance, store, provider, _decision_id = (
+        _cli_awaiting_human_controller(tmp_path)
+    )
+    monkeypatch.setattr(
+        "harness.squad_provider.SquadCliProvider",
+        lambda _config: provider,
+    )
+    state_path = store.squad_dir / "state.json"
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+    clarification = Path(store.load()["staging_dir"]) / "user-clarifications.md"
+
+    with _external_resume_lease(
+        lock_type,
+        root_selector(tmp_path, store.squad_dir),
+    ):
+        with pytest.raises(SystemExit) as exc:
+            _cmd_resume(
+                ["Lease-blocked answer"],
+                project_root=tmp_path,
+                ext_dir=ROOT / "extension",
+            )
+
+    assert exc.value.code == 1
+    assert store.load() == before
+    assert not clarification.exists()
+    provider.exec_agent.assert_not_called()
+
+
+def test_concurrent_cli_resume_keeps_decision_and_file_answer_identical(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_resume
+
+    _controller_instance, store, provider, _decision_id = (
+        _cli_awaiting_human_controller(tmp_path)
+    )
+    monkeypatch.setattr(
+        "harness.squad_provider.SquadCliProvider",
+        lambda _config: provider,
+    )
+    entered = Event()
+    release = Event()
+    original_resume = SquadController.resume_with_human_input
+
+    def coordinated_resume(self, answer):
+        entered.set()
+        assert release.wait(timeout=5)
+        return original_resume(self, answer)
+
+    monkeypatch.setattr(
+        SquadController,
+        "resume_with_human_input",
+        coordinated_resume,
+    )
+    outcomes: dict[str, BaseException | None] = {}
+
+    def submit_second() -> None:
+        assert entered.wait(timeout=5)
+        try:
+            _cmd_resume(
+                ["Answer B"],
+                project_root=tmp_path,
+                ext_dir=ROOT / "extension",
+            )
+        except BaseException as error:
+            outcomes["second"] = error
+        else:
+            outcomes["second"] = None
+        finally:
+            release.set()
+
+    second = Thread(target=submit_second)
+    second.start()
+    _cmd_resume(
+        ["Answer A"],
+        project_root=tmp_path,
+        ext_dir=ROOT / "extension",
+    )
+    second.join(timeout=5)
+
+    assert not second.is_alive()
+    assert isinstance(outcomes["second"], SystemExit)
+    state = store.load()
+    assert state["blocked_decision"]["answer_text"] == "Answer A"
+    clarification = Path(state["staging_dir"]) / "user-clarifications.md"
+    assert "**Answer:** Answer A" in clarification.read_text(encoding="utf-8")
     provider.exec_agent.assert_not_called()
 
 
@@ -779,6 +949,138 @@ def test_legacy_squad_rejects_unproven_or_terminal_recovery_state(
     )
 
     assert result.status == "blocked"
+    assert store.load() == before
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "malformation",
+    (
+        "boolean_schema",
+        "unknown_field",
+        "missing_blocked_at",
+        "invalid_blocked_at",
+        "pending_answer_metadata",
+        "malformed_raw_options",
+        "null_recommendation",
+        "null_risk",
+        "recommendation_projection_mismatch",
+        "risk_projection_mismatch",
+    ),
+)
+def test_legacy_squad_rejects_malformed_raw_v1_envelope(
+    tmp_path: Path,
+    malformation: str,
+) -> None:
+    controller, store, provider = _legacy_workflow_controller(
+        tmp_path,
+        autonomy_mode="guided",
+        phase_id="phase1-tracker",
+        reason_code="human_clarification_required",
+    )
+    state_path = store.squad_dir / "state.json"
+    state = store.load()
+    raw = state["blocked_decision"]
+    if malformation == "boolean_schema":
+        raw["schema_version"] = True
+    elif malformation == "unknown_field":
+        raw["unexpected_authority"] = "accepted"
+    elif malformation == "missing_blocked_at":
+        raw.pop("blocked_at")
+    elif malformation == "invalid_blocked_at":
+        raw["blocked_at"] = "not-a-timestamp"
+    elif malformation == "pending_answer_metadata":
+        raw["answer_text"] = "Already answered."
+    elif malformation == "malformed_raw_options":
+        raw["options"] = [{"malformed": True}]
+    elif malformation == "null_recommendation":
+        raw["recommended_answer"] = None
+    elif malformation == "null_risk":
+        raw["risk_level"] = None
+    elif malformation == "recommendation_projection_mismatch":
+        state["escalation_recommended_answer"] = "Use top-level authority."
+        raw["recommended_answer"] = "Use durable authority."
+    elif malformation == "risk_projection_mismatch":
+        state["escalation_risk_level"] = "medium"
+        raw["risk_level"] = "high"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+
+    result = controller.run(
+        user_message="registered user message",
+        mode="guided",
+    )
+
+    assert result.status == "blocked"
+    assert store.load() == before
+    provider.exec_agent.assert_not_called()
+
+
+def test_legacy_squad_rejects_mismatched_durable_choice_projection(
+    tmp_path: Path,
+) -> None:
+    option = _dispatch_cap_option(_dispatch_cap_candidate())
+    top_level_options = [
+        {
+            "id": option.id,
+            "label": option.label,
+            "description": option.description,
+            "recommended": option.recommended,
+            "risk_level": option.risk_level,
+            "next_phase": option.next_phase,
+        }
+    ]
+    controller, store, provider = _legacy_workflow_controller(
+        tmp_path,
+        autonomy_mode="guided",
+        phase_id="terminal-blocked",
+        recovery_phase="phase1-what",
+        reason_code="phase_dispatch_limit",
+        recovery_kind=RecoveryKind.RESOLVE_ISSUE,
+        options=top_level_options,
+    )
+    state_path = store.squad_dir / "state.json"
+    state = store.load()
+    state["blocked_decision"]["options"][0]["label"] = "Different durable label"
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    before = json.loads(state_path.read_text(encoding="utf-8"))
+
+    result = controller.run(
+        user_message="registered user message",
+        mode="guided",
+    )
+
+    assert result.status == "blocked"
+    assert store.load() == before
+    provider.exec_agent.assert_not_called()
+
+
+def test_controller_rejects_registry_with_only_legacy_recovery_policy(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy(source_kind="legacy_recovery")
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    controller._human_input_registry = HumanInputPolicyRegistry((policy,))
+    request = HumanInputPolicyRegistry((policy,)).prepare(
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id=next(iter(policy.allowed_phase_ids)),
+        reason_code=policy.reason_code,
+        question="Which exact boundary should be used?",
+        source_state_revision=store.load()["state_revision"],
+    )
+    before = store.load()
+
+    with pytest.raises(
+        HumanInputPolicyError,
+        match="one exact current policy",
+    ):
+        controller.handle_human_input(request)
+
     assert store.load() == before
     provider.exec_agent.assert_not_called()
 

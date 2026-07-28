@@ -461,7 +461,14 @@ def _install_test_clarification_policy(
         context_paths=(),
         options=(),
     )
-    ctrl._human_input_registry = HumanInputPolicyRegistry((policy,))
+    registered_policy = (
+        replace(policy, source_kind="provider_escalation")
+        if source_kind == "legacy_recovery"
+        else policy
+    )
+    ctrl._human_input_registry = HumanInputPolicyRegistry(
+        (registered_policy,)
+    )
     return policy
 
 
@@ -5060,7 +5067,7 @@ class TestSquadControllerBasics:
         state = store.load()
         state["escalation_resolved"] = True
         store.save(state)
-        request = ctrl._human_input_registry.prepare(
+        request = HumanInputPolicyRegistry((policy,)).prepare(
             source_kind=policy.source_kind,
             producer_id=policy.producer_id,
             phase_id="checkpoint-assess",
@@ -5114,7 +5121,7 @@ class TestSquadControllerBasics:
             max_iterations=5,
             autonomy_mode="banzai",
         )
-        request = ctrl._human_input_registry.prepare(
+        request = HumanInputPolicyRegistry((policy,)).prepare(
             source_kind=policy.source_kind,
             producer_id=policy.producer_id,
             phase_id="phase1-investigate",

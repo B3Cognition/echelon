@@ -466,19 +466,24 @@ loaded by that transaction. The durable field records that source revision;
 the state replacement then advances the ordinary current revision. A stale
 request has no effect.
 
-The existing Phase A execution lock remains the single-run execution guard.
-`spec run`, `spec continue`, and `spec resume` acquire it before sealing,
-claiming, or applying a schema-v2 decision. No new process lease or lock
-hierarchy is introduced. Before a COMMANDER call, the controller changes
-`pending` to `resolving` and increments `attempts`.
+The existing Phase A and run-local execution locks remain the execution
+guards. `spec run`, `spec continue`, and `spec resume` acquire
+`PhaseAExecutionLock` followed by `SpecRunExecutionLock` before loading,
+sealing, claiming, writing a clarification receipt, or applying a schema-v2
+decision. No new process lease or lock-order rank is introduced. Before a
+COMMANDER call, the controller changes `pending` to `resolving` and increments
+`attempts`.
 The decision's `autonomy_mode` is copied from state when sealed and cannot be
 changed by a CLI mode override. Under the execution lock, controller startup
 treats a persisted `resolving` decision as an interrupted call: it returns it
 to `pending` when `attempts < 2`, or fails it with
 `resolution_attempts_exhausted` otherwise. Duplicate model calls are possible
 after a process crash, as they are today, but only one result can pass the
-current state-revision and decision-id checks. Provider-call accounting is
-outside this design.
+current state-revision and decision-id checks. Each COMMANDER attempt's token
+usage is committed exactly once through `token_usage_delta`: a failed attempt
+records it with the failure transition, and a successful attempt records it
+with the resolution transition. Interrupted `resolving` recovery does not
+invent usage; the second claimed attempt is the crash limit.
 
 Resolved decisions remain in state for status/audit display. A later request
 may replace only a resolved or failed decision. Pending, resolving, and
@@ -489,6 +494,11 @@ awaiting-human decisions cannot be overwritten.
 Every Semi, Banzai, or human answer calls
 `SquadController.apply_human_input_resolution(...)`. `spec resume` must not edit
 state or clarification files directly.
+
+`apply_human_input_resolution(..., token_usage_delta=0)` forwards COMMANDER
+usage to `apply_human_input_state_resolution(..., token_usage_delta=0)`.
+`record_human_input_resolution_failure(..., token_usage_delta=0)` commits the
+same per-attempt accounting on the failure path.
 
 The method validates:
 
@@ -525,15 +535,18 @@ the existing labelled section and does not append it twice.
 
 ## CLI Behavior
 
-- `echelon spec status` displays the active decision, mode, question, options,
-  recommendation, risk, and exact recovery command.
+- `echelon spec status` displays the durable decision id, mode, question,
+  options, recommendation, risk, and exact recovery command.
 - `echelon spec continue` resolves `pending` or interrupted `resolving`
   decisions for Banzai and eligible Semi requests. It never clears the decision
   before resolution succeeds.
 - `echelon spec resume "<answer>"` is accepted only for
   `awaiting_human` with a matching `await_human_answer` instruction. It parses
   an exact option id/label or free text and calls the shared controller
-  resolution method.
+  resolution method while holding Phase A then run-local execution leases
+  across state load, file receipt, and state application. The method returns a
+  boolean; the command reports the same durable decision id and leaves
+  `echelon spec continue` to the operator.
 - `spec resume` on a Banzai project decision is rejected because COMMANDER owns
   it. Banzai external prerequisites remain resumable by the human.
 - Manual phase execution and `--next-phase` reject while an unresolved
@@ -552,8 +565,13 @@ the existing labelled section and does not append it twice.
   copying that matched entry's authority; it does not install a wildcard or
   broaden any target, handler, classification, or recommendation rule.
 - Adaptation requires an active schema-v1 `pending` decision whose question,
-  reason, display phase, answer shape, and optional schema-v1 recovery
-  instruction agree. A non-terminal display phase is the source phase. A
+  reason, display phase, answer shape, options, recommendations, risk, and
+  optional schema-v1 recovery instruction agree with their top-level
+  projections. The Squad-only validator requires exact integer
+  `schema_version: 1`, the complete required field set, no unknown fields,
+  valid UTC `blocked_at`, valid option/recommendation/default shapes, and no
+  answer or resolution fields on the pending record. The shared RE schema-v1
+  lifecycle remains unchanged. A non-terminal display phase is the source phase. A
   terminal safeguard display phase is accepted only when
   `phase_dispatch_limit_phase` or `last_dispatch.phase_id` identifies one
   exact non-terminal source phase for the matching current safeguard. A
