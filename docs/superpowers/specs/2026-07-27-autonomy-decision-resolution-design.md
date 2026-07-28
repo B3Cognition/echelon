@@ -1175,24 +1175,46 @@ retained only for authoritative legacy-unbundled runtime paths.
 The policy and `artifact_effects` migration then bumps the exact top-level
 workflow contract version to `2`. New-run bootstrap is one
 `start_phase_a_spec` lifecycle transaction under the existing spec-lifecycle
-and Phase A execution locks. It plans the branch, run id, and target directory;
-builds and fsyncs the content-addressed bundle in the uncommitted target;
-resolves and fsyncs the frozen runtime-profile document; and preflights every
-selected adapter, image, credential mode, token bound, and containment capability before
-`_write_prepared_state`, branch switch, or `.current` commit. Prepared state
-contains all four immutable workflow/profile authority fields, and
-`SquadStateStore.initialize` must preserve and revalidate them rather than
-reconstructing or clearing them.
+and Phase A execution locks. It introduces the no-follow atomic
+`spec-start-intent.json` beside the existing switch intent. The start intent
+has exactly `schema_version: 1`, `operation_id`, nullable `source_run`,
+`source_branch`, `target_run`, `target_branch`, `staging_dir`, `stage`, and
+`created_at`; `stage` is `planned`, `target_prepared`, or `checked_out`.
+Lifecycle acquisition refuses simultaneous start and switch intents.
 
-Any bootstrap failure removes only the uncommitted run directory, branch, and
-unreferenced temporary bundle created by that transaction and leaves the
-previous branch and `.current` pointer unchanged. A crash is recovered through
-the existing lifecycle transaction journal: either no new run is visible or
-the committed pointer names a run whose fsynced bundle, profile attestation,
-and prepared state already agree. Missing runtime, image, profile, or hard
-accounting support reports `provider_containment_unavailable` before
-authoritative run creation. A v1 run with a valid v1 bundle continues against
-that bundle. A legacy unversioned run created before the precursor release is
+After pure planning and target-absence validation, bootstrap writes and fsyncs
+the `planned` start intent before creating a branch, run directory, or prepared
+state. It creates a controller-owned sibling staging directory on the same
+filesystem, builds and fsyncs the content-addressed bundle there, resolves and
+fsyncs the frozen runtime-profile document, and preflights every selected
+adapter, image, credential mode, token bound, and containment capability.
+`_write_prepared_state` is refactored to initialize that staging directory and
+atomically write and fsync `state.json`; it no longer owns creation of the
+canonical target directory. Prepared state contains all four immutable
+workflow/profile authority fields, and `SquadStateStore.initialize` must
+preserve and revalidate them rather than reconstructing or clearing them.
+
+Only after staged authority validates does bootstrap create the branch ref,
+atomically rename the staging directory to `runs/<target-run>`, fsync the
+`runs` parent, and advance the intent to `target_prepared`. It then switches to
+the target branch, records `checked_out`, atomically replaces `.current`,
+fsyncs its parent, and clears the intent. This same start-intent state machine
+handles both an existing source run and first-run activation; the latter no
+longer bypasses durable lifecycle intent.
+
+Recovery preserves the current lifecycle distinction around checkout. From
+`planned` or `target_prepared` while Git remains on `source_branch`, it removes
+the unselected target and branch, restores no mutable source data, and clears
+the intent. Once Git is on `target_branch`, recovery validates the target's
+prepared state, bundle, and profile digests, completes `.current` activation,
+and clears the intent; it does not promise to roll back after checkout. Any
+ambiguous branch/pointer/intent combination requires lifecycle manual repair.
+Thus recovery yields either an unchanged selected source before checkout or a
+fully committed target after checkout, never a pointer to partially prepared
+authority. Missing runtime, image, profile, containment, or token-bound support
+reports the corresponding typed preflight failure before canonical run
+creation. A v1 run with a valid v1 bundle continues against that bundle. A
+legacy unversioned run created before the precursor release is
 automatically migratable only while pristine, before its first provider
 dispatch. Pristine
 means all of the following: `last_dispatch` is null; `completed_phases` and
@@ -1296,11 +1318,11 @@ blocked_decision:
   status: pending | resolving | awaiting_human | resolved | failed
   source_identity:
     identity_kind: workflow_dispatch
-    source_kind: provider_result | human_gate
-    dispatch_key: "phase1-what/agents/chief-product-owner"
+    source_kind: human_gate
+    dispatch_key: "checkpoint-assess/phase/0/checkpoint-assess"
     policy_digest: "<sha256>"
-  source_phase: phase1-what
-  source_reason_code: human_clarification_required
+  source_phase: checkpoint-assess
+  source_reason_code: checkpoint_assess_decision_required
   recovery_generation: 1
   operations_digest: "<sha256>"
   invocation_kind: full_run | manual_phase
@@ -1352,11 +1374,11 @@ decision_history:
     decision_id: dec-<random-token>
     source_identity:
       identity_kind: workflow_dispatch
-      source_kind: provider_result | human_gate
-      dispatch_key: "phase1-what/agents/chief-product-owner"
+      source_kind: human_gate
+      dispatch_key: "checkpoint-assess/phase/0/checkpoint-assess"
       policy_digest: "<sha256>"
-    source_phase: phase1-what
-    source_reason_code: human_clarification_required
+    source_phase: checkpoint-assess
+    source_reason_code: checkpoint_assess_decision_required
     operations_digest: "<sha256>"
     invocation_kind: full_run | manual_phase
     classification: operational | material | execution_blocked
@@ -1651,8 +1673,13 @@ Before `apply_decision`, `SquadController` performs a visible-effect-free
 3. Call the existing `_prepare_controller_completion` before the authorizing
    state write. Its route retains the current exact
    `from_phase`/`to_phase`/`manual_phase_run`/`record_completion` shape. The
-   normalized judgment record contains the decision id and operation id, so the
-   existing `judgment_payload_sha256` binds them into the completion intent.
+   synthetic result's normalized judgment contains exactly one
+   `controller_completion_binding` object with `schema_version: 1`,
+   `binding_kind: decision_resolution`, `decision_id`, `operation_id`, and
+   `disposition`, so the existing `judgment_payload_sha256` binds them into the
+   completion intent. Ordinary routed and terminal completion judgments contain
+   no `controller_completion_binding`; duplicate, unknown, or partial bindings
+   are `intent_invalid`.
    The prepared routing decision separately binds state revision, route, and
    completion id. The judgment record contains only controller-owned decision
    audit data; it never contains raw human input, raw provider output, or
@@ -1705,16 +1732,23 @@ existing `completion_missing` code owns diagnosis. The shared classifier
 prioritizes the marker or that standard diagnostic and exposes only completion
 retry.
 
-Successful `complete_controller_completion` performs the final continuation
-transition in its existing exclusive state transaction. It requires a resolved
-active decision, selected operation and disposition matching the completion
-intent, continuation stage `awaiting_completion`, and the same
-`completion_id`; it then advances a dispatch continuation to `ready` or a
-`finish_without_dispatch` continuation to `consumed`, and clears
-`controller_completion_failure` through the existing lifecycle restore. A
-binding mismatch uses the existing completion-failure/manual-diagnosis path and
-does not mutate the continuation. After completion recovery succeeds, the
-controller follows the operation-specific continuation behavior below.
+Successful `complete_controller_completion` first validates the shared current
+marker, intent, receipts, and provenance exactly as it does for every ordinary
+routed or terminal completion. It then inspects the validated judgments. When
+and only when one exact `binding_kind: decision_resolution` binding is present,
+the same exclusive state transaction additionally requires a resolved active
+decision, selected operation and disposition matching that binding,
+continuation stage `awaiting_completion`, and the same `completion_id`; it then
+advances a dispatch continuation to `ready` or a
+`finish_without_dispatch` continuation to `consumed`. A decision-binding
+mismatch records the existing exact `intent_mismatch`
+`controller_completion_failure` and does not mutate the continuation. A
+completion without that discriminator follows the unchanged ordinary
+completion path and neither requires nor reads decision or continuation state.
+Both paths clear a prior matching completion failure through the existing
+lifecycle restore after successful finalization. After decision-bound
+completion recovery succeeds, the controller follows the operation-specific
+continuation behavior below.
 
 Operation application has two closed continuation behaviors:
 
