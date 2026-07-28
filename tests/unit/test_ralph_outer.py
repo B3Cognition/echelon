@@ -2608,6 +2608,32 @@ class TestOuterLoopConvergence:
         assert decision["action"] == "scoped"
         assert result.passed is True
 
+    def test_single_target_completion_uses_full_fulfillment_refresh(
+        self, tmp_path: Path
+    ) -> None:
+        """A one-target delivery at 100% progress must bootstrap full evidence."""
+        controller, _provider, _gitops, state_store = _make_controller(tmp_path)
+        worktree = tmp_path / "workspace" / "sources" / "prosaic"
+        spec_dir = tmp_path / "workspace" / "specs" / "001-dashboard"
+        worktree.mkdir(parents=True)
+        spec_dir.mkdir(parents=True)
+        state = state_store.read()
+        state["implementation_target"] = "sources/prosaic"
+        state["declared_targets"] = ["sources/prosaic"]
+        state["target_task_ids"] = ["T-001", "T-002"]
+        state["spec_dir"] = str(spec_dir)
+        state["build"] = {
+            "total_tasks": 2,
+            "completed_tasks": 2,
+            "tasks_completed_pct": 100,
+        }
+        state_store.write(state)
+
+        decision = controller._fulfillment_refresh_decision(str(worktree))
+
+        assert decision["action"] == "full"
+        assert decision["reason"] == "single target convergence boundary reached"
+
     def test_convergence_only_fulfillment_policy_skips_failed_slice_refresh(
         self, tmp_path: Path
     ) -> None:

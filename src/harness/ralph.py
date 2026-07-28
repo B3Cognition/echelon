@@ -2094,13 +2094,24 @@ class RalphController:
 
     def _fulfillment_refresh_decision(self, worktree_path: str) -> dict[str, object]:
         policy = self._config.fulfillment.refresh_policy
+        total, completed = self._task_progress_counts()
+        tasks_complete = total > 0 and completed >= total
         if self._target_task_ids() is not None:
+            state = self._state_store.read()
+            declared_targets = state.get("declared_targets")
+            if (
+                tasks_complete
+                and isinstance(declared_targets, list)
+                and len([target for target in declared_targets if str(target).strip()]) == 1
+            ):
+                return {
+                    "action": "full",
+                    "reason": "single target convergence boundary reached",
+                }
             return {
                 "action": "scoped",
                 "reason": "multi-target delivery uses target-owned task scope",
             }
-        total, completed = self._task_progress_counts()
-        tasks_complete = total > 0 and completed >= total
         if policy == "scoped":
             if tasks_complete or total <= 0:
                 return {"action": "full", "reason": "convergence boundary reached"}
