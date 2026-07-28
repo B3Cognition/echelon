@@ -211,11 +211,13 @@ of `phase`, `pre_dispatch`, `stage_agent`, or `sequential_agent`.
 `stage_index` is a non-negative integer only for `stage_agent` and is null
 otherwise. A simple phase uses its phase id as `entry_id`; every nested entry
 must declare a non-empty `id`, and fallback from `id` to agent name is removed.
-`declaration_index` is zero for a simple phase or pre-dispatch entry and is the
+`declaration_index` is zero for a simple phase, the zero-based position in the
+phase's complete YAML `pre_dispatch` list for a pre-dispatch entry, and the
 zero-based position in the phase's complete YAML `agents` list for staged and
-sequential entries; it is never renumbered within a stage. Thus two peers in one
-stage and two entries in different stages cannot acquire the same ordering
-identity by local renumbering.
+sequential entries; it is never renumbered after condition filtering or within a
+stage. Thus two pre-dispatch entries, two peers in one stage, and two entries in
+different stages cannot acquire the same ordering identity by local
+renumbering.
 The canonical key is
 `<phase_id>/<dispatch_kind>/<stage-index-or-zero>/<entry_id>`. The workflow
 validator rejects duplicate nested ids or dispatch keys and inconsistent stage
@@ -337,7 +339,8 @@ cannot recursively escalate. Its static contract is split:
   field are rejected.
 - `DecisionResolutionContract` owns all v2 decision resolution.
 - `LEGACY_BANZAI_ESCALATION_RESULT_CONTRACT` retains the old cleanup fields only
-  when resuming a pre-v2 active decision.
+  when resuming a pre-v2 active decision under an authoritative v1 workflow
+  bundle.
 
 The COMMANDER instructions remove the rule that existential routing judgments
 may preserve `escalation_question`. If an ordinary routing judgment cannot
@@ -449,10 +452,9 @@ performs these steps in order:
    destination, and create a child workspace for each provider-executing
    dispatch;
 2. execute providers only through the child workspace and accumulate detached
-   results, journal proposals, controller-measured usage charges containing both
-   token and USD deltas, product-input proposals, state-update proposals,
-   certificate updates, and staged artifact manifests in the parent
-   transaction;
+   results, journal proposals, controller-normalized usage records,
+   product-input proposals, state-update proposals, certificate updates, and
+   staged artifact manifests in the parent transaction;
 3. join every concurrent stage, then detach and validate all results in declared
    dispatch order against their exact contracts and descriptors;
 4. collect question-bearing results for that stage in declared order. Exactly
@@ -478,36 +480,64 @@ The controller is the only component that may commit a provider attempt's
 validated aggregate after it proves that the complete attempt contains no
 decision request.
 
-Controller-measured usage is accounting, not a provider phase effect. Every
-provider or resolver call receives a controller-generated `usage_id` of
-`<attempt-or-decision-id>/<dispatch-key-or-resolver>/<call-index>`. After a call
-returns, the controller fsyncs an exact usage-spool record below the Squad run
-directory before interpreting the result. `schema_version` is exactly `1`;
-`usage_id` is a non-empty ASCII string of at most 512 characters; `token_delta`
-is a non-negative integer; and `cost_usd_delta` is a finite non-negative decimal
-rounded to six places. The controller hashes `usage_id` for the spool filename,
-so provider identity never selects a path. Usage remains deferred until outcome
-classification, then joins the authoritative success, decision-seal, or failure
-state operation.
+Provider-reported and controller-normalized usage is accounting, not a provider
+phase effect. One backend invocation is one billable call. Result extraction
+repair is therefore controller orchestration, not an internal second call hidden
+inside `SquadCliProvider.exec_agent`: the controller receives and spools the
+initial `CliRunResult`, validates it, and only then may issue a separately
+indexed repair call. Every provider or resolver call receives a
+controller-generated `usage_id` of
+`<attempt-or-decision-id>/<dispatch-key-or-resolver>/<call-index>`. The call
+index starts at zero and advances for initial, repair, and retry calls.
+
+Before each backend invocation, after reserving a receipt slot, the controller
+fsyncs an exact nine-field usage-spool record below the Squad run directory with
+`call_status: started`, unknown token and cost status, and null deltas. It then
+invokes the backend. After return, and before output interpretation or a later
+call, it atomically replaces and fsyncs that record with
+`call_status: returned` and normalized usage.
+
+The nine fields are exactly `schema_version: 1`, `usage_id`, `call_status`,
+`provider_id`, `model_id`, `token_status`, `token_delta`, `cost_status`, and
+`cost_microusd_delta`. Provider and model ids are null or controller-normalized
+non-empty strings. `token_status` is `reported` or `unknown`; `token_delta` is a
+non-negative integer exactly when reported and is null otherwise. `cost_status`
+is `reported`, `estimated`, or `unknown`; `cost_microusd_delta` is a
+non-negative integer exactly when reported or estimated and is null otherwise.
+Conversion from provider currency data uses decimal arithmetic and round-half-
+even to one micro-USD. A backend's default zero with no supporting usage field
+is `unknown`, not a reported zero. The controller hashes `usage_id` for the
+spool filename, so provider identity never selects a path.
+
+On startup, the broker first terminates or proves absent every orphaned OCI call.
+A remaining `started` record is finalized as `returned` with both statuses
+unknown, applied through deferred usage recovery, and associated with the
+ordinary interrupted-attempt failure path; the same call index is never
+replayed. Usage remains deferred until outcome classification, then joins the
+authoritative success, decision-seal, or failure state operation.
 
 The store owns an exact `applied_usage_receipts` list and one
-`_apply_usage_unlocked` primitive. Each receipt has exactly `schema_version: 1`,
-`usage_id`, `token_delta`, and `cost_usd_delta`, matching the fsynced source
-record. Every outcome API and the deferred-usage fallback pass the same records
-through that primitive: a new id applies both deltas and appends its receipt, an
-existing identical id is an idempotent success, and an existing id with
-different deltas is corruption and enters `manual_diagnosis`. The ledger permits
-at most 4,096 entries and 512 KiB of canonical JSON; receipts are never evicted
-within a run. Before starting a provider or resolver call, the controller checks
-that one receipt slot remains while holding the run execution lock; startup
-drains every fsynced unreceipted
-usage record before another call, so the slot cannot be consumed by competing
-work. Exhaustion blocks before billable work. After an ambiguous state-write or
-fsync exception, authority reload determines whether the authoritative outcome
-already owns the usage ids; only absent ids go through deferred fallback.
-Attempt and decision-workspace cleanup preserve every fsynced usage record until
-its id has a durable receipt, so cleanup can neither drop nor reapply token or
-USD usage.
+`_apply_usage_unlocked` primitive. Each receipt repeats the exact nine fields
+from its fsynced source record. A new id adds known token usage to `token_usage`,
+known reported or estimated cost to integer `cost_microusd`, increments
+`unknown_token_usage_calls` or `unknown_cost_calls` when the corresponding
+status is unknown, and appends the receipt. Existing `cost_usd` becomes a
+derived display value and is never independently incremented. An existing
+identical id is an idempotent success; an existing id with any different field
+is corruption and enters `manual_diagnosis`. Budget enforcement uses known
+reported and estimated values and surfaces unknown-call counters; it never
+silently treats unknown cost as zero.
+
+The ledger permits at most 4,096 entries and 512 KiB of canonical JSON;
+receipts are never evicted within a run. Before starting a provider or resolver
+call, the controller checks that one receipt slot remains while holding the run
+execution lock. Startup drains every fsynced unreceipted usage record before
+another call, so the slot cannot be consumed by competing work. Exhaustion
+blocks before billable work. After an ambiguous state-write or fsync exception,
+authority reload determines whether the authoritative outcome already owns the
+usage ids; only absent ids go through deferred fallback. Attempt and decision-
+workspace cleanup preserve every fsynced usage record until its id has a durable
+receipt, so cleanup can neither drop nor reapply usage.
 
 The same ordering applies to `BLOCKED` and `STOP_AND_ASK`. The pre-dispatch
 `phase_dispatch_limit` safeguard enters at sealing step 5 without a provider
@@ -532,34 +562,56 @@ contracts again.
 `PhaseAttemptTransaction` is a controller-owned effect boundary, not a
 best-effort cleanup pass. Artifact ownership uses a new exact
 `artifact_effects` contract; the existing descriptive `outputs` list remains
-documentation and grants no write authority. The controller assigns a random
-attempt id and creates the parent and child workspaces below the Squad run
-directory using the existing no-follow and real-directory checks; workflow or
-provider data never selects their paths:
+documentation and grants no write authority. `artifact_effects` is nested on
+the executable YAML entry that owns it: on the phase object for a simple agent,
+or on the exact `pre_dispatch` or `agents` item for a nested dispatch. The
+workflow never supplies owner identity. During compilation, `PhaseGraph` stamps
+each effect with its trusted `DispatchDescriptor.dispatch_key`. The controller
+assigns a random attempt id and creates the parent and child workspaces below
+the Squad run directory using the existing no-follow and real-directory checks;
+workflow or provider data never selects their paths:
 
 ```yaml
 artifact_effects:
-  - id: issues
-    owner_dispatch_id: speckit-echelon-sage
+  - id: kill_report
     operation: upsert
     destination_root: spec
-    destination_path: issues.md
+    destination_path: kill-report.md
     kind: file
     tree_mode: null
-    required: true
+    presence_by_verdict:
+      PASS: forbidden
+      KILL: required
+      DEFER: forbidden
     move_group: null
 ```
 
-Every descriptor has exactly `id`, `owner_dispatch_id`, `operation`,
-`destination_root`, `destination_path`, `kind`, `tree_mode`, `required`, and
-`move_group`. `operation` is `upsert` or `delete`. An `upsert` publishes the
-complete postimage and covers create, amend, or replace; an existing owned
-destination is seeded into the child so in-place tools can amend it. A `delete`
-grants no writable path and publishes removal after validating the begin-time
-preimage. `destination_root` is one of the controller-resolved aliases `spec`,
-`staging`, `squad`, or `memory`; broad `project` authority is forbidden. `kind`
-is `file` or `tree`; `required` means an upsert postimage or delete preimage must
-exist. `destination_path` is a normalized relative path.
+Every workflow descriptor has exactly `id`, `operation`, `destination_root`,
+`destination_path`, `kind`, `tree_mode`, `presence_by_verdict`, and
+`move_group`; the compiled descriptor additionally contains the controller-
+stamped `owner_dispatch_key`. `operation` is `upsert` or `delete`. An `upsert`
+publishes the complete postimage and covers create, amend, or replace; an
+existing owned destination is seeded into the child so in-place tools can amend
+it. A `delete` grants no provider-controlled publishable postimage and publishes
+controller-staged removal after validating the begin-time preimage.
+`destination_root` is one of the controller-resolved
+aliases `spec`, `staging`, `squad`, or `memory`; broad `project` authority is
+forbidden. `kind` is `file` or `tree`. `destination_path` is a normalized
+relative path.
+
+`presence_by_verdict` is an exact mapping whose keys equal the complete
+effective `allowed_verdicts` set in that executable entry's compiled result
+contract and whose values are `required`, `optional`, or `forbidden`. An entry
+without a finite effective verdict set cannot declare artifact effects and is a
+workflow error. There is no default or wildcard.
+Validation occurs after result-contract validation and before publication. For
+an upsert, `required` requires a staged postimage, `optional` publishes one only
+when present, and `forbidden` rejects a staged postimage or matching
+`output_files` claim. For a delete, `required` requires a begin-time preimage,
+`optional` deletes only when that preimage exists, and `forbidden` performs no
+delete. Both members of a move group must have identical presence mappings.
+This makes verdict-dependent outputs such as `kill-report.md` required for
+`KILL` and forbidden for `PASS` without trusting provider prose.
 
 `tree_mode` is null for files and deletes and is `additive` or `replace` for an
 upsert tree. An additive tree publishes only staged child-manifest changes and
@@ -578,67 +630,176 @@ without granting canonical staging writes.
 
 Before overlap validation, every root alias is resolved through trusted run
 state and normalized to a physical no-follow path. Root aliases may be nested,
-as `staging` is normally below `squad`, but two aliases may not resolve to the
-same physical directory. The validator resolves each complete effect
-destination before checking overlap, so a `squad` tree cannot conceal a
-collision with a `staging` effect. It rejects absolute paths, parent traversal,
-duplicate ids, overlapping file/tree effect destinations after physical
-resolution, undeclared roots, owner mismatch, malformed move groups, unresolved
+as `staging` and read-only `context_dir` are normally below `squad`, but two
+aliases may not resolve to the same physical directory. The validator resolves
+each complete effect destination before checking overlap, so a `squad` tree
+cannot conceal a collision with a `staging` effect.
+
+The controller also resolves a protected-path set containing `state.json`,
+`.controller`, `.publication-outbox`, `.completion-outbox`, usage spools,
+credential workspaces, parent/child attempt workspaces, and `context_dir`.
+An effect destination may not equal, contain, or be contained by a protected
+path. These paths are never seeded or provider-mounted writable. The validator
+rejects absolute paths, parent traversal, duplicate ids, overlapping file/tree
+effect destinations after physical resolution, protected-path overlap,
+undeclared roots, owner mismatch, malformed move groups, unresolved
 placeholders, and any provider dispatch whose effects cannot be redirected.
-Prompts reference writable destinations only through
-`{artifact_effect.<id>}` placeholders. Because the attempt boundary exists
-before a result is known, every Phase A provider-executing dispatch, marked or
-unmarked, declares every writable or deleted artifact through this schema. The
-decision marker controls ingress authority, not filesystem isolation.
+Owner mismatch means a compiled effect is presented by any dispatch other than
+its stamped `owner_dispatch_key`; owner is never read from provider output or
+workflow YAML.
+
+Prompt paths are instructions, not authority. Shared phase and agent documents
+may continue to use controller-mapped `{spec_dir}`, `{staging_dir}`,
+`{context_dir}`, `SQUAD_DIR`, and `STAGING_DIR` aliases. The attempt overlay
+makes every provider write land in a disposable private child, regardless of how
+broad those aliases look in text; `artifact_effects` defines the only paths
+eligible for publication. `{artifact_effect.<id>}` is optional shorthand for an
+exact dispatch-owned destination; it may appear only in a dispatch-specific
+prompt fragment and must resolve to an effect owned by that dispatch. Shared
+multi-mode role files do not use dispatch-specific effect placeholders. Because
+the attempt boundary exists before a result is known, every Phase A provider-
+executing dispatch, marked or unmarked, declares every publishable write or
+delete through the schema. The decision marker controls ingress authority, not
+filesystem isolation.
 
 The controller creates one immutable `AttemptPathMap` per child. It has exactly
-the visible roots `project_root`, `spec_dir`, `staging_dir`, `squad_dir`, and
-`memory_dir`, plus the exact `artifact_effect` paths. `project_root` is always
-read-only. The other visible roots are an overlay of the parent-attempt snapshot
-and that child's owned writable postimages; unowned paths remain read-only.
-Prompt construction, context-pack resolution, environment variables including
-`SQUAD_DIR` and `STAGING_DIR`, phase documents, and extra-file checks all use
-this map. No executor may reconstruct a path from canonical `state.spec_dir`,
-`state.staging_dir`, `_project_root`, or `_squad_dir` while an attempt is open.
+the visible roots `project_root`, `spec_dir`, `staging_dir`, `squad_dir`,
+`memory_dir`, and `context_dir`, plus the exact `artifact_effect` paths.
+`project_root` and `context_dir` are always read-only. `context_dir` is the
+parent-attempt snapshot of the run's controller-owned context directory and is
+never an artifact destination root. The other visible roots are private copy-
+on-write views of the parent-attempt snapshot. A provider may create incidental
+files in its private upper layer, but after execution the controller enumerates
+the complete upper-layer diff; any change not covered by that dispatch's
+compiled effects is `undeclared_artifact_effect`, rejects the attempt, and is
+discarded. No child path is a canonical path. Prompt construction, context-pack
+resolution, environment variables including `CONTEXT_DIR`, `SQUAD_DIR`, and
+`STAGING_DIR`, phase documents, and extra-file checks all use this map. Alias
+validation resolves every root physically and rejects an unexpected alias
+collision. No executor may reconstruct a path from canonical `state.spec_dir`,
+`state.staging_dir`, `state.context_dir`, `_project_root`, or `_squad_dir` while
+an attempt is open.
 
 Provider execution uses an exact controller-created `ProviderExecutionRequest`
 containing the `DispatchDescriptor`, private child CWD, `AttemptPathMap`,
-read-only input roots, exact writable postimages, placeholder mapping, and
-`containment_required: true`. The provider registry exposes
-`ENFORCED_WRITE_CONTAINMENT` only when its backend applies an OS-enforced
-filesystem boundary; CLI permission flags, prompts, CWD selection, and provider
-claims are insufficient. A provider dispatch fails closed before provider
-execution when the selected provider lacks that capability. `SquadCliProvider`,
-`AICodingCliProvider`, and every backend adapter must preserve and attest the
-request rather than reducing it to `project_root`.
+read-only canonical inputs, private overlay roots, exact publishable effects,
+placeholder mapping, and `containment_required: true`. The AI backend capability
+registry exposes `ENFORCED_WRITE_CONTAINMENT` only when its backend applies an
+OS-enforced filesystem boundary that prevents writes to canonical and protected
+host paths. It does not prohibit scratch writes inside the disposable child;
+publication validation handles those. CLI permission flags, prompts, CWD
+selection, and provider claims are insufficient. A provider dispatch fails
+closed before provider execution when the selected provider lacks that
+capability. `SquadCliProvider`, `AICodingCliProvider`, and every backend adapter
+must preserve and attest the request rather than reducing it to `project_root`.
 
-The first supported enforced backend is `oci_brokered_cli`. It executes the
-provider CLI in a controller-selected, digest-pinned OCI image through a
-Docker- or Podman-compatible runtime on Linux or macOS. Windows and a host-only
-CLI backend are unsupported for v2 provider dispatches. The broker bind-mounts
-the parent snapshot and source/config inputs read-only, mounts only the exact
-child postimage paths writable, and supplies controller-created writable
-`HOME`, cache, and temporary directories below the attempt. Each provider
-adapter declares a closed runtime profile naming its image digest, command,
-authentication/config roots, a `credential_mode` of `readonly_mount` or
-`ephemeral_copy`, and ephemeral cache paths; workflow and provider output cannot
-add mounts. `readonly_mount` exposes the host credential root read-only.
-`ephemeral_copy` copies only the adapter-declared credential files into a
-private writable credential directory below the attempt for CLIs that must
-refresh tokens; it is excluded from artifact manifests, scrubbed after its usage
-receipt is durable, and never copied back to the host. Secrets and token-refresh
-files are never copied into artifact postimages. Network behavior remains the
-selected provider's existing network policy and is independent of filesystem
-containment.
+The containment interface is a new `AiExecutionSandbox`, distinct from the
+existing build-oriented `SandboxProvider`: the latter owns a worktree lifecycle
+and one broad worktree mount, while AI attempts require multiple exact read-only
+inputs and isolated writable views per dispatch. `AiExecutionSandbox` reuses
+`HarnessConfig.container_cli`, resource-limit parsing, runtime invocation
+helpers, and image-security utilities; it does not create a second generic
+provider registry or reinterpret `HarnessConfig.provider`.
+
+The first implementation is `OciAiExecutionSandbox`, through a Docker- or
+Podman-compatible runtime on Linux or macOS. It has two closed adapters:
+
+- `OciCliExecutionAdapter` executes `claude`, `codex`, `copilot`, and `opencode`
+  as subprocess CLIs in a controller-selected, digest-pinned OCI image.
+- `OciOpenAICompatibleWorker` starts a controller-owned Python worker in the
+  same OCI boundary and runs the existing HTTP and structured-tool engine
+  inside that worker. Its file tools see only the mounted attempt paths; the
+  host process does not execute provider-selected file operations.
+
+`plain`, an unknown LLM value, Windows, and host-only execution are unsupported
+for v2 provider dispatches. Preflight covers every configured value in
+`VALID_LLM_CLIS` and fails with `provider_containment_unavailable` when its
+specific adapter is absent. The broker bind-mounts the parent snapshot and
+source/config inputs read-only, bind-mounts controller-created private writable
+views over the mapped `spec`, `staging`, `squad`, and `memory` aliases, and
+supplies controller-created writable `HOME`, cache, and temporary directories
+outside artifact roots. A read-only nested mount restores `context_dir`;
+controller-only protected paths inside a writable alias are omitted from the
+private view and masked by controller-created empty read-only mounts, so their
+contents are not exposed. The first implementation uses a runtime-supported
+copy-on-write filesystem when available and a full private copy otherwise; it
+never uses writable hard links to canonical files.
+
+Each adapter declares a closed runtime profile naming its image by immutable
+digest, command or worker entrypoint, authentication/config roots, a
+`credential_mode` of `readonly_mount` or `ephemeral_copy`, and ephemeral cache
+paths; workflow and provider output cannot add mounts. Image resolution calls a
+new fail-closed image-security API: missing pin, inspection failure, timeout,
+empty digest, or mismatch all fail v2 preflight. The existing fail-open
+`validate_digest_pin` behavior is not used for v2.
+
+`readonly_mount` exposes the host credential root read-only. `ephemeral_copy`
+initializes a private controller-owned credential workspace once per
+run-and-adapter, reuses it across initial, repair, retry, and resolver calls so
+token refresh survives, excludes it from artifact manifests, never copies it
+back to the host, and scrubs it when the run becomes terminal or is explicitly
+abandoned. Secrets and token-refresh files are never copied into artifact
+postimages.
+
+The v2 capability is filesystem write containment only. Its initial exact
+network mode is ordinary OCI bridge egress, allowing the selected provider API,
+authentication endpoints, and configured OpenAI-compatible `base_url`; it does
+not claim network isolation. The existing build-sandbox Squid/package allowlist
+continues to govern build sandboxes and is not silently applied to AI provider
+calls. A later network-contained AI profile requires a separate capability and
+cannot change this behavior under the same capability name.
 
 Containment ships before v2 workflow activation. Provider/backend support,
 request attestation, OCI preflight, and attempt overlays land first while the v1
-workflow remains active. The policy and `artifact_effects` migration then bumps
-the workflow schema to v2. Starting a new v2 run performs backend preflight
-before creating run state and reports `provider_containment_unavailable` when
-the required image, runtime, or profile is missing. Existing v1 runs remain on
-their compatibility path; the validator never silently downgrades a v2 dispatch
-to host execution.
+workflow remains active. That precursor release also makes workflow authority
+durable for every new run and adds exact top-level
+`workflow_contract_version: 1` to the installed definition. Before state
+initialization, `PhaseGraph` compiles the installed definition, extension agent
+mapping, every prompt source actually used by executable entries, and referenced
+controller contract registries into a canonical controller-owned workflow
+bundle at
+`<squad_dir>/.controller/workflows/<workflow_digest>/`. The
+`.controller/workflows` tree is never provider-mounted.
+`manifest.json` has exactly `schema_version: 1`,
+`workflow_contract_version`, `compiled_graph_sha256`,
+`source_manifest_sha256`, and `workflow_digest`. `sources.json` is a canonical
+array sorted by logical path; each entry has exactly `logical_path`, `kind`, and
+`sha256`, where `kind` is `phase_prompt`, `agent_prompt`,
+`extension_mapping`, or `controller_contract`. Source bytes live under
+`sources/<sha256>` and the canonical compiled graph under
+`compiled-graph.json`. `workflow_digest` hashes the canonical manifest fields
+other than itself together with the exact compiled graph and source-manifest
+bytes. The contract version is integer `1` or `2`; every digest is lowercase
+64-character hexadecimal. Logical paths are normalized relative POSIX paths;
+absolute paths, parent traversal, duplicates, unknown kinds, missing content,
+and content/hash mismatch reject the bundle.
+
+State initialization stores `workflow_contract_version` and `workflow_digest`
+in exact top-level fields. The complete bundle is fsynced and atomically sealed
+before state creation and is immutable; resume, continue, manual phase replay,
+decision migration, policy validation, and prompt construction load authority
+from it rather than rereading the currently installed extension. Every load
+revalidates manifest, source, compiled-graph, and state digests. Display-only
+extension drift warnings remain permitted. `PhaseGraph.from_installed(...)` is
+used only to prepare a new or explicitly migrated bundle;
+`PhaseGraph.from_bundle(...)` is the only runtime dispatch constructor.
+
+The policy and `artifact_effects` migration then bumps the exact top-level
+workflow contract version to `2`. Starting a new v2 run performs backend
+preflight before writing the bundle or run state and reports
+`provider_containment_unavailable` when the required image, runtime, or profile
+is missing. A v1 run with a valid v1 bundle continues against that bundle. A
+legacy unversioned run created before the precursor release cannot be called
+compatible: activation either requires it to finish, or an explicit controller
+migration validates the current v2 graph, provider preflight, phase identity,
+pending decision authority, and artifact roots before installing and fsyncing
+the content-addressed v2 bundle. The subsequent state CAS writes the v2 version
+and digest and is the single authority switch. A crash before that CAS leaves
+an unreferenced immutable bundle that a retry may revalidate and reuse; a crash
+after it cannot expose missing bundle bytes. Validation failure leaves workflow
+authority unchanged and puts the run in `manual_diagnosis`. The validator never
+silently substitutes the installed v2 graph for v1 authority or downgrades a v2
+dispatch to host execution.
 
 Concurrent child dispatches are seeded from the same parent-attempt snapshot and
 cannot read or write peer child workspaces. After a stage joins and all results
@@ -665,7 +826,27 @@ sequential supersession rule.
 After a complete non-question phase passes result, artifact, and
 controller-contract validation, provider-staged effects are imported into the
 same `SquadPublicationTransaction` builder used by controller-owned external
-effects. The builder seals one combined manifest and one existing
+effects. Import lowers every effect to the builder's existing regular-file
+operations before sealing; the durable publication schema gains no tree or move
+action:
+
+- a file upsert becomes one `add_write`, and a file delete becomes one
+  `add_delete`;
+- an additive tree is walked in normalized lexical order, rejects symlinks and
+  special files, and adds writes only for staged regular files whose postimage
+  differs from the begin-time snapshot;
+- a replacement tree performs the same walk and additionally adds file deletes
+  for regular canonical descendants present in the begin-time snapshot but
+  absent from the staged tree;
+- a file move becomes one write seeded from the source preimage plus one delete;
+  a tree move enumerates the source and lowers to paired file writes and deletes
+  in normalized lexical order.
+
+All lowered operations retain the compiled owner dispatch key and source effect
+id in the aggregate effect digest. Empty required trees fail validation; empty
+optional additive trees are no-ops. Directory creation and removal are
+consequences of file publication and cleanup, not manifest operations. The
+builder seals one combined manifest and one existing
 `pending_external_publication` marker containing begin-time destination
 preimage hashes, staged hashes, dispatch identities, aggregate effect digest,
 and completion intent. There is never a second provider-publication marker.
@@ -851,12 +1032,16 @@ decision_continuation:
   target_phase: phase1-why1
   dispatch_lease_id: null
   dispatch_lease_expires_at: null
+  failure_dispatch_sha256: null
+  recovery_instruction_sha256: null
   consumed_at: null
 ```
 
-The record has exactly these fourteen fields. Lease fields are non-null only in
-`dispatching`; `consumed_at` is non-null only in `consumed`. A replay-source
-operation has `disposition: dispatch_source`. A route-and-finish operation has
+The record has exactly these sixteen fields. Lease fields are non-null only in
+`dispatching`. `failure_dispatch_sha256` and
+`recovery_instruction_sha256` are non-null only in `blocked`; `consumed_at` is
+non-null only in `consumed`. A replay-source operation has
+`disposition: dispatch_source`. A route-and-finish operation has
 `dispatch_target` only for a full run whose target is an executable graph phase;
 manual routes, terminal targets, and controller-only targets use
 `finish_without_dispatch`. The disposition is computed and attested during
@@ -893,8 +1078,11 @@ new decision.
 
 `state_transaction_namespace` registers `decision_history`,
 `legacy_decision_history`, `decision_clarifications`, `decision_continuation`,
-`applied_usage_receipts`, `blocked_decision`, and `recovery_instruction` as
-store-owned transaction keys.
+`applied_usage_receipts`, `cost_microusd`, `unknown_token_usage_calls`,
+`unknown_cost_calls`, `blocked_decision`, and `recovery_instruction` as
+store-owned transaction keys. `workflow_contract_version` and `workflow_digest`
+are immutable workflow-authority keys: only initialization or the dedicated
+legacy-unversioned workflow migration may write them.
 `why2_metric_stagnation_count` is added to atomic store control keys and trusted
 routing effects before safeguard migration. These keys may be changed only by
 the exact `SquadStateStore` decision methods below, controller-completion
@@ -915,19 +1103,19 @@ expected status, and lease identity as applicable, increments
 mismatch returns a stale outcome without mutation.
 
 The existing ordinary prepared phase-advance and prepared failure-settlement
-APIs also accept `usage_charges` and call `_apply_usage_unlocked` in their
+APIs also accept `usage_records` and call `_apply_usage_unlocked` in their
 authoritative state operation. No success, decision, or failure path calls
 `increment_cost` or increments `token_usage` separately.
 
 - `seal_decision(snapshot, prepared_identity, decision, instruction,
-  continuation_receipt, usage_charges)` accepts only a newly validated
+  continuation_receipt, usage_records)` accepts only a newly validated
   decision-bearing prepared result or a registered controller safeguard.
   `continuation_receipt` is null for an ordinary source and must be the exact
   current claim receipt when the producer is a continuation dispatch. The method
   archives an existing resolved/failed active record only after validating its
   history and continuation preconditions, then writes the new active decision,
-  recovery instruction, blocked lifecycle state, and idempotent controller-
-  measured source token and USD charges. A decision produced by the exact
+  recovery instruction, blocked lifecycle state, and idempotent normalized
+  source usage records. A decision produced by the exact
   dispatch that owns a `dispatching` continuation consumes and archives that
   continuation in the same transaction before installing the new decision. It
   does not update `last_dispatch` or phase completion.
@@ -940,13 +1128,13 @@ authoritative state operation. No success, decision, or failure path calls
   every later settle/apply CAS use that receipt; callers never reconstruct
   lease identity from a stale pre-claim snapshot. It does not route.
 - `settle_decision(snapshot, decision_id, lease_id, outcome,
-  usage_charges)` handles state-only transitions to `pending`,
+  usage_records)` handles state-only transitions to `pending`,
   `awaiting_human`, or `failed`, including recovery-generation replacement,
   lease clearing, audit append, idempotent history append for failure, and the
-  idempotent controller-measured resolver token and USD charges. It cannot
+  idempotent normalized resolver usage records. It cannot
   change phase.
 - `apply_decision(snapshot, decision_id, expected_lease_id, operation,
-  prepared_route, completion_marker, continuation, usage_charges)` accepts only
+  prepared_route, completion_marker, continuation, usage_records)` accepts only
   controller-prepared, mutually attested application artifacts. It revalidates
   the sealed operation, static policy digest, concrete operations digest,
   current workflow edge or registered recovery route, exact transaction
@@ -954,8 +1142,8 @@ authoritative state operation. No success, decision, or failure path calls
   of an older pending publication, completion, or unconsumed continuation under
   the state lock. It then records the replay-source route, gate edge, or
   safeguard repair through the single state-advance commit primitive while
-  atomically resolving the decision, applying the idempotent controller-measured
-  resolver token and USD charges, applying the operation-specific run-status
+  atomically resolving the decision, applying idempotent normalized resolver
+  usage records, applying the operation-specific run-status
   effect, installing the pending completion marker, and writing
   `decision_continuation.stage: awaiting_completion`.
   Human resolutions use `expected_lease_id: null` and require
@@ -966,35 +1154,46 @@ authoritative state operation. No success, decision, or failure path calls
 - `claim_decision_continuation(snapshot, continuation_id,
   recovery_attestation)` accepts `ready`, or `blocked` only when the shared
   recovery classifier attests that the exact previous continuation dispatch has
-  a retryable phase failure and names the same dispatch phase. It rejects
-  `finish_without_dispatch`. It verifies the active resolved decision,
-  disposition, and invocation kind, then writes `dispatching` with a random
-  dispatch lease and expiry. It returns an exact ten-field
+  a retryable phase failure and names the same dispatch phase. For `blocked`, it
+  recomputes the canonical hash of current `last_dispatch` and the canonical
+  five-field `RecoveryInstruction`, requires exact equality with
+  `failure_dispatch_sha256` and `recovery_instruction_sha256`, and rejects stale
+  same-phase recovery generations. It rejects `finish_without_dispatch`. It
+  verifies the active resolved decision, disposition, and invocation kind, then
+  writes `dispatching` with a random dispatch lease and expiry and clears both
+  failure hashes. It returns an exact ten-field
   `ContinuationClaimReceipt` containing `schema_version: 1`, `continuation_id`,
   `dispatch_lease_id`, `dispatch_lease_expires_at`, committed `state_revision`,
   `invocation_kind`, `disposition`, `source_phase`, `target_phase`, and
   `previous_dispatch_sha256`. An expired `dispatching` lease may be reclaimed
   under the same execution-lock and CAS rules.
 - `settle_decision_continuation(snapshot, continuation_id,
-  dispatch_lease_id, prepared_outcome, usage_charges)` runs inside the first
+  dispatch_lease_id, prepared_outcome, usage_records)` runs inside the first
   authoritative state advance produced by the real source/target dispatch. The
   controller-prepared outcome is exactly `success`, `retryable_failure`, or
   `terminal_failure`; a `new_decision` outcome uses `seal_decision` above so
   there is only one active-decision replacement transaction. Failure
-  classification and its recovery instruction come from the same standard
-  failure-preparation helper consumed by the shared recovery classifier; the
-  continuation method does not invent a second retry policy.
+  classification uses the existing `retry_phase_recovery(dispatch_phase,
+  reason_code)` constructor and writes the normal failure fields consumed by
+  `echelon.cli._classify_run_recovery`; the continuation method does not invent
+  a second retry policy. A new continuation-recovery binding validator, called
+  by both settlement and the shared classifier, hashes the exact canonical
+  `last_dispatch` object written by the normal prepared-failure path and the
+  canonical recovery instruction. Settlement derives `last_dispatch` from the
+  prepared dispatch attestation once, writes it, and stores the hash of those
+  exact bytes in the same CAS.
   `retryable_failure` writes `blocked`, clears the lease, retains null
-  `consumed_at`, installs that prepared standard recovery instruction, and
-  preserves invocation kind and disposition. Every other outcome writes
-  `consumed`, clears the lease, and records `consumed_at`. Both paths apply the
-  same idempotent token and USD charges.
+  `consumed_at`, installs that prepared standard recovery instruction, stores
+  both binding hashes, and preserves invocation kind and disposition. Every
+  other outcome writes `consumed`, clears the lease and failure hashes, and
+  records `consumed_at`. Both paths apply the same idempotent usage records.
 - `migrate_legacy_squad_decision(snapshot, compiled_policy,
   invocation_attestation)` is the only v1-to-v2 migration API. It may reconstruct
-  a pending v1 decision only from the supplied current graph policy and exact
-  full/manual invocation proof. It archives a terminal v1 record only through
-  `legacy_decision_history` and never reconstructs terminal operation authority.
-  Generic save has no migration authority.
+  a pending v1 decision only from policy compiled from the run's authoritative
+  workflow bundle and exact full/manual invocation proof; it never reads policy
+  from the currently installed extension. It archives a terminal v1 record only
+  through `legacy_decision_history` and never reconstructs terminal operation
+  authority. Generic save has no migration authority.
 
 No decision or continuation path calls generic `SquadStateStore.save`.
 State-only methods do not fabricate `last_dispatch`; phase-changing or
@@ -1114,8 +1313,9 @@ Migration rules:
    load/save validates and preserves them but never migrates them.
 2. The explicit Squad migration API normalizes a pending v1 decision once to v2
    only when its original source phase or blocked reason resolves to the
-   supplied compiled policy and its invocation kind is proven by an attested
-   full-run entrypoint or matching persisted manual-dispatch metadata. The
+   policy compiled from the run's authoritative workflow bundle and its
+   invocation kind is proven by an attested full-run entrypoint or matching
+   persisted manual-dispatch metadata. The
    conversion preserves its question, options, recommendation, blocked phase,
    timestamps, and v1 resume metadata, computes both digests from reconstructed
    static policy and concrete operations, and takes `source_reason_code` from
@@ -1325,10 +1525,10 @@ Continuation transitions are also closed:
 | successful completion drain for `dispatch_source` or `dispatch_target` | matching pending completion and `awaiting_completion` | `ready` |
 | successful completion drain for `finish_without_dispatch` | matching pending completion and `awaiting_completion` | `consumed` |
 | initial continuation claim | `ready`, dispatching disposition | `dispatching` with new lease |
-| retry continuation claim | `blocked`, matching standard retry attestation and dispatch phase | `dispatching` with new lease |
+| retry continuation claim | `blocked`, matching dispatch and recovery hashes, standard retry attestation, and dispatch phase | `dispatching` with new lease and cleared failure hashes |
 | expired continuation reclaim | expired `dispatching` | `dispatching` with replacement lease |
-| successful, terminal-failure, or new-decision outcome of exact real dispatch | matching `dispatching` lease | `consumed` |
-| retryable-failure outcome of exact real dispatch | matching `dispatching` lease | `blocked`, invocation kind and disposition retained |
+| successful, terminal-failure, or new-decision outcome of exact real dispatch | matching `dispatching` lease | `consumed` with cleared failure hashes |
+| retryable-failure outcome of exact real dispatch | matching `dispatching` lease | `blocked` with exact dispatch and recovery hashes; invocation kind and disposition retained |
 | process loss before authoritative dispatch outcome | `dispatching` | unchanged until lease expiry, then reclaimable |
 | stale continuation result | id, stage, lease, disposition, source, or target mismatch | unchanged |
 
@@ -1431,7 +1631,8 @@ The controller validates the identity, operation id, policy classification,
 and operation preconditions before it writes any state. This decision contract
 replaces the current banzai cleanup-intent output for the new path; the
 controller alone clears lifecycle state. Legacy banzai escalation recovery
-keeps its old contract only for pre-v2 active runs.
+keeps its old contract only for pre-v2 active runs with an authoritative v1
+workflow bundle.
 
 For semi material decisions, COMMANDER's operation becomes
 `recommended_operation_id`; the controller changes the record to
@@ -1536,8 +1737,10 @@ the controller supplies its approve/reject operations and context pack.
   recommendation binding rules above. `record_clarification` accepts bounded
   answer text; `record_prerequisite` accepts bounded prerequisite text and
   reruns its sealed verifier before continuation.
-- Old runs without v2 records retain the existing escalation and recovery
-  compatibility paths.
+- Old runs without v2 decision records retain the existing escalation and
+  recovery compatibility paths. This concerns decision schema only: any later
+  provider dispatch still requires a valid run-local workflow bundle or the
+  explicit legacy-unversioned workflow migration described above.
 - Before `spec run`, `phase run`, `spec run --next-phase`, `continue`, `resume`,
   or any override mutates phase or dispatches a provider, the shared controller
   guard validates active decision, completion, and continuation authority.
@@ -1589,40 +1792,56 @@ move together:
 - `harness.phase_graph` and `harness.workflow_validator`: parse, compile, hash,
   and validate static policy cases, reason codes, concrete-operation digest
   inputs, the complete immutable `DispatchDescriptor`, normalized dependency
-  dispatch keys, disjoint parallel proposal ownership, exact
-  `artifact_effects`, physical-root overlap, and gate outcome edges.
+  dispatch keys, pre-dispatch declaration positions, disjoint parallel proposal
+  ownership, executable-entry-local `artifact_effects`, exact
+  `presence_by_verdict`, physical-root and protected-path overlap, and gate
+  outcome edges.
+- new `harness.workflow_bundle`, `harness.phase_graph`, and
+  `harness.squad_state`: compile and fsync immutable run-local workflow and
+  prompt authority before state creation; persist exact workflow version and
+  digest; load bundles for every resumed dispatch and policy check; support only
+  explicit validated migration for legacy unversioned runs.
 - `harness.squad_provider`, `harness.llm_provider`,
-  `harness.llm_tool_policy`, `harness.provider_capability`, the new
-  controller-owned OCI execution broker, and every AI CLI backend adapter:
-  preserve and attest the exact `ProviderExecutionRequest` and
-  `AttemptPathMap`; implement closed digest-pinned runtime profiles and
-  read-only auth/config plus ephemeral home/cache/tmp mounts; expose
-  `ENFORCED_WRITE_CONTAINMENT` only for the OCI backend; run v2 preflight before
-  state creation; fail closed for unsupported provider dispatches; and return
-  typed provider-validation failures instead of fabricated provider-shaped
-  blocks.
+  `harness.llm_tool_policy`, `harness.provider_capability`,
+  `harness.ai_cli_backend`, the new controller-owned `AiExecutionSandbox`, and
+  every AI backend adapter: preserve and attest the exact
+  `ProviderExecutionRequest` and `AttemptPathMap`; implement the closed CLI and
+  OpenAI-compatible OCI worker adapters, bridge-network declaration,
+  digest-pinned runtime profiles, persistent per-run ephemeral credentials, and
+  ephemeral home/cache/tmp mounts; expose `ENFORCED_WRITE_CONTAINMENT` only for
+  these OCI adapters; run complete backend-matrix preflight before state
+  creation; fail closed for unsupported dispatches; move result-repair call
+  orchestration to the controller; and return typed provider-validation
+  failures instead of fabricated provider-shaped blocks.
+- `harness.image_security`: add the v2 fail-closed digest resolution API. The
+  existing fail-open build-sandbox compatibility function remains separate and
+  cannot authorize `OciAiExecutionSandbox`.
 - `harness.squad_executors` and `harness.prepared_phase_result`: introduce the
   trusted decision envelope, remove provider blocking-contract bypasses, attest
   the complete dispatch descriptor without giving it state authority, route
   prompt/context/extra-file resolution only through `AttemptPathMap`, remove
-  provider-attempt direct state/journal/cost writes, and accumulate all child
-  artifact effects, results, journals, usage, product-input, certificate, and
-  state proposals inside one phase-scoped `PhaseAttemptTransaction`.
+  provider-attempt direct state/journal/cost writes, reject complete child-
+  overlay diffs not covered by compiled effects, and accumulate all child
+  artifact effects, results, journals, exact per-call usage records, product-
+  input, certificate, and state proposals inside one phase-scoped
+  `PhaseAttemptTransaction`.
 - `harness.squad_publication` and `harness.state_transaction_namespace`: import
-  provider-staged upserts, deletes, atomic move pairs, and additive/replacement
-  trees into the existing single publication builder; bind begin-time preimages
-  and aggregate effect identity to its one durable marker; and register
-  decision, continuation, legacy-history, usage-receipt, and safeguard-counter
-  ownership.
+  provider-staged upserts and deletes, lower move pairs and
+  additive/replacement trees to existing regular-file operations, bind
+  begin-time preimages and aggregate effect identity to its one durable marker,
+  and register decision, continuation, legacy-history, usage-receipt, and
+  safeguard-counter ownership.
 - `harness.blocked_decision`, `harness.recovery_instruction`,
   `harness.state_transaction_namespace`, and `harness.squad_state`: implement
   exact v2 records, dual digests, invocation kind, recovery-generation equality,
   clarification and legacy-ledger ownership, exact continuation state,
   `DecisionClaimReceipt`, dedicated decision/migration/continuation CAS methods,
-  blocked continuation retry scope, exact v1 source-phase projection, generic-
-  save mutation guards, the shared unlocked advance and idempotent usage
-  primitives, bounded usage receipts, operation-specific status effects,
-  authority-aware cleanup, and completion-bound application.
+  failure-dispatch and recovery-instruction hashes for blocked continuation
+  retry, exact v1 source-phase projection, generic-save mutation guards, the
+  shared unlocked advance and idempotent nine-field usage primitives, bounded
+  usage receipts, integer micro-USD and unknown-usage counters, operation-
+  specific status effects, authority-aware cleanup, and completion-bound
+  application.
 - `harness.squad`: centralize interception, autonomy resolution, completion
   preparation/drain and authority ownership, phase-attempt aggregation,
   deterministic parallel-question arbitration, dedicated prepared continuation
@@ -1632,29 +1851,37 @@ move together:
   contracts.
   Safeguards seal before legacy terminal-phase writes.
 - `echelon.cli`: consume v2 instructions through the existing shared recovery
-  classifier, prioritize pending completion and ready/blocked/expired
-  continuation authority before generic phase retry, keep manual retries on the
-  dedicated one-phase path, guard every full/manual/override entrypoint,
-  implement exact
+  classifier with continuation-generation binding, prioritize pending
+  completion and ready/blocked/expired continuation authority before generic
+  phase retry, load the run-local workflow bundle before dispatch, keep manual
+  retries on the dedicated one-phase path, guard every full/manual/override
+  entrypoint, implement exact
   `--operation`/`--answer` syntax, and route `status`, `continue`, and `resume`
   through controller APIs rather than direct state/file writes.
 - `extension/workflow/definition.yaml`: declare the complete producer matrix,
-  policies, result contracts, explicit nested ids, valid exact dependencies,
-  exact `artifact_effects` for every provider dispatch, question-bearing verdict
-  migration, and gate outcomes. In particular, PLAN2's current
+  exact top-level `workflow_contract_version: 2`, policies, result contracts,
+  explicit nested ids, valid exact dependencies,
+  executable-entry-local `artifact_effects` with complete verdict presence
+  mappings for every provider dispatch, question-bearing verdict migration, and
+  gate outcomes. In particular, PLAN2's current
   `speckit-echelon-gatekeeper-assess2` dependency is corrected to the declared
   `speckit-echelon-gatekeeper` id before dependency validation is enabled.
-- every Phase A document under `extension/workflow/phases/*.md` and every agent
-  document referenced by a Phase A provider dispatch under
-  `extension/agents/**/*.md`: replace canonical write/move instructions with
-  exact `{artifact_effect.<id>}` destinations, retain canonical-looking
-  `{spec_dir}`, `{staging_dir}`, `SQUAD_DIR`, and `STAGING_DIR` only as
-  controller-mapped attempt roots, and remove any instruction that reconstructs
-  a writable project or run path. Build, RE, and verify-spec documents remain
-  outside this Phase A attempt migration.
+- prompt migration follows compiled prompt sources, not filesystem globs. For
+  each Phase A provider dispatch, inspect only the phase fragment actually
+  included by its executor and its referenced agent role file. Retain
+  `{spec_dir}`, `{staging_dir}`, `{context_dir}`, `SQUAD_DIR`, and `STAGING_DIR`
+  as controller-mapped attempt roots; use `{artifact_effect.<id>}` only in
+  dispatch-specific fragments; and remove instructions that reconstruct a
+  writable project or run path. Shared multi-mode role files keep mapped root
+  aliases. `commander_internal` no-op documents and phase documents intentionally
+  excluded by staged prompt assembly, including `phase3-consensus.md`, are not
+  mechanically rewritten. Build, RE, and verify-spec documents remain outside
+  this Phase A attempt migration.
 - `extension/echelon-config.yml` and `extension/config-template.yml`: ship the
   bounded `analysis.decision_resolution` defaults and closed OCI provider
-  runtime-profile selection consumed by the shared strict parser.
+  runtime-profile selection, adapter-specific immutable image digest,
+  credential mode, and explicit `bridge` AI network mode consumed by the shared
+  strict parser.
 - `extension/agents/control/commander.md`: remove recursive/existential human
   escalation and legacy file ownership from v2 instructions; document the
   exact routing, decision-resolution, and explicitly labeled legacy contracts.
@@ -1664,32 +1891,50 @@ move together:
 
 ## Verification
 
-Unit tests cover explicit v1-to-v2 migration, generic-save non-migration,
-terminal v1 legacy-history archival, non-migration when invocation authority is
-absent, v2 and continuation preservation across save, generic-save mutation
+Unit tests cover workflow-bundle compilation, source hashing, fsync-before-state
+ordering, immutable reload after installed extension drift, version/digest
+state validation, explicit legacy-unversioned-to-v2 migration, migration
+rollback on preflight or graph failure, generic-save non-migration, terminal v1
+legacy-history archival, and non-migration when invocation authority is absent.
+They cover v2 and continuation preservation across save, generic-save mutation
 guards, exact history and audit validation, idempotent bounded history append,
 non-evicting clarification-ledger append and capacity failure, decision-case
 selection from detached result state with no persisted-state fallback, the
 complete existing-producer policy matrix, policy reason codes, static policy
 drift, concrete operations drift, immutable dispatch-key derivation and
-uniqueness, declaration-index derivation, dependency-key compilation and
-rejection of the current mismatched dependency id, every tagged operation and
-trigger descriptor, fixed/generated effective answer selection, immutable issue
-snapshots and exact ledger projection, registered recovery routes, strict
-artifact-effect descriptors, physical alias overlap, upsert/delete/move and
-additive/replacement tree semantics, begin-time preimage capture,
-`AttemptPathMap` resolution, deterministic child-workspace and non-artifact
-proposal merge, one combined publication manifest, idempotent token-and-USD
-usage receipts and pre-call capacity checks, clarification projection,
-prerequisite verifier behavior,
-recovery-instruction v1/v2 validation and reason equality, valid and invalid
-config parsing with no mutation, every decision, continuation, and Squad status
-transition, decision and continuation lease claiming and expiry, retry
-exhaustion, authority-aware prepared-completion cleanup, and stale-result
-rejection. Validator regressions prove malformed question-bearing `BLOCKED`
-results cannot use a base-validator fast path, question-bearing `ESCALATE` is
-rejected, and provider validation repair failure becomes the typed controller
-failure path.
+uniqueness, pre-dispatch and agent declaration-index derivation, dependency-key
+compilation and rejection of the current mismatched dependency id, every tagged
+operation and trigger descriptor, fixed/generated effective answer selection,
+immutable issue snapshots and exact ledger projection, and registered recovery
+routes.
+
+Artifact tests cover executable-entry ownership stamping, complete
+`presence_by_verdict` mappings, conditional required/optional/forbidden effects,
+physical alias and protected-path overlap, mapped read-only `context_dir`,
+upsert/delete/move and additive/replacement tree semantics, special-file
+rejection, complete private-overlay diffing and undeclared-change rejection,
+deterministic tree lowering to existing file manifest operations, begin-time
+preimage capture,
+`AttemptPathMap` resolution, shared multi-mode prompts without unresolved
+dispatch placeholders, deterministic child-workspace and non-artifact proposal
+merge, and one combined publication manifest.
+
+Usage tests cover exact nine-field started/returned spool records,
+reported/estimated/unknown normalization, integer micro-USD rounding,
+unknown-call counters, idempotent receipts, and pre-call capacity checks. Crash
+tests cover loss after pre-call intent fsync, during an orphaned OCI call, after
+the initial call but before interpretation, between initial and repair calls,
+after repair but before settlement, and during deferred receipt application.
+Remaining unit coverage includes clarification projection, prerequisite
+verifier behavior, recovery-instruction v1/v2 validation and reason equality,
+blocked-continuation failure and recovery hash equality, stale same-phase
+recovery rejection, valid and invalid config parsing with no mutation, every
+decision, continuation, and Squad status transition, decision and continuation
+lease claiming and expiry, retry exhaustion, authority-aware prepared-
+completion cleanup, and stale-result rejection. Validator regressions prove
+malformed question-bearing `BLOCKED` results cannot use a base-validator fast
+path, question-bearing `ESCALATE` is rejected, and provider validation repair
+failure becomes the typed controller failure path.
 
 Integration tests cover each producer path in guided, semi, and banzai:
 `STOP_AND_ASK` escalation, `BLOCKED` escalation, nested-agent escalation, both
@@ -1701,15 +1946,22 @@ occurs before all artifact and non-artifact effects and ordinary routing,
 parallel peers are joined and arbitrated in declaration order, multiple peer
 questions fail as `ambiguous_parallel_decision`, a nested question abandons all
 peer/stage work from that phase attempt, later stages see only validated parent-
-attempt output through mapped `{spec_dir}` and extra-file paths, providers
-without enforced containment fail before execution, missing OCI runtime/profile
-blocks before run-state creation, host fallback is impossible, and discarded
-phase effects are recomputed after redispatch. They also assert that
+attempt output through mapped `{spec_dir}`, `{context_dir}`, and extra-file
+paths, providers without enforced containment fail before execution, missing
+OCI runtime/profile blocks before run-state creation, host fallback is
+impossible, and discarded phase effects are recomputed after redispatch. The
+backend matrix runs one contained dispatch through each configured CLI adapter
+and the contained OpenAI-compatible worker; digest inspection failure is fail-
+closed, refreshed ephemeral credentials survive a repair/retry and are scrubbed
+only at terminal cleanup, and bridge egress behavior is explicit. A v1 bundled
+run continues with its bundled graph and prompt after the installed extension
+becomes v2, while an unversioned run never silently acquires v2 authority. Tests
+also assert that
 CARTOGRAPHER's staging-to-spec promotion publishes one atomic move without a
 canonical provider write, KB proposal trees merge additively, one publication
 marker owns provider and controller effects, changed begin-time preimages never
-overwrite newer files, ambiguous state-write exceptions never duplicate token
-or USD charges, and authority-aware cleanup drains every fsynced usage record.
+overwrite newer files, ambiguous state-write exceptions never duplicate usage
+records, and authority-aware cleanup drains every fsynced usage record.
 
 Lifecycle integration asserts that generic `save` is never used, public
 `advance` is not called recursively under the exclusive state lock, every
