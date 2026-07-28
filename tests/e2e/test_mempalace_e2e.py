@@ -415,15 +415,15 @@ class TestPipelineEngineWingThreading:
         )
 
     def test_mine_then_pipeline_uses_same_wing(self, project_dir, isolated_palace):
-        """Requirements mined via RequirementsMiner and searched via PipelineEngine RE phase use same wing."""
+        """Requirements mined via SpecMemoryMiner and searched via PipelineEngine RE phase use same wing."""
         pytest.importorskip("mempalace", reason="mempalace SDK not installed in test runner Python")
         from codegen.pipeline.pipeline_engine import PipelineEngine
         from codegen.memory.context import MemPalaceContext
-        from codegen.memory.requirements_miner import RequirementsMiner
+        from echelon.spec_memory_miner import SpecMemoryMiner
 
         # Mine requirements
         ctx = MemPalaceContext(wing="api-project", run_id="mine-run", palace_path=str(isolated_palace))
-        miner = RequirementsMiner(ctx, project_dir=project_dir)
+        miner = SpecMemoryMiner(ctx, project_dir=project_dir)
         mine_result = miner.mine_file(project_dir / "spec.md")
         assert mine_result.written > 0, (
             f"Expected at least 1 drawer written, got {mine_result.written}. "

@@ -609,6 +609,8 @@ def land(
         logger.info("land: %s — feature branch not found, already landed", spec_id)
         _cleanup_worktrees(spec_id, wrapper_project_dir, gitops)
         _delete_harness_branches(spec_id, project_dir)
+        if spec_dir:
+            write_status(spec_dir, "landed")
         return True
 
     if _block_different_active_authoring_spec(

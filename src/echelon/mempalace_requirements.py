@@ -73,6 +73,25 @@ class SpecMemoryMineReport:
         }
 
 
+SUPPORTING_MEMORY_ARTIFACTS: frozenset[str] = frozenset(
+    {
+        "plan.md",
+        "tasks.md",
+        "coverage-map.md",
+        "research.md",
+        "quality-gates.md",
+        "test-strategy.md",
+        "test-architecture.md",
+        "issues.md",
+        "fulfillment-gaps.md",
+        "contradictions-and-gaps.md",
+        "critical-path.md",
+        "mvp-scope.md",
+        "prioritization.md",
+    }
+)
+
+
 def resolve_spec_dir(project_root: Path, selector: str | Path) -> Path:
     root = project_root.resolve()
     raw = Path(str(selector))
@@ -133,6 +152,50 @@ def load_canonical_spec_snapshot(project_root: Path, spec_dir: Path) -> Canonica
     )
 
 
+def load_supporting_artifact_snapshots(
+    project_root: Path,
+    spec_dir: Path,
+) -> list[CanonicalSpecSnapshot]:
+    root = project_root.resolve()
+    resolved_dir = spec_dir.resolve()
+    try:
+        relative_dir = resolved_dir.relative_to(root)
+    except ValueError as exc:
+        raise SpecMemoryError("spec directory is outside the project") from exc
+    if len(relative_dir.parts) != 2 or relative_dir.parts[0] != "specs":
+        raise SpecMemoryError("spec directory must be under canonical specs/")
+
+    snapshots: list[CanonicalSpecSnapshot] = []
+    for artifact in sorted(resolved_dir.iterdir(), key=lambda path: path.name):
+        if not artifact.is_file() or artifact.name not in SUPPORTING_MEMORY_ARTIFACTS:
+            continue
+        content = artifact.read_bytes()
+        digest = artifact_hash(artifact)
+        source = f"{relative_dir.as_posix()}/{artifact.name}"
+        snapshots.append(
+            CanonicalSpecSnapshot(
+                spec_id=relative_dir.parts[1],
+                spec_dir=resolved_dir,
+                spec_file=artifact,
+                content=content,
+                spec_sha256=digest.removeprefix("sha256:"),
+                source=source,
+                artifact_metadata={
+                    "scope": "canonical-support",
+                    "canonical": True,
+                    "artifact_kind": "supporting-context",
+                    "artifact_path": source,
+                    "artifact_hash": digest,
+                    "source_file": source,
+                    "lifecycle_status": "active",
+                    "provenance_type": "requirements_mine",
+                    "added_by": "echelon",
+                },
+            )
+        )
+    return snapshots
+
+
 def _read_mempalace_wing(project_root: Path) -> str:
     canonical = project_root / ".echelon" / "config.yml"
     legacy = (
@@ -169,11 +232,11 @@ def _read_mempalace_wing(project_root: Path) -> str:
 class RequirementMemoryAdapter:
     def __init__(self, project_root: Path, run_id: str) -> None:
         from codegen.memory.context import MemPalaceContext
-        from codegen.memory.requirements_miner import RequirementsMiner
+        from echelon.spec_memory_miner import SpecMemoryMiner
 
         wing = _read_mempalace_wing(project_root)
         self.context = MemPalaceContext.from_wing(wing, run_id=run_id)
-        self.miner = RequirementsMiner(self.context, project_dir=project_root)
+        self.miner = SpecMemoryMiner(self.context, project_dir=project_root)
         self.wing = self.context.wing
         self.palace_path = self.context.palace_path
 
@@ -214,6 +277,30 @@ class RequirementMemoryAdapter:
             )
         ]
 
+    def plan_canonical_support_rows(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> list[PlannedRequirementDrawer]:
+        return [
+            PlannedRequirementDrawer(
+                drawer_id=row.drawer_id,
+                requirement_id=row.requirement_id,
+                room=row.room,
+                source=row.source,
+                artifact_hash=row.artifact_hash,
+                canonical_spec_sha256=row.canonical_spec_sha256,
+                requirement_content_sha256=row.requirement_content_sha256,
+            )
+            for row in self.miner.plan_canonical_support_rows(
+                content,
+                source=source,
+                artifact_metadata=artifact_metadata,
+            )
+        ]
+
     def open_collection_read_only(self) -> object:
         opener = getattr(self.miner, "open_collection_read_only", None)
         if not callable(opener):
@@ -230,6 +317,19 @@ class RequirementMemoryAdapter:
         artifact_metadata: dict[str, Any],
     ) -> object:
         return self.miner.mine_canonical_bytes(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+        )
+
+    def mine_canonical_support_bytes(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> object:
+        return self.miner.mine_canonical_support_bytes(
             content,
             source=source,
             artifact_metadata=artifact_metadata,
@@ -318,6 +418,18 @@ def mine_spec_requirements(
             source=snapshot.source,
             artifact_metadata=snapshot.artifact_metadata,
         )
+        support_results = []
+        for support_snapshot in load_supporting_artifact_snapshots(
+            project_root,
+            spec_dir,
+        ):
+            support_results.append(
+                adapter.mine_canonical_support_bytes(
+                    support_snapshot.content,
+                    source=support_snapshot.source,
+                    artifact_metadata=support_snapshot.artifact_metadata,
+                )
+            )
     except ValueError as exc:
         return SpecMemoryMineReport(
             schema_version=1,
@@ -350,14 +462,27 @@ def mine_spec_requirements(
             drifted_count=0,
             errors=[type(exc).__name__],
         )
-    expected = _read_str_list(result, "expected_drawer_ids")
-    drawer_ids = _read_str_list(result, "drawer_ids")
-    written = _read_int(result, "written")
-    adopted = _read_int(result, "already_present")
-    skipped = _read_int(result, "skipped")
-    failed = _read_int(result, "failed")
-    drifted = _read_int(result, "drifted")
-    unavailable = _read_int(result, "unavailable")
+    results = [result, *support_results]
+    expected = sorted(
+        {
+            drawer_id
+            for item in results
+            for drawer_id in _read_str_list(item, "expected_drawer_ids")
+        }
+    )
+    drawer_ids = sorted(
+        {
+            drawer_id
+            for item in results
+            for drawer_id in _read_str_list(item, "drawer_ids")
+        }
+    )
+    written = sum(_read_int(item, "written") for item in results)
+    adopted = sum(_read_int(item, "already_present") for item in results)
+    skipped = sum(_read_int(item, "skipped") for item in results)
+    failed = sum(_read_int(item, "failed") for item in results)
+    drifted = sum(_read_int(item, "drifted") for item in results)
+    unavailable = sum(_read_int(item, "unavailable") for item in results)
     status = "complete"
     if unavailable:
         status = "unavailable"
@@ -379,5 +504,10 @@ def mine_spec_requirements(
         unavailable_count=unavailable,
         drawer_ids=drawer_ids,
         expected_drawer_ids=expected,
-        errors=[str(error) for error in getattr(result, "errors", []) if isinstance(error, str)],
+        errors=[
+            str(error)
+            for item in results
+            for error in getattr(item, "errors", [])
+            if isinstance(error, str)
+        ],
     )

@@ -14,6 +14,8 @@ def test_spec_memory_help_is_exposed() -> None:
     assert "mine" in result.output
     assert "audit" in result.output
     assert "refresh" in result.output
+    assert "search" in result.output
+    assert "list-rooms" in result.output
 
 
 @pytest.mark.unit
@@ -41,6 +43,69 @@ def test_spec_memory_audit_json_exit_zero_for_warn(monkeypatch, tmp_path: Path) 
 
     assert result.exit_code == 0
     assert '"status": "warn"' in result.output
+
+
+@pytest.mark.unit
+def test_spec_memory_search_outputs_hits(monkeypatch, tmp_path: Path) -> None:
+    from echelon.spec_memory_search import SpecMemorySearchHit, SpecMemorySearchReport
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.spec_memory_search.search_spec_memory",
+        lambda project_root, query, room=None, spec=None, kind=None, limit=10: SpecMemorySearchReport(
+            query=query,
+            wing="demo-wing",
+            room=room,
+            spec=spec,
+            kind=kind,
+            limit=limit,
+            hits=[
+                SpecMemorySearchHit(
+                    drawer_id="drawer-1",
+                    content="FR-001: Import prose artifacts.",
+                    room="functional-requirements",
+                    spec_id="905-import-prose",
+                    artifact_path="specs/905-import-prose/spec.md",
+                    requirement_id="FR-001",
+                    kind="requirement",
+                    distance=0.1234,
+                )
+            ],
+        ),
+    )
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["spec", "memory", "search", "import prose", "--room", "functional-requirements"],
+    )
+
+    assert result.exit_code == 0
+    assert "FR-001" in result.output
+    assert "905-import-prose" in result.output
+
+
+@pytest.mark.unit
+def test_spec_memory_list_rooms_outputs_facets(monkeypatch, tmp_path: Path) -> None:
+    from echelon.spec_memory_search import SpecMemoryFacetReport
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.spec_memory_search.list_spec_memory_facets",
+        lambda project_root: SpecMemoryFacetReport(
+            wing="demo-wing",
+            rooms={"acceptance-criteria": 3},
+            specs={"905-import-prose": 2},
+            kinds={"requirement": 2, "supporting-context": 1},
+        ),
+    )
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["spec", "memory", "list-rooms"])
+
+    assert result.exit_code == 0
+    assert "acceptance-criteria" in result.output
+    assert "3" in result.output
 
 
 @pytest.mark.unit

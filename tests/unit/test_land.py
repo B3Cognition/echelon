@@ -642,9 +642,19 @@ class TestLand:
     def test_is_idempotent_when_branch_already_deleted(self, tmp_path: Path) -> None:
         _init_repo(tmp_path)
         _commit(tmp_path, "README.md", "base\n", "base")
+        spec_dir = tmp_path / "specs" / "042-my-feature"
+        spec_dir.mkdir(parents=True)
+        (spec_dir / "spec.md").write_text(
+            "---\nstatus: ready_to_land\n---\n# Spec\n",
+            encoding="utf-8",
+        )
         gitops = _make_gitops(feature_branch=None)
+
         result = land("042", project_dir=tmp_path, gitops=gitops)
+
         assert result is True
+        from harness.spec_frontmatter import read_frontmatter
+        assert read_frontmatter(spec_dir)["status"] == "landed"
 
     def test_lands_latest_legacy_harness_branch_when_feature_branch_is_missing(
         self, tmp_path: Path

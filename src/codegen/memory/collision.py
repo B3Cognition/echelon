@@ -46,6 +46,9 @@ def check_wing_collision(wing: str, project_dir: Path, palace_path: str) -> list
             continue
         if source.startswith("codegen/"):
             continue
+        source_path = Path(source)
+        if not source_path.is_absolute() and (project_dir / source_path).exists():
+            continue
         if source.startswith(project_prefix):
             continue
         if source not in seen:

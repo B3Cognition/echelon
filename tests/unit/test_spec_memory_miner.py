@@ -1,4 +1,4 @@
-"""Unit tests for RequirementsMiner with MemPalaceContext."""
+"""Unit tests for SpecMemoryMiner with MemPalaceContext."""
 from __future__ import annotations
 
 import hashlib
@@ -10,9 +10,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from codegen.memory.context import MemPalaceContext
-from codegen.memory.requirements_miner import (
-    RequirementsMiner,
+from echelon.spec_memory_miner import (
+    SpecMemoryMiner,
     plan_canonical_requirement_drawers,
+    plan_canonical_support_drawers,
 )
 
 
@@ -22,7 +23,7 @@ def _make_ctx(wing="my-app", run_id="run-1", palace_path="/fake/palace"):
 
 def test_miner_stores_ctx(tmp_path):
     ctx = _make_ctx()
-    miner = RequirementsMiner(ctx, project_dir=tmp_path)
+    miner = SpecMemoryMiner(ctx, project_dir=tmp_path)
     assert miner.ctx is ctx
     assert miner.wing == "my-app"
     assert miner.run_id == "run-1"
@@ -34,13 +35,13 @@ def test_miner_passes_ctx_to_writer(tmp_path):
     spec = tmp_path / "spec.md"
     spec.write_text("FR-001: Do a thing\n")
 
-    with patch("codegen.memory.requirements_miner.scrub_secrets", side_effect=lambda x: x):
-        miner = RequirementsMiner(ctx, project_dir=tmp_path)
+    with patch("echelon.spec_memory_miner.scrub_secrets", side_effect=lambda x: x):
+        miner = SpecMemoryMiner(ctx, project_dir=tmp_path)
         mock_writer = MagicMock()
         mock_writer.write.return_value = "drawer-id-1"
         miner._writer = mock_writer
 
-        with patch("codegen.memory.requirements_miner.check_wing_collision", return_value=[]):
+        with patch("echelon.spec_memory_miner.check_wing_collision", return_value=[]):
             result = miner.mine_file(spec)
 
     assert result.written == 1
@@ -52,9 +53,9 @@ def test_miner_checks_collision_on_first_write(tmp_path):
     spec = tmp_path / "spec.md"
     spec.write_text("FR-001: Do a thing\n")
 
-    with patch("codegen.memory.requirements_miner.scrub_secrets", side_effect=lambda x: x):
-        with patch("codegen.memory.requirements_miner.check_wing_collision", return_value=[]) as mock_check:
-            miner = RequirementsMiner(ctx, project_dir=tmp_path)
+    with patch("echelon.spec_memory_miner.scrub_secrets", side_effect=lambda x: x):
+        with patch("echelon.spec_memory_miner.check_wing_collision", return_value=[]) as mock_check:
+            miner = SpecMemoryMiner(ctx, project_dir=tmp_path)
             mock_writer = MagicMock()
             mock_writer.write.return_value = "drawer-id-1"
             miner._writer = mock_writer
@@ -70,9 +71,9 @@ def test_collision_check_runs_only_once(tmp_path):
     spec2 = tmp_path / "spec2.md"
     spec2.write_text("FR-002: Second\n")
 
-    with patch("codegen.memory.requirements_miner.scrub_secrets", side_effect=lambda x: x):
-        with patch("codegen.memory.requirements_miner.check_wing_collision", return_value=[]) as mock_check:
-            miner = RequirementsMiner(ctx, project_dir=tmp_path)
+    with patch("echelon.spec_memory_miner.scrub_secrets", side_effect=lambda x: x):
+        with patch("echelon.spec_memory_miner.check_wing_collision", return_value=[]) as mock_check:
+            miner = SpecMemoryMiner(ctx, project_dir=tmp_path)
             mock_writer = MagicMock()
             mock_writer.write.return_value = "d"
             miner._writer = mock_writer
@@ -87,10 +88,10 @@ def test_miner_prints_warning_on_collision(tmp_path, capsys):
     spec = tmp_path / "spec.md"
     spec.write_text("FR-001: Do a thing\n")
 
-    with patch("codegen.memory.requirements_miner.scrub_secrets", side_effect=lambda x: x):
-        with patch("codegen.memory.requirements_miner.check_wing_collision",
+    with patch("echelon.spec_memory_miner.scrub_secrets", side_effect=lambda x: x):
+        with patch("echelon.spec_memory_miner.check_wing_collision",
                    return_value=["/other/project/spec.md"]):
-            miner = RequirementsMiner(ctx, project_dir=tmp_path)
+            miner = SpecMemoryMiner(ctx, project_dir=tmp_path)
             mock_writer = MagicMock()
             mock_writer.write.return_value = "drawer-id-1"
             miner._writer = mock_writer
@@ -105,7 +106,7 @@ def test_mine_file_passes_artifact_metadata(monkeypatch, tmp_path):
     spec = tmp_path / "spec.md"
     spec.write_text("FR-001: Upload.\n", encoding="utf-8")
     ctx = MemPalaceContext(wing="demo", run_id="run-1", palace_path=str(tmp_path / "palace"))
-    miner = RequirementsMiner(ctx, project_dir=tmp_path)
+    miner = SpecMemoryMiner(ctx, project_dir=tmp_path)
     calls = []
 
     class Writer:
@@ -114,7 +115,7 @@ def test_mine_file_passes_artifact_metadata(monkeypatch, tmp_path):
             return "drawer_demo"
 
     monkeypatch.setattr(miner, "_get_writer", lambda: Writer())
-    monkeypatch.setattr("codegen.memory.requirements_miner.check_wing_collision", lambda *args, **kwargs: [])
+    monkeypatch.setattr("echelon.spec_memory_miner.check_wing_collision", lambda *args, **kwargs: [])
 
     miner.mine_file(spec, artifact_metadata={"artifact_hash": "sha256:" + "2" * 64, "canonical": True})
 
@@ -144,6 +145,86 @@ def test_structured_canonical_plan_uses_shared_parser_room_and_identity() -> Non
     assert all(len(row.requirement_content_sha256) == 64 for row in rows)
 
 
+def test_echelon_bold_requirement_ids_are_structured_by_room() -> None:
+    content = (
+        b"# Demo\n\n"
+        b"- **FR-001**: System MUST import prose artifacts.\n"
+        b"- **AC-001**: Given a valid artifact, when import runs, then it succeeds.\n"
+        b"**NFR-001**: Import completes in under one second.\n"
+    )
+    digest = hashlib.sha256(content).hexdigest()
+
+    rows = plan_canonical_requirement_drawers(
+        content,
+        source="specs/905-import-prose/spec.md",
+        artifact_metadata={
+            "canonical": True,
+            "artifact_hash": f"sha256:{digest}",
+        },
+        wing="demo",
+    )
+
+    assert [(row.requirement_id, row.room) for row in rows] == [
+        ("FR-001", "functional-requirements"),
+        ("AC-001", "acceptance-criteria"),
+        ("NFR-001", "non-functional-requirements"),
+    ]
+
+
+def test_id_header_tables_are_parsed_without_dependency_table_duplicates() -> None:
+    content = (
+        b"# Demo\n\n"
+        b"| ID | Category | Requirement | Target |\n"
+        b"|---|---|---|---|\n"
+        b"| **NFR-001** | Performance | Render quickly | <= 100 ms |\n\n"
+        b"| Requirement | Depends On | Relationship | Impact |\n"
+        b"|---|---|---|---|\n"
+        b"| **FR-001 (Import)** | FR-000 | Prerequisite | Reference only |\n"
+    )
+    digest = hashlib.sha256(content).hexdigest()
+
+    rows = plan_canonical_requirement_drawers(
+        content,
+        source="specs/001-demo/spec.md",
+        artifact_metadata={
+            "canonical": True,
+            "artifact_hash": f"sha256:{digest}",
+        },
+        wing="demo",
+    )
+
+    assert [(row.requirement_id, row.room) for row in rows] == [
+        ("NFR-001", "non-functional-requirements"),
+    ]
+
+
+def test_support_artifact_plan_chunks_context_with_linked_requirements() -> None:
+    content = (
+        b"# Implementation Plan\n\n"
+        b"Build the import path for FR-001 and AC-001.\n\n"
+        b"## Rollout\n\n"
+        b"Keep NFR-001 visible during verification.\n"
+    )
+    digest = hashlib.sha256(content).hexdigest()
+
+    rows = plan_canonical_support_drawers(
+        content,
+        source="specs/905-import-prose/plan.md",
+        artifact_metadata={
+            "canonical": True,
+            "artifact_hash": f"sha256:{digest}",
+            "scope": "canonical-support",
+        },
+        wing="demo",
+    )
+
+    assert [row.requirement_id for row in rows] == [
+        "CTX-plan-000",
+        "CTX-plan-001",
+    ]
+    assert {row.room for row in rows} == {"implementation-plan"}
+
+
 def test_canonical_miner_preserves_exact_writer_outcomes(monkeypatch, tmp_path) -> None:
     content = (
         b"FR-001: Written.\n"
@@ -161,10 +242,10 @@ def test_canonical_miner_preserves_exact_writer_outcomes(monkeypatch, tmp_path) 
             drawer_id = kwargs["drawer_id"] if outcome in {"written", "already_present"} else None
             return SimpleNamespace(outcome=outcome, drawer_id=drawer_id)
 
-    miner = RequirementsMiner(_make_ctx(wing="demo"), project_dir=tmp_path)
+    miner = SpecMemoryMiner(_make_ctx(wing="demo"), project_dir=tmp_path)
     miner._writer = Writer()
     monkeypatch.setattr(
-        "codegen.memory.requirements_miner.check_wing_collision",
+        "echelon.spec_memory_miner.check_wing_collision",
         lambda *args, **kwargs: [],
     )
 
@@ -210,15 +291,15 @@ def test_canonical_mining_uses_unique_stable_ids_for_same_room_requirements(
             )
 
     monkeypatch.setattr(
-        "codegen.memory.requirements_miner.check_wing_collision",
+        "echelon.spec_memory_miner.check_wing_collision",
         lambda *args, **kwargs: [],
     )
     monkeypatch.setattr(
-        "codegen.memory.requirements_miner.scrub_secrets",
+        "echelon.spec_memory_miner.scrub_secrets",
         lambda value: value,
     )
     first_writer = ExactWriter()
-    first = RequirementsMiner(
+    first = SpecMemoryMiner(
         _make_ctx(wing="demo", run_id="run-one"),
         project_dir=tmp_path,
     )
@@ -231,7 +312,7 @@ def test_canonical_mining_uses_unique_stable_ids_for_same_room_requirements(
         },
     )
     second_writer = ExactWriter()
-    second = RequirementsMiner(
+    second = SpecMemoryMiner(
         _make_ctx(wing="demo", run_id="run-two"),
         project_dir=tmp_path,
     )

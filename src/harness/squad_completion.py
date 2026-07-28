@@ -3318,7 +3318,7 @@ def _completion_local_mining_plan(
         from codegen.memory.context import (
             _read_wing_from_echelon_yml,
         )
-        from codegen.memory.requirements_miner import (
+        from echelon.spec_memory_miner import (
             plan_canonical_requirement_drawer_ids,
         )
 

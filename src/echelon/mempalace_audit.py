@@ -12,6 +12,7 @@ from echelon.mempalace_requirements import (
     PlannedRequirementDrawer,
     create_requirement_memory_adapter,
     load_canonical_spec_snapshot,
+    load_supporting_artifact_snapshots,
     resolve_spec_dir,
 )
 
@@ -72,6 +73,28 @@ class SpecMemoryAuditReport:
             "retrieval_probe": self.retrieval_probe,
             "recommendations": list(self.recommendations),
             "errors": list(self.errors),
+        }
+
+
+@dataclass(frozen=True)
+class SpecMemoryCleanupReport:
+    schema_version: int
+    spec_id: str
+    spec_dir: str
+    wing: str | None
+    palace_path: str | None
+    deleted_count: int
+    deleted_ids: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "spec_id": self.spec_id,
+            "spec_dir": self.spec_dir,
+            "wing": self.wing,
+            "palace_path": self.palace_path,
+            "deleted_count": self.deleted_count,
+            "deleted_ids": list(self.deleted_ids),
         }
 
 
@@ -257,6 +280,75 @@ def _scan_spec_extras(
     )
 
 
+def _plan_expected_spec_memory_rows(
+    *,
+    project_root: Path,
+    spec_dir: Path,
+    snapshot: object,
+    adapter: object,
+) -> list[PlannedRequirementDrawer]:
+    expected_rows = adapter.plan_canonical_rows(
+        getattr(snapshot, "content"),
+        source=getattr(snapshot, "source"),
+        artifact_metadata=getattr(snapshot, "artifact_metadata"),
+    )
+    for support_snapshot in load_supporting_artifact_snapshots(
+        project_root,
+        spec_dir,
+    ):
+        expected_rows.extend(
+            adapter.plan_canonical_support_rows(
+                support_snapshot.content,
+                source=support_snapshot.source,
+                artifact_metadata=support_snapshot.artifact_metadata,
+            )
+        )
+    return expected_rows
+
+
+def cleanup_stale_spec_memory(
+    project_root: Path,
+    spec_selector: str | Path,
+) -> SpecMemoryCleanupReport:
+    spec_dir = resolve_spec_dir(project_root, spec_selector)
+    snapshot = load_canonical_spec_snapshot(project_root, spec_dir)
+    adapter = create_requirement_memory_adapter(project_root, run_id="cleanup")
+    expected_rows = _plan_expected_spec_memory_rows(
+        project_root=project_root,
+        spec_dir=spec_dir,
+        snapshot=snapshot,
+        adapter=adapter,
+    )
+    source_paths = {row.source for row in expected_rows}
+    expected_ids = {row.drawer_id for row in expected_rows}
+    collection = _collection_from_adapter(adapter)
+    raw = collection.get(  # type: ignore[attr-defined]
+        where={"wing": getattr(adapter, "wing")},
+        include=["documents", "metadatas"],
+        limit=MAX_AUDIT_SCAN_ROWS,
+    )
+    parsed = _as_collection_rows(raw)
+    deleted_ids = sorted(
+        drawer_id
+        for drawer_id, (_document, metadata) in parsed.rows.items()
+        if drawer_id not in expected_ids
+        and metadata.get("canonical") is True
+        and (metadata.get("artifact_path") or metadata.get("source_file"))
+        in source_paths
+    )
+    if deleted_ids:
+        collection.delete(ids=deleted_ids)  # type: ignore[attr-defined]
+    return SpecMemoryCleanupReport(
+        schema_version=1,
+        spec_id=snapshot.spec_id,
+        spec_dir=str(snapshot.spec_dir),
+        wing=str(getattr(adapter, "wing", "")) or None,
+        palace_path=str(getattr(adapter, "palace_path", "")) or None,
+        deleted_count=len(deleted_ids),
+        deleted_ids=deleted_ids,
+    )
+
+
 def audit_spec_memory(
     project_root: Path,
     spec_selector: str | Path,
@@ -272,10 +364,11 @@ def audit_spec_memory(
     except (Exception, SystemExit) as exc:
         return _unavailable_report(snapshot=snapshot, adapter=None, expected=[], error=exc)
     try:
-        expected_rows = adapter.plan_canonical_rows(
-            snapshot.content,
-            source=snapshot.source,
-            artifact_metadata=snapshot.artifact_metadata,
+        expected_rows = _plan_expected_spec_memory_rows(
+            project_root=project_root,
+            spec_dir=spec_dir,
+            snapshot=snapshot,
+            adapter=adapter,
         )
     except (Exception, SystemExit) as exc:
         return _failure_report(snapshot=snapshot, adapter=adapter, error=exc)
@@ -351,9 +444,11 @@ def audit_spec_memory(
             _append_unique(wrong_wing, drawer_id)
         if metadata.get("room") != planned.room:
             _append_unique(wrong_room, drawer_id)
+        if metadata.get("scope") != "canonical" or metadata.get("canonical") is not True:
+            _append_unique(non_canonical, drawer_id)
         if (
-            metadata.get("scope") != "canonical"
-            or metadata.get("canonical") is not True
+            planned.requirement_id.startswith("CTX-")
+            and metadata.get("artifact_kind") != "supporting-context"
         ):
             _append_unique(non_canonical, drawer_id)
         if (
@@ -364,7 +459,7 @@ def audit_spec_memory(
         if metadata.get("lifecycle_status", metadata.get("status", "active")) in {"deprecated", "superseded", "removed", "delivered"}:
             if drawer_id not in lifecycle_excluded:
                 _append_unique(lifecycle_excluded, drawer_id)
-        if metadata.get("artifact_path") != snapshot.source and drawer_id not in non_canonical:
+        if metadata.get("artifact_path") != planned.source and drawer_id not in non_canonical:
             _append_unique(non_canonical, drawer_id)
         if (
             metadata.get("deterministic_identity_schema_version") != 1

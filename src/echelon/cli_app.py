@@ -93,7 +93,7 @@ spec_checkpoint_app = typer.Typer(
 )
 spec_memory_app = typer.Typer(
     add_completion=False,
-    help="Mine and audit canonical spec requirements in MemPalace.",
+    help="Mine, audit, search, and inspect canonical spec memory in MemPalace.",
     no_args_is_help=True,
 )
 harness_app = typer.Typer(
@@ -255,10 +255,60 @@ def _memory_exit_code(status: str) -> int:
     return 2
 
 
+def _cleanup_stale_memory_best_effort(project_root: Path, spec_selector: str) -> None:
+    from echelon.mempalace_audit import cleanup_stale_spec_memory
+
+    try:
+        cleanup = cleanup_stale_spec_memory(project_root, spec_selector)
+    except Exception as exc:
+        typer.echo(
+            f"warning: stale MemPalace cleanup skipped: {type(exc).__name__}",
+            err=True,
+        )
+        return
+    if cleanup.deleted_count:
+        typer.echo(f"MemPalace cleanup: deleted={cleanup.deleted_count}")
+
+
 def _echo_json(data: dict) -> None:
     import json
 
     typer.echo(json.dumps(data, indent=2, sort_keys=True))
+
+
+def _echo_memory_facet(title: str, values: dict[str, int]) -> None:
+    typer.echo(title)
+    if not values:
+        typer.echo("  (none)")
+        return
+    width = max(len(value) for value in values)
+    for value, count in sorted(values.items()):
+        typer.echo(f"  {value.ljust(width)}  {count}")
+
+
+def _echo_memory_search(report: object) -> None:
+    typer.echo(f"MemPalace search: {getattr(report, 'query')!r}")
+    typer.echo(f"Wing: {getattr(report, 'wing')}")
+    if getattr(report, "room", None):
+        typer.echo(f"Room: {getattr(report, 'room')}")
+    if getattr(report, "spec", None):
+        typer.echo(f"Spec: {getattr(report, 'spec')}")
+    if getattr(report, "kind", None):
+        typer.echo(f"Kind: {getattr(report, 'kind')}")
+    hits = list(getattr(report, "hits", []))
+    if not hits:
+        typer.echo("\nNo results.")
+        return
+    for index, hit in enumerate(hits, start=1):
+        typer.echo("")
+        typer.echo(
+            f"[{index}] {hit.spec_id} / {hit.room} / {hit.kind} "
+            f"(distance={hit.distance})"
+        )
+        typer.echo(f"    Source: {hit.artifact_path}")
+        if hit.requirement_id:
+            typer.echo(f"    ID: {hit.requirement_id}")
+        typer.echo(f"    {hit.content}")
 
 
 def _dispatch_phase(args: list[str]) -> None:
@@ -1747,6 +1797,8 @@ def spec_memory_mine(
 
     try:
         report = mine_spec_requirements(Path.cwd(), spec_selector, run_id="manual")
+        if report.status == "complete":
+            _cleanup_stale_memory_best_effort(Path.cwd(), spec_selector)
     except SpecMemoryError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
@@ -1800,6 +1852,8 @@ def spec_memory_refresh(
 
     try:
         mine_report = mine_spec_requirements(Path.cwd(), spec_selector, run_id="manual")
+        if mine_report.status == "complete":
+            _cleanup_stale_memory_best_effort(Path.cwd(), spec_selector)
     except SpecMemoryError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
@@ -1819,6 +1873,86 @@ def spec_memory_refresh(
         write_audit_reports(audit_report, Path(audit_report.spec_dir))
     typer.echo(render_audit_markdown(audit_report).rstrip())
     raise typer.Exit(code=max(_memory_exit_code(mine_report.status), _memory_exit_code(audit_report.status)))
+
+
+@spec_memory_app.command("search")
+def spec_memory_search(
+    query: str,
+    room: Optional[str] = typer.Option(None, "--room", help="Restrict search to one memory room."),
+    spec: Optional[str] = typer.Option(None, "--spec", help="Restrict results to one spec slug."),
+    kind: Optional[str] = typer.Option(None, "--kind", help="Restrict to requirement or supporting-context."),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, max=100),
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.spec_memory_search import SpecMemorySearchError, search_spec_memory
+
+    try:
+        report = search_spec_memory(
+            Path.cwd(),
+            query,
+            room=room,
+            spec=spec,
+            kind=kind,
+            limit=limit,
+        )
+    except SpecMemorySearchError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json(report.to_dict())
+    else:
+        _echo_memory_search(report)
+
+
+@spec_memory_app.command("list-rooms")
+def spec_memory_list_rooms(
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.spec_memory_search import SpecMemorySearchError, list_spec_memory_facets
+
+    try:
+        report = list_spec_memory_facets(Path.cwd())
+    except SpecMemorySearchError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json({"wing": report.wing, "rooms": report.rooms})
+    else:
+        _echo_memory_facet("MemPalace rooms", report.rooms)
+
+
+@spec_memory_app.command("list-specs")
+def spec_memory_list_specs(
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.spec_memory_search import SpecMemorySearchError, list_spec_memory_facets
+
+    try:
+        report = list_spec_memory_facets(Path.cwd())
+    except SpecMemorySearchError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json({"wing": report.wing, "specs": report.specs})
+    else:
+        _echo_memory_facet("MemPalace specs", report.specs)
+
+
+@spec_memory_app.command("list-kinds")
+def spec_memory_list_kinds(
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.spec_memory_search import SpecMemorySearchError, list_spec_memory_facets
+
+    try:
+        report = list_spec_memory_facets(Path.cwd())
+    except SpecMemorySearchError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json({"wing": report.wing, "kinds": report.kinds})
+    else:
+        _echo_memory_facet("MemPalace kinds", report.kinds)
 
 
 @spec_app.command(

@@ -21,6 +21,7 @@ class FakeCollection:
     def __init__(self, rows):
         self.rows = rows
         self.calls = []
+        self.deleted_ids = []
 
     def get(self, ids=None, where=None, include=None, limit=None):
         self.calls.append(
@@ -41,6 +42,11 @@ class FakeCollection:
             "metadatas": [row["metadata"] for _drawer_id, row in found],
         }
 
+    def delete(self, ids):
+        self.deleted_ids.extend(ids)
+        for drawer_id in ids:
+            self.rows.pop(drawer_id, None)
+
 
 class FakeAdapter:
     wing = "demo-wing"
@@ -56,6 +62,22 @@ class FakeAdapter:
                 drawer_id="drawer-fr-001",
                 requirement_id="FR-001",
                 room="functional-requirements",
+                source=source,
+                artifact_hash=artifact_metadata["artifact_hash"],
+                canonical_spec_sha256=hashlib.sha256(content).hexdigest(),
+                requirement_content_sha256=hashlib.sha256(
+                    document.encode("utf-8")
+                ).hexdigest(),
+            )
+        ]
+
+    def plan_canonical_support_rows(self, content, *, source, artifact_metadata):
+        document = "CTX-plan-000: Plan: Implement FR-001. [linked_requirements: FR-001]"
+        return [
+            SimpleNamespace(
+                drawer_id="drawer-plan-000",
+                requirement_id="CTX-plan-000",
+                room="implementation-plan",
                 source=source,
                 artifact_hash=artifact_metadata["artifact_hash"],
                 canonical_spec_sha256=hashlib.sha256(content).hexdigest(),
@@ -111,6 +133,29 @@ def current_row(snapshot) -> dict:
     }
 
 
+def current_support_row(snapshot) -> dict:
+    document = "CTX-plan-000: Plan: Implement FR-001. [linked_requirements: FR-001]"
+    return {
+        "document": document,
+        "metadata": {
+            "deterministic_identity_schema_version": 1,
+            "wing": "demo-wing",
+            "room": "implementation-plan",
+            "scope": "canonical",
+            "canonical": True,
+            "artifact_kind": "supporting-context",
+            "artifact_path": snapshot.source,
+            "artifact_hash": snapshot.artifact_metadata["artifact_hash"],
+            "canonical_spec_sha256": snapshot.spec_sha256,
+            "requirement_id": "CTX-plan-000",
+            "requirement_content_sha256": hashlib.sha256(
+                document.encode("utf-8")
+            ).hexdigest(),
+            "lifecycle_status": "active",
+        },
+    }
+
+
 @pytest.mark.unit
 def test_audit_reports_missing_exact_drawer(tmp_path: Path, monkeypatch) -> None:
     spec_dir = make_spec(tmp_path)
@@ -145,6 +190,40 @@ def test_audit_passes_matching_exact_drawer(tmp_path: Path, monkeypatch) -> None
     assert report.status == "pass"
     assert report.present_current_count == 1
     assert report.missing == []
+
+
+@pytest.mark.unit
+def test_audit_includes_support_artifact_rows_in_expected_set(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_dir = make_spec(tmp_path)
+    spec_dir.joinpath("plan.md").write_text(
+        "# Plan\n\nImplement FR-001.\n",
+        encoding="utf-8",
+    )
+    from echelon.mempalace_requirements import (
+        load_canonical_spec_snapshot,
+        load_supporting_artifact_snapshots,
+    )
+
+    spec_snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
+    support_snapshot = load_supporting_artifact_snapshots(tmp_path, spec_dir)[0]
+    rows = {
+        "drawer-fr-001": current_row(spec_snapshot),
+        "drawer-plan-000": current_support_row(support_snapshot),
+    }
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(FakeCollection(rows)),
+    )
+    from echelon.mempalace_audit import audit_spec_memory
+
+    report = audit_spec_memory(tmp_path, spec_dir)
+
+    assert report.status == "pass"
+    assert report.expected_count == 2
+    assert report.present_current_count == 2
+    assert report.stale == []
 
 
 @pytest.mark.unit
@@ -234,7 +313,7 @@ def test_audit_accepts_exact_security_requirement_room(tmp_path: Path, monkeypat
         "SEC-001: Encrypt uploaded photos.\n",
         encoding="utf-8",
     )
-    from codegen.memory.requirements_miner import plan_canonical_requirement_drawers
+    from echelon.spec_memory_miner import plan_canonical_requirement_drawers
     from echelon.mempalace_requirements import load_canonical_spec_snapshot
 
     snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
@@ -286,7 +365,7 @@ def test_audit_reports_security_requirement_in_wrong_room(tmp_path: Path, monkey
         "SEC-001: Encrypt uploaded photos.\n",
         encoding="utf-8",
     )
-    from codegen.memory.requirements_miner import plan_canonical_requirement_drawers
+    from echelon.spec_memory_miner import plan_canonical_requirement_drawers
     from echelon.mempalace_requirements import load_canonical_spec_snapshot
 
     snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
@@ -364,6 +443,98 @@ def test_audit_reports_duplicate_stale_and_run_local_extras(
     assert report.duplicate == ["drawer-duplicate"]
     assert "drawer-stale" in report.stale
     assert "drawer-run-local" in report.non_canonical
+
+
+@pytest.mark.unit
+def test_cleanup_deletes_only_stale_canonical_rows_for_selected_spec(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_dir = make_spec(tmp_path)
+    from echelon.mempalace_requirements import load_canonical_spec_snapshot
+
+    snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
+    current = current_row(snapshot)
+    stale = current_row(snapshot)
+    stale["metadata"]["artifact_hash"] = "sha256:" + "0" * 64
+    other_spec = current_row(snapshot)
+    other_spec["metadata"]["artifact_path"] = "specs/004-other/spec.md"
+    other_spec["metadata"]["source_file"] = "specs/004-other/spec.md"
+    rows = {
+        "drawer-fr-001": current,
+        "drawer-stale": stale,
+        "drawer-other-spec": other_spec,
+    }
+    collection = FakeCollection(rows)
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(collection),
+    )
+    from echelon.mempalace_audit import cleanup_stale_spec_memory
+
+    report = cleanup_stale_spec_memory(tmp_path, spec_dir)
+
+    assert report.deleted_count == 1
+    assert report.deleted_ids == ["drawer-stale"]
+    assert collection.deleted_ids == ["drawer-stale"]
+    assert sorted(collection.rows) == ["drawer-fr-001", "drawer-other-spec"]
+
+
+@pytest.mark.unit
+def test_cleanup_deletes_stale_support_artifact_rows(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_dir = make_spec(tmp_path)
+    spec_dir.joinpath("plan.md").write_text(
+        "# Plan\n\nImplement FR-001.\n",
+        encoding="utf-8",
+    )
+    from echelon.mempalace_requirements import (
+        load_canonical_spec_snapshot,
+        load_supporting_artifact_snapshots,
+    )
+
+    snapshot = load_canonical_spec_snapshot(tmp_path, spec_dir)
+    support = load_supporting_artifact_snapshots(tmp_path, spec_dir)[0]
+    current = current_row(snapshot)
+    stale_support = {
+        "document": "old plan",
+        "metadata": {
+            "wing": "demo-wing",
+            "room": "implementation-plan",
+            "scope": "canonical-support",
+            "canonical": True,
+            "artifact_path": support.source,
+            "artifact_hash": "sha256:" + "0" * 64,
+            "requirement_id": "CTX-plan-000",
+            "lifecycle_status": "active",
+        },
+    }
+    unrelated_support = {
+        "document": "other",
+        "metadata": {
+            "wing": "demo-wing",
+            "scope": "canonical-support",
+            "canonical": True,
+            "artifact_path": "specs/003-demo/random-note.md",
+        },
+    }
+    collection = FakeCollection(
+        {
+            "drawer-fr-001": current,
+            "drawer-plan-stale": stale_support,
+            "drawer-unrelated-support": unrelated_support,
+        }
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(collection),
+    )
+    from echelon.mempalace_audit import cleanup_stale_spec_memory
+
+    report = cleanup_stale_spec_memory(tmp_path, spec_dir)
+
+    assert report.deleted_ids == ["drawer-plan-stale"]
+    assert sorted(collection.rows) == ["drawer-fr-001", "drawer-unrelated-support"]
 
 
 @pytest.mark.unit

@@ -185,7 +185,7 @@ def test_phase4_publish_creates_canonical_metadata_and_mines_canonical_spec(tmp_
         "spec_id": "001",
         "feature_id": "001-photo-album",
     }
-    from codegen.memory.requirements_miner import (
+    from echelon.spec_memory_miner import (
         MineResult,
         plan_canonical_requirement_drawer_ids,
     )
@@ -361,7 +361,7 @@ def test_context_metadata_publication_staging_defers_mining(
         return_value=mock_ctx,
     ) as mock_from_project:
         with patch(
-            "codegen.memory.requirements_miner.RequirementsMiner",
+            "echelon.spec_memory_miner.SpecMemoryMiner",
             return_value=mock_miner,
         ):
             prepared = ctrl._prepare_external_phase_effects(

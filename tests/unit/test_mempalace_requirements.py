@@ -62,9 +62,32 @@ def test_snapshot_contains_canonical_artifact_metadata(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_supporting_snapshots_are_curated_and_marked_as_context(tmp_path: Path) -> None:
+    spec_dir = write_workspace(tmp_path)
+    spec_dir.joinpath("plan.md").write_text(
+        "# Plan\n\nImplement FR-001 and verify AC-001.\n",
+        encoding="utf-8",
+    )
+    spec_dir.joinpath("random-note.md").write_text(
+        "Mention FR-001 but do not mine this by default.\n",
+        encoding="utf-8",
+    )
+    from echelon.mempalace_requirements import load_supporting_artifact_snapshots
+
+    snapshots = load_supporting_artifact_snapshots(tmp_path, spec_dir)
+
+    assert [snapshot.source for snapshot in snapshots] == [
+        "specs/003-demo/plan.md"
+    ]
+    assert snapshots[0].artifact_metadata["scope"] == "canonical-support"
+    assert snapshots[0].artifact_metadata["canonical"] is True
+    assert snapshots[0].artifact_metadata["artifact_kind"] == "supporting-context"
+
+
+@pytest.mark.unit
 def test_adapter_plan_matches_existing_canonical_miner(tmp_path: Path) -> None:
     spec_dir = write_workspace(tmp_path)
-    from codegen.memory.requirements_miner import plan_canonical_requirement_drawer_ids
+    from echelon.spec_memory_miner import plan_canonical_requirement_drawer_ids
     from echelon.mempalace_requirements import (
         create_requirement_memory_adapter,
         load_canonical_spec_snapshot,
@@ -164,7 +187,7 @@ def test_mine_spec_requirements_uses_canonical_config_without_legacy_config(
     spec_dir = write_workspace(tmp_path)
     (tmp_path / ".specify" / "extensions" / "echelon" / "echelon-config.yml").unlink()
     monkeypatch.setattr(
-        "codegen.memory.requirements_miner.RequirementsMiner.mine_canonical_bytes",
+        "echelon.spec_memory_miner.SpecMemoryMiner.mine_canonical_bytes",
         lambda self, content, *, source, artifact_metadata: SimpleNamespace(
             written=1,
             already_present=0,

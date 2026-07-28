@@ -30,6 +30,16 @@ def test_no_collision_when_all_drawers_from_same_project(tmp_path):
     assert result == []
 
 
+def test_no_collision_for_relative_canonical_spec_paths(tmp_path):
+    source = "specs/003-demo/spec.md"
+    (tmp_path / source).parent.mkdir(parents=True)
+    (tmp_path / source).write_text("FR-001: Demo.\n", encoding="utf-8")
+    col = _make_collection([{"source_file": source, "wing": "my-app"}])
+    with patch("codegen.memory.collision._get_collection", return_value=col):
+        result = check_wing_collision("my-app", tmp_path, "/fake/palace")
+    assert result == []
+
+
 def test_collision_detected_when_foreign_source_file(tmp_path):
     foreign_path = "/Users/other/other-project/spec.md"
     col = _make_collection([{"source_file": foreign_path, "wing": "my-app"}])

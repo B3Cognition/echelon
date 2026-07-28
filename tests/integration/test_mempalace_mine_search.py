@@ -75,10 +75,10 @@ def _ctx(wing: str, palace_path: str):
 
 def test_mine_writes_drawers_to_chromadb(project_alpha, isolated_palace):
     """Mine a spec and verify drawers are written to ChromaDB."""
-    from codegen.memory.requirements_miner import RequirementsMiner
+    from echelon.spec_memory_miner import SpecMemoryMiner
 
     ctx = _ctx("alpha", str(isolated_palace))
-    miner = RequirementsMiner(ctx, project_dir=project_alpha)
+    miner = SpecMemoryMiner(ctx, project_dir=project_alpha)
     result = miner.mine_file(project_alpha / "spec.md")
 
     assert result.failed == 0, f"Mine errors: {result.errors}"
@@ -91,11 +91,11 @@ def test_mine_writes_drawers_to_chromadb(project_alpha, isolated_palace):
 
 def test_mined_drawers_are_semantically_searchable(project_alpha, isolated_palace):
     """Mine a spec then search — verify semantic retrieval returns correct wing's content."""
-    from codegen.memory.requirements_miner import RequirementsMiner
+    from echelon.spec_memory_miner import SpecMemoryMiner
     from codegen.memory.mempalace_reader import MemPalaceReader
 
     ctx = _ctx("alpha", str(isolated_palace))
-    miner = RequirementsMiner(ctx, project_dir=project_alpha)
+    miner = SpecMemoryMiner(ctx, project_dir=project_alpha)
     miner.mine_file(project_alpha / "spec.md")
 
     reader = MemPalaceReader(ctx)
@@ -109,14 +109,14 @@ def test_mined_drawers_are_semantically_searchable(project_alpha, isolated_palac
 
 def test_wing_isolation_prevents_cross_project_leakage(project_alpha, project_beta, isolated_palace):
     """Two projects sharing a palace but different wings must not see each other's drawers."""
-    from codegen.memory.requirements_miner import RequirementsMiner
+    from echelon.spec_memory_miner import SpecMemoryMiner
     from codegen.memory.mempalace_reader import MemPalaceReader
 
     ctx_alpha = _ctx("alpha", str(isolated_palace))
     ctx_beta = _ctx("beta", str(isolated_palace))
 
-    RequirementsMiner(ctx_alpha, project_dir=project_alpha).mine_file(project_alpha / "spec.md")
-    RequirementsMiner(ctx_beta, project_dir=project_beta).mine_file(project_beta / "spec.md")
+    SpecMemoryMiner(ctx_alpha, project_dir=project_alpha).mine_file(project_alpha / "spec.md")
+    SpecMemoryMiner(ctx_beta, project_dir=project_beta).mine_file(project_beta / "spec.md")
 
     # Alpha reader must not see payment requirements
     alpha_result = MemPalaceReader(ctx_alpha).search("payment Stripe PayPal")
@@ -135,10 +135,10 @@ def test_wing_isolation_prevents_cross_project_leakage(project_alpha, project_be
 
 def test_drawer_id_uses_sha256_not_md5(project_alpha, isolated_palace):
     """Verify drawer IDs written to ChromaDB use SHA256[:24] — the fixed format."""
-    from codegen.memory.requirements_miner import RequirementsMiner
+    from echelon.spec_memory_miner import SpecMemoryMiner
 
     ctx = _ctx("alpha", str(isolated_palace))
-    miner = RequirementsMiner(ctx, project_dir=project_alpha)
+    miner = SpecMemoryMiner(ctx, project_dir=project_alpha)
     result = miner.mine_file(project_alpha / "spec.md")
 
     assert len(result.drawer_ids) > 0, "Expected drawer IDs from mine result"
@@ -155,12 +155,12 @@ def test_drawer_id_uses_sha256_not_md5(project_alpha, isolated_palace):
 
 def test_collision_detection_finds_foreign_drawers(project_alpha, project_beta, isolated_palace):
     """Mine project-B's spec under wing 'shared', verify collision detected from project-A."""
-    from codegen.memory.requirements_miner import RequirementsMiner
+    from echelon.spec_memory_miner import SpecMemoryMiner
     from codegen.memory.collision import check_wing_collision
 
     ctx_polluted = _ctx("shared", str(isolated_palace))
     # Mine project-B's spec under wing "shared" — source_file will be project-B path
-    RequirementsMiner(ctx_polluted, project_dir=project_beta).mine_file(project_beta / "spec.md")
+    SpecMemoryMiner(ctx_polluted, project_dir=project_beta).mine_file(project_beta / "spec.md")
 
     foreign = check_wing_collision("shared", project_alpha, str(isolated_palace))
 
@@ -171,12 +171,12 @@ def test_collision_detection_finds_foreign_drawers(project_alpha, project_beta, 
 
 
 def test_requirements_clean_removes_miner_drawers(project_alpha, isolated_palace):
-    """requirements clean correctly removes drawers written by RequirementsMiner (real source_file)."""
-    from codegen.memory.requirements_miner import RequirementsMiner
+    """requirements clean correctly removes drawers written by SpecMemoryMiner (real source_file)."""
+    from echelon.spec_memory_miner import SpecMemoryMiner
     from codegen.memory.collision import check_wing_collision
 
     ctx = _ctx("alpha", str(isolated_palace))
-    miner = RequirementsMiner(ctx, project_dir=project_alpha)
+    miner = SpecMemoryMiner(ctx, project_dir=project_alpha)
     mine_result = miner.mine_file(project_alpha / "spec.md")
     assert mine_result.written > 0
 
