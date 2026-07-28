@@ -307,6 +307,23 @@ def test_schema_v2_blocked_decision_rejects_unsafe_shapes(
         validate_blocked_decision_v2(decision)
 
 
+def test_schema_v2_allows_an_option_whose_own_id_is_its_label() -> None:
+    decision = _v2_decision()
+    decision["options"] = [
+        {
+            "id": "continue",
+            "label": "continue",
+            "description": "Continue with the bounded investigation.",
+            "recommended": True,
+            "risk_level": "low",
+            "next_phase": "phase1-what",
+            "outcome": None,
+        }
+    ]
+
+    assert validate_blocked_decision_v2(decision)["options"] == decision["options"]
+
+
 @pytest.mark.parametrize(
     "mutate",
     [

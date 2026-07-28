@@ -159,6 +159,8 @@ def test_registry_prepares_normalized_provider_dynamic_options() -> None:
     [
         ([{"id": "one", "label": "One", "description": "First.", "recommended": True, "risk_level": "low", "next_phase": "phase1-what", "outcome": "approved"}], "outcome"),
         ([{"id": "one", "label": "One", "description": "First.", "recommended": True, "risk_level": "low", "next_phase": "phase1-what"}, {"id": "one", "label": "Two", "description": "Second.", "recommended": False, "risk_level": "low", "next_phase": "phase1-what"}], "duplicate option id"),
+        ([{"id": "one", "label": "Same", "description": "First.", "recommended": True, "risk_level": "low", "next_phase": "phase1-what"}, {"id": "two", "label": "Same", "description": "Second.", "recommended": False, "risk_level": "low", "next_phase": "phase1-what"}], "duplicate option label"),
+        ([{"id": "one", "label": "two", "description": "First.", "recommended": True, "risk_level": "low", "next_phase": "phase1-what"}, {"id": "two", "label": "Two", "description": "Second.", "recommended": False, "risk_level": "low", "next_phase": "phase1-what"}], "option label conflicts"),
         ([{"id": "one", "label": "One", "description": "First.", "recommended": True, "risk_level": "low", "next_phase": "terminal-blocked"}], "allowed_target_phases"),
     ],
 )
@@ -175,6 +177,31 @@ def test_registry_rejects_invalid_provider_dynamic_options(options: list[dict], 
             options=options,
             source_state_revision=8,
         )
+
+
+def test_registry_allows_a_provider_option_whose_own_id_is_its_label() -> None:
+    registry = HumanInputPolicyRegistry((_provider_policy(),))
+
+    request = registry.prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        phase_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        question="Choose the next investigation step.",
+        options=[
+            {
+                "id": "continue",
+                "label": "continue",
+                "description": "Continue with the bounded investigation.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "phase1-what",
+            }
+        ],
+        source_state_revision=8,
+    )
+
+    assert request.options[0].id == request.options[0].label == "continue"
 
 
 def test_semi_requires_an_operational_low_risk_recommendation() -> None:

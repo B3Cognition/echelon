@@ -8,8 +8,12 @@ import subprocess
 
 import pytest
 
-from echelon.cli import _cmd_phase
+from echelon.cli import _cmd_continue, _cmd_phase, _cmd_run
+from harness.blocked_decision import build_blocked_decision_v2
+from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
+from harness.recovery_instruction import RecoveryInstruction, RecoveryKind
 from harness.squad_provider import SquadAgentResult
+from harness.squad_state import SquadStateStore, StateAdvanceError
 
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -29,7 +33,7 @@ def _initialize_active_run(project_root: Path) -> Path:
         cwd=project_root,
         check=True,
     )
-    (project_root / ".gitignore").write_text("/runs/.current\n", encoding="utf-8")
+    (project_root / ".gitignore").write_text("/runs/\n", encoding="utf-8")
     subprocess.run(["git", "add", ".gitignore"], cwd=project_root, check=True)
     subprocess.run(
         ["git", "commit", "-m", "base"], cwd=project_root, check=True, capture_output=True
@@ -39,6 +43,102 @@ def _initialize_active_run(project_root: Path) -> Path:
     (run_dir / "staging").mkdir()
     (project_root / "runs" / ".current").write_text("run-active\n", encoding="utf-8")
     return run_dir
+
+
+def _seal_pending_v2_decision(
+    run_dir: Path,
+    *,
+    status: str,
+    autonomy_mode: str = "semi",
+) -> None:
+    store = SquadStateStore(run_dir)
+    store.initialize(
+        "run-active",
+        "greenfield",
+        "validate the pending decision",
+        0,
+        "checkpoint-plan",
+        autonomy_mode=autonomy_mode,
+    )
+    state = store.load()
+    spec_dir = run_dir / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=run_dir.parents[1],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    record_checkpoint_metadata(
+        spec_dir,
+        PhaseCheckpoint(
+            id="checkpoint-test",
+            spec_id="001-demo",
+            phase="checkpoint-plan",
+            next_phase="phase4-document",
+            commit=commit,
+            metadata_commit=commit,
+            source="test",
+            run_id="run-active",
+            created_at="2026-07-28T10:00:00+00:00",
+        ),
+    )
+    decision = build_blocked_decision_v2(
+        decision_id="dec-cli-phase-bypass",
+        status=status,
+        source_kind="human_gate",
+        producer_id="checkpoint-plan",
+        source_phase="checkpoint-plan",
+        reason_code="checkpoint_plan_decision_required",
+        classification="operational",
+        question="Approve the plan?",
+        options=[
+            {
+                "id": "approve",
+                "label": "Approve",
+                "description": "Continue to finalization.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "phase4-document",
+                "outcome": "approved",
+            },
+            {
+                "id": "reject",
+                "label": "Reject",
+                "description": "Stop for plan revision.",
+                "recommended": False,
+                "risk_level": "low",
+                "next_phase": "terminal-blocked",
+                "outcome": "rejected",
+            },
+        ],
+        recommended_answer=None,
+        risk_level="low",
+        resolution_handler="gate_outcome",
+        autonomy_mode=autonomy_mode,
+        source_state_revision=state["state_revision"],
+        now="2026-07-28T10:00:00+00:00",
+    )
+    state.update(
+        {
+            "status": "blocked",
+            "phase": "checkpoint-plan",
+            "spec_id": "001-demo",
+            "feature_branch": "main",
+            "spec_dir": str(spec_dir),
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.RESOLVE_DECISION,
+                reason_code="checkpoint_plan_decision_required",
+                phase="checkpoint-plan",
+                requires_human_input=False,
+                schema_version=2,
+                decision_id="dec-cli-phase-bypass",
+            ).to_dict(),
+        }
+    )
+    store._path.write_text(json.dumps(state), encoding="utf-8")
 
 
 def test_phase_list_prints_workflow_phases(tmp_path: Path, capsys) -> None:
@@ -75,6 +175,102 @@ def test_phase_run_rejects_unknown_phase(tmp_path: Path, capsys) -> None:
     err = capsys.readouterr().err
     assert "Unknown phase id" in err
     assert "phase1-constitution" in err
+
+
+@pytest.mark.parametrize("status", ("pending", "resolving"))
+@pytest.mark.parametrize("entrypoint", ("next_phase", "phase_run"))
+def test_cli_bypass_entrypoints_reject_unresolved_v2_decisions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+    entrypoint: str,
+) -> None:
+    run_dir = _initialize_active_run(tmp_path)
+    _seal_pending_v2_decision(run_dir, status=status)
+    before = (run_dir / "state.json").read_bytes()
+
+    class PhysicalProvider:
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def exec_agent(self, *_args: object, **_kwargs: object) -> SquadAgentResult:
+            raise AssertionError("unresolved decision must block before provider dispatch")
+
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", PhysicalProvider)
+    if entrypoint == "next_phase":
+        with pytest.raises(SystemExit) as exc:
+            _cmd_run(
+                ["--next-phase", "phase1-tracker"],
+                project_root=tmp_path,
+                ext_dir=EXT_DIR,
+            )
+        assert exc.value.code == 1
+    else:
+        _cmd_phase(
+            ["run", "phase1-tracker"],
+            project_root=tmp_path,
+            ext_dir=EXT_DIR,
+        )
+
+    assert (run_dir / "state.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("autonomy_mode", ("semi", "banzai"))
+def test_continue_resolves_eligible_v2_decisions_through_real_controller(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    autonomy_mode: str,
+) -> None:
+    run_dir = _initialize_active_run(tmp_path)
+    switchable_run_dir = run_dir.with_name("spec-001")
+    run_dir.rename(switchable_run_dir)
+    (tmp_path / "runs" / ".current").write_text("spec-001\n", encoding="utf-8")
+    run_dir = switchable_run_dir
+    _seal_pending_v2_decision(run_dir, status="pending", autonomy_mode=autonomy_mode)
+
+    class PhysicalProvider:
+        def __init__(self, _config: object) -> None:
+            self.calls = 0
+
+        def exec_agent(self, *_args: object, **_kwargs: object) -> SquadAgentResult:
+            self.calls += 1
+            if autonomy_mode == "banzai" and self.calls == 1:
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "DECISION_RESOLVED",
+                        "state_updates": {},
+                        "journal_entries": [],
+                        "decision": {
+                            "selected_option_id": "approve",
+                            "answer_text": None,
+                            "rationale": "The sealed low-risk option applies.",
+                            "confidence": "high",
+                        },
+                    },
+                    raw_output="",
+                    duration_ms=1,
+                    timed_out=False,
+                )
+            return SquadAgentResult(
+                exit_code=1,
+                echelon_result=None,
+                raw_output="physical provider stopped after decision resolution",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", PhysicalProvider)
+    with pytest.raises((SystemExit, StateAdvanceError)):
+        _cmd_continue(
+            [],
+            project_root=tmp_path,
+            ext_dir=EXT_DIR,
+        )
+
+    decision = SquadStateStore(run_dir).load()["blocked_decision"]
+    assert decision["status"] == "resolved"
+    assert decision["resolved_by"] == ("semi" if autonomy_mode == "semi" else "COMMANDER")
 
 
 def test_phase_run_constitution_does_not_require_task_lexicon_config(

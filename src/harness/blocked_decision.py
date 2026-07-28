@@ -99,8 +99,8 @@ def _validate_v2_options(value: object) -> list[dict[str, object]]:
         raise BlockedDecisionError("options must be a list")
 
     options: list[dict[str, object]] = []
-    option_ids: set[str] = set()
-    option_labels: set[str] = set()
+    option_id_indexes: dict[str, int] = {}
+    option_label_indexes: dict[str, int] = {}
     recommended_count = 0
     for index, raw in enumerate(value):
         if not isinstance(raw, Mapping):
@@ -114,13 +114,13 @@ def _validate_v2_options(value: object) -> list[dict[str, object]]:
         if missing:
             raise BlockedDecisionError(f"missing option field: {sorted(missing)[0]}")
         option_id = _required_v2_string(raw["id"], f"options[{index}].id")
-        if option_id in option_ids:
+        if option_id in option_id_indexes:
             raise BlockedDecisionError("duplicate option id")
-        option_ids.add(option_id)
+        option_id_indexes[option_id] = index
         option_label = _required_v2_string(raw["label"], f"options[{index}].label")
-        if option_label in option_labels:
+        if option_label in option_label_indexes:
             raise BlockedDecisionError("duplicate option label")
-        option_labels.add(option_label)
+        option_label_indexes[option_label] = index
         recommended = raw["recommended"]
         if type(recommended) is not bool:
             raise BlockedDecisionError(f"options[{index}].recommended must be a boolean")
@@ -149,7 +149,11 @@ def _validate_v2_options(value: object) -> list[dict[str, object]]:
         )
     if recommended_count > 1:
         raise BlockedDecisionError("at most one option may be recommended")
-    if option_ids & option_labels:
+    if any(
+        option_id_indexes[label] != label_index
+        for label, label_index in option_label_indexes.items()
+        if label in option_id_indexes
+    ):
         raise BlockedDecisionError("option label conflicts with an option id")
     return options
 

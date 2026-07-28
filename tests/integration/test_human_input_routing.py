@@ -783,6 +783,67 @@ def test_real_provider_and_executor_accept_each_declared_question_contract(
     assert validated.verdict == "STOP_AND_ASK"
 
 
+def test_controller_blocks_malformed_provider_options_before_decision_sealing(
+    tmp_path: Path,
+) -> None:
+    graph = PhaseGraph(DEFINITION, EXTENSION)
+    policy = graph.human_input_policy_registry().lookup(
+        "provider_escalation",
+        "phase1-tracker",
+        "human_clarification_required",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    result = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "STOP_AND_ASK",
+            "state_updates": {
+                "status": "blocked",
+                "blocked_reason": "human_clarification_required",
+                "escalation_question": "Which bounded decision should be applied?",
+                "escalation_options": [
+                    {
+                        "id": "one",
+                        "label": "Same",
+                        "description": "First bounded route.",
+                        "recommended": True,
+                        "risk_level": "low",
+                        "next_phase": "phase1-tracker",
+                    },
+                    {
+                        "id": "two",
+                        "label": "Same",
+                        "description": "Second bounded route.",
+                        "recommended": False,
+                        "risk_level": "low",
+                        "next_phase": "phase1-tracker",
+                    },
+                ],
+            },
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=1,
+        timed_out=False,
+    )
+
+    node = graph.get("phase1-tracker")
+    snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+    prepared = controller._prepare_phase_result(node, result, snapshot)
+    before = store.load()
+
+    with pytest.raises(HumanInputPolicyError, match="duplicate option label"):
+        controller._prepare_provider_human_input(node, prepared, snapshot)
+
+    assert store.load() == before
+
+
 def test_human_input_handler_phase_dispatch_limit_reuses_issue_lifecycle(
     tmp_path: Path,
 ) -> None:
@@ -2234,6 +2295,59 @@ def test_resume_rejects_banzai_project_decision_but_allows_external_prerequisite
     assert external_store.load()["blocked_decision"]["status"] == "resolved"
     project_provider.exec_agent.assert_not_called()
     external_provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda state: state["blocked_decision"].update({"status": "pending"}),
+        lambda state: state.pop("recovery_instruction"),
+        lambda state: state["recovery_instruction"].update({"kind": "resolve_decision", "requires_human_input": False}),
+        lambda state: state["recovery_instruction"].update({"phase": "phase4-document"}),
+        lambda state: state["recovery_instruction"].update({"decision_id": "dec-stale"}),
+        lambda state: state["recovery_instruction"].update({"reason_code": "stale_reason"}),
+    ],
+    ids=("non_awaiting", "missing_instruction", "kind", "phase", "decision_id", "reason"),
+)
+def test_resume_rejects_invalid_or_stale_durable_authority_before_resolution(
+    tmp_path: Path,
+    mutation,
+) -> None:
+    policy = _choice_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    _seal_awaiting_human(controller, store, policy)
+    raw = json.loads(store._path.read_text(encoding="utf-8"))
+    mutation(raw)
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises((HumanInputPolicyError, ValueError)):
+        controller.resume_with_human_input("approve")
+
+    provider.exec_agent.assert_not_called()
+
+
+def test_resume_rejects_a_replaced_decision_with_a_stale_instruction(
+    tmp_path: Path,
+) -> None:
+    policy = _choice_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    _seal_awaiting_human(controller, store, policy)
+    raw = json.loads(store._path.read_text(encoding="utf-8"))
+    raw["blocked_decision"]["id"] = "dec-replaced"
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="decision_id"):
+        controller.resume_with_human_input("approve")
+
+    provider.exec_agent.assert_not_called()
 
 
 @pytest.mark.parametrize("status", ("pending", "resolving"))

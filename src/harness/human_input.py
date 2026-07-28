@@ -129,9 +129,21 @@ def _validate_options(
     *,
     allowed_target_phases: frozenset[str],
 ) -> None:
-    option_ids = [item.id for item in options]
-    if len(set(option_ids)) != len(option_ids):
-        raise HumanInputPolicyError("duplicate option id")
+    option_id_indexes: dict[str, int] = {}
+    option_label_indexes: dict[str, int] = {}
+    for index, option in enumerate(options):
+        if option.id in option_id_indexes:
+            raise HumanInputPolicyError("duplicate option id")
+        if option.label in option_label_indexes:
+            raise HumanInputPolicyError("duplicate option label")
+        option_id_indexes[option.id] = index
+        option_label_indexes[option.label] = index
+    if any(
+        option_id_indexes[label] != label_index
+        for label, label_index in option_label_indexes.items()
+        if label in option_id_indexes
+    ):
+        raise HumanInputPolicyError("option label conflicts with an option id")
     if sum(item.recommended for item in options) > 1:
         raise HumanInputPolicyError("at most one recommended option is allowed")
     for option in options:

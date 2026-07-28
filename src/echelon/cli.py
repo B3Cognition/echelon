@@ -5907,11 +5907,30 @@ def _cmd_run(
 
     config = load_config(project_root, squad_only=True)
     prev_dir = _find_current_run_dir(project_root)
+    active_v2_decision = False
+    if prev_dir is not None:
+        try:
+            previous_state = json.loads(
+                (prev_dir / "state.json").read_text(encoding="utf-8")
+            )
+            previous_decision = (
+                previous_state.get("blocked_decision")
+                if isinstance(previous_state, dict)
+                else None
+            )
+            active_v2_decision = (
+                isinstance(previous_decision, dict)
+                and previous_decision.get("schema_version") == 2
+                and previous_decision.get("status")
+                in {"pending", "resolving", "awaiting_human", "failed"}
+            )
+        except (OSError, ValueError, TypeError):
+            pass
     squad_dir, is_fresh = _select_squad_dir(
         project_root,
         message,
         reset=reset,
-        manual_recovery=bool(next_phase),
+        manual_recovery=bool(next_phase) or active_v2_decision,
         configured_default_branch=str(getattr(config, "target_default_branch", "") or ""),
         dirty_action=dirty_action,
         confirm_discard=confirm_discard,
