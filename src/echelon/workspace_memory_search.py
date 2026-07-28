@@ -11,12 +11,12 @@ DEFAULT_SEARCH_LIMIT = 10
 DEFAULT_SEARCH_OVERFETCH = 8
 
 
-class SpecMemorySearchError(RuntimeError):
-    """Bounded operator-facing error for spec memory search commands."""
+class WorkspaceMemorySearchError(RuntimeError):
+    """Bounded operator-facing error for workspace memory search commands."""
 
 
 @dataclass(frozen=True)
-class SpecMemorySearchHit:
+class WorkspaceMemorySearchHit:
     drawer_id: str
     content: str
     room: str
@@ -40,14 +40,14 @@ class SpecMemorySearchHit:
 
 
 @dataclass(frozen=True)
-class SpecMemorySearchReport:
+class WorkspaceMemorySearchReport:
     query: str
     wing: str
     room: str | None
     spec: str | None
     kind: str | None
     limit: int
-    hits: list[SpecMemorySearchHit] = field(default_factory=list)
+    hits: list[WorkspaceMemorySearchHit] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,7 +62,7 @@ class SpecMemorySearchReport:
 
 
 @dataclass(frozen=True)
-class SpecMemoryFacetReport:
+class WorkspaceMemoryFacetReport:
     wing: str
     rooms: dict[str, int] = field(default_factory=dict)
     specs: dict[str, int] = field(default_factory=dict)
@@ -77,7 +77,7 @@ class SpecMemoryFacetReport:
         }
 
 
-def search_spec_memory(
+def search_workspace_memory(
     project_root: Path,
     query: str,
     *,
@@ -85,9 +85,9 @@ def search_spec_memory(
     spec: str | None = None,
     kind: str | None = None,
     limit: int = DEFAULT_SEARCH_LIMIT,
-) -> SpecMemorySearchReport:
+) -> WorkspaceMemorySearchReport:
     if not query.strip():
-        raise SpecMemorySearchError("query must not be empty")
+        raise WorkspaceMemorySearchError("query must not be empty")
     bounded_limit = max(1, min(limit, 100))
     adapter = create_requirement_memory_adapter(project_root, run_id="search")
     collection = adapter.open_collection_read_only()
@@ -102,9 +102,9 @@ def search_spec_memory(
             include=["documents", "metadatas", "distances"],
         )
     except (Exception, SystemExit) as exc:
-        raise SpecMemorySearchError(type(exc).__name__) from exc
+        raise WorkspaceMemorySearchError(type(exc).__name__) from exc
 
-    hits: list[SpecMemorySearchHit] = []
+    hits: list[WorkspaceMemorySearchHit] = []
     ids = _first_list(raw.get("ids"))
     documents = _first_list(raw.get("documents"))
     metadatas = _first_list(raw.get("metadatas"))
@@ -125,7 +125,7 @@ def search_spec_memory(
         if kind and actual_kind != kind:
             continue
         hits.append(
-            SpecMemorySearchHit(
+            WorkspaceMemorySearchHit(
                 drawer_id=drawer_id,
                 content=document if isinstance(document, str) else "",
                 room=str(metadata.get("room") or ""),
@@ -141,7 +141,7 @@ def search_spec_memory(
         if len(hits) >= bounded_limit:
             break
 
-    return SpecMemorySearchReport(
+    return WorkspaceMemorySearchReport(
         query=query,
         wing=str(getattr(adapter, "wing")),
         room=room,
@@ -152,27 +152,19 @@ def search_spec_memory(
     )
 
 
-def list_spec_memory_facets(project_root: Path) -> SpecMemoryFacetReport:
+def list_workspace_memory_facets(project_root: Path) -> WorkspaceMemoryFacetReport:
     adapter = create_requirement_memory_adapter(project_root, run_id="list")
     collection = adapter.open_collection_read_only()
-    try:
-        raw = collection.get(  # type: ignore[attr-defined]
-            where={"wing": {"$eq": getattr(adapter, "wing")}},
-            include=["metadatas"],
-            limit=MAX_MEMORY_SCAN_ROWS,
-        )
-    except (Exception, SystemExit) as exc:
-        raise SpecMemorySearchError(type(exc).__name__) from exc
     rooms: dict[str, int] = {}
     specs: dict[str, int] = {}
     kinds: dict[str, int] = {}
-    for metadata in raw.get("metadatas") or []:
+    for metadata in _iter_facet_metadatas(collection, str(getattr(adapter, "wing"))):
         if not isinstance(metadata, dict):
             continue
         _increment(rooms, str(metadata.get("room") or ""))
         _increment(specs, _spec_id_from_artifact_path(_artifact_path(metadata)))
         _increment(kinds, _kind_from_metadata(metadata))
-    return SpecMemoryFacetReport(
+    return WorkspaceMemoryFacetReport(
         wing=str(getattr(adapter, "wing")),
         rooms=_without_empty_key(rooms),
         specs=_without_empty_key(specs),
@@ -189,6 +181,50 @@ def _search_where(wing: str, *, room: str | None, kind: str | None) -> dict[str,
     if len(clauses) == 1:
         return clauses[0]
     return {"$and": clauses}
+
+
+def _iter_facet_metadatas(collection: Any, wing: str) -> list[Any]:
+    metadatas: list[Any] = []
+    offset = 0
+    while True:
+        try:
+            raw = collection.get(  # type: ignore[attr-defined]
+                where={"wing": {"$eq": wing}},
+                include=["metadatas"],
+                limit=MAX_MEMORY_SCAN_ROWS,
+                offset=offset,
+            )
+        except TypeError as exc:
+            if offset:
+                raise WorkspaceMemorySearchError(type(exc).__name__) from exc
+            raw = _get_first_facet_page_without_offset(collection, wing)
+            page = raw.get("metadatas") or []
+            if len(page) >= MAX_MEMORY_SCAN_ROWS:
+                raise WorkspaceMemorySearchError(
+                    "MemPalace backend does not support complete facet scans"
+                ) from exc
+            metadatas.extend(page)
+            break
+        except (Exception, SystemExit) as exc:
+            raise WorkspaceMemorySearchError(type(exc).__name__) from exc
+
+        page = raw.get("metadatas") or []
+        metadatas.extend(page)
+        if len(page) < MAX_MEMORY_SCAN_ROWS:
+            break
+        offset += len(page)
+    return metadatas
+
+
+def _get_first_facet_page_without_offset(collection: Any, wing: str) -> dict[str, Any]:
+    try:
+        return collection.get(  # type: ignore[attr-defined]
+            where={"wing": {"$eq": wing}},
+            include=["metadatas"],
+            limit=MAX_MEMORY_SCAN_ROWS,
+        )
+    except (Exception, SystemExit) as exc:
+        raise WorkspaceMemorySearchError(type(exc).__name__) from exc
 
 
 def _first_list(value: object) -> list[Any]:

@@ -14,8 +14,21 @@ def test_spec_memory_help_is_exposed() -> None:
     assert "mine" in result.output
     assert "audit" in result.output
     assert "refresh" in result.output
+    assert "search" not in result.output
+    assert "list-rooms" not in result.output
+
+
+@pytest.mark.unit
+def test_workspace_memory_help_is_exposed() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["memory", "--help"])
+
+    assert result.exit_code == 0
     assert "search" in result.output
     assert "list-rooms" in result.output
+    assert "list-specs" in result.output
+    assert "list-kinds" in result.output
 
 
 @pytest.mark.unit
@@ -46,13 +59,13 @@ def test_spec_memory_audit_json_exit_zero_for_warn(monkeypatch, tmp_path: Path) 
 
 
 @pytest.mark.unit
-def test_spec_memory_search_outputs_hits(monkeypatch, tmp_path: Path) -> None:
-    from echelon.spec_memory_search import SpecMemorySearchHit, SpecMemorySearchReport
+def test_workspace_memory_search_outputs_hits(monkeypatch, tmp_path: Path) -> None:
+    from echelon.workspace_memory_search import WorkspaceMemorySearchHit, WorkspaceMemorySearchReport
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "echelon.spec_memory_search.search_spec_memory",
-        lambda project_root, query, room=None, spec=None, kind=None, limit=10: SpecMemorySearchReport(
+        "echelon.workspace_memory_search.search_workspace_memory",
+        lambda project_root, query, room=None, spec=None, kind=None, limit=10: WorkspaceMemorySearchReport(
             query=query,
             wing="demo-wing",
             room=room,
@@ -60,7 +73,7 @@ def test_spec_memory_search_outputs_hits(monkeypatch, tmp_path: Path) -> None:
             kind=kind,
             limit=limit,
             hits=[
-                SpecMemorySearchHit(
+                WorkspaceMemorySearchHit(
                     drawer_id="drawer-1",
                     content="FR-001: Import prose artifacts.",
                     room="functional-requirements",
@@ -77,7 +90,7 @@ def test_spec_memory_search_outputs_hits(monkeypatch, tmp_path: Path) -> None:
 
     result = CliRunner().invoke(
         app,
-        ["spec", "memory", "search", "import prose", "--room", "functional-requirements"],
+        ["memory", "search", "import prose", "--room", "functional-requirements"],
     )
 
     assert result.exit_code == 0
@@ -86,13 +99,13 @@ def test_spec_memory_search_outputs_hits(monkeypatch, tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_spec_memory_list_rooms_outputs_facets(monkeypatch, tmp_path: Path) -> None:
-    from echelon.spec_memory_search import SpecMemoryFacetReport
+def test_workspace_memory_list_rooms_outputs_facets(monkeypatch, tmp_path: Path) -> None:
+    from echelon.workspace_memory_search import WorkspaceMemoryFacetReport
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
-        "echelon.spec_memory_search.list_spec_memory_facets",
-        lambda project_root: SpecMemoryFacetReport(
+        "echelon.workspace_memory_search.list_workspace_memory_facets",
+        lambda project_root: WorkspaceMemoryFacetReport(
             wing="demo-wing",
             rooms={"acceptance-criteria": 3},
             specs={"905-import-prose": 2},
@@ -101,11 +114,20 @@ def test_spec_memory_list_rooms_outputs_facets(monkeypatch, tmp_path: Path) -> N
     )
     from echelon.cli_app import app
 
-    result = CliRunner().invoke(app, ["spec", "memory", "list-rooms"])
+    result = CliRunner().invoke(app, ["memory", "list-rooms"])
 
     assert result.exit_code == 0
     assert "acceptance-criteria" in result.output
     assert "3" in result.output
+
+
+@pytest.mark.unit
+def test_spec_memory_search_is_not_exposed() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["spec", "memory", "search", "import prose"])
+
+    assert result.exit_code != 0
 
 
 @pytest.mark.unit

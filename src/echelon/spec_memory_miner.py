@@ -392,7 +392,31 @@ def _parse_markdown(text: str, source: str) -> list[MinedRequirement]:
 def _parse_support_markdown(text: str, source: str) -> list[MinedRequirement]:
     """Chunk selected non-spec artifacts as contextual memory."""
     room = _support_artifact_room(source)
-    stem = re.sub(r"[^A-Za-z0-9]+", "-", Path(source).stem).strip("-") or "artifact"
+    return _parse_context_markdown(
+        text,
+        source=source,
+        room=room,
+        req_prefix="CTX",
+        content_suffix=True,
+        id_stem=None,
+    )
+
+
+def _parse_context_markdown(
+    text: str,
+    *,
+    source: str,
+    room: str,
+    req_prefix: str,
+    content_suffix: bool,
+    id_stem: str | None,
+) -> list[MinedRequirement]:
+    """Chunk a contextual artifact by headings using stable synthetic IDs."""
+    stem = (
+        id_stem
+        or re.sub(r"[^A-Za-z0-9]+", "-", Path(source).stem).strip("-")
+        or "artifact"
+    )
     requirements: list[MinedRequirement] = []
     current_heading = Path(source).name
     current_lines: list[str] = []
@@ -406,11 +430,10 @@ def _parse_support_markdown(text: str, source: str) -> list[MinedRequirement]:
             return
         linked_ids = sorted(set(_LINKED_REQ_ID_PATTERN.findall(chunk_text)))
         linked_text = ", ".join(linked_ids) if linked_ids else "none"
-        req_id = f"CTX-{stem}-{chunk_index:03d}"
-        content = (
-            f"{req_id}: {current_heading}: {chunk_text} "
-            f"[linked_requirements: {linked_text}]"
-        )
+        req_id = f"{req_prefix}-{stem}-{chunk_index:03d}"
+        content = f"{req_id}: {current_heading}: {chunk_text}"
+        if content_suffix:
+            content = f"{content} [linked_requirements: {linked_text}]"
         requirements.append(
             MinedRequirement(
                 req_id=req_id,
@@ -431,6 +454,44 @@ def _parse_support_markdown(text: str, source: str) -> list[MinedRequirement]:
             current_lines.append(line)
     flush()
     return requirements
+
+
+def _parse_re_artifact_markdown(
+    text: str,
+    *,
+    source: str,
+    artifact_metadata: dict[str, Any],
+) -> list[MinedRequirement]:
+    room = artifact_metadata.get("room")
+    if not isinstance(room, str) or not room:
+        room = "re-workspace-context"
+    return _parse_context_markdown(
+        text,
+        source=source,
+        room=room,
+        req_prefix="RE",
+        content_suffix=False,
+        id_stem=re.sub(r"[^A-Za-z0-9]+", "-", source).strip("-") or None,
+    )
+
+
+def _parse_spec_evidence_artifact_markdown(
+    text: str,
+    *,
+    source: str,
+    artifact_metadata: dict[str, Any],
+) -> list[MinedRequirement]:
+    room = artifact_metadata.get("room")
+    if not isinstance(room, str) or not room:
+        room = "spec-evidence"
+    return _parse_context_markdown(
+        text,
+        source=source,
+        room=room,
+        req_prefix="EVID",
+        content_suffix=False,
+        id_stem=re.sub(r"[^A-Za-z0-9]+", "-", source).strip("-") or None,
+    )
 
 
 def _parse_jira_issue(issue: dict, source: str) -> Optional[MinedRequirement]:
@@ -504,6 +565,66 @@ def _canonical_support_from_bytes(
     return digest, _parse_support_markdown(text, source=source)
 
 
+def _re_artifact_from_bytes(
+    content: bytes,
+    *,
+    source: str,
+    artifact_metadata: dict[str, Any],
+) -> tuple[str, list[MinedRequirement]]:
+    if (
+        type(content) is not bytes
+        or type(source) is not str
+        or not source
+        or type(artifact_metadata) is not dict
+        or artifact_metadata.get("canonical") is not True
+        or artifact_metadata.get("artifact_kind") != "reverse-engineering"
+        or artifact_metadata.get("scope") != "reverse-engineering"
+    ):
+        raise ValueError("invalid reverse-engineering mining input")
+    digest = hashlib.sha256(content).hexdigest()
+    if artifact_metadata.get("artifact_hash") != f"sha256:{digest}":
+        raise ValueError("reverse-engineering artifact digest mismatch")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("reverse-engineering artifact is not UTF-8") from exc
+    return digest, _parse_re_artifact_markdown(
+        text,
+        source=source,
+        artifact_metadata=artifact_metadata,
+    )
+
+
+def _spec_evidence_artifact_from_bytes(
+    content: bytes,
+    *,
+    source: str,
+    artifact_metadata: dict[str, Any],
+) -> tuple[str, list[MinedRequirement]]:
+    if (
+        type(content) is not bytes
+        or type(source) is not str
+        or not source
+        or type(artifact_metadata) is not dict
+        or artifact_metadata.get("canonical") is not True
+        or artifact_metadata.get("artifact_kind") != "spec-evidence"
+        or artifact_metadata.get("scope") != "spec-evidence"
+    ):
+        raise ValueError("invalid spec evidence mining input")
+    digest = hashlib.sha256(content).hexdigest()
+    if artifact_metadata.get("artifact_hash") != f"sha256:{digest}":
+        raise ValueError("spec evidence artifact digest mismatch")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("spec evidence artifact is not UTF-8") from exc
+    return digest, _parse_spec_evidence_artifact_markdown(
+        text,
+        source=source,
+        artifact_metadata=artifact_metadata,
+    )
+
+
 def plan_canonical_requirement_drawers(
     content: bytes,
     *,
@@ -561,6 +682,98 @@ def plan_canonical_support_drawers(
     if type(wing) is not str or not wing:
         raise ValueError("invalid canonical support mining input")
     digest, requirements = _canonical_support_from_bytes(
+        content,
+        source=source,
+        artifact_metadata=artifact_metadata,
+    )
+    from codegen.memory.mempalace_writer import (
+        deterministic_requirement_drawer_id,
+    )
+
+    result: list[CanonicalRequirementDrawerPlan] = []
+    for requirement in requirements:
+        scrubbed_content = scrub_secrets(requirement.content)
+        result.append(
+            CanonicalRequirementDrawerPlan(
+                drawer_id=deterministic_requirement_drawer_id(
+                    wing=wing,
+                    room=requirement.room,
+                    spec_sha256=digest,
+                    requirement_id=requirement.req_id,
+                    content=scrubbed_content,
+                ),
+                requirement_id=requirement.req_id,
+                room=requirement.room,
+                source=requirement.source,
+                artifact_hash=f"sha256:{digest}",
+                canonical_spec_sha256=digest,
+                requirement_content_sha256=hashlib.sha256(
+                    scrubbed_content.encode("utf-8")
+                ).hexdigest(),
+            )
+        )
+    if len({row.drawer_id for row in result}) != len(result):
+        raise ValueError("deterministic drawer identity collision")
+    return result
+
+
+def plan_re_artifact_drawers(
+    content: bytes,
+    *,
+    source: str,
+    artifact_metadata: dict[str, Any],
+    wing: str,
+) -> list[CanonicalRequirementDrawerPlan]:
+    """Plan deterministic contextual rows for curated RE artifacts."""
+    if type(wing) is not str or not wing:
+        raise ValueError("invalid reverse-engineering mining input")
+    digest, requirements = _re_artifact_from_bytes(
+        content,
+        source=source,
+        artifact_metadata=artifact_metadata,
+    )
+    from codegen.memory.mempalace_writer import (
+        deterministic_requirement_drawer_id,
+    )
+
+    result: list[CanonicalRequirementDrawerPlan] = []
+    for requirement in requirements:
+        scrubbed_content = scrub_secrets(requirement.content)
+        result.append(
+            CanonicalRequirementDrawerPlan(
+                drawer_id=deterministic_requirement_drawer_id(
+                    wing=wing,
+                    room=requirement.room,
+                    spec_sha256=digest,
+                    requirement_id=requirement.req_id,
+                    content=scrubbed_content,
+                ),
+                requirement_id=requirement.req_id,
+                room=requirement.room,
+                source=requirement.source,
+                artifact_hash=f"sha256:{digest}",
+                canonical_spec_sha256=digest,
+                requirement_content_sha256=hashlib.sha256(
+                    scrubbed_content.encode("utf-8")
+                ).hexdigest(),
+            )
+        )
+    if len({row.drawer_id for row in result}) != len(result):
+        raise ValueError("deterministic drawer identity collision")
+    return result
+
+
+def plan_spec_evidence_artifact_drawers(
+    content: bytes,
+    *,
+    source: str,
+    artifact_metadata: dict[str, Any],
+    wing: str,
+) -> list[CanonicalRequirementDrawerPlan]:
+    """Plan deterministic contextual rows for curated spec evidence artifacts."""
+    if type(wing) is not str or not wing:
+        raise ValueError("invalid spec evidence mining input")
+    digest, requirements = _spec_evidence_artifact_from_bytes(
         content,
         source=source,
         artifact_metadata=artifact_metadata,
@@ -716,6 +929,36 @@ class SpecMemoryMiner:
             wing=self.wing,
         )
 
+    def plan_re_artifact_rows(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> list[CanonicalRequirementDrawerPlan]:
+        """Compute structured RE-context rows without reading or writing."""
+        return plan_re_artifact_drawers(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+            wing=self.wing,
+        )
+
+    def plan_spec_evidence_artifact_rows(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> list[CanonicalRequirementDrawerPlan]:
+        """Compute structured spec-evidence rows without reading or writing."""
+        return plan_spec_evidence_artifact_drawers(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+            wing=self.wing,
+        )
+
     def open_collection_read_only(self) -> object:
         """Open existing storage for inspection without creating it."""
         writer = self._get_writer()
@@ -778,6 +1021,62 @@ class SpecMemoryMiner:
     ) -> MineResult:
         """Mine one selected canonical support artifact without a path reread."""
         _, requirements = _canonical_support_from_bytes(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+        )
+        result = MineResult(
+            wing=self.wing,
+            total=len(requirements),
+            written=0,
+            skipped=0,
+            failed=0,
+        )
+        result.requirements = requirements
+        self._write_requirements(
+            requirements,
+            result,
+            artifact_metadata=artifact_metadata,
+        )
+        return result
+
+    def mine_re_artifact_bytes(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> MineResult:
+        """Mine one curated reverse-engineering artifact without a path reread."""
+        _, requirements = _re_artifact_from_bytes(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+        )
+        result = MineResult(
+            wing=self.wing,
+            total=len(requirements),
+            written=0,
+            skipped=0,
+            failed=0,
+        )
+        result.requirements = requirements
+        self._write_requirements(
+            requirements,
+            result,
+            artifact_metadata=artifact_metadata,
+        )
+        return result
+
+    def mine_spec_evidence_artifact_bytes(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> MineResult:
+        """Mine one curated spec evidence artifact without a path reread."""
+        _, requirements = _spec_evidence_artifact_from_bytes(
             content,
             source=source,
             artifact_metadata=artifact_metadata,
@@ -1016,14 +1315,20 @@ class SpecMemoryMiner:
                         )
                         continue
                     deterministic_ids.add(expected_id)
+                    provenance_type = artifact_metadata.get("provenance_type")
+                    if not isinstance(provenance_type, str) or not provenance_type:
+                        provenance_type = "requirements_mine"
+                    phase = artifact_metadata.get("phase")
+                    if not isinstance(phase, str) or not phase:
+                        phase = "RE"
                     exact_result = exact_write(
                         room=req.room,
                         content=content,
-                        phase="RE",
+                        phase=phase,
                         drawer_id=expected_id,
                         spec_sha256=canonical_spec_sha256,
                         requirement_id=req.req_id,
-                        provenance_type="requirements_mine",
+                        provenance_type=provenance_type,
                         source_file=req.source,
                         extra_metadata=artifact_metadata,
                     )
@@ -1059,8 +1364,18 @@ class SpecMemoryMiner:
                 drawer_id = writer.write(  # type: ignore[union-attr]
                     room=req.room,
                     content=content,
-                    phase="RE",
-                    provenance_type="requirements_mine",
+                    phase=(
+                        artifact_metadata.get("phase")
+                        if isinstance(artifact_metadata, dict)
+                        and isinstance(artifact_metadata.get("phase"), str)
+                        else "RE"
+                    ),
+                    provenance_type=(
+                        artifact_metadata.get("provenance_type")
+                        if isinstance(artifact_metadata, dict)
+                        and isinstance(artifact_metadata.get("provenance_type"), str)
+                        else "requirements_mine"
+                    ),
                     source_file=req.source,
                     extra_metadata=artifact_metadata,
                 )

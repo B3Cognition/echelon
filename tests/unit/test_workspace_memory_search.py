@@ -30,13 +30,17 @@ class FakeCollection:
             "distances": [[row.get("distance", 0.1) for row in matches]],
         }
 
-    def get(self, where=None, include=None, limit=None):
-        self.gets.append({"where": where, "include": include, "limit": limit})
+    def get(self, where=None, include=None, limit=None, offset=0):
+        self.gets.append(
+            {"where": where, "include": include, "limit": limit, "offset": offset}
+        )
         matches = [
             row
             for row in self.rows
             if where is None or _matches_where(row["metadata"], where)
-        ][:limit]
+        ][offset:]
+        if limit is not None:
+            matches = matches[:limit]
         return {
             "ids": [row["id"] for row in matches],
             "documents": [row["document"] for row in matches],
@@ -112,12 +116,12 @@ def _rows():
 def test_search_filters_by_room_spec_and_kind(monkeypatch, tmp_path: Path) -> None:
     collection = FakeCollection(_rows())
     monkeypatch.setattr(
-        "echelon.spec_memory_search.create_requirement_memory_adapter",
+        "echelon.workspace_memory_search.create_requirement_memory_adapter",
         lambda project_root, run_id: FakeAdapter(collection),
     )
-    from echelon.spec_memory_search import search_spec_memory
+    from echelon.workspace_memory_search import search_workspace_memory
 
-    report = search_spec_memory(
+    report = search_workspace_memory(
         tmp_path,
         "import",
         room="functional-requirements",
@@ -140,12 +144,12 @@ def test_search_filters_by_room_spec_and_kind(monkeypatch, tmp_path: Path) -> No
 def test_list_facets_extracts_rooms_specs_and_kinds(monkeypatch, tmp_path: Path) -> None:
     collection = FakeCollection(_rows())
     monkeypatch.setattr(
-        "echelon.spec_memory_search.create_requirement_memory_adapter",
+        "echelon.workspace_memory_search.create_requirement_memory_adapter",
         lambda project_root, run_id: FakeAdapter(collection),
     )
-    from echelon.spec_memory_search import list_spec_memory_facets
+    from echelon.workspace_memory_search import list_workspace_memory_facets
 
-    facets = list_spec_memory_facets(tmp_path)
+    facets = list_workspace_memory_facets(tmp_path)
 
     assert facets.rooms == {
         "functional-requirements": 2,
@@ -156,3 +160,38 @@ def test_list_facets_extracts_rooms_specs_and_kinds(monkeypatch, tmp_path: Path)
         "909-expose-supported-machine-readable": 1,
     }
     assert facets.kinds == {"requirement": 2, "supporting-context": 1}
+
+
+@pytest.mark.unit
+def test_list_facets_reads_all_pages(monkeypatch, tmp_path: Path) -> None:
+    rows = []
+    for index in range(5):
+        rows.append(
+            {
+                "id": f"drawer-{index}",
+                "document": f"RE-{index}: Reverse-engineered fact.",
+                "metadata": {
+                    "wing": "demo-wing",
+                    "room": "re-generated-specs",
+                    "artifact_path": "re/modules/search/spec.md",
+                    "requirement_id": f"RE-{index}",
+                    "artifact_kind": "reverse-engineering",
+                },
+            }
+        )
+    collection = FakeCollection(rows)
+    monkeypatch.setattr(
+        "echelon.workspace_memory_search.MAX_MEMORY_SCAN_ROWS",
+        2,
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_memory_search.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(collection),
+    )
+    from echelon.workspace_memory_search import list_workspace_memory_facets
+
+    facets = list_workspace_memory_facets(tmp_path)
+
+    assert facets.kinds == {"reverse-engineering": 5}
+    assert facets.rooms == {"re-generated-specs": 5}
+    assert [call["offset"] for call in collection.gets] == [0, 2, 4]

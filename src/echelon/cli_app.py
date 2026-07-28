@@ -93,7 +93,22 @@ spec_checkpoint_app = typer.Typer(
 )
 spec_memory_app = typer.Typer(
     add_completion=False,
-    help="Mine, audit, search, and inspect canonical spec memory in MemPalace.",
+    help="Mine and audit canonical spec memory in MemPalace.",
+    no_args_is_help=True,
+)
+memory_app = typer.Typer(
+    add_completion=False,
+    help="Search and inspect workspace memory in MemPalace.",
+    no_args_is_help=True,
+)
+spec_evidence_app = typer.Typer(
+    add_completion=False,
+    help="Inspect and mine spec verification evidence.",
+    no_args_is_help=True,
+)
+spec_evidence_memory_app = typer.Typer(
+    add_completion=False,
+    help="Mine spec verification evidence in MemPalace.",
     no_args_is_help=True,
 )
 harness_app = typer.Typer(
@@ -109,6 +124,11 @@ llm_app = typer.Typer(
 re_app = typer.Typer(
     add_completion=False,
     help="Publish and inspect workspace reverse engineering.",
+    no_args_is_help=True,
+)
+re_memory_app = typer.Typer(
+    add_completion=False,
+    help="Mine workspace reverse-engineering memory in MemPalace.",
     no_args_is_help=True,
 )
 kb_app = typer.Typer(
@@ -135,6 +155,7 @@ app.add_typer(stack_app, name="stack")
 app.add_typer(delivery_app, name="delivery")
 app.add_typer(harness_app, name="harness", hidden=True)
 app.add_typer(llm_app, name="llm")
+app.add_typer(memory_app, name="memory")
 app.add_typer(re_app, name="re")
 app.add_typer(kb_app, name="kb")
 app.add_typer(wiki_app, name="wiki")
@@ -142,7 +163,10 @@ app.add_typer(admin_app, name="admin", hidden=True)
 workspace_app.add_typer(workspace_sources_app, name="sources")
 spec_app.add_typer(spec_checkpoint_app, name="checkpoint")
 spec_app.add_typer(spec_memory_app, name="memory")
+spec_app.add_typer(spec_evidence_app, name="evidence")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
+re_app.add_typer(re_memory_app, name="memory")
+spec_evidence_app.add_typer(spec_evidence_memory_app, name="memory")
 
 
 @admin_app.command("commands")
@@ -1875,19 +1899,19 @@ def spec_memory_refresh(
     raise typer.Exit(code=max(_memory_exit_code(mine_report.status), _memory_exit_code(audit_report.status)))
 
 
-@spec_memory_app.command("search")
-def spec_memory_search(
+@memory_app.command("search")
+def memory_search(
     query: str,
     room: Optional[str] = typer.Option(None, "--room", help="Restrict search to one memory room."),
     spec: Optional[str] = typer.Option(None, "--spec", help="Restrict results to one spec slug."),
-    kind: Optional[str] = typer.Option(None, "--kind", help="Restrict to requirement or supporting-context."),
+    kind: Optional[str] = typer.Option(None, "--kind", help="Restrict to one memory artifact kind."),
     limit: int = typer.Option(10, "--limit", "-n", min=1, max=100),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
-    from echelon.spec_memory_search import SpecMemorySearchError, search_spec_memory
+    from echelon.workspace_memory_search import WorkspaceMemorySearchError, search_workspace_memory
 
     try:
-        report = search_spec_memory(
+        report = search_workspace_memory(
             Path.cwd(),
             query,
             room=room,
@@ -1895,7 +1919,7 @@ def spec_memory_search(
             kind=kind,
             limit=limit,
         )
-    except SpecMemorySearchError as exc:
+    except WorkspaceMemorySearchError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     if as_json:
@@ -1904,15 +1928,15 @@ def spec_memory_search(
         _echo_memory_search(report)
 
 
-@spec_memory_app.command("list-rooms")
-def spec_memory_list_rooms(
+@memory_app.command("list-rooms")
+def memory_list_rooms(
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
-    from echelon.spec_memory_search import SpecMemorySearchError, list_spec_memory_facets
+    from echelon.workspace_memory_search import WorkspaceMemorySearchError, list_workspace_memory_facets
 
     try:
-        report = list_spec_memory_facets(Path.cwd())
-    except SpecMemorySearchError as exc:
+        report = list_workspace_memory_facets(Path.cwd())
+    except WorkspaceMemorySearchError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     if as_json:
@@ -1921,15 +1945,15 @@ def spec_memory_list_rooms(
         _echo_memory_facet("MemPalace rooms", report.rooms)
 
 
-@spec_memory_app.command("list-specs")
-def spec_memory_list_specs(
+@memory_app.command("list-specs")
+def memory_list_specs(
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
-    from echelon.spec_memory_search import SpecMemorySearchError, list_spec_memory_facets
+    from echelon.workspace_memory_search import WorkspaceMemorySearchError, list_workspace_memory_facets
 
     try:
-        report = list_spec_memory_facets(Path.cwd())
-    except SpecMemorySearchError as exc:
+        report = list_workspace_memory_facets(Path.cwd())
+    except WorkspaceMemorySearchError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     if as_json:
@@ -1938,21 +1962,75 @@ def spec_memory_list_specs(
         _echo_memory_facet("MemPalace specs", report.specs)
 
 
-@spec_memory_app.command("list-kinds")
-def spec_memory_list_kinds(
+@memory_app.command("list-kinds")
+def memory_list_kinds(
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
-    from echelon.spec_memory_search import SpecMemorySearchError, list_spec_memory_facets
+    from echelon.workspace_memory_search import WorkspaceMemorySearchError, list_workspace_memory_facets
 
     try:
-        report = list_spec_memory_facets(Path.cwd())
-    except SpecMemorySearchError as exc:
+        report = list_workspace_memory_facets(Path.cwd())
+    except WorkspaceMemorySearchError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
     if as_json:
         _echo_json({"wing": report.wing, "kinds": report.kinds})
     else:
         _echo_memory_facet("MemPalace kinds", report.kinds)
+
+
+@re_memory_app.command("refresh")
+def re_memory_refresh(
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.mempalace_re import mine_re_memory
+    from echelon.mempalace_requirements import SpecMemoryError
+
+    try:
+        report = mine_re_memory(Path.cwd(), run_id="manual")
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json(report.to_dict())
+    else:
+        typer.echo(
+            f"MemPalace RE mine {report.status}: artifacts={report.artifact_count} "
+            f"expected={report.expected_count} written={report.written_count} "
+            f"adopted={report.adopted_count} drifted={report.drifted_count} "
+            f"failed={report.failed_count}"
+        )
+    raise typer.Exit(code=_memory_exit_code(report.status))
+
+
+@spec_evidence_memory_app.command("refresh")
+def spec_evidence_memory_refresh(
+    spec_selector: str,
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.mempalace_requirements import SpecMemoryError
+    from echelon.mempalace_spec_evidence import mine_spec_evidence_memory
+
+    try:
+        report = mine_spec_evidence_memory(
+            Path.cwd(),
+            spec_selector,
+            run_id="manual",
+        )
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json(report.to_dict())
+    else:
+        typer.echo(
+            f"MemPalace spec evidence mine {report.status}: "
+            f"spec={report.spec_id} artifacts={report.artifact_count} "
+            f"expected={report.expected_count} written={report.written_count} "
+            f"adopted={report.adopted_count} drifted={report.drifted_count} "
+            f"failed={report.failed_count}"
+        )
+    raise typer.Exit(code=_memory_exit_code(report.status))
 
 
 @spec_app.command(
