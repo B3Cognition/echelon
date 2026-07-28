@@ -141,6 +141,8 @@ def validate_recovery_instruction_v2(value: object) -> RecoveryInstruction:
     """Validate a schema-v2 recovery instruction bound to one decision ID."""
     if not isinstance(value, Mapping):
         raise RecoveryInstructionError("recovery instruction must be an object")
+    if not all(isinstance(key, str) for key in value):
+        raise RecoveryInstructionError("recovery instruction field names must be strings")
     unknown = set(value) - _V2_FIELDS
     missing = _V2_FIELDS - set(value)
     if unknown:

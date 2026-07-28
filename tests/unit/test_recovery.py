@@ -217,6 +217,18 @@ def test_schema_v2_recovery_instruction_requires_a_decision_id() -> None:
         validate_recovery_instruction(instruction)
 
 
+def test_schema_v2_recovery_instruction_rejects_mixed_mapping_key_types() -> None:
+    instruction = _v2_instruction(
+        "resolve_decision",
+        phase="phase1-why1",
+        requires_human_input=False,
+    )
+    instruction.update({1: "invalid", "unknown": "invalid"})
+
+    with pytest.raises(RecoveryInstructionError):
+        validate_recovery_instruction(instruction)
+
+
 @pytest.mark.parametrize(
     ("status", "kind", "phase", "requires_human_input"),
     [

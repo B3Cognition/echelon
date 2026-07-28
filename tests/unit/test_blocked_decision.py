@@ -188,6 +188,25 @@ def test_builds_schema_v2_blocked_decision_with_all_nullable_fields_explicit() -
         (
             lambda decision: decision.update(
                 {
+                    "options": [
+                        {
+                            "id": "approve",
+                            "label": "Approve",
+                            "description": "Continue.",
+                            "recommended": True,
+                            "risk_level": "low",
+                            "next_phase": "phase2-decide",
+                            "outcome": None,
+                        }
+                    ],
+                    "recommended_answer": "Free text recommendation",
+                }
+            ),
+            "choice decisions cannot record recommended_answer",
+        ),
+        (
+            lambda decision: decision.update(
+                {
                     "status": "resolved",
                     "selected_option_id": "undeclared",
                     "answer_text": None,
@@ -231,6 +250,40 @@ def test_schema_v2_blocked_decision_rejects_unsafe_shapes(
     mutate(decision)
 
     with pytest.raises(BlockedDecisionError, match=message):
+        validate_blocked_decision_v2(decision)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda decision: decision.update({1: "invalid", "unknown": "invalid"}),
+        lambda decision: decision.update(
+            {
+                "options": [
+                    {
+                        "id": "approve",
+                        "label": "Approve",
+                        "description": "Continue.",
+                        "recommended": True,
+                        "risk_level": "low",
+                        "next_phase": "phase2-decide",
+                        "outcome": None,
+                        1: "invalid",
+                        "unknown": "invalid",
+                    }
+                ]
+            }
+        ),
+    ],
+)
+def test_schema_v2_blocked_decision_rejects_mixed_mapping_key_types(
+    mutate: object,
+) -> None:
+    decision = _v2_decision()
+    assert callable(mutate)
+    mutate(decision)
+
+    with pytest.raises(BlockedDecisionError):
         validate_blocked_decision_v2(decision)
 
 

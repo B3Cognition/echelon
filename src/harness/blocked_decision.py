@@ -104,6 +104,8 @@ def _validate_v2_options(value: object) -> list[dict[str, object]]:
     for index, raw in enumerate(value):
         if not isinstance(raw, Mapping):
             raise BlockedDecisionError(f"options[{index}] must be an object")
+        if not all(isinstance(key, str) for key in raw):
+            raise BlockedDecisionError(f"options[{index}] field names must be strings")
         unknown = set(raw) - _V2_OPTION_FIELDS
         missing = _V2_OPTION_FIELDS - set(raw)
         if unknown:
@@ -149,6 +151,8 @@ def validate_blocked_decision_v2(value: object) -> dict[str, object]:
     """Validate and return a copy of a complete schema-v2 blocked decision."""
     if not isinstance(value, Mapping):
         raise BlockedDecisionError("blocked decision must be an object")
+    if not all(isinstance(key, str) for key in value):
+        raise BlockedDecisionError("blocked decision field names must be strings")
     unknown = set(value) - _V2_FIELDS
     missing = _V2_FIELDS - set(value)
     if unknown:
@@ -186,6 +190,9 @@ def validate_blocked_decision_v2(value: object) -> dict[str, object]:
 
     options = _validate_v2_options(value["options"])
     option_ids = {option["id"] for option in options}
+    recommended_answer = _optional_v2_string(
+        value["recommended_answer"], "recommended_answer"
+    )
     selected_option_id = _optional_v2_string(value["selected_option_id"], "selected_option_id")
     answer_text = _optional_v2_string(value["answer_text"], "answer_text")
     resolved_by = _optional_v2_string(value["resolved_by"], "resolved_by")
@@ -196,6 +203,8 @@ def validate_blocked_decision_v2(value: object) -> dict[str, object]:
         raise BlockedDecisionError("selected_option_id requires a declared option")
     if options and answer_text is not None:
         raise BlockedDecisionError("choice decisions cannot record answer_text")
+    if options and recommended_answer is not None:
+        raise BlockedDecisionError("choice decisions cannot record recommended_answer")
     if not options and selected_option_id is not None:
         raise BlockedDecisionError("free-text decisions cannot record selected_option_id")
     if status == "resolved":
@@ -228,9 +237,7 @@ def validate_blocked_decision_v2(value: object) -> dict[str, object]:
         "classification": classification,
         "question": _required_v2_string(value["question"], "question"),
         "options": options,
-        "recommended_answer": _optional_v2_string(
-            value["recommended_answer"], "recommended_answer"
-        ),
+        "recommended_answer": recommended_answer,
         "risk_level": risk_level,
         "resolution_handler": _required_v2_string(
             value["resolution_handler"], "resolution_handler"
