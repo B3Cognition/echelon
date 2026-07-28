@@ -145,6 +145,31 @@ def test_workflow_validator_keeps_a_legacy_workflow_without_declarations_valid(t
     assert report.ok, report.format()
 
 
+def test_workflow_validator_allows_provider_policy_without_static_options(tmp_path: Path) -> None:
+    policy = _human_input_provider_policy()
+    policy.pop("options")
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "provider",
+                "type": "agent",
+                "allowed_state_updates": ["escalation_question"],
+                "human_input": [policy],
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert report.ok, report.format()
+
+
 def test_workflow_validator_requires_complete_provider_coverage_after_opt_in(tmp_path: Path) -> None:
     definition = _write_definition(
         tmp_path,

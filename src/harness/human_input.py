@@ -62,9 +62,11 @@ _POLICY_FIELDS = frozenset({
     "context_paths",
     "options",
 })
+_REQUIRED_POLICY_FIELDS = _POLICY_FIELDS - {"options"}
 _OPTION_FIELDS = frozenset({
     "id", "label", "description", "recommended", "risk_level", "next_phase", "outcome",
 })
+_PROVIDER_OPTION_FIELDS = _OPTION_FIELDS - {"outcome"}
 
 
 def _clean_string(value: object, field: str) -> str:
@@ -113,6 +115,59 @@ class HumanInputOption:
         object.__setattr__(self, "outcome", _clean_optional_string(self.outcome, "option.outcome"))
 
 
+def _validate_options(
+    options: tuple[HumanInputOption, ...],
+    *,
+    allowed_target_phases: frozenset[str],
+) -> None:
+    option_ids = [item.id for item in options]
+    if len(set(option_ids)) != len(option_ids):
+        raise HumanInputPolicyError("duplicate option id")
+    if sum(item.recommended for item in options) > 1:
+        raise HumanInputPolicyError("at most one recommended option is allowed")
+    for option in options:
+        if option.next_phase is not None and option.next_phase not in allowed_target_phases:
+            raise HumanInputPolicyError("option.next_phase must be in allowed_target_phases")
+
+
+def _normalize_provider_options(
+    value: object,
+    *,
+    allowed_target_phases: frozenset[str],
+) -> tuple[HumanInputOption, ...]:
+    if not isinstance(value, list):
+        raise HumanInputPolicyError("options must be a list")
+    options: list[HumanInputOption] = []
+    for index, raw_option in enumerate(value):
+        if not isinstance(raw_option, Mapping):
+            raise HumanInputPolicyError(f"options[{index}] must be a mapping")
+        if "outcome" in raw_option:
+            raise HumanInputPolicyError("provider options cannot set outcome")
+        unknown = set(raw_option) - _PROVIDER_OPTION_FIELDS
+        required = _PROVIDER_OPTION_FIELDS - {"risk_level"}
+        missing = required - set(raw_option)
+        if unknown:
+            raise HumanInputPolicyError(
+                f"options[{index}] has unsupported key {sorted(unknown)[0]!r}"
+            )
+        if missing:
+            raise HumanInputPolicyError(
+                f"options[{index}] is missing {sorted(missing)[0]!r}"
+            )
+        options.append(HumanInputOption(
+            id=raw_option["id"],
+            label=raw_option["label"],
+            description=raw_option["description"],
+            recommended=raw_option["recommended"],
+            risk_level=raw_option.get("risk_level"),
+            next_phase=raw_option["next_phase"],
+            outcome=None,
+        ))
+    normalized = tuple(options)
+    _validate_options(normalized, allowed_target_phases=allowed_target_phases)
+    return normalized
+
+
 @dataclass(frozen=True)
 class HumanInputPolicy:
     source_kind: HumanInputSourceKind
@@ -156,14 +211,7 @@ class HumanInputPolicy:
                 raise HumanInputPolicyError("context_paths must remain inside the declared root")
         if not isinstance(self.options, tuple) or not all(isinstance(item, HumanInputOption) for item in self.options):
             raise HumanInputPolicyError("options must be a tuple of HumanInputOption values")
-        option_ids = [item.id for item in self.options]
-        if len(set(option_ids)) != len(option_ids):
-            raise HumanInputPolicyError("duplicate option id")
-        if sum(item.recommended for item in self.options) > 1:
-            raise HumanInputPolicyError("at most one recommended option is allowed")
-        for option in self.options:
-            if option.next_phase is not None and option.next_phase not in targets:
-                raise HumanInputPolicyError("option.next_phase must be in allowed_target_phases")
+        _validate_options(self.options, allowed_target_phases=targets)
         if self.source_kind == "human_gate":
             if self.allow_free_text:
                 raise HumanInputPolicyError("human_gate policies cannot allow free text")
@@ -253,6 +301,7 @@ class HumanInputPolicyRegistry:
         question: str,
         recommended_answer: str | None = None,
         risk_level: HumanInputRisk | None = None,
+        options: list[Mapping[str, object]] | None = None,
         source_state_revision: int,
         **provider_fields: object,
     ) -> PreparedHumanInput:
@@ -260,6 +309,8 @@ class HumanInputPolicyRegistry:
             fields = ", ".join(sorted(provider_fields))
             raise HumanInputPolicyError(f"provider cannot set policy-owned fields: {fields}")
         policy = self.lookup(source_kind, producer_id, reason_code)
+        if options is not None and policy.source_kind != "provider_escalation":
+            raise HumanInputPolicyError("provider options are only valid for provider_escalation policies")
         normalized_phase = _clean_string(phase_id, "phase_id")
         if normalized_phase not in policy.allowed_phase_ids:
             raise HumanInputPolicyError("phase_id is not allowed by the selected policy")
@@ -269,8 +320,20 @@ class HumanInputPolicyRegistry:
         normalized_recommendation = _clean_optional_string(recommended_answer, "recommended_answer")
         if risk_level is not None and risk_level not in _RISKS:
             raise HumanInputPolicyError("risk_level must be low, medium, high, or critical")
-        if normalized_recommendation is None and risk_level is not None:
-            raise HumanInputPolicyError("risk_level requires recommended_answer")
+        normalized_options = (
+            _normalize_provider_options(
+                options,
+                allowed_target_phases=policy.allowed_target_phases,
+            )
+            if options is not None
+            else policy.options
+        )
+        if (
+            normalized_recommendation is None
+            and risk_level is not None
+            and not any(option.recommended for option in normalized_options)
+        ):
+            raise HumanInputPolicyError("risk_level requires a recommendation")
         if type(source_state_revision) is not int or source_state_revision < 0:
             raise HumanInputPolicyError("source_state_revision must be a non-negative integer")
         return PreparedHumanInput(
@@ -281,7 +344,7 @@ class HumanInputPolicyRegistry:
             reason_code=policy.reason_code,
             classification=policy.classification,
             question=normalized_question,
-            options=policy.options,
+            options=normalized_options,
             recommended_answer=normalized_recommendation,
             risk_level=risk_level,
             resolution_handler=policy.resolution_handler,
@@ -299,10 +362,16 @@ def select_initial_decision_status(
         raise HumanInputPolicyError("mode must be guided, semi, or banzai")
     if request.source_kind != policy.source_kind or request.producer_id != policy.producer_id or request.reason_code != policy.reason_code:
         raise HumanInputPolicyError("request does not match the selected policy")
-    if mode == "guided" or policy.classification == "external_prerequisite":
+    if mode == "guided" or policy.classification != "operational":
         return "awaiting_human"
     if mode == "semi":
-        if policy.semi_policy == "auto_if_recommended_low_risk" and request.recommended_answer and request.risk_level == "low":
+        if policy.semi_policy != "auto_if_recommended_low_risk":
+            return "awaiting_human"
+        recommended_options = [option for option in request.options if option.recommended]
+        if len(recommended_options) == 1:
+            effective_risk = recommended_options[0].risk_level or request.risk_level
+            return "pending" if effective_risk == "low" else "awaiting_human"
+        if not request.options and request.recommended_answer and request.risk_level == "low":
             return "pending"
         return "awaiting_human"
     return "pending"
@@ -329,7 +398,7 @@ def compile_workflow_human_input_policies(
         if not isinstance(raw_policy, Mapping):
             raise HumanInputPolicyError(f"human_input[{index}] must be a mapping")
         unknown = set(raw_policy) - _POLICY_FIELDS
-        missing = _POLICY_FIELDS - set(raw_policy)
+        missing = _REQUIRED_POLICY_FIELDS - set(raw_policy)
         if unknown:
             raise HumanInputPolicyError(f"human_input[{index}] has unsupported key {sorted(unknown)[0]!r}")
         if missing:
@@ -338,7 +407,9 @@ def compile_workflow_human_input_policies(
         if reason_code in reason_codes:
             raise HumanInputPolicyError("duplicate human_input reason_code")
         reason_codes.add(reason_code)
-        raw_options = raw_policy["options"]
+        if source_kind == "human_gate" and "options" not in raw_policy:
+            raise HumanInputPolicyError(f"human_input[{index}] is missing 'options'")
+        raw_options = raw_policy.get("options", [])
         if not isinstance(raw_options, list):
             raise HumanInputPolicyError("options must be a list")
         options: list[HumanInputOption] = []
@@ -385,6 +456,7 @@ def controller_safeguard_policies() -> tuple[HumanInputPolicy, ...]:
         "phase3-specialists", "phase3-sentinel", "phase3-plan", "phase3-tasks-lexicon",
         "phase3-understanding", "phase3-consensus", "phase3-consensus-tasks-lexicon",
         "checkpoint-plan", "phase4-document",
+        "escalate",
     })
     return (
         HumanInputPolicy(

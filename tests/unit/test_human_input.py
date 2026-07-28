@@ -97,7 +97,7 @@ def test_registry_prepares_exact_provider_policy_without_provider_policy_authori
     assert request.classification == "material"
     assert request.resolution_handler == "clarification_resume"
     assert request.question == "Which scope should the investigation use?"
-    assert select_initial_decision_status("semi", registry.lookup("provider_escalation", "phase1-investigate", "human_clarification_required"), request) == "pending"
+    assert select_initial_decision_status("semi", registry.lookup("provider_escalation", "phase1-investigate", "human_clarification_required"), request) == "awaiting_human"
 
     with pytest.raises(HumanInputPolicyError, match="policy-owned"):
         registry.prepare(
@@ -109,6 +109,112 @@ def test_registry_prepares_exact_provider_policy_without_provider_policy_authori
             source_state_revision=7,
             classification="operational",
         )
+
+
+def test_registry_prepares_normalized_provider_dynamic_options() -> None:
+    policy = HumanInputPolicy(
+        **{
+            **_provider_policy().__dict__,
+            "classification": "operational",
+        }
+    )
+    registry = HumanInputPolicyRegistry((policy,))
+
+    request = registry.prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        phase_id="phase1-investigate",
+        reason_code="human_clarification_required",
+        question="Choose the next investigation step.",
+        options=[
+            {
+                "id": "  use-api  ",
+                "label": "Use API access",
+                "description": "Query the approved API.",
+                "recommended": True,
+                "risk_level": None,
+                "next_phase": " phase1-what ",
+            },
+            {
+                "id": "manual",
+                "label": "Use manual evidence",
+                "description": "Continue with public evidence.",
+                "recommended": False,
+                "risk_level": "medium",
+                "next_phase": "phase1-what",
+            },
+        ],
+        risk_level="low",
+        source_state_revision=8,
+    )
+
+    assert request.options[0].id == "use-api"
+    assert request.options[0].next_phase == "phase1-what"
+    assert request.options[0].outcome is None
+    assert select_initial_decision_status("semi", policy, request) == "pending"
+
+
+@pytest.mark.parametrize(
+    "options, match",
+    [
+        ([{"id": "one", "label": "One", "description": "First.", "recommended": True, "risk_level": "low", "next_phase": "phase1-what", "outcome": "approved"}], "outcome"),
+        ([{"id": "one", "label": "One", "description": "First.", "recommended": True, "risk_level": "low", "next_phase": "phase1-what"}, {"id": "one", "label": "Two", "description": "Second.", "recommended": False, "risk_level": "low", "next_phase": "phase1-what"}], "duplicate option id"),
+        ([{"id": "one", "label": "One", "description": "First.", "recommended": True, "risk_level": "low", "next_phase": "terminal-blocked"}], "allowed_target_phases"),
+    ],
+)
+def test_registry_rejects_invalid_provider_dynamic_options(options: list[dict], match: str) -> None:
+    registry = HumanInputPolicyRegistry((_provider_policy(),))
+
+    with pytest.raises(HumanInputPolicyError, match=match):
+        registry.prepare(
+            source_kind="provider_escalation",
+            producer_id="phase1-investigate",
+            phase_id="phase1-investigate",
+            reason_code="human_clarification_required",
+            question="Choose the next investigation step.",
+            options=options,
+            source_state_revision=8,
+        )
+
+
+def test_semi_requires_an_operational_low_risk_recommendation() -> None:
+    policy = _gate_policy(
+        options=(
+            HumanInputOption(
+                id="approve",
+                label="Approve",
+                description="Continue.",
+                recommended=True,
+                risk_level=None,
+                next_phase="phase4-document",
+                outcome="approved",
+            ),
+            HumanInputOption(
+                id="reject",
+                label="Reject",
+                description="Stop.",
+                recommended=False,
+                risk_level="low",
+                next_phase="terminal-blocked",
+                outcome="rejected",
+            ),
+        )
+    )
+    registry = HumanInputPolicyRegistry((policy,))
+    request = registry.prepare(
+        source_kind="human_gate",
+        producer_id="checkpoint-plan",
+        phase_id="checkpoint-plan",
+        reason_code="checkpoint_plan_decision_required",
+        question="Approve this plan?",
+        risk_level="low",
+        source_state_revision=8,
+    )
+
+    assert select_initial_decision_status("semi", policy, request) == "pending"
+
+    material_policy = HumanInputPolicy(**{**policy.__dict__, "classification": "material"})
+    assert select_initial_decision_status("semi", material_policy, request) == "awaiting_human"
 
 
 def test_registry_prepares_gate_options_from_the_exact_policy() -> None:

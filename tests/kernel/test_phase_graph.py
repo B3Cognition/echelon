@@ -168,6 +168,30 @@ class TestPhaseGraph:
         registry = self.graph.human_input_policy_registry()
 
         assert self.graph.get("phase1-tracker").human_input_policies == ()
+        dispatch_limit_policy = registry.lookup(
+            "controller_safeguard",
+            "phase_dispatch_limit",
+            "phase_dispatch_limit",
+        )
+        reachable = set()
+        pending = [self.graph.entry_phase()]
+        while pending:
+            phase_id = pending.pop()
+            if phase_id in reachable:
+                continue
+            reachable.add(phase_id)
+            pending.extend(
+                transition["to"]
+                for transition in self.graph.get(phase_id).transitions
+                if isinstance(transition, dict)
+                and transition.get("to") in self.graph.all_phase_ids()
+            )
+
+        assert dispatch_limit_policy.allowed_phase_ids == {
+            phase_id
+            for phase_id in reachable
+            if self.graph.get(phase_id).type != "terminal"
+        } | {"escalate"}
         assert registry.lookup(
             "controller_safeguard",
             "consecutive_why_fails",
