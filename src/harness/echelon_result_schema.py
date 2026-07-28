@@ -301,11 +301,15 @@ def validate_decision_resolution_result(
         )
 
     expected_fields = {"verdict", "state_updates", "journal_entries", "decision"}
+    if any(type(field) is not str for field in payload):
+        raise EchelonResultValidationError(
+            "decision resolution field names must be strings"
+        )
     fields = set(payload)
     unexpected = fields - expected_fields
     if unexpected:
         raise EchelonResultValidationError(
-            "decision resolution has unsupported field " + repr(sorted(unexpected)[0])
+            "decision resolution has unsupported field " + repr(min(unexpected))
         )
     missing = expected_fields - fields
     if missing:
@@ -328,6 +332,10 @@ def validate_decision_resolution_result(
     decision = payload["decision"]
     if type(decision) is not dict:
         raise EchelonResultValidationError("decision resolution decision must be an object")
+    if any(type(field) is not str for field in decision):
+        raise EchelonResultValidationError(
+            "decision resolution decision field names must be strings"
+        )
     expected_decision_fields = {
         "selected_option_id", "answer_text", "rationale", "confidence",
     }
@@ -336,7 +344,7 @@ def validate_decision_resolution_result(
     if unexpected_decision:
         raise EchelonResultValidationError(
             "decision resolution decision has unsupported field "
-            + repr(sorted(unexpected_decision)[0])
+            + repr(min(unexpected_decision))
         )
     missing_decision = expected_decision_fields - decision_fields
     if missing_decision:

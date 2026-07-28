@@ -51,6 +51,36 @@ def test_decision_resolution_accepts_the_exact_choice_envelope() -> None:
 
 
 @pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            **_decision_resolution_payload(),
+            1: "malformed field name",
+            "unexpected": "extra field",
+        },
+        _decision_resolution_payload(
+            decision={
+                "selected_option_id": "approve",
+                "answer_text": None,
+                "rationale": "The declared plan is internally consistent.",
+                "confidence": "high",
+                1: "malformed field name",
+                "unexpected": "extra field",
+            }
+        ),
+    ],
+)
+def test_decision_resolution_rejects_mixed_type_extra_field_names(
+    payload: dict[object, object],
+) -> None:
+    with pytest.raises(
+        EchelonResultValidationError,
+        match="field names must be strings",
+    ):
+        validate_decision_resolution_result(payload, options=OPTIONS)
+
+
+@pytest.mark.parametrize(
     ("payload", "options", "match"),
     [
         (
