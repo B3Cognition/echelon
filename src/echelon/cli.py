@@ -2425,6 +2425,7 @@ def _cmd_harness_resume(
     spec_id, kv, resume_answer = _parse_harness_resume_args(args)
     strategy = kv.get("strategy", "default")
     mode = kv.get("mode", "semi")
+    target_resume_command = "resume" if require_answer else "continue"
 
     from harness.config import load_config, ValidationError as HarnessValidationError
     from harness.docker_provider import DockerWorktreeProvider
@@ -2492,7 +2493,7 @@ def _cmd_harness_resume(
                             spec_id,
                             [target],
                             args[1:],
-                            command="resume",
+                            command=target_resume_command,
                             **_workspace_target_dispatch_metadata(workspace_target),
                         )
                     )
@@ -2518,7 +2519,7 @@ def _cmd_harness_resume(
                             workspace_git_role="orchestration",
                             source_ids=source_ids,
                             source_git_roles=source_git_roles,
-                            command="resume",
+                            command=target_resume_command,
                         )
                     )
 
