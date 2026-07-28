@@ -5923,6 +5923,7 @@ def _cmd_run(
                 and previous_decision.get("schema_version") == 2
                 and previous_decision.get("status")
                 in {"pending", "resolving", "awaiting_human", "failed"}
+                and message == previous_state.get("user_message", "")
             )
         except (OSError, ValueError, TypeError):
             pass

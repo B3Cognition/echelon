@@ -271,6 +271,47 @@ def test_continue_resolves_eligible_v2_decisions_through_real_controller(
     decision = SquadStateStore(run_dir).load()["blocked_decision"]
     assert decision["status"] == "resolved"
     assert decision["resolved_by"] == ("semi" if autonomy_mode == "semi" else "COMMANDER")
+    assert (tmp_path / "runs" / ".current").read_text(encoding="utf-8").strip() == run_dir.name
+
+
+def test_direct_run_with_a_different_message_preserves_active_v2_decision_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_dir = _initialize_active_run(tmp_path)
+    switchable_run_dir = run_dir.with_name("spec-001")
+    run_dir.rename(switchable_run_dir)
+    (tmp_path / "runs" / ".current").write_text("spec-001\n", encoding="utf-8")
+    run_dir = switchable_run_dir
+    _seal_pending_v2_decision(run_dir, status="pending")
+    before = (run_dir / "state.json").read_bytes()
+
+    class PhysicalProvider:
+        def __init__(self, _config: object) -> None:
+            pass
+
+        def exec_agent(self, *_args: object, **_kwargs: object) -> SquadAgentResult:
+            return SquadAgentResult(
+                exit_code=1,
+                echelon_result=None,
+                raw_output="physical provider stopped the new run",
+                duration_ms=1,
+                timed_out=False,
+            )
+
+    monkeypatch.setattr("harness.squad_provider.SquadCliProvider", PhysicalProvider)
+    with pytest.raises((SystemExit, StateAdvanceError)):
+        _cmd_run(
+            ["a different task"],
+            project_root=tmp_path,
+            ext_dir=EXT_DIR,
+        )
+
+    current = (tmp_path / "runs" / ".current").read_text(encoding="utf-8").strip()
+    assert current != run_dir.name
+    assert (run_dir / "state.json").read_bytes() == before
+    assert SquadStateStore(run_dir).load()["user_message"] == "validate the pending decision"
+    assert SquadStateStore(tmp_path / "runs" / current).load()["user_message"] == "a different task"
 
 
 def test_phase_run_constitution_does_not_require_task_lexicon_config(
