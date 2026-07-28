@@ -2159,3 +2159,110 @@ def test_unresolved_v2_decision_blocks_controller_phase_bypass(
     assert result.status == "blocked"
     assert store.load() == before
     provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected_option_id"),
+    [
+        ("approve", "approve"),
+        ("Approve", "approve"),
+    ],
+)
+def test_resume_with_human_input_resolves_exact_option_id_or_label(
+    tmp_path: Path,
+    answer: str,
+    expected_option_id: str,
+) -> None:
+    policy = _choice_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    _seal_awaiting_human(controller, store, policy)
+
+    assert controller.resume_with_human_input(answer)
+
+    decision = store.load()["blocked_decision"]
+    assert decision["status"] == "resolved"
+    assert decision["selected_option_id"] == expected_option_id
+    provider.exec_agent.assert_not_called()
+
+
+def test_resume_with_human_input_resolves_allowed_free_text(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy(source_kind="legacy_recovery")
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    _seal_awaiting_human(controller, store, policy)
+
+    assert controller.resume_with_human_input("Use the public boundary.")
+
+    decision = store.load()["blocked_decision"]
+    assert decision["status"] == "resolved"
+    assert decision["answer_text"] == "Use the public boundary."
+    provider.exec_agent.assert_not_called()
+
+
+def test_resume_rejects_banzai_project_decision_but_allows_external_prerequisite(
+    tmp_path: Path,
+) -> None:
+    project_policy = _choice_policy()
+    project_controller, project_store, project_provider = _controller(
+        tmp_path / "project",
+        autonomy_mode="banzai",
+        policy=project_policy,
+    )
+    _seal_awaiting_human(project_controller, project_store, project_policy)
+
+    with pytest.raises(HumanInputPolicyError, match="Banzai project decisions"):
+        project_controller.resume_with_human_input("approve")
+
+    external_policy = _choice_policy(classification="external_prerequisite")
+    external_controller, external_store, external_provider = _controller(
+        tmp_path / "external",
+        autonomy_mode="banzai",
+        policy=external_policy,
+    )
+    _seal_awaiting_human(external_controller, external_store, external_policy)
+
+    assert external_controller.resume_with_human_input("approve")
+    assert external_store.load()["blocked_decision"]["status"] == "resolved"
+    project_provider.exec_agent.assert_not_called()
+    external_provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize("status", ("pending", "resolving"))
+@pytest.mark.parametrize("entrypoint", ("next_phase", "manual_phase"))
+def test_pending_and_resolving_v2_decisions_block_controller_phase_bypass(
+    tmp_path: Path,
+    status: str,
+    entrypoint: str,
+) -> None:
+    policy = _choice_policy()
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    request = _request(controller, store, policy)
+    sealed = store.set_human_input_decision(request, initial_status="pending")
+    if status == "resolving":
+        store.claim_human_input_decision(
+            sealed["blocked_decision"]["id"],
+            expected_state_revision=sealed["state_revision"],
+        )
+    before = store.load()
+
+    if entrypoint == "next_phase":
+        result = controller.run(next_phase_override="phase4-document")
+    else:
+        result = controller.run_single_phase("phase4-document")
+
+    assert result.status == "blocked"
+    assert store.load() == before
+    provider.exec_agent.assert_not_called()

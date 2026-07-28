@@ -256,6 +256,18 @@ def test_schema_v2_recovery_instruction_matches_its_decision_status(
     assert paired.to_dict() == instruction
 
 
+def test_schema_v2_recovery_instruction_requires_the_decision_reason_code() -> None:
+    instruction = _v2_instruction(
+        "await_human_answer",
+        phase="phase1-why1",
+        requires_human_input=True,
+    )
+    instruction["reason_code"] = "stale_unrelated_reason"
+
+    with pytest.raises(RecoveryInstructionError, match="reason code"):
+        validate_decision_recovery_pair(_v2_decision("awaiting_human"), instruction)
+
+
 def test_schema_v2_resolved_decision_requires_no_recovery_instruction() -> None:
     decision = _v2_decision("resolved")
     decision.update(

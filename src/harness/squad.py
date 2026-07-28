@@ -3116,14 +3116,18 @@ class SquadController:
         answer = answer.strip()
         options = self._human_input_options_from_decision(decision)
         if options:
-            selected = next(
-                (
-                    option
-                    for option in options
-                    if answer in {option.id, option.label}
-                ),
-                None,
-            )
+            id_matches = [option for option in options if answer == option.id]
+            if len(id_matches) == 1:
+                selected = id_matches[0]
+            elif len(id_matches) > 1:
+                raise HumanInputPolicyError("sealed decision option ids are ambiguous")
+            else:
+                label_matches = [option for option in options if answer == option.label]
+                if len(label_matches) != 1:
+                    raise HumanInputPolicyError(
+                        "human-input answer must exactly match one offered option id or label"
+                    )
+                selected = label_matches[0]
             if selected is None:
                 raise HumanInputPolicyError(
                     "human-input answer must exactly match an offered option id or label"

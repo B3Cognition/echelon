@@ -235,6 +235,8 @@ def validate_decision_recovery_pair(
         raise RecoveryInstructionError("decision recovery must use schema 2")
     if validated_instruction.decision_id != validated_decision["id"]:
         raise RecoveryInstructionError("recovery decision_id does not match decision")
+    if validated_instruction.reason_code != validated_decision["reason_code"]:
+        raise RecoveryInstructionError("recovery reason code does not match decision")
     expected = {
         "pending": (RecoveryKind.RESOLVE_DECISION, False, validated_decision["source_phase"]),
         "resolving": (RecoveryKind.RESOLVE_DECISION, False, validated_decision["source_phase"]),

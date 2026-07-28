@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from echelon.cli import _cmd_status, _find_converged_harness_build, _print_next_steps
 from harness.blocked_decision import build_blocked_decision_v2
 from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
@@ -93,6 +95,7 @@ def _v2_decision(
         resolution_handler="gate_outcome",
         autonomy_mode=autonomy_mode,
         source_state_revision=0,
+        failure_code="resolution_attempts_exhausted" if status == "failed" else None,
         now="2026-07-28T10:00:00+00:00",
     )
 
@@ -137,6 +140,55 @@ def test_status_renders_active_v2_awaiting_human_decision_read_only(
     assert "Recommendation" in output
     assert "Risk" in output
     assert 'echelon spec resume "<your answer>"' in output
+
+
+@pytest.mark.parametrize(
+    ("decision_status", "recovery_kind", "phase", "requires_human_input", "action"),
+    [
+        ("pending", RecoveryKind.RESOLVE_DECISION, "phase1-what", False, "echelon spec continue"),
+        ("resolving", RecoveryKind.RESOLVE_DECISION, "phase1-what", False, "echelon spec continue"),
+        ("awaiting_human", RecoveryKind.AWAIT_HUMAN_ANSWER, "phase1-what", True, 'echelon spec resume "<your answer>"'),
+        ("failed", RecoveryKind.MANUAL_DIAGNOSIS, "", False, "diagnose the failed decision"),
+    ],
+)
+def test_status_renders_v2_action_without_changing_state(
+    tmp_path: Path,
+    capsys,
+    decision_status: str,
+    recovery_kind: RecoveryKind,
+    phase: str,
+    requires_human_input: bool,
+    action: str,
+) -> None:
+    run_dir = tmp_path / "runs" / "spec-decision"
+    run_dir.mkdir(parents=True)
+    (tmp_path / "runs" / ".current").write_text(run_dir.name, encoding="utf-8")
+    state_path = run_dir / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "run_id": run_dir.name,
+                "status": "blocked",
+                "phase": "phase1-what",
+                "blocked_decision": _v2_decision(status=decision_status),
+                "recovery_instruction": RecoveryInstruction(
+                    kind=recovery_kind,
+                    reason_code="checkpoint_assessment",
+                    phase=phase,
+                    requires_human_input=requires_human_input,
+                    schema_version=2,
+                    decision_id="dec-cli-status",
+                ).to_dict(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    before = state_path.read_bytes()
+
+    _cmd_status(tmp_path)
+
+    assert action in capsys.readouterr().out
+    assert state_path.read_bytes() == before
 
 
 def test_newer_blocked_harness_build_masks_older_converged_build(

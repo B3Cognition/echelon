@@ -105,6 +105,59 @@ def _pending_v2_decision(*, autonomy_mode: str) -> dict[str, object]:
     )
 
 
+def _v2_continue_decision(
+    *,
+    status: str,
+    autonomy_mode: str,
+    classification: str,
+) -> dict[str, object]:
+    return build_blocked_decision_v2(
+        decision_id="dec-cli-continue-side-effect",
+        status=status,
+        source_kind="human_gate",
+        producer_id="checkpoint-assess",
+        source_phase="phase1-what",
+        reason_code="checkpoint_assessment",
+        classification=classification,
+        question="Should the reviewed boundary be accepted?",
+        options=[
+            {
+                "id": "accept",
+                "label": "Accept the reviewed boundary",
+                "description": "Continue with the reviewed scope.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "phase2-decide",
+                "outcome": "approved",
+            }
+        ],
+        recommended_answer=None,
+        risk_level="low",
+        resolution_handler="gate_outcome",
+        autonomy_mode=autonomy_mode,
+        source_state_revision=0,
+        failure_code="resolution_attempts_exhausted" if status == "failed" else None,
+        now="2026-07-28T10:00:00+00:00",
+    )
+
+
+def _v2_continue_instruction(status: str) -> dict[str, object]:
+    kind, phase, requires_human_input = {
+        "pending": (RecoveryKind.RESOLVE_DECISION, "phase1-what", False),
+        "resolving": (RecoveryKind.RESOLVE_DECISION, "phase1-what", False),
+        "awaiting_human": (RecoveryKind.AWAIT_HUMAN_ANSWER, "phase1-what", True),
+        "failed": (RecoveryKind.MANUAL_DIAGNOSIS, "", False),
+    }[status]
+    return RecoveryInstruction(
+        kind=kind,
+        reason_code="checkpoint_assessment",
+        phase=phase,
+        requires_human_input=requires_human_input,
+        schema_version=2,
+        decision_id="dec-cli-continue-side-effect",
+    ).to_dict()
+
+
 def test_continue_uses_sealed_v2_decision_mode_not_cli_override(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -145,6 +198,97 @@ def test_continue_uses_sealed_v2_decision_mode_not_cli_override(
     state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
     assert state["blocked_decision"]["status"] == "pending"
     assert state["recovery_instruction"]["kind"] == "resolve_decision"
+
+
+@pytest.mark.parametrize("status", ("pending", "resolving"))
+def test_continue_routes_eligible_semi_and_recovering_decisions_without_cli_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "run_id": "spec-test",
+            "status": "blocked",
+            "phase": "phase1-what",
+            "user_message": "prepare the release",
+            "autonomy_mode": "semi",
+            "blocked_decision": _v2_continue_decision(
+                status=status,
+                autonomy_mode="semi",
+                classification="operational",
+            ),
+            "recovery_instruction": _v2_continue_instruction(status),
+        },
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, project_root, ext_dir: calls.append(args),
+    )
+    state_path = run_dir / "state.json"
+    before = state_path.read_bytes()
+
+    _cmd_continue(
+        ["--mode", "guided"],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    assert calls == [["prepare the release", "--mode", "semi"]]
+    assert state_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("status", "autonomy_mode", "classification"),
+    [
+        ("awaiting_human", "guided", "operational"),
+        ("awaiting_human", "semi", "material"),
+        ("awaiting_human", "banzai", "external_prerequisite"),
+        ("failed", "banzai", "operational"),
+    ],
+)
+def test_continue_nonautomatic_v2_decisions_are_filesystem_read_only(
+    tmp_path: Path,
+    status: str,
+    autonomy_mode: str,
+    classification: str,
+) -> None:
+    published = tmp_path / "specs" / "001-side-effect"
+    published.mkdir(parents=True)
+    (published / "spec.md").write_text("# Published\n", encoding="utf-8")
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "run_id": "spec-test",
+            "status": "blocked",
+            "phase": "phase1-what",
+            "user_message": "prepare the release",
+            "autonomy_mode": autonomy_mode,
+            "spec_id": "001-side-effect",
+            "spec_dir": "runs/spec-test/specs/stale",
+            "published_spec_dir": "specs/001-side-effect",
+            "blocked_decision": _v2_continue_decision(
+                status=status,
+                autonomy_mode=autonomy_mode,
+                classification=classification,
+            ),
+            "recovery_instruction": _v2_continue_instruction(status),
+        },
+    )
+    state_path = run_dir / "state.json"
+    before = state_path.read_bytes()
+    assert not (run_dir / "specs").exists()
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    assert state_path.read_bytes() == before
+    assert not (run_dir / "specs").exists()
 
 
 def test_continue_prefers_specify_feature_directory_over_stale_short_spec_id(

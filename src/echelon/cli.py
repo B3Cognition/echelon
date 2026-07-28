@@ -7008,6 +7008,40 @@ def _cmd_continue(
                 command_name=_command_display("echelon spec continue", args),
             )
 
+    action = _classify_run_recovery(state, project_root=project_root)
+    if decision is not None:
+        if action.kind == "resolve_decision":
+            run_args = [user_message, "--mode", mode]
+            targets = state.get("implementation_targets")
+            if isinstance(targets, list):
+                for target in targets:
+                    target = str(target).strip()
+                    if target:
+                        run_args.extend(["--target", target])
+            print(
+                "[squad] continuing through the controller-owned decision resolver.",
+                flush=True,
+            )
+            _cmd_run(run_args, project_root=project_root, ext_dir=ext_dir)
+            return
+        if action.kind == "human_resume":
+            fields = [("decision needed", action.note or str(decision["question"]))]
+            fields.append(("options", _render_v2_decision_options(decision)))
+            fields.append(("resume with", action.command))
+            _banner("CHECKPOINT", fields, subtitle="Run paused. Human decision required.")
+            return
+        if action.kind == "manual_recovery":
+            _banner(
+                "CHECKPOINT",
+                [
+                    ("blocked by", action.reason),
+                    ("next", action.command),
+                    ("note", action.note),
+                ],
+                subtitle="Run paused. Manual recovery required.",
+            )
+            return
+
     prepared_state, _ = _ensure_active_continue_spec_context(
         project_root,
         squad_dir,
@@ -7068,7 +7102,6 @@ def _cmd_continue(
         )
         _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
 
-    action = _classify_run_recovery(state, project_root=project_root)
     issue_recovery = state.get("issue_resolution_recovery")
     if (
         isinstance(issue_recovery, dict)

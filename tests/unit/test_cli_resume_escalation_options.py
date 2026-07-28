@@ -172,6 +172,54 @@ def test_resume_submits_a_valid_v2_answer_only_through_controller(
     assert persisted["blocked_decision"] == decision
 
 
+def test_resume_rejects_stale_v2_reason_before_controller_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.cli import _cmd_resume
+
+    run_dir = _write_blocked_run(tmp_path, [])
+    decision = build_blocked_decision_v2(
+        decision_id="dec-cli-stale-reason",
+        status="awaiting_human",
+        source_kind="provider_escalation",
+        producer_id="phase1-investigate",
+        source_phase="phase1-investigate",
+        reason_code="human_clarification_required",
+        classification="material",
+        question="Which boundary should be used?",
+        options=[],
+        recommended_answer=None,
+        risk_level="medium",
+        resolution_handler="clarification_resume",
+        autonomy_mode="guided",
+        source_state_revision=0,
+        now="2026-07-28T10:00:00+00:00",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "blocked_decision": decision,
+            "recovery_instruction": RecoveryInstruction(
+                kind=RecoveryKind.AWAIT_HUMAN_ANSWER,
+                reason_code="stale_unrelated_reason",
+                phase="phase1-investigate",
+                requires_human_input=True,
+                schema_version=2,
+                decision_id="dec-cli-stale-reason",
+            ).to_dict(),
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    _patch_resume_dependencies(monkeypatch)
+
+    with pytest.raises(SystemExit) as exc:
+        _cmd_resume(["Use the public boundary"], project_root=tmp_path, ext_dir=Path.cwd() / "extension")
+
+    assert exc.value.code == 1
+
+
 def test_resume_option_a_routes_to_offered_next_phase(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from echelon.cli import _cmd_resume
 

@@ -239,6 +239,60 @@ def test_builds_schema_v2_blocked_decision_with_all_nullable_fields_explicit() -
             ),
             "choice decisions cannot record answer_text",
         ),
+        (
+            lambda decision: decision.update(
+                {
+                    "options": [
+                        {
+                            "id": "approve",
+                            "label": "Same label",
+                            "description": "Continue.",
+                            "recommended": True,
+                            "risk_level": "low",
+                            "next_phase": "phase2-decide",
+                            "outcome": None,
+                        },
+                        {
+                            "id": "reject",
+                            "label": "Same label",
+                            "description": "Stop.",
+                            "recommended": False,
+                            "risk_level": "low",
+                            "next_phase": "phase1-what",
+                            "outcome": None,
+                        },
+                    ]
+                }
+            ),
+            "duplicate option label",
+        ),
+        (
+            lambda decision: decision.update(
+                {
+                    "options": [
+                        {
+                            "id": "approve",
+                            "label": "reject",
+                            "description": "Continue.",
+                            "recommended": True,
+                            "risk_level": "low",
+                            "next_phase": "phase2-decide",
+                            "outcome": None,
+                        },
+                        {
+                            "id": "reject",
+                            "label": "Reject",
+                            "description": "Stop.",
+                            "recommended": False,
+                            "risk_level": "low",
+                            "next_phase": "phase1-what",
+                            "outcome": None,
+                        },
+                    ]
+                }
+            ),
+            "option label conflicts with an option id",
+        ),
     ],
 )
 def test_schema_v2_blocked_decision_rejects_unsafe_shapes(
