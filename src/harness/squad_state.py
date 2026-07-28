@@ -133,7 +133,6 @@ _ACTIVE_HUMAN_INPUT_AUTHORITY_KEYS = frozenset(
 )
 _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS = frozenset(
     {
-        "blocked_reason",
         "escalation_question",
         "escalation_options",
         "escalation_resolved",

@@ -4102,6 +4102,44 @@ class TestHumanInputDecisionStateCAS:
         assert "escalation_question" not in resolved
         assert "escalation_options" not in resolved
 
+    def test_human_input_resolved_audit_allows_later_unrelated_block(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=store.load()["state_revision"],
+        )
+        awaiting = store.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
+        resolved = store.apply_human_input_state_resolution(
+            awaiting["blocked_decision"]["id"],
+            expected_state_revision=awaiting["state_revision"],
+            resolution=HumanInputResolution(
+                selected_option_id="approve",
+                answer_text=None,
+                resolved_by="user",
+            ),
+            state_updates={"status": "running", "phase": "next"},
+            state_removals=(),
+        )
+        audit_record = deepcopy(resolved["blocked_decision"])
+
+        store.set_blocked("provider_unavailable")
+
+        blocked = store.load()
+        assert blocked["state_revision"] == resolved["state_revision"] + 1
+        assert blocked["status"] == "blocked"
+        assert blocked["blocked_reason"] == "provider_unavailable"
+        assert blocked["blocked_decision"] == audit_record
+        assert "recovery_instruction" not in blocked
+        assert "escalation_question" not in blocked
+        assert "escalation_options" not in blocked
+
     def test_human_input_resolution_detaches_updates_before_validation(
         self,
         tmp_path,
