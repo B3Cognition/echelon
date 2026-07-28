@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 import harness.squad as squad_module
 from harness.ai_cli_backend import CliRunRequest, CliRunResult
@@ -676,6 +677,110 @@ def test_real_workflow_gate_mode_matrix_uses_controller_decisions(
     assert provider.exec_agent.call_count == (
         1 if mode == "banzai" else 0
     )
+
+
+@pytest.mark.parametrize(
+    ("producer_id", "reason_code", "extra_updates"),
+    [
+        ("phase1-tracker", "human_clarification_required", {}),
+        ("phase1-why1", "human_clarification_required", {}),
+        (
+            "phase1-why2",
+            "human_clarification_required",
+            {
+                "evidence_resolution_status": "not_required",
+                "finding_routes": {"findings": []},
+            },
+        ),
+        (
+            "phase1-investigate",
+            "human_clarification_required",
+            {"evidence_resolution_status": "inconclusive"},
+        ),
+        (
+            "phase1-investigate",
+            "investigation_access_required",
+            {"evidence_resolution_status": "access_required"},
+        ),
+        (
+            "phase2-tracker-alignment",
+            "human_clarification_required",
+            {},
+        ),
+    ],
+)
+def test_real_provider_and_executor_accept_each_declared_question_contract(
+    tmp_path: Path,
+    producer_id: str,
+    reason_code: str,
+    extra_updates: dict,
+) -> None:
+    graph = PhaseGraph(DEFINITION, EXTENSION)
+    policy = graph.human_input_policy_registry().lookup(
+        "provider_escalation",
+        producer_id,
+        reason_code,
+    )
+    node = graph.get(producer_id)
+    payload = {
+        "verdict": "STOP_AND_ASK",
+        "state_updates": {
+            **extra_updates,
+            "status": "blocked",
+            "blocked_reason": reason_code,
+            "escalation_question": "Which bounded decision should be applied?",
+            "escalation_recommended_answer": "Use the evidence-backed default.",
+            "escalation_risk_level": "low",
+        },
+        "journal_entries": [],
+    }
+
+    class FakeBackend:
+        def run_prompt(self, request: CliRunRequest) -> CliRunResult:
+            raise AssertionError("question validation must use run_agent")
+
+        def run_agent(self, request: CliRunRequest) -> CliRunResult:
+            return CliRunResult(
+                exit_code=0,
+                stdout=yaml.safe_dump(
+                    {"echelon_result": payload},
+                    sort_keys=False,
+                ),
+                stderr="",
+            )
+
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="codex"),
+    )
+    provider = SquadCliProvider(config)
+    provider._backend = FakeBackend()
+    controller, _store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+        provider=provider,
+    )
+    contract = node.result_contract()
+
+    normalized = provider.exec_agent(
+        str(tmp_path),
+        "Return the supplied question result.",
+        result_contract=contract,
+        allow_result_repair=False,
+    )
+
+    assert normalized.echelon_result == payload
+    assert normalized.quarantined_state_updates == {}
+    validated = controller._executors["agent"]._validate_result_state_updates(
+        node,
+        normalized,
+        result_contract=contract,
+    )
+    assert validated.echelon_result == payload
+    assert validated.verdict == "STOP_AND_ASK"
 
 
 def test_human_input_handler_phase_dispatch_limit_reuses_issue_lifecycle(

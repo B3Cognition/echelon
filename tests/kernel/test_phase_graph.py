@@ -166,129 +166,176 @@ class TestPhaseGraph:
 
     def test_real_workflow_compiles_exact_initial_human_input_registry(self):
         registry = self.graph.human_input_policy_registry()
+        dispatch_phases = frozenset({
+            "checkpoint-assess",
+            "checkpoint-plan",
+            "escalate",
+            "init",
+            "phase1-constitution",
+            "phase1-discover",
+            "phase1-investigate",
+            "phase1-lexicon",
+            "phase1-lexicon-derive",
+            "phase1-modeler",
+            "phase1-synthesizer",
+            "phase1-tracker",
+            "phase1-understanding",
+            "phase1-what",
+            "phase1-why1",
+            "phase1-why2",
+            "phase2-decide",
+            "phase2-feasibility-structural",
+            "phase2-intent-alignment-structural",
+            "phase2-strategic-overview",
+            "phase2-tracker-alignment",
+            "phase3-consensus",
+            "phase3-consensus-tasks-lexicon",
+            "phase3-how",
+            "phase3-plan",
+            "phase3-sentinel",
+            "phase3-specialists",
+            "phase3-tasks-lexicon",
+            "phase3-understanding",
+            "phase4-document",
+        })
 
-        assert {
-            (policy.source_kind, policy.producer_id, policy.reason_code)
-            for policy in registry.policies
-        } == {
-            (
-                "provider_escalation",
-                "phase1-tracker",
-                "human_clarification_required",
+        def fields(policy):
+            return (
+                policy.classification,
+                policy.semi_policy,
+                policy.resolution_handler,
+                policy.allow_free_text,
+                policy.allowed_phase_ids,
+                policy.allowed_target_phases,
+                policy.context_state_keys,
+                policy.context_paths,
+                tuple(
+                    (
+                        option.id,
+                        option.label,
+                        option.description,
+                        option.recommended,
+                        option.risk_level,
+                        option.next_phase,
+                        option.outcome,
+                    )
+                    for option in policy.options
+                ),
+            )
+
+        expected = {
+            ("provider_escalation", "phase1-tracker", "human_clarification_required"): (
+                "material", "require_human", "clarification_resume", True,
+                frozenset({"phase1-tracker"}), frozenset({"phase1-tracker"}),
+                ("user_message", "phase"),
+                ("{staging_dir}/user-intent.md",), (),
             ),
-            (
-                "provider_escalation",
-                "phase1-why1",
-                "human_clarification_required",
+            ("provider_escalation", "phase1-why1", "human_clarification_required"): (
+                "material", "require_human", "clarification_resume", True,
+                frozenset({"phase1-why1"}), frozenset({"phase1-why1"}),
+                ("user_message", "phase", "quality_scores"),
+                ("{staging_dir}/assumptions.md", "{staging_dir}/unknowns.md"), (),
             ),
-            (
-                "provider_escalation",
-                "phase1-why2",
-                "human_clarification_required",
+            ("provider_escalation", "phase1-why2", "human_clarification_required"): (
+                "material", "require_human", "clarification_resume", True,
+                frozenset({"phase1-why2"}), frozenset({"phase1-why2"}),
+                ("user_message", "phase", "quality_scores"),
+                ("{spec_dir}/spec.md", "{spec_dir}/issues.md"), (),
             ),
-            (
-                "provider_escalation",
-                "phase1-investigate",
-                "human_clarification_required",
+            ("provider_escalation", "phase1-investigate", "human_clarification_required"): (
+                "material", "require_human", "clarification_resume", True,
+                frozenset({"phase1-investigate"}), frozenset({"phase1-investigate"}),
+                ("user_message", "phase"),
+                ("{spec_dir}/evidence-resolution.md",), (),
             ),
-            (
-                "provider_escalation",
-                "phase1-investigate",
-                "investigation_access_required",
+            ("provider_escalation", "phase1-investigate", "investigation_access_required"): (
+                "external_prerequisite", "require_human", "clarification_resume", True,
+                frozenset({"phase1-investigate"}), frozenset({"phase1-investigate"}),
+                ("user_message", "phase"),
+                ("{spec_dir}/evidence-resolution.md",), (),
             ),
-            (
-                "provider_escalation",
-                "phase2-tracker-alignment",
-                "human_clarification_required",
+            ("human_gate", "checkpoint-assess", "checkpoint_assess_decision_required"): (
+                "material", "require_human", "gate_outcome", False,
+                frozenset({"checkpoint-assess"}),
+                frozenset({"phase2-decide", "terminal-blocked"}),
+                ("user_message", "phase", "quality_scores"),
+                (
+                    "{spec_dir}/spec.md",
+                    "{spec_dir}/quality-gates.md",
+                    "{spec_dir}/issues.md",
+                ),
+                (
+                    (
+                        "approve", "Approve", "Continue to feasibility assessment.",
+                        False, "medium", "phase2-decide", "approved",
+                    ),
+                    (
+                        "reject", "Reject", "Stop for specification revision.",
+                        False, "low", "terminal-blocked", "rejected",
+                    ),
+                ),
             ),
-            (
-                "human_gate",
-                "checkpoint-assess",
-                "checkpoint_assess_decision_required",
+            ("provider_escalation", "phase2-tracker-alignment", "human_clarification_required"): (
+                "material", "require_human", "clarification_resume", True,
+                frozenset({"phase2-tracker-alignment"}),
+                frozenset({"phase2-tracker-alignment"}),
+                ("user_message", "phase"),
+                (
+                    "{spec_dir}/user-intent.md",
+                    "{spec_dir}/intent-alignment-check.md",
+                ),
+                (),
             ),
-            (
-                "human_gate",
-                "checkpoint-plan",
-                "checkpoint_plan_decision_required",
+            ("human_gate", "checkpoint-plan", "checkpoint_plan_decision_required"): (
+                "operational", "auto_if_recommended_low_risk", "gate_outcome", False,
+                frozenset({"checkpoint-plan"}),
+                frozenset({"phase4-document", "terminal-blocked"}),
+                ("user_message", "phase", "quality_scores"),
+                ("{spec_dir}/plan.md", "{spec_dir}/tasks.md"),
+                (
+                    (
+                        "approve", "Approve", "Continue to finalization.",
+                        True, "low", "phase4-document", "approved",
+                    ),
+                    (
+                        "reject", "Reject", "Stop for plan revision.",
+                        False, "low", "terminal-blocked", "rejected",
+                    ),
+                ),
             ),
-            (
-                "controller_safeguard",
-                "phase_dispatch_limit",
-                "phase_dispatch_limit",
+            ("controller_safeguard", "phase_dispatch_limit", "phase_dispatch_limit"): (
+                "material", "require_human", "phase_dispatch_limit", False,
+                dispatch_phases, frozenset({"phase1-what"}),
+                (
+                    "phase",
+                    "phase_dispatch_limit_phase",
+                    "phase_dispatch_limit",
+                    "issue_resolution_ledger",
+                ),
+                (), (),
             ),
-            (
-                "controller_safeguard",
-                "consecutive_why_fails",
-                "consecutive_why_fails",
+            ("controller_safeguard", "consecutive_why_fails", "consecutive_why_fails"): (
+                "material", "require_human", "reset_why_fail_count", True,
+                frozenset({"phase1-why2"}), frozenset({"phase1-why2"}),
+                ("phase", "why_fail_count", "issue_resolution_ledger"), (), (),
             ),
-            (
-                "controller_safeguard",
-                "why2_metric_stagnation",
-                "why2_metric_stagnation",
+            ("controller_safeguard", "why2_metric_stagnation", "why2_metric_stagnation"): (
+                "material", "require_human", "reset_why2_stagnation", True,
+                frozenset({"phase1-why2"}), frozenset({"phase1-why2"}),
+                ("phase", "why_fail_count", "why2_metric_stagnation_count"), (), (),
             ),
         }
+        actual = {
+            (policy.source_kind, policy.producer_id, policy.reason_code): fields(policy)
+            for policy in registry.policies
+        }
 
-        assess = registry.lookup(
-            "human_gate",
-            "checkpoint-assess",
-            "checkpoint_assess_decision_required",
-        )
-        assert assess.classification == "material"
-        assert assess.semi_policy == "require_human"
-
-        plan = registry.lookup(
-            "human_gate",
-            "checkpoint-plan",
-            "checkpoint_plan_decision_required",
-        )
-        assert plan.classification == "operational"
-        assert plan.semi_policy == "auto_if_recommended_low_risk"
-        assert [
-            (
-                option.id,
-                option.recommended,
-                option.risk_level,
-                option.next_phase,
-                option.outcome,
-            )
-            for option in plan.options
-        ] == [
-            ("approve", True, "low", "phase4-document", "approved"),
-            ("reject", False, "low", "terminal-blocked", "rejected"),
-        ]
-
-        dispatch_limit_policy = registry.lookup(
-            "controller_safeguard",
-            "phase_dispatch_limit",
-            "phase_dispatch_limit",
-        )
-        reachable = set()
-        pending = [self.graph.entry_phase()]
-        while pending:
-            phase_id = pending.pop()
-            if phase_id in reachable:
-                continue
-            reachable.add(phase_id)
-            pending.extend(
-                transition["to"]
-                for transition in self.graph.get(phase_id).transitions
-                if isinstance(transition, dict)
-                and transition.get("to") in self.graph.all_phase_ids()
-            )
-
-        assert dispatch_limit_policy.allowed_phase_ids == {
-            phase_id
-            for phase_id in reachable
-            if self.graph.get(phase_id).type != "terminal"
-        } | {"escalate"}
-        assert registry.lookup(
-            "controller_safeguard",
-            "consecutive_why_fails",
-            "consecutive_why_fails",
-        ).allowed_phase_ids == frozenset({"phase1-why2"})
+        assert actual == expected
 
     def test_question_provider_allowlists_match_declared_policies(self):
-        question_fields = {
+        required_question_fields = {
+            "status",
+            "blocked_reason",
             "escalation_question",
             "escalation_recommended_answer",
             "escalation_risk_level",
@@ -305,7 +352,9 @@ class TestPhaseGraph:
             node = self.graph.get(phase_id)
             allowed = set(node.allowed_state_updates or [])
             if phase_id in declared_producers:
-                assert question_fields <= allowed
+                assert required_question_fields <= allowed
+                assert node.state_update_types["status"] == "string"
+                assert node.state_update_enums["status"] == ["blocked"]
             else:
                 assert not (
                     allowed

@@ -339,6 +339,24 @@ def _mock_quality_first_flow_provider() -> MagicMock:
 
     def phase_aware_exec_agent(*args, **kwargs):
         prompt = str(args[1])
+        if "# COMMANDER DECISION RESOLUTION" in prompt:
+            return SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DECISION_RESOLVED",
+                    "state_updates": {},
+                    "journal_entries": [],
+                    "decision": {
+                        "selected_option_id": "approve",
+                        "answer_text": None,
+                        "rationale": "Approve the compiled workflow checkpoint.",
+                        "confidence": "high",
+                    },
+                },
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            )
         if "# Phase: phase1-why2" in prompt:
             return SquadAgentResult(
                 exit_code=0,
@@ -3872,14 +3890,14 @@ class TestAgentResultIntegrity:
         )
         assert not targets["delete"].exists()
 
-    def test_checkpoint_plan_auto_routes_without_commander_judgment(self, tmp_path):
+    def test_checkpoint_plan_semi_auto_routes_without_commander_judgment(self, tmp_path):
         _disable_lexicon_gate(tmp_path)
         provider = MagicMock()
         provider.exec_agent.side_effect = AssertionError(
-            "checkpoint-plan should not dispatch COMMANDER judgment in banzai"
+            "checkpoint-plan should not dispatch COMMANDER judgment in semi"
         )
-        ctrl, store = _controller(tmp_path, provider=provider)
-        store.initialize("r", "banzai", "msg", 0, "checkpoint-plan", max_iterations=5)
+        ctrl, store = _controller(tmp_path, provider=provider, mode="semi")
+        store.initialize("r", "semi", "msg", 0, "checkpoint-plan", max_iterations=5)
         _mark_constitution_complete(tmp_path, store)
 
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
@@ -3890,7 +3908,7 @@ class TestAgentResultIntegrity:
         state["spec_dir"] = "runs/run-test/specs/001-demo"
         store.save(state)
 
-        result = ctrl.run("msg", "banzai")
+        result = ctrl.run("msg", "semi")
 
         assert result.status == "done"
         assert provider.exec_agent.call_count == 0
@@ -4870,6 +4888,23 @@ class TestSquadControllerBasics:
                     },
                     raw_output="", duration_ms=0, timed_out=False,
                 )
+            if call_count["n"] == 7:
+                # Banzai resolves the compiled checkpoint-assess decision.
+                return SquadAgentResult(
+                    exit_code=0,
+                    echelon_result={
+                        "verdict": "DECISION_RESOLVED",
+                        "state_updates": {},
+                        "journal_entries": [],
+                        "decision": {
+                            "selected_option_id": "approve",
+                            "answer_text": None,
+                            "rationale": "The quality evidence supports approval.",
+                            "confidence": "high",
+                        },
+                    },
+                    raw_output="", duration_ms=0, timed_out=False,
+                )
             # End the flow at phase2-decide so this test remains focused on
             # banzai escalation recovery rather than full Phase A artifact output.
             return SquadAgentResult(
@@ -4884,12 +4919,6 @@ class TestSquadControllerBasics:
         provider = _mock_provider()
         provider.exec_agent.side_effect = side_effect
         ctrl, store = _controller(tmp_path, provider=provider)
-        _install_test_clarification_policy(
-            ctrl,
-            source_kind="provider_escalation",
-            producer_id="phase1-why1",
-            phase_id="phase1-why1",
-        )
         monkeypatch.setattr(
             ctrl,
             "_lexicon_gate_config",
@@ -5118,41 +5147,61 @@ class TestSquadControllerBasics:
         assert result.status == "blocked"
 
 
-class TestHumanGate:
-    def test_banzai_auto_approves(self, tmp_path):
-        from harness.squad_executors import HumanGateExecutor
-        graph = PhaseGraph(DEFINITION, EXT_YML)
-        store = SquadStateStore(tmp_path / "squad" / "run-test")
-        store.initialize("r", "banzai", "msg", 0, "init")
+class TestHumanGateControllerInterception:
+    class _ExecutorLookupForbidden:
+        def get(self, phase_type):
+            raise AssertionError(
+                f"executor lookup reached for intercepted {phase_type!r}"
+            )
 
-        executor = HumanGateExecutor(
-            _mock_provider(), graph, EXT_ROOT / "extension", tmp_path
+    @staticmethod
+    def _at_plan_gate(tmp_path):
+        provider = _mock_provider()
+        ctrl, store = _controller(tmp_path, provider=provider, mode="guided")
+        store.initialize(
+            "r",
+            "greenfield",
+            "msg",
+            0,
+            "checkpoint-plan",
+            autonomy_mode="guided",
         )
-        node = PhaseNode(
-            id="checkpoint-plan",
-            type="human_gate",
-            label="Phase 3 Checkpoint",
+        _mark_constitution_complete(tmp_path, store)
+        ctrl._guard_spec_lexicon_evidence = lambda phase: phase
+        ctrl._guard_phase1_quality_evidence = lambda phase: phase
+        ctrl._guard_understanding_evidence = lambda phase: phase
+        ctrl._executors = (
+            TestHumanGateControllerInterception._ExecutorLookupForbidden()
         )
-        result = executor.execute(node, store)
-        assert result.verdict == "APPROVED"
-        assert result.state_updates.get("gate_result") == "auto_approved"
+        return ctrl, store, provider
 
-    def test_semi_auto_approves(self, tmp_path):
-        from harness.squad_executors import HumanGateExecutor
-        graph = PhaseGraph(DEFINITION, EXT_YML)
-        store = SquadStateStore(tmp_path / "squad" / "run-test")
-        store.initialize("r", "semi", "msg", 0, "init")
+    def test_run_intercepts_gate_before_executor_lookup(self, tmp_path):
+        ctrl, store, provider = self._at_plan_gate(tmp_path)
 
-        executor = HumanGateExecutor(
-            _mock_provider(), graph, EXT_ROOT / "extension", tmp_path
+        result = ctrl.run("msg", "guided")
+
+        state = store.load()
+        assert result.status == "blocked"
+        assert state["phase"] == "checkpoint-plan"
+        assert state["blocked_decision"]["status"] == "awaiting_human"
+        assert "human_input_outcome" not in state
+        provider.exec_agent.assert_not_called()
+
+    def test_run_single_phase_intercepts_gate_before_executor_lookup(self, tmp_path):
+        ctrl, store, provider = self._at_plan_gate(tmp_path)
+
+        result = ctrl.run_single_phase(
+            "checkpoint-plan",
+            user_message="msg",
+            mode="guided",
         )
-        node = PhaseNode(
-            id="checkpoint-plan",
-            type="human_gate",
-            label="Phase 3 Checkpoint",
-        )
-        result = executor.execute(node, store)
-        assert result.verdict == "APPROVED"
+
+        state = store.load()
+        assert result.status == "blocked"
+        assert state["phase"] == "checkpoint-plan"
+        assert state["blocked_decision"]["status"] == "awaiting_human"
+        assert "human_input_outcome" not in state
+        provider.exec_agent.assert_not_called()
 
 
 class TestConvergenceRoutingGuard:

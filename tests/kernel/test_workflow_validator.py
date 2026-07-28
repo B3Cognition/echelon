@@ -316,6 +316,157 @@ def test_workflow_validator_requires_list_mappings_unique_reasons_and_exact_gate
     assert "outcome must be unique" in messages
 
 
+def _gate_workflow(
+    tmp_path: Path,
+    *,
+    policies: list[dict] | None = None,
+    transitions: list[dict] | None = None,
+) -> Path:
+    return _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "checkpoint",
+                "type": "human_gate",
+                "human_input": (
+                    [_human_input_gate_policy()]
+                    if policies is None
+                    else policies
+                ),
+                "transitions": transitions or [
+                    {
+                        "to": "done",
+                        "condition": "human_input_outcome = approved",
+                        "outcome": "approved",
+                    },
+                    {
+                        "to": "terminal-blocked",
+                        "condition": "human_input_outcome = rejected",
+                        "outcome": "rejected",
+                    },
+                ],
+            },
+            {"id": "done", "type": "terminal"},
+            {"id": "terminal-blocked", "type": "terminal"},
+        ],
+    )
+
+
+def _gate_report(tmp_path: Path, definition: Path):
+    return validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+
+def test_workflow_validator_rejects_multiple_gate_policies(tmp_path: Path) -> None:
+    second = _human_input_gate_policy()
+    second["reason_code"] = "another_gate_decision_required"
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(
+            tmp_path,
+            policies=[_human_input_gate_policy(), second],
+        ),
+    )
+
+    assert not report.ok
+    assert any("exactly one human_input policy" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_missing_gate_policy(tmp_path: Path) -> None:
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(tmp_path, policies=[]),
+    )
+
+    assert not report.ok
+    assert any("exactly one human_input policy" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_custom_gate_outcome(tmp_path: Path) -> None:
+    policy = _human_input_gate_policy()
+    policy["options"][0]["outcome"] = "continued"
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(
+            tmp_path,
+            policies=[policy],
+            transitions=[
+                {
+                    "to": "done",
+                    "condition": "human_input_outcome = continued",
+                    "outcome": "continued",
+                },
+                {
+                    "to": "terminal-blocked",
+                    "condition": "human_input_outcome = rejected",
+                    "outcome": "rejected",
+                },
+            ],
+        ),
+    )
+
+    assert not report.ok
+    assert any("exact approved/rejected outcomes" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_gate_handler_mismatch(tmp_path: Path) -> None:
+    policy = _human_input_gate_policy()
+    policy["resolution_handler"] = "clarification_resume"
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(tmp_path, policies=[policy]),
+    )
+
+    assert not report.ok
+    assert any("resolution_handler must be gate_outcome" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_gate_target_mismatch(tmp_path: Path) -> None:
+    transitions = [
+        {
+            "to": "terminal-blocked",
+            "condition": "human_input_outcome = approved",
+            "outcome": "approved",
+        },
+        {
+            "to": "terminal-blocked",
+            "condition": "human_input_outcome = rejected",
+            "outcome": "rejected",
+        },
+    ]
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(tmp_path, transitions=transitions),
+    )
+
+    assert not report.ok
+    assert any("target must match" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_gate_condition_mismatch(tmp_path: Path) -> None:
+    transitions = [
+        {
+            "to": "done",
+            "condition": "human_input_outcome = rejected",
+            "outcome": "approved",
+        },
+        {
+            "to": "terminal-blocked",
+            "condition": "human_input_outcome = rejected",
+            "outcome": "rejected",
+        },
+    ]
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(tmp_path, transitions=transitions),
+    )
+
+    assert not report.ok
+    assert any("condition" in issue.message for issue in report.issues)
+
+
 def test_workflow_validator_rejects_duplicate_human_input_reason_code(tmp_path: Path) -> None:
     definition = _write_definition(
         tmp_path,

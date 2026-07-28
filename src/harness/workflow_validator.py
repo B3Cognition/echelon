@@ -891,6 +891,20 @@ def _validate_human_gate_outcomes(
     if not isinstance(transitions, list):
         return []
     issues: list[WorkflowValidationIssue] = []
+    if len(policies) != 1:
+        issues.append(WorkflowValidationIssue(
+            "human_gate requires exactly one human_input policy",
+            phase_id=phase_id,
+            path=path,
+        ))
+    policy = policies[0] if len(policies) == 1 else None
+    if policy is not None and policy.resolution_handler != "gate_outcome":
+        issues.append(WorkflowValidationIssue(
+            "human_gate resolution_handler must be gate_outcome",
+            phase_id=phase_id,
+            path=path,
+        ))
+
     outcomes: dict[str, tuple[int, str]] = {}
     for index, transition in enumerate(transitions):
         if not isinstance(transition, dict):
@@ -912,25 +926,39 @@ def _validate_human_gate_outcomes(
         outcomes[outcome] = (index, str(transition.get("to") or ""))
         if transition.get("condition") != f"human_input_outcome = {outcome}":
             issues.append(WorkflowValidationIssue(
-                "human_gate outcome must match human_input_outcome condition",
+                "human_gate outcome must match its exact condition",
                 phase_id=phase_id, transition_index=index, path=path,
             ))
-    option_outcomes: dict[str, str] = {}
-    for policy in policies:
-        for option in policy.options:
-            if option.outcome is not None and option.next_phase is not None:
-                option_outcomes[option.outcome] = option.next_phase
-    if set(outcomes) != set(option_outcomes):
+
+    expected_outcomes = {"approved", "rejected"}
+    if len(outcomes) != 2 or set(outcomes) != expected_outcomes:
         issues.append(WorkflowValidationIssue(
-            "human_gate options must map one-to-one to declared transition outcomes",
+            "human_gate transitions require exact approved/rejected outcomes",
             phase_id=phase_id, path=path,
         ))
-    for outcome, (_, target) in outcomes.items():
-        if outcome in option_outcomes and option_outcomes[outcome] != target:
+
+    option_outcomes: dict[str, str] = {}
+    if policy is not None:
+        for option in policy.options:
+            if option.outcome is not None and option.next_phase is not None:
+                if option.outcome in option_outcomes:
+                    issues.append(WorkflowValidationIssue(
+                        "human_gate option outcome must be unique",
+                        phase_id=phase_id,
+                        path=path,
+                    ))
+                option_outcomes[option.outcome] = option.next_phase
+        if len(policy.options) != 2 or set(option_outcomes) != expected_outcomes:
             issues.append(WorkflowValidationIssue(
-                "human_gate outcome target must match its option next_phase",
+                "human_gate options require exact approved/rejected outcomes",
                 phase_id=phase_id, path=path,
             ))
+        for outcome, (_, target) in outcomes.items():
+            if outcome in option_outcomes and option_outcomes[outcome] != target:
+                issues.append(WorkflowValidationIssue(
+                    "human_gate outcome target must match its option next_phase",
+                    phase_id=phase_id, path=path,
+                ))
     return issues
 
 
