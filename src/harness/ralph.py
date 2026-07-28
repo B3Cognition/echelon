@@ -370,7 +370,39 @@ class RalphController:
                     # Run build
                     iter_prompt = self._make_iter_prompt(build_prompt, outer_iter, last_verify_failures_text)
                     before_build_state = self._state_store.read()
-                    containment_before = _snapshot_project_status(
+                    unsafe_host_violation = _unsafe_host_execution_violation(
+                        self._config,
+                        before_build_state,
+                        worktree_path,
+                    )
+                    if unsafe_host_violation is not None:
+                        preserve_worktree = True
+                        _print_containment_violation_banner(
+                            self._spec_id,
+                            self._strategy_id,
+                            unsafe_host_violation,
+                        )
+                        return self._finalize(
+                            status="blocked",
+                            reason="containment_violation",
+                            outer_iterations=outer_iter + 1,
+                            inner_iterations=total_inner_iterations,
+                            pr_url=pr_url,
+                            tokens_used=tokens_used,
+                            final_verify=None,
+                            extra_state={
+                                "containment_violation": unsafe_host_violation,
+                                "build_status": "unsafe_host_execution_blocked",
+                                "build_reason": (
+                                    "Unsafe host LLM execution is disabled for isolated "
+                                    "target delivery; disable "
+                                    "harness.llm.tool_policy.allow_unsafe_host_execution "
+                                    "or use a containerized/brokered runner."
+                                ),
+                            },
+                        )
+                    containment_before = _snapshot_containment_projects(
+                        before_build_state,
                         getattr(self._gitops, "base_dir", None),
                         worktree_path,
                     )
@@ -427,9 +459,8 @@ class RalphController:
                                 "harness_source_containment_violation": harness_source_violation,
                             },
                         )
-                    containment_violation = _detect_containment_violation(
+                    containment_violation = _detect_first_containment_violation(
                         containment_before,
-                        getattr(self._gitops, "base_dir", None),
                         worktree_path,
                     )
                     if containment_violation is not None:
@@ -565,11 +596,11 @@ class RalphController:
                                 )
                                 build_status = "host_tool_permission_denied"
                                 build_reason = (
-                                    "Unsafe host execution is disabled. If this disposable "
-                                    "harness worktree is approved for AI-driven writes and "
-                                    "local test execution, set "
-                                    "harness.llm.tool_policy.allow_unsafe_host_execution: true "
-                                    "and provide harness.llm.tool_policy.approval_reason."
+                                    "Host LLM tool permissions blocked writes or local "
+                                    "commands in the harness worktree. For isolated target "
+                                    "delivery, do not enable unsafe host execution; use a "
+                                    "CLI/runtime that can write inside its sandboxed cwd or "
+                                    "move execution behind a containerized/brokered runner."
                                 )
                             elif build_status == "unknown" and _is_provider_session_limit(build_result):
                                 provider_reset_hint = _provider_session_limit_reset_hint(build_result)
@@ -4783,12 +4814,87 @@ def _snapshot_project_status(
             return None
     except OSError:
         return None
+    project = _git_top_level(project) or project
     status = _git_status_lines(project)
     if status is None:
         return None
     return {
         "project_dir": str(project),
         "before_status": status,
+    }
+
+
+def _snapshot_containment_projects(
+    state: Dict[str, Any],
+    project_dir: Any,
+    worktree_path: str,
+) -> List[Dict[str, Any]]:
+    """Snapshot every git root whose drift would violate worktree isolation."""
+    snapshots: List[Dict[str, Any]] = []
+    seen: Set[Path] = set()
+    for candidate in (
+        project_dir,
+        state.get("workspace_root"),
+        state.get("source_root"),
+    ):
+        snapshot = _snapshot_project_status(candidate, worktree_path)
+        if snapshot is None:
+            continue
+        try:
+            resolved = Path(str(snapshot["project_dir"])).resolve()
+        except OSError:
+            resolved = Path(str(snapshot["project_dir"]))
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        snapshots.append(snapshot)
+    return snapshots
+
+
+def _detect_first_containment_violation(
+    snapshots: List[Dict[str, Any]],
+    worktree_path: str,
+) -> Optional[Dict[str, Any]]:
+    for snapshot in snapshots:
+        violation = _detect_containment_violation(
+            snapshot,
+            snapshot.get("project_dir"),
+            worktree_path,
+        )
+        if violation is not None:
+            return violation
+    return None
+
+
+def _unsafe_host_execution_violation(
+    config: HarnessConfig,
+    state: Dict[str, Any],
+    worktree_path: str,
+) -> Optional[Dict[str, Any]]:
+    policy = getattr(getattr(config, "llm", None), "tool_policy", None)
+    if not bool(getattr(policy, "allow_unsafe_host_execution", False)):
+        return None
+    workspace_root = str(state.get("workspace_root") or "").strip()
+    source_root = str(state.get("source_root") or "").strip()
+    if not workspace_root or not source_root:
+        return None
+    workspace = Path(workspace_root).expanduser().resolve(strict=False)
+    source = Path(source_root).expanduser().resolve(strict=False)
+    worktree = Path(worktree_path).expanduser().resolve(strict=False)
+    if workspace == source or source == worktree:
+        return None
+    return {
+        "project_dir": str(workspace),
+        "worktree_path": str(worktree),
+        "changed_status": [
+            "unsafe_host_execution_blocked: Unsafe host LLM execution is disabled for isolated target delivery"
+        ],
+        "policy": {
+            "allow_unsafe_host_execution": True,
+            "approval_reason": getattr(policy, "approval_reason", None),
+        },
+        "workspace_root": str(workspace),
+        "source_root": str(source),
     }
 
 
@@ -4804,6 +4910,7 @@ def _detect_containment_violation(
         project = Path(project_dir)
     except TypeError:
         return None
+    project = _git_top_level(project) or project
     after = _git_status_lines(project)
     if after is None:
         return None
@@ -4822,6 +4929,23 @@ def _detect_containment_violation(
         "after_status": after,
         "changed_status": changed_status,
     }
+
+
+def _git_top_level(project: Path) -> Optional[Path]:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(project),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    return Path(result.stdout.strip())
 
 
 def _is_allowed_external_documentation_status(status_line: str) -> bool:

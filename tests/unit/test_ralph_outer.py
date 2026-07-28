@@ -36,6 +36,8 @@ from harness.provider import (
     SandboxSpec,
 )
 from harness import ralph
+from harness.build_result import BuildResult
+from harness.llm_tool_policy import LlmToolPolicy
 from harness.ralph import RalphController
 from harness.state import StateStore
 
@@ -169,8 +171,9 @@ def _make_controller(
     llm_provider: Optional[Any] = None,
     llm_build_runner: Optional[Any] = None,
     fulfillment_runner: Optional[Any] = None,
+    config: Optional[HarnessConfig] = None,
 ) -> tuple:
-    config = _make_config()
+    config = config or _make_config()
     provider = MockProvider(verify_results=verify_results)
     gitops = _make_gitops()
     state_store = StateStore(tmp_path, "spec-001", "default")
@@ -3219,12 +3222,12 @@ class TestOuterLoopConvergence:
         assert result.termination_reason == "build_incomplete"
         captured = capsys.readouterr()
         assert "host LLM tool permissions blocked the build" in captured.err
-        assert "allow_unsafe_host_execution: true" in captured.err
+        assert "do not enable unsafe host execution" in captured.err
         assert "verify_command" not in captured.err
         state = state_store.read()
         assert state["termination_reason"] == "build_incomplete"
         assert state["build_status"] == "host_tool_permission_denied"
-        assert "allow_unsafe_host_execution" in state["build_reason"]
+        assert "do not enable unsafe host execution" in state["build_reason"]
         assert state["cleanup_warnings"][0]["operation"] == "sandbox_destroy"
         assert "podman rm timed out" in state["cleanup_warnings"][0]["error"]
         gitops.commit.assert_not_called()
@@ -3595,8 +3598,6 @@ class TestOuterLoopConvergence:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Harness detects when the LLM writes outside the isolated worktree."""
-        from harness.build_result import BuildResult
-
         project = tmp_path / "project"
         project.mkdir()
         subprocess.run(["git", "init", "-b", "main"], cwd=project, check=True)
@@ -3645,6 +3646,147 @@ class TestOuterLoopConvergence:
         assert "outside the isolated worktree" in captured.err
         assert "real target repo" not in captured.err
         assert state_store.read()["termination_reason"] == "containment_violation"
+        gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
+    def test_llm_build_blocks_when_workspace_root_gets_dirty(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Target-scoped delivery must detect writes to the orchestration workspace."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        subprocess.run(["git", "init", "-b", "main"], cwd=workspace, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=workspace, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=workspace, check=True)
+        spec_dir = workspace / "specs" / "spec-001"
+        spec_dir.mkdir(parents=True)
+        for name in (
+            "00-overview.md",
+            "requirements-overview.md",
+            "spec.md",
+            "plan.md",
+            "plan-conformance.md",
+            "plan-conformance.json",
+            "research.md",
+            "data-model.md",
+        ):
+            content = (
+                _valid_plan_conformance_json()
+                if name == "plan-conformance.json"
+                else f"# {name}\n"
+            )
+            (spec_dir / name).write_text(content, encoding="utf-8")
+        for name in ("test-strategy.md", "test-architecture.md", "coverage-map.md"):
+            (spec_dir / name).write_text(f"# {name}\n", encoding="utf-8")
+        (spec_dir / "constitution.md").write_text(
+            "# Real Constitution\n\nProject-specific governance.\n",
+            encoding="utf-8",
+        )
+        (workspace / "specs" / "spec-001" / "tasks.md").write_text(
+            "- [ ] T-001 complexity=standard phase=base req=FR-001 depends=none target=sources/prosaic\n",
+            encoding="utf-8",
+        )
+        canonical = workspace / ".specify" / "memory" / "constitution.md"
+        canonical.parent.mkdir(parents=True)
+        canonical.write_text("# Real Constitution\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=workspace, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=workspace, check=True)
+
+        harness_base = workspace / "runs" / "targets" / "prosaic"
+        worktree = harness_base / "runs" / "build-1" / "worktrees" / "default" / "iter-0"
+        worktree.mkdir(parents=True)
+        source = workspace / "sources" / "prosaic"
+        source.mkdir(parents=True)
+
+        llm_build_runner = MagicMock()
+
+        def dirty_workspace(_worktree_path: str, _prompt: str, **_kwargs):
+            (workspace / "node_modules").mkdir()
+            (workspace / "node_modules" / ".package-lock.json").write_text("{}", encoding="utf-8")
+            return BuildResult(
+                exit_code=0,
+                status="done",
+                impasse_file=None,
+                stdout="",
+                stderr="",
+                duration_ms=1000,
+            )
+
+        llm_build_runner.exec_build.side_effect = dirty_workspace
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+        )
+        gitops.base_dir = harness_base
+        gitops.create_worktree.return_value = str(worktree)
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(source)
+        state["spec_dir"] = str(spec_dir)
+        state_store.write(state)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "containment_violation"
+        captured = capsys.readouterr()
+        assert "CONTAINMENT VIOLATION" in captured.err
+        assert "node_modules/.package-lock.json" in captured.err
+        violation = state_store.read()["containment_violation"]
+        assert violation["project_dir"] == str(workspace)
+        gitops.commit.assert_not_called()
+        gitops.destroy_worktree.assert_not_called()
+
+    def test_target_scoped_llm_build_blocks_unsafe_host_execution(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Unsafe host LLM execution is incompatible with isolated target delivery."""
+        config = _make_config()
+        config.llm.tool_policy = LlmToolPolicy(
+            allow_unsafe_host_execution=True,
+            approval_reason="Operator approved old host execution behavior.",
+        )
+        llm_build_runner = MagicMock()
+        llm_build_runner.exec_build.return_value = BuildResult(
+            exit_code=0,
+            status="done",
+            impasse_file=None,
+            stdout="",
+            stderr="",
+            duration_ms=1000,
+        )
+        controller, _provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+            llm_build_runner=llm_build_runner,
+            config=config,
+        )
+        workspace = tmp_path / "workspace"
+        source = workspace / "sources" / "prosaic"
+        worktree = tmp_path / "runs" / "targets" / "prosaic" / "worktrees" / "default" / "iter-0"
+        state = state_store.read()
+        state["workspace_root"] = str(workspace)
+        state["source_root"] = str(source)
+        state_store.write(state)
+        gitops.create_worktree.return_value = str(worktree)
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            build_prompt="implement something",
+        )
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "containment_violation"
+        assert state_store.read()["build_status"] == "unsafe_host_execution_blocked"
+        captured = capsys.readouterr()
+        assert "Unsafe host LLM execution is disabled for isolated target delivery" in captured.err
+        llm_build_runner.exec_build.assert_not_called()
         gitops.commit.assert_not_called()
         gitops.destroy_worktree.assert_not_called()
 
