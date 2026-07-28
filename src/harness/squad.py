@@ -38,8 +38,19 @@ from harness.controller_state_contract_requirements import (
 from harness.echelon_result_schema import (
     EchelonResultContract,
     EchelonResultValidationError,
+    validate_decision_resolution_result,
     validate_echelon_result,
     validate_echelon_result_contract,
+)
+from harness.blocked_decision import validate_blocked_decision_v2
+from harness.human_input import (
+    HumanInputOption,
+    HumanInputPolicy,
+    HumanInputPolicyError,
+    HumanInputPolicyRegistry,
+    HumanInputResolution,
+    PreparedHumanInput,
+    select_initial_decision_status,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.phase_a_readiness import (
@@ -163,6 +174,7 @@ PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION = 2
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
 WHY2_METRIC_STAGNATION_LIMIT = 2
 WHY2_METRIC_MIN_DELTA = 0.01
+COMMANDER_DECISION_PROMPT_MAX_BYTES = 32_768
 _WHY2_CERTIFIED_METRICS = (
     "overall",
     "structure",
@@ -293,16 +305,6 @@ def _checkpoint_spec_id_from_state(state: dict, spec_dir: Path) -> str:
     if state_spec_id and spec_dir_id.startswith(f"{state_spec_id}-"):
         return spec_dir_id
     return state_spec_id or spec_dir_id
-
-
-def _state_autonomy_mode(state: dict, fallback: str) -> str:
-    autonomy = state.get("autonomy_mode")
-    if isinstance(autonomy, str) and autonomy:
-        return autonomy
-    legacy = state.get("mode")
-    if isinstance(legacy, str) and legacy in {"guided", "semi", "banzai"}:
-        return legacy
-    return fallback
 
 
 def _normalize_phase_recommendation(recommended: object, valid_phases: set[str]) -> str | None:
@@ -518,6 +520,15 @@ class _PhaseAReadinessCommitError(RuntimeError):
         self.readiness = readiness
 
 
+@dataclass(frozen=True)
+class _ProviderHumanInputAdvance:
+    """One already-attested provider route that may seal a human decision."""
+
+    from_phase: str
+    to_phase: str
+    decision: PreparedRoutingDecision
+
+
 class SquadController:
     """Drives the squad run phase graph deterministically.
 
@@ -571,6 +582,7 @@ class SquadController:
         )
         self._state_store = state_store
         self._graph = phase_graph
+        self._human_input_registry = phase_graph.human_input_policy_registry()
         self._ext_dir = ext_dir
         self._project_root = project_root
         self._token_budget = token_budget
@@ -1876,6 +1888,453 @@ class SquadController:
                 exc_info=True,
             )
 
+    @staticmethod
+    def _human_input_options_from_decision(
+        decision: Mapping[str, object],
+    ) -> tuple[HumanInputOption, ...]:
+        raw_options = decision.get("options")
+        if not isinstance(raw_options, list):
+            raise HumanInputPolicyError("sealed decision options are invalid")
+        try:
+            return tuple(
+                HumanInputOption(
+                    id=option["id"],
+                    label=option["label"],
+                    description=option["description"],
+                    recommended=option["recommended"],
+                    risk_level=option["risk_level"],
+                    next_phase=option["next_phase"],
+                    outcome=option["outcome"],
+                )
+                for option in raw_options
+                if isinstance(option, Mapping)
+            )
+        except (KeyError, TypeError, HumanInputPolicyError) as exc:
+            raise HumanInputPolicyError(
+                "sealed decision options are invalid"
+            ) from exc
+
+    def _policy_for_human_input_decision(
+        self,
+        decision: Mapping[str, object],
+    ) -> HumanInputPolicy:
+        policy = self._human_input_registry.lookup(
+            str(decision.get("source_kind") or ""),
+            str(decision.get("producer_id") or ""),
+            str(decision.get("reason_code") or ""),
+        )
+        if (
+            decision.get("classification") != policy.classification
+            or decision.get("resolution_handler") != policy.resolution_handler
+            or decision.get("source_phase") not in policy.allowed_phase_ids
+        ):
+            raise HumanInputPolicyError(
+                "sealed decision does not match its registered policy"
+            )
+        options = self._human_input_options_from_decision(decision)
+        if policy.source_kind != "provider_escalation" and options != policy.options:
+            raise HumanInputPolicyError(
+                "sealed decision options do not match their registered policy"
+            )
+        if any(
+            option.next_phase is not None
+            and option.next_phase not in policy.allowed_target_phases
+            for option in options
+        ):
+            raise HumanInputPolicyError(
+                "sealed decision option escapes registered targets"
+            )
+        if bool(options) == policy.allow_free_text:
+            raise HumanInputPolicyError(
+                "sealed decision answer shape does not match its registered policy"
+            )
+        return policy
+
+    def _validate_prepared_human_input(
+        self,
+        request: PreparedHumanInput,
+    ) -> HumanInputPolicy:
+        if type(request) is not PreparedHumanInput or request.schema_version != 1:
+            raise HumanInputPolicyError(
+                "controller requires a prepared human-input request"
+            )
+        policy = self._human_input_registry.lookup(
+            request.source_kind,
+            request.producer_id,
+            request.reason_code,
+        )
+        if (
+            request.phase_id not in policy.allowed_phase_ids
+            or request.classification != policy.classification
+            or request.resolution_handler != policy.resolution_handler
+        ):
+            raise HumanInputPolicyError(
+                "prepared request does not match its registered policy"
+            )
+        if (
+            request.source_kind != "provider_escalation"
+            and request.options != policy.options
+        ):
+            raise HumanInputPolicyError(
+                "prepared request options do not match their registered policy"
+            )
+        return policy
+
+    @staticmethod
+    def _provider_advance_required(request: PreparedHumanInput) -> bool:
+        return request.source_kind == "provider_escalation" or (
+            request.source_kind == "controller_safeguard"
+            and request.producer_id
+            in {"consecutive_why_fails", "why2_metric_stagnation"}
+        )
+
+    def handle_human_input(
+        self,
+        request: PreparedHumanInput,
+        *,
+        provider_advance: _ProviderHumanInputAdvance | None = None,
+    ) -> bool:
+        """Seal one prepared request, then route only from its durable decision."""
+        policy = self._validate_prepared_human_input(request)
+        needs_advance = self._provider_advance_required(request)
+        if needs_advance != (provider_advance is not None):
+            raise HumanInputPolicyError(
+                "human-input request used the wrong state sealing path"
+            )
+        if provider_advance is not None:
+            if type(provider_advance) is not _ProviderHumanInputAdvance:
+                raise HumanInputPolicyError(
+                    "provider human-input advance is invalid"
+                )
+            if (
+                provider_advance.from_phase != request.phase_id
+                or provider_advance.decision.from_phase
+                != provider_advance.from_phase
+                or provider_advance.decision.to_phase
+                != provider_advance.to_phase
+            ):
+                raise HumanInputPolicyError(
+                    "provider human-input advance does not match the request"
+                )
+
+        state = self._state_store.load()
+        autonomy_mode = state.get("autonomy_mode")
+        if autonomy_mode not in {"guided", "semi", "banzai"}:
+            raise HumanInputPolicyError(
+                "persisted autonomy mode is invalid"
+            )
+        initial_status = select_initial_decision_status(
+            str(autonomy_mode),
+            policy,
+            request,
+        )
+        if provider_advance is None:
+            self._state_store.set_human_input_decision(
+                request,
+                initial_status=initial_status,
+            )
+        else:
+            node = self._graph.get(provider_advance.from_phase)
+            receipt = self._advance_prepared_result_or_block(
+                node,
+                provider_advance.decision,
+                human_input=request,
+                human_input_initial_status=initial_status,
+            )
+            if receipt is None:
+                return False
+        return self.resume_pending_human_input()
+
+    def _semi_human_input_resolution(
+        self,
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+    ) -> HumanInputResolution | None:
+        if (
+            policy.classification != "operational"
+            or policy.semi_policy != "auto_if_recommended_low_risk"
+        ):
+            return None
+        options = self._human_input_options_from_decision(decision)
+        recommended = [option for option in options if option.recommended]
+        if len(recommended) == 1:
+            option = recommended[0]
+            effective_risk = option.risk_level or decision.get("risk_level")
+            if effective_risk == "low":
+                return HumanInputResolution(
+                    selected_option_id=option.id,
+                    answer_text=None,
+                    resolved_by="semi",
+                )
+            return None
+        recommended_answer = decision.get("recommended_answer")
+        if (
+            not options
+            and isinstance(recommended_answer, str)
+            and recommended_answer.strip()
+            and decision.get("risk_level") == "low"
+        ):
+            return HumanInputResolution(
+                selected_option_id=None,
+                answer_text=recommended_answer,
+                resolved_by="semi",
+            )
+        return None
+
+    @staticmethod
+    def _truncate_utf8(value: str, byte_limit: int) -> str:
+        if byte_limit <= 0:
+            return ""
+        encoded = value.encode("utf-8")
+        if len(encoded) <= byte_limit:
+            return value
+        return encoded[:byte_limit].decode("utf-8", errors="ignore")
+
+    def _resolve_human_input_context_path(
+        self,
+        template: str,
+        state: Mapping[str, object],
+    ) -> tuple[Path, Path]:
+        roots = {
+            "{staging_dir}": state.get("staging_dir")
+            or self._squad_dir / "staging",
+            "{spec_dir}": state.get("spec_dir"),
+            "{context_dir}": state.get("context_dir")
+            or self._squad_dir / "context",
+            "{squad_dir}": self._squad_dir,
+        }
+        for marker, raw_root in roots.items():
+            if template != marker and not template.startswith(f"{marker}/"):
+                continue
+            if raw_root is None:
+                raise HumanInputPolicyError(
+                    f"context root {marker} is unavailable"
+                )
+            root = Path(raw_root)
+            if not root.is_absolute():
+                root = self._project_root / root
+            root = root.resolve()
+            suffix = template[len(marker):].lstrip("/")
+            candidate = (root / suffix).resolve()
+            try:
+                candidate.relative_to(root)
+            except ValueError as exc:
+                raise HumanInputPolicyError(
+                    "context path cannot escape its declared root"
+                ) from exc
+            return root, candidate
+        raise HumanInputPolicyError(
+            "context path does not use a registered root"
+        )
+
+    def _render_commander_decision_prompt(
+        self,
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        state: Mapping[str, object],
+    ) -> str:
+        """Render only registered context under the complete UTF-8 byte cap."""
+        validated = validate_blocked_decision_v2(decision)
+        registered = self._policy_for_human_input_decision(validated)
+        if registered != policy:
+            raise HumanInputPolicyError(
+                "COMMANDER context policy does not match the sealed decision"
+            )
+        request_payload = {
+            "decision_id": validated["id"],
+            "source_kind": validated["source_kind"],
+            "producer_id": validated["producer_id"],
+            "source_phase": validated["source_phase"],
+            "reason_code": validated["reason_code"],
+            "classification": validated["classification"],
+            "question": validated["question"],
+            "options": validated["options"],
+            "recommended_answer": validated["recommended_answer"],
+            "risk_level": validated["risk_level"],
+        }
+        instructions = (
+            "# COMMANDER DECISION RESOLUTION\n\n"
+            "Return exactly one echelon_result with verdict DECISION_RESOLVED, "
+            "empty state_updates, empty journal_entries, and one decision. "
+            "For choices, set one exact selected_option_id and null answer_text. "
+            "For free text, set a non-empty answer_text and null "
+            "selected_option_id. Do not ask another question. Do not write "
+            "files or mutate state, counters, recovery, or routing.\n\n"
+            "## Prepared Request\n"
+            f"{json.dumps(request_payload, ensure_ascii=False, sort_keys=True)}\n\n"
+            "## Registered Context\n"
+        )
+        base_size = len(instructions.encode("utf-8"))
+        if base_size > COMMANDER_DECISION_PROMPT_MAX_BYTES:
+            raise HumanInputPolicyError(
+                "COMMANDER prepared request exceeds the prompt byte limit"
+            )
+
+        context_state = {
+            key: state.get(key)
+            for key in policy.context_state_keys
+        }
+        sections = [
+            "### State\n"
+            f"{json.dumps(context_state, ensure_ascii=False, sort_keys=True)}\n"
+        ]
+        for template in policy.context_paths:
+            _root, path = self._resolve_human_input_context_path(
+                template,
+                state,
+            )
+            if not path.exists():
+                content = "<missing>"
+            elif not path.is_file():
+                raise HumanInputPolicyError(
+                    "registered context path must be a file"
+                )
+            else:
+                try:
+                    content = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeError) as exc:
+                    raise HumanInputPolicyError(
+                        "registered context file is not readable UTF-8"
+                    ) from exc
+            sections.append(
+                f"\n### File {template}\n{content}\n"
+            )
+        context = "".join(sections)
+        remaining = COMMANDER_DECISION_PROMPT_MAX_BYTES - base_size
+        prompt = instructions + self._truncate_utf8(context, remaining)
+        if len(prompt.encode("utf-8")) > COMMANDER_DECISION_PROMPT_MAX_BYTES:
+            raise AssertionError("COMMANDER prompt byte bound was exceeded")
+        return prompt
+
+    def _dispatch_commander_human_input(
+        self,
+        state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+    ) -> bool:
+        current_state = dict(state)
+        current_decision = dict(decision)
+        while current_decision.get("status") == "pending":
+            prompt = self._render_commander_decision_prompt(
+                current_decision,
+                policy,
+                current_state,
+            )
+            claimed = self._state_store.claim_human_input_decision(
+                str(current_decision["id"]),
+                expected_state_revision=int(current_state["state_revision"]),
+            )
+            claimed_decision = validate_blocked_decision_v2(
+                claimed["blocked_decision"]
+            )
+            attempt = int(claimed_decision["attempts"])
+            failure_code = "provider_failed"
+            resolved = None
+            with self._defer_routing_provider_usage() as usage:
+                try:
+                    with self._telemetry_provider.dispatch(
+                        DispatchContext(
+                            phase=str(claimed_decision["source_phase"]),
+                            agent="COMMANDER",
+                            kind="judgment",
+                            attempt=attempt,
+                            reason=(
+                                "initial" if attempt == 1 else "provider_retry"
+                            ),
+                        )
+                    ):
+                        raw_result = self._telemetry_provider.exec_agent(
+                            str(self._project_root),
+                            prompt,
+                        )
+                    if (
+                        type(raw_result) is not SquadAgentResult
+                        or raw_result.exit_code != 0
+                        or raw_result.timed_out
+                        or type(raw_result.echelon_result) is not dict
+                    ):
+                        raise EchelonResultValidationError(
+                            "COMMANDER provider result failed"
+                        )
+                    failure_code = "invalid_resolution_result"
+                    resolved = validate_decision_resolution_result(
+                        raw_result.echelon_result,
+                        options=self._human_input_options_from_decision(
+                            claimed_decision
+                        ),
+                    )
+                except Exception:
+                    resolved = None
+
+            if resolved is None:
+                failed = self._state_store.record_human_input_resolution_failure(
+                    str(claimed_decision["id"]),
+                    expected_state_revision=int(claimed["state_revision"]),
+                    failure_code=failure_code,
+                )
+                if usage["tokens"]:
+                    self._state_store.increment_token_usage(usage["tokens"])
+                    failed = self._state_store.load()
+                current_state = failed
+                current_decision = validate_blocked_decision_v2(
+                    failed["blocked_decision"]
+                )
+                continue
+
+            try:
+                return self.apply_human_input_resolution(
+                    str(claimed_decision["id"]),
+                    expected_state_revision=int(claimed["state_revision"]),
+                    resolution=HumanInputResolution(
+                        selected_option_id=resolved.selected_option_id,
+                        answer_text=resolved.answer_text,
+                        resolved_by="COMMANDER",
+                    )
+                )
+            finally:
+                if usage["tokens"]:
+                    self._state_store.increment_token_usage(usage["tokens"])
+        return False
+
+    def resume_pending_human_input(self) -> bool:
+        """Recover an interrupted claim, then route one pending decision."""
+        state = self._state_store.recover_interrupted_human_input_decision()
+        raw_decision = state.get("blocked_decision")
+        if (
+            not isinstance(raw_decision, Mapping)
+            or raw_decision.get("schema_version") != 2
+        ):
+            return False
+        decision = validate_blocked_decision_v2(raw_decision)
+        if decision["status"] != "pending":
+            return False
+        policy = self._policy_for_human_input_decision(decision)
+        autonomy_mode = decision["autonomy_mode"]
+        if autonomy_mode == "guided":
+            return False
+        if autonomy_mode == "semi":
+            resolution = self._semi_human_input_resolution(
+                decision,
+                policy,
+            )
+            if resolution is None:
+                return False
+            return self.apply_human_input_resolution(
+                str(decision["id"]),
+                expected_state_revision=int(state["state_revision"]),
+                resolution=resolution,
+            )
+        if (
+            autonomy_mode == "banzai"
+            and decision["classification"] != "external_prerequisite"
+        ):
+            return self._dispatch_commander_human_input(
+                state,
+                decision,
+                policy,
+            )
+        return False
+
     def run(
         self,
         user_message: str = "",
@@ -2026,38 +2485,21 @@ class SquadController:
 
         # ── Escalation block ──────────────────────────────────────────────
         elif existing_status == "blocked" and existing.get("escalation_question"):
-            q = existing.get("escalation_question", "")
-            mode_at_block = _state_autonomy_mode(existing, mode)
-            recovery_reason = str(existing.get("blocked_reason") or "")
-
-            if mode_at_block == "banzai":
-                print(
-                    f"\n[squad] escalation detected — banzai mode, "
-                    f"dispatching COMMANDER judgment\n"
-                    f"  Questions: {q[:120]}",
-                    flush=True,
-                )
-                self._judgment_dispatch_escalation(
-                    escalation_question=q,
-                    blocked_phase=existing.get("phase", "unknown"),
-                    recovery_reason=recovery_reason,
-                )
+            if self.resume_pending_human_input():
                 recovered = self._state_store.load()
                 existing_status = recovered.get("status")
-                if existing_status == "blocked":
-                    return SquadResult.from_state(recovered)
                 force_resume = True
             else:
-                # semi / guided: stop and require echelon spec resume
+                recovered = self._state_store.load()
                 _blocked_banner(
-                    phase=existing.get("phase", "?"),
-                    reason=existing.get("blocked_reason", ""),
-                    question=q,
+                    phase=recovered.get("phase", "?"),
+                    reason=recovered.get("blocked_reason", ""),
+                    question=recovered.get("escalation_question", ""),
                 )
                 return SquadResult(
                     status="blocked",
-                    phase=existing.get("phase", "unknown"),
-                    run_id=existing.get("run_id", ""),
+                    phase=recovered.get("phase", "unknown"),
+                    run_id=recovered.get("run_id", ""),
                 )
 
         # ── Recovery: convergence already picked the next phase ─────────────
@@ -2422,6 +2864,42 @@ class SquadController:
                 return SquadResult.from_state(self._state_store.load())
             next_phase = decision.to_phase
 
+            try:
+                human_input = self._prepare_provider_human_input(
+                    node,
+                    prepared,
+                    snapshot,
+                )
+            except HumanInputPolicyError as exc:
+                self._discard_publication_without_authority(
+                    prepared_publication,
+                )
+                self._block_after_state_advance_failure(
+                    node,
+                    decision.from_phase,
+                    StateAdvanceError(
+                        "provider human-input preparation failed",
+                        json_path="$.state_updates.escalation_question",
+                        validator="human_input_policy",
+                    ),
+                    decision=decision,
+                    token_usage_delta=decision.token_usage_delta,
+                    diagnostic_subject=str(exc),
+                )
+                return SquadResult.from_state(self._state_store.load())
+
+            if human_input is not None:
+                if self.handle_human_input(
+                    human_input,
+                    provider_advance=_ProviderHumanInputAdvance(
+                        from_phase=decision.from_phase,
+                        to_phase=decision.to_phase,
+                        decision=decision,
+                    ),
+                ):
+                    continue
+                return SquadResult.from_state(self._state_store.load())
+
             receipt = self._advance_prepared_result_or_block(
                 node,
                 decision,
@@ -2436,33 +2914,19 @@ class SquadController:
             # re-invocation to reach the top-of-loop escalation block.
             state_now = self._state_store.load()
             if state_now.get("status") == "blocked" and state_now.get("escalation_question") and not state_now.get("escalation_resolved"):
-                q = state_now["escalation_question"]
-                run_mode = _state_autonomy_mode(state_now, mode)
-                recovery_reason = str(state_now.get("blocked_reason") or "")
-                if run_mode == "banzai":
-                    print(
-                        f"[squad] ~ {node.id}  escalation — banzai COMMANDER judgment",
-                        flush=True,
-                    )
-                    self._judgment_dispatch_escalation(
-                        q,
-                        phase,
-                        recovery_reason=recovery_reason,
-                    )
-                    if self._state_store.load().get("status") == "blocked":
-                        return SquadResult.from_state(self._state_store.load())
-                    continue  # re-dispatch the same phase (e.g. phase1-why1) next iteration
-                else:
-                    _blocked_banner(
-                        phase=phase,
-                        reason=state_now.get("blocked_reason", ""),
-                        question=q,
-                    )
-                    return SquadResult(
-                        status="blocked",
-                        phase=phase,
-                        run_id=state_now.get("run_id", ""),
-                    )
+                if self.resume_pending_human_input():
+                    continue
+                state_now = self._state_store.load()
+                _blocked_banner(
+                    phase=phase,
+                    reason=state_now.get("blocked_reason", ""),
+                    question=state_now.get("escalation_question", ""),
+                )
+                return SquadResult(
+                    status="blocked",
+                    phase=phase,
+                    run_id=state_now.get("run_id", ""),
+                )
             else:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
                 continue
@@ -5787,12 +6251,50 @@ class SquadController:
             )
             return None
 
+    def _prepare_provider_human_input(
+        self,
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
+    ) -> PreparedHumanInput | None:
+        """Prepare canonical provider question facts without policy authority."""
+        updates = prepared.state_updates
+        question = updates.get("escalation_question")
+        if not isinstance(question, str) or not question.strip():
+            return None
+        control = prepared.control_updates
+        reason_code = control.get("blocked_reason")
+        if not isinstance(reason_code, str) or not reason_code.strip():
+            raise HumanInputPolicyError(
+                "provider question requires an exact reason code"
+            )
+        options = updates.get("escalation_options")
+        if options is not None and not isinstance(options, list):
+            raise HumanInputPolicyError(
+                "provider escalation options must be a list"
+            )
+        return self._human_input_registry.prepare(
+            source_kind="provider_escalation",
+            producer_id=node.id,
+            phase_id=node.id,
+            reason_code=reason_code,
+            question=question,
+            recommended_answer=updates.get(
+                "escalation_recommended_answer"
+            ),
+            risk_level=updates.get("escalation_risk_level"),
+            options=options,
+            source_state_revision=snapshot.state_revision,
+        )
+
     def _advance_prepared_result_or_block(
         self,
         node: PhaseNode,
         decision: PreparedRoutingDecision,
         *,
         prepared_publication: PreparedSquadPublication | None = None,
+        human_input: PreparedHumanInput | None = None,
+        human_input_initial_status: str | None = None,
     ) -> AdvanceReceipt | None:
         """Commit one sealed route or persist a separate redacted failure."""
         completion_marker = dict(
@@ -5834,11 +6336,20 @@ class SquadController:
                         ),
                         validator="ownership",
                     )
-            receipt = self._state_store.advance(
-                decision.from_phase,
-                decision.to_phase,
-                decision,
-            )
+            if human_input is None:
+                receipt = self._state_store.advance(
+                    decision.from_phase,
+                    decision.to_phase,
+                    decision,
+                )
+            else:
+                receipt = self._state_store.advance(
+                    decision.from_phase,
+                    decision.to_phase,
+                    decision,
+                    human_input=human_input,
+                    human_input_initial_status=human_input_initial_status,
+                )
             if not isinstance(receipt, AdvanceReceipt):
                 raise StateAdvanceError(
                     "state advance did not return a receipt",
