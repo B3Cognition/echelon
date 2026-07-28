@@ -6,9 +6,12 @@ from pathlib import Path
 import pytest
 import yaml
 
+from harness.phase_graph import PhaseGraph
+
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFINITION = ROOT / "extension" / "workflow" / "definition.yaml"
+EXTENSION = ROOT / "extension" / "extension.yml"
 SQUAD = ROOT / "src" / "harness" / "squad.py"
 EXECUTORS = ROOT / "src" / "harness" / "squad_executors.py"
 COMMANDER = ROOT / "extension" / "agents" / "control" / "commander.md"
@@ -178,6 +181,15 @@ def test_phase_a_has_no_terminal_human_input_executor() -> None:
     assert '"human_gate": HumanGateExecutor' not in squad_text
     assert re.search(r"\binput\(", squad_text) is None
     assert re.search(r"\binput\(", executor_text) is None
+
+
+def test_compiled_registry_has_no_standing_legacy_recovery_policy() -> None:
+    registry = PhaseGraph(DEFINITION, EXTENSION).human_input_policy_registry()
+
+    assert all(
+        policy.source_kind != "legacy_recovery"
+        for policy in registry.policies
+    )
 
 
 def test_workflow_gates_have_only_compiled_outcome_policy() -> None:

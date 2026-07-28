@@ -1,7 +1,7 @@
 """Closed, controller-owned human-input policy definitions."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
@@ -371,6 +371,24 @@ class HumanInputPolicyRegistry:
             resolution_handler=policy.resolution_handler,
             source_state_revision=source_state_revision,
         )
+
+
+def legacy_recovery_policy_alias(
+    current_policy: HumanInputPolicy,
+) -> HumanInputPolicy:
+    """Copy one exact current provider or safeguard policy as a legacy alias."""
+    if type(current_policy) is not HumanInputPolicy:
+        raise HumanInputPolicyError(
+            "legacy recovery requires one current human-input policy"
+        )
+    if current_policy.source_kind not in {
+        "provider_escalation",
+        "controller_safeguard",
+    }:
+        raise HumanInputPolicyError(
+            "legacy recovery can alias only a provider or safeguard policy"
+        )
+    return replace(current_policy, source_kind="legacy_recovery")
 
 
 def select_initial_decision_status(

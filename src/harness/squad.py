@@ -53,6 +53,7 @@ from harness.human_input import (
     HumanInputResolution,
     PreparedHumanInput,
     gate_outcome_route_error,
+    legacy_recovery_policy_alias,
     select_initial_decision_status,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
@@ -79,10 +80,12 @@ from harness.quality_scores import (
     resolve_quality_gate_thresholds,
 )
 from harness.recovery_instruction import (
+    RecoveryKind,
     RecoveryInstruction,
     controller_contract_recovery,
     retry_phase_recovery,
     trusted_executor_block_recovery,
+    validate_recovery_instruction,
 )
 from harness.published_re_context import attach_published_re_context
 from harness.run_history import append_phase_a_run
@@ -2022,7 +2025,10 @@ class SquadController:
     @staticmethod
     def _is_dynamic_dispatch_cap_policy(policy: HumanInputPolicy) -> bool:
         return (
-            policy.source_kind == "controller_safeguard"
+            policy.source_kind in {
+                "controller_safeguard",
+                "legacy_recovery",
+            }
             and policy.producer_id == "phase_dispatch_limit"
             and policy.reason_code == "phase_dispatch_limit"
             and policy.resolution_handler == "phase_dispatch_limit"
@@ -2106,15 +2112,251 @@ class SquadController:
             cls._dispatch_cap_candidate_from_option(option)
         return options
 
+    def _legacy_policy_alias(
+        self,
+        *,
+        phase_id: str,
+        reason_code: str,
+        producer_id: str | None = None,
+    ) -> HumanInputPolicy:
+        candidates = [
+            policy
+            for policy in self._human_input_registry.policies
+            if policy.source_kind in {
+                "provider_escalation",
+                "controller_safeguard",
+            }
+            and policy.reason_code == reason_code
+            and phase_id in policy.allowed_phase_ids
+            and (
+                producer_id is None
+                or policy.producer_id == producer_id
+            )
+        ]
+        if len(candidates) != 1:
+            raise HumanInputPolicyError(
+                "legacy recovery does not identify one exact current policy"
+            )
+        return legacy_recovery_policy_alias(candidates[0])
+
+    def _registered_or_current_legacy_policy_alias(
+        self,
+        *,
+        phase_id: str,
+        reason_code: str,
+        producer_id: str,
+    ) -> HumanInputPolicy:
+        registered = [
+            policy
+            for policy in self._human_input_registry.policies
+            if policy.source_kind == "legacy_recovery"
+            and policy.producer_id == producer_id
+            and policy.reason_code == reason_code
+            and phase_id in policy.allowed_phase_ids
+        ]
+        if len(registered) == 1:
+            return registered[0]
+        if registered:
+            raise HumanInputPolicyError(
+                "legacy recovery policy identity is ambiguous"
+            )
+        return self._legacy_policy_alias(
+            phase_id=phase_id,
+            producer_id=producer_id,
+            reason_code=reason_code,
+        )
+
+    @classmethod
+    def _legacy_escalation_options(
+        cls,
+        raw_options: object,
+        policy: HumanInputPolicy,
+    ) -> tuple[HumanInputOption, ...]:
+        if raw_options is None:
+            raw_options = []
+        if not isinstance(raw_options, list):
+            raise HumanInputPolicyError(
+                "legacy recovery options must be a list"
+            )
+        if not cls._is_dynamic_dispatch_cap_policy(policy):
+            if raw_options:
+                raise HumanInputPolicyError(
+                    "legacy recovery options do not match the current policy"
+                )
+            return ()
+        if not raw_options:
+            raise HumanInputPolicyError(
+                "legacy dispatch-cap recovery requires sealed issue options"
+            )
+        expected_fields = {
+            "id",
+            "label",
+            "description",
+            "recommended",
+            "risk_level",
+            "next_phase",
+        }
+        options: list[HumanInputOption] = []
+        for raw_option in raw_options:
+            if (
+                not isinstance(raw_option, Mapping)
+                or set(raw_option) != expected_fields
+            ):
+                raise HumanInputPolicyError(
+                    "legacy recovery options are malformed"
+                )
+            option = HumanInputOption(
+                id=raw_option["id"],
+                label=raw_option["label"],
+                description=raw_option["description"],
+                recommended=raw_option["recommended"],
+                risk_level=raw_option["risk_level"],
+                next_phase=raw_option["next_phase"],
+                outcome=None,
+            )
+            cls._dispatch_cap_candidate_from_option(option)
+            options.append(option)
+        return tuple(options)
+
+    def _prepare_legacy_human_input(
+        self,
+        state: Mapping[str, object],
+    ) -> PreparedHumanInput | None:
+        if state.get("status") != "blocked":
+            return None
+        run_kind = state.get("run_kind")
+        if run_kind not in {None, "", "squad"}:
+            return None
+        phase_id = state.get("phase")
+        reason_code = state.get("blocked_reason")
+        question = state.get("escalation_question")
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (phase_id, reason_code, question)
+        ):
+            return None
+        phase_id = str(phase_id).strip()
+        reason_code = str(reason_code).strip()
+        question = str(question).strip()
+
+        raw_decision = state.get("blocked_decision")
+        if (
+            not isinstance(raw_decision, Mapping)
+            or raw_decision.get("schema_version") != 1
+            or raw_decision.get("status") != "pending"
+            or str(raw_decision.get("question") or "").strip() != question
+            or str(raw_decision.get("blocked_reason") or "").strip()
+            != reason_code
+            or str(raw_decision.get("blocked_phase") or "").strip()
+            != phase_id
+        ):
+            return None
+
+        try:
+            raw_instruction = state.get("recovery_instruction")
+            instruction = (
+                validate_recovery_instruction(raw_instruction)
+                if raw_instruction is not None
+                else None
+            )
+            source_phase = phase_id
+            if phase_id in TERMINAL_PHASES:
+                if reason_code == "phase_dispatch_limit":
+                    legacy_source_phase = state.get(
+                        "phase_dispatch_limit_phase"
+                    )
+                else:
+                    last_dispatch = state.get("last_dispatch")
+                    legacy_source_phase = (
+                        last_dispatch.get("phase_id")
+                        if isinstance(last_dispatch, Mapping)
+                        else None
+                    )
+                if (
+                    not isinstance(legacy_source_phase, str)
+                    or not legacy_source_phase.strip()
+                    or legacy_source_phase.strip() in TERMINAL_PHASES
+                ):
+                    return None
+                source_phase = legacy_source_phase.strip()
+
+            policy = self._legacy_policy_alias(
+                phase_id=source_phase,
+                reason_code=reason_code,
+            )
+            if (
+                phase_id in TERMINAL_PHASES
+                and policy.producer_id
+                not in {
+                    "phase_dispatch_limit",
+                    "consecutive_why_fails",
+                    "why2_metric_stagnation",
+                }
+            ):
+                return None
+            options = self._legacy_escalation_options(
+                state.get("escalation_options"),
+                policy,
+            )
+            expected_answer_type = "choice" if options else "free_text"
+            if raw_decision.get("answer_type") != expected_answer_type:
+                return None
+
+            expected_kind = (
+                RecoveryKind.RESOLVE_ISSUE
+                if self._is_dynamic_dispatch_cap_policy(policy)
+                else RecoveryKind.AWAIT_HUMAN_ANSWER
+            )
+            if instruction is not None:
+                if (
+                    instruction.schema_version != 1
+                    or instruction.kind is not expected_kind
+                    or instruction.reason_code != reason_code
+                    or instruction.phase != source_phase
+                    or not instruction.requires_human_input
+                ):
+                    return None
+
+            alias_registry = HumanInputPolicyRegistry((policy,))
+            request = alias_registry.prepare(
+                source_kind="legacy_recovery",
+                producer_id=policy.producer_id,
+                phase_id=source_phase,
+                reason_code=reason_code,
+                question=question,
+                recommended_answer=state.get(
+                    "escalation_recommended_answer"
+                ),
+                risk_level=state.get("escalation_risk_level"),
+                source_state_revision=int(state["state_revision"]),
+            )
+            if options:
+                request = replace(request, options=options)
+            return request
+        except (
+            HumanInputPolicyError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ):
+            return None
+
     def _policy_for_human_input_decision(
         self,
         decision: Mapping[str, object],
     ) -> HumanInputPolicy:
-        policy = self._human_input_registry.lookup(
-            str(decision.get("source_kind") or ""),
-            str(decision.get("producer_id") or ""),
-            str(decision.get("reason_code") or ""),
-        )
+        if decision.get("source_kind") == "legacy_recovery":
+            policy = self._registered_or_current_legacy_policy_alias(
+                phase_id=str(decision.get("source_phase") or ""),
+                producer_id=str(decision.get("producer_id") or ""),
+                reason_code=str(decision.get("reason_code") or ""),
+            )
+        else:
+            policy = self._human_input_registry.lookup(
+                str(decision.get("source_kind") or ""),
+                str(decision.get("producer_id") or ""),
+                str(decision.get("reason_code") or ""),
+            )
         if (
             decision.get("classification") != policy.classification
             or decision.get("resolution_handler") != policy.resolution_handler
@@ -2157,11 +2399,18 @@ class SquadController:
             raise HumanInputPolicyError(
                 "controller requires a prepared human-input request"
             )
-        policy = self._human_input_registry.lookup(
-            request.source_kind,
-            request.producer_id,
-            request.reason_code,
-        )
+        if request.source_kind == "legacy_recovery":
+            policy = self._registered_or_current_legacy_policy_alias(
+                phase_id=request.phase_id,
+                producer_id=request.producer_id,
+                reason_code=request.reason_code,
+            )
+        else:
+            policy = self._human_input_registry.lookup(
+                request.source_kind,
+                request.producer_id,
+                request.reason_code,
+            )
         if (
             request.phase_id not in policy.allowed_phase_ids
             or request.classification != policy.classification
@@ -3339,7 +3588,12 @@ class SquadController:
 
         # ── Escalation block ──────────────────────────────────────────────
         elif existing_status == "blocked" and existing.get("escalation_question"):
-            if self.resume_pending_human_input():
+            legacy_request = self._prepare_legacy_human_input(existing)
+            if legacy_request is not None:
+                resumed = self.handle_human_input(legacy_request)
+            else:
+                resumed = self.resume_pending_human_input()
+            if resumed:
                 recovered = self._state_store.load()
                 existing_status = recovered.get("status")
                 force_resume = True

@@ -22,7 +22,9 @@ from harness.human_input import (
     HumanInputResolution,
     controller_safeguard_policies,
 )
-from harness.phase_graph import PhaseGraph
+from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.prepared_phase_result import prepare_phase_result
+from harness.recovery_instruction import RecoveryKind, RecoveryInstruction
 from harness.squad import SquadController, _ProviderHumanInputAdvance
 from harness.squad_provider import SquadAgentResult, SquadCliProvider
 from harness.squad_state import SquadStateStore, StateAdvanceError
@@ -162,7 +164,23 @@ def _controller(
         project_root=tmp_path,
         squad_dir=squad_dir,
     )
-    controller._human_input_registry = HumanInputPolicyRegistry((policy,))
+    policies = (policy,)
+    if policy.source_kind == "legacy_recovery":
+        safeguard_identities = {
+            (item.producer_id, item.reason_code)
+            for item in controller_safeguard_policies()
+        }
+        current_source_kind = (
+            "controller_safeguard"
+            if (policy.producer_id, policy.reason_code)
+            in safeguard_identities
+            else "provider_escalation"
+        )
+        policies = (
+            replace(policy, source_kind=current_source_kind),
+            policy,
+        )
+    controller._human_input_registry = HumanInputPolicyRegistry(policies)
     return controller, store, provider
 
 
@@ -306,6 +324,542 @@ def _seal_dispatch_cap_decision(
     store.set_human_input_decision(request, initial_status=initial_status)
     state = store.load()
     return state["blocked_decision"]["id"], state["state_revision"]
+
+
+def _legacy_workflow_controller(
+    tmp_path: Path,
+    *,
+    autonomy_mode: str,
+    phase_id: str,
+    reason_code: str,
+    recovery_phase: str | None = None,
+    options: object = None,
+    decision_status: str = "pending",
+    recovery_kind: RecoveryKind = RecoveryKind.AWAIT_HUMAN_ANSWER,
+    provider_result: SquadAgentResult | None = None,
+) -> tuple[SquadController, SquadStateStore, object]:
+    graph = PhaseGraph(DEFINITION, EXTENSION)
+    setup_policy = graph.human_input_policy_registry().lookup(
+        "provider_escalation",
+        "phase1-tracker",
+        "human_clarification_required",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode=autonomy_mode,
+        policy=setup_policy,
+        provider_result=provider_result,
+    )
+    controller._graph = graph
+    controller._human_input_registry = graph.human_input_policy_registry()
+    state = store.load()
+    state.update(
+        {
+            "status": "blocked",
+            "phase": phase_id,
+            "blocked_reason": reason_code,
+            "escalation_question": "Which exact legacy decision should be applied?",
+            "escalation_options": [] if options is None else options,
+            "recovery_instruction": RecoveryInstruction(
+                kind=recovery_kind,
+                reason_code=reason_code,
+                phase=recovery_phase or phase_id,
+                requires_human_input=True,
+            ).to_dict(),
+        }
+    )
+    if recovery_phase is not None:
+        state["last_dispatch"] = {"phase_id": recovery_phase}
+        if reason_code == "phase_dispatch_limit":
+            state["phase_dispatch_limit_phase"] = recovery_phase
+    store.save(state)
+    if decision_status != "pending":
+        state = store.load()
+        state["blocked_decision"]["status"] = decision_status
+        store.save(state)
+    return controller, store, provider
+
+
+def _provider_routing_decision(
+    store: SquadStateStore,
+    policy: HumanInputPolicy,
+):
+    prepared = prepare_phase_result(
+        PhaseNode(
+            id=policy.producer_id,
+            type="agent",
+            allowed_state_updates=[],
+        ),
+        SquadAgentResult(
+            exit_code=0,
+            echelon_result={
+                "verdict": "DONE",
+                "state_updates": {},
+            },
+            raw_output="",
+            duration_ms=1,
+            timed_out=False,
+        ),
+        controller_updates={},
+    )
+    snapshot = store.capture_routing_snapshot(
+        expected_phase=policy.producer_id,
+    )
+    return store.prepare_routing_decision(
+        prepared,
+        snapshot=snapshot,
+        from_phase=policy.producer_id,
+        to_phase=policy.producer_id,
+        record_completion=False,
+        dispatch_id="d" * 32,
+    )
+
+
+def test_provider_request_resolved_inline_keeps_sealed_decision_id(
+    tmp_path: Path,
+) -> None:
+    answer = "Use the attested public contract."
+    graph = PhaseGraph(DEFINITION, EXTENSION)
+    policy = graph.human_input_policy_registry().lookup(
+        "provider_escalation",
+        "phase1-tracker",
+        "human_clarification_required",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+        provider_result=_decision_result(
+            selected_option_id=None,
+            answer_text=answer,
+        ),
+    )
+    routing = _provider_routing_decision(store, policy)
+    request = _request(controller, store, policy)
+    sealed_ids: list[str] = []
+
+    def advance(_node, decision, **kwargs):
+        receipt = store.advance(
+            policy.producer_id,
+            policy.producer_id,
+            decision,
+            human_input=kwargs["human_input"],
+            human_input_initial_status=kwargs[
+                "human_input_initial_status"
+            ],
+        )
+        sealed_ids.append(store.load()["blocked_decision"]["id"])
+        return receipt
+
+    controller._advance_prepared_result_or_block = MagicMock(
+        side_effect=advance
+    )
+
+    assert controller.handle_human_input(
+        request,
+        provider_advance=_ProviderHumanInputAdvance(
+            from_phase=policy.producer_id,
+            to_phase=policy.producer_id,
+            decision=routing,
+        ),
+    )
+
+    resolved = store.load()["blocked_decision"]
+    assert resolved["source_kind"] == "provider_escalation"
+    assert resolved["id"] == sealed_ids[0]
+    assert resolved["status"] == "resolved"
+    assert resolved["answer_text"] == answer
+    provider.exec_agent.assert_called_once()
+
+
+def test_provider_v2_seal_survives_process_restart_with_same_decision_id(
+    tmp_path: Path,
+) -> None:
+    answer = "Use the attested public contract."
+    graph = PhaseGraph(DEFINITION, EXTENSION)
+    policy = graph.human_input_policy_registry().lookup(
+        "provider_escalation",
+        "phase1-tracker",
+        "human_clarification_required",
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    routing = _provider_routing_decision(store, policy)
+    request = _request(controller, store, policy)
+    store.advance(
+        policy.producer_id,
+        policy.producer_id,
+        routing,
+        human_input=request,
+        human_input_initial_status="pending",
+    )
+    sealed = store.load()
+    decision_id = sealed["blocked_decision"]["id"]
+    assert sealed["recovery_instruction"]["decision_id"] == decision_id
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = _decision_result(
+        selected_option_id=None,
+        answer_text=answer,
+    )
+    restarted = SquadController(
+        provider=provider,
+        state_store=store,
+        phase_graph=graph,
+        ext_dir=ROOT / "extension",
+        project_root=tmp_path,
+        squad_dir=store.squad_dir,
+    )
+
+    assert restarted.resume_pending_human_input()
+    resolved = store.load()["blocked_decision"]
+    assert resolved["id"] == decision_id
+    assert resolved["status"] == "resolved"
+    assert resolved["resolved_by"] == "COMMANDER"
+    provider.exec_agent.assert_called_once()
+
+
+def test_status_continue_and_resume_observe_one_durable_decision_id(
+    tmp_path: Path,
+) -> None:
+    from echelon.cli import _active_v2_decision, _classify_run_recovery
+
+    graph = PhaseGraph(DEFINITION, EXTENSION)
+    policy = graph.human_input_policy_registry().lookup(
+        "provider_escalation",
+        "phase1-investigate",
+        "investigation_access_required",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    routing = _provider_routing_decision(store, policy)
+    request = _request(controller, store, policy)
+    store.advance(
+        policy.producer_id,
+        policy.producer_id,
+        routing,
+        human_input=request,
+        human_input_initial_status="awaiting_human",
+    )
+
+    status_state = store.load()
+    status_decision = _active_v2_decision(status_state)
+    assert status_decision is not None
+    decision_id = status_decision["id"]
+    continue_action = _classify_run_recovery(
+        status_state,
+        project_root=tmp_path,
+    )
+    continue_decision = _active_v2_decision(store.load())
+    assert continue_action.kind == "human_resume"
+    assert continue_decision is not None
+    assert continue_decision["id"] == decision_id
+
+    assert controller.resume_with_human_input(
+        "Credentials are now available."
+    )
+    resumed = store.load()["blocked_decision"]
+    assert resumed["id"] == decision_id
+    assert resumed["status"] == "resolved"
+    assert resumed["resolved_by"] == "user"
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("phase_id", "reason_code", "producer_id", "classification", "handler"),
+    [
+        (
+            "phase1-tracker",
+            "human_clarification_required",
+            "phase1-tracker",
+            "material",
+            "clarification_resume",
+        ),
+        (
+            "phase1-why2",
+            "why2_metric_stagnation",
+            "why2_metric_stagnation",
+            "material",
+            "reset_why2_stagnation",
+        ),
+    ],
+)
+def test_legacy_squad_adapts_one_exact_current_policy_without_broadening(
+    tmp_path: Path,
+    phase_id: str,
+    reason_code: str,
+    producer_id: str,
+    classification: str,
+    handler: str,
+) -> None:
+    controller, store, provider = _legacy_workflow_controller(
+        tmp_path,
+        autonomy_mode="guided",
+        phase_id=phase_id,
+        reason_code=reason_code,
+    )
+
+    result = controller.run(
+        user_message="registered user message",
+        mode="banzai",
+    )
+
+    state = store.load()
+    decision = state["blocked_decision"]
+    assert result.status == "blocked"
+    assert decision["schema_version"] == 2
+    assert decision["source_kind"] == "legacy_recovery"
+    assert decision["producer_id"] == producer_id
+    assert decision["source_phase"] == phase_id
+    assert decision["reason_code"] == reason_code
+    assert decision["classification"] == classification
+    assert decision["resolution_handler"] == handler
+    assert decision["autonomy_mode"] == "guided"
+    assert decision["status"] == "awaiting_human"
+    assert state["recovery_instruction"]["decision_id"] == decision["id"]
+    provider.exec_agent.assert_not_called()
+
+
+def test_legacy_terminal_safeguard_adapts_from_exact_resume_phase(
+    tmp_path: Path,
+) -> None:
+    controller, store, provider = _legacy_workflow_controller(
+        tmp_path,
+        autonomy_mode="guided",
+        phase_id="terminal-blocked",
+        recovery_phase="phase1-why2",
+        reason_code="why2_metric_stagnation",
+    )
+
+    result = controller.run(
+        user_message="registered user message",
+        mode="guided",
+    )
+
+    decision = store.load()["blocked_decision"]
+    assert result.status == "blocked"
+    assert decision["schema_version"] == 2
+    assert decision["source_kind"] == "legacy_recovery"
+    assert decision["producer_id"] == "why2_metric_stagnation"
+    assert decision["source_phase"] == "phase1-why2"
+    assert decision["resolution_handler"] == "reset_why2_stagnation"
+    assert decision["status"] == "awaiting_human"
+    provider.exec_agent.assert_not_called()
+
+
+def test_legacy_terminal_dispatch_cap_requires_exact_sealed_option(
+    tmp_path: Path,
+) -> None:
+    option = _dispatch_cap_option(_dispatch_cap_candidate())
+    controller, store, provider = _legacy_workflow_controller(
+        tmp_path,
+        autonomy_mode="guided",
+        phase_id="terminal-blocked",
+        recovery_phase="phase1-what",
+        reason_code="phase_dispatch_limit",
+        recovery_kind=RecoveryKind.RESOLVE_ISSUE,
+        options=[
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": option.recommended,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+            }
+        ],
+    )
+
+    result = controller.run(
+        user_message="registered user message",
+        mode="guided",
+    )
+
+    decision = store.load()["blocked_decision"]
+    assert result.status == "blocked"
+    assert decision["schema_version"] == 2
+    assert decision["source_kind"] == "legacy_recovery"
+    assert decision["producer_id"] == "phase_dispatch_limit"
+    assert decision["source_phase"] == "phase1-what"
+    assert decision["resolution_handler"] == "phase_dispatch_limit"
+    assert decision["options"][0]["id"] == "ISS-001"
+    assert decision["status"] == "awaiting_human"
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    (
+        "phase_id",
+        "reason_code",
+        "options",
+        "decision_status",
+        "recovery_kind",
+    ),
+    [
+        (
+            "phase1-tracker",
+            "unknown_legacy_reason",
+            [],
+            "pending",
+            RecoveryKind.AWAIT_HUMAN_ANSWER,
+        ),
+        (
+            "phase1-tracker",
+            "human_clarification_required",
+            "not-a-list",
+            "pending",
+            RecoveryKind.AWAIT_HUMAN_ANSWER,
+        ),
+        (
+            "terminal-blocked",
+            "human_clarification_required",
+            [],
+            "pending",
+            RecoveryKind.AWAIT_HUMAN_ANSWER,
+        ),
+        (
+            "phase1-investigate",
+            "human_input_required",
+            [],
+            "pending",
+            RecoveryKind.AWAIT_HUMAN_ANSWER,
+        ),
+        (
+            "phase1-tracker",
+            "human_clarification_required",
+            [],
+            "resolved",
+            RecoveryKind.AWAIT_HUMAN_ANSWER,
+        ),
+        (
+            "phase1-tracker",
+            "human_clarification_required",
+            [],
+            "pending",
+            RecoveryKind.RESOLVE_ISSUE,
+        ),
+    ],
+    ids=(
+        "unknown_reason",
+        "malformed_options",
+        "terminal_without_handler",
+        "ambiguous_investigate_reason",
+        "already_resolved",
+        "mismatched_resume_behavior",
+    ),
+)
+def test_legacy_squad_rejects_unproven_or_terminal_recovery_state(
+    tmp_path: Path,
+    phase_id: str,
+    reason_code: str,
+    options: object,
+    decision_status: str,
+    recovery_kind: RecoveryKind,
+) -> None:
+    controller, store, provider = _legacy_workflow_controller(
+        tmp_path,
+        autonomy_mode="guided",
+        phase_id=phase_id,
+        reason_code=reason_code,
+        options=options,
+        decision_status=decision_status,
+        recovery_kind=recovery_kind,
+    )
+    before = store.load()
+
+    result = controller.run(
+        user_message="registered user message",
+        mode="guided",
+    )
+
+    assert result.status == "blocked"
+    assert store.load() == before
+    provider.exec_agent.assert_not_called()
+
+
+def test_legacy_adapter_leaves_re_schema_v1_state_untouched(
+    tmp_path: Path,
+) -> None:
+    controller, store, provider = _legacy_workflow_controller(
+        tmp_path,
+        autonomy_mode="guided",
+        phase_id="phase1-tracker",
+        reason_code="human_clarification_required",
+    )
+    state = store.load()
+    state["run_kind"] = "re"
+    store.save(state)
+    before = store.load()
+
+    result = controller.run(
+        user_message="registered user message",
+        mode="guided",
+    )
+
+    assert result.status == "blocked"
+    assert store.load() == before
+    assert before["blocked_decision"]["schema_version"] == 1
+    provider.exec_agent.assert_not_called()
+
+
+def test_legacy_provider_restart_reuses_decision_id_after_v2_seal(
+    tmp_path: Path,
+) -> None:
+    answer = "Use the public contract boundary."
+    controller, store, _provider = _legacy_workflow_controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        phase_id="phase1-tracker",
+        reason_code="human_clarification_required",
+        provider_result=_decision_result(
+            selected_option_id=None,
+            answer_text=answer,
+        ),
+    )
+    original_seal = store.set_human_input_decision
+
+    def seal_then_crash(*args, **kwargs):
+        original_seal(*args, **kwargs)
+        raise RuntimeError("simulated restart after v2 seal")
+
+    store.set_human_input_decision = MagicMock(side_effect=seal_then_crash)
+    with pytest.raises(RuntimeError, match="simulated restart"):
+        controller.run(
+            user_message="registered user message",
+            mode="banzai",
+        )
+
+    sealed = store.load()
+    decision_id = sealed["blocked_decision"]["id"]
+    assert sealed["blocked_decision"]["status"] == "pending"
+    assert sealed["recovery_instruction"]["decision_id"] == decision_id
+
+    provider = MagicMock()
+    provider.exec_agent.return_value = _decision_result(
+        selected_option_id=None,
+        answer_text=answer,
+    )
+    restarted = SquadController(
+        provider=provider,
+        state_store=store,
+        phase_graph=PhaseGraph(DEFINITION, EXTENSION),
+        ext_dir=ROOT / "extension",
+        project_root=tmp_path,
+        squad_dir=store.squad_dir,
+    )
+
+    assert restarted.resume_pending_human_input()
+    resolved = store.load()
+    assert resolved["blocked_decision"]["id"] == decision_id
+    assert resolved["blocked_decision"]["status"] == "resolved"
+    assert resolved["blocked_decision"]["resolved_by"] == "COMMANDER"
+    provider.exec_agent.assert_called_once()
 
 
 def test_human_input_handler_clarification_appends_decision_section_atomically(
