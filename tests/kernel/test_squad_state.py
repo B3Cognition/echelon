@@ -6,6 +6,7 @@ import json
 import os
 import stat
 import sys
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -166,23 +167,26 @@ def _human_input_request(
     source_kind: str,
     source_state_revision: int,
     phase_id: str = "init",
+    producer_id: str | None = None,
 ) -> PreparedHumanInput:
     if source_kind == "controller_safeguard":
+        producer_id = producer_id or "consecutive_why_fails"
         policy = next(
             item
             for item in controller_safeguard_policies()
-            if item.producer_id == "consecutive_why_fails"
+            if item.producer_id == producer_id
         )
         return HumanInputPolicyRegistry((policy,)).prepare(
             source_kind=source_kind,
-            producer_id="consecutive_why_fails",
+            producer_id=producer_id,
             phase_id=phase_id,
-            reason_code="consecutive_why_fails",
-            question="WHY convergence failed twice. Choose how to proceed.",
-            recommended_answer="Retry WHY with the existing evidence.",
-            risk_level="low",
+            reason_code=policy.reason_code,
+            question=f"{producer_id} requires a routing decision.",
+            recommended_answer="Continue with the attested provider result.",
+            risk_level="medium",
             source_state_revision=source_state_revision,
         )
+    producer_id = producer_id or "init"
     options = (
         (
             HumanInputOption(
@@ -209,7 +213,7 @@ def _human_input_request(
     )
     policy = HumanInputPolicy(
         source_kind=source_kind,
-        producer_id="init",
+        producer_id=producer_id,
         reason_code="approval_required",
         classification="operational",
         semi_policy="require_human",
@@ -227,7 +231,7 @@ def _human_input_request(
     )
     return HumanInputPolicyRegistry((policy,)).prepare(
         source_kind=source_kind,
-        producer_id="init",
+        producer_id=producer_id,
         phase_id=phase_id,
         reason_code="approval_required",
         question="May the squad continue?",
@@ -239,6 +243,37 @@ def _human_input_request(
         risk_level="low" if source_kind != "human_gate" else None,
         source_state_revision=source_state_revision,
     )
+
+
+def _seal_provider_human_input_via_advance(
+    store: SquadStateStore,
+    *,
+    source_kind: str = "provider_escalation",
+    producer_id: str | None = None,
+    from_phase: str = "init",
+    to_phase: str = "next",
+) -> dict[str, object]:
+    before = store.load()
+    request = _human_input_request(
+        source_kind=source_kind,
+        producer_id=producer_id,
+        source_state_revision=before["state_revision"],
+        phase_id=from_phase,
+    )
+    _advance(
+        store,
+        from_phase,
+        to_phase,
+        _result(
+            "DONE",
+            {"provider_fact": "attested"},
+            phase_id=from_phase,
+        ),
+        dispatch_id="d" * 32,
+        human_input=request,
+        human_input_initial_status="pending",
+    )
+    return store.load()
 
 
 def _prepare_completion(
@@ -3560,23 +3595,169 @@ class TestHumanInputDecisionStateCAS:
         assert invalid_store.load() == invalid_before
 
     @pytest.mark.parametrize(
-        ("source_kind", "phase_id", "save_then_raise"),
+        ("source_kind", "producer_id", "phase_id"),
         [
-            ("provider_escalation", "init", False),
-            ("provider_escalation", "init", True),
-            ("controller_safeguard", "phase1-why2", False),
-            ("controller_safeguard", "phase1-why2", True),
+            ("provider_escalation", None, "init"),
+            ("controller_safeguard", "consecutive_why_fails", "phase1-why2"),
+            ("controller_safeguard", "why2_metric_stagnation", "phase1-why2"),
+        ],
+    )
+    def test_human_input_setter_rejects_provider_transaction_sources_without_write(
+        self,
+        tmp_path,
+        source_kind,
+        producer_id,
+        phase_id,
+    ):
+        store = SquadStateStore(tmp_path / f"{source_kind}-{producer_id}")
+        store.initialize("r1", "greenfield", "msg", 0, phase_id)
+        before = store.load()
+        request = _human_input_request(
+            source_kind=source_kind,
+            producer_id=producer_id,
+            source_state_revision=before["state_revision"],
+            phase_id=phase_id,
+        )
+
+        with pytest.raises(StateAdvanceError):
+            store.set_human_input_decision(request, initial_status="pending")
+
+        assert store.load() == before
+
+    @pytest.mark.parametrize(
+        ("source_kind", "producer_id"),
+        [
+            ("legacy_recovery", None),
+            ("controller_safeguard", "phase_dispatch_limit"),
+        ],
+    )
+    def test_human_input_setter_accepts_non_provider_transaction_sources(
+        self,
+        tmp_path,
+        source_kind,
+        producer_id,
+    ):
+        store = SquadStateStore(tmp_path / f"{source_kind}-{producer_id}")
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        before = store.load()
+        request = _human_input_request(
+            source_kind=source_kind,
+            producer_id=producer_id,
+            source_state_revision=before["state_revision"],
+        )
+
+        sealed = store.set_human_input_decision(
+            request,
+            initial_status="pending",
+        )
+
+        assert sealed == store.load()
+        assert sealed["blocked_decision"]["source_kind"] == source_kind
+        assert sealed["blocked_decision"]["producer_id"] == (
+            producer_id or "init"
+        )
+
+    @pytest.mark.parametrize(
+        ("source_kind", "producer_id"),
+        [
+            ("human_gate", None),
+            ("legacy_recovery", None),
+            ("controller_safeguard", "phase_dispatch_limit"),
+        ],
+    )
+    def test_human_input_advance_rejects_non_provider_transaction_sources_without_write(
+        self,
+        tmp_path,
+        source_kind,
+        producer_id,
+    ):
+        store = SquadStateStore(tmp_path / f"{source_kind}-{producer_id}")
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        before = store.load()
+        request = _human_input_request(
+            source_kind=source_kind,
+            producer_id=producer_id,
+            source_state_revision=before["state_revision"],
+        )
+
+        with pytest.raises(StateAdvanceError):
+            _advance(
+                store,
+                "init",
+                "next",
+                _result("DONE", {"provider_fact": "attested"}),
+                human_input=request,
+                human_input_initial_status="pending",
+            )
+
+        assert store.load() == before
+
+    def test_human_input_advance_rejects_source_phase_mismatch_without_write(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        before = store.load()
+        request = _human_input_request(
+            source_kind="provider_escalation",
+            source_state_revision=before["state_revision"],
+            phase_id="next",
+        )
+
+        with pytest.raises(StateAdvanceError):
+            _advance(
+                store,
+                "init",
+                "next",
+                _result("DONE", {"provider_fact": "attested"}),
+                human_input=request,
+                human_input_initial_status="pending",
+            )
+
+        assert store.load() == before
+
+    @pytest.mark.parametrize(
+        ("source_kind", "producer_id", "phase_id", "save_then_raise"),
+        [
+            ("provider_escalation", None, "init", False),
+            ("provider_escalation", None, "init", True),
+            (
+                "controller_safeguard",
+                "consecutive_why_fails",
+                "phase1-why2",
+                False,
+            ),
+            (
+                "controller_safeguard",
+                "consecutive_why_fails",
+                "phase1-why2",
+                True,
+            ),
+            (
+                "controller_safeguard",
+                "why2_metric_stagnation",
+                "phase1-why2",
+                False,
+            ),
+            (
+                "controller_safeguard",
+                "why2_metric_stagnation",
+                "phase1-why2",
+                True,
+            ),
         ],
     )
     def test_human_input_provider_advance_is_preimage_or_complete_v2_postimage(
         self,
         tmp_path,
         source_kind,
+        producer_id,
         phase_id,
         save_then_raise,
     ):
         store = SquadStateStore(
-            tmp_path / f"{source_kind}-{save_then_raise}"
+            tmp_path / f"{source_kind}-{producer_id}-{save_then_raise}"
         )
         store.initialize(
             "r1",
@@ -3589,6 +3770,7 @@ class TestHumanInputDecisionStateCAS:
         before = store.load()
         request = _human_input_request(
             source_kind=source_kind,
+            producer_id=producer_id,
             source_state_revision=before["state_revision"],
             phase_id=phase_id,
         )
@@ -3655,20 +3837,105 @@ class TestHumanInputDecisionStateCAS:
             after["blocked_decision"]["id"]
         )
 
+    @pytest.mark.parametrize(
+        ("effect_kind", "authority_key"),
+        [
+            ("update", "blocked_decision"),
+            ("update", "recovery_instruction"),
+            ("removal", "blocked_decision"),
+            ("removal", "recovery_instruction"),
+        ],
+    )
+    def test_human_input_advance_rejects_authority_routing_effects_without_write(
+        self,
+        tmp_path,
+        effect_kind,
+        authority_key,
+    ):
+        store = SquadStateStore(
+            tmp_path / f"{effect_kind}-{authority_key}"
+        )
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        before = store.load()
+        request = _human_input_request(
+            source_kind="provider_escalation",
+            source_state_revision=before["state_revision"],
+        )
+        transaction_updates = (
+            {authority_key: {"masked": True}}
+            if effect_kind == "update"
+            else None
+        )
+        transaction_removals = (
+            (authority_key,) if effect_kind == "removal" else ()
+        )
+
+        with pytest.raises(StateAdvanceError):
+            _advance(
+                store,
+                "init",
+                "next",
+                _result("DONE", {"provider_fact": "attested"}),
+                transaction_state_updates=transaction_updates,
+                transaction_state_removals=transaction_removals,
+                human_input=request,
+                human_input_initial_status="pending",
+            )
+
+        assert store.load() == before
+
+    @pytest.mark.parametrize("effect_kind", ["update", "removal"])
+    def test_human_input_advance_cannot_mask_active_authority_before_reseal(
+        self,
+        tmp_path,
+        effect_kind,
+    ):
+        store = SquadStateStore(tmp_path / effect_kind)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        _seal_provider_human_input_via_advance(store)
+        before = store.load()
+        request = _human_input_request(
+            source_kind="provider_escalation",
+            source_state_revision=before["state_revision"],
+            phase_id="next",
+        )
+
+        with pytest.raises(StateAdvanceError):
+            _advance(
+                store,
+                "next",
+                "init",
+                _result(
+                    "DONE",
+                    {"replacement_fact": "must-not-commit"},
+                    phase_id="next",
+                ),
+                transaction_state_updates=(
+                    {
+                        "blocked_decision": {"masked": True},
+                        "recovery_instruction": {"masked": True},
+                    }
+                    if effect_kind == "update"
+                    else None
+                ),
+                transaction_state_removals=(
+                    ("blocked_decision", "recovery_instruction")
+                    if effect_kind == "removal"
+                    else ()
+                ),
+                human_input=request,
+                human_input_initial_status="pending",
+            )
+
+        assert store.load() == before
+
     def test_human_input_claim_failure_retry_and_exhaustion_are_cas_transitions(
         self,
         tmp_path,
     ):
         store = _store(tmp_path)
         store.initialize("r1", "greenfield", "msg", 0, "init")
-        request = _human_input_request(
-            source_kind="provider_escalation",
-            source_state_revision=store.load()["state_revision"],
-        )
-        pending = store.set_human_input_decision(
-            request,
-            initial_status="pending",
-        )
+        pending = _seal_provider_human_input_via_advance(store)
         decision_id = pending["blocked_decision"]["id"]
 
         claimed_once = store.claim_human_input_decision(
@@ -3715,14 +3982,7 @@ class TestHumanInputDecisionStateCAS:
     ):
         store = SquadStateStore(tmp_path / str(second_attempt))
         store.initialize("r1", "greenfield", "msg", 0, "init")
-        request = _human_input_request(
-            source_kind="provider_escalation",
-            source_state_revision=store.load()["state_revision"],
-        )
-        pending = store.set_human_input_decision(
-            request,
-            initial_status="pending",
-        )
+        pending = _seal_provider_human_input_via_advance(store)
         decision_id = pending["blocked_decision"]["id"]
         resolving = store.claim_human_input_decision(
             decision_id,
@@ -3763,14 +4023,7 @@ class TestHumanInputDecisionStateCAS:
     ):
         store = _store(tmp_path)
         store.initialize("r1", "greenfield", "msg", 0, "init")
-        request = _human_input_request(
-            source_kind="provider_escalation",
-            source_state_revision=store.load()["state_revision"],
-        )
-        pending = store.set_human_input_decision(
-            request,
-            initial_status="pending",
-        )
+        pending = _seal_provider_human_input_via_advance(store)
         before = store.load()
 
         with pytest.raises(StateAdvanceError):
@@ -3848,6 +4101,131 @@ class TestHumanInputDecisionStateCAS:
         assert "blocked_reason" not in resolved
         assert "escalation_question" not in resolved
         assert "escalation_options" not in resolved
+
+    def test_human_input_resolution_detaches_updates_before_validation(
+        self,
+        tmp_path,
+    ):
+        class SwitchingMapping(Mapping):
+            def __getitem__(self, key):
+                if key != "status":
+                    raise KeyError(key)
+                return "running"
+
+            def __iter__(self):
+                return iter(("status",))
+
+            def __len__(self):
+                return 1
+
+            def items(self):
+                return (("escalation_question", "injected after validation"),)
+
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=store.load()["state_revision"],
+        )
+        awaiting = store.set_human_input_decision(
+            request,
+            initial_status="awaiting_human",
+        )
+
+        resolved = store.apply_human_input_state_resolution(
+            awaiting["blocked_decision"]["id"],
+            expected_state_revision=awaiting["state_revision"],
+            resolution=HumanInputResolution(
+                selected_option_id="approve",
+                answer_text=None,
+                resolved_by="user",
+            ),
+            state_updates=SwitchingMapping(),
+            state_removals=(),
+        )
+
+        assert resolved == store.load()
+        assert resolved["status"] == "running"
+        assert "escalation_question" not in resolved
+
+    def test_human_input_shared_commit_attempts_exact_complete_postimage(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        before = store.load()
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=before["state_revision"],
+        )
+        original_save = store._save_unlocked
+        attempted = {}
+
+        def save_then_raise(state, **kwargs):
+            attempted.update(deepcopy(state))
+            original_save(state, **kwargs)
+            raise OSError("injected post-save ambiguity")
+
+        with patch.object(store, "_save_unlocked", side_effect=save_then_raise):
+            sealed = store.set_human_input_decision(
+                request,
+                initial_status="awaiting_human",
+            )
+
+        assert sealed == store.load()
+        assert attempted == sealed
+        assert attempted["state_revision"] == before["state_revision"] + 1
+        assert isinstance(attempted["updated_at"], str)
+
+    @pytest.mark.parametrize(
+        "drift",
+        [
+            "missing_updated_at",
+            "stale_updated_at",
+            "malformed_updated_at",
+            "state_revision",
+        ],
+    )
+    def test_human_input_shared_commit_rejects_near_postimage_drift(
+        self,
+        tmp_path,
+        drift,
+    ):
+        store = SquadStateStore(tmp_path / drift)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        before = store.load()
+        request = _human_input_request(
+            source_kind="human_gate",
+            source_state_revision=before["state_revision"],
+        )
+        original_save = store._save_unlocked
+
+        def save_drift_then_raise(state, **kwargs):
+            saved = original_save(state, **kwargs)
+            if drift == "missing_updated_at":
+                saved.pop("updated_at")
+            elif drift == "stale_updated_at":
+                saved["updated_at"] = before["updated_at"]
+            elif drift == "malformed_updated_at":
+                saved["updated_at"] = "not-a-timestamp"
+            else:
+                saved["state_revision"] += 1
+            store._path.write_text(json.dumps(saved, indent=2))
+            raise OSError("injected near-postimage ambiguity")
+
+        with patch.object(
+            store,
+            "_save_unlocked",
+            side_effect=save_drift_then_raise,
+        ):
+            with pytest.raises(StateAdvanceError):
+                store.set_human_input_decision(
+                    request,
+                    initial_status="awaiting_human",
+                )
+
+        assert store.load() != before
 
     def test_generic_save_preserves_active_decision_v2_authority_exactly(
         self,
@@ -4020,6 +4398,20 @@ class TestHumanInputDecisionStateCAS:
                 failure_code="provider_failed",
             )
 
+        prompt_recreation = deepcopy(terminal)
+        prompt_recreation.update(
+            {
+                "status": "blocked",
+                "blocked_reason": "recreated",
+                "escalation_question": "Recreate the terminal prompt?",
+                "escalation_options": [],
+                "escalation_resolved": False,
+            }
+        )
+        with pytest.raises(StateAdvanceError):
+            store.save(prompt_recreation)
+        assert store.load() == terminal
+
         candidate = deepcopy(terminal)
         candidate.pop("blocked_decision")
         candidate.pop("recovery_instruction", None)
@@ -4028,13 +4420,13 @@ class TestHumanInputDecisionStateCAS:
         assert store.load() == terminal
 
         replacement = _human_input_request(
-            source_kind="provider_escalation",
+            source_kind="human_gate",
             source_state_revision=terminal["state_revision"],
             phase_id=terminal["phase"],
         )
         resealed = store.set_human_input_decision(
             replacement,
-            initial_status="pending",
+            initial_status="awaiting_human",
         )
         assert resealed["blocked_decision"]["id"] != decision_id
-        assert resealed["blocked_decision"]["status"] == "pending"
+        assert resealed["blocked_decision"]["status"] == "awaiting_human"
