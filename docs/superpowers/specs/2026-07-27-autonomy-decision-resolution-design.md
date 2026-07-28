@@ -1,7 +1,7 @@
 # Design: Autonomy Decision Resolution
 
 **Date:** 2026-07-27
-**Status:** Corrected draft - phase-attempt authority and durable continuation specified
+**Status:** Corrected draft - human-input, workflow, filesystem, and usage authority specified
 
 ## Problem
 
@@ -58,10 +58,10 @@ how it is classified, and whether COMMANDER or a human resolves it.
 ## Architecture
 
 ```
-agent / gate / controller safeguard
+agent / gate / controller safeguard / recovery request
                 |
                 v
-  constrained escalation input (legacy-compatible)
+      PreparedHumanInput (controller-owned)
                 |
                 v
   SquadController seals blocked_decision v2
@@ -91,6 +91,71 @@ completed by writing a route, clearing a question, or setting a status field.
 It is completed only when the controller validates and atomically applies a
 permitted operation.
 
+## Standard Human-Input Boundary
+
+`allows_human_decision` is a static result-contract capability. It answers only
+whether a provider result is permitted to propose a project decision; it is not
+the runtime signal that human input is required.
+
+Every Phase A runtime source that would otherwise ask a human calls one
+controller-owned `prepare_human_input(...)` boundary before persistence or CLI
+rendering. The boundary accepts an exact `PreparedHumanInput` value with these
+ten fields:
+
+- `schema_version: 1`;
+- `source_kind`: `provider_result`, `human_gate`, `controller_safeguard`, or
+  `recovery_request`;
+- `source_identity`: the attested dispatch key or closed registry entry id;
+- `dispatch_key`: the attested dispatch key for provider sources and null
+  otherwise;
+- `reason_code`: a closed producer-policy or recovery-bridge reason;
+- `classification`: `operational`, `material`, or `execution_blocked`;
+- `question`: a non-empty bounded string;
+- `options`: a bounded canonical array of the existing validated escalation
+  option objects;
+- `prerequisite`: the validated prerequisite object or null; and
+- `policy_digest`: the static producer-policy digest.
+
+The controller constructs this value. Provider output may supply only the
+question, option facts, and prerequisite ingress already allowed by its exact
+result contract. Human gates, safeguards, and recovery bridges obtain every
+field from closed controller registries. Unknown source identities, reasons,
+classifications, or policies fail to non-decision `manual_diagnosis`; they are
+never presented directly to a human and never sent to COMMANDER.
+`PreparedHumanInput` is an ephemeral typed boundary value, not a third durable
+decision or recovery record.
+
+`prepare_human_input(...)` is the single policy interception point. Guided
+seals the decision as `awaiting_human`; semi first applies the recommendation
+rules below and seals `awaiting_human` only when they require confirmation;
+banzai claims the sealed decision for COMMANDER unless its validated
+classification is `execution_blocked`. No producer calls `input()`, renders a
+question, or writes a human recovery instruction itself.
+
+The durable runtime signal is the pair of a v2 `blocked_decision` and its
+matching v2 `recovery_instruction`. A v2 instruction has
+`requires_human_input: true` if and only if its kind is
+`await_human_answer`, its decision id and generation match the one active
+decision, and that decision is `awaiting_human`. Every other v2 instruction has
+`requires_human_input: false`. An orphan or inconsistent human-input
+instruction is `manual_diagnosis`; the classifier must not expose its question
+or fall through to legacy `AWAIT_HUMAN_ANSWER`/`RESOLVE_ISSUE` behavior.
+
+Existing recovery producers that classify directly as `AWAIT_HUMAN_ANSWER` or
+`RESOLVE_ISSUE` are bridge inputs, not a second interception mechanism. Under
+an authoritative v2 workflow bundle they must map through the closed
+recovery-bridge registry into `PreparedHumanInput` before persistence. An
+unmapped reason is manual diagnosis. Their current direct behavior remains
+available only to a run whose authoritative workflow bundle records the v1
+contract and supported v1 runtime semantics.
+
+Deterministic operator prerequisites that cannot be chosen or assumed, such as
+missing credentials, legal authority, external access, or manual state repair,
+remain ordinary recovery/manual diagnosis. They do not become project
+decisions. The only intentional banzai-to-human path is a decision already
+classified `execution_blocked` by a declared policy and verified prerequisite
+registry.
+
 ## Provider Ingress and Controller Ownership
 
 Providers retain the existing escalation input surface:
@@ -119,7 +184,8 @@ validated but not applied as phase state. It is accepted only when the
 selected decision case is `execution_blocked`.
 
 The controller accepts that input only when it can map the producing phase or
-controller safeguard to a declared `decision_policy`. It then creates the
+controller safeguard to a declared `decision_policy`. It then constructs
+`PreparedHumanInput` and, after autonomy policy interception, creates the
 transaction-owned `blocked_decision` and `recovery_instruction` in the same
 state advance. Providers and COMMANDER cannot write either record directly.
 
@@ -131,10 +197,10 @@ decision, downgrade the request to `material`, or permit banzai to choose.
 
 ## Workflow Decision Policy
 
-`allows_human_decision` is the standard producer marker. It is a boolean field
-on the exact result contract and defaults to false. When false, result
-validation rejects `escalation_question` for every verdict, including the
-current `BLOCKED` fast path. When true, the dispatch must declare
+`allows_human_decision` is the standard compile-time provider capability. It is
+a boolean field on the exact result contract and defaults to false. When false,
+result validation rejects `escalation_question` for every verdict, including
+the current `BLOCKED` fast path. When true, the dispatch must declare
 `decision_policy`, `escalation_question` is permitted, and `STOP_AND_ASK` may
 be included in `allowed_verdicts`. Conversely, allowing `STOP_AND_ASK` requires
 `allows_human_decision: true`.
@@ -301,10 +367,12 @@ translate that typed failure into the trusted, non-question
 and controller failure recovery.
 
 Before every claim, human confirmation, prerequisite submission, and apply,
-the controller recompiles the current workflow or registry entry and compares
-its static `policy_digest` with the active decision. It separately recomputes
+the controller recompiles the run's authoritative workflow bundle and registry
+entry using its recorded semantics versions and compares its static
+`policy_digest` with the active decision. It separately recomputes
 `operations_digest` from the persisted descriptors and validates every selected
-descriptor against the current edge, verifier, and recovery-route registries.
+descriptor against the bundled edge and the version-selected verifier and
+recovery-route registries.
 A missing producer, either digest mismatch, incompatible descriptor, or
 operation-semantics version change atomically fails the v2 decision with audit
 code `decision_policy_changed` and decision-related v2 `manual_diagnosis`. It
@@ -461,9 +529,10 @@ performs these steps in order:
    one may continue to decision sealing. More than one produces trusted
    non-decision `ambiguous_parallel_decision` manual diagnosis and discards the
    attempt; scheduler completion order never selects authority;
-5. if one validated result contains a non-empty `escalation_question`, seal the
-   v2 decision, matching recovery instruction, and any registry-owned safeguard
-   seal effects in one CAS state advance;
+5. if one validated result contains a non-empty `escalation_question`, construct
+   `PreparedHumanInput`, invoke the single autonomy interception boundary, and
+   seal the v2 decision, matching recovery instruction, and any registry-owned
+   safeguard seal effects in one CAS state advance;
 6. abandon the complete phase attempt and return to the autonomy resolver
    without preparing external publication, evaluating ordinary transitions,
    recording phase completion, or applying accumulated ordinary effects;
@@ -485,48 +554,90 @@ phase effect. One backend invocation is one billable call. Result extraction
 repair is therefore controller orchestration, not an internal second call hidden
 inside `SquadCliProvider.exec_agent`: the controller receives and spools the
 initial `CliRunResult`, validates it, and only then may issue a separately
-indexed repair call. Every provider or resolver call receives a
-controller-generated `usage_id` of
-`<attempt-or-decision-id>/<dispatch-key-or-resolver>/<call-index>`. The call
-index starts at zero and advances for initial, repair, and retry calls.
+indexed repair call.
+
+Every billable sequence has a durable `billing_scope_id`: a phase provider
+sequence uses its attempt id; a decision resolver sequence uses its decision
+claim lease id; a continuation sequence uses its continuation dispatch lease
+id; and controller routing/resolution without an existing claim creates a
+random billing scope and fsyncs it before its first call. A retry or new claim
+gets a new scope and restarts its index at zero. Initial and repair calls in one
+sequence share the scope and use indices zero and one. Every call's
+controller-generated `usage_id` is
+`<billing-scope-id>/<encoded-dispatch-key-or-resolver>/<call-index>`, where the
+middle component uses UTF-8 RFC 3986 percent-encoding, leaves only unreserved
+ASCII characters unescaped, and uses uppercase hexadecimal, so it contains no
+literal slash. The exclusive-created index-zero started record is the durable
+creation of a random generic scope; no separate mutable call counter is used.
 
 Before each backend invocation, after reserving a receipt slot, the controller
-fsyncs an exact nine-field usage-spool record below the Squad run directory with
-`call_status: started`, unknown token and cost status, and null deltas. It then
-invokes the backend. After return, and before output interpretation or a later
-call, it atomically replaces and fsyncs that record with
+creates with exclusive-create semantics and fsyncs an exact twelve-field
+usage-spool record below the Squad run directory. It has
+`call_status: started`, unknown token and cost status, null deltas, and the
+pre-call `token_budget_debit`. A pre-existing filename is never overwritten by
+a new call. The controller then invokes the backend. After return, and before
+output interpretation or a later call, it atomically replaces and fsyncs that record with
 `call_status: returned` and normalized usage.
 
-The nine fields are exactly `schema_version: 1`, `usage_id`, `call_status`,
-`provider_id`, `model_id`, `token_status`, `token_delta`, `cost_status`, and
-`cost_microusd_delta`. Provider and model ids are null or controller-normalized
-non-empty strings. `token_status` is `reported` or `unknown`; `token_delta` is a
-non-negative integer exactly when reported and is null otherwise. `cost_status`
-is `reported`, `estimated`, or `unknown`; `cost_microusd_delta` is a
-non-negative integer exactly when reported or estimated and is null otherwise.
-Conversion from provider currency data uses decimal arithmetic and round-half-
-even to one micro-USD. A backend's default zero with no supporting usage field
-is `unknown`, not a reported zero. The controller hashes `usage_id` for the
-spool filename, so provider identity never selects a path.
+The twelve fields are exactly `schema_version: 1`, `usage_id`,
+`billing_scope_id`, `call_index`, `call_status`, `provider_id`, `model_id`,
+`token_status`, `token_delta`, `token_budget_debit`, `cost_status`, and
+`cost_microusd_delta`. `call_index` is a non-negative integer and the parsed
+scope and index components of `usage_id` must equal their explicit fields.
+Provider and model ids are null or controller-normalized non-empty strings.
+`token_status` is `reported` or `unknown`; `token_delta` is a non-negative
+integer exactly when reported and is null otherwise. `token_budget_debit` is a
+non-negative integer fixed by the rules below. `cost_status` is `reported`,
+`estimated`, or `unknown`; `cost_microusd_delta` is a non-negative integer
+exactly when reported or estimated and is null otherwise. Conversion from
+provider currency data uses decimal arithmetic and round-half-even to one
+micro-USD. A backend's default zero with no supporting usage field is
+`unknown`, not a reported zero. The controller hashes `usage_id` for the spool
+filename, so provider identity never selects a path.
+
+The current hard safety budget is `token_budget`; `cost_microusd` is accounting
+and display only until a separate cost-budget contract is designed. Each
+controller-owned runtime profile declares `token_accounting_mode` as
+`reported` or `reserved`. With a positive token budget, the adapter must also
+support an enforceable positive per-call token limit. Under the run execution
+lock, the controller derives an effective limit no greater than the remaining
+budget, accounts for debit in all outstanding started/returned-but-unapplied
+spool records, and writes that limit as the started record's
+`token_budget_debit` before billable work.
+
+For `reported`, a returned record replaces `token_budget_debit` with the exact
+reported `token_delta`; a return above the reserved limit is an adapter contract
+violation, debits the larger actual value, and enters manual diagnosis. For
+`reserved`, the returned record keeps the full reservation as
+`token_budget_debit`, even when the backend also reports a smaller token count.
+An unknown return or interrupted started call keeps the reservation. If a
+positive token budget is configured and the profile cannot provide reported
+usage or an enforceable reservation, provider preflight fails before billable
+work. With token budgeting disabled, unknown usage may run with zero budget
+debit, but its unknown counter and audit record remain mandatory. Thus no
+provider can continue indefinitely against a positive hard budget with unknown
+usage.
 
 On startup, the broker first terminates or proves absent every orphaned OCI call.
 A remaining `started` record is finalized as `returned` with both statuses
-unknown, applied through deferred usage recovery, and associated with the
-ordinary interrupted-attempt failure path; the same call index is never
-replayed. Usage remains deferred until outcome classification, then joins the
-authoritative success, decision-seal, or failure state operation.
+unknown and its reservation unchanged, applied through deferred usage recovery,
+and associated with the ordinary interrupted-attempt failure path; the same
+usage id is never replayed. Usage remains deferred until outcome classification,
+then joins the authoritative success, decision-seal, or failure state operation.
 
 The store owns an exact `applied_usage_receipts` list and one
-`_apply_usage_unlocked` primitive. Each receipt repeats the exact nine fields
-from its fsynced source record. A new id adds known token usage to `token_usage`,
-known reported or estimated cost to integer `cost_microusd`, increments
-`unknown_token_usage_calls` or `unknown_cost_calls` when the corresponding
-status is unknown, and appends the receipt. Existing `cost_usd` becomes a
-derived display value and is never independently incremented. An existing
-identical id is an idempotent success; an existing id with any different field
-is corruption and enters `manual_diagnosis`. Budget enforcement uses known
-reported and estimated values and surfaces unknown-call counters; it never
-silently treats unknown cost as zero.
+`_apply_usage_unlocked` primitive. Each receipt repeats the exact twelve fields
+from its fsynced source record. A new id adds known reported token usage to
+`token_usage`, adds `token_budget_debit` to the new monotonic
+`token_budget_usage`, adds known reported or estimated cost to integer
+`cost_microusd`, increments `unknown_token_usage_calls` or
+`unknown_cost_calls` when the corresponding status is unknown, and appends the
+receipt. Existing `cost_usd` becomes a derived display value and is never
+independently incremented. `_budget_exhausted` and every pre-call hard-budget
+check use `token_budget_usage` plus unapplied spool debits, never display
+`token_usage` or cost. An existing identical id is an idempotent success; an
+existing id with any different field is corruption and enters
+`manual_diagnosis`.
 
 The ledger permits at most 4,096 entries and 512 KiB of canonical JSON;
 receipts are never evicted within a run. Before starting a provider or resolver
@@ -629,20 +740,34 @@ canonical roots. This represents CARTOGRAPHER's staging-to-spec promotion
 without granting canonical staging writes.
 
 Before overlap validation, every root alias is resolved through trusted run
-state and normalized to a physical no-follow path. Root aliases may be nested,
-as `staging` and read-only `context_dir` are normally below `squad`, but two
-aliases may not resolve to the same physical directory. The validator resolves
-each complete effect destination before checking overlap, so a `squad` tree
-cannot conceal a collision with a `staging` effect.
+state and normalized to a canonical host path using no-follow traversal. Aliases
+may be equal or nested because current Echelon layouts place `spec`, `squad`,
+`staging`, and `context_dir` within the project tree. The validator therefore
+compares canonical destination identity, not alias names: the same host path
+always maps to the same child path, and a `squad` tree cannot conceal a
+collision with a `staging` effect.
 
-The controller also resolves a protected-path set containing `state.json`,
-`.controller`, `.publication-outbox`, `.completion-outbox`, usage spools,
-credential workspaces, parent/child attempt workspaces, and `context_dir`.
-An effect destination may not equal, contain, or be contained by a protected
-path. These paths are never seeded or provider-mounted writable. The validator
+Every canonical path belongs to one visibility class:
+
+- `hidden`: `state.json`, `.controller`, publication and completion outboxes,
+  usage spools, locks, credential workspaces, and attempt internals. These are
+  neither mounted nor projected into prompts.
+- `read_only_visible`: declared external input roots and immutable context
+  inputs that are not within the child project tree. They are mounted
+  separately read-only.
+- `controller_projected`: controller state needed for reasoning. Raw
+  `state.json` remains hidden; prompt assembly receives an immutable
+  `AttemptStateProjection` containing only a closed allowlist of non-secret
+  fields required by the dispatch contract.
+- `publishable`: effect destinations in the private child project tree. They
+  may be changed in the attempt, but only declared `artifact_effects` can be
+  published.
+
+An effect destination may not equal, contain, or be contained by a hidden,
+read-only-visible, or controller-projected canonical source. The validator
 rejects absolute paths, parent traversal, duplicate ids, overlapping file/tree
-effect destinations after physical resolution, protected-path overlap,
-undeclared roots, owner mismatch, malformed move groups, unresolved
+effect destinations after canonical physical resolution, visibility-class
+overlap, undeclared roots, owner mismatch, malformed move groups, unresolved
 placeholders, and any provider dispatch whose effects cannot be redirected.
 Owner mismatch means a compiled effect is presented by any dispatch other than
 its stamped `owner_dispatch_key`; owner is never read from provider output or
@@ -662,28 +787,36 @@ executing dispatch, marked or unmarked, declares every publishable write or
 delete through the schema. The decision marker controls ingress authority, not
 filesystem isolation.
 
-The controller creates one immutable `AttemptPathMap` per child. It has exactly
-the visible roots `project_root`, `spec_dir`, `staging_dir`, `squad_dir`,
-`memory_dir`, and `context_dir`, plus the exact `artifact_effect` paths.
-`project_root` and `context_dir` are always read-only. `context_dir` is the
-parent-attempt snapshot of the run's controller-owned context directory and is
-never an artifact destination root. The other visible roots are private copy-
-on-write views of the parent-attempt snapshot. A provider may create incidental
-files in its private upper layer, but after execution the controller enumerates
-the complete upper-layer diff; any change not covered by that dispatch's
-compiled effects is `undeclared_artifact_effect`, rejects the attempt, and is
-discarded. No child path is a canonical path. Prompt construction, context-pack
-resolution, environment variables including `CONTEXT_DIR`, `SQUAD_DIR`, and
-`STAGING_DIR`, phase documents, and extra-file checks all use this map. Alias
-validation resolves every root physically and rejects an unexpected alias
-collision. No executor may reconstruct a path from canonical `state.spec_dir`,
-`state.staging_dir`, `state.context_dir`, `_project_root`, or `_squad_dir` while
-an attempt is open.
+The controller creates one coherent `AttemptFilesystem` per provider dispatch.
+It consists of one private child project tree plus any declared external
+read-only input mounts. The canonical host project is controller-only input;
+the provider-visible `AttemptPathMap.project_root` is the private child project
+root and is the provider CWD. `spec_dir`, `staging_dir`, `squad_dir`,
+`memory_dir`, and an in-project `context_dir` are canonical project-relative
+paths within that same backing tree. Their equality and nesting relationships
+are preserved exactly. An external `context_dir` is a separate
+read-only-visible mount and is never an artifact destination.
+
+The child project is initialized from the parent-attempt snapshot with hidden
+paths omitted and controller-projected state replaced by
+`AttemptStateProjection` in the prompt, not by a filesystem copy. It uses a
+safe copy-on-write clone where supported and a full private copy otherwise; it
+never uses writable hard links. A provider may create incidental files in the
+child tree, but after execution the controller computes one complete tree diff
+against the snapshot. Any change not covered by that dispatch's compiled
+effects is `undeclared_artifact_effect`, rejects the attempt, and is discarded.
+No child path is a canonical host path.
+
+Prompt construction, context-pack resolution, environment variables including
+`PROJECT_ROOT`, `CONTEXT_DIR`, `SQUAD_DIR`, and `STAGING_DIR`, phase documents,
+and extra-file checks all use `AttemptPathMap`. No executor may reconstruct a
+path from canonical `state.spec_dir`, `state.staging_dir`,
+`state.context_dir`, `_project_root`, or `_squad_dir` while an attempt is open.
 
 Provider execution uses an exact controller-created `ProviderExecutionRequest`
 containing the `DispatchDescriptor`, private child CWD, `AttemptPathMap`,
-read-only canonical inputs, private overlay roots, exact publishable effects,
-placeholder mapping, and `containment_required: true`. The AI backend capability
+`AttemptStateProjection`, declared external read-only inputs, exact publishable
+effects, placeholder mapping, and `containment_required: true`. The AI backend capability
 registry exposes `ENFORCED_WRITE_CONTAINMENT` only when its backend applies an
 OS-enforced filesystem boundary that prevents writes to canonical and protected
 host paths. It does not prohibit scratch writes inside the disposable child;
@@ -695,8 +828,8 @@ must preserve and attest the request rather than reducing it to `project_root`.
 
 The containment interface is a new `AiExecutionSandbox`, distinct from the
 existing build-oriented `SandboxProvider`: the latter owns a worktree lifecycle
-and one broad worktree mount, while AI attempts require multiple exact read-only
-inputs and isolated writable views per dispatch. `AiExecutionSandbox` reuses
+and one broad worktree mount, while AI attempts require one isolated private
+project plus exact external read-only inputs per dispatch. `AiExecutionSandbox` reuses
 `HarnessConfig.container_cli`, resource-limit parsing, runtime invocation
 helpers, and image-security utilities; it does not create a second generic
 provider registry or reinterpret `HarnessConfig.provider`.
@@ -714,16 +847,13 @@ Podman-compatible runtime on Linux or macOS. It has two closed adapters:
 `plain`, an unknown LLM value, Windows, and host-only execution are unsupported
 for v2 provider dispatches. Preflight covers every configured value in
 `VALID_LLM_CLIS` and fails with `provider_containment_unavailable` when its
-specific adapter is absent. The broker bind-mounts the parent snapshot and
-source/config inputs read-only, bind-mounts controller-created private writable
-views over the mapped `spec`, `staging`, `squad`, and `memory` aliases, and
-supplies controller-created writable `HOME`, cache, and temporary directories
-outside artifact roots. A read-only nested mount restores `context_dir`;
-controller-only protected paths inside a writable alias are omitted from the
-private view and masked by controller-created empty read-only mounts, so their
-contents are not exposed. The first implementation uses a runtime-supported
-copy-on-write filesystem when available and a full private copy otherwise; it
-never uses writable hard links to canonical files.
+specific adapter is absent. The broker mounts only the private child project
+tree read-write at `/workspace`, mounts declared external inputs read-only at
+controller-selected paths, and supplies controller-created writable `HOME`,
+cache, and temporary directories outside artifact roots. It does not mount the
+canonical host project, `state.json`, `.controller`, outboxes, usage spools,
+locks, or attempt internals into the container. Alias paths are ordinary paths
+within `/workspace`, not independent overlay mounts.
 
 Each adapter declares a closed runtime profile naming its image by immutable
 digest, command or worker entrypoint, authentication/config roots, a
@@ -750,55 +880,112 @@ calls. A later network-contained AI profile requires a separate capability and
 cannot change this behavior under the same capability name.
 
 Containment ships before v2 workflow activation. Provider/backend support,
-request attestation, OCI preflight, and attempt overlays land first while the v1
+request attestation, OCI preflight, and attempt filesystems land first while the v1
 workflow remains active. That precursor release also makes workflow authority
 durable for every new run and adds exact top-level
 `workflow_contract_version: 1` to the installed definition. Before state
-initialization, `PhaseGraph` compiles the installed definition, extension agent
-mapping, every prompt source actually used by executable entries, and referenced
-controller contract registries into a canonical controller-owned workflow
-bundle at
+initialization, `WorkflowBundleBuilder` resolves the installed definition,
+extension agent mapping, every static prompt/result source actually used by an
+executable entry, referenced controller contract registries, and all immutable
+Phase A configuration into a canonical controller-owned workflow bundle at
 `<squad_dir>/.controller/workflows/<workflow_digest>/`. The
 `.controller/workflows` tree is never provider-mounted.
-`manifest.json` has exactly `schema_version: 1`,
-`workflow_contract_version`, `compiled_graph_sha256`,
-`source_manifest_sha256`, and `workflow_digest`. `sources.json` is a canonical
-array sorted by logical path; each entry has exactly `logical_path`, `kind`, and
-`sha256`, where `kind` is `phase_prompt`, `agent_prompt`,
-`extension_mapping`, or `controller_contract`. Source bytes live under
-`sources/<sha256>` and the canonical compiled graph under
-`compiled-graph.json`. `workflow_digest` hashes the canonical manifest fields
-other than itself together with the exact compiled graph and source-manifest
-bytes. The contract version is integer `1` or `2`; every digest is lowercase
-64-character hexadecimal. Logical paths are normalized relative POSIX paths;
-absolute paths, parent traversal, duplicates, unknown kinds, missing content,
-and content/hash mismatch reject the bundle.
+
+`manifest.json` has exactly these eight fields:
+
+- `schema_version: 1`;
+- `workflow_contract_version`;
+- `workflow_runtime_semantics_version`;
+- `prompt_assembly_semantics_version`;
+- `result_repair_semantics_version`;
+- `source_manifest_sha256`;
+- `workflow_config_sha256`; and
+- `workflow_digest`.
+
+`sources.json` is a canonical array sorted by `(kind, logical_path)`. Each entry
+has exactly `logical_path`, `kind`, and `sha256`; `kind` is one of
+`workflow_definition`, `extension_mapping`, `phase_prompt`, `agent_prompt`,
+`result_template`, or `controller_contract`. Source bytes live under
+`sources/<sha256>`. `workflow-config.json` contains the closed normalized
+values read by Phase A workflow compilation, prompt assembly, decision policy,
+quality/convergence gates, and dispatch limits, including
+`analysis.decision_resolution`, quality thresholds, governance settings, and
+`max_iterations`. It excludes the mutable token budget, selected
+provider/profile, and credentials, whose separate authority is defined below.
+
+`source_manifest_sha256` is SHA-256 of the exact canonical `sources.json`
+bytes, and `workflow_config_sha256` is SHA-256 of the exact canonical
+`workflow-config.json` bytes.
+`workflow_digest` is SHA-256 over one canonical JSON object with exactly
+`manifest`, `sources`, and `workflow_config`: `manifest` contains the seven
+manifest fields other than `workflow_digest`, while the other members contain
+the parsed values whose canonical encodings are the two hashed files. Contract
+and semantics versions are positive integers; every digest is lowercase
+64-character hexadecimal.
+Logical paths are normalized relative POSIX paths. Absolute paths, parent
+traversal, duplicates, unknown kinds, missing content, content/hash mismatch,
+or unknown configuration keys reject the bundle.
+
+The bundle stores validated sources, not a second serialized graph authority.
+`PhaseGraph.from_bundle(...)` recompiles the workflow definition with the
+closed compiler registered for
+`workflow_runtime_semantics_version`. `PromptSourceResolver` is the only
+runtime loader for phase prompts, agent prompts, result templates, extension
+mappings, and controller contracts. It selects controller-generated shared
+agent/result-contract fragments with the recorded
+`prompt_assembly_semantics_version`; result extraction and the controller-owned
+repair prompt use the recorded `result_repair_semantics_version`. Unsupported
+compiler, prompt, or repair semantics fail closed before provider execution.
+No runtime prompt or repair path reads the currently installed extension.
+
+An explicit immutable-config consumer registry identifies every Phase A
+consumer that must read `workflow-config.json`; activation fails if a registered
+consumer still reads mutable installed config. Mutable operational controls are
+separate from workflow authority: the token budget may only increase through
+the existing authorized recovery path; selected provider/profile changes are
+accepted only after per-dispatch containment, image, credential, and accounting
+preflight and are recorded in invocation attestation; credentials remain
+external secret inputs. No other Phase A workflow, prompt, policy, or gate
+setting may change for an active run.
 
 State initialization stores `workflow_contract_version` and `workflow_digest`
 in exact top-level fields. The complete bundle is fsynced and atomically sealed
 before state creation and is immutable; resume, continue, manual phase replay,
 decision migration, policy validation, and prompt construction load authority
 from it rather than rereading the currently installed extension. Every load
-revalidates manifest, source, compiled-graph, and state digests. Display-only
-extension drift warnings remain permitted. `PhaseGraph.from_installed(...)` is
-used only to prepare a new or explicitly migrated bundle;
+revalidates manifest, source, config, semantics-version, and state digests.
+Display-only extension drift warnings remain permitted.
+`PhaseGraph.from_installed(...)` is used only by `WorkflowBundleBuilder` while
+preparing a new or explicitly eligible migration bundle;
 `PhaseGraph.from_bundle(...)` is the only runtime dispatch constructor.
+A v1 bundle may continue only while the runtime supports every semantics
+version recorded by that bundle.
 
 The policy and `artifact_effects` migration then bumps the exact top-level
 workflow contract version to `2`. Starting a new v2 run performs backend
 preflight before writing the bundle or run state and reports
 `provider_containment_unavailable` when the required image, runtime, or profile
 is missing. A v1 run with a valid v1 bundle continues against that bundle. A
-legacy unversioned run created before the precursor release cannot be called
-compatible: activation either requires it to finish, or an explicit controller
-migration validates the current v2 graph, provider preflight, phase identity,
-pending decision authority, and artifact roots before installing and fsyncing
-the content-addressed v2 bundle. The subsequent state CAS writes the v2 version
-and digest and is the single authority switch. A crash before that CAS leaves
+legacy unversioned run created before the precursor release is automatically
+migratable only while pristine, before its first provider dispatch. Pristine
+means all of the following: `last_dispatch` is null; `completed_phases` and
+`phase_dispatch_counts` are empty; there are no usage receipts or usage spool
+records; there is no pending publication, completion, continuation, decision,
+or recovery authority; there is no provider/controller phase output; state is
+at the declared entry phase with status `preparing` or `running`; and any
+initial context/product-input setup passes its current structural validation.
+
+For that one case, an explicit controller migration performs v2 graph and
+provider preflight, installs and fsyncs the content-addressed bundle, then uses
+one state CAS to write the v2 version and digest. A crash before that CAS leaves
 an unreferenced immutable bundle that a retry may revalidate and reuse; a crash
-after it cannot expose missing bundle bytes. Validation failure leaves workflow
-authority unchanged and puts the run in `manual_diagnosis`. The validator never
-silently substitutes the installed v2 graph for v1 authority or downgrades a v2
+after it cannot expose missing bundle bytes. An unversioned run that is not
+pristine requires the matching legacy runtime and cannot be projected onto the
+current graph. The current runtime persists
+`workflow_migration_required` manual diagnosis without replacing its workflow
+authority. Validation failure likewise leaves workflow authority unchanged.
+The validator never substitutes an installed graph for bundle authority,
+attempts arbitrary mid-run state/artifact projection, or downgrades a v2
 dispatch to host execution.
 
 Concurrent child dispatches are seeded from the same parent-attempt snapshot and
@@ -1078,11 +1265,12 @@ new decision.
 
 `state_transaction_namespace` registers `decision_history`,
 `legacy_decision_history`, `decision_clarifications`, `decision_continuation`,
-`applied_usage_receipts`, `cost_microusd`, `unknown_token_usage_calls`,
+`applied_usage_receipts`, `token_budget_usage`, `cost_microusd`,
+`unknown_token_usage_calls`,
 `unknown_cost_calls`, `blocked_decision`, and `recovery_instruction` as
 store-owned transaction keys. `workflow_contract_version` and `workflow_digest`
 are immutable workflow-authority keys: only initialization or the dedicated
-legacy-unversioned workflow migration may write them.
+pristine legacy-unversioned workflow migration may write them.
 `why2_metric_stagnation_count` is added to atomic store control keys and trusted
 routing effects before safeguard migration. These keys may be changed only by
 the exact `SquadStateStore` decision methods below, controller-completion
@@ -1137,8 +1325,9 @@ authoritative state operation. No success, decision, or failure path calls
   prepared_route, completion_marker, continuation, usage_records)` accepts only
   controller-prepared, mutually attested application artifacts. It revalidates
   the sealed operation, static policy digest, concrete operations digest,
-  current workflow edge or registered recovery route, exact transaction
-  effects, completion-marker and continuation binding, disposition, and absence
+  bundled workflow edge or version-selected registered recovery route, exact
+  transaction effects, completion-marker and continuation binding, disposition,
+  and absence
   of an older pending publication, completion, or unconsumed continuation under
   the state lock. It then records the replay-source route, gate edge, or
   safeguard repair through the single state-advance commit primitive while
@@ -1187,7 +1376,7 @@ authoritative state operation. No success, decision, or failure path calls
   both binding hashes, and preserves invocation kind and disposition. Every
   other outcome writes `consumed`, clears the lease and failure hashes, and
   records `consumed_at`. Both paths apply the same idempotent usage records.
-- `migrate_legacy_squad_decision(snapshot, compiled_policy,
+- `migrate_legacy_squad_decision(snapshot, bundled_policy,
   invocation_attestation)` is the only v1-to-v2 migration API. It may reconstruct
   a pending v1 decision only from policy compiled from the run's authoritative
   workflow bundle and exact full/manual invocation proof; it never reads policy
@@ -1567,17 +1756,20 @@ analysis:
 ```
 
 These values belong to the existing top-level `analysis:` section. The
-controller reads them through `get_full_resolved_config`, not `HarnessConfig`.
-A dedicated parser applies defaults, rejects non-mappings and booleans used as
-integers, and enforces the stated numeric bounds before a resolver claim.
+bundle builder reads them through `get_full_resolved_config`, normalizes them
+into `workflow-config.json`, and the active controller reads only that immutable
+bundle value. A dedicated parser applies defaults, rejects non-mappings and
+booleans used as integers, and enforces the stated numeric bounds before bundle
+creation and again on bundle load.
 `lease_ttl_seconds` governs both decision-resolution and continuation-dispatch
 leases; only decision-resolution claims consume `max_attempts`.
-Malformed configuration is a non-mutating pre-claim failure: decision status,
-instruction, lease, attempt count, phase, and run status remain unchanged; the
-CLI reports the exact config path and `continue` may retry after correction.
-The parser never broadly catches an error and substitutes defaults. Full-run,
-manual-phase, `continue`, and `resume` controller construction all use this one
-parser. Both `extension/echelon-config.yml` and
+Malformed installed configuration blocks new bundle creation. Malformed or
+unsupported bundled configuration is a non-mutating pre-claim failure:
+decision status, instruction, lease, attempt count, phase, and run status remain
+unchanged; the CLI reports the exact bundle field and does not reread a mutable
+installed correction. The parser never broadly catches an error and substitutes
+defaults. Full-run, manual-phase, `continue`, and `resume` controller
+construction all use this one parser. Both `extension/echelon-config.yml` and
 `extension/config-template.yml` ship the same default section and bounds.
 
 A result applies only if its decision id, status, lease id, static policy
@@ -1698,10 +1890,23 @@ retain their current terminal-phase reconstruction.
 
 `human_gate` becomes a controller decision producer. Its existing automatic
 semi/banzai path is removed. Each gate must declare its `decision_policy` and
-the controller supplies its approve/reject operations and context pack.
+the controller supplies its approve/reject operations and context pack, builds
+`PreparedHumanInput`, and invokes the same interception boundary as every other
+producer.
 
 ## CLI Behavior
 
+- Phase A run selection is deterministic and has no stdin question. `spec run`
+  accepts mutually exclusive `--continue-current` and `--new-run`. Without a
+  flag, an empty request or a request identical to the active run continues it;
+  a different non-empty request starts a new run and preserves the old one.
+  `--continue-current` requires a resumable active run and rejects a different
+  non-empty request rather than changing or ignoring its task.
+  `--new-run` requires a non-empty request and preserves any active run;
+  existing `--reset` becomes a deprecated alias for `--new-run`. Supplying both
+  modes, continuing with no active run, or any other invalid flag/input
+  combination fails before mutation. This removes the current active-run
+  `input()` choice instead of creating a pre-run decision model.
 - The shared recovery classifier recognizes a valid
   `pending_controller_completion` as `drain_controller_completion` before run
   status, blocked-reason, decision-instruction, or legacy-prose classification.
@@ -1714,6 +1919,11 @@ the controller supplies its approve/reject operations and context pack.
   matching standard retry attestation. The controller resumes only the
   persisted disposition, source/target, and invocation kind; manual continuation
   retries use the dedicated one-phase entrypoint.
+- `status` loads the run-local workflow bundle and renders phase names,
+  transitions, and the roadmap only from that authoritative graph. It may load
+  the installed definition separately to display a drift warning, but never
+  substitutes it. An invalid or unsupported bundle renders manual diagnosis
+  without guessing the current roadmap.
 - `status` classifies valid recovery instructions before legacy prose.
 - `continue` invokes `resolve_pending_decision` without pre-clearing its state.
 - `resume` accepts input only for a matching v2 `await_human_answer`
@@ -1740,7 +1950,7 @@ the controller supplies its approve/reject operations and context pack.
 - Old runs without v2 decision records retain the existing escalation and
   recovery compatibility paths. This concerns decision schema only: any later
   provider dispatch still requires a valid run-local workflow bundle or the
-  explicit legacy-unversioned workflow migration described above.
+  exact pristine legacy-unversioned workflow migration described above.
 - Before `spec run`, `phase run`, `spec run --next-phase`, `continue`, `resume`,
   or any override mutates phase or dispatches a provider, the shared controller
   guard validates active decision, completion, and continuation authority.
@@ -1794,21 +2004,32 @@ move together:
   inputs, the complete immutable `DispatchDescriptor`, normalized dependency
   dispatch keys, pre-dispatch declaration positions, disjoint parallel proposal
   ownership, executable-entry-local `artifact_effects`, exact
-  `presence_by_verdict`, physical-root and protected-path overlap, and gate
-  outcome edges.
+  `presence_by_verdict`, canonical destination and visibility-class overlap,
+  and gate outcome edges.
 - new `harness.workflow_bundle`, `harness.phase_graph`, and
-  `harness.squad_state`: compile and fsync immutable run-local workflow and
-  prompt authority before state creation; persist exact workflow version and
-  digest; load bundles for every resumed dispatch and policy check; support only
-  explicit validated migration for legacy unversioned runs.
+  `harness.squad_state`: capture and fsync the exact run-local source manifest,
+  immutable workflow config, and compiler/prompt/repair semantics versions
+  before state creation; persist exact workflow version and digest; load all
+  resumed graph, prompt, template, repair, gate, and policy authority through
+  `PhaseGraph.from_bundle` and `PromptSourceResolver`; fail closed on an
+  unsupported registry version; and permit legacy-unversioned migration only
+  for the exact pristine pre-dispatch state.
+- new `harness.human_input` and the shared recovery classifier: define
+  `PreparedHumanInput`, route provider, gate, safeguard, and registered recovery
+  requests through one controller interception function, enforce the v2
+  decision/instruction pair, and retain direct legacy classifications only
+  under authoritative supported v1 bundle semantics.
 - `harness.squad_provider`, `harness.llm_provider`,
   `harness.llm_tool_policy`, `harness.provider_capability`,
   `harness.ai_cli_backend`, the new controller-owned `AiExecutionSandbox`, and
   every AI backend adapter: preserve and attest the exact
-  `ProviderExecutionRequest` and `AttemptPathMap`; implement the closed CLI and
+  `ProviderExecutionRequest`, `AttemptFilesystem`, `AttemptPathMap`, and
+  `AttemptStateProjection`; implement the closed CLI and
   OpenAI-compatible OCI worker adapters, bridge-network declaration,
   digest-pinned runtime profiles, persistent per-run ephemeral credentials, and
-  ephemeral home/cache/tmp mounts; expose `ENFORCED_WRITE_CONTAINMENT` only for
+  ephemeral home/cache/tmp mounts; declare `token_accounting_mode` and an
+  enforceable per-call token limit for hard-budget operation; expose
+  `ENFORCED_WRITE_CONTAINMENT` only for
   these OCI adapters; run complete backend-matrix preflight before state
   creation; fail closed for unsupported dispatches; move result-repair call
   orchestration to the controller; and return typed provider-validation
@@ -1819,9 +2040,11 @@ move together:
 - `harness.squad_executors` and `harness.prepared_phase_result`: introduce the
   trusted decision envelope, remove provider blocking-contract bypasses, attest
   the complete dispatch descriptor without giving it state authority, route
-  prompt/context/extra-file resolution only through `AttemptPathMap`, remove
-  provider-attempt direct state/journal/cost writes, reject complete child-
-  overlay diffs not covered by compiled effects, and accumulate all child
+  prompt/context/extra-file resolution only through `PromptSourceResolver`,
+  `AttemptPathMap`, and sanitized `AttemptStateProjection`, remove raw
+  `state.json` prompt injection and provider-attempt direct
+  state/journal/cost writes, reject complete private-project diffs not covered
+  by compiled effects, and accumulate all child
   artifact effects, results, journals, exact per-call usage records, product-
   input, certificate, and state proposals inside one phase-scoped
   `PhaseAttemptTransaction`.
@@ -1838,10 +2061,10 @@ move together:
   `DecisionClaimReceipt`, dedicated decision/migration/continuation CAS methods,
   failure-dispatch and recovery-instruction hashes for blocked continuation
   retry, exact v1 source-phase projection, generic-save mutation guards, the
-  shared unlocked advance and idempotent nine-field usage primitives, bounded
-  usage receipts, integer micro-USD and unknown-usage counters, operation-
-  specific status effects, authority-aware cleanup, and completion-bound
-  application.
+  shared unlocked advance and idempotent twelve-field usage primitives,
+  claim-scoped billing ids, `token_budget_usage`, bounded usage receipts,
+  integer micro-USD and unknown-usage counters, operation-specific status
+  effects, authority-aware cleanup, and completion-bound application.
 - `harness.squad`: centralize interception, autonomy resolution, completion
   preparation/drain and authority ownership, phase-attempt aggregation,
   deterministic parallel-question arbitration, dedicated prepared continuation
@@ -1855,8 +2078,10 @@ move together:
   completion and ready/blocked/expired continuation authority before generic
   phase retry, load the run-local workflow bundle before dispatch, keep manual
   retries on the dedicated one-phase path, guard every full/manual/override
-  entrypoint, implement exact
-  `--operation`/`--answer` syntax, and route `status`, `continue`, and `resume`
+  entrypoint, implement exact `--operation`/`--answer` syntax, replace the
+  active-run stdin choice with mutually exclusive `--continue-current` and
+  `--new-run` plus deterministic defaults, render `status` roadmap authority
+  from the run-local bundle, and route `status`, `continue`, and `resume`
   through controller APIs rather than direct state/file writes.
 - `extension/workflow/definition.yaml`: declare the complete producer matrix,
   exact top-level `workflow_contract_version: 2`, policies, result contracts,
@@ -1866,7 +2091,10 @@ move together:
   gate outcomes. In particular, PLAN2's current
   `speckit-echelon-gatekeeper-assess2` dependency is corrected to the declared
   `speckit-echelon-gatekeeper` id before dependency validation is enabled.
-- prompt migration follows compiled prompt sources, not filesystem globs. For
+- prompt migration follows bundle-declared prompt sources, not filesystem globs.
+  `PromptSourceResolver` replaces direct extension-directory reads, result
+  template reads, hardcoded repair prompt selection, and raw-state prompt
+  injection. For
   each Phase A provider dispatch, inspect only the phase fragment actually
   included by its executor and its referenced agent role file. Retain
   `{spec_dir}`, `{staging_dir}`, `{context_dir}`, `SQUAD_DIR`, and `STAGING_DIR`
@@ -1880,8 +2108,8 @@ move together:
 - `extension/echelon-config.yml` and `extension/config-template.yml`: ship the
   bounded `analysis.decision_resolution` defaults and closed OCI provider
   runtime-profile selection, adapter-specific immutable image digest,
-  credential mode, and explicit `bridge` AI network mode consumed by the shared
-  strict parser.
+  credential mode, token-accounting mode, enforceable per-call limit, and
+  explicit `bridge` AI network mode consumed by the shared strict parser.
 - `extension/agents/control/commander.md`: remove recursive/existential human
   escalation and legacy file ownership from v2 instructions; document the
   exact routing, decision-resolution, and explicitly labeled legacy contracts.
@@ -1891,11 +2119,14 @@ move together:
 
 ## Verification
 
-Unit tests cover workflow-bundle compilation, source hashing, fsync-before-state
-ordering, immutable reload after installed extension drift, version/digest
-state validation, explicit legacy-unversioned-to-v2 migration, migration
-rollback on preflight or graph failure, generic-save non-migration, terminal v1
-legacy-history archival, and non-migration when invocation authority is absent.
+Unit tests cover workflow-bundle source/config capture, source hashing,
+fsync-before-state ordering, immutable reload after installed extension drift,
+compiler/prompt/repair registry selection, rejection of unsupported semantics,
+absence of runtime extension/config reads, version/digest state validation,
+pristine pre-dispatch legacy-unversioned-to-v2 migration, rejection of every
+non-pristine migration condition, migration rollback on preflight or graph
+failure, generic-save non-migration, terminal v1 legacy-history archival, and
+non-migration when invocation authority is absent.
 They cover v2 and continuation preservation across save, generic-save mutation
 guards, exact history and audit validation, idempotent bounded history append,
 non-evicting clarification-ledger append and capacity failure, decision-case
@@ -1910,18 +2141,23 @@ routes.
 
 Artifact tests cover executable-entry ownership stamping, complete
 `presence_by_verdict` mappings, conditional required/optional/forbidden effects,
-physical alias and protected-path overlap, mapped read-only `context_dir`,
+canonical alias identity, nesting, and visibility-class overlap,
+in-project and external read-only `context_dir`,
 upsert/delete/move and additive/replacement tree semantics, special-file
-rejection, complete private-overlay diffing and undeclared-change rejection,
+rejection, complete private-project diffing and undeclared-change rejection,
 deterministic tree lowering to existing file manifest operations, begin-time
 preimage capture,
-`AttemptPathMap` resolution, shared multi-mode prompts without unresolved
-dispatch placeholders, deterministic child-workspace and non-artifact proposal
-merge, and one combined publication manifest.
+`AttemptFilesystem`/`AttemptPathMap` identity preservation, hidden controller
+paths, sanitized `AttemptStateProjection`, shared multi-mode prompts without
+unresolved dispatch placeholders, deterministic child-workspace and
+non-artifact proposal merge, and one combined publication manifest.
 
-Usage tests cover exact nine-field started/returned spool records,
-reported/estimated/unknown normalization, integer micro-USD rounding,
-unknown-call counters, idempotent receipts, and pre-call capacity checks. Crash
+Usage tests cover exact twelve-field started/returned spool records, exclusive
+creation, billing-scope uniqueness across retries and claims, usage-id field
+agreement, reported/reserved/unknown normalization, conservative
+`token_budget_debit`, positive-budget preflight failure without enforceable
+accounting, integer micro-USD rounding, unknown-call counters, idempotent
+receipts, and pre-call capacity and hard-budget checks. Crash
 tests cover loss after pre-call intent fsync, during an orphaned OCI call, after
 the initial call but before interpretation, between initial and repair calls,
 after repair but before settlement, and during deferred receipt application.
@@ -1942,7 +2178,9 @@ investigator decision cases, human gates, phase-dispatch cap from a phase
 without a direct issue-repair edge, consecutive WHY block, metric stagnation,
 manual single-phase execution, `status`, `continue`, process interruption at
 each durable state, and `resume`. Tests assert that decision interception
-occurs before all artifact and non-artifact effects and ordinary routing,
+occurs through `PreparedHumanInput` before all artifact and non-artifact effects
+and ordinary routing, and that every v2 human recovery instruction has one
+matching active v2 decision while orphan/mismatched instructions fail closed,
 parallel peers are joined and arbitrated in declaration order, multiple peer
 questions fail as `ambiguous_parallel_decision`, a nested question abandons all
 peer/stage work from that phase attempt, later stages see only validated parent-
@@ -1956,7 +2194,9 @@ closed, refreshed ephemeral credentials survive a repair/retry and are scrubbed
 only at terminal cleanup, and bridge egress behavior is explicit. A v1 bundled
 run continues with its bundled graph and prompt after the installed extension
 becomes v2, while an unversioned run never silently acquires v2 authority. Tests
-also assert that
+also assert that `status` renders the bundled roadmap after installed workflow
+drift, active-run selection performs no stdin read, the shared Phase A
+execution/entry paths contain no direct `input()` call, and
 CARTOGRAPHER's staging-to-spec promotion publishes one atomic move without a
 canonical provider write, KB proposal trees merge additively, one publication
 marker owns provider and controller effects, changed begin-time preimages never
