@@ -1,7 +1,7 @@
 # Spec Artifact Graph Design
 
 **Date:** 2026-07-28
-**Status:** Draft for review
+**Status:** Approved for implementation
 **Scope:** Spec-scoped deterministic graph for canonical Echelon specs.
 
 ## Goal
@@ -178,6 +178,8 @@ V1 creates `Artifact` nodes only for:
 
 - existing top-level canonical spec files registered by
   `echelon.artifact_index`;
+- existing source artifacts returned by an applicable native MemPalace planner,
+  including supported canonical supporting-context artifacts;
 - `inputs/manifest.json`, `inputs/catalog.json`, and
   `inputs/traceability.json`;
 - curated spec-evidence files returned by native evidence discovery;
@@ -189,10 +191,14 @@ V1 creates `Artifact` nodes only for:
 Product-input snapshots, arbitrary files beneath canonical directories, and
 evidence reference paths do not become v1 nodes. Their identities and hashes
 remain properties of their owning control artifact or verification edge.
+Planner-returned source artifacts are an explicit bounded exception to
+`artifact_index`; the graph does not discover them independently or crawl for
+additional files.
 
 Every artifact node has `path`, `role`, `hash`, and `mining_status`. Role is
-assigned by the existing artifact/evidence policy. `mining_status` is `mined`
-or `not-mined-by-policy`.
+assigned by existing artifact or evidence policy, or by the native planner
+metadata for planner-returned sources; the graph does not infer it.
+`mining_status` is `mined` or `not-mined-by-policy`.
 
 ### MemPalace Audit Domains
 
@@ -288,10 +294,15 @@ V1 reads `verified-fulfillment-ledger.json` through
 - `verify_scope`;
 - `complete`.
 
-`complete` is true only when the row status is not `MISSING`, `PARTIAL`,
-`DEVIATED`, or `UNVERIFIED`, and the native spec-evidence memory audit passes.
-Unresolved rows still appear but have `complete: false`. Ledger rows for a
-requirement absent from current `spec.md` are audit failures.
+`complete` is true only when the authoritative ledger row status is not
+`MISSING`, `PARTIAL`, `DEVIATED`, or `UNVERIFIED`. Unresolved rows still appear
+but have `complete: false`. Ledger rows for a requirement absent from current
+`spec.md` are audit failures.
+
+Spec-evidence memory health does not alter `complete`. Its freshness and
+reconciliation are represented independently by the evidence domain receipt,
+`MemPalaceDrawer` nodes, and `STORED_AS` edges. A requirement can therefore
+remain verified while its derived evidence memory is stale or unavailable.
 
 The graph does not recompute implementation-input hashes or verifier reuse.
 Those remain owned by the existing fulfillment lifecycle. The graph hashes the
@@ -605,6 +616,8 @@ Unit tests:
   three;
 - each storage edge reflects only its native audit domain's reconciliation
   status;
+- every source returned by an applicable native memory planner has an
+  `Artifact` node and valid `STORED_AS` endpoints;
 - derived artifact references cannot create requirement nodes;
 - workspace RE artifacts appear in a spec graph only through canonical
   `re-context.json`;
@@ -617,6 +630,8 @@ Unit tests:
   remain audit findings;
 - verified-ledger rows produce resolved or unresolved `VERIFIED_BY` edges
   without reimplementing fulfillment invalidation;
+- verified-ledger completeness is unchanged when spec-evidence memory is stale
+  or unavailable;
 - deferred requirements warn instead of fail by default;
 - unknown deferral IDs fail;
 - task mappings to requirements absent from current `spec.md` fail;
