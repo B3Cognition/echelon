@@ -144,3 +144,75 @@ def test_mine_spec_evidence_refresh_cleans_only_matching_spec_evidence(
     assert report.artifact_count == 2
     assert report.written_count == 2
     assert deleted == ["old-evidence"]
+
+
+@pytest.mark.unit
+def test_audit_spec_evidence_memory_reports_stale_hash(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    write_evidence_workspace(tmp_path)
+
+    class FakeCollection:
+        def get(self, ids=None, where=None, include=None, limit=None):
+            if ids is not None:
+                return {
+                    "ids": ["evidence-drawer"],
+                    "documents": ["EVID-001: Published evidence fact."],
+                    "metadatas": [
+                        {
+                            "wing": "demo-wing",
+                            "room": "spec-fulfillment-evidence",
+                            "artifact_kind": "spec-evidence",
+                            "scope": "spec-evidence",
+                            "spec_id": "003-demo",
+                            "canonical": True,
+                            "artifact_path": "specs/003-demo/fulfillment-report.md",
+                            "source_file": "specs/003-demo/fulfillment-report.md",
+                            "artifact_hash": "sha256:old",
+                            "canonical_spec_sha256": "old",
+                            "requirement_content_sha256": "88217a44e5991b0a2b4e4275a781753c9d7da8f20ac04f4614b9c84842e48a50",
+                            "requirement_id": "EVID-001",
+                            "deterministic_identity_schema_version": 1,
+                            "lifecycle_status": "active",
+                        }
+                    ],
+                }
+            return {
+                "ids": ["evidence-drawer"],
+                "documents": ["EVID-001: Published evidence fact."],
+                "metadatas": [{}],
+            }
+
+    class FakeAdapter:
+        wing = "demo-wing"
+        palace_path = tmp_path / ".mempalace"
+
+        def open_collection_read_only(self):
+            return FakeCollection()
+
+        def plan_spec_evidence_artifact_rows(self, content, *, source, artifact_metadata):
+            if source != "specs/003-demo/fulfillment-report.md":
+                return []
+            return [
+                SimpleNamespace(
+                    drawer_id="evidence-drawer",
+                    requirement_id="EVID-001",
+                    room="spec-fulfillment-evidence",
+                    source="specs/003-demo/fulfillment-report.md",
+                    artifact_hash="sha256:new",
+                    canonical_spec_sha256="new",
+                    requirement_content_sha256="88217a44e5991b0a2b4e4275a781753c9d7da8f20ac04f4614b9c84842e48a50",
+                )
+            ]
+
+    monkeypatch.setattr(
+        "echelon.mempalace_spec_evidence.create_spec_evidence_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    from echelon.mempalace_spec_evidence import audit_spec_evidence_memory
+
+    report = audit_spec_evidence_memory(tmp_path, "003-demo")
+
+    assert report.status == "fail"
+    assert report.stale == ["evidence-drawer"]

@@ -187,6 +187,113 @@ def test_mine_re_memory_deletes_existing_re_drawers_before_refresh(
 
 
 @pytest.mark.unit
+def test_audit_re_memory_reports_exact_pass(tmp_path: Path, monkeypatch) -> None:
+    write_re_workspace(tmp_path)
+
+    class FakeCollection:
+        def get(self, ids=None, where=None, include=None, limit=None):
+            if ids is not None:
+                return {
+                    "ids": ["drawer-1"],
+                    "documents": ["RE-001: Published RE fact."],
+                    "metadatas": [
+                        {
+                            "wing": "demo-wing",
+                            "room": "re-workspace-context",
+                            "artifact_kind": "reverse-engineering",
+                            "scope": "canonical",
+                            "canonical": True,
+                            "artifact_path": "re/workspace/overview.md",
+                            "source_file": "re/workspace/overview.md",
+                            "artifact_hash": "sha256:artifact",
+                            "canonical_spec_sha256": "artifact",
+                            "requirement_content_sha256": "596d231108054d099f4ddba2d1719742cb0d458cfba61fe150eb26a7789464ff",
+                            "requirement_id": "RE-001",
+                            "deterministic_identity_schema_version": 1,
+                            "lifecycle_status": "active",
+                        }
+                    ],
+                }
+            return {"ids": ["drawer-1"], "documents": ["RE-001: Published RE fact."], "metadatas": [{}]}
+
+    class FakeAdapter:
+        wing = "demo-wing"
+        palace_path = tmp_path / ".mempalace"
+
+        def open_collection_read_only(self):
+            return FakeCollection()
+
+        def plan_re_artifact_rows(self, content, *, source, artifact_metadata):
+            if source != "re/workspace/overview.md":
+                return []
+            return [
+                SimpleNamespace(
+                    drawer_id="drawer-1",
+                    requirement_id="RE-001",
+                    room="re-workspace-context",
+                    source="re/workspace/overview.md",
+                    artifact_hash="sha256:artifact",
+                    canonical_spec_sha256="artifact",
+                    requirement_content_sha256="596d231108054d099f4ddba2d1719742cb0d458cfba61fe150eb26a7789464ff",
+                )
+            ]
+
+    monkeypatch.setattr(
+        "echelon.mempalace_re.create_re_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    from echelon.mempalace_re import audit_re_memory
+
+    report = audit_re_memory(tmp_path)
+
+    assert report.status == "pass"
+    assert report.expected_count == 1
+    assert report.present_current_count == 1
+
+
+@pytest.mark.unit
+def test_audit_re_memory_reports_missing_drawers(tmp_path: Path, monkeypatch) -> None:
+    write_re_workspace(tmp_path)
+
+    class FakeCollection:
+        def get(self, ids=None, where=None, include=None, limit=None):
+            return {"ids": [], "documents": [], "metadatas": []}
+
+    class FakeAdapter:
+        wing = "demo-wing"
+        palace_path = tmp_path / ".mempalace"
+
+        def open_collection_read_only(self):
+            return FakeCollection()
+
+        def plan_re_artifact_rows(self, content, *, source, artifact_metadata):
+            if source != "re/workspace/overview.md":
+                return []
+            return [
+                SimpleNamespace(
+                    drawer_id="missing-drawer",
+                    requirement_id="RE-001",
+                    room="re-workspace-context",
+                    source="re/workspace/overview.md",
+                    artifact_hash="sha256:artifact",
+                    canonical_spec_sha256="artifact",
+                    requirement_content_sha256="content",
+                )
+            ]
+
+    monkeypatch.setattr(
+        "echelon.mempalace_re.create_re_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    from echelon.mempalace_re import audit_re_memory
+
+    report = audit_re_memory(tmp_path)
+
+    assert report.status == "fail"
+    assert report.missing == ["missing-drawer"]
+
+
+@pytest.mark.unit
 def test_re_generated_specs_use_source_path_in_synthetic_identity() -> None:
     import hashlib
 

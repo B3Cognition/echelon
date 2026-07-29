@@ -12,6 +12,7 @@ from echelon.mempalace_requirements import (
     _read_str_list,
     resolve_spec_dir,
 )
+from echelon.mempalace_memory_audit import audit_artifact_memory
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,50 @@ class SpecEvidenceMemoryMineReport:
             "drawer_ids": list(self.drawer_ids),
             "expected_drawer_ids": list(self.expected_drawer_ids),
             "errors": list(self.errors),
+        }
+
+
+@dataclass(frozen=True)
+class SpecEvidenceMemoryAuditReport:
+    schema_version: int
+    spec_id: str
+    spec_dir: str
+    wing: str | None
+    palace_path: str | None
+    status: str
+    artifact_count: int
+    expected_count: int
+    present_current_count: int
+    missing: list[str] = field(default_factory=list)
+    stale: list[str] = field(default_factory=list)
+    wrong_wing: list[str] = field(default_factory=list)
+    wrong_room: list[str] = field(default_factory=list)
+    non_canonical: list[str] = field(default_factory=list)
+    lifecycle_excluded: list[str] = field(default_factory=list)
+    duplicate: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    recommendations: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "spec_id": self.spec_id,
+            "spec_dir": self.spec_dir,
+            "wing": self.wing,
+            "palace_path": self.palace_path,
+            "status": self.status,
+            "artifact_count": self.artifact_count,
+            "expected_count": self.expected_count,
+            "present_current_count": self.present_current_count,
+            "missing": list(self.missing),
+            "stale": list(self.stale),
+            "wrong_wing": list(self.wrong_wing),
+            "wrong_room": list(self.wrong_room),
+            "non_canonical": list(self.non_canonical),
+            "lifecycle_excluded": list(self.lifecycle_excluded),
+            "duplicate": list(self.duplicate),
+            "errors": list(self.errors),
+            "recommendations": list(self.recommendations),
         }
 
 
@@ -170,6 +215,19 @@ class SpecEvidenceMemoryAdapter:
             artifact_metadata=artifact_metadata,
         )
 
+    def plan_spec_evidence_artifact_rows(
+        self,
+        content: bytes,
+        *,
+        source: str,
+        artifact_metadata: dict[str, Any],
+    ) -> list[object]:
+        return self.miner.plan_spec_evidence_artifact_rows(
+            content,
+            source=source,
+            artifact_metadata=artifact_metadata,
+        )
+
     def open_collection_read_only(self) -> object:
         opener = getattr(self.miner, "open_collection_read_only", None)
         if not callable(opener):
@@ -184,6 +242,61 @@ def create_spec_evidence_memory_adapter(
     run_id: str,
 ) -> SpecEvidenceMemoryAdapter:
     return SpecEvidenceMemoryAdapter(project_root, run_id)
+
+
+def audit_spec_evidence_memory(
+    project_root: Path,
+    spec_selector: str | Path,
+) -> SpecEvidenceMemoryAuditReport:
+    spec_dir = resolve_spec_dir(project_root, spec_selector)
+    snapshots = load_spec_evidence_artifact_snapshots(project_root, spec_selector)
+    try:
+        adapter = create_spec_evidence_memory_adapter(project_root, run_id="audit")
+    except SpecMemoryError:
+        raise
+    except (Exception, SystemExit) as exc:
+        return SpecEvidenceMemoryAuditReport(
+            schema_version=1,
+            label="Spec Evidence",
+            root=str(spec_dir),
+            wing=None,
+            palace_path=None,
+            status="unavailable",
+            artifact_count=len(snapshots),
+            expected_count=0,
+            present_current_count=0,
+            errors=[type(exc).__name__],
+        )
+    generic = audit_artifact_memory(
+        label="Spec Evidence",
+        root=spec_dir,
+        snapshots=snapshots,
+        adapter=adapter,
+        artifact_kind="spec-evidence",
+        scope="spec-evidence",
+        spec_id=spec_dir.name,
+        planner_name="plan_spec_evidence_artifact_rows",
+    )
+    return SpecEvidenceMemoryAuditReport(
+        schema_version=generic.schema_version,
+        spec_id=spec_dir.name,
+        spec_dir=generic.root,
+        wing=generic.wing,
+        palace_path=generic.palace_path,
+        status=generic.status,
+        artifact_count=generic.artifact_count,
+        expected_count=generic.expected_count,
+        present_current_count=generic.present_current_count,
+        missing=generic.missing,
+        stale=generic.stale,
+        wrong_wing=generic.wrong_wing,
+        wrong_room=generic.wrong_room,
+        non_canonical=generic.non_canonical,
+        lifecycle_excluded=generic.lifecycle_excluded,
+        duplicate=generic.duplicate,
+        errors=generic.errors,
+        recommendations=generic.recommendations,
+    )
 
 
 def _cleanup_existing_spec_evidence_drawers(adapter: object, spec_id: str) -> list[str]:

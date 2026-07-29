@@ -335,6 +335,50 @@ def _echo_memory_search(report: object) -> None:
         typer.echo(f"    {hit.content}")
 
 
+def _render_re_memory_audit_markdown(report: object) -> str:
+    return _render_memory_audit_markdown(
+        "MemPalace RE Audit",
+        report,
+        extra=[f"- RE root: {getattr(report, 're_root')}"],
+    )
+
+
+def _render_spec_evidence_memory_audit_markdown(report: object) -> str:
+    return _render_memory_audit_markdown(
+        "MemPalace Spec Evidence Audit",
+        report,
+        extra=[
+            f"- Spec: {getattr(report, 'spec_id')}",
+            f"- Spec dir: {getattr(report, 'spec_dir')}",
+        ],
+    )
+
+
+def _render_memory_audit_markdown(
+    title: str,
+    report: object,
+    *,
+    extra: list[str],
+) -> str:
+    lines = [
+        f"# {title}",
+        "",
+        *extra,
+        f"- Status: {getattr(report, 'status')}",
+        f"- Artifacts: {getattr(report, 'artifact_count')}",
+        f"- Expected drawers: {getattr(report, 'expected_count')}",
+        f"- Present current drawers: {getattr(report, 'present_current_count')}",
+        f"- Missing: {len(getattr(report, 'missing', []))}",
+        f"- Stale: {len(getattr(report, 'stale', []))}",
+        f"- Wrong wing: {len(getattr(report, 'wrong_wing', []))}",
+        f"- Wrong room: {len(getattr(report, 'wrong_room', []))}",
+        f"- Non-canonical: {len(getattr(report, 'non_canonical', []))}",
+        f"- Lifecycle excluded: {len(getattr(report, 'lifecycle_excluded', []))}",
+        f"- Duplicate: {len(getattr(report, 'duplicate', []))}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
 def _dispatch_phase(args: list[str]) -> None:
     legacy_cli = _legacy_cli()
     project_root = Path.cwd()
@@ -1995,9 +2039,10 @@ def memory_list_kinds(
 
 @re_memory_app.command("refresh")
 def re_memory_refresh(
+    audit: bool = typer.Option(True, "--audit/--no-audit"),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
-    from echelon.mempalace_re import mine_re_memory
+    from echelon.mempalace_re import audit_re_memory, mine_re_memory
     from echelon.mempalace_requirements import SpecMemoryError
 
     try:
@@ -2005,25 +2050,59 @@ def re_memory_refresh(
     except SpecMemoryError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
-    if as_json:
+    if as_json and not audit:
         _echo_json(report.to_dict())
-    else:
+    elif not as_json:
         typer.echo(
             f"MemPalace RE mine {report.status}: artifacts={report.artifact_count} "
             f"expected={report.expected_count} written={report.written_count} "
             f"adopted={report.adopted_count} drifted={report.drifted_count} "
             f"failed={report.failed_count}"
         )
+    if not audit:
+        raise typer.Exit(code=_memory_exit_code(report.status))
+    try:
+        audit_report = audit_re_memory(Path.cwd())
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json({"mine": report.to_dict(), "audit": audit_report.to_dict()})
+    else:
+        typer.echo(_render_re_memory_audit_markdown(audit_report).rstrip())
+    raise typer.Exit(code=max(_memory_exit_code(report.status), _memory_exit_code(audit_report.status)))
+
+
+@re_memory_app.command("audit")
+def re_memory_audit(
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.mempalace_re import audit_re_memory
+    from echelon.mempalace_requirements import SpecMemoryError
+
+    try:
+        report = audit_re_memory(Path.cwd())
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json(report.to_dict())
+    else:
+        typer.echo(_render_re_memory_audit_markdown(report).rstrip())
     raise typer.Exit(code=_memory_exit_code(report.status))
 
 
 @spec_evidence_memory_app.command("refresh")
 def spec_evidence_memory_refresh(
     spec_selector: str,
+    audit: bool = typer.Option(True, "--audit/--no-audit"),
     as_json: bool = typer.Option(False, "--json"),
 ) -> None:
     from echelon.mempalace_requirements import SpecMemoryError
-    from echelon.mempalace_spec_evidence import mine_spec_evidence_memory
+    from echelon.mempalace_spec_evidence import (
+        audit_spec_evidence_memory,
+        mine_spec_evidence_memory,
+    )
 
     try:
         report = mine_spec_evidence_memory(
@@ -2034,9 +2113,9 @@ def spec_evidence_memory_refresh(
     except SpecMemoryError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
-    if as_json:
+    if as_json and not audit:
         _echo_json(report.to_dict())
-    else:
+    elif not as_json:
         typer.echo(
             f"MemPalace spec evidence mine {report.status}: "
             f"spec={report.spec_id} artifacts={report.artifact_count} "
@@ -2044,6 +2123,37 @@ def spec_evidence_memory_refresh(
             f"adopted={report.adopted_count} drifted={report.drifted_count} "
             f"failed={report.failed_count}"
         )
+    if not audit:
+        raise typer.Exit(code=_memory_exit_code(report.status))
+    try:
+        audit_report = audit_spec_evidence_memory(Path.cwd(), spec_selector)
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json({"mine": report.to_dict(), "audit": audit_report.to_dict()})
+    else:
+        typer.echo(_render_spec_evidence_memory_audit_markdown(audit_report).rstrip())
+    raise typer.Exit(code=max(_memory_exit_code(report.status), _memory_exit_code(audit_report.status)))
+
+
+@spec_evidence_memory_app.command("audit")
+def spec_evidence_memory_audit(
+    spec_selector: str,
+    as_json: bool = typer.Option(False, "--json"),
+) -> None:
+    from echelon.mempalace_requirements import SpecMemoryError
+    from echelon.mempalace_spec_evidence import audit_spec_evidence_memory
+
+    try:
+        report = audit_spec_evidence_memory(Path.cwd(), spec_selector)
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json(report.to_dict())
+    else:
+        typer.echo(_render_spec_evidence_memory_audit_markdown(report).rstrip())
     raise typer.Exit(code=_memory_exit_code(report.status))
 
 
