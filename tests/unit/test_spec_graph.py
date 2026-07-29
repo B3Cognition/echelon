@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -313,3 +315,316 @@ def test_build_spec_graph_includes_deferrals_amendments_and_verified_ledger(
             "artifact:001-demo:specs/001-demo/verified-fulfillment-ledger.json",
         )
     ]["properties"]["complete"] is False
+
+
+@pytest.mark.unit
+def test_build_spec_graph_uses_native_planner_and_audit_for_drawers(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import echelon.mempalace_audit  # noqa: F401
+
+    spec_dir = _canonical_spec(tmp_path)
+    support = spec_dir / "fulfillment-gaps.md"
+    support.write_text("# Gaps\n\nFR-001 has no gap.\n", encoding="utf-8")
+
+    class FakeAdapter:
+        wing = "demo-wing"
+        palace_path = tmp_path / ".mempalace"
+
+        def plan_canonical_rows(self, content, *, source, artifact_metadata):
+            return [
+                SimpleNamespace(
+                    drawer_id="drawer-fr-001",
+                    requirement_id="FR-001",
+                    room="functional-requirements",
+                    source=source,
+                    artifact_hash=artifact_metadata["artifact_hash"],
+                    canonical_spec_sha256="spec-hash",
+                    requirement_content_sha256="content-hash",
+                )
+            ]
+
+        def plan_canonical_support_rows(self, content, *, source, artifact_metadata):
+            return [
+                SimpleNamespace(
+                    drawer_id="drawer-gap-001",
+                    requirement_id="CTX-fulfillment-gaps-001",
+                    room="spec-fulfillment-evidence",
+                    source=source,
+                    artifact_hash=artifact_metadata["artifact_hash"],
+                    canonical_spec_sha256="support-hash",
+                    requirement_content_sha256="support-content-hash",
+                )
+            ]
+
+    monkeypatch.setattr(
+        "echelon.mempalace_requirements.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.audit_spec_memory",
+        lambda project_root, selector: SimpleNamespace(
+            schema_version=1,
+            wing="demo-wing",
+            status="pass",
+            expected_count=2,
+            present_current_count=2,
+            missing=[],
+            stale=[],
+            wrong_wing=[],
+            wrong_room=[],
+            duplicate=[],
+            non_canonical=[],
+            lifecycle_excluded=[],
+            errors=[],
+        ),
+    )
+
+    payload = build_spec_graph(tmp_path, spec_dir).to_dict()
+    nodes = {item["id"]: item for item in payload["nodes"]}
+    edges = {
+        (item["source"], item["type"], item["target"]): item
+        for item in payload["edges"]
+    }
+
+    assert nodes["drawer:001-demo:drawer-fr-001"]["properties"]["presence"] == "present"
+    assert nodes["drawer:001-demo:drawer-gap-001"]["properties"]["room"] == (
+        "spec-fulfillment-evidence"
+    )
+    support_id = "artifact:001-demo:specs/001-demo/fulfillment-gaps.md"
+    assert support_id in nodes
+    assert (
+        support_id,
+        "STORED_AS",
+        "drawer:001-demo:drawer-gap-001",
+    ) in edges
+    assert (
+        "req:001-demo:FR-001",
+        "STORED_AS",
+        "drawer:001-demo:drawer-fr-001",
+    ) in edges
+    memory_inputs = [
+        item for item in payload["inputs"] if item["role"] == "memory_audit_report"
+    ]
+    assert memory_inputs == [
+        {
+            "path": "mempalace://canonical-spec/001-demo/audit",
+            "hash": memory_inputs[0]["hash"],
+            "role": "memory_audit_report",
+            "required": True,
+            "source_set_digest": memory_inputs[0]["source_set_digest"],
+            "status": "pass",
+        }
+    ]
+
+
+@pytest.mark.unit
+def test_build_spec_graph_retains_expected_drawers_when_memory_is_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import echelon.mempalace_audit  # noqa: F401
+
+    spec_dir = _canonical_spec(tmp_path)
+
+    class FakeAdapter:
+        wing = "demo-wing"
+
+        def plan_canonical_rows(self, content, *, source, artifact_metadata):
+            return [
+                SimpleNamespace(
+                    drawer_id="drawer-fr-001",
+                    requirement_id="FR-001",
+                    room="functional-requirements",
+                    source=source,
+                    artifact_hash=artifact_metadata["artifact_hash"],
+                    canonical_spec_sha256="spec-hash",
+                    requirement_content_sha256="content-hash",
+                )
+            ]
+
+        def plan_canonical_support_rows(self, content, *, source, artifact_metadata):
+            return []
+
+    monkeypatch.setattr(
+        "echelon.mempalace_requirements.create_requirement_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_audit.audit_spec_memory",
+        lambda project_root, selector: SimpleNamespace(
+            schema_version=1,
+            wing="demo-wing",
+            status="unavailable",
+            expected_count=1,
+            present_current_count=0,
+            missing=[],
+            stale=[],
+            wrong_wing=[],
+            wrong_room=[],
+            duplicate=[],
+            non_canonical=[],
+            lifecycle_excluded=[],
+            errors=["ConnectionError"],
+        ),
+    )
+
+    payload = build_spec_graph(tmp_path, spec_dir).to_dict()
+    drawer = next(
+        item for item in payload["nodes"] if item["id"] == "drawer:001-demo:drawer-fr-001"
+    )
+
+    assert drawer["properties"]["presence"] == "unavailable"
+    assert drawer["properties"]["reconciliation_status"] == "unavailable"
+
+
+@pytest.mark.unit
+def test_build_spec_graph_reconciles_applicable_evidence_memory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    spec_dir = _canonical_spec(tmp_path)
+    evidence = spec_dir / "fulfillment-report.md"
+    evidence.write_text("# Fulfillment\n\nFR-001 is implemented.\n", encoding="utf-8")
+
+    class FakeAdapter:
+        wing = "demo-wing"
+
+        def plan_spec_evidence_artifact_rows(
+            self,
+            content,
+            *,
+            source,
+            artifact_metadata,
+        ):
+            return [
+                SimpleNamespace(
+                    drawer_id="drawer-evidence-001",
+                    requirement_id="EVID-001",
+                    room=artifact_metadata["room"],
+                    source=source,
+                    artifact_hash=artifact_metadata["artifact_hash"],
+                    canonical_spec_sha256="evidence-hash",
+                    requirement_content_sha256="evidence-content-hash",
+                )
+            ]
+
+    monkeypatch.setattr(
+        "echelon.mempalace_spec_evidence.create_spec_evidence_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_spec_evidence.audit_spec_evidence_memory",
+        lambda project_root, selector: SimpleNamespace(
+            schema_version=1,
+            wing="demo-wing",
+            status="pass",
+            artifact_count=1,
+            expected_count=1,
+            present_current_count=1,
+            missing=[],
+            stale=[],
+            wrong_wing=[],
+            wrong_room=[],
+            duplicate=[],
+            non_canonical=[],
+            lifecycle_excluded=[],
+            errors=[],
+        ),
+    )
+
+    payload = build_spec_graph(tmp_path, spec_dir).to_dict()
+    nodes = {item["id"]: item for item in payload["nodes"]}
+    edges = {
+        (item["source"], item["type"], item["target"])
+        for item in payload["edges"]
+    }
+
+    artifact_id = "artifact:001-demo:specs/001-demo/fulfillment-report.md"
+    drawer_id = "drawer:001-demo:drawer-evidence-001"
+    assert nodes[drawer_id]["properties"]["artifact_kind"] == "spec-evidence"
+    assert (artifact_id, "STORED_AS", drawer_id) in edges
+    assert any(
+        item["path"] == "mempalace://spec-evidence/001-demo/audit"
+        and item["status"] == "pass"
+        for item in payload["inputs"]
+    )
+
+
+@pytest.mark.unit
+def test_build_spec_graph_limits_re_memory_to_canonical_context(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    spec_dir = _canonical_spec(tmp_path)
+    linked = tmp_path / "re" / "workspace" / "overview.md"
+    linked.parent.mkdir(parents=True)
+    linked.write_text("# Linked RE\n", encoding="utf-8")
+    unrelated = tmp_path / "re" / "workspace" / "relationships.md"
+    unrelated.write_text("# Unrelated RE\n", encoding="utf-8")
+    _write_json(
+        spec_dir / "re-context.json",
+        {
+            "schema_version": 1,
+            "status": "attached",
+            "generation": 2,
+            "artifacts": [
+                {
+                    "path": "re/workspace/overview.md",
+                    "hash": (
+                        "sha256:"
+                        + hashlib.sha256(linked.read_bytes()).hexdigest()
+                    ),
+                }
+            ],
+        },
+    )
+
+    class FakeAdapter:
+        wing = "demo-wing"
+
+        def plan_re_artifact_rows(self, content, *, source, artifact_metadata):
+            return [
+                SimpleNamespace(
+                    drawer_id=f"drawer-{Path(source).stem}",
+                    requirement_id=f"RE-{Path(source).stem.upper()}",
+                    room=artifact_metadata["room"],
+                    source=source,
+                    artifact_hash=artifact_metadata["artifact_hash"],
+                    canonical_spec_sha256="re-hash",
+                    requirement_content_sha256="re-content-hash",
+                )
+            ]
+
+    monkeypatch.setattr(
+        "echelon.mempalace_re.create_re_memory_adapter",
+        lambda project_root, run_id: FakeAdapter(),
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_re.audit_re_memory",
+        lambda project_root: SimpleNamespace(
+            schema_version=1,
+            wing="demo-wing",
+            status="pass",
+            artifact_count=2,
+            expected_count=2,
+            present_current_count=2,
+            missing=[],
+            stale=[],
+            wrong_wing=[],
+            wrong_room=[],
+            duplicate=[],
+            non_canonical=[],
+            lifecycle_excluded=[],
+            errors=[],
+        ),
+    )
+
+    payload = build_spec_graph(tmp_path, spec_dir).to_dict()
+    nodes = {item["id"]: item for item in payload["nodes"]}
+
+    assert "drawer:001-demo:drawer-overview" in nodes
+    assert "drawer:001-demo:drawer-relationships" not in nodes
+    assert "artifact:001-demo:re/workspace/overview.md" in nodes
+    assert "artifact:001-demo:re/workspace/relationships.md" not in nodes

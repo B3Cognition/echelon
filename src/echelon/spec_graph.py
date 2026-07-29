@@ -12,6 +12,9 @@ from typing import Any, Mapping
 from echelon import artifact_index
 from echelon.mempalace_requirements import (
     SUPPORTING_MEMORY_ARTIFACTS,
+    SpecMemoryError,
+    load_canonical_spec_snapshot,
+    load_supporting_artifact_snapshots,
     resolve_spec_dir,
 )
 from harness.canonical_requirements import (
@@ -215,6 +218,31 @@ def build_spec_graph(
     _add_deferrals(spec_dir, nodes, edges)
     _add_amendments(root, spec_dir, nodes, edges, inputs)
     _add_verified_ledger(root, spec_dir, requirement_ids, nodes, edges, inputs)
+    memory_receipts: list[MemoryReceipt] = []
+    _add_canonical_memory(
+        root,
+        spec_dir,
+        nodes,
+        edges,
+        inputs,
+        memory_receipts,
+    )
+    _add_evidence_memory(
+        root,
+        spec_dir,
+        nodes,
+        edges,
+        inputs,
+        memory_receipts,
+    )
+    _add_re_memory(
+        root,
+        spec_dir,
+        nodes,
+        edges,
+        inputs,
+        memory_receipts,
+    )
 
     return SpecArtifactGraph(
         spec_id=spec_id,
@@ -222,7 +250,7 @@ def build_spec_graph(
         inputs=tuple(inputs.values()),
         nodes=tuple(nodes.values()),
         edges=tuple(edges),
-        memory_receipts=(),
+        memory_receipts=tuple(memory_receipts),
     )
 
 
@@ -491,6 +519,500 @@ def _add_verified_ledger(
                 },
             )
         )
+
+
+def _add_canonical_memory(
+    root: Path,
+    spec_dir: Path,
+    nodes: dict[str, GraphNode],
+    edges: list[GraphEdge],
+    inputs: dict[str, GraphInput],
+    receipts: list[MemoryReceipt],
+) -> None:
+    snapshot = load_canonical_spec_snapshot(root, spec_dir)
+    support_snapshots = load_supporting_artifact_snapshots(root, spec_dir)
+    for support in support_snapshots:
+        _add_artifact(
+            root,
+            spec_dir,
+            support.spec_file,
+            nodes,
+            inputs,
+            role="supporting-context",
+        )
+    snapshots = [snapshot, *support_snapshots]
+    source_set_digest = _memory_source_set_digest(snapshots)
+    virtual_path = f"mempalace://canonical-spec/{spec_dir.name}/audit"
+
+    try:
+        from echelon.mempalace_requirements import (
+            create_requirement_memory_adapter,
+        )
+
+        adapter = create_requirement_memory_adapter(root, run_id="graph")
+        planned_rows = list(
+            adapter.plan_canonical_rows(
+                snapshot.content,
+                source=snapshot.source,
+                artifact_metadata=snapshot.artifact_metadata,
+            )
+        )
+        for support in support_snapshots:
+            planned_rows.extend(
+                adapter.plan_canonical_support_rows(
+                    support.content,
+                    source=support.source,
+                    artifact_metadata=support.artifact_metadata,
+                )
+            )
+        from echelon.mempalace_audit import audit_spec_memory
+
+        report = audit_spec_memory(root, spec_dir)
+    except SpecMemoryError as exc:
+        report = _UnavailableMemoryReport(type(exc).__name__)
+        planned_rows = []
+    except (Exception, SystemExit) as exc:
+        report = _UnavailableMemoryReport(type(exc).__name__)
+        planned_rows = locals().get("planned_rows", [])
+
+    normalized = _normalized_memory_audit(report)
+    audit_hash = _canonical_digest(normalized)
+    status = str(getattr(report, "status", "unavailable"))
+    receipt = MemoryReceipt(
+        domain="canonical-spec",
+        source_set_digest=source_set_digest,
+        audit_hash=audit_hash,
+        status=status,
+    )
+    receipts.append(receipt)
+    inputs[virtual_path] = GraphInput(
+        path=virtual_path,
+        hash=audit_hash,
+        role="memory_audit_report",
+        required=True,
+        status=status,
+        source_set_digest=source_set_digest,
+    )
+    _add_drawer_rows(
+        spec_dir,
+        planned_rows,
+        report,
+        nodes,
+        edges,
+        source_artifact_kind={
+            item.source: str(
+                item.artifact_metadata.get("artifact_kind")
+                or (
+                    "requirement"
+                    if item.source == snapshot.source
+                    else "supporting-context"
+                )
+            )
+            for item in snapshots
+        },
+    )
+
+
+def _add_evidence_memory(
+    root: Path,
+    spec_dir: Path,
+    nodes: dict[str, GraphNode],
+    edges: list[GraphEdge],
+    inputs: dict[str, GraphInput],
+    receipts: list[MemoryReceipt],
+) -> None:
+    from echelon.mempalace_spec_evidence import (
+        audit_spec_evidence_memory,
+        create_spec_evidence_memory_adapter,
+        load_spec_evidence_artifact_snapshots,
+    )
+
+    snapshots = load_spec_evidence_artifact_snapshots(root, spec_dir)
+    if not snapshots:
+        return
+    _add_artifact_memory_domain(
+        root=root,
+        spec_dir=spec_dir,
+        domain="spec-evidence",
+        virtual_path=f"mempalace://spec-evidence/{spec_dir.name}/audit",
+        snapshots=snapshots,
+        planner_name="plan_spec_evidence_artifact_rows",
+        adapter_factory=lambda: create_spec_evidence_memory_adapter(
+            root,
+            run_id="graph",
+        ),
+        audit=lambda: audit_spec_evidence_memory(root, spec_dir),
+        required=False,
+        nodes=nodes,
+        edges=edges,
+        inputs=inputs,
+        receipts=receipts,
+    )
+
+
+def _add_re_memory(
+    root: Path,
+    spec_dir: Path,
+    nodes: dict[str, GraphNode],
+    edges: list[GraphEdge],
+    inputs: dict[str, GraphInput],
+    receipts: list[MemoryReceipt],
+) -> None:
+    linked_sources = {
+        _workspace_path(root, path)
+        for path in _linked_re_artifacts(root, spec_dir)
+        if path.name != "re-context.json"
+    }
+    if not linked_sources:
+        return
+    from echelon.mempalace_re import (
+        audit_re_memory,
+        create_re_memory_adapter,
+        load_re_artifact_snapshots,
+    )
+
+    snapshots = [
+        snapshot
+        for snapshot in load_re_artifact_snapshots(root)
+        if snapshot.source in linked_sources
+    ]
+    if not snapshots:
+        return
+    _add_artifact_memory_domain(
+        root=root,
+        spec_dir=spec_dir,
+        domain="published-re",
+        virtual_path="mempalace://published-re/audit",
+        snapshots=snapshots,
+        planner_name="plan_re_artifact_rows",
+        adapter_factory=lambda: create_re_memory_adapter(root, run_id="graph"),
+        audit=lambda: audit_re_memory(root),
+        required=False,
+        nodes=nodes,
+        edges=edges,
+        inputs=inputs,
+        receipts=receipts,
+        project_audit=True,
+    )
+
+
+def _add_artifact_memory_domain(
+    *,
+    root: Path,
+    spec_dir: Path,
+    domain: str,
+    virtual_path: str,
+    snapshots: list[object],
+    planner_name: str,
+    adapter_factory: object,
+    audit: object,
+    required: bool,
+    nodes: dict[str, GraphNode],
+    edges: list[GraphEdge],
+    inputs: dict[str, GraphInput],
+    receipts: list[MemoryReceipt],
+    project_audit: bool = False,
+) -> None:
+    for snapshot in snapshots:
+        _add_artifact(
+            root,
+            spec_dir,
+            getattr(snapshot, "artifact_file"),
+            nodes,
+            inputs,
+            role=(
+                "verification-evidence"
+                if domain == "spec-evidence"
+                else "reverse-engineering"
+            ),
+        )
+    source_set_digest = _memory_source_set_digest(snapshots)
+    planned_rows: list[object] = []
+    try:
+        adapter = adapter_factory()  # type: ignore[operator]
+        planner = getattr(adapter, planner_name)
+        for snapshot in snapshots:
+            planned_rows.extend(
+                planner(
+                    getattr(snapshot, "content"),
+                    source=getattr(snapshot, "source"),
+                    artifact_metadata=getattr(snapshot, "artifact_metadata"),
+                )
+            )
+        report = audit()  # type: ignore[operator]
+        if project_audit:
+            report = _project_memory_audit(
+                report,
+                {str(getattr(row, "drawer_id")) for row in planned_rows},
+            )
+    except SpecMemoryError as exc:
+        report = _UnavailableMemoryReport(type(exc).__name__)
+    except (Exception, SystemExit) as exc:
+        report = _UnavailableMemoryReport(type(exc).__name__)
+
+    normalized = _normalized_memory_audit(report)
+    audit_hash = _canonical_digest(normalized)
+    status = str(getattr(report, "status", "unavailable"))
+    receipts.append(
+        MemoryReceipt(
+            domain=domain,
+            source_set_digest=source_set_digest,
+            audit_hash=audit_hash,
+            status=status,
+        )
+    )
+    inputs[virtual_path] = GraphInput(
+        path=virtual_path,
+        hash=audit_hash,
+        role="memory_audit_report",
+        required=required,
+        status=status,
+        source_set_digest=source_set_digest,
+    )
+    _add_drawer_rows(
+        spec_dir,
+        planned_rows,
+        report,
+        nodes,
+        edges,
+        source_artifact_kind={
+            str(getattr(snapshot, "source")): str(
+                getattr(snapshot, "artifact_metadata", {}).get(
+                    "artifact_kind",
+                    domain,
+                )
+            )
+            for snapshot in snapshots
+        },
+    )
+
+
+def _project_memory_audit(report: object, drawer_ids: set[str]) -> object:
+    projected: dict[str, list[str]] = {}
+    fail_fields = (
+        "missing",
+        "stale",
+        "wrong_wing",
+        "wrong_room",
+        "non_canonical",
+        "lifecycle_excluded",
+    )
+    for field in (*fail_fields, "duplicate"):
+        projected[field] = sorted(
+            value
+            for value in getattr(report, field, [])
+            if value in drawer_ids
+        )
+    projected["errors"] = sorted(
+        value
+        for value in getattr(report, "errors", [])
+        if any(str(value).startswith(drawer_id) for drawer_id in drawer_ids)
+    )
+    if str(getattr(report, "status", "")) == "unavailable":
+        status = "unavailable"
+    elif any(projected[field] for field in fail_fields):
+        status = "fail"
+    elif projected["duplicate"] or projected["errors"]:
+        status = "warn"
+    else:
+        status = "pass"
+    return _ProjectedMemoryReport(
+        report=report,
+        status=status,
+        expected_count=len(drawer_ids),
+        issues=projected,
+    )
+
+
+class _ProjectedMemoryReport:
+    def __init__(
+        self,
+        *,
+        report: object,
+        status: str,
+        expected_count: int,
+        issues: Mapping[str, list[str]],
+    ) -> None:
+        self.schema_version = int(getattr(report, "schema_version", 1))
+        self.wing = getattr(report, "wing", None)
+        self.status = status
+        self.artifact_count = 0
+        self.expected_count = expected_count
+        failed_ids = {
+            drawer_id
+            for values in issues.values()
+            for drawer_id in values
+            if drawer_id in {
+                value
+                for field in (
+                    "missing",
+                    "stale",
+                    "wrong_wing",
+                    "wrong_room",
+                    "non_canonical",
+                    "lifecycle_excluded",
+                )
+                for value in issues[field]
+            }
+        }
+        self.present_current_count = expected_count - len(failed_ids)
+        for field, values in issues.items():
+            setattr(self, field, values)
+
+
+def _add_drawer_rows(
+    spec_dir: Path,
+    planned_rows: list[object],
+    report: object,
+    nodes: dict[str, GraphNode],
+    edges: list[GraphEdge],
+    *,
+    source_artifact_kind: Mapping[str, str],
+) -> None:
+    issue_fields = (
+        "missing",
+        "stale",
+        "wrong_wing",
+        "wrong_room",
+        "non_canonical",
+        "lifecycle_excluded",
+        "duplicate",
+    )
+    issues_by_id: dict[str, list[str]] = {}
+    for field in issue_fields:
+        values = getattr(report, field, [])
+        if not isinstance(values, list):
+            continue
+        for drawer_id in values:
+            if isinstance(drawer_id, str):
+                issues_by_id.setdefault(drawer_id, []).append(field)
+    status = str(getattr(report, "status", "unavailable"))
+
+    for row in planned_rows:
+        drawer_id = str(getattr(row, "drawer_id"))
+        source = str(getattr(row, "source"))
+        requirement_id = str(getattr(row, "requirement_id", ""))
+        issue_codes = sorted(issues_by_id.get(drawer_id, []))
+        if status == "unavailable":
+            presence = "unavailable"
+            reconciliation_status = "unavailable"
+        elif "missing" in issue_codes:
+            presence = "missing"
+            reconciliation_status = "fail"
+        elif issue_codes:
+            presence = "invalid"
+            reconciliation_status = "fail"
+        else:
+            presence = "present"
+            reconciliation_status = "pass"
+
+        node_id = f"drawer:{spec_dir.name}:{drawer_id}"
+        nodes[node_id] = GraphNode(
+            node_id,
+            "MemPalaceDrawer",
+            {
+                "drawer_id": drawer_id,
+                "source_path": source,
+                "room": str(getattr(row, "room", "")),
+                "artifact_kind": source_artifact_kind.get(source, "unknown"),
+                "artifact_hash": str(getattr(row, "artifact_hash", "")),
+                "content_hash": str(
+                    getattr(row, "requirement_content_sha256", "")
+                ),
+                "presence": presence,
+                "reconciliation_status": reconciliation_status,
+                "issue_codes": issue_codes,
+            },
+        )
+        requirement_node = f"req:{spec_dir.name}:{requirement_id}"
+        artifact_node = f"artifact:{spec_dir.name}:{source}"
+        source_node = (
+            requirement_node
+            if requirement_node in nodes and source_artifact_kind.get(source) == "requirement"
+            else artifact_node
+        )
+        if source_node not in nodes:
+            raise SpecGraphError(
+                f"memory planner source has no Artifact node: {source}"
+            )
+        edges.append(
+            GraphEdge(
+                source_node,
+                "STORED_AS",
+                node_id,
+                {
+                    "presence": presence,
+                    "reconciliation_status": reconciliation_status,
+                },
+            )
+        )
+
+
+def _memory_source_set_digest(snapshots: list[object]) -> str:
+    records = [
+        {
+            "path": str(getattr(snapshot, "source")),
+            "hash": str(
+                getattr(snapshot, "artifact_metadata", {}).get("artifact_hash")
+            ),
+            "artifact_kind": str(
+                getattr(snapshot, "artifact_metadata", {}).get(
+                    "artifact_kind",
+                    "requirement",
+                )
+            ),
+            "room": str(
+                getattr(snapshot, "artifact_metadata", {}).get("room", "")
+            ),
+        }
+        for snapshot in snapshots
+    ]
+    return _canonical_digest(sorted(records, key=lambda item: item["path"]))
+
+
+def _normalized_memory_audit(report: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": int(getattr(report, "schema_version", 1)),
+        "wing": getattr(report, "wing", None),
+        "status": str(getattr(report, "status", "unavailable")),
+        "artifact_count": int(getattr(report, "artifact_count", 0)),
+        "expected_count": int(getattr(report, "expected_count", 0)),
+        "present_current_count": int(
+            getattr(report, "present_current_count", 0)
+        ),
+    }
+    for field in (
+        "missing",
+        "stale",
+        "wrong_wing",
+        "wrong_room",
+        "duplicate",
+        "non_canonical",
+        "lifecycle_excluded",
+        "errors",
+    ):
+        values = getattr(report, field, [])
+        payload[field] = sorted(str(value) for value in values)
+    return payload
+
+
+class _UnavailableMemoryReport:
+    schema_version = 1
+    wing = None
+    status = "unavailable"
+    artifact_count = 0
+    expected_count = 0
+    present_current_count = 0
+    missing: list[str] = []
+    stale: list[str] = []
+    wrong_wing: list[str] = []
+    wrong_room: list[str] = []
+    duplicate: list[str] = []
+    non_canonical: list[str] = []
+    lifecycle_excluded: list[str] = []
+
+    def __init__(self, error: str) -> None:
+        self.errors = [error]
 
 
 def _linked_re_artifacts(root: Path, spec_dir: Path) -> set[Path]:
