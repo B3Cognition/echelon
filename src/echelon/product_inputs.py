@@ -9,8 +9,9 @@ import re
 import shutil
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
@@ -75,6 +76,53 @@ class ProductInputResolution:
         }
 
 
+@dataclass(frozen=True)
+class ProductInputAttachmentResult:
+    """Result of appending evidence to an existing product-input contract."""
+
+    attachment_id: str
+    inputs_dir: Path
+    revision: ProductInputResolution | None
+    added: tuple[dict[str, object], ...]
+    duplicates: tuple[dict[str, object], ...]
+    ledger_path: Path
+
+    def state_product_inputs(
+        self,
+        project_root: Path,
+        current_product_inputs: Mapping[str, object],
+    ) -> dict[str, object]:
+        updated = dict(current_product_inputs)
+        updated.update({
+            "inputs_dir": _portable(self.inputs_dir, project_root),
+            "manifest": _portable(self.inputs_dir / "manifest.json", project_root),
+            "catalog": _portable(self.inputs_dir / "catalog.json", project_root),
+            "input_context": _portable(self.inputs_dir / "input-context.md", project_root),
+            "requirement_context": _portable(self.inputs_dir / "requirement-context.md", project_root),
+            "reference_context": _portable(self.inputs_dir / "reference-context.md", project_root),
+            "traceability": _portable(self.inputs_dir / "traceability.json", project_root),
+            "traceability_markdown": _portable(self.inputs_dir / "traceability.md", project_root),
+            "manifest_hash": hashlib.sha256((self.inputs_dir / "manifest.json").read_bytes()).hexdigest(),
+        })
+        return updated
+
+    def state_attachments(self, project_root: Path) -> list[dict[str, object]]:
+        if not self.ledger_path.exists():
+            return []
+        ledger = _read_json_object(self.ledger_path, "product input attachment ledger")
+        attachments = ledger.get("attachments")
+        if not isinstance(attachments, list):
+            return []
+        normalized: list[dict[str, object]] = []
+        for item in attachments:
+            if not isinstance(item, dict):
+                continue
+            clone = dict(item)
+            clone["ledger"] = _portable(self.ledger_path, project_root)
+            normalized.append(clone)
+        return normalized
+
+
 def parse_input_declaration(value: str) -> ProductInputDeclaration:
     """Parse one ``role:location`` CLI declaration without corrupting URL schemes."""
     role, separator, location = value.partition(":")
@@ -112,6 +160,156 @@ def resolve_product_input_revision(
         Path(inputs_dir),
         declarations,
         replace_existing=False,
+    )
+
+
+def attach_product_input_revision(
+    project_root: Path,
+    inputs_dir: Path,
+    declarations: Sequence[ProductInputDeclaration],
+    *,
+    command: str,
+    evidence_requests: Mapping[str, object] | None = None,
+) -> ProductInputAttachmentResult:
+    """Append one immutable evidence revision and rebuild aggregate indexes."""
+    project_root = Path(project_root).resolve()
+    inputs_dir = Path(inputs_dir)
+    manifest_path = inputs_dir / "manifest.json"
+    catalog_path = inputs_dir / "catalog.json"
+    traceability_path = inputs_dir / "traceability.json"
+    manifest = _read_json_object(manifest_path, "product input manifest")
+    catalog = _read_json_object(catalog_path, "product input catalog")
+    traceability = _read_json_object(traceability_path, "product input traceability")
+    ledger_path = inputs_dir / "attachment-ledger.json"
+    ledger = (
+        _read_json_object(ledger_path, "product input attachment ledger")
+        if ledger_path.exists()
+        else {"schema_version": 1, "attachments": []}
+    )
+    if not isinstance(ledger.get("attachments"), list):
+        raise ProductInputError("product input attachment ledger has no attachments list")
+
+    normalized = tuple(_normalize_declaration(item) for item in declarations)
+    if not normalized:
+        raise ProductInputError("add-input requires at least one input declaration")
+    existing_declarations = _attachment_declaration_keys(manifest, ledger)
+    declaration_duplicates = [
+        {
+            "role": item.role,
+            "location": item.location,
+            "reason": "duplicate declaration",
+        }
+        for item in normalized
+        if (item.role, item.location) in existing_declarations
+    ]
+    new_declarations = [
+        item for item in normalized
+        if (item.role, item.location) not in existing_declarations
+    ]
+    attachment_id = _next_attachment_id(inputs_dir, ledger)
+    if not new_declarations:
+        return ProductInputAttachmentResult(
+            attachment_id=attachment_id,
+            inputs_dir=inputs_dir,
+            revision=None,
+            added=(),
+            duplicates=tuple(declaration_duplicates),
+            ledger_path=ledger_path,
+        )
+
+    revision_dir = inputs_dir / "attachments" / attachment_id
+    revision = resolve_product_input_revision(
+        project_root,
+        revision_dir,
+        new_declarations,
+    )
+    revision_manifest = _read_json_object(revision.manifest_path, "attachment manifest")
+    revision_catalog = _read_json_object(revision.catalog_path, "attachment catalog")
+    known_hashes = _accepted_hashes(manifest, ledger)
+    accepted_resources = [
+        dict(item)
+        for item in revision_manifest.get("resources", [])
+        if isinstance(item, dict) and item.get("status") == "accepted"
+    ]
+    duplicate_hashes = {
+        str(item.get("sha256"))
+        for item in accepted_resources
+        if str(item.get("sha256") or "") in known_hashes
+    }
+    added_resources = [
+        _attachment_resource_summary(
+            item,
+            attachment_id=attachment_id,
+            inputs_dir=inputs_dir,
+            project_root=project_root,
+        )
+        for item in accepted_resources
+        if str(item.get("sha256") or "") not in duplicate_hashes
+    ]
+    content_duplicates = [
+        {
+            **_attachment_resource_summary(
+                item,
+                attachment_id=attachment_id,
+                inputs_dir=inputs_dir,
+                project_root=project_root,
+            ),
+            "reason": "duplicate content",
+        }
+        for item in accepted_resources
+        if str(item.get("sha256") or "") in duplicate_hashes
+    ]
+    duplicates = tuple([*declaration_duplicates, *content_duplicates])
+    if not added_resources:
+        shutil.rmtree(revision_dir, ignore_errors=True)
+        return ProductInputAttachmentResult(
+            attachment_id=attachment_id,
+            inputs_dir=inputs_dir,
+            revision=None,
+            added=(),
+            duplicates=duplicates,
+            ledger_path=ledger_path,
+        )
+
+    linked_request_ids = _linked_evidence_request_ids(
+        evidence_requests,
+        [*new_declarations],
+        added_resources,
+    )
+    attachment_entry = {
+        "id": attachment_id,
+        "command": command,
+        "attached_at": datetime.now(timezone.utc).isoformat(),
+        "declarations": [
+            {"role": item.role, "location": item.location}
+            for item in new_declarations
+        ],
+        "resources": added_resources,
+        "duplicates": list(duplicates),
+        "linked_evidence_request_ids": linked_request_ids,
+        "revision_manifest": _portable(revision.manifest_path, project_root),
+        "revision_catalog": _portable(revision.catalog_path, project_root),
+    }
+    ledger["attachments"].append(attachment_entry)
+
+    _write_aggregate_product_inputs(
+        inputs_dir,
+        manifest,
+        catalog,
+        traceability,
+        revision_manifest,
+        revision_catalog,
+        duplicate_hashes=duplicate_hashes,
+        attachment_id=attachment_id,
+    )
+    _write_json(ledger_path, ledger)
+    return ProductInputAttachmentResult(
+        attachment_id=attachment_id,
+        inputs_dir=inputs_dir,
+        revision=revision,
+        added=tuple(added_resources),
+        duplicates=duplicates,
+        ledger_path=ledger_path,
     )
 
 
@@ -626,6 +824,287 @@ def repair_product_input_structural_units(
         _write_json(traceability_path, ledger)
         _write_traceability_markdown(traceability_path.with_suffix(".md"), ledger)
     return tuple(repaired)
+
+
+def _read_json_object(path: Path, label: str) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ProductInputError(f"cannot read {label}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ProductInputError(f"{label} must be a JSON object")
+    return payload
+
+
+def _attachment_declaration_keys(
+    manifest: Mapping[str, object],
+    ledger: Mapping[str, object],
+) -> set[tuple[str, str]]:
+    keys = {
+        (str(item.get("role") or ""), str(item.get("location") or ""))
+        for item in manifest.get("declarations", [])
+        if isinstance(item, dict)
+    }
+    attachments = ledger.get("attachments")
+    if isinstance(attachments, list):
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            declarations = attachment.get("declarations")
+            if not isinstance(declarations, list):
+                continue
+            keys.update(
+                (str(item.get("role") or ""), str(item.get("location") or ""))
+                for item in declarations
+                if isinstance(item, dict)
+            )
+    return {(role, location) for role, location in keys if role and location}
+
+
+def _accepted_hashes(
+    manifest: Mapping[str, object],
+    ledger: Mapping[str, object],
+) -> set[str]:
+    hashes = {
+        str(item.get("sha256"))
+        for item in manifest.get("resources", [])
+        if isinstance(item, dict)
+        and item.get("status") == "accepted"
+        and str(item.get("sha256") or "")
+    }
+    attachments = ledger.get("attachments")
+    if isinstance(attachments, list):
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            resources = attachment.get("resources")
+            if not isinstance(resources, list):
+                continue
+            hashes.update(
+                str(item.get("sha256"))
+                for item in resources
+                if isinstance(item, dict) and str(item.get("sha256") or "")
+            )
+    return hashes
+
+
+def _next_attachment_id(
+    inputs_dir: Path,
+    ledger: Mapping[str, object],
+) -> str:
+    ids: list[int] = []
+    attachments = ledger.get("attachments")
+    if isinstance(attachments, list):
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            raw_id = str(attachment.get("id") or "")
+            if raw_id.isdigit():
+                ids.append(int(raw_id))
+    attachment_root = inputs_dir / "attachments"
+    if attachment_root.exists():
+        ids.extend(
+            int(path.name)
+            for path in attachment_root.iterdir()
+            if path.is_dir() and path.name.isdigit()
+        )
+    return f"{(max(ids) if ids else 0) + 1:03d}"
+
+
+def _attachment_resource_summary(
+    resource: Mapping[str, object],
+    *,
+    attachment_id: str,
+    inputs_dir: Path,
+    project_root: Path,
+) -> dict[str, object]:
+    snapshot = str(resource.get("snapshot") or "")
+    run_relative_snapshot = (
+        (Path("attachments") / attachment_id / snapshot).as_posix()
+        if snapshot
+        else ""
+    )
+    return {
+        "declaration_id": str(resource.get("declaration_id") or ""),
+        "role": str(resource.get("role") or ""),
+        "source_locator": str(resource.get("source_locator") or ""),
+        "declared_relative_path": str(resource.get("declared_relative_path") or ""),
+        "sha256": str(resource.get("sha256") or ""),
+        "size_bytes": resource.get("size_bytes", 0),
+        "media_type": str(resource.get("media_type") or ""),
+        "snapshot": run_relative_snapshot,
+        "snapshot_path": _portable(inputs_dir / run_relative_snapshot, project_root)
+        if run_relative_snapshot
+        else "",
+    }
+
+
+def _linked_evidence_request_ids(
+    evidence_requests: Mapping[str, object] | None,
+    declarations: Sequence[ProductInputDeclaration],
+    resources: Sequence[Mapping[str, object]],
+) -> list[str]:
+    if not isinstance(evidence_requests, Mapping):
+        return []
+    requests = evidence_requests.get("requests")
+    if not isinstance(requests, list):
+        return []
+    haystack = " ".join(
+        [
+            *(item.location for item in declarations),
+            *(
+                str(resource.get("source_locator") or "")
+                for resource in resources
+            ),
+            *(
+                str(resource.get("declared_relative_path") or "")
+                for resource in resources
+            ),
+        ]
+    ).lower()
+    request_ids: list[str] = []
+    for request in requests:
+        if not isinstance(request, dict):
+            continue
+        request_id = str(request.get("id") or "").strip()
+        if not request_id:
+            continue
+        question = str(request.get("question") or "").lower()
+        if request_id.lower() in haystack or any(
+            token and len(token) > 3 and token in haystack
+            for token in re.split(r"\W+", question)
+        ):
+            request_ids.append(request_id)
+    if request_ids:
+        return request_ids
+    return [
+        str(request.get("id"))
+        for request in requests
+        if isinstance(request, dict) and str(request.get("id") or "").strip()
+    ]
+
+
+def _write_aggregate_product_inputs(
+    inputs_dir: Path,
+    base_manifest: Mapping[str, object],
+    base_catalog: Mapping[str, object],
+    base_traceability: Mapping[str, object],
+    revision_manifest: Mapping[str, object],
+    revision_catalog: Mapping[str, object],
+    *,
+    duplicate_hashes: set[str],
+    attachment_id: str,
+) -> None:
+    aggregate_manifest = json.loads(json.dumps(base_manifest))
+    aggregate_catalog = json.loads(json.dumps(base_catalog))
+    aggregate_traceability = json.loads(json.dumps(base_traceability))
+
+    aggregate_manifest.setdefault("schema_version", 1)
+    aggregate_manifest.setdefault("declarations", [])
+    aggregate_manifest.setdefault("resources", [])
+    aggregate_catalog.setdefault("schema_version", 1)
+    aggregate_catalog.setdefault("units", [])
+    aggregate_traceability.setdefault("schema_version", 1)
+    aggregate_traceability.setdefault("requirements", [])
+    aggregate_traceability.setdefault("references", [])
+
+    declaration_id_map: dict[str, str] = {}
+    declarations = revision_manifest.get("declarations")
+    if isinstance(declarations, list):
+        for declaration in declarations:
+            if not isinstance(declaration, dict):
+                continue
+            old_id = str(declaration.get("id") or "")
+            new_id = f"attachment-{attachment_id}-{old_id}" if old_id else f"attachment-{attachment_id}"
+            declaration_id_map[old_id] = new_id
+            aggregate_manifest["declarations"].append({
+                **declaration,
+                "id": new_id,
+                "attachment_id": attachment_id,
+            })
+
+    resources = revision_manifest.get("resources")
+    if isinstance(resources, list):
+        for resource in resources:
+            if not isinstance(resource, dict):
+                continue
+            cloned = dict(resource)
+            old_declaration_id = str(cloned.get("declaration_id") or "")
+            if old_declaration_id in declaration_id_map:
+                cloned["declaration_id"] = declaration_id_map[old_declaration_id]
+            cloned["attachment_id"] = attachment_id
+            if cloned.get("snapshot"):
+                cloned["snapshot"] = (
+                    Path("attachments") / attachment_id / str(cloned["snapshot"])
+                ).as_posix()
+            if (
+                cloned.get("status") == "accepted"
+                and str(cloned.get("sha256") or "") in duplicate_hashes
+            ):
+                cloned["status"] = "excluded"
+                cloned["reason"] = "duplicate content"
+            aggregate_manifest["resources"].append(cloned)
+
+    units = revision_catalog.get("units")
+    if isinstance(units, list):
+        existing_unit_ids = {
+            str(unit.get("id"))
+            for unit in aggregate_catalog.get("units", [])
+            if isinstance(unit, dict) and unit.get("id")
+        }
+        for unit in units:
+            if not isinstance(unit, dict):
+                continue
+            if str(unit.get("sha256") or "") in duplicate_hashes:
+                continue
+            cloned = dict(unit)
+            old_declaration_id = str(cloned.get("declaration_id") or "")
+            if old_declaration_id in declaration_id_map:
+                cloned["declaration_id"] = declaration_id_map[old_declaration_id]
+            cloned["attachment_id"] = attachment_id
+            if cloned.get("snapshot"):
+                cloned["snapshot"] = (
+                    Path("attachments") / attachment_id / str(cloned["snapshot"])
+                ).as_posix()
+            if str(cloned.get("id") or "") in existing_unit_ids:
+                continue
+            aggregate_catalog["units"].append(cloned)
+            existing_unit_ids.add(str(cloned.get("id") or ""))
+            if cloned.get("role") == "requirement" and cloned.get("traceability_required", True):
+                aggregate_traceability["requirements"].append({
+                    "input_unit_id": cloned["id"],
+                    "disposition": "open_question",
+                    "rationale": "Awaiting specification analysis.",
+                    "spec_ids": [],
+                    "task_ids": [],
+                    "targets": [],
+                })
+            elif cloned.get("role") == "reference":
+                aggregate_traceability["references"].append({
+                    "input_unit_id": cloned["id"],
+                    "state": "reviewed_unused",
+                    "rationale": "Awaiting analysis.",
+                })
+
+    _write_json(inputs_dir / "manifest.json", aggregate_manifest)
+    _write_json(inputs_dir / "catalog.json", aggregate_catalog)
+    aggregate_units = [
+        unit for unit in aggregate_catalog.get("units", [])
+        if isinstance(unit, dict)
+    ]
+    _write_context(inputs_dir / "requirement-context.md", aggregate_units, "requirement")
+    _write_context(inputs_dir / "reference-context.md", aggregate_units, "reference")
+    input_context = inputs_dir / "input-context.md"
+    input_context.write_text(
+        "# Product Input Context\n\n"
+        f"- Manifest: `{inputs_dir / 'manifest.json'}`\n"
+        f"- Catalog: `{inputs_dir / 'catalog.json'}`\n"
+        f"- Requirement units: `{inputs_dir / 'requirement-context.md'}`\n"
+        f"- Reference units: `{inputs_dir / 'reference-context.md'}`\n",
+        encoding="utf-8",
+    )
+    _write_json(inputs_dir / "traceability.json", aggregate_traceability)
+    _write_traceability_markdown(inputs_dir / "traceability.md", aggregate_traceability)
 
 
 def _normalize_declaration(declaration: ProductInputDeclaration) -> ProductInputDeclaration:
