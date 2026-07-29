@@ -358,6 +358,41 @@ def _render_product_input_context(state: dict) -> str:
         "  task_ids: []",
         "  targets: []",
     ]
+    attachments = state.get("product_input_attachments")
+    if isinstance(attachments, list) and attachments:
+        lines.extend([
+            "",
+            "## Added Reference Material",
+            "- Preserve and extend prior investigation artifacts; do not restart evidence collection from scratch.",
+        ])
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            attachment_id = str(attachment.get("id") or "").strip() or "(unknown)"
+            request_ids = [
+                str(item).strip()
+                for item in attachment.get("linked_evidence_request_ids", [])
+                if str(item).strip()
+            ]
+            intended_for = ", ".join(request_ids) if request_ids else "outstanding evidence requests"
+            lines.append(f"- Attachment {attachment_id}: intended for {intended_for}.")
+            declarations = attachment.get("declarations")
+            if isinstance(declarations, list):
+                for declaration in declarations:
+                    if not isinstance(declaration, dict):
+                        continue
+                    role = str(declaration.get("role") or "").strip()
+                    location = str(declaration.get("location") or "").strip()
+                    if role or location:
+                        lines.append(f"  - {role or 'input'}: {location}")
+            resources = attachment.get("resources")
+            if isinstance(resources, list):
+                for resource in resources[:10]:
+                    if not isinstance(resource, dict):
+                        continue
+                    snapshot = str(resource.get("snapshot") or "").strip()
+                    if snapshot:
+                        lines.append(f"  - snapshot: {snapshot}")
     repair = state.get("product_input_mapping_repair")
     if isinstance(repair, dict):
         blockers = repair.get("blockers")

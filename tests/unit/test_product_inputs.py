@@ -1043,6 +1043,48 @@ def test_product_input_context_includes_controller_mapping_repair() -> None:
     assert "Do not return COMPLETE" in prompt
 
 
+def test_product_input_context_renders_added_reference_material() -> None:
+    from harness.squad_executors import _render_product_input_context
+
+    prompt = _render_product_input_context({
+        "product_inputs": {
+            "manifest": "runs/run-1/inputs/manifest.json",
+            "catalog": "runs/run-1/inputs/catalog.json",
+            "traceability": "runs/run-1/inputs/traceability.json",
+            "requirement_context": "runs/run-1/inputs/requirement-context.md",
+            "reference_context": "runs/run-1/inputs/reference-context.md",
+        },
+        "product_input_attachments": [
+            {
+                "id": "001",
+                "declarations": [
+                    {
+                        "role": "reference",
+                        "location": "sources/DE-OPTA-SCHEMA-MAPPING",
+                    }
+                ],
+                "resources": [
+                    {
+                        "snapshot": (
+                            "attachments/001/snapshots/reference/"
+                            "reference-001/mapping.csv"
+                        )
+                    }
+                ],
+                "linked_evidence_request_ids": ["ER-001"],
+            }
+        ],
+        "evidence_requests": {
+            "requests": [{"id": "ER-001", "question": "Need mapping"}]
+        },
+    })
+
+    assert "## Added Reference Material" in prompt
+    assert "sources/DE-OPTA-SCHEMA-MAPPING" in prompt
+    assert "ER-001" in prompt
+    assert "Preserve and extend prior investigation artifacts" in prompt
+
+
 def test_product_input_context_makes_phase_one_id_repair_allowlist_explicit() -> None:
     from harness.squad_executors import _render_product_input_context
 

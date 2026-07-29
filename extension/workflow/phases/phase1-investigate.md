@@ -145,6 +145,16 @@ recovery dispatch, return the controller-provided prior routing state updates
 again after completing the artifact; do not downgrade a validated or
 conflicting conclusion merely because its report was initially incomplete.
 
+## Added Reference Material Recovery
+
+When the Product Input Contract includes **Added Reference Material**, read the
+prior `evidence-inventory.json`, `evidence-resolution.md`,
+`evidence-grades.md`, and `investigation/` reports before expanding sources.
+Preserve conclusions that are still supported. Expand only the newly declared
+material and any directly relevant linked sources needed to resolve outstanding
+`ER-*` requests. Do not restart evidence collection from scratch merely because
+new references were attached.
+
 ## Outputs
 
 Produce in `{spec_dir}`:
