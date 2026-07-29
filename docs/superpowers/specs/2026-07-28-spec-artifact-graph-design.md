@@ -687,3 +687,27 @@ Integration tests:
 7. Keep automatic lifecycle integration off until manual reports are stable.
 8. Later, allow GraphRAG features to consume the audited graph as discovery
    context, not as correctness proof.
+
+## Implementation Status
+
+Implemented on 2026-07-29:
+
+- `harness.published_re_context` publishes canonical `re-context.json` during
+  normal Phase A finalization.
+- `echelon.spec_graph` builds deterministic graph JSON, source-set receipts,
+  native MemPalace domain receipts, drawer reconciliation, and canonical
+  lifecycle edges.
+- `echelon.spec_graph_audit` audits graph freshness, memory freshness, input
+  identity changes, and lifecycle coherence independently.
+- `echelon spec graph build`, `audit`, and `refresh` expose the workflow without
+  mining MemPalace.
+
+Verification:
+
+```text
+python -m pytest -q tests/integration/test_spec_graph_workflow.py
+1 passed
+
+python -m pytest -q tests/unit
+4075 passed
+```
