@@ -4771,6 +4771,8 @@ class TestSquadControllerBasics:
         assert updates["selected_issue_resolution"] is None
 
     def test_consecutive_why_escalation_gives_an_actionable_question(self, tmp_path):
+        from echelon.cli import _classify_run_recovery
+
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
         spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
@@ -4814,10 +4816,25 @@ class TestSquadControllerBasics:
             )
             == "terminal-blocked"
         )
-        question = store.load()["escalation_question"]
-        assert "No retry is authorized" in question
-        assert "echelon spec resolve ISS-<n>" in question
-        assert str(spec_dir / "issues.md") in question
+        awaiting = store.load()
+        question = awaiting["escalation_question"]
+        assert 'echelon spec resume "<your answer>"' in question
+        assert "resets the consecutive WHY failure count" in question
+        assert "reopens phase1-why2" in question
+        assert "echelon spec resolve" not in question
+        action = _classify_run_recovery(awaiting, project_root=tmp_path)
+        assert action.kind == "human_resume"
+        assert action.command == 'echelon spec resume "<your answer>"'
+
+        answer = "Narrow the scope to the public API and retry its repair."
+        assert ctrl.resume_with_human_input(answer)
+        resumed = store.load()
+        assert resumed["status"] == "running"
+        assert resumed["phase"] == "phase1-why2"
+        assert resumed["why_fail_count"] == 0
+        assert resumed["blocked_decision"]["status"] == "resolved"
+        assert resumed["blocked_decision"]["answer_text"] == answer
+        assert "recovery_instruction" not in resumed
 
     def test_banzai_escalation_inline_when_agent_sets_escalation_question(self, tmp_path, monkeypatch):
         """Banzai: WHY1 returns escalation_question in state_updates → inline COMMANDER, not routing judge."""
@@ -5220,6 +5237,208 @@ class TestHumanGateControllerInterception:
         assert state["blocked_decision"]["status"] == "awaiting_human"
         assert "human_input_outcome" not in state
         provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_status", "expected_resolver", "provider_calls"),
+    [
+        ("guided", "awaiting_human", None, 1),
+        ("semi", "awaiting_human", None, 1),
+        ("banzai", "resolved", "COMMANDER", 2),
+    ],
+)
+def test_run_single_phase_routes_new_provider_question_through_shared_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    expected_status: str,
+    expected_resolver: str | None,
+    provider_calls: int,
+) -> None:
+    provider_question = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "STOP_AND_ASK",
+            "state_updates": {
+                "status": "blocked",
+                "blocked_reason": "human_clarification_required",
+                "escalation_question": (
+                    "Which bounded product constraint should TRACKER record?"
+                ),
+            },
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=1,
+        timed_out=False,
+    )
+    commander_answer = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "DECISION_RESOLVED",
+            "state_updates": {},
+            "journal_entries": [],
+            "decision": {
+                "selected_option_id": None,
+                "answer_text": "Use the public product boundary.",
+                "rationale": "The declared boundary is the best allowed answer.",
+                "confidence": "high",
+            },
+        },
+        raw_output="",
+        duration_ms=1,
+        timed_out=False,
+    )
+    provider = MagicMock()
+    provider.exec_agent.side_effect = (
+        [provider_question, commander_answer]
+        if mode == "banzai"
+        else [provider_question]
+    )
+    ctrl, store = _controller(tmp_path, provider=provider)
+    monkeypatch.setattr(ctrl, "_refresh_run_context", lambda _reason: None)
+
+    result = ctrl.run_single_phase(
+        "phase1-tracker",
+        user_message="record the product boundary",
+        mode=mode,
+    )
+
+    state = store.load()
+    decision = state["blocked_decision"]
+    assert decision["source_kind"] == "provider_escalation"
+    assert decision["producer_id"] == "phase1-tracker"
+    assert decision["status"] == expected_status
+    assert decision["resolved_by"] == expected_resolver
+    assert provider.exec_agent.call_count == provider_calls
+    assert result.status == (
+        "running" if expected_status == "resolved" else "blocked"
+    )
+
+
+def test_invalid_provider_answer_shape_uses_redacted_controller_failure_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "SECRET-PROVIDER-QUESTION-MUST-NOT-PERSIST"
+    invalid_question = SquadAgentResult(
+        exit_code=0,
+        echelon_result={
+            "verdict": "STOP_AND_ASK",
+            "state_updates": {
+                "status": "blocked",
+                "blocked_reason": "human_clarification_required",
+                "escalation_question": secret,
+                "escalation_options": [
+                    {
+                        "id": "retry",
+                        "label": "Retry",
+                        "description": "Retry with bounded evidence.",
+                        "recommended": False,
+                        "risk_level": "medium",
+                        "next_phase": "phase1-tracker",
+                    }
+                ],
+                "escalation_recommended_answer": (
+                    "A conflicting free-text recommendation."
+                ),
+                "escalation_risk_level": "medium",
+            },
+            "journal_entries": [],
+        },
+        raw_output="",
+        duration_ms=1,
+        timed_out=False,
+    )
+    provider = MagicMock()
+    provider.exec_agent.return_value = invalid_question
+    ctrl, store = _controller(tmp_path, provider=provider)
+    monkeypatch.setattr(ctrl, "_refresh_run_context", lambda _reason: None)
+
+    result = ctrl.run_single_phase(
+        "phase1-tracker",
+        user_message="record the product boundary",
+        mode="banzai",
+    )
+
+    state = store.load()
+    assert result.status == "blocked"
+    assert state["blocked_reason"] == (
+        "controller_state_contract_validation_failed"
+    )
+    assert state["controller_contract_error"]["validator"] == (
+        "human_input_policy"
+    )
+    assert secret not in json.dumps(state)
+    assert "blocked_decision" not in state
+    assert "escalation_question" not in state
+    assert provider.exec_agent.call_count == 1
+
+
+def test_run_single_phase_rejects_provider_and_safeguard_question_overlap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _mock_provider("ALIGNED")
+    ctrl, store = _controller(tmp_path, provider=provider)
+    store.initialize(
+        "r",
+        "greenfield",
+        "msg",
+        0,
+        "phase1-tracker",
+        autonomy_mode="guided",
+    )
+    monkeypatch.setattr(ctrl, "_refresh_run_context", lambda _reason: None)
+    snapshot = store.capture_routing_snapshot(
+        expected_phase="phase1-tracker"
+    )
+    provider_request = ctrl._human_input_registry.prepare(
+        source_kind="provider_escalation",
+        producer_id="phase1-tracker",
+        phase_id="phase1-tracker",
+        reason_code="human_clarification_required",
+        question="Provider question.",
+        source_state_revision=snapshot.state_revision,
+    )
+    safeguard_policy = ctrl._human_input_registry.lookup(
+        "controller_safeguard",
+        "consecutive_why_fails",
+        "consecutive_why_fails",
+    )
+    safeguard_request = ctrl._human_input_registry.prepare(
+        source_kind=safeguard_policy.source_kind,
+        producer_id=safeguard_policy.producer_id,
+        phase_id="phase1-why2",
+        reason_code=safeguard_policy.reason_code,
+        question="Safeguard question.",
+        source_state_revision=snapshot.state_revision,
+    )
+    decision = MagicMock()
+    decision.from_phase = "phase1-tracker"
+    decision.to_phase = "phase1-tracker"
+    decision.token_usage_delta = 0
+    ctrl._construct_routing_decision_or_block = MagicMock(
+        return_value=SimpleNamespace(
+            decision=decision,
+            human_input=safeguard_request,
+        )
+    )
+    ctrl._prepare_provider_human_input = MagicMock(
+        return_value=provider_request
+    )
+    ctrl._block_after_state_advance_failure = MagicMock()
+    ctrl.handle_human_input = MagicMock()
+
+    ctrl.run_single_phase(
+        "phase1-tracker",
+        user_message="msg",
+        mode="guided",
+    )
+
+    ctrl._prepare_provider_human_input.assert_called_once()
+    ctrl._block_after_state_advance_failure.assert_called_once()
+    ctrl.handle_human_input.assert_not_called()
 
 
 class TestConvergenceRoutingGuard:

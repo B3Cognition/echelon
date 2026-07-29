@@ -32,7 +32,7 @@ def _v2_decision(status: str) -> dict[str, object]:
         "selected_option_id": None,
         "answer_text": None,
         "resolved_by": None,
-        "attempts": 0,
+        "attempts": 1 if status == "resolving" else 0,
         "failure_code": "commander_failure" if status == "failed" else None,
         "created_at": "2026-07-28T10:00:00+00:00",
         "resolved_at": None,

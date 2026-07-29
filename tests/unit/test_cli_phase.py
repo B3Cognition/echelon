@@ -118,6 +118,7 @@ def _seal_pending_v2_decision(
         resolution_handler="gate_outcome",
         autonomy_mode=autonomy_mode,
         source_state_revision=state["state_revision"],
+        attempts=1 if status == "resolving" else 0,
         now="2026-07-28T10:00:00+00:00",
     )
     state.update(

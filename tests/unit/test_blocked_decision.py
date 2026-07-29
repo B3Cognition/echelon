@@ -324,6 +324,144 @@ def test_schema_v2_allows_an_option_whose_own_id_is_its_label() -> None:
     assert validate_blocked_decision_v2(decision)["options"] == decision["options"]
 
 
+def _v2_decision_with_status(status: str, attempts: int) -> dict[str, object]:
+    decision = _v2_decision()
+    decision["status"] = status
+    decision["attempts"] = attempts
+    if status == "failed":
+        decision["failure_code"] = "decision_setup_failed" if attempts == 0 else "provider_failed"
+    elif status == "resolved":
+        decision.update(
+            {
+                "answer_text": "Use the bounded answer.",
+                "resolved_by": "user" if attempts == 0 else "COMMANDER",
+                "resolved_at": "2026-07-28T10:01:00+00:00",
+            }
+        )
+    return decision
+
+
+@pytest.mark.parametrize(
+    ("status", "attempts"),
+    [
+        ("pending", 0),
+        ("pending", 1),
+        ("resolving", 1),
+        ("resolving", 2),
+        ("awaiting_human", 0),
+        ("failed", 0),
+        ("failed", 1),
+        ("failed", 2),
+        ("resolved", 0),
+        ("resolved", 1),
+        ("resolved", 2),
+    ],
+)
+def test_schema_v2_accepts_only_reachable_status_attempt_combinations(
+    status: str,
+    attempts: int,
+) -> None:
+    decision = _v2_decision_with_status(status, attempts)
+
+    assert validate_blocked_decision_v2(decision)["attempts"] == attempts
+
+
+@pytest.mark.parametrize(
+    ("status", "attempts"),
+    [
+        ("pending", 2),
+        ("pending", 3),
+        ("resolving", 0),
+        ("resolving", 3),
+        ("awaiting_human", 1),
+        ("failed", 3),
+        ("resolved", 3),
+    ],
+)
+def test_schema_v2_rejects_unreachable_status_attempt_combinations(
+    status: str,
+    attempts: int,
+) -> None:
+    decision = _v2_decision_with_status(status, attempts)
+
+    with pytest.raises(BlockedDecisionError, match="attempt"):
+        validate_blocked_decision_v2(decision)
+
+
+def test_schema_v2_dispatch_cap_requires_at_least_one_complete_option() -> None:
+    decision = _v2_decision()
+    decision.update(
+        {
+            "source_kind": "controller_safeguard",
+            "producer_id": "phase_dispatch_limit",
+            "reason_code": "phase_dispatch_limit",
+            "resolution_handler": "phase_dispatch_limit",
+            "options": [],
+        }
+    )
+
+    with pytest.raises(BlockedDecisionError, match="option"):
+        validate_blocked_decision_v2(decision)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("question", "q" * 40_000),
+        ("recommended_answer", "r" * 40_000),
+        ("producer_id", "p" * 5_000),
+        ("reason_code", "r" * 5_000),
+        ("resolution_handler", "h" * 5_000),
+    ],
+)
+def test_schema_v2_bounds_every_prompt_request_string(
+    field: str,
+    value: str,
+) -> None:
+    decision = _v2_decision()
+    decision[field] = value
+    if field == "recommended_answer":
+        decision["risk_level"] = "low"
+
+    with pytest.raises(BlockedDecisionError, match=field):
+        validate_blocked_decision_v2(decision)
+
+
+def test_schema_v2_bounds_option_count_and_option_fields() -> None:
+    decision = _v2_decision()
+    decision["options"] = [
+        {
+            "id": f"option-{index}",
+            "label": f"Option {index}",
+            "description": "One bounded option.",
+            "recommended": False,
+            "risk_level": "medium",
+            "next_phase": "phase1-what",
+            "outcome": None,
+        }
+        for index in range(65)
+    ]
+
+    with pytest.raises(BlockedDecisionError, match="options"):
+        validate_blocked_decision_v2(decision)
+
+    decision = _v2_decision()
+    decision["options"] = [
+        {
+            "id": "option",
+            "label": "Option",
+            "description": "d" * 5_000,
+            "recommended": False,
+            "risk_level": "medium",
+            "next_phase": "phase1-what",
+            "outcome": None,
+        }
+    ]
+
+    with pytest.raises(BlockedDecisionError, match="description"):
+        validate_blocked_decision_v2(decision)
+
+
 @pytest.mark.parametrize(
     "mutate",
     [

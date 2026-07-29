@@ -2,9 +2,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import json
 from types import MappingProxyType
 from typing import Any, Literal, Mapping
 
+
+HUMAN_INPUT_MAX_OPTIONS = 16
+HUMAN_INPUT_PROMPT_REQUEST_MAX_BYTES = 24_000
+HUMAN_INPUT_QUESTION_MAX_BYTES = 4_000
+HUMAN_INPUT_RECOMMENDATION_MAX_BYTES = 4_000
+HUMAN_INPUT_IDENTIFIER_MAX_BYTES = 256
+HUMAN_INPUT_OPTION_ID_MAX_BYTES = 128
+HUMAN_INPUT_OPTION_LABEL_MAX_BYTES = 256
+HUMAN_INPUT_OPTION_DESCRIPTION_MAX_BYTES = 1_024
+HUMAN_INPUT_OPTION_OUTCOME_MAX_BYTES = 128
 
 HumanInputSourceKind = Literal[
     "provider_escalation",
@@ -87,10 +98,40 @@ def _clean_string(value: object, field: str) -> str:
     return normalized
 
 
+def _clean_bounded_string(
+    value: object,
+    field: str,
+    *,
+    max_bytes: int,
+    max_characters: int | None = None,
+) -> str:
+    normalized = _clean_string(value, field)
+    if max_characters is not None and len(normalized) > max_characters:
+        raise HumanInputPolicyError(
+            f"{field} must not exceed {max_characters:,} characters"
+        )
+    if len(normalized.encode("utf-8")) > max_bytes:
+        raise HumanInputPolicyError(
+            f"{field} must not exceed {max_bytes:,} UTF-8 bytes"
+        )
+    return normalized
+
+
 def _clean_optional_string(value: object, field: str) -> str | None:
     if value is None:
         return None
     return _clean_string(value, field)
+
+
+def _clean_optional_bounded_string(
+    value: object,
+    field: str,
+    *,
+    max_bytes: int,
+) -> str | None:
+    if value is None:
+        return None
+    return _clean_bounded_string(value, field, max_bytes=max_bytes)
 
 
 def _clean_string_collection(value: object, field: str) -> tuple[str, ...]:
@@ -113,22 +154,66 @@ class HumanInputOption:
     outcome: str | None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "id", _clean_string(self.id, "option.id"))
-        object.__setattr__(self, "label", _clean_string(self.label, "option.label"))
-        object.__setattr__(self, "description", _clean_string(self.description, "option.description"))
+        object.__setattr__(
+            self,
+            "id",
+            _clean_bounded_string(
+                self.id,
+                "option.id",
+                max_bytes=HUMAN_INPUT_OPTION_ID_MAX_BYTES,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "label",
+            _clean_bounded_string(
+                self.label,
+                "option.label",
+                max_bytes=HUMAN_INPUT_OPTION_LABEL_MAX_BYTES,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "description",
+            _clean_bounded_string(
+                self.description,
+                "option.description",
+                max_bytes=HUMAN_INPUT_OPTION_DESCRIPTION_MAX_BYTES,
+            ),
+        )
         if type(self.recommended) is not bool:
             raise HumanInputPolicyError("option.recommended must be a boolean")
         if self.risk_level is not None and self.risk_level not in _RISKS:
             raise HumanInputPolicyError("option.risk_level must be low, medium, high, or critical")
-        object.__setattr__(self, "next_phase", _clean_optional_string(self.next_phase, "option.next_phase"))
-        object.__setattr__(self, "outcome", _clean_optional_string(self.outcome, "option.outcome"))
+        object.__setattr__(
+            self,
+            "next_phase",
+            _clean_optional_bounded_string(
+                self.next_phase,
+                "option.next_phase",
+                max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "outcome",
+            _clean_optional_bounded_string(
+                self.outcome,
+                "option.outcome",
+                max_bytes=HUMAN_INPUT_OPTION_OUTCOME_MAX_BYTES,
+            ),
+        )
 
 
 def _validate_options(
     options: tuple[HumanInputOption, ...],
     *,
-    allowed_target_phases: frozenset[str],
+    allowed_target_phases: frozenset[str] | None,
 ) -> None:
+    if len(options) > HUMAN_INPUT_MAX_OPTIONS:
+        raise HumanInputPolicyError(
+            f"options must not contain more than {HUMAN_INPUT_MAX_OPTIONS} entries"
+        )
     option_id_indexes: dict[str, int] = {}
     option_label_indexes: dict[str, int] = {}
     for index, option in enumerate(options):
@@ -147,7 +232,11 @@ def _validate_options(
     if sum(item.recommended for item in options) > 1:
         raise HumanInputPolicyError("at most one recommended option is allowed")
     for option in options:
-        if option.next_phase is not None and option.next_phase not in allowed_target_phases:
+        if (
+            option.next_phase is not None
+            and allowed_target_phases is not None
+            and option.next_phase not in allowed_target_phases
+        ):
             raise HumanInputPolicyError("option.next_phase must be in allowed_target_phases")
 
 
@@ -158,6 +247,10 @@ def _normalize_provider_options(
 ) -> tuple[HumanInputOption, ...]:
     if not isinstance(value, list):
         raise HumanInputPolicyError("options must be a list")
+    if len(value) > HUMAN_INPUT_MAX_OPTIONS:
+        raise HumanInputPolicyError(
+            f"options must not contain more than {HUMAN_INPUT_MAX_OPTIONS} entries"
+        )
     options: list[HumanInputOption] = []
     for index, raw_option in enumerate(value):
         if not isinstance(raw_option, Mapping):
@@ -207,8 +300,24 @@ class HumanInputPolicy:
     def __post_init__(self) -> None:
         if self.source_kind not in _SOURCE_KINDS:
             raise HumanInputPolicyError("source_kind is not supported")
-        object.__setattr__(self, "producer_id", _clean_string(self.producer_id, "producer_id"))
-        object.__setattr__(self, "reason_code", _clean_string(self.reason_code, "reason_code"))
+        object.__setattr__(
+            self,
+            "producer_id",
+            _clean_bounded_string(
+                self.producer_id,
+                "producer_id",
+                max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "reason_code",
+            _clean_bounded_string(
+                self.reason_code,
+                "reason_code",
+                max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+            ),
+        )
         if self.classification not in _CLASSIFICATIONS:
             raise HumanInputPolicyError("classification is not supported")
         if self.semi_policy not in _SEMI_POLICIES:
@@ -266,6 +375,143 @@ class PreparedHumanInput:
     resolution_handler: str
     source_state_revision: int
 
+    def __post_init__(self) -> None:
+        if type(self.schema_version) is not int or self.schema_version != 1:
+            raise HumanInputPolicyError("prepared human input schema_version must be 1")
+        if self.source_kind not in _SOURCE_KINDS:
+            raise HumanInputPolicyError("source_kind is not supported")
+        object.__setattr__(
+            self,
+            "producer_id",
+            _clean_bounded_string(
+                self.producer_id,
+                "producer_id",
+                max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "phase_id",
+            _clean_bounded_string(
+                self.phase_id,
+                "phase_id",
+                max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+            ),
+        )
+        object.__setattr__(
+            self,
+            "reason_code",
+            _clean_bounded_string(
+                self.reason_code,
+                "reason_code",
+                max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+            ),
+        )
+        if self.classification not in _CLASSIFICATIONS:
+            raise HumanInputPolicyError("classification is not supported")
+        object.__setattr__(
+            self,
+            "question",
+            _clean_bounded_string(
+                self.question,
+                "question",
+                max_bytes=HUMAN_INPUT_QUESTION_MAX_BYTES,
+                max_characters=4_000,
+            ),
+        )
+        if not isinstance(self.options, tuple) or not all(
+            isinstance(option, HumanInputOption) for option in self.options
+        ):
+            raise HumanInputPolicyError(
+                "options must be a tuple of HumanInputOption values"
+            )
+        _validate_options(self.options, allowed_target_phases=None)
+        recommendation = _clean_optional_bounded_string(
+            self.recommended_answer,
+            "recommended_answer",
+            max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
+        )
+        object.__setattr__(self, "recommended_answer", recommendation)
+        validate_human_input_answer_shape(
+            options=self.options,
+            recommended_answer=recommendation,
+        )
+        if self.risk_level is not None and self.risk_level not in _RISKS:
+            raise HumanInputPolicyError(
+                "risk_level must be low, medium, high, or critical"
+            )
+        object.__setattr__(
+            self,
+            "resolution_handler",
+            _clean_bounded_string(
+                self.resolution_handler,
+                "resolution_handler",
+                max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+            ),
+        )
+        if (
+            type(self.source_state_revision) is not int
+            or self.source_state_revision < 0
+        ):
+            raise HumanInputPolicyError(
+                "source_state_revision must be a non-negative integer"
+            )
+        validate_human_input_prompt_request_payload(
+            {
+                "source_kind": self.source_kind,
+                "producer_id": self.producer_id,
+                "source_phase": self.phase_id,
+                "reason_code": self.reason_code,
+                "classification": self.classification,
+                "question": self.question,
+                "options": [
+                    {
+                        "id": option.id,
+                        "label": option.label,
+                        "description": option.description,
+                        "recommended": option.recommended,
+                        "risk_level": option.risk_level,
+                        "next_phase": option.next_phase,
+                        "outcome": option.outcome,
+                    }
+                    for option in self.options
+                ],
+                "recommended_answer": self.recommended_answer,
+                "risk_level": self.risk_level,
+            }
+        )
+
+
+def validate_human_input_answer_shape(
+    *,
+    options: tuple[HumanInputOption, ...] | list[Mapping[str, object]],
+    recommended_answer: str | None,
+) -> None:
+    """Reject answer metadata that cannot be represented by durable v2 state."""
+    if options and recommended_answer is not None:
+        raise HumanInputPolicyError(
+            "recommended_answer cannot be combined with options"
+        )
+
+
+def validate_human_input_prompt_request_payload(
+    payload: Mapping[str, object],
+) -> None:
+    """Keep the fixed COMMANDER request portion below its allocated byte budget."""
+    try:
+        encoded = json.dumps(
+            dict(payload),
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise HumanInputPolicyError(
+            "human-input prompt request must be JSON serializable"
+        ) from exc
+    if len(encoded) > HUMAN_INPUT_PROMPT_REQUEST_MAX_BYTES:
+        raise HumanInputPolicyError(
+            "human-input prompt request exceeds the byte limit"
+        )
 
 @dataclass(frozen=True)
 class DecisionResolution:

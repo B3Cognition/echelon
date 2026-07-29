@@ -377,3 +377,101 @@ def test_registry_rejects_malformed_risk_and_invalid_request_bounds() -> None:
         arguments["source_state_revision"] = revision
         with pytest.raises(HumanInputPolicyError, match="source_state_revision"):
             registry.prepare(**arguments)
+
+
+def test_registry_rejects_choice_options_with_a_free_text_recommendation() -> None:
+    registry = HumanInputPolicyRegistry((_provider_policy(),))
+
+    with pytest.raises(
+        HumanInputPolicyError,
+        match="recommended_answer.*options|options.*recommended_answer",
+    ):
+        registry.prepare(
+            source_kind="provider_escalation",
+            producer_id="phase1-investigate",
+            phase_id="phase1-investigate",
+            reason_code="human_clarification_required",
+            question="Choose one bounded investigation route.",
+            options=[
+                {
+                    "id": "use-api",
+                    "label": "Use API access",
+                    "description": "Query the approved API.",
+                    "recommended": False,
+                    "risk_level": "medium",
+                    "next_phase": "phase1-what",
+                }
+            ],
+            recommended_answer="Ignore the choice and use free text.",
+            risk_level="medium",
+            source_state_revision=8,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "overlong_value"),
+    [
+        ("id", "i" * 5_000),
+        ("label", "l" * 5_000),
+        ("description", "d" * 5_000),
+        ("next_phase", "p" * 5_000),
+        ("outcome", "o" * 5_000),
+    ],
+)
+def test_human_input_option_bounds_every_string_field(
+    field: str,
+    overlong_value: str,
+) -> None:
+    values = {
+        "id": "approve",
+        "label": "Approve",
+        "description": "Continue.",
+        "recommended": False,
+        "risk_level": "low",
+        "next_phase": "phase4-document",
+        "outcome": "approved",
+    }
+    values[field] = overlong_value
+
+    with pytest.raises(HumanInputPolicyError, match=field):
+        HumanInputOption(**values)
+
+
+def test_registry_bounds_recommendation_option_count_and_utf8_question() -> None:
+    registry = HumanInputPolicyRegistry((_provider_policy(),))
+    base = {
+        "source_kind": "provider_escalation",
+        "producer_id": "phase1-investigate",
+        "phase_id": "phase1-investigate",
+        "reason_code": "human_clarification_required",
+        "question": "Which bounded answer should be used?",
+        "source_state_revision": 8,
+    }
+
+    with pytest.raises(HumanInputPolicyError, match="recommended_answer"):
+        registry.prepare(
+            **base,
+            recommended_answer="r" * 40_000,
+            risk_level="low",
+        )
+
+    with pytest.raises(HumanInputPolicyError, match="options"):
+        registry.prepare(
+            **base,
+            options=[
+                {
+                    "id": f"option-{index}",
+                    "label": f"Option {index}",
+                    "description": "One bounded option.",
+                    "recommended": False,
+                    "risk_level": "medium",
+                    "next_phase": "phase1-what",
+                }
+                for index in range(65)
+            ],
+        )
+
+    with pytest.raises(HumanInputPolicyError, match="question"):
+        registry.prepare(
+            **{**base, "question": "ž" * 4_000},
+        )

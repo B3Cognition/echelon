@@ -136,6 +136,7 @@ def _v2_continue_decision(
         resolution_handler="gate_outcome",
         autonomy_mode=autonomy_mode,
         source_state_revision=0,
+        attempts=1 if status == "resolving" else 0,
         failure_code="resolution_attempts_exhausted" if status == "failed" else None,
         now="2026-07-28T10:00:00+00:00",
     )

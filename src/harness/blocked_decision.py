@@ -7,6 +7,18 @@ from datetime import datetime, timedelta, timezone
 import re
 from typing import Any, Mapping
 
+from harness.human_input import (
+    HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+    HUMAN_INPUT_MAX_OPTIONS,
+    HUMAN_INPUT_OPTION_ID_MAX_BYTES,
+    HUMAN_INPUT_QUESTION_MAX_BYTES,
+    HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
+    HumanInputOption,
+    HumanInputPolicyError,
+    validate_human_input_answer_shape,
+    validate_human_input_prompt_request_payload,
+)
+
 
 SCHEMA_VERSION = 1
 SCHEMA_V2 = 2
@@ -66,7 +78,11 @@ def _clean_string(value: object) -> str:
 
 def is_valid_decision_id(value: object) -> bool:
     """Return whether a durable decision ID has the persisted v2 form."""
-    return isinstance(value, str) and bool(_DECISION_ID_RE.fullmatch(value))
+    return (
+        isinstance(value, str)
+        and len(value.encode("utf-8")) <= HUMAN_INPUT_OPTION_ID_MAX_BYTES
+        and bool(_DECISION_ID_RE.fullmatch(value))
+    )
 
 
 def _required_v2_string(value: object, field: str) -> str:
@@ -79,6 +95,31 @@ def _optional_v2_string(value: object, field: str) -> str | None:
     if value is None:
         return None
     return _required_v2_string(value, field)
+
+
+def _required_v2_bounded_string(
+    value: object,
+    field: str,
+    *,
+    max_bytes: int,
+) -> str:
+    normalized = _required_v2_string(value, field)
+    if len(normalized.encode("utf-8")) > max_bytes:
+        raise BlockedDecisionError(
+            f"{field} must not exceed {max_bytes:,} UTF-8 bytes"
+        )
+    return normalized
+
+
+def _optional_v2_bounded_string(
+    value: object,
+    field: str,
+    *,
+    max_bytes: int,
+) -> str | None:
+    if value is None:
+        return None
+    return _required_v2_bounded_string(value, field, max_bytes=max_bytes)
 
 
 def _validate_v2_timestamp(value: object, field: str, *, nullable: bool) -> str | None:
@@ -97,6 +138,10 @@ def _validate_v2_timestamp(value: object, field: str, *, nullable: bool) -> str 
 def _validate_v2_options(value: object) -> list[dict[str, object]]:
     if not isinstance(value, list):
         raise BlockedDecisionError("options must be a list")
+    if len(value) > HUMAN_INPUT_MAX_OPTIONS:
+        raise BlockedDecisionError(
+            f"options must not contain more than {HUMAN_INPUT_MAX_OPTIONS} entries"
+        )
 
     options: list[dict[str, object]] = []
     option_id_indexes: dict[str, int] = {}
@@ -113,7 +158,11 @@ def _validate_v2_options(value: object) -> list[dict[str, object]]:
             raise BlockedDecisionError(f"unknown option field: {sorted(unknown)[0]}")
         if missing:
             raise BlockedDecisionError(f"missing option field: {sorted(missing)[0]}")
-        option_id = _required_v2_string(raw["id"], f"options[{index}].id")
+        option_id = _required_v2_bounded_string(
+            raw["id"],
+            f"options[{index}].id",
+            max_bytes=HUMAN_INPUT_OPTION_ID_MAX_BYTES,
+        )
         if option_id in option_id_indexes:
             raise BlockedDecisionError("duplicate option id")
         option_id_indexes[option_id] = index
@@ -132,19 +181,33 @@ def _validate_v2_options(value: object) -> list[dict[str, object]]:
             raise BlockedDecisionError(
                 f"options[{index}].risk_level must be low, medium, high, or critical"
             )
-        options.append(
-            {
-                "id": option_id,
-                "label": option_label,
-                "description": _required_v2_string(
+        try:
+            option = HumanInputOption(
+                id=option_id,
+                label=option_label,
+                description=_required_v2_string(
                     raw["description"], f"options[{index}].description"
                 ),
-                "recommended": recommended,
-                "risk_level": risk_level,
-                "next_phase": _optional_v2_string(
+                recommended=recommended,
+                risk_level=risk_level,
+                next_phase=_optional_v2_string(
                     raw["next_phase"], f"options[{index}].next_phase"
                 ),
-                "outcome": _optional_v2_string(raw["outcome"], f"options[{index}].outcome"),
+                outcome=_optional_v2_string(
+                    raw["outcome"], f"options[{index}].outcome"
+                ),
+            )
+        except HumanInputPolicyError as exc:
+            raise BlockedDecisionError(str(exc)) from exc
+        options.append(
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": option.recommended,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+                "outcome": option.outcome,
             }
         )
     if recommended_count > 1:
@@ -197,13 +260,39 @@ def validate_blocked_decision_v2(value: object) -> dict[str, object]:
         raise BlockedDecisionError("source_state_revision must be a non-negative integer")
     attempts = value["attempts"]
     if type(attempts) is not int or attempts < 0:
-        raise BlockedDecisionError("attempts must be a non-negative integer")
+        raise BlockedDecisionError(
+            "attempts must be a non-negative integer"
+        )
+    if attempts > 2:
+        raise BlockedDecisionError("attempts must not exceed 2")
+    allowed_attempts = {
+        "pending": frozenset({0, 1}),
+        "resolving": frozenset({1, 2}),
+        "awaiting_human": frozenset({0}),
+        "failed": frozenset({0, 1, 2}),
+        "resolved": frozenset({0, 1, 2}),
+    }[status]
+    if attempts not in allowed_attempts:
+        raise BlockedDecisionError(
+            f"attempts value is unreachable for status {status!r}"
+        )
 
     options = _validate_v2_options(value["options"])
     option_ids = {option["id"] for option in options}
-    recommended_answer = _optional_v2_string(
-        value["recommended_answer"], "recommended_answer"
+    recommended_answer = _optional_v2_bounded_string(
+        value["recommended_answer"],
+        "recommended_answer",
+        max_bytes=HUMAN_INPUT_RECOMMENDATION_MAX_BYTES,
     )
+    try:
+        validate_human_input_answer_shape(
+            options=options,
+            recommended_answer=recommended_answer,
+        )
+    except HumanInputPolicyError as exc:
+        raise BlockedDecisionError(
+            "choice decisions cannot record recommended_answer"
+        ) from exc
     selected_option_id = _optional_v2_string(value["selected_option_id"], "selected_option_id")
     answer_text = _optional_v2_string(value["answer_text"], "answer_text")
     resolved_by = _optional_v2_string(value["resolved_by"], "resolved_by")
@@ -214,8 +303,13 @@ def validate_blocked_decision_v2(value: object) -> dict[str, object]:
         raise BlockedDecisionError("selected_option_id requires a declared option")
     if options and answer_text is not None:
         raise BlockedDecisionError("choice decisions cannot record answer_text")
-    if options and recommended_answer is not None:
-        raise BlockedDecisionError("choice decisions cannot record recommended_answer")
+    if (
+        source_kind == "human_gate"
+        or value["resolution_handler"] == "phase_dispatch_limit"
+    ) and not options:
+        raise BlockedDecisionError(
+            "human gate and phase dispatch decisions require at least one option"
+        )
     if not options and selected_option_id is not None:
         raise BlockedDecisionError("free-text decisions cannot record selected_option_id")
     if status == "resolved":
@@ -237,21 +331,39 @@ def validate_blocked_decision_v2(value: object) -> dict[str, object]:
         if status != "failed" and failure_code is not None:
             raise BlockedDecisionError("active decisions cannot record failure_code")
 
-    return {
+    normalized = {
         "schema_version": SCHEMA_V2,
         "id": value["id"],
         "status": status,
         "source_kind": source_kind,
-        "producer_id": _required_v2_string(value["producer_id"], "producer_id"),
-        "source_phase": _required_v2_string(value["source_phase"], "source_phase"),
-        "reason_code": _required_v2_string(value["reason_code"], "reason_code"),
+        "producer_id": _required_v2_bounded_string(
+            value["producer_id"],
+            "producer_id",
+            max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+        ),
+        "source_phase": _required_v2_bounded_string(
+            value["source_phase"],
+            "source_phase",
+            max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+        ),
+        "reason_code": _required_v2_bounded_string(
+            value["reason_code"],
+            "reason_code",
+            max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
+        ),
         "classification": classification,
-        "question": _required_v2_string(value["question"], "question"),
+        "question": _required_v2_bounded_string(
+            value["question"],
+            "question",
+            max_bytes=HUMAN_INPUT_QUESTION_MAX_BYTES,
+        ),
         "options": options,
         "recommended_answer": recommended_answer,
         "risk_level": risk_level,
-        "resolution_handler": _required_v2_string(
-            value["resolution_handler"], "resolution_handler"
+        "resolution_handler": _required_v2_bounded_string(
+            value["resolution_handler"],
+            "resolution_handler",
+            max_bytes=HUMAN_INPUT_IDENTIFIER_MAX_BYTES,
         ),
         "autonomy_mode": autonomy_mode,
         "source_state_revision": source_state_revision,
@@ -263,6 +375,24 @@ def validate_blocked_decision_v2(value: object) -> dict[str, object]:
         "created_at": _validate_v2_timestamp(value["created_at"], "created_at", nullable=False),
         "resolved_at": resolved_at,
     }
+    try:
+        validate_human_input_prompt_request_payload(
+            {
+                "decision_id": normalized["id"],
+                "source_kind": normalized["source_kind"],
+                "producer_id": normalized["producer_id"],
+                "source_phase": normalized["source_phase"],
+                "reason_code": normalized["reason_code"],
+                "classification": normalized["classification"],
+                "question": normalized["question"],
+                "options": normalized["options"],
+                "recommended_answer": normalized["recommended_answer"],
+                "risk_level": normalized["risk_level"],
+            }
+        )
+    except HumanInputPolicyError as exc:
+        raise BlockedDecisionError(str(exc)) from exc
+    return normalized
 
 
 def validate_blocked_decision(value: object) -> dict[str, object]:

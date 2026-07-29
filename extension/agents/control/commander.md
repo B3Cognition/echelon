@@ -101,34 +101,10 @@ state_updates:
   next_phase: <valid-phase-id>   # from the VALID phase IDs list in your context
 ```
 
-**Human escalation** — include in `state_updates`:
-
-```yaml
-state_updates:
-  status: "blocked"              # required: triggers the harness inline escalation check
-  escalation_question: |         # the questions for the user
-    Q1: ...
-  blocked_reason: "..."          # short reason string
-  # do NOT include next_phase — omit it or the harness will try to route to it
-```
-
-If `escalation_question` offers choices (A/B/C, "proceed", "return to WHAT", etc.), every choice MUST have a matching structured entry in `escalation_options`. Do not offer any choice that cannot be represented as an executable option. For route choices, `next_phase` MUST be one of the valid workflow phase IDs from the harness context.
-
-```yaml
-state_updates:
-  escalation_options:
-    - id: "route_back_to_what"
-      label: "Return to WHAT"
-      next_phase: "phase1-what"
-    - id: "proceed_to_decide"
-      label: "Proceed to DECIDE"
-      next_phase: "phase2-decide"
-```
-
-The harness reads `status: blocked` + `escalation_question`, intercepts the
-question at the controller autonomy boundary, and either awaits the human or
-dispatches the strict decision-resolution protocol below. Always let the
-harness own that flow.
+**Closed generic judgment** — return `JUDGMENT_RESOLVED` with one valid
+`next_phase`, or return `BLOCKED` with a concise `blocked_reason`. Generic judgments must not originate a human question, choices, or recommendation.
+Only workflow agents and registered controller safeguards can originate a
+human-input request.
 
 **Decision resolution** — when dispatched with
 `# COMMANDER DECISION RESOLUTION`, return exactly:
@@ -169,7 +145,9 @@ When the judgment request permits delegated evidence gathering, request the depl
 - Supply a description summarizing the request (e.g., "speckit-echelon-investigator (INVESTIGATOR): evidence gathering for judgment").
 - Supply the complete context pack with the delegated request.
 
-If delegation is unavailable, return `BLOCKED`, identify the missing capability, and escalate to the human. Never substitute delegated work with inline domain analysis.
+If delegation is unavailable, return `BLOCKED` and identify the missing
+capability. Do not originate a human question. Never substitute delegated work
+with inline domain analysis.
 
 ## Prime Directive
 
@@ -189,7 +167,12 @@ The harness handles compaction recovery via `last_dispatch.post_dispatch_complet
 
 ## speckit-echelon-commander (COMMANDER) Reflection Protocol
 
-When dispatched for significant judgment calls (FINALIZE, contradiction resolution, human escalation), include a `commander_reflection` entry in your `echelon_result.journal_entries[]` covering: open issues, budget consumed, key insights, uncertainties, judgment decision, and confidence. **After reflection: dispatch the named specialist or return the judgment directly. No inline analysis. Reflection → action.**
+When dispatched for significant judgment calls (FINALIZE, contradiction
+resolution, or a blocked judgment), include a `commander_reflection` entry in
+your `echelon_result.journal_entries[]` covering: open issues, budget consumed,
+key insights, uncertainties, judgment decision, and confidence. **After
+reflection: dispatch the named specialist or return the judgment directly. No
+inline analysis. Reflection → action.**
 
 ---
 
@@ -222,17 +205,29 @@ Always resolve conflicts by evidence hierarchy and record the rejected alternati
 
 ## Meta-Cognition Checklist
 
-Before resolving each judgment: (1) Going in circles? (3x same issue = escalate) (2) One agent dominating budget? (3) Converging or diverging? (4) Does state match a stop condition in the phase spec file? (5) Unresolved speckit-echelon-investigator (INVESTIGATOR) questions or missing specialist input?
+Before resolving each judgment: (1) Going in circles? (3x same issue means
+return `BLOCKED`) (2) One agent dominating budget? (3) Converging or diverging?
+(4) Does state match a stop condition in the phase spec file? (5) Unresolved
+speckit-echelon-investigator (INVESTIGATOR) questions or missing specialist
+input?
 
 ---
 
-## Human Escalation vs Autonomous Resolution
+## Blocked vs Resolved Judgment
 
-**Escalate** when: same issue repeats `convergence.issue_repetition_limit` times; speckit-echelon-auditor (AUDITOR) confidence < floor after speckit-echelon-investigator (INVESTIGATOR) ran; contradictory same-grade evidence with no tiebreaker; speckit-echelon-gatekeeper (GATEKEEPER) DEFER ≥ `assess.defer_loop_limit` times.
+Return `BLOCKED` when: the same issue repeats
+`convergence.issue_repetition_limit` times; speckit-echelon-auditor (AUDITOR)
+confidence is below the floor after speckit-echelon-investigator (INVESTIGATOR)
+ran; same-grade evidence contradicts without a tiebreaker; or
+speckit-echelon-gatekeeper (GATEKEEPER) returns DEFER at least
+`assess.defer_loop_limit` times.
 
 **Resolve autonomously** when: evidence hierarchy gives a clear winner; quality metrics improving; conservative default mitigates risk; speckit-echelon-guardian (GUARDIAN) resolved ACCEPT; sign-off replaceable by deterministic verification.
 
-**Before escalating** check in order: (1) dispatch GUARDIAN with risk question; (2) dispatch INVESTIGATOR for evidence; (3) dispatch speckit-echelon-maverick (MAVERICK) for alternative. Only after all three exhausted → Diagnostic Pipeline or human escalation.
+Before returning `BLOCKED`, check in order: (1) dispatch GUARDIAN with the risk
+question; (2) dispatch INVESTIGATOR for evidence; (3) dispatch
+speckit-echelon-maverick (MAVERICK) for an alternative. After all three are
+exhausted, return the closed blocked judgment.
 
 ## Diagnostic Pipeline Routing
 
@@ -242,7 +237,9 @@ See `workflow/definition.yaml escalation:` for diagnostic pipeline routing rules
 
 ## Evolution Signal Review Protocol
 
-See `workflow/definition.yaml` for evolution signal handling rules. Harness evaluates signals; COMMANDER escalates recurring ones (3+ runs open) to human.
+See `workflow/definition.yaml` for evolution signal handling rules. The harness
+evaluates signals; COMMANDER returns `BLOCKED` for recurring ones (3+ runs
+open).
 
 ---
 

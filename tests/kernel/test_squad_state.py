@@ -176,7 +176,7 @@ def _human_input_request(
             for item in controller_safeguard_policies()
             if item.producer_id == producer_id
         )
-        return HumanInputPolicyRegistry((policy,)).prepare(
+        request = HumanInputPolicyRegistry((policy,)).prepare(
             source_kind=source_kind,
             producer_id=producer_id,
             phase_id=phase_id,
@@ -186,6 +186,38 @@ def _human_input_request(
             risk_level="medium",
             source_state_revision=source_state_revision,
         )
+        if producer_id == "phase_dispatch_limit":
+            candidate = {
+                "issue_id": "ISS-001",
+                "title": "Bounded controller safeguard",
+                "decision_required": "Choose the attested repair.",
+                "suggested_option": "Apply the attested repair.",
+                "evidence_basis": "The persisted issue evidence is complete.",
+            }
+            request = replace(
+                request,
+                recommended_answer=None,
+                risk_level=None,
+                options=(
+                    HumanInputOption(
+                        id=candidate["issue_id"],
+                        label=(
+                            f"{candidate['issue_id']}: "
+                            f"{candidate['title']}"
+                        ),
+                        description=json.dumps(
+                            candidate,
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                        recommended=False,
+                        risk_level="medium",
+                        next_phase="phase1-what",
+                        outcome=None,
+                    ),
+                ),
+            )
+        return request
     producer_id = producer_id or "init"
     options = (
         (
@@ -3973,6 +4005,107 @@ class TestHumanInputDecisionStateCAS:
         assert failed["recovery_instruction"]["kind"] == "manual_diagnosis"
         assert failed["recovery_instruction"]["phase"] == ""
         assert "escalation_question" not in failed
+
+    def test_human_input_setup_failure_fails_pending_without_claiming(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        pending = _seal_provider_human_input_via_advance(store)
+        decision_id = pending["blocked_decision"]["id"]
+
+        failed = store.fail_pending_human_input_decision(
+            decision_id,
+            expected_state_revision=pending["state_revision"],
+            failure_code="decision_context_setup_failed",
+        )
+
+        assert failed["blocked_decision"]["status"] == "failed"
+        assert failed["blocked_decision"]["attempts"] == 0
+        assert failed["blocked_decision"]["failure_code"] == (
+            "decision_context_setup_failed"
+        )
+        assert failed["recovery_instruction"]["kind"] == "manual_diagnosis"
+        assert "escalation_question" not in failed
+
+    def test_claim_rejects_attempt_limit_independently_of_schema_validation(
+        self,
+        tmp_path,
+    ):
+        store = _store(tmp_path)
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        pending = _seal_provider_human_input_via_advance(store)
+        corrupted = deepcopy(pending)
+        corrupted["blocked_decision"]["attempts"] = 2
+        store._path.write_text(json.dumps(corrupted), encoding="utf-8")
+        before = store._path.read_bytes()
+
+        with (
+            patch(
+                "harness.squad_state.validate_blocked_decision_v2",
+                side_effect=lambda value: deepcopy(dict(value)),
+            ),
+            patch(
+                "harness.squad_state.validate_decision_recovery_pair",
+                return_value=None,
+            ),
+        ):
+            with pytest.raises(StateAdvanceError, match="attempt"):
+                store.claim_human_input_decision(
+                    pending["blocked_decision"]["id"],
+                    expected_state_revision=pending["state_revision"],
+                )
+
+        assert store._path.read_bytes() == before
+
+    @pytest.mark.parametrize(
+        ("status", "attempts"),
+        [
+            ("pending", 2),
+            ("resolving", 0),
+            ("awaiting_human", 1),
+            ("failed", 3),
+            ("resolved", 3),
+        ],
+    )
+    def test_startup_recovery_rejects_corrupted_status_attempt_state(
+        self,
+        tmp_path,
+        status,
+        attempts,
+    ):
+        store = SquadStateStore(tmp_path / f"{status}-{attempts}")
+        store.initialize("r1", "greenfield", "msg", 0, "init")
+        pending = _seal_provider_human_input_via_advance(store)
+        corrupted = deepcopy(pending)
+        decision = corrupted["blocked_decision"]
+        decision["status"] = status
+        decision["attempts"] = attempts
+        if status == "failed":
+            decision["failure_code"] = "provider_failed"
+            corrupted["recovery_instruction"].update(
+                {
+                    "kind": "manual_diagnosis",
+                    "phase": "",
+                }
+            )
+        elif status == "resolved":
+            decision.update(
+                {
+                    "answer_text": "Resolved answer.",
+                    "resolved_by": "COMMANDER",
+                    "resolved_at": "2026-07-28T10:01:00+00:00",
+                }
+            )
+            corrupted.pop("recovery_instruction")
+        store._path.write_text(json.dumps(corrupted), encoding="utf-8")
+        before = store._path.read_bytes()
+
+        with pytest.raises(ValueError, match="attempt"):
+            store.recover_interrupted_human_input_decision()
+
+        assert store._path.read_bytes() == before
 
     @pytest.mark.parametrize("transition", ["resolution", "failure"])
     @pytest.mark.parametrize("save_then_raise", [False, True])

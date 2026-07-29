@@ -12,7 +12,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 import threading
 import uuid
@@ -44,8 +43,12 @@ from harness.echelon_result_schema import (
     validate_echelon_result,
     validate_echelon_result_contract,
 )
-from harness.blocked_decision import validate_blocked_decision_v2
+from harness.blocked_decision import (
+    BlockedDecisionError,
+    validate_blocked_decision_v2,
+)
 from harness.human_input import (
+    HUMAN_INPUT_MAX_OPTIONS,
     HumanInputOption,
     HumanInputPolicy,
     HumanInputPolicyError,
@@ -180,6 +183,7 @@ PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
 WHY2_METRIC_STAGNATION_LIMIT = 2
 WHY2_METRIC_MIN_DELTA = 0.01
 COMMANDER_DECISION_PROMPT_MAX_BYTES = 32_768
+DISPATCH_CAP_ISSUES_MAX_BYTES = 65_536
 _BOUNDED_TEXT_CHUNK_CHARS = 1_024
 _CONTEXT_FILE_READ_CHUNK_BYTES = 8_192
 _WHY2_CERTIFIED_METRICS = (
@@ -192,6 +196,14 @@ _WHY2_CERTIFIED_METRICS = (
     "readability",
     "depth",
 )
+
+
+class _DispatchCapEvidenceError(HumanInputPolicyError):
+    """A deterministic issue-evidence diagnosis with a closed reason code."""
+
+    def __init__(self, reason_code: str) -> None:
+        super().__init__("phase dispatch limit evidence is not resolvable")
+        self.reason_code = reason_code
 
 
 class _BoundedUtf8Builder:
@@ -352,13 +364,6 @@ JUDGMENT_STATE_UPDATE_KEYS = frozenset(
         "iteration",
         "status",
         "blocked_reason",
-        "escalation_question",
-        "escalation_options",
-        "escalation_resolved",
-        "escalation_resolver",
-        "escalation_risk_level",
-        "escalation_recommended_answer",
-        "escalation_default_answer",
         "issue_resolution_selection",
         "risk_level",
         "fallback_mode",
@@ -372,7 +377,6 @@ JUDGMENT_RESULT_CONTRACT = EchelonResultContract(
     state_update_types={
         "iteration": "integer",
         "status": "string",
-        "escalation_resolved": "boolean",
         "issue_resolution_selection": "object",
     },
     state_update_enums={
@@ -2092,6 +2096,14 @@ class SquadController:
         cls,
         candidates: list[dict[str, str]],
     ) -> tuple[HumanInputOption, ...]:
+        if not candidates:
+            raise HumanInputPolicyError(
+                "phase dispatch limit requires an eligible issue option"
+            )
+        if len(candidates) > HUMAN_INPUT_MAX_OPTIONS:
+            raise HumanInputPolicyError(
+                "phase dispatch limit has too many eligible issue options"
+            )
         options = tuple(
             HumanInputOption(
                 id=candidate["issue_id"],
@@ -2588,6 +2600,10 @@ class SquadController:
                 "prepared request does not match its registered policy"
             )
         if self._is_dynamic_dispatch_cap_policy(policy):
+            if not request.options:
+                raise HumanInputPolicyError(
+                    "phase dispatch limit requires at least one eligible option"
+                )
             for option in request.options:
                 self._dispatch_cap_candidate_from_option(option)
         elif (
@@ -2596,6 +2612,13 @@ class SquadController:
         ):
             raise HumanInputPolicyError(
                 "prepared request options do not match their registered policy"
+            )
+        if (
+            not self._is_dynamic_dispatch_cap_policy(policy)
+            and bool(request.options) == policy.allow_free_text
+        ):
+            raise HumanInputPolicyError(
+                "prepared request answer shape does not match its registered policy"
             )
         return policy
 
@@ -2814,28 +2837,120 @@ class SquadController:
             )
         return route
 
-    @staticmethod
-    def _atomic_replace_text(path: Path, content: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary = tempfile.mkstemp(
-            dir=str(path.parent),
-            prefix=f".{path.name}-",
-            suffix=".tmp",
-        )
+    def _read_clarification_receipts(
+        self,
+        state: Mapping[str, object],
+    ) -> tuple[str, int]:
+        roots = self._authoritative_human_input_roots(state)
+        staging = roots["{staging_dir}"]
+        if staging is None:
+            raise HumanInputPolicyError("staging root is unavailable")
+        opened = self._open_project_directory_chain(staging)
+        directory_fd = opened[-1]
+        file_fd = -1
+        keep_directory = False
         try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                handle.write(content)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, path)
-            directory_fd = os.open(path.parent, os.O_RDONLY)
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+            )
             try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+                file_fd = os.open(
+                    "user-clarifications.md",
+                    flags,
+                    dir_fd=directory_fd,
+                )
+            except FileNotFoundError:
+                keep_directory = True
+                return "", directory_fd
+            metadata = os.fstat(file_fd)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise HumanInputPolicyError(
+                    "clarification receipt must be a regular file"
+                )
+            if metadata.st_size > 1_048_576:
+                raise HumanInputPolicyError(
+                    "clarification receipt exceeds the byte limit"
+                )
+            chunks: list[bytes] = []
+            remaining = 1_048_576
+            while remaining > 0:
+                chunk = os.read(
+                    file_fd,
+                    min(remaining + 1, _CONTEXT_FILE_READ_CHUNK_BYTES),
+                )
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+                if remaining < 0:
+                    raise HumanInputPolicyError(
+                        "clarification receipt exceeds the byte limit"
+                    )
+            text = b"".join(chunks).decode("utf-8")
+            keep_directory = True
+            return text, directory_fd
+        except HumanInputPolicyError:
+            raise
+        except (OSError, UnicodeError) as exc:
+            raise HumanInputPolicyError(
+                "clarification receipt cannot follow a symlink or invalid file"
+            ) from exc
         finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+            descriptors = opened[:-1] if keep_directory else opened
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
+
+    @staticmethod
+    def _replace_clarification_receipts(
+        directory_fd: int,
+        content: str,
+    ) -> None:
+        temporary = f".user-clarifications-{uuid.uuid4().hex}.tmp"
+        descriptor = -1
+        try:
+            descriptor = os.open(
+                temporary,
+                (
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | getattr(os, "O_NOFOLLOW", 0)
+                    | getattr(os, "O_CLOEXEC", 0)
+                ),
+                0o600,
+                dir_fd=directory_fd,
+            )
+            payload = content.encode("utf-8")
+            offset = 0
+            while offset < len(payload):
+                written = os.write(descriptor, payload[offset:])
+                if written <= 0:
+                    raise OSError("clarification receipt write made no progress")
+                offset += written
+            os.fsync(descriptor)
+            os.close(descriptor)
+            descriptor = -1
+            os.replace(
+                temporary,
+                "user-clarifications.md",
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+            os.fsync(directory_fd)
+        except OSError as exc:
+            raise HumanInputPolicyError(
+                "clarification receipt replacement failed"
+            ) from exc
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
             try:
-                os.unlink(temporary)
+                os.unlink(temporary, dir_fd=directory_fd)
             except FileNotFoundError:
                 pass
 
@@ -2862,17 +2977,8 @@ class SquadController:
             if selected is not None
             else str(resolution.answer_text)
         )
-        staging_dir = Path(
-            str(state.get("staging_dir") or self._squad_dir / "staging")
-        )
-        if not staging_dir.is_absolute():
-            staging_dir = self._project_root / staging_dir
-        path = staging_dir / "user-clarifications.md"
         marker = f"## Decision {decision['id']}"
-        try:
-            existing = path.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            existing = ""
+        existing, directory_fd = self._read_clarification_receipts(state)
         section = (
             f"{marker}\n\n"
             f"**Question:** {decision['question']}\n\n"
@@ -2897,6 +3003,7 @@ class SquadController:
                     and not remainder.startswith("\n## Decision ")
                 )
             ):
+                os.close(directory_fd)
                 raise HumanInputPolicyError(
                     "clarification receipt conflicts with the resolution"
                 )
@@ -2904,10 +3011,16 @@ class SquadController:
             separator = "" if not existing or existing.endswith("\n\n") else (
                 "\n" if existing.endswith("\n") else "\n\n"
             )
-            self._atomic_replace_text(
-                path,
-                f"{existing}{separator}{section}",
-            )
+            try:
+                self._replace_clarification_receipts(
+                    directory_fd,
+                    f"{existing}{separator}{section}",
+                )
+            finally:
+                os.close(directory_fd)
+            directory_fd = -1
+        if directory_fd >= 0:
+            os.close(directory_fd)
         return _HumanInputResolutionEffects(
             state_updates={"status": "running", "phase": route},
             state_removals=frozenset(),
@@ -3164,24 +3277,14 @@ class SquadController:
         template: str,
         state: Mapping[str, object],
     ) -> tuple[Path, tuple[str, ...]]:
-        roots = {
-            "{staging_dir}": state.get("staging_dir")
-            or self._squad_dir / "staging",
-            "{spec_dir}": state.get("spec_dir"),
-            "{context_dir}": state.get("context_dir")
-            or self._squad_dir / "context",
-            "{squad_dir}": self._squad_dir,
-        }
-        for marker, raw_root in roots.items():
+        roots = self._authoritative_human_input_roots(state)
+        for marker, root in roots.items():
             if template != marker and not template.startswith(f"{marker}/"):
                 continue
-            if raw_root is None:
+            if root is None:
                 raise HumanInputPolicyError(
                     f"context root {marker} is unavailable"
                 )
-            root = Path(raw_root)
-            if not root.is_absolute():
-                root = self._project_root / root
             suffix = template[len(marker):].lstrip("/")
             components = tuple(suffix.split("/")) if suffix else ()
             if not components or any(
@@ -3194,6 +3297,145 @@ class SquadController:
         raise HumanInputPolicyError(
             "context path does not use a registered root"
         )
+
+    def _identity_path(
+        self,
+        value: object,
+        *,
+        base: Path | None = None,
+        field: str,
+    ) -> Path:
+        if not isinstance(value, (str, os.PathLike)):
+            raise HumanInputPolicyError(f"{field} root identity is invalid")
+        path = Path(value)
+        if not path.is_absolute():
+            path = (base or self._project_root) / path
+        return Path(os.path.abspath(os.fspath(path)))
+
+    def _project_contained_path(
+        self,
+        value: object,
+        *,
+        field: str,
+    ) -> Path:
+        project_root = self._identity_path(
+            self._project_root,
+            field="project",
+        )
+        path = self._identity_path(value, field=field)
+        try:
+            path.relative_to(project_root)
+        except ValueError as exc:
+            raise HumanInputPolicyError(
+                f"{field} root is outside the controller project"
+            ) from exc
+        return path
+
+    def _validated_spec_root(
+        self,
+        state: Mapping[str, object],
+        *,
+        state_key: str = "spec_dir",
+    ) -> Path | None:
+        raw_root = state.get(state_key)
+        if raw_root is None or not str(raw_root).strip():
+            return None
+        root = self._project_contained_path(
+            raw_root,
+            field=state_key,
+        )
+        spec_id = str(state.get("spec_id") or "").strip()
+        if spec_id:
+            actual_id = _spec_id_from_phase_a_dir(root)
+            if (
+                actual_id != spec_id
+                and not actual_id.startswith(f"{spec_id}-")
+            ):
+                raise HumanInputPolicyError(
+                    "spec root identity does not match the active spec"
+                )
+        return root
+
+    def _authoritative_human_input_roots(
+        self,
+        state: Mapping[str, object],
+    ) -> dict[str, Path | None]:
+        store_squad = self._project_contained_path(
+            self._state_store.squad_dir,
+            field="store squad",
+        )
+        controller_squad = self._project_contained_path(
+            self._squad_dir,
+            field="controller squad",
+        )
+        if controller_squad != store_squad:
+            raise HumanInputPolicyError(
+                "controller and store run root identities do not match"
+            )
+        expected = {
+            "squad_dir": store_squad,
+            "staging_dir": self._identity_path(
+                self._state_store.staging_dir,
+                field="store staging",
+            ),
+            "context_dir": self._identity_path(
+                store_squad / "context",
+                field="store context",
+            ),
+        }
+        for key, expected_root in expected.items():
+            persisted = self._identity_path(
+                state.get(key),
+                field=key,
+            )
+            if persisted != expected_root:
+                raise HumanInputPolicyError(
+                    f"persisted {key} root identity does not match the run"
+                )
+        return {
+            "{staging_dir}": expected["staging_dir"],
+            "{spec_dir}": self._validated_spec_root(state),
+            "{context_dir}": expected["context_dir"],
+            "{squad_dir}": expected["squad_dir"],
+        }
+
+    def _open_project_directory_chain(self, root: Path) -> list[int]:
+        no_follow = getattr(os, "O_NOFOLLOW", None)
+        if no_follow is None:
+            raise HumanInputPolicyError(
+                "context no-follow traversal is unavailable"
+            )
+        project_root = self._identity_path(
+            self._project_root,
+            field="project",
+        )
+        try:
+            relative = root.relative_to(project_root)
+        except ValueError as exc:
+            raise HumanInputPolicyError(
+                "context root is outside the controller project"
+            ) from exc
+        directory_flags = (
+            os.O_RDONLY
+            | no_follow
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        opened = [os.open(project_root, directory_flags)]
+        try:
+            current_fd = opened[0]
+            for component in relative.parts:
+                current_fd = os.open(
+                    component,
+                    directory_flags,
+                    dir_fd=current_fd,
+                )
+                opened.append(current_fd)
+            return opened
+        except Exception:
+            for descriptor in reversed(opened):
+                os.close(descriptor)
+            raise
 
     def _read_human_input_context_file(
         self,
@@ -3214,12 +3456,6 @@ class SquadController:
             template,
             state,
         )
-        directory_flags = (
-            os.O_RDONLY
-            | no_follow
-            | getattr(os, "O_DIRECTORY", 0)
-            | getattr(os, "O_CLOEXEC", 0)
-        )
         file_flags = (
             os.O_RDONLY
             | no_follow
@@ -3228,12 +3464,17 @@ class SquadController:
         )
         opened: list[int] = []
         try:
-            current_fd = os.open(root, directory_flags)
-            opened.append(current_fd)
+            opened = self._open_project_directory_chain(root)
+            current_fd = opened[-1]
             for component in components[:-1]:
                 current_fd = os.open(
                     component,
-                    directory_flags,
+                    (
+                        os.O_RDONLY
+                        | no_follow
+                        | getattr(os, "O_DIRECTORY", 0)
+                        | getattr(os, "O_CLOEXEC", 0)
+                    ),
                     dir_fd=current_fd,
                 )
                 opened.append(current_fd)
@@ -3375,11 +3616,21 @@ class SquadController:
         current_state = dict(state)
         current_decision = dict(decision)
         while current_decision.get("status") == "pending":
-            prompt = self._render_commander_decision_prompt(
-                current_decision,
-                policy,
-                current_state,
-            )
+            try:
+                prompt = self._render_commander_decision_prompt(
+                    current_decision,
+                    policy,
+                    current_state,
+                )
+            except (HumanInputPolicyError, BlockedDecisionError):
+                self._state_store.fail_pending_human_input_decision(
+                    str(current_decision["id"]),
+                    expected_state_revision=int(
+                        current_state["state_revision"]
+                    ),
+                    failure_code="decision_context_setup_failed",
+                )
+                return False
             claimed = self._state_store.claim_human_input_decision(
                 str(current_decision["id"]),
                 expected_state_revision=int(current_state["state_revision"]),
@@ -3407,6 +3658,7 @@ class SquadController:
                             str(self._project_root),
                             prompt,
                             allow_result_repair=False,
+                            strict_result_envelope=True,
                         )
                     if (
                         type(raw_result) is not SquadAgentResult
@@ -3985,15 +4237,40 @@ class SquadController:
                 else MAX_PHASE_DISPATCHES
             )
             if dispatch_count > phase_limit:
-                candidates = self._banzai_issue_resolution_candidates(
-                    self._state_store.load()
-                )
+                cap_state = self._state_store.load()
+                try:
+                    candidates = self._banzai_issue_resolution_candidates(
+                        cap_state
+                    )
+                    cap_options = self._dispatch_cap_options(candidates)
+                except _DispatchCapEvidenceError as exc:
+                    self._record_blocker_event(phase, exc.reason_code)
+                    self._block_unresolvable_dispatch_cap(
+                        phase,
+                        cap_state,
+                        exc.reason_code,
+                    )
+                    return SquadResult.from_state(
+                        self._state_store.load()
+                    )
+                except HumanInputPolicyError:
+                    reason_code = (
+                        "phase_dispatch_limit_evidence_malformed"
+                    )
+                    self._record_blocker_event(phase, reason_code)
+                    self._block_unresolvable_dispatch_cap(
+                        phase,
+                        cap_state,
+                        reason_code,
+                    )
+                    return SquadResult.from_state(
+                        self._state_store.load()
+                    )
                 escalation_q = (
                     f"Phase {phase!r} has been dispatched {dispatch_count} times "
                     f"(limit {phase_limit}) without converging or advancing. "
                     "Select exactly one sealed evidence-backed issue resolution."
                 )
-                cap_state = self._state_store.load()
                 request = self._human_input_registry.prepare(
                     source_kind="controller_safeguard",
                     producer_id="phase_dispatch_limit",
@@ -4004,7 +4281,7 @@ class SquadController:
                 )
                 request = replace(
                     request,
-                    options=self._dispatch_cap_options(candidates),
+                    options=cap_options,
                 )
                 self._record_blocker_event(phase, "phase_dispatch_limit")
                 print(
@@ -4154,47 +4431,17 @@ class SquadController:
             decision = routing.decision
             next_phase = decision.to_phase
 
-            try:
-                provider_human_input = self._prepare_provider_human_input(
+            human_input_result = (
+                self._handle_prepared_human_input_or_block(
                     node,
                     prepared,
                     snapshot,
-                )
-            except HumanInputPolicyError as exc:
-                self._discard_publication_without_authority(
+                    routing,
                     prepared_publication,
                 )
-                self._block_after_state_advance_failure(
-                    node,
-                    decision.from_phase,
-                    StateAdvanceError(
-                        "provider human-input preparation failed",
-                        json_path="$.state_updates.escalation_question",
-                        validator="human_input_policy",
-                    ),
-                    decision=decision,
-                    token_usage_delta=decision.token_usage_delta,
-                    diagnostic_subject=str(exc),
-                )
-                return SquadResult.from_state(self._state_store.load())
-
-            if (
-                provider_human_input is not None
-                and routing.human_input is not None
-            ):
-                raise HumanInputPolicyError(
-                    "provider question and controller safeguard overlap"
-                )
-            human_input = provider_human_input or routing.human_input
-            if human_input is not None:
-                if self.handle_human_input(
-                    human_input,
-                    provider_advance=_ProviderHumanInputAdvance(
-                        from_phase=decision.from_phase,
-                        to_phase=decision.to_phase,
-                        decision=decision,
-                    ),
-                ):
+            )
+            if human_input_result is not None:
+                if human_input_result:
                     continue
                 return SquadResult.from_state(self._state_store.load())
 
@@ -4430,6 +4677,20 @@ class SquadController:
         existing = self._state_store.load()
         if self._unresolved_human_input_decision(existing) is not None:
             return self._unresolved_human_input_result(existing)
+        if (
+            existing.get("status") == "blocked"
+            and existing.get("escalation_question")
+            and not (
+                isinstance(existing.get("blocked_decision"), Mapping)
+                and existing["blocked_decision"].get("schema_version") == 2
+            )
+        ):
+            legacy_request = self._prepare_legacy_human_input(existing)
+            if legacy_request is None:
+                return SquadResult.from_state(existing)
+            if not self.handle_human_input(legacy_request):
+                return SquadResult.from_state(self._state_store.load())
+            existing = self._state_store.load()
         if not existing:
             run_id = f"squad-{int(time.time())}"
             project_mode = self._detect_project_mode(mode)
@@ -4615,15 +4876,14 @@ class SquadController:
         decision = routing.decision
         next_phase = decision.to_phase
 
-        if routing.human_input is not None:
-            self.handle_human_input(
-                routing.human_input,
-                provider_advance=_ProviderHumanInputAdvance(
-                    from_phase=decision.from_phase,
-                    to_phase=decision.to_phase,
-                    decision=decision,
-                ),
-            )
+        human_input_result = self._handle_prepared_human_input_or_block(
+            node,
+            prepared,
+            snapshot,
+            routing,
+            prepared_publication,
+        )
+        if human_input_result is not None:
             return SquadResult.from_state(self._state_store.load())
         receipt = self._advance_prepared_result_or_block(
             node,
@@ -7621,6 +7881,59 @@ class SquadController:
             source_state_revision=snapshot.state_revision,
         )
 
+    def _handle_prepared_human_input_or_block(
+        self,
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
+        routing: _PreparedControllerRouting,
+        prepared_publication: PreparedSquadPublication | None,
+    ) -> bool | None:
+        """Share provider preparation, overlap rejection, and sealing."""
+        decision = routing.decision
+        try:
+            provider_request = self._prepare_provider_human_input(
+                node,
+                prepared,
+                snapshot,
+            )
+            if (
+                provider_request is not None
+                and routing.human_input is not None
+            ):
+                raise HumanInputPolicyError(
+                    "provider question and controller safeguard overlap"
+                )
+            request = provider_request or routing.human_input
+        except HumanInputPolicyError:
+            self._discard_publication_without_authority(
+                prepared_publication,
+            )
+            self._block_after_state_advance_failure(
+                node,
+                decision.from_phase,
+                StateAdvanceError(
+                    "provider human-input preparation failed",
+                    json_path="$.state_updates.escalation_question",
+                    validator="human_input_policy",
+                ),
+                decision=decision,
+                token_usage_delta=decision.token_usage_delta,
+                diagnostic_subject="provider human-input preparation",
+            )
+            return False
+
+        if request is None:
+            return None
+        return self.handle_human_input(
+            request,
+            provider_advance=_ProviderHumanInputAdvance(
+                from_phase=decision.from_phase,
+                to_phase=decision.to_phase,
+                decision=decision,
+            ),
+        )
+
     def _advance_prepared_result_or_block(
         self,
         node: PhaseNode,
@@ -8102,20 +8415,14 @@ class SquadController:
             "FAILs with no artifact progress — forcing escalation",
             flush=True,
         )
-        spec_dir_ref = str(state.get("spec_dir") or "").strip()
-        if spec_dir_ref:
-            issues_path = Path(spec_dir_ref)
-            if not issues_path.is_absolute():
-                issues_path = self._project_root / issues_path
-            issues_hint = str(issues_path / "issues.md")
-        else:
-            issues_hint = "issues.md was not available"
         question = (
             f"{node.id} still fails after {fail_count} assessments without "
-            "a spec artifact change. No retry is authorized. Resolve the "
-            f"first unresolved SAGE issue from {issues_hint} with "
-            "`echelon spec resolve ISS-<n> '<decision>'`; the controller "
-            "will run and revalidate only that issue's declared repair edge."
+            "a spec artifact change. No automatic retry is authorized. Run "
+            '`echelon spec resume "<your answer>"` with new evidence, narrowed '
+            "scope, or a concrete repair instruction. The resume records that "
+            "free-text answer, resets the consecutive WHY failure count, and "
+            "reopens phase1-why2. Then `echelon spec continue` retries that "
+            "phase under the normal validation gates."
         )
         request = self._human_input_registry.prepare(
             source_kind="controller_safeguard",
@@ -8564,45 +8871,187 @@ class SquadController:
         judgment = self._canonicalize_judgment_result(raw_judgment)
         return judgment
 
-    def _banzai_issue_resolution_candidates(self, state: dict) -> list[dict[str, str]]:
-        """Read only explicitly auto-eligible SAGE suggestions from issues.md."""
-        spec_ref = str(state.get("published_spec_dir") or state.get("spec_dir") or "").strip()
-        if not spec_ref:
-            return []
-        spec_dir = Path(spec_ref)
-        if not spec_dir.is_absolute():
-            spec_dir = self._project_root / spec_dir
-        issues_path = spec_dir / "issues.md"
+    def _block_unresolvable_dispatch_cap(
+        self,
+        phase: str,
+        state: Mapping[str, object],
+        reason_code: str,
+    ) -> None:
+        self._state_store.block_unresolvable_dispatch_cap(
+            from_phase=phase,
+            expected_state_revision=int(state.get("state_revision") or 0),
+            reason_code=reason_code,
+        )
+
+    def _read_dispatch_cap_issues(
+        self,
+        state: Mapping[str, object],
+    ) -> str:
+        state_key = (
+            "published_spec_dir"
+            if state.get("published_spec_dir")
+            else "spec_dir"
+        )
         try:
-            issues_md = issues_path.read_text(errors="replace")
-        except OSError:
-            return []
-        candidates: list[dict[str, str]] = []
-        for title, body in re.findall(
+            spec_dir = self._validated_spec_root(
+                state,
+                state_key=state_key,
+            )
+        except HumanInputPolicyError as exc:
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_malformed"
+            ) from exc
+        if spec_dir is None:
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_missing"
+            )
+        opened: list[int] = []
+        file_fd = -1
+        try:
+            opened = self._open_project_directory_chain(spec_dir)
+            file_fd = os.open(
+                "issues.md",
+                (
+                    os.O_RDONLY
+                    | getattr(os, "O_NOFOLLOW", 0)
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_NONBLOCK", 0)
+                ),
+                dir_fd=opened[-1],
+            )
+            metadata = os.fstat(file_fd)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_malformed"
+                )
+            if metadata.st_size > DISPATCH_CAP_ISSUES_MAX_BYTES:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_oversized"
+                )
+            chunks: list[bytes] = []
+            remaining = DISPATCH_CAP_ISSUES_MAX_BYTES + 1
+            while remaining > 0:
+                chunk = os.read(
+                    file_fd,
+                    min(remaining, _CONTEXT_FILE_READ_CHUNK_BYTES),
+                )
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            payload = b"".join(chunks)
+            if len(payload) > DISPATCH_CAP_ISSUES_MAX_BYTES:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_oversized"
+                )
+            try:
+                return payload.decode("utf-8")
+            except UnicodeError as exc:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_malformed"
+                ) from exc
+        except FileNotFoundError as exc:
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_missing"
+            ) from exc
+        except _DispatchCapEvidenceError:
+            raise
+        except (OSError, HumanInputPolicyError) as exc:
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_malformed"
+            ) from exc
+        finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+            for descriptor in reversed(opened):
+                os.close(descriptor)
+
+    def _banzai_issue_resolution_candidates(
+        self,
+        state: dict,
+    ) -> list[dict[str, str]]:
+        """Return a bounded, complete set of explicitly eligible issue options."""
+        issues_md = self._read_dispatch_cap_issues(state)
+        if not issues_md.strip():
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_empty"
+            )
+        issue_blocks = re.findall(
             r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### ISS-\d+:|\Z)",
             issues_md,
             re.MULTILINE | re.DOTALL,
-        ):
-            issue_match = re.match(r"^(ISS-\d+):\s*(.+)$", title.strip())
-            if not issue_match:
+        )
+        if not issue_blocks:
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_malformed"
+            )
+
+        candidates: list[dict[str, str]] = []
+        seen_issue_ids: set[str] = set()
+        for title, body in issue_blocks:
+            issue_match = re.fullmatch(
+                r"(ISS-\d+):\s*(\S(?:.*\S)?)",
+                title.strip(),
+            )
+            guidance = re.search(
+                r"^### Resolution Guidance[ \t]*\n(.*?)(?=^### |\Z)",
+                body,
+                re.MULTILINE | re.DOTALL,
+            )
+            if issue_match is None or guidance is None:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_malformed"
+                )
+            issue_id = issue_match.group(1)
+            if issue_id in seen_issue_ids:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_malformed"
+                )
+            seen_issue_ids.add(issue_id)
+            guidance_text = guidance.group(1)
+            field_patterns = {
+                "decision_required": "Decision required",
+                "suggested_option": "Suggested option",
+                "evidence_basis": "Evidence basis",
+            }
+            fields: dict[str, str] = {}
+            for field, label in field_patterns.items():
+                matches = re.findall(
+                    rf"^- \*\*{re.escape(label)}:\*\*[ \t]*(.+?)[ \t]*$",
+                    guidance_text,
+                    re.MULTILINE,
+                )
+                if len(matches) != 1 or not matches[0].strip():
+                    raise _DispatchCapEvidenceError(
+                        "phase_dispatch_limit_evidence_malformed"
+                    )
+                fields[field] = matches[0].strip()
+            eligibility = re.findall(
+                r"^- \*\*Banzai eligible:\*\*[ \t]*(yes|no)[ \t]*$",
+                guidance_text,
+                re.MULTILINE | re.IGNORECASE,
+            )
+            if len(eligibility) != 1:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_malformed"
+                )
+            if eligibility[0].lower() == "no":
                 continue
-            guidance = re.search(r"### Resolution Guidance\n(.*?)(?=^### |\Z)", body, re.DOTALL)
-            if not guidance:
-                continue
-            text = guidance.group(1)
-            eligible = re.search(r"- \*\*Banzai eligible:\*\*\s*yes\b", text, re.IGNORECASE)
-            suggested = re.search(r"- \*\*Suggested option:\*\*\s*(.+)", text)
-            evidence = re.search(r"- \*\*Evidence basis:\*\*\s*(.+)", text)
-            required = re.search(r"- \*\*Decision required:\*\*\s*(.+)", text)
-            if not eligible or not suggested or not evidence or not required:
-                continue
-            candidates.append({
-                "issue_id": issue_match.group(1),
-                "title": issue_match.group(2),
-                "decision_required": required.group(1).strip(),
-                "suggested_option": suggested.group(1).strip(),
-                "evidence_basis": evidence.group(1).strip(),
-            })
+            candidates.append(
+                {
+                    "issue_id": issue_id,
+                    "title": issue_match.group(2),
+                    **fields,
+                }
+            )
+            if len(candidates) > HUMAN_INPUT_MAX_OPTIONS:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_too_many_candidates"
+                )
+        if not candidates:
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_ineligible"
+            )
         return candidates
 
     def _validate_banzai_issue_resolution_selection(

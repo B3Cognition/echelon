@@ -796,6 +796,80 @@ def test_legacy_squad_adapts_one_exact_current_policy_without_broadening(
     provider.exec_agent.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("mode", "expected_status", "expected_resolver", "provider_calls"),
+    [
+        ("guided", "awaiting_human", None, 0),
+        ("semi", "awaiting_human", None, 0),
+        ("banzai", "resolved", "COMMANDER", 1),
+    ],
+)
+def test_run_single_phase_adapts_active_exact_legacy_question_before_manual_mutation(
+    tmp_path: Path,
+    mode: str,
+    expected_status: str,
+    expected_resolver: str | None,
+    provider_calls: int,
+) -> None:
+    controller, store, provider = _legacy_workflow_controller(
+        tmp_path,
+        autonomy_mode=mode,
+        phase_id="phase1-tracker",
+        reason_code="human_clarification_required",
+        provider_result=_decision_result(
+            selected_option_id=None,
+            answer_text="Use the bounded legacy answer.",
+        ),
+    )
+    controller._refresh_run_context = MagicMock()
+    controller._skip_phase_if_condition_false = MagicMock(return_value=True)
+
+    result = controller.run_single_phase(
+        "phase1-tracker",
+        user_message="registered user message",
+        mode=mode,
+    )
+
+    state = store.load()
+    decision = state["blocked_decision"]
+    assert decision["schema_version"] == 2
+    assert decision["source_kind"] == "legacy_recovery"
+    assert decision["status"] == expected_status
+    assert decision["resolved_by"] == expected_resolver
+    assert provider.exec_agent.call_count == provider_calls
+    assert result.status == (
+        "running" if expected_status == "resolved" else "blocked"
+    )
+
+
+def test_run_single_phase_rejects_malformed_active_legacy_question_before_mutation(
+    tmp_path: Path,
+) -> None:
+    controller, store, provider = _legacy_workflow_controller(
+        tmp_path,
+        autonomy_mode="guided",
+        phase_id="phase1-tracker",
+        reason_code="human_clarification_required",
+    )
+    raw = json.loads(store._path.read_text(encoding="utf-8"))
+    raw["blocked_decision"]["unexpected_authority"] = "must not be adapted"
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+    before = store._path.read_bytes()
+    controller._refresh_run_context = MagicMock()
+
+    result = controller.run_single_phase(
+        "phase4-document",
+        user_message="different manual input",
+        mode="banzai",
+        initial_state_updates={"manual_mutation": "must-not-commit"},
+    )
+
+    assert result.status == "blocked"
+    assert store._path.read_bytes() == before
+    assert "manual_mutation" not in store.load()
+    provider.exec_agent.assert_not_called()
+
+
 def test_legacy_terminal_safeguard_adapts_from_exact_resume_phase(
     tmp_path: Path,
 ) -> None:
@@ -1181,11 +1255,15 @@ def test_human_input_handler_clarification_appends_decision_section_atomically(
         question="Which product boundary should be used?",
     )
     real_replace = os.replace
-    replacements: list[Path] = []
+    replacements: list[tuple[Path, dict[str, object]]] = []
 
-    def recording_replace(source: object, destination: object) -> None:
-        replacements.append(Path(destination))
-        real_replace(source, destination)
+    def recording_replace(
+        source: object,
+        destination: object,
+        **kwargs: object,
+    ) -> None:
+        replacements.append((Path(destination), kwargs))
+        real_replace(source, destination, **kwargs)
 
     monkeypatch.setattr(squad_module.os, "replace", recording_replace)
 
@@ -1201,7 +1279,15 @@ def test_human_input_handler_clarification_appends_decision_section_atomically(
 
     state = store.load()
     clarification_path = Path(state["staging_dir"]) / "user-clarifications.md"
-    assert clarification_path in replacements
+    clarification_replacements = [
+        replacement
+        for replacement in replacements
+        if replacement[0] == Path("user-clarifications.md")
+    ]
+    assert len(clarification_replacements) == 1
+    destination, replace_kwargs = clarification_replacements[0]
+    assert destination == Path("user-clarifications.md")
+    assert replace_kwargs["src_dir_fd"] == replace_kwargs["dst_dir_fd"]
     assert clarification_path.read_text(encoding="utf-8") == (
         f"## Decision {decision_id}\n\n"
         "**Question:** Which product boundary should be used?\n\n"
@@ -1279,6 +1365,65 @@ def test_clarification_idempotent_after_state_save_interruption(
         f"## Decision {decision_id}"
     ) == 1
     store.apply_human_input_state_resolution.assert_called_once()
+
+
+def test_clarification_rejects_tampered_staging_root_without_outside_write(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy(source_kind="legacy_recovery")
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    _decision_id, _revision = _seal_awaiting_human(
+        controller,
+        store,
+        policy,
+    )
+    outside = tmp_path.parent / f"{tmp_path.name}-clarification-outside"
+    outside.mkdir()
+    raw = json.loads(store._path.read_text(encoding="utf-8"))
+    raw["staging_dir"] = str(outside)
+    store._path.write_text(json.dumps(raw), encoding="utf-8")
+    before = store._path.read_bytes()
+
+    with pytest.raises(HumanInputPolicyError, match="staging|root|identity"):
+        controller.resume_with_human_input("Use the contained answer.")
+
+    assert store._path.read_bytes() == before
+    assert not (outside / "user-clarifications.md").exists()
+    assert not (store.staging_dir / "user-clarifications.md").exists()
+    provider.exec_agent.assert_not_called()
+
+
+def test_clarification_rejects_symlink_target_without_following_it(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy(source_kind="legacy_recovery")
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    _decision_id, _revision = _seal_awaiting_human(
+        controller,
+        store,
+        policy,
+    )
+    outside = tmp_path / "outside-clarifications.md"
+    outside.write_text("OUTSIDE CONTENT", encoding="utf-8")
+    clarification = store.staging_dir / "user-clarifications.md"
+    clarification.symlink_to(outside)
+    before = store._path.read_bytes()
+
+    with pytest.raises(HumanInputPolicyError, match="symlink|clarification"):
+        controller.resume_with_human_input("Use the contained answer.")
+
+    assert store._path.read_bytes() == before
+    assert outside.read_text(encoding="utf-8") == "OUTSIDE CONTENT"
+    assert clarification.is_symlink()
+    provider.exec_agent.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -2124,6 +2269,265 @@ def test_phase_dispatch_limit_uses_human_input_setter_path(
     provider.exec_agent.assert_not_called()
 
 
+def test_dispatch_cap_options_reject_an_empty_candidate_set() -> None:
+    with pytest.raises(HumanInputPolicyError, match="eligible|option"):
+        SquadController._dispatch_cap_options([])
+
+
+def test_controller_rejects_empty_dispatch_cap_request_before_sealing(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase1-what",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-what"}),
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    request = controller._human_input_registry.prepare(
+        source_kind=policy.source_kind,
+        producer_id=policy.producer_id,
+        phase_id="phase1-what",
+        reason_code=policy.reason_code,
+        question="Select one sealed evidence-backed issue resolution.",
+        source_state_revision=store.load()["state_revision"],
+    )
+    before = store.load()
+
+    with pytest.raises(HumanInputPolicyError, match="eligible|option"):
+        controller.handle_human_input(request)
+
+    assert store.load() == before
+    provider.exec_agent.assert_not_called()
+
+
+def test_controller_rejects_prepared_answer_shape_that_conflicts_with_policy(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        _free_text_policy(source_kind="legacy_recovery"),
+        allow_free_text=False,
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    request = _request(controller, store, policy)
+    before = store.load()
+
+    with pytest.raises(HumanInputPolicyError, match="answer shape"):
+        controller.handle_human_input(request)
+
+    assert store.load() == before
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize("mode", ("guided", "semi", "banzai"))
+@pytest.mark.parametrize(
+    ("evidence", "expected_reason"),
+    [
+        ("missing", "phase_dispatch_limit_evidence_missing"),
+        ("empty", "phase_dispatch_limit_evidence_empty"),
+        ("malformed", "phase_dispatch_limit_evidence_malformed"),
+        ("ineligible", "phase_dispatch_limit_evidence_ineligible"),
+    ],
+)
+def test_dispatch_cap_without_resolvable_evidence_fails_manual_diagnosis_in_all_modes(
+    tmp_path: Path,
+    mode: str,
+    evidence: str,
+    expected_reason: str,
+) -> None:
+    from echelon.cli import _active_v2_decision, _classify_run_recovery
+
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase1-what",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-what"}),
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode=mode,
+        policy=policy,
+    )
+    for guard_name in (
+        "_guard_constitution_provenance",
+        "_guard_spec_lexicon_evidence",
+        "_guard_phase1_quality_evidence",
+        "_guard_understanding_evidence",
+    ):
+        setattr(controller, guard_name, MagicMock(side_effect=lambda phase: phase))
+    state = store.load()
+    state["phase_dispatch_counts"] = {
+        "phase1-what": controller._max_iterations + 1,
+    }
+    store.save(state)
+    spec_dir = Path(store.load()["spec_dir"])
+    if evidence != "missing":
+        spec_dir.mkdir(parents=True)
+        content = {
+            "empty": "",
+            "malformed": (
+                "### ISS-001: Incomplete guidance\n\n"
+                "### Resolution Guidance\n"
+                "- **Banzai eligible:** yes\n"
+            ),
+            "ineligible": (
+                "### ISS-001: Product preference\n\n"
+                "### Resolution Guidance\n"
+                "- **Decision required:** Choose a product preference.\n"
+                "- **Suggested option:** Use option A.\n"
+                "- **Evidence basis:** The user must decide.\n"
+                "- **Banzai eligible:** no\n"
+            ),
+        }[evidence]
+        (spec_dir / "issues.md").write_text(content, encoding="utf-8")
+
+    result = controller.run("message", mode)
+
+    failed = store.load()
+    assert result.status == "blocked"
+    assert failed["blocked_reason"] == expected_reason
+    assert failed["recovery_instruction"]["kind"] == "manual_diagnosis"
+    assert failed["recovery_instruction"]["requires_human_input"] is False
+    assert "blocked_decision" not in failed
+    assert "escalation_question" not in failed
+    assert _active_v2_decision(failed) is None
+    action = _classify_run_recovery(failed, project_root=tmp_path)
+    assert action.kind == "manual_recovery"
+    assert "free text" not in f"{action.command} {action.note}".lower()
+    provider.exec_agent.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("evidence", "expected_reason"),
+    [
+        ("oversized", "phase_dispatch_limit_evidence_oversized"),
+        ("too_many", "phase_dispatch_limit_evidence_too_many_candidates"),
+    ],
+)
+def test_dispatch_cap_bounds_issue_reads_and_candidate_count(
+    tmp_path: Path,
+    evidence: str,
+    expected_reason: str,
+) -> None:
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase1-what",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-what"}),
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    for guard_name in (
+        "_guard_constitution_provenance",
+        "_guard_spec_lexicon_evidence",
+        "_guard_phase1_quality_evidence",
+        "_guard_understanding_evidence",
+    ):
+        setattr(controller, guard_name, MagicMock(side_effect=lambda phase: phase))
+    state = store.load()
+    state["phase_dispatch_counts"] = {
+        "phase1-what": controller._max_iterations + 1,
+    }
+    store.save(state)
+    spec_dir = Path(store.load()["spec_dir"])
+    spec_dir.mkdir(parents=True)
+    issue = (
+        "### {issue_id}: Retry policy\n\n"
+        "### Resolution Guidance\n"
+        "- **Decision required:** Retry behavior.\n"
+        "- **Suggested option:** Use exponential backoff.\n"
+        "- **Evidence basis:** The API documents idempotent reads.\n"
+        "- **Banzai eligible:** yes\n"
+    )
+    if evidence == "oversized":
+        content = issue.format(issue_id="ISS-001") + ("x" * 1_000_000)
+    else:
+        content = "\n".join(
+            issue.format(issue_id=f"ISS-{index:03d}")
+            for index in range(1, 66)
+        )
+    (spec_dir / "issues.md").write_text(content, encoding="utf-8")
+
+    result = controller.run("message", "guided")
+
+    failed = store.load()
+    assert result.status == "blocked"
+    assert failed["blocked_reason"] == expected_reason
+    assert failed["recovery_instruction"]["kind"] == "manual_diagnosis"
+    assert "blocked_decision" not in failed
+    provider.exec_agent.assert_not_called()
+
+
+def test_unresolvable_dispatch_cap_retires_prior_terminal_decision_authority(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        _safeguard_policy(
+            "phase_dispatch_limit",
+            phase_id="phase1-what",
+        ),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-what"}),
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="guided",
+        policy=policy,
+    )
+    for guard_name in (
+        "_guard_constitution_provenance",
+        "_guard_spec_lexicon_evidence",
+        "_guard_phase1_quality_evidence",
+        "_guard_understanding_evidence",
+    ):
+        setattr(
+            controller,
+            guard_name,
+            MagicMock(side_effect=lambda phase: phase),
+        )
+    _seal_dispatch_cap_decision(
+        controller,
+        store,
+        policy,
+        (_dispatch_cap_candidate(),),
+    )
+    assert controller.resume_with_human_input("ISS-001")
+    assert store.load()["blocked_decision"]["status"] == "resolved"
+    state = store.load()
+    state["phase_dispatch_counts"] = {
+        "phase1-what": controller._max_iterations + 1,
+    }
+    store.save(state)
+
+    result = controller.run("message", "guided")
+
+    failed = store.load()
+    assert result.status == "blocked"
+    assert failed["blocked_reason"] == (
+        "phase_dispatch_limit_evidence_missing"
+    )
+    assert failed["recovery_instruction"]["kind"] == "manual_diagnosis"
+    assert "blocked_decision" not in failed
+    provider.exec_agent.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("producer_id", "stagnation_count", "expected_updates"),
     [
@@ -2527,6 +2931,128 @@ def test_commander_context_rejects_parent_symlink_swap_during_open(
             state,
         )
     assert swapped
+
+
+@pytest.mark.parametrize(
+    ("state_key", "context_path"),
+    [
+        ("staging_dir", "{staging_dir}/evidence.md"),
+        ("context_dir", "{context_dir}/evidence.md"),
+        ("squad_dir", "{squad_dir}/evidence.md"),
+        ("spec_dir", "{spec_dir}/evidence.md"),
+    ],
+)
+def test_commander_context_rejects_tampered_persisted_roots_before_claim(
+    tmp_path: Path,
+    state_key: str,
+    context_path: str,
+) -> None:
+    policy = _free_text_policy(
+        context_paths=(context_path,),
+        source_kind="legacy_recovery",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    outside = tmp_path.parent / f"{tmp_path.name}-{state_key}-outside"
+    outside.mkdir()
+    (outside / "evidence.md").write_text(
+        "OUTSIDE SECRET",
+        encoding="utf-8",
+    )
+    state = store.load()
+    state[state_key] = str(outside)
+    store.save(state)
+
+    assert controller.handle_human_input(
+        _request(controller, store, policy)
+    ) is False
+
+    failed = store.load()
+    assert failed["blocked_decision"]["status"] == "failed"
+    assert failed["blocked_decision"]["attempts"] == 0
+    assert failed["blocked_decision"]["failure_code"] == (
+        "decision_context_setup_failed"
+    )
+    assert failed["recovery_instruction"]["kind"] == "manual_diagnosis"
+    assert "escalation_question" not in failed
+    provider.exec_agent.assert_not_called()
+
+
+def test_commander_context_rejects_mismatched_spec_identity_before_claim(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy(
+        context_paths=("{spec_dir}/evidence.md",),
+        source_kind="legacy_recovery",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    wrong_spec = tmp_path / "specs" / "999-other"
+    wrong_spec.mkdir(parents=True)
+    (wrong_spec / "evidence.md").write_text("WRONG SPEC", encoding="utf-8")
+    state = store.load()
+    state["spec_id"] = "001-expected"
+    state["spec_dir"] = str(wrong_spec)
+    store.save(state)
+
+    assert controller.handle_human_input(
+        _request(controller, store, policy)
+    ) is False
+
+    failed = store.load()
+    assert failed["blocked_decision"]["status"] == "failed"
+    assert failed["blocked_decision"]["attempts"] == 0
+    assert failed["blocked_decision"]["failure_code"] == (
+        "decision_context_setup_failed"
+    )
+    provider.exec_agent.assert_not_called()
+
+
+def test_commander_context_setup_failure_is_stable_across_restart(
+    tmp_path: Path,
+) -> None:
+    policy = _free_text_policy(
+        context_paths=("{staging_dir}/evidence.md",),
+        source_kind="legacy_recovery",
+    )
+    controller, store, provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+    )
+    outside = tmp_path.parent / f"{tmp_path.name}-restart-outside"
+    outside.mkdir()
+    (outside / "evidence.md").write_text("OUTSIDE SECRET", encoding="utf-8")
+    state = store.load()
+    state["staging_dir"] = str(outside)
+    store.save(state)
+
+    assert controller.handle_human_input(
+        _request(controller, store, policy)
+    ) is False
+    before_restart = store.load()
+    restarted_provider = MagicMock()
+    restarted = SquadController(
+        provider=restarted_provider,
+        state_store=store,
+        phase_graph=PhaseGraph(DEFINITION, EXTENSION),
+        ext_dir=ROOT / "extension",
+        project_root=tmp_path,
+        squad_dir=store.squad_dir,
+    )
+
+    assert restarted.resume_pending_human_input() is False
+    assert store.load() == before_restart
+    assert before_restart["blocked_decision"]["status"] == "failed"
+    assert before_restart["blocked_decision"]["attempts"] == 0
+    provider.exec_agent.assert_not_called()
+    restarted_provider.exec_agent.assert_not_called()
 
 
 def test_commander_context_reads_only_the_remaining_aggregate_file_budget(
@@ -2949,6 +3475,74 @@ def test_commander_real_provider_has_one_physical_call_per_durable_claim(
     assert len(backend.requests) == 2
     assert claims == [1, 2]
     assert state["blocked_decision"]["attempts"] == 2
+    assert state["token_usage"] == 8
+
+
+def test_commander_duplicate_physical_envelope_consumes_one_claim(
+    tmp_path: Path,
+) -> None:
+    valid = (
+        "echelon_result:\n"
+        "  verdict: DECISION_RESOLVED\n"
+        "  state_updates: {}\n"
+        "  journal_entries: []\n"
+        "  decision:\n"
+        "    selected_option_id: approve\n"
+        "    answer_text: null\n"
+        "    rationale: Best exact allowed option.\n"
+        "    confidence: high\n"
+    )
+
+    class FakeBackend:
+        def __init__(self) -> None:
+            self.requests: list[CliRunRequest] = []
+
+        def run_prompt(self, request: CliRunRequest) -> CliRunResult:
+            raise AssertionError("decision resolution must use run_agent")
+
+        def run_agent(self, request: CliRunRequest) -> CliRunResult:
+            self.requests.append(request)
+            return CliRunResult(
+                exit_code=0,
+                stdout=(
+                    (
+                        valid.replace(
+                            "selected_option_id: approve",
+                            "selected_option_id: reject",
+                        )
+                        + "\nConflicting answer follows.\n\n"
+                        + valid
+                    )
+                    if len(self.requests) == 1
+                    else valid
+                ),
+                stderr="",
+                token_usage=3 if len(self.requests) == 1 else 5,
+            )
+
+    config = HarnessConfig(
+        target_repo=".",
+        target_default_branch="main",
+        provider="docker",
+        llm=LlmConfig(cli="codex"),
+    )
+    provider = SquadCliProvider(config)
+    backend = FakeBackend()
+    provider._backend = backend
+    policy = _choice_policy()
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="banzai",
+        policy=policy,
+        provider=provider,
+    )
+
+    assert controller.handle_human_input(_request(controller, store, policy))
+
+    state = store.load()
+    assert len(backend.requests) == 2
+    assert state["blocked_decision"]["attempts"] == 2
+    assert state["blocked_decision"]["selected_option_id"] == "approve"
     assert state["token_usage"] == 8
 
 

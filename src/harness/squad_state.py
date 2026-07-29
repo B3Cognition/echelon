@@ -1875,6 +1875,15 @@ class SquadStateStore:
                 expected_state_revision=expected_state_revision,
                 allowed_statuses=frozenset({"pending"}),
             )
+            if (
+                type(decision.get("attempts")) is not int
+                or int(decision["attempts"]) >= 2
+            ):
+                raise StateAdvanceError(
+                    "human-input decision attempt limit is exhausted",
+                    json_path="$.blocked_decision.attempts",
+                    validator="human_input_authority",
+                )
             desired = deepcopy(before)
             resolving = {
                 **decision,
@@ -1886,6 +1895,108 @@ class SquadStateStore:
                 resolving,
             )
             return self._commit_human_input_state_unlocked(before, desired)
+
+    def fail_pending_human_input_decision(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+        failure_code: str,
+    ) -> dict[str, Any]:
+        """Fail deterministic pre-claim setup without consuming an attempt."""
+        if not isinstance(failure_code, str) or not failure_code.strip():
+            raise StateAdvanceError(
+                "human-input setup failure code is invalid",
+                json_path="$.blocked_decision.failure_code",
+                validator="type",
+            )
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=frozenset({"pending"}),
+            )
+            desired = deepcopy(before)
+            failed = {
+                **decision,
+                "status": "failed",
+                "failure_code": failure_code.strip(),
+            }
+            desired.pop("escalation_question", None)
+            self._replace_human_input_decision_unlocked(desired, failed)
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def block_unresolvable_dispatch_cap(
+        self,
+        *,
+        from_phase: str,
+        expected_state_revision: int,
+        reason_code: str,
+    ) -> bool:
+        """Install manual diagnosis without retaining unrelated terminal authority."""
+        if (
+            not isinstance(from_phase, str)
+            or not from_phase.strip()
+            or not isinstance(reason_code, str)
+            or not reason_code.strip()
+        ):
+            raise StateAdvanceError(
+                "dispatch-cap diagnosis identity is invalid",
+                json_path="$.blocked_reason",
+                validator="type",
+            )
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            if (
+                before.get("phase") != from_phase
+                or type(expected_state_revision) is not int
+                or before.get("state_revision", 0)
+                != expected_state_revision
+            ):
+                return False
+            raw_decision = before.get("blocked_decision")
+            if raw_decision is not None:
+                if not _is_human_input_decision_v2(raw_decision):
+                    raise StateAdvanceError(
+                        "dispatch-cap diagnosis cannot replace malformed authority",
+                        json_path="$.blocked_decision",
+                        validator="human_input_authority",
+                    )
+                decision = validate_blocked_decision_v2(raw_decision)
+                validate_decision_recovery_pair(
+                    decision,
+                    before.get("recovery_instruction"),
+                )
+                if decision["status"] != "resolved":
+                    raise StateAdvanceError(
+                        "dispatch-cap diagnosis cannot replace unresolved authority",
+                        json_path="$.blocked_decision.status",
+                        validator="human_input_authority",
+                    )
+
+            desired = deepcopy(before)
+            desired.pop("blocked_decision", None)
+            desired.pop("recovery_instruction", None)
+            for key in _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS:
+                desired.pop(key, None)
+            desired["status"] = "blocked"
+            desired["blocked_reason"] = reason_code.strip()
+            desired["recovery_instruction"] = RecoveryInstruction(
+                kind=RecoveryKind.MANUAL_DIAGNOSIS,
+                reason_code=reason_code.strip(),
+                phase="",
+                requires_human_input=False,
+            ).to_dict()
+            self._save_exact_state_unlocked(
+                before,
+                desired,
+                allow_human_input_authority_update=True,
+                json_path="$.recovery_instruction",
+                error_message="atomic dispatch-cap diagnosis save failed",
+            )
+            return True
 
     def recover_interrupted_human_input_decision(self) -> dict[str, Any]:
         with self._lock(exclusive=True):
