@@ -162,6 +162,9 @@ ITERATIVE_PHASES = WHY_PHASES | frozenset(
     {
         "phase1-what",
         "phase1-lexicon",
+        # Understanding verifies every WHAT amendment. It is a bounded
+        # remediation-cycle phase, not a one-shot phase with a five-run cap.
+        "phase1-understanding",
         "phase3-how",
         "phase3-sentinel",
         "phase3-plan",
@@ -173,8 +176,9 @@ ITERATIVE_PHASES = WHY_PHASES | frozenset(
 # force-advancing. Protects against agents that re-assert convergence on every dispatch.
 MAX_CONVERGENCE_GUARD_FIRES = 3
 
-# Max dispatches of any single phase per run before forcing escalation.
-# WHY phases are governed separately by why_fail_count; this cap applies to all others.
+# Max dispatches of a non-iterative phase per run before forcing escalation.
+# Iterative authoring and verification phases use the configured repair-cycle
+# budget; their no-progress safeguards remain the authority for stopping loops.
 MAX_PHASE_DISPATCHES = 5
 # An authoring or planning agent gets the original pass plus two
 # controller-directed repairs to resolve its own product-input mapping errors.
@@ -4231,8 +4235,8 @@ class SquadController:
             self._start_declared_phase_timing(node)
 
             # Per-phase dispatch cap — prevents runaway loops on any phase.
-            # WHY phases use max_iterations as their cap (they legitimately iterate).
-            # All other phases use MAX_PHASE_DISPATCHES.
+            # Iterative authoring and verification phases use max_iterations;
+            # one-shot phases use the lower general cap.
             dispatch_count = self._state_store.increment_phase_dispatch_count(phase)
             phase_limit = (
                 self._max_iterations + 1

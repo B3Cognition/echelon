@@ -9181,12 +9181,13 @@ THEN: The dashboard is visible
 
         assert ctrl._lexicon_gate_config()["lexicon_gate"]["spec_enabled"] is expected
 
-    def test_spec_lexicon_gate_uses_the_iteration_dispatch_budget(self):
-        """WHAT repairs and their visible gate use max_iterations, not the generic cap."""
+    def test_spec_quality_gates_use_the_iteration_dispatch_budget(self):
+        """WHAT repairs and their verification gates use the repair-cycle budget."""
         from harness.squad import ITERATIVE_PHASES
 
         assert "phase1-what" in ITERATIVE_PHASES
         assert "phase1-lexicon" in ITERATIVE_PHASES
+        assert "phase1-understanding" in ITERATIVE_PHASES
 
     @pytest.mark.parametrize(
         ("phase_id", "next_phase"),
