@@ -5518,6 +5518,19 @@ class SquadController:
                 quality_certificate_override = PHASE_TERMINAL_BLOCKED
             else:
                 updates["spec_quality_certificate"] = certificate
+        quality_remediation_override: str | None = None
+        quality_remediation = state_copy.get("quality_gate_remediation")
+        if (
+            node.id == "phase1-what"
+            and (result.verdict or "").upper() == "DONE"
+            and isinstance(quality_remediation, Mapping)
+        ):
+            baseline_sha = str(
+                quality_remediation.get("baseline_spec_sha256") or ""
+            ).strip().lower()
+            current_sha = self._spec_markdown_sha256(state_copy)
+            if baseline_sha and current_sha == baseline_sha:
+                quality_remediation_override = PHASE_TERMINAL_BLOCKED
         state_removals: set[str] = set()
         if node.id == "phase2-decide":
             state_removals.update(
@@ -5565,6 +5578,12 @@ class SquadController:
         if node.id == "phase1-what":
             state_removals.add("spec_quality_certificate")
             state_removals.update(lexicon_certification_fields)
+            # A remediation is only complete when the canonical specification
+            # actually changed. Keeping its controller context through a no-op
+            # prevents the next dispatch from falsely treating a DONE payload
+            # as a repaired specification.
+            if not quality_remediation_override:
+                state_removals.add("quality_gate_remediation")
         if node.id == "phase1-lexicon-derive":
             state_removals.update(lexicon_certification_fields)
         if node.id == "phase1-lexicon":
@@ -5589,6 +5608,7 @@ class SquadController:
             or lexicon_override
             or repair_override
             or quality_certificate_override
+            or quality_remediation_override
         )
         control_updates: dict[str, object] = {}
         if routing_override == PHASE_TERMINAL_BLOCKED:
@@ -5616,6 +5636,13 @@ class SquadController:
             elif quality_certificate_override:
                 control_updates["blocked_reason"] = (
                     "spec_quality_certificate_unavailable"
+                )
+            elif quality_remediation_override:
+                control_updates.update(
+                    {
+                        "blocked_reason": "quality_gate_remediation_no_artifact_progress",
+                        "quality_gate_remediation_no_artifact_progress": True,
+                    }
                 )
         return ControllerEnrichment(
             updates=updates,
@@ -6075,9 +6102,10 @@ class SquadController:
     def _coordinate_what_repair_cycle_updates(
         self,
         node: PhaseNode,
+        prepared: PreparedPhaseResult,
         snapshot: RoutingStateSnapshot,
     ) -> dict[str, object]:
-        """Start a fresh WHY cycle when WHAT changed phase artifacts."""
+        """Record a selected WHAT repair before its targeted WHY2 validation."""
         if node.id != "phase1-what":
             return {}
         state = snapshot.state
@@ -6092,11 +6120,11 @@ class SquadController:
             and baseline.get("issue_id") == selected
             and isinstance(ledger.get(selected), dict)
             and ledger[selected].get("status") == "selected"
-            and self._phase_artifacts_changed_since(
-                str(baseline.get("recorded_at") or "") or None,
-                state,
-            )
+            and prepared.verdict.upper() == "DONE"
         ):
+            # The selected resolution may already have been incorporated by an
+            # earlier amendment. Requiring another byte-level spec.md change
+            # turns that valid confirmation into an endless repair loop.
             repaired_ledger = dict(ledger)
             repaired_entry = dict(ledger[selected])
             repaired_entry["status"] = "repaired"
@@ -6185,6 +6213,81 @@ class SquadController:
                     }
                 )
             return None, updates
+
+        # A selected issue is validated independently from the overall WHY2
+        # verdict. A targeted WHAT repair is marked ``repaired`` only after
+        # the canonical spec changed since its controller-owned baseline. At
+        # that point a later qualitative review must not reopen the same issue
+        # merely by repeating it from a stale issues.md or an unchanged
+        # aggregate score. Other issues may still keep the specification at
+        # FAIL, but the operator must be able to proceed in SAGE order.
+        selected = str(state.get("selected_issue_resolution") or "").strip()
+        ledger = state.get("issue_resolution_ledger")
+        finding_routes = prepared.state_updates.get("finding_routes")
+        findings = (
+            finding_routes.get("findings")
+            if isinstance(finding_routes, Mapping)
+            else None
+        )
+        finding_ids = {
+            str(finding.get("issue_id") or "").strip()
+            for finding in findings
+            if isinstance(finding, Mapping)
+        } if isinstance(findings, list) else set()
+        if (
+            node.id == "phase1-why2"
+            and selected
+            and isinstance(ledger, dict)
+            and isinstance(ledger.get(selected), dict)
+            and ledger[selected].get("status") == "repaired"
+        ):
+            validated_ledger = dict(ledger)
+            validated_entry = dict(ledger[selected])
+            validated_entry["status"] = "validated"
+            validated_ledger[selected] = validated_entry
+            unresolved = [
+                issue_id
+                for issue_id, entry in validated_ledger.items()
+                if isinstance(entry, dict) and entry.get("status") != "validated"
+            ]
+            if unresolved:
+                blocked_reason = "issue_resolution_next"
+                escalation_question = (
+                    f"{selected} was recorded as repaired after spec.md changed. "
+                    "Resolve the next unresolved SAGE issue with `echelon spec resolve "
+                    "ISS-<n> '<project decision>'`."
+                )
+            else:
+                updates = {
+                    "issue_resolution_ledger": validated_ledger,
+                    "selected_issue_resolution": None,
+                    "issue_resolution_repair_baseline": None,
+                    "why_fail_count": 0,
+                    "why2_metric_stagnation_count": 0,
+                    "iteration": 0,
+                    "quality_gate_remediation": {
+                        "evidence": state.get("understanding_evidence"),
+                        "baseline_spec_sha256": self._spec_markdown_sha256(state),
+                        "attempt": 1,
+                        "reason": (
+                            "All named issue resolutions are complete, but certified "
+                            "quality gates still fail. Rewrite the specification to "
+                            "address the failed metric families as a fresh remediation cycle."
+                        ),
+                    },
+                }
+                return "phase1-what", updates
+            updates = {
+                "issue_resolution_ledger": validated_ledger,
+                "selected_issue_resolution": None,
+                "issue_resolution_repair_baseline": None,
+                "why_fail_count": 0,
+                "why2_metric_stagnation_count": 0,
+                "status": "blocked",
+                "blocked_reason": blocked_reason,
+                "escalation_question": escalation_question,
+            }
+            return PHASE_TERMINAL_BLOCKED, updates
 
         from datetime import datetime, timezone
 
@@ -6409,7 +6512,7 @@ class SquadController:
 
         merge_effects(dict(additional_state_updates or {}))
         merge_effects(
-            self._coordinate_what_repair_cycle_updates(node, snapshot)
+            self._coordinate_what_repair_cycle_updates(node, prepared, snapshot)
         )
         judgment_payloads: list[dict[str, object]] = []
         judgment_results: list[SquadAgentResult] = []
@@ -7259,6 +7362,19 @@ class SquadController:
             return False
         except Exception:
             return True  # conservative: treat parse failure as progress
+
+    def _spec_markdown_sha256(self, state: Mapping[str, object]) -> str | None:
+        """Return the canonical spec digest used by a quality repair cycle."""
+        spec_dir_ref = str(state.get("spec_dir") or "").strip()
+        if not spec_dir_ref:
+            return None
+        spec_dir = Path(spec_dir_ref)
+        if not spec_dir.is_absolute():
+            spec_dir = self._project_root / spec_dir
+        try:
+            return hashlib.sha256((spec_dir / "spec.md").read_bytes()).hexdigest()
+        except OSError:
+            return None
 
     def _budget_exhausted(self) -> bool:
         if self._token_budget <= 0:

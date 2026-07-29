@@ -99,6 +99,18 @@ Specification quality is evaluated immediately by the deterministic
 `phase1-understanding` node and SAGE WHY2. A draft with missing or weak acceptance criteria therefore
 returns through the ordinary WHY2 repair route rather than relying on model-executed probes.
 
+## Completion Payload (Mandatory)
+
+Every `DONE` result from this phase MUST include:
+
+```yaml
+state_updates:
+  evidence_resolution_status: not_required
+```
+
+Do not return an empty `state_updates` object. The controller rejects it as a
+contract failure even when `spec.md` was successfully updated.
+
 After the required WHAT artifacts exist, the controller always advances to the visible,
 provider-free `phase1-understanding` node. Only a quality-certified specification advances to
 the dedicated Lexicon derivation and validation nodes.

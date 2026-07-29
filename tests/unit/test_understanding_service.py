@@ -8,6 +8,7 @@ from understanding.service import (
     DEFAULT_QUALITY_GATES,
     analyze_spec_bundle,
     evaluate_quality_gates,
+    parse_requirements,
 )
 import understanding.service as service
 
@@ -77,6 +78,63 @@ def test_analyze_spec_bundle_is_serializable_and_reports_disabled_diagrams(
     assert set(payload["gates"]) == set(DEFAULT_QUALITY_GATES)
     assert isinstance(payload["pass"], bool)
     assert payload["analysis"]["spec_path"] == str(spec)
+    assert payload["analysis"]["scoring_basis"] == "formal_requirements"
+
+
+@pytest.mark.unit
+def test_bundle_scores_formal_requirements_not_surrounding_narrative(
+    tmp_path: Path,
+) -> None:
+    spec = tmp_path / "spec.md"
+    spec.write_text(
+        "# Product rationale\n\n"
+        "This deliberately verbose narrative is not a normative requirement. "
+        "It may contain arbitrary vocabulary, examples, and implementation "
+        "detail without changing the meaning of the formal requirement below.\n\n"
+        "- **AC-001** (Error): Given an invalid request, when the user submits it, "
+        "then the system SHALL return HTTP 400 with an observable error message.\n",
+        encoding="utf-8",
+    )
+
+    bundle = analyze_spec_bundle(
+        spec,
+        thresholds=DEFAULT_QUALITY_GATES,
+        enhanced=True,
+        use_nlp=False,
+    ).to_dict()
+
+    assert bundle["requirement_count"] == 1
+    assert bundle["analysis"]["scoring_basis"] == "formal_requirements"
+    # The quality analysis must contain the criterion text, not the narrative.
+    transitions = bundle["analysis"]["behavioral_analysis"]["transitions"]
+    assert transitions
+
+
+@pytest.mark.unit
+def test_parse_requirements_accepts_parenthesized_criterion_classifier() -> None:
+    parsed = parse_requirements(
+        "- **AC-005** (Error): The system SHALL return a clear error.\n"
+    )
+
+    assert parsed["count"] == 1
+    assert parsed["requirements"] == [
+        {"id": "AC-005", "text": "The system SHALL return a clear error."}
+    ]
+
+
+@pytest.mark.unit
+def test_parse_requirements_accepts_conventional_heading_statement_format() -> None:
+    parsed = parse_requirements(
+        "### FR-001: Store reports\n\n"
+        "- **Statement**: The system SHALL store each submitted report.\n\n"
+        "### NFR-001: Performance\n\n"
+        "- **Statement**: The system SHALL respond within 200 ms.\n"
+    )
+
+    assert parsed["requirements"] == [
+        {"id": "FR-001", "text": "The system SHALL store each submitted report."},
+        {"id": "NFR-001", "text": "The system SHALL respond within 200 ms."},
+    ]
 
 
 @pytest.mark.unit

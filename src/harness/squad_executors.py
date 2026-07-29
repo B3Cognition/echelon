@@ -455,6 +455,51 @@ def _render_controller_repair_context(state: dict) -> str:
         ),
     )
     sections: list[str] = []
+    quality_remediation = state.get("quality_gate_remediation")
+    if isinstance(quality_remediation, dict):
+        evidence = quality_remediation.get("evidence")
+        report = evidence.get("path") if isinstance(evidence, dict) else ""
+        failed_gates: list[str] = []
+        if isinstance(report, str) and report:
+            try:
+                payload = json.loads(Path(report).read_text(encoding="utf-8"))
+                gates_payload = payload.get("gates")
+                if isinstance(gates_payload, dict):
+                    for name, gate in gates_payload.items():
+                        if not isinstance(gate, dict) or gate.get("pass") is True:
+                            continue
+                        score = gate.get("score")
+                        threshold = gate.get("threshold")
+                        failed_gates.append(
+                            f"{name} ({score} < required {threshold})"
+                        )
+            except (OSError, ValueError, TypeError):
+                # The evidence path is advisory context. The deterministic
+                # gate remains the source of truth if an old report is gone.
+                pass
+        sections.extend([
+            "## Controller Quality-Gate Remediation",
+            "All previously named issue resolutions are complete, but the certified "
+            "Understanding gates still fail. This is a fresh remediation cycle, not "
+            "a request to repeat stale ISS findings.",
+            f"Read the certified report at `{report}` before editing." if report else "Read the current certified Understanding report before editing.",
+            "Certified failing gates: " + ", ".join(failed_gates)
+            if failed_gates else "Use the failing gates in the certified report as the repair checklist.",
+            "Rewrite the affected requirements into atomic, independently testable "
+            "statements with explicit actor, trigger, action, observable outcome, "
+            "and measurable acceptance criteria. Add explicit conditional/error "
+            "flows where the behavioral gate requires them.",
+            "Edit `spec.md` during this phase. The controller compares its SHA-256 "
+            "with the remediation baseline and rejects a DONE result with no spec "
+            "change; a review-only response is invalid.",
+            "For each compound requirement, split independently verifiable behavior "
+            "into separately identified formal requirements or acceptance criteria. "
+            "State explicit exclusions and invalid-combination behavior where relevant.",
+            "Preserve the already-recorded issue decisions and do not re-open them. "
+            "Return the normal required phase state updates after completing the "
+            "specification remediation.",
+            "",
+        ])
     for pass_key, report_key, artifact in gates:
         if state.get(pass_key) is not False:
             continue
@@ -512,7 +557,7 @@ def _render_controller_repair_context(state: dict) -> str:
 
 
 def _render_issue_resolution_context(state: dict) -> str:
-    """Render the one issue decision a repair is authorized to apply."""
+    """Render the one issue decision a repair is authorized to apply or validate."""
     selected = str(state.get("selected_issue_resolution") or "").strip()
     ledger = state.get("issue_resolution_ledger")
     if not selected or not isinstance(ledger, dict):
@@ -520,6 +565,21 @@ def _render_issue_resolution_context(state: dict) -> str:
     entry = ledger.get(selected)
     if not isinstance(entry, dict) or entry.get("status") not in {"selected", "repaired"}:
         return ""
+    status = str(entry.get("status") or "")
+    validation_rules = ""
+    if status == "repaired":
+        validation_rules = (
+            "- This repair is now under targeted validation. Compare the current "
+            "specification with the exact guidance and user decision above.\n"
+            "- If the current specification implements that decision, OMIT this "
+            "issue from `finding_routes` even when the aggregate Understanding "
+            "gate still fails. Those aggregate failures may be caused by other "
+            "issues.\n"
+            "- Re-list this issue only when you can identify a concrete missing or "
+            "contradictory part of its decision in the current spec, citing the "
+            "affected section and the missing detail. Never re-list it merely "
+            "because it appeared in a prior issues.md or prior score report.\n"
+        )
     return (
         "## Selected Issue Resolution (Controller-Owned)\n"
         f"- Issue: {selected} — {entry.get('title', '')}\n"
@@ -531,6 +591,9 @@ def _render_issue_resolution_context(state: dict) -> str:
         "with the exact missing evidence or user decision; do not advance.\n"
         "- Apply this decision only to the named issue. Do not claim that any "
         "other issue is resolved; the controller retains them in the ledger.\n\n"
+        "- Your completion report MUST discuss only this selected issue. Never "
+        "state or imply that all issues are resolved.\n\n"
+        + validation_rules
     )
 
 

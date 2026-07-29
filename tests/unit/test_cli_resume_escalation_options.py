@@ -393,6 +393,7 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
                 "phase1-understanding": 6,
                 "phase1-why2": 5,
             },
+            "issue_resolution_revalidation_attempted": "ISS-002",
         }
     )
     state_path.write_text(json.dumps(state), encoding="utf-8")
@@ -404,6 +405,7 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
 
     resolved = json.loads(state_path.read_text(encoding="utf-8"))
     assert resolved["selected_issue_resolution"] == "ISS-002"
+    assert "issue_resolution_revalidation_attempted" not in resolved
     assert resolved["issue_resolution_ledger"]["ISS-002"] == {
         "issue_id": "ISS-002",
         "title": "Retry policy needs a product decision",
@@ -427,6 +429,52 @@ def test_resolve_records_one_issue_and_starts_targeted_repair(
     assert "blocked_reason" not in resolved
     assert "escalation_question" not in resolved
     assert resolved["phase_dispatch_counts"] == {"phase1-tracker": 1}
+
+
+def test_resolve_same_selected_decision_is_idempotent(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from echelon.cli import _cmd_spec_resolve
+
+    run_dir = _write_blocked_run(tmp_path, options=[])
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "issues.md").write_text(
+        """# Issues
+
+### ISS-001: Retry policy
+- **Severity:** CRITICAL
+- **Action Required:** Choose retry behavior.
+""",
+        encoding="utf-8",
+    )
+    state_path = run_dir / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state.update(
+        {
+            "spec_dir": str(spec_dir),
+            "selected_issue_resolution": "ISS-001",
+            "issue_resolution_ledger": {
+                "ISS-001": {
+                    "status": "selected",
+                    "decision": "Use exponential backoff.",
+                }
+            },
+            "issue_resolution_repair_baseline": {"recorded_at": "fixed"},
+        }
+    )
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    _cmd_spec_resolve(
+        ["ISS-001", "Use exponential backoff."],
+        project_root=tmp_path,
+        ext_dir=Path.cwd() / "extension",
+    )
+
+    unchanged = json.loads(state_path.read_text(encoding="utf-8"))
+    assert unchanged["issue_resolution_repair_baseline"] == {"recorded_at": "fixed"}
+    assert "already recorded with this decision" in capsys.readouterr().out
 
 
 def test_resolve_requires_sage_order(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1257,6 +1257,55 @@ def test_legacy_controller_contract_failure_retries_current_phase_without_rewind
     assert "rewind" not in action.command
 
 
+def test_recovery_after_exhausted_issue_resolutions_requests_quality_gate_decision() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "quality_gates_failed_after_resolutions",
+        }
+    )
+
+    assert action.kind == "human_resume"
+    assert action.command == 'echelon spec resume "<quality-gate decision>"'
+    assert "No further `spec resolve` command applies" in action.note
+
+
+def test_legacy_issue_resolution_next_with_no_open_ledger_entries_is_reclassified() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "issue_resolution_next",
+            "issue_resolution_ledger": {
+                "ISS-001": {"status": "validated"},
+                "ISS-002": {"status": "validated"},
+            },
+        }
+    )
+
+    assert action.reason == "quality_gate_remediation"
+    assert action.command == "echelon spec continue"
+
+
+def test_consecutive_why_failure_after_all_resolutions_restarts_quality_remediation() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "consecutive_why_fails",
+            "issue_resolution_ledger": {
+                "ISS-006": {"status": "validated"},
+                "ISS-007": {"status": "validated"},
+            },
+        }
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "quality_gate_remediation"
+    assert action.phase == "phase1-what"
+
+
 def test_persisted_runtime_sync_recovery_retries_after_compatible_sync(
     tmp_path: Path,
     monkeypatch,
@@ -1387,6 +1436,101 @@ def test_continue_prioritizes_phase_output_recovery_over_pending_issue(
         "requirements-overview.md"
     ]
     assert state["issue_resolution_recovery"]["issue_id"] == "ISS-003"
+    assert len(calls) == 1
+
+
+def test_continue_starts_controller_owned_issue_repair(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """Issue resolution must leave terminal-blocked before invoking the controller."""
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "consecutive_why_fails",
+            "user_message": "Expose the supported machine-readable format",
+            "escalation_question": "Resolve ISS-001 before continuing.",
+            "escalation_options": ["Use a project decision."],
+            "selected_issue_resolution": "ISS-001",
+            "issue_resolution_ledger": {
+                "ISS-001": {"status": "selected", "decision": "Adopt JSON."}
+            },
+            "issue_resolution_recovery": {
+                "issue_id": "ISS-001",
+                "from_phase": "phase1-why2",
+                "to_phase": "phase1-what",
+                "reason": "issue_resolution",
+            },
+        },
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "running"
+    assert state["phase"] == "phase1-what"
+    assert state["blocked_reason"] is None
+    assert state["escalation_question"] is None
+    assert state["selected_issue_resolution"] == "ISS-001"
+    assert state["issue_resolution_recovery"]["issue_id"] == "ISS-001"
+    assert len(calls) == 1
+
+
+def test_continue_revalidates_repaired_issue_before_requesting_new_decision(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    run_dir = _write_run_state(
+        tmp_path,
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "consecutive_why_fails",
+            "user_message": "Expose the supported machine-readable format",
+            "escalation_question": "Resolve ISS-001 before continuing.",
+            "selected_issue_resolution": "ISS-001",
+            "issue_resolution_ledger": {
+                "ISS-001": {"status": "repaired", "decision": "Adopt JSON."}
+            },
+            "issue_resolution_recovery": {
+                "issue_id": "ISS-001",
+                "status": "consumed",
+            },
+            "why_fail_count": 2,
+            "why2_metric_stagnation_count": 2,
+            "why_failure_baseline": {"recorded_at": "2026-01-01T00:00:00+00:00"},
+        },
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        "echelon.cli._cmd_run",
+        lambda args, **_kwargs: calls.append(args),
+    )
+
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "running"
+    assert state["phase"] == "phase1-understanding"
+    assert state["issue_resolution_revalidation_attempted"] == "ISS-001"
+    assert state["why_fail_count"] == 0
+    assert state["why2_metric_stagnation_count"] == 0
+    assert "why_failure_baseline" not in state
     assert len(calls) == 1
 
 
