@@ -1,0 +1,344 @@
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+import pytest
+
+from echelon.spec_graph import (
+    GraphEdge,
+    GraphInput,
+    GraphNode,
+    MemoryReceipt,
+    SpecArtifactGraph,
+    write_spec_graph,
+)
+from echelon.spec_graph_audit import (
+    audit_spec_graph,
+    write_spec_graph_audit,
+)
+
+
+def _graph(
+    *,
+    lifecycle: str = "phase_a",
+    inputs: tuple[GraphInput, ...] = (),
+    receipts: tuple[MemoryReceipt, ...] = (),
+    include_task: bool = True,
+    include_verification: bool = False,
+) -> SpecArtifactGraph:
+    nodes = [
+        GraphNode(
+            "spec:001-demo",
+            "Spec",
+            {
+                "spec_id": "001-demo",
+                "path": "specs/001-demo",
+                "lifecycle": lifecycle,
+            },
+        ),
+        GraphNode(
+            "req:001-demo:FR-001",
+            "Requirement",
+            {
+                "requirement_id": "FR-001",
+                "category": "functional",
+                "source_path": "specs/001-demo/spec.md",
+            },
+        ),
+    ]
+    edges = [
+        GraphEdge(
+            "spec:001-demo",
+            "HAS_REQUIREMENT",
+            "req:001-demo:FR-001",
+            {},
+        )
+    ]
+    if include_task:
+        nodes.append(
+            GraphNode(
+                "task:001-demo:T-001",
+                "Task",
+                {
+                    "task_id": "T-001",
+                    "status": "PENDING",
+                    "phase": "build",
+                    "target": None,
+                    "unresolved_requirement_ids": [],
+                },
+            )
+        )
+        edges.append(
+            GraphEdge(
+                "task:001-demo:T-001",
+                "IMPLEMENTS",
+                "req:001-demo:FR-001",
+                {},
+            )
+        )
+    if include_verification:
+        nodes.append(
+            GraphNode(
+                "artifact:001-demo:specs/001-demo/verified-fulfillment-ledger.json",
+                "Artifact",
+                {
+                    "path": "specs/001-demo/verified-fulfillment-ledger.json",
+                    "role": "verification-evidence",
+                    "hash": "sha256:ledger",
+                    "mining_status": "mined",
+                },
+            )
+        )
+        edges.append(
+            GraphEdge(
+                "req:001-demo:FR-001",
+                "VERIFIED_BY",
+                "artifact:001-demo:specs/001-demo/verified-fulfillment-ledger.json",
+                {"complete": True},
+            )
+        )
+    return SpecArtifactGraph(
+        spec_id="001-demo",
+        generator_version="test",
+        inputs=inputs,
+        nodes=tuple(nodes),
+        edges=tuple(edges),
+        memory_receipts=receipts,
+    )
+
+
+def _write_current_graph(tmp_path: Path, graph: SpecArtifactGraph) -> Path:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("FR-001\n", encoding="utf-8")
+    write_spec_graph(graph, spec_dir)
+    return spec_dir
+
+
+@pytest.mark.unit
+def test_audit_passes_for_matching_current_graph(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    graph = _graph(
+        inputs=(
+            GraphInput(
+                "specs/001-demo/spec.md",
+                "sha256:spec",
+                "requirements_source",
+                True,
+            ),
+        ),
+    )
+    spec_dir = _write_current_graph(tmp_path, graph)
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.build_spec_graph",
+        lambda project_root, selector: graph,
+    )
+
+    report = audit_spec_graph(tmp_path, spec_dir)
+
+    assert report.status == "pass"
+    assert report.findings == ()
+    assert report.graph_hash == (
+        "sha256:"
+        + hashlib.sha256(
+            (spec_dir / "spec-artifact-graph.json").read_bytes()
+        ).hexdigest()
+    )
+
+
+@pytest.mark.unit
+def test_audit_distinguishes_graph_staleness_from_current_memory_health(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    old = _graph(
+        inputs=(
+            GraphInput("specs/001-demo/spec.md", "sha256:old", "requirements_source", True),
+            GraphInput(
+                "mempalace://canonical-spec/001-demo/audit",
+                "sha256:old-audit",
+                "memory_audit_report",
+                True,
+                status="fail",
+                source_set_digest="sha256:old-source",
+            ),
+        ),
+        receipts=(
+            MemoryReceipt(
+                "canonical-spec",
+                "sha256:old-source",
+                "sha256:old-audit",
+                "fail",
+            ),
+        ),
+    )
+    current = _graph(
+        inputs=(
+            GraphInput("specs/001-demo/spec.md", "sha256:new", "requirements_source", True),
+            GraphInput(
+                "mempalace://canonical-spec/001-demo/audit",
+                "sha256:new-audit",
+                "memory_audit_report",
+                True,
+                status="pass",
+                source_set_digest="sha256:new-source",
+            ),
+        ),
+        receipts=(
+            MemoryReceipt(
+                "canonical-spec",
+                "sha256:new-source",
+                "sha256:new-audit",
+                "pass",
+            ),
+        ),
+    )
+    spec_dir = _write_current_graph(tmp_path, old)
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.build_spec_graph",
+        lambda project_root, selector: current,
+    )
+
+    report = audit_spec_graph(tmp_path, spec_dir)
+    codes = {finding.code for finding in report.findings}
+
+    assert report.status == "fail"
+    assert "graph_source_set_stale" in codes
+    assert "graph_memory_state_stale" in codes
+    assert "mempalace_reconciliation_failed" not in codes
+
+
+@pytest.mark.unit
+def test_audit_reports_required_memory_unavailable(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    graph = _graph(
+        inputs=(
+            GraphInput(
+                "mempalace://canonical-spec/001-demo/audit",
+                "sha256:audit",
+                "memory_audit_report",
+                True,
+                status="unavailable",
+                source_set_digest="sha256:sources",
+            ),
+        ),
+        receipts=(
+            MemoryReceipt(
+                "canonical-spec",
+                "sha256:sources",
+                "sha256:audit",
+                "unavailable",
+            ),
+        ),
+    )
+    spec_dir = _write_current_graph(tmp_path, graph)
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.build_spec_graph",
+        lambda project_root, selector: graph,
+    )
+
+    report = audit_spec_graph(tmp_path, spec_dir)
+
+    assert report.status == "unavailable"
+    assert {finding.code for finding in report.findings} == {
+        "mempalace_reconciliation_unavailable"
+    }
+
+
+@pytest.mark.unit
+def test_audit_enforces_lifecycle_coverage_with_stable_finding_id(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    graph = _graph(lifecycle="verified", include_task=False)
+    spec_dir = _write_current_graph(tmp_path, graph)
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.build_spec_graph",
+        lambda project_root, selector: graph,
+    )
+
+    report = audit_spec_graph(tmp_path, spec_dir)
+    findings = {finding.code: finding for finding in report.findings}
+
+    assert report.status == "fail"
+    assert findings["requirement_task_missing"].id == (
+        "finding:requirement_task_missing:req:001-demo:FR-001"
+    )
+    assert findings["requirement_verification_missing"].severity == "error"
+
+
+@pytest.mark.unit
+def test_write_graph_audit_uses_deterministic_json(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    graph = _graph()
+    spec_dir = _write_current_graph(tmp_path, graph)
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.build_spec_graph",
+        lambda project_root, selector: graph,
+    )
+    report = audit_spec_graph(tmp_path, spec_dir)
+
+    path = write_spec_graph_audit(report, spec_dir)
+
+    assert path.name == "spec-artifact-graph-audit.json"
+    assert path.read_bytes().endswith(b"\n")
+
+
+@pytest.mark.unit
+def test_audit_reports_missing_graph_as_unavailable(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("FR-001\n", encoding="utf-8")
+
+    report = audit_spec_graph(tmp_path, spec_dir)
+
+    assert report.status == "unavailable"
+    assert report.findings[0].code == "graph_missing"
+
+
+@pytest.mark.unit
+def test_audit_reports_malformed_graph_without_traceback(tmp_path: Path) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text("FR-001\n", encoding="utf-8")
+    (spec_dir / "spec-artifact-graph.json").write_text("{broken", encoding="utf-8")
+
+    report = audit_spec_graph(tmp_path, spec_dir)
+
+    assert report.status == "fail"
+    assert report.findings[0].code == "graph_invalid"
+    assert "malformed" in report.findings[0].message
+
+
+@pytest.mark.unit
+def test_audit_reports_added_input_identity(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    old = _graph()
+    current = _graph(
+        inputs=(
+            GraphInput(
+                "specs/001-demo/tasks.md",
+                "sha256:tasks",
+                "task_source",
+                False,
+            ),
+        ),
+    )
+    spec_dir = _write_current_graph(tmp_path, old)
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.build_spec_graph",
+        lambda project_root, selector: current,
+    )
+
+    report = audit_spec_graph(tmp_path, spec_dir)
+
+    assert "graph_input_added" in {finding.code for finding in report.findings}

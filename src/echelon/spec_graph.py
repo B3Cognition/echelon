@@ -838,23 +838,16 @@ class _ProjectedMemoryReport:
         self.status = status
         self.artifact_count = 0
         self.expected_count = expected_count
-        failed_ids = {
-            drawer_id
-            for values in issues.values()
-            for drawer_id in values
-            if drawer_id in {
-                value
-                for field in (
-                    "missing",
-                    "stale",
-                    "wrong_wing",
-                    "wrong_room",
-                    "non_canonical",
-                    "lifecycle_excluded",
-                )
-                for value in issues[field]
-            }
-        }
+        failed_ids: set[str] = set()
+        for field in (
+            "missing",
+            "stale",
+            "wrong_wing",
+            "wrong_room",
+            "non_canonical",
+            "lifecycle_excluded",
+        ):
+            failed_ids.update(issues[field])
         self.present_current_count = expected_count - len(failed_ids)
         for field, values in issues.items():
             setattr(self, field, values)
