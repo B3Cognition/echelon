@@ -461,6 +461,24 @@ def _render_controller_repair_context(state: dict) -> str:
         report = evidence.get("path") if isinstance(evidence, dict) else ""
         failed_gates: list[str] = []
         weak_requirements: dict[str, list[str]] = {}
+        validated_issue_ids = sorted(
+            str(issue_id)
+            for issue_id, entry in (state.get("issue_resolution_ledger") or {}).items()
+            if isinstance(entry, dict) and entry.get("status") == "validated"
+        )
+        if validated_issue_ids:
+            stale_issue_instruction = (
+                "This controller instruction OVERRIDES any stale `issues.md`, "
+                "journal, or state text that tells you to resolve "
+                + ", ".join(f"`{issue_id}`" for issue_id in validated_issue_ids)
+                + ". Those decisions are already validated."
+            )
+        else:
+            stale_issue_instruction = (
+                "This controller instruction OVERRIDES any stale `issues.md`, "
+                "journal, or state text that tries to reopen already validated "
+                "issue decisions."
+            )
         if isinstance(report, str) and report:
             try:
                 payload = json.loads(Path(report).read_text(encoding="utf-8"))
@@ -516,9 +534,7 @@ def _render_controller_repair_context(state: dict) -> str:
             "All previously named issue resolutions are complete, but the certified "
             "Understanding gates still fail. This is a fresh remediation cycle, not "
             "a request to repeat stale ISS findings.",
-            "This controller instruction OVERRIDES any stale `issues.md`, journal, "
-            "or state text that tells you to resolve ISS-006, ISS-007, ISS-008, "
-            "or ISS-009. Those decisions are already validated.",
+            stale_issue_instruction,
             "Do NOT invoke any `echelon spec resolve`, `echelon spec continue`, "
             "or other Echelon CLI command. You are the authoring agent; edit the "
             "active spec directly.",
