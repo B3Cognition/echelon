@@ -15,6 +15,7 @@ from echelon.cli import (
     _ensure_active_continue_spec_context,
     _next_continue_phase,
     _phase_a_readiness_candidate_dirs,
+    _reset_quality_remediation_dispatch_counts,
     _supersede_quality_guard_decision,
 )
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
@@ -1569,6 +1570,44 @@ def test_quality_remediation_no_progress_retries_authoring_without_resolve() -> 
     assert action.kind == "retry_phase"
     assert action.reason == "quality_gate_remediation"
     assert action.command == "echelon spec continue"
+
+
+def test_dispatch_cap_missing_published_evidence_retries_active_spec(
+    tmp_path: Path,
+) -> None:
+    active_spec = tmp_path / "runs" / "run" / "specs" / "001-demo"
+    active_spec.mkdir(parents=True)
+    (active_spec / "issues.md").write_text("# Issues\n", encoding="utf-8")
+
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "phase1-understanding",
+            "blocked_reason": "phase_dispatch_limit_evidence_missing",
+            "spec_dir": str(active_spec),
+            "published_spec_dir": "specs/001-demo",
+        },
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "phase_dispatch_limit_evidence_retry"
+    assert action.phase == "phase1-understanding"
+
+
+def test_quality_remediation_resets_its_authoring_quality_phase_counts() -> None:
+    state = {
+        "phase_dispatch_counts": {
+            "phase1-what": 8,
+            "phase1-lexicon": 6,
+            "phase1-understanding": 6,
+            "phase1-why2": 5,
+            "phase1-discover": 3,
+        },
+    }
+    _reset_quality_remediation_dispatch_counts(state)
+
+    assert state["phase_dispatch_counts"] == {"phase1-discover": 3}
 
 
 def test_spec_continue_prints_start_and_end_timestamps(

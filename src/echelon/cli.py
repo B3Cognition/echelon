@@ -3303,6 +3303,22 @@ def _supersede_quality_guard_decision(state: dict) -> bool:
     return True
 
 
+def _reset_quality_remediation_dispatch_counts(state: dict) -> None:
+    """Start a spec-changing quality remediation with a fresh verification budget."""
+    dispatch_counts = state.get("phase_dispatch_counts")
+    if not isinstance(dispatch_counts, dict):
+        return
+    updated_counts = dict(dispatch_counts)
+    for phase_id in (
+        "phase1-what",
+        "phase1-lexicon",
+        "phase1-understanding",
+        "phase1-why2",
+    ):
+        updated_counts.pop(phase_id, None)
+    state["phase_dispatch_counts"] = updated_counts
+
+
 def _render_v2_decision_options(decision: dict[str, object]) -> str:
     options = decision.get("options")
     if not isinstance(options, list) or not options:
@@ -3524,6 +3540,25 @@ def _spec_markdown_sha256_for_state(run_state: dict, project_root: Path) -> str 
         return None
 
 
+def _active_dispatch_cap_evidence_exists(
+    run_state: dict,
+    project_root: Path | None,
+) -> bool:
+    """Whether the active run has the issues artifact a stale publication missed."""
+    if project_root is None:
+        return False
+    spec_ref = str(run_state.get("spec_dir") or "").strip()
+    if not spec_ref:
+        return False
+    spec_dir = Path(spec_ref)
+    if not spec_dir.is_absolute():
+        spec_dir = project_root / spec_dir
+    try:
+        return (spec_dir / "issues.md").is_file()
+    except OSError:
+        return False
+
+
 def _classify_run_recovery(
     run_state: dict,
     *,
@@ -3629,6 +3664,23 @@ def _classify_run_recovery(
                 "repair contract; no `spec resolve` command applies."
             ),
         )
+
+    if (
+        reason == "phase_dispatch_limit_evidence_missing"
+        and _active_dispatch_cap_evidence_exists(run_state, project_root)
+    ):
+        phase = str(run_state.get("phase") or "").strip()
+        if phase and phase != "terminal-blocked":
+            return _RunRecoveryAction(
+                "retry_phase",
+                reason="phase_dispatch_limit_evidence_retry",
+                phase=phase,
+                command="echelon spec continue",
+                note=(
+                    "The active run contains issues.md; retrying the capped phase "
+                    "after bypassing a stale published-spec lookup."
+                ),
+            )
 
     try:
         instruction = _persisted_or_legacy_recovery_instruction(run_state)
@@ -7405,6 +7457,10 @@ def _cmd_continue_impl(
         state["why_fail_count"] = 0
         state["why2_metric_stagnation_count"] = 0
         state.pop("why_failure_baseline", None)
+        # A certified remediation is a new, spec-changing lifecycle cycle.
+        # Keep unrelated phase counters for observability, but reset every
+        # authoring/quality phase that must run to verify this new artifact.
+        _reset_quality_remediation_dispatch_counts(state)
         state["quality_gate_remediation"] = {
             "evidence": state.get("understanding_evidence"),
             "baseline_spec_sha256": _spec_markdown_sha256_for_state(
@@ -7463,6 +7519,18 @@ def _cmd_continue_impl(
             "CHECKPOINT",
             fields,
             subtitle="Run paused. Deterministic recovery required.",
+        )
+        return
+    if action.reason == "phase_dispatch_limit_evidence_retry":
+        dispatch_counts = state.get("phase_dispatch_counts")
+        if isinstance(dispatch_counts, dict):
+            dispatch_counts = dict(dispatch_counts)
+            dispatch_counts.pop(action.phase, None)
+            state["phase_dispatch_counts"] = dispatch_counts
+        start_phase(
+            action.phase,
+            verb="Retrying phase after active-spec evidence recovery",
+            clear_recovery=True,
         )
         return
     if action.kind == "retry_phase":

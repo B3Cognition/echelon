@@ -9042,24 +9042,44 @@ class SquadController:
         self,
         state: Mapping[str, object],
     ) -> str:
-        state_key = (
-            "published_spec_dir"
-            if state.get("published_spec_dir")
-            else "spec_dir"
-        )
-        try:
-            spec_dir = self._validated_spec_root(
-                state,
-                state_key=state_key,
-            )
-        except HumanInputPolicyError as exc:
-            raise _DispatchCapEvidenceError(
-                "phase_dispatch_limit_evidence_malformed"
-            ) from exc
-        if spec_dir is None:
+        roots: list[Path] = []
+        for state_key in ("published_spec_dir", "spec_dir"):
+            if state_key == "published_spec_dir" and not state.get(state_key):
+                continue
+            try:
+                spec_dir = self._validated_spec_root(
+                    state,
+                    state_key=state_key,
+                )
+            except HumanInputPolicyError as exc:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_malformed"
+                ) from exc
+            if spec_dir is not None and spec_dir not in roots:
+                roots.append(spec_dir)
+        if not roots:
             raise _DispatchCapEvidenceError(
                 "phase_dispatch_limit_evidence_missing"
             )
+
+        last_missing: _DispatchCapEvidenceError | None = None
+        for spec_dir in roots:
+            try:
+                return self._read_dispatch_cap_issues_from_root(spec_dir)
+            except _DispatchCapEvidenceError as exc:
+                # A stale or not-yet-published Phase A copy must not hide the
+                # active run-local spec, which is the authoritative source
+                # during authoring and remediation.
+                if exc.reason_code == "phase_dispatch_limit_evidence_missing":
+                    last_missing = exc
+                    continue
+                raise
+        raise last_missing or _DispatchCapEvidenceError(
+            "phase_dispatch_limit_evidence_missing"
+        )
+
+    def _read_dispatch_cap_issues_from_root(self, spec_dir: Path) -> str:
+        """Read a bounded issues artifact from one already-validated root."""
         opened: list[int] = []
         file_fd = -1
         try:
