@@ -310,7 +310,11 @@ def _coherence_findings(graph: SpecArtifactGraph) -> list[GraphFinding]:
             edge.type == "IMPLEMENTS" and edge.target == node.id
             for edge in graph.edges
         )
-        if not implemented and not deferred:
+        task_addressable = node.properties.get("category") in {
+            "functional",
+            "non_functional",
+        }
+        if task_addressable and not implemented and not deferred:
             severity = (
                 "error"
                 if lifecycle in {"build", "verified", "landed"}

@@ -99,6 +99,30 @@ def test_write_canonical_requirements_ignores_ids_extended_by_lowercase_prose(
     assert [row["id"] for row in payload["requirements"]] == ["FR-001"]
 
 
+def test_write_canonical_requirements_supports_suffix_ids_without_inventing_ranges(
+    tmp_path,
+):
+    spec_dir = tmp_path / "specs" / "001-demo"
+    verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "spec.md").write_text(
+        "- **FR-016b**: Results retain definition order.\n"
+        "FR-001..FR-006 are implemented by one shared adapter.\n",
+        encoding="utf-8",
+    )
+
+    write_canonical_requirements(
+        spec_dir=spec_dir, verify_run_dir=verify_run_dir
+    )
+
+    payload = json.loads((verify_run_dir / "canonical-requirements.json").read_text())
+    assert [row["id"] for row in payload["requirements"]] == [
+        "FR-001",
+        "FR-006",
+        "FR-016b",
+    ]
+
+
 def test_write_requirement_audit_renders_deterministic_audit_table(tmp_path):
     verify_run_dir = tmp_path / "runs" / "verify-spec-001-demo-1"
     verify_run_dir.mkdir(parents=True)

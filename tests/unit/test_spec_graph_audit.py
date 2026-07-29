@@ -273,6 +273,46 @@ def test_audit_enforces_lifecycle_coverage_with_stable_finding_id(
 
 
 @pytest.mark.unit
+def test_audit_does_not_require_tasks_for_acceptance_criteria(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    graph = _graph(lifecycle="build", include_task=False)
+    graph = SpecArtifactGraph(
+        spec_id=graph.spec_id,
+        generator_version=graph.generator_version,
+        inputs=graph.inputs,
+        nodes=tuple(
+            GraphNode(
+                node.id,
+                node.type,
+                {
+                    **node.properties,
+                    "requirement_id": "AC-001",
+                    "category": "acceptance",
+                },
+            )
+            if node.type == "Requirement"
+            else node
+            for node in graph.nodes
+        ),
+        edges=graph.edges,
+        memory_receipts=graph.memory_receipts,
+    )
+    spec_dir = _write_current_graph(tmp_path, graph)
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.build_spec_graph",
+        lambda project_root, selector: graph,
+    )
+
+    report = audit_spec_graph(tmp_path, spec_dir)
+
+    assert "requirement_task_missing" not in {
+        finding.code for finding in report.findings
+    }
+
+
+@pytest.mark.unit
 def test_write_graph_audit_uses_deterministic_json(
     tmp_path: Path,
     monkeypatch,

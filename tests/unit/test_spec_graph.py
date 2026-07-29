@@ -270,6 +270,23 @@ def test_build_spec_graph_aggregates_multiple_product_inputs_per_requirement(
 
 
 @pytest.mark.unit
+def test_build_spec_graph_accepts_infrastructure_task_scope(
+    tmp_path: Path,
+) -> None:
+    spec_dir = _canonical_spec(tmp_path)
+    (spec_dir / "tasks.md").write_text(
+        "- [ ] T-001 complexity=standard phase=foundation "
+        "req=INFRA depends=none\n",
+        encoding="utf-8",
+    )
+
+    graph = build_spec_graph(tmp_path, spec_dir)
+    task = next(node for node in graph.nodes if node.type == "Task")
+
+    assert task.properties["unresolved_requirement_ids"] == []
+
+
+@pytest.mark.unit
 def test_build_spec_graph_includes_deferrals_amendments_and_verified_ledger(
     tmp_path: Path,
 ) -> None:

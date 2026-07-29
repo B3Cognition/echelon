@@ -343,7 +343,9 @@ def _add_tasks(
         raise SpecGraphError("invalid task progress: " + "; ".join(progress.errors))
     for task in parse_task_rows(markdown):
         node_id = f"task:{spec_dir.name}:{task.task_id}"
-        unresolved = sorted(set(task.requirements) - requirement_ids - {"UNMAPPED"})
+        unresolved = sorted(
+            set(task.requirements) - requirement_ids - {"INFRA", "UNMAPPED"}
+        )
         nodes[node_id] = GraphNode(
             node_id,
             "Task",

@@ -491,8 +491,11 @@ Graph audit reports stale or unsafe state for:
 - a curated artifact is present but not reconciled in its applicable memory
   audit.
 - task maps to a requirement absent from the current canonical `spec.md`.
-- active requirement has no mapped task once lifecycle is `build`, `verified`,
-  or `landed`. Before build it is a warning.
+- active functional or non-functional requirement has no mapped task once
+  lifecycle is `build`, `verified`, or `landed`. Before build it is a warning.
+  Acceptance criteria and other canonical spec rows remain graph nodes but do
+  not independently require tasks. `INFRA` and `UNMAPPED` are valid task-scope
+  sentinels and do not identify requirement nodes.
 - active requirement has no verification evidence when lifecycle is
   `verified` or `landed`.
 - deferred requirement has active task work that was not paused by the deferral
@@ -635,8 +638,9 @@ Unit tests:
 - deferred requirements warn instead of fail by default;
 - unknown deferral IDs fail;
 - task mappings to requirements absent from current `spec.md` fail;
-- active requirements without task mappings warn before build and fail from
-  build onward;
+- active functional or non-functional requirements without task mappings warn
+  before build and fail from build onward; acceptance criteria do not
+  independently require task mappings;
 - graph JSON rejects duplicate IDs, duplicate edges, and missing endpoints.
 
 CLI tests:
