@@ -44,6 +44,20 @@ _EXECUTOR_BLOCK_REASONS = frozenset(
         "missing_phase_outputs",
     }
 )
+_JOURNAL_CONTEXT_MAX_BYTES = 24 * 1024
+_WHY_STATE_CONTEXT_KEYS = (
+    "run_id",
+    "spec_id",
+    "phase",
+    "iteration",
+    "max_iterations",
+    "autonomy_mode",
+    "implementation_targets",
+    "user_message",
+    "understanding_evidence",
+    "quality_gate_remediation",
+    "selected_issue_resolution",
+)
 
 
 @dataclass(frozen=True)
@@ -1022,8 +1036,97 @@ def _render_active_spec_roots_context(
     )
 
 
-def _render_context_candidate(file_ref: str, candidate: Path) -> str:
+def _context_pack_filters(item: str) -> dict[str, str]:
+    """Parse the optional ``[key=value]`` selector on a context-pack item."""
+    match = re.search(r"\[([^\]]+)\]", item)
+    if match is None:
+        return {}
+    filters: dict[str, str] = {}
+    for part in match.group(1).split(","):
+        key, separator, value = part.partition("=")
+        if separator and key.strip() and value.strip():
+            filters[key.strip()] = value.strip()
+    return filters
+
+
+def _render_reasoning_journal_context(
+    candidate: Path,
+    filters: dict[str, str],
+) -> str:
+    """Render only the requested, bounded journal evidence for an agent."""
+    resolved = candidate.resolve()
+    try:
+        entries = [
+            json.loads(line)
+            for line in candidate.read_text(encoding="utf-8", errors="replace").splitlines()
+            if line.strip()
+        ]
+    except (OSError, ValueError):
+        return f"\n---\n# {resolved}\n[Journal unavailable or malformed]"
+
+    requested_type = filters.get("type")
+    # ``routing_decision`` is the historic context-pack selector for durable
+    # decision records, whose canonical journal type is ``decision``.
+    if requested_type == "routing_decision":
+        requested_type = "decision"
+    selected = [
+        entry
+        for entry in entries
+        if isinstance(entry, dict)
+        and (not requested_type or entry.get("type") == requested_type)
+        and (not filters.get("phase") or entry.get("phase") == filters["phase"])
+    ]
+    rendered: list[str] = []
+    used = 0
+    for entry in reversed(selected):
+        line = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+        line_bytes = len(line.encode("utf-8")) + 1
+        if line_bytes > _JOURNAL_CONTEXT_MAX_BYTES:
+            # A single verbose historical entry must not consume the entire
+            # SAGE budget or hide the rest of the current decision trail.
+            continue
+        if rendered and used + line_bytes > _JOURNAL_CONTEXT_MAX_BYTES:
+            break
+        rendered.append(line)
+        used += line_bytes
+    rendered.reverse()
+    selector = ", ".join(f"{key}={value}" for key, value in sorted(filters.items()))
+    header = (
+        f"\n---\n# {resolved}\n"
+        f"[Journal context: {len(rendered)}/{len(selected)} matching entries"
+        f"{f'; {selector}' if selector else ''}; newest entries retained]"
+    )
+    return header + ("\n" + "\n".join(rendered) if rendered else "\n[No matching entries]")
+
+
+def _render_why_state_context(state: dict) -> str:
+    """Give SAGE current routing facts without injecting stale run history."""
+    projection = {
+        key: state[key]
+        for key in _WHY_STATE_CONTEXT_KEYS
+        if key in state
+    }
+    ledger = state.get("issue_resolution_ledger")
+    if isinstance(ledger, dict):
+        projection["issue_resolution_statuses"] = {
+            str(issue_id): str(entry.get("status") or "unknown")
+            for issue_id, entry in ledger.items()
+            if isinstance(entry, dict)
+        }
+    return "\n---\n# Current controller state (WHY projection)\n" + json.dumps(
+        projection, indent=2, ensure_ascii=False, sort_keys=True
+    )
+
+
+def _render_context_candidate(
+    file_ref: str,
+    candidate: Path,
+    *,
+    filters: dict[str, str] | None = None,
+) -> str:
     """Render a context-pack file or directory into deterministic prompt text."""
+    if candidate.name == "reasoning-journal.jsonl":
+        return _render_reasoning_journal_context(candidate, filters or {})
     resolved_candidate = candidate.resolve()
     if candidate.is_dir():
         chunks = [f"\n---\n# {resolved_candidate.as_posix().rstrip('/')}/"]
@@ -1452,6 +1555,7 @@ class PhaseExecutor(ABC):
             file_ref = item.split(" ")[0].split("(")[0].rstrip()
             if not file_ref or file_ref.startswith("#"):
                 continue
+            context_filters = _context_pack_filters(item)
             resolved = _translate_squad_path(
                 file_ref.replace("{spec_dir}", spec_dir_ref)
                 .replace("{context_dir}", context_dir_str)
@@ -1463,12 +1567,20 @@ class PhaseExecutor(ABC):
                 candidates = [base / resolved for base in search_bases]
             for candidate in candidates:
                 if candidate.exists():
-                    dynamic_parts.append(_render_context_candidate(file_ref, candidate))
+                    dynamic_parts.append(
+                        _render_context_candidate(
+                            file_ref,
+                            candidate,
+                            filters=context_filters,
+                        )
+                    )
                     break
 
         # 4. Current state.json for context
         state_path = self._squad_dir / "state.json"
-        if state_path.exists():
+        if node.id in {"phase1-why1", "phase1-why2"}:
+            dynamic_parts.append(_render_why_state_context(state))
+        elif state_path.exists():
             dynamic_parts.append(f"\n---\n# Current state.json\n{state_path.read_text()}")
         # Inject squad run context so agents know where to write
         context_preamble = (
