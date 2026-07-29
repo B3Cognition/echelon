@@ -4744,19 +4744,28 @@ class TestSquadControllerBasics:
         )
         store.save(state)
 
-        enrichment = ctrl._controller_enrichment(
+        next_phase = _coordinate_prepared_result(
+            ctrl,
             ctrl._graph.get("phase1-what"),
-            state,
             SquadAgentResult(
                 exit_code=0,
-                echelon_result={"verdict": "DONE", "state_updates": {}},
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                    },
+                },
                 raw_output="",
                 duration_ms=0,
                 timed_out=False,
             ),
         )
 
-        assert enrichment.routing_override == "terminal-blocked"
+        assert next_phase == "terminal-blocked"
+        refreshed = store.load()
+        assert refreshed["blocked_reason"] == (
+            "quality_gate_remediation_no_artifact_progress"
+        )
 
     def test_selected_issue_repair_accepts_an_already_present_spec_amendment(self, tmp_path):
         ctrl, store = _controller(tmp_path)

@@ -183,6 +183,19 @@ Read ALL input artifacts before beginning. Pay special attention to:
 
 ## Per-Requirement Failure Consumption (Amendment Mode)
 
+### Controller Quality-Gate Remediation Takes Precedence
+
+When the dispatch includes **Controller Quality-Gate Remediation**, it is a
+fresh requirements-quality rewrite after every named SAGE issue decision is
+already validated. ALWAYS follow that controller instruction before reading or
+acting on a historical `issues.md` table.
+
+NEVER invoke `echelon spec resolve`, `echelon spec continue`, or any other
+Echelon CLI command from CARTOGRAPHER. NEVER re-open a validated ISS merely
+because an old journal entry or issues file repeats it. Edit the active
+`spec.md` directly, split the failing formal requirements into atomic units,
+and return the required WHAT completion payload.
+
 When speckit-echelon-commander (COMMANDER) routes you back for amendment after WHY2/WHY3 FAIL, you will receive a per-requirement failure list from speckit-echelon-sage (SAGE)'s issues.md.
 
 ### Parsing

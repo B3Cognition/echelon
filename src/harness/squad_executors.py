@@ -482,6 +482,12 @@ def _render_controller_repair_context(state: dict) -> str:
             "All previously named issue resolutions are complete, but the certified "
             "Understanding gates still fail. This is a fresh remediation cycle, not "
             "a request to repeat stale ISS findings.",
+            "This controller instruction OVERRIDES any stale `issues.md`, journal, "
+            "or state text that tells you to resolve ISS-006, ISS-007, ISS-008, "
+            "or ISS-009. Those decisions are already validated.",
+            "Do NOT invoke any `echelon spec resolve`, `echelon spec continue`, "
+            "or other Echelon CLI command. You are the authoring agent; edit the "
+            "active spec directly.",
             f"Read the certified report at `{report}` before editing." if report else "Read the current certified Understanding report before editing.",
             "Certified failing gates: " + ", ".join(failed_gates)
             if failed_gates else "Use the failing gates in the certified report as the repair checklist.",
@@ -495,6 +501,9 @@ def _render_controller_repair_context(state: dict) -> str:
             "For each compound requirement, split independently verifiable behavior "
             "into separately identified formal requirements or acceptance criteria. "
             "State explicit exclusions and invalid-combination behavior where relevant.",
+            "Do not merely inspect, summarize, or confirm the existing ISS repairs. "
+            "The required deliverable is an actual rewrite of the failing formal "
+            "requirements for the certified metric families.",
             "Preserve the already-recorded issue decisions and do not re-open them. "
             "Return the normal required phase state updates after completing the "
             "specification remediation.",
