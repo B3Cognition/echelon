@@ -94,12 +94,18 @@ def test_quality_remediation_context_requires_an_actual_spec_edit(tmp_path):
         "quality_gate_remediation": {
             "evidence": {"path": str(report)},
         },
+        "issue_resolution_ledger": {
+            "ISS-042": {"status": "validated"},
+            "ISS-099": {"status": "open"},
+        },
     })
 
     assert "structure (0.5 < required 0.75)" in prompt
     assert "Edit `spec.md`" in prompt
     assert "SHA-256" in prompt
     assert "OVERRIDES any stale `issues.md`" in prompt
+    assert "`ISS-042`" in prompt
+    assert "ISS-006" not in prompt
     assert "Do NOT invoke any `echelon spec resolve`" in prompt
 
 
