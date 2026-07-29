@@ -3250,6 +3250,59 @@ def _active_v2_decision(state: dict) -> dict[str, object] | None:
     return decision if decision["status"] != "resolved" else None
 
 
+def _supersede_quality_guard_decision(state: dict) -> bool:
+    """Close the obsolete WHY safeguard when quality remediation supersedes it.
+
+    A certified quality remediation cycle is controller-owned evidence that a
+    previous no-progress WHY guard no longer describes the next safe action.
+    Preserve that guard as a resolved decision rather than leaving an active
+    decision without its recovery instruction.  The narrow identity check
+    prevents this path from bypassing ordinary human or provider decisions.
+    """
+    from harness.blocked_decision import validate_blocked_decision_v2
+
+    remediation = state.get("quality_gate_remediation")
+    raw_decision = state.get("blocked_decision")
+    ledger = state.get("issue_resolution_ledger")
+    if not isinstance(remediation, dict) or not isinstance(raw_decision, dict):
+        return False
+    if not isinstance(ledger, dict) or not ledger:
+        return False
+    if not all(
+        isinstance(entry, dict) and entry.get("status") == "validated"
+        for entry in ledger.values()
+    ):
+        return False
+    try:
+        decision = validate_blocked_decision_v2(raw_decision)
+    except ValueError:
+        return False
+    if (
+        decision["status"] != "awaiting_human"
+        or decision["source_kind"] != "controller_safeguard"
+        or decision["producer_id"] not in {
+            "consecutive_why_fails",
+            "why2_metric_stagnation",
+        }
+        or decision["reason_code"] != decision["producer_id"]
+    ):
+        return False
+
+    superseded = {
+        **decision,
+        "status": "resolved",
+        "answer_text": (
+            "Superseded by controller quality-gate remediation after all "
+            "recorded issue resolutions were validated."
+        ),
+        "resolved_by": "COMMANDER",
+        "resolved_at": datetime.now(timezone.utc).isoformat(),
+    }
+    state["blocked_decision"] = validate_blocked_decision_v2(superseded)
+    state.pop("recovery_instruction", None)
+    return True
+
+
 def _render_v2_decision_options(decision: dict[str, object]) -> str:
     options = decision.get("options")
     if not isinstance(options, list) or not options:
@@ -7184,6 +7237,10 @@ def _cmd_continue_impl(
         return
 
     state = _json.loads((squad_dir / "state.json").read_text())
+    if _supersede_quality_guard_decision(state):
+        (squad_dir / "state.json").write_text(
+            _json.dumps(state, indent=2, ensure_ascii=False)
+        )
     user_message = state.get("user_message", "")
     mode = mode_override or state.get("autonomy_mode") or state.get("mode", "semi")
     try:
@@ -7361,6 +7418,7 @@ def _cmd_continue_impl(
                 "gates still fail. Begin a fresh remediation cycle."
             ),
         }
+        _supersede_quality_guard_decision(state)
         start_phase(
             "phase1-what",
             verb="Starting quality-gate remediation",

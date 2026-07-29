@@ -15,6 +15,7 @@ from echelon.cli import (
     _ensure_active_continue_spec_context,
     _next_continue_phase,
     _phase_a_readiness_candidate_dirs,
+    _supersede_quality_guard_decision,
 )
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
 from harness.blocked_decision import build_blocked_decision_v2
@@ -1523,6 +1524,37 @@ def test_consecutive_why_failure_after_all_resolutions_restarts_quality_remediat
     assert action.kind == "retry_phase"
     assert action.reason == "quality_gate_remediation"
     assert action.phase == "phase1-what"
+
+
+def test_quality_remediation_supersedes_only_its_stale_why_safeguard() -> None:
+    decision = build_blocked_decision_v2(
+        decision_id="dec-quality-guard",
+        status="awaiting_human",
+        source_kind="controller_safeguard",
+        producer_id="consecutive_why_fails",
+        source_phase="phase1-why2",
+        reason_code="consecutive_why_fails",
+        classification="material",
+        question="Provide a repair instruction.",
+        options=[],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler="reset_why_fail_count",
+        autonomy_mode="semi",
+        source_state_revision=3,
+        now="2026-07-29T00:00:00+00:00",
+    )
+    state = {
+        "quality_gate_remediation": {"attempt": 1},
+        "issue_resolution_ledger": {"ISS-042": {"status": "validated"}},
+        "blocked_decision": decision,
+        "recovery_instruction": {"stale": "instruction"},
+    }
+
+    assert _supersede_quality_guard_decision(state) is True
+    assert state["blocked_decision"]["status"] == "resolved"
+    assert state["blocked_decision"]["resolved_by"] == "COMMANDER"
+    assert "recovery_instruction" not in state
 
 
 def test_quality_remediation_no_progress_retries_authoring_without_resolve() -> None:
