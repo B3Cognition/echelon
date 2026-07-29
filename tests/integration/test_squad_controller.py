@@ -4886,9 +4886,12 @@ class TestSquadControllerBasics:
             snapshot,
         )
 
-        override, updates = ctrl._coordinate_why_transition_state(node, prepared, snapshot)
+        override, updates, human_input = ctrl._coordinate_why_transition_state(
+            node, prepared, snapshot
+        )
 
         assert override == "terminal-blocked"
+        assert human_input is None
         assert updates["blocked_reason"] == "issue_resolution_next"
         assert updates["issue_resolution_ledger"]["ISS-001"]["status"] == "validated"
         assert updates["selected_issue_resolution"] is None
@@ -4926,11 +4929,12 @@ class TestSquadControllerBasics:
             snapshot,
         )
 
-        next_phase, state_updates = ctrl._coordinate_why_transition_state(
+        next_phase, state_updates, human_input = ctrl._coordinate_why_transition_state(
             node, prepared, snapshot
         )
 
         assert next_phase == "phase1-what"
+        assert human_input is None
         assert state_updates["iteration"] == 0
         assert "quality_gate_remediation" in state_updates
         assert state_updates["issue_resolution_ledger"]["ISS-001"]["status"] == "validated"
@@ -4972,11 +4976,12 @@ class TestSquadControllerBasics:
             snapshot,
         )
 
-        next_phase, updates = ctrl._coordinate_why_transition_state(
+        next_phase, updates, human_input = ctrl._coordinate_why_transition_state(
             node, prepared, snapshot
         )
 
         assert next_phase == "phase1-what"
+        assert human_input is None
         assert updates["iteration"] == 0
         assert updates["quality_gate_remediation"]["evidence"] is None
 

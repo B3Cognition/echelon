@@ -8494,7 +8494,7 @@ class SquadController:
                         ),
                     },
                 }
-                return "phase1-what", updates
+                return "phase1-what", updates, None
             updates = {
                 "issue_resolution_ledger": validated_ledger,
                 "selected_issue_resolution": None,
@@ -8505,7 +8505,7 @@ class SquadController:
                 "blocked_reason": blocked_reason,
                 "escalation_question": escalation_question,
             }
-            return PHASE_TERMINAL_BLOCKED, updates
+            return PHASE_TERMINAL_BLOCKED, updates, None
 
         from datetime import datetime, timezone
 
