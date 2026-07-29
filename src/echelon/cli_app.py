@@ -75,6 +75,7 @@ spec_app = typer.Typer(
         "                    [--re-policy none|cached-only|changed|refresh-all]\n"
         "                    [--re-max-inner <n>]\n"
         "  checkpoint list|accept|commit [--spec <id>] [--phase <phase-id>]\n"
+        "  add-input --input <role:path>...  Add evidence to a parked investigation run.\n"
         "  resolve ISS-<n> <decision>  Record one issue decision and run its targeted repair.\n"
         "  publish <spec-id-or-branch> | publish --all\n"
         "                    Commit spec-only snapshots to the local default branch.\n"
@@ -1666,6 +1667,25 @@ def spec_resume(
         args.append(answer)
     args.extend(list(ctx.args))
     legacy_cli._cmd_spec_resume(args)
+
+
+@spec_app.command("add-input")
+def spec_add_input(
+    input_values: Optional[list[str]] = typer.Option(
+        None,
+        "--input",
+        help=(
+            "Reference material for a parked investigation checkpoint as "
+            "requirement:<path> or reference:<path>; repeat as needed."
+        ),
+    ),
+) -> None:
+    """Add declared evidence to a parked investigation access checkpoint."""
+    from echelon import cli as legacy_cli
+
+    args: list[str] = []
+    _extend_repeated_option(args, "--input", input_values)
+    legacy_cli._cmd_spec_add_input(args)
 
 
 @spec_app.command(
