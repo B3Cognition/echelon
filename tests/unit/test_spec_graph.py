@@ -228,6 +228,48 @@ def test_build_spec_graph_uses_only_canonical_spec_requirements(
 
 
 @pytest.mark.unit
+def test_build_spec_graph_aggregates_multiple_product_inputs_per_requirement(
+    tmp_path: Path,
+) -> None:
+    spec_dir = _canonical_spec(tmp_path)
+    _write_json(
+        spec_dir / "inputs" / "traceability.json",
+        {
+            "schema_version": 1,
+            "requirements": [
+                {
+                    "input_unit_id": "IN-REQ-002",
+                    "disposition": "included",
+                    "spec_ids": ["FR-001"],
+                    "task_ids": ["T-001"],
+                    "targets": [],
+                },
+                {
+                    "input_unit_id": "IN-REQ-001",
+                    "disposition": "included",
+                    "spec_ids": ["FR-001"],
+                    "task_ids": ["T-001"],
+                    "targets": [],
+                },
+            ],
+        },
+    )
+
+    payload = build_spec_graph(tmp_path, spec_dir).to_dict()
+    derived = [
+        edge
+        for edge in payload["edges"]
+        if edge["source"] == "req:001-demo:FR-001"
+        and edge["type"] == "DERIVED_FROM"
+    ]
+
+    assert len(derived) == 1
+    assert derived[0]["properties"] == {
+        "input_unit_ids": ["IN-REQ-001", "IN-REQ-002"]
+    }
+
+
+@pytest.mark.unit
 def test_build_spec_graph_includes_deferrals_amendments_and_verified_ledger(
     tmp_path: Path,
 ) -> None:

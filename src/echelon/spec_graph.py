@@ -383,6 +383,7 @@ def _add_traceability(
     rows = payload.get("requirements", [])
     if not isinstance(rows, list):
         raise SpecGraphError("product input traceability requirements must be a list")
+    input_units_by_requirement: dict[str, set[str]] = {}
     for row in rows:
         if not isinstance(row, dict):
             raise SpecGraphError("product input traceability entry must be an object")
@@ -393,14 +394,20 @@ def _add_traceability(
         for requirement_id in sorted(
             requirement_ids.intersection(str(value) for value in spec_ids)
         ):
-            edges.append(
-                GraphEdge(
-                    f"req:{spec_dir.name}:{requirement_id}",
-                    "DERIVED_FROM",
-                    target,
-                    {"input_unit_id": input_unit_id},
-                )
+            input_units_by_requirement.setdefault(requirement_id, set()).add(
+                input_unit_id
             )
+    for requirement_id, input_unit_ids in sorted(
+        input_units_by_requirement.items()
+    ):
+        edges.append(
+            GraphEdge(
+                f"req:{spec_dir.name}:{requirement_id}",
+                "DERIVED_FROM",
+                target,
+                {"input_unit_ids": sorted(input_unit_ids)},
+            )
+        )
 
 
 def _add_deferrals(

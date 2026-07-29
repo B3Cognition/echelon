@@ -101,7 +101,7 @@ Each edge has one deterministic authority:
 | Edge | Source | Target | Authority |
 | --- | --- | --- | --- |
 | `HAS_REQUIREMENT` | `Spec` | `Requirement` | Canonical `spec.md` parser. |
-| `DERIVED_FROM` | `Requirement` | product-input `Artifact` | `inputs/traceability.json`; input-unit ID is an edge property. |
+| `DERIVED_FROM` | `Requirement` | product-input `Artifact` | `inputs/traceability.json`; sorted `input_unit_ids` are an edge property. |
 | `IMPLEMENTS` | `Task` | `Requirement` | Canonical `tasks.md` `req=` metadata. |
 | `VERIFIED_BY` | `Requirement` | verified-ledger `Artifact` | `verified-fulfillment-ledger.json`. |
 | `STORED_AS` | `Requirement` or `Artifact` | `MemPalaceDrawer` | Native memory planner plus native audit. |
