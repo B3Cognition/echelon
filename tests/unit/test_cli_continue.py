@@ -1539,6 +1539,21 @@ def test_quality_remediation_no_progress_retries_authoring_without_resolve() -> 
     assert action.command == "echelon spec continue"
 
 
+def test_spec_continue_prints_start_and_end_timestamps(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _cmd_continue(
+        [],
+        project_root=tmp_path,
+        ext_dir=tmp_path / ".specify/extensions/echelon",
+    )
+
+    output = capsys.readouterr().out
+    assert "[squad] start:" in output
+    assert "[squad] end:" in output
+
+
 def test_persisted_runtime_sync_recovery_retries_after_compatible_sync(
     tmp_path: Path,
     monkeypatch,
