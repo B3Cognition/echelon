@@ -4703,6 +4703,77 @@ class TestSquadControllerBasics:
         assert refreshed["issue_resolution_ledger"]["ISS-002"]["status"] == "pending"
         assert refreshed["issue_resolution_recovery"]["status"] == "consumed"
 
+    def test_quality_remediation_rejects_done_without_spec_change(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-what", max_iterations=5)
+        spec_dir = tmp_path / "runs" / "run-test" / "specs" / "001-demo"
+        spec_dir.mkdir(parents=True)
+        spec = spec_dir / "spec.md"
+        spec.write_text("# Specification\n", encoding="utf-8")
+        state = store.load()
+        state.update(
+            {
+                "spec_dir": "runs/run-test/specs/001-demo",
+                "quality_gate_remediation": {
+                    "baseline_spec_sha256": hashlib.sha256(
+                        spec.read_bytes()
+                    ).hexdigest(),
+                },
+            }
+        )
+        store.save(state)
+
+        enrichment = ctrl._controller_enrichment(
+            ctrl._graph.get("phase1-what"),
+            state,
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={"verdict": "DONE", "state_updates": {}},
+                raw_output="",
+                duration_ms=0,
+                timed_out=False,
+            ),
+        )
+
+        assert enrichment.routing_override == "terminal-blocked"
+
+    def test_selected_issue_repair_accepts_an_already_present_spec_amendment(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-what", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "selected_issue_resolution": "ISS-001",
+                "issue_resolution_ledger": {
+                    "ISS-001": {"issue_id": "ISS-001", "status": "selected"},
+                },
+                "issue_resolution_repair_baseline": {
+                    "issue_id": "ISS-001",
+                    "repair_phase": "phase1-what",
+                    "recorded_at": "2099-01-01T00:00:00+00:00",
+                },
+                "issue_resolution_recovery": {"issue_id": "ISS-001"},
+            }
+        )
+        store.save(state)
+
+        _coordinate_prepared_result(
+            ctrl,
+            ctrl._graph.get("phase1-what"),
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "DONE",
+                    "state_updates": {"evidence_resolution_status": "not_required"},
+                },
+                raw_output="", duration_ms=0, timed_out=False,
+            ),
+        )
+
+        refreshed = store.load()
+        assert refreshed["issue_resolution_ledger"]["ISS-001"]["status"] == "repaired"
+        assert refreshed["issue_resolution_recovery"]["status"] == "consumed"
+
     def test_passing_why2_validates_only_the_repaired_selected_issue(self, tmp_path):
         ctrl, store = _controller(tmp_path)
         store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
@@ -4743,6 +4814,136 @@ class TestSquadControllerBasics:
         assert updates["issue_resolution_ledger"]["ISS-001"]["status"] == "validated"
         assert updates["issue_resolution_ledger"]["ISS-002"]["status"] == "pending"
         assert updates["selected_issue_resolution"] is None
+
+    def test_failing_why2_validates_repaired_issue_absent_from_remaining_findings(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "selected_issue_resolution": "ISS-001",
+                "issue_resolution_ledger": {
+                    "ISS-001": {"issue_id": "ISS-001", "status": "repaired"},
+                    "ISS-002": {"issue_id": "ISS-002", "status": "pending"},
+                },
+            }
+        )
+        store.save(state)
+        node = ctrl._graph.get("phase1-why2")
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
+            node,
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "FAIL",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                        "finding_routes": {"findings": [{
+                            "issue_id": "ISS-002",
+                            "route": "spec_repair",
+                            "rationale": "A separate repair is still required.",
+                        }]},
+                    },
+                },
+                raw_output="", duration_ms=0, timed_out=False,
+            ),
+            snapshot,
+        )
+
+        override, updates = ctrl._coordinate_why_transition_state(node, prepared, snapshot)
+
+        assert override == "terminal-blocked"
+        assert updates["blocked_reason"] == "issue_resolution_next"
+        assert updates["issue_resolution_ledger"]["ISS-001"]["status"] == "validated"
+        assert updates["selected_issue_resolution"] is None
+
+    def test_failing_why2_does_not_reopen_a_repaired_selected_issue(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        state = store.load()
+        state.update({
+            "selected_issue_resolution": "ISS-001",
+            "issue_resolution_ledger": {
+                "ISS-001": {"status": "repaired"},
+            },
+        })
+        store.save(state)
+        node = ctrl._graph.get("phase1-why2")
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
+            node,
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "FAIL",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                        "finding_routes": {"findings": [{
+                            "issue_id": "ISS-001",
+                            "route": "spec_repair",
+                            "rationale": "A stale report repeats the selected issue.",
+                        }]},
+                    },
+                },
+                raw_output="", duration_ms=0, timed_out=False,
+            ),
+            snapshot,
+        )
+
+        next_phase, state_updates = ctrl._coordinate_why_transition_state(
+            node, prepared, snapshot
+        )
+
+        assert next_phase == "phase1-what"
+        assert state_updates["iteration"] == 0
+        assert "quality_gate_remediation" in state_updates
+        assert state_updates["issue_resolution_ledger"]["ISS-001"]["status"] == "validated"
+        assert state_updates["selected_issue_resolution"] is None
+
+    def test_failing_why2_starts_quality_remediation_after_last_resolution(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "selected_issue_resolution": "ISS-001",
+                "issue_resolution_ledger": {
+                    "ISS-001": {"status": "repaired"},
+                    "ISS-002": {"status": "validated"},
+                },
+            }
+        )
+        store.save(state)
+        node = ctrl._graph.get("phase1-why2")
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
+            node,
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "FAIL",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                        "finding_routes": {"findings": [{
+                            "issue_id": "ISS-001",
+                            "route": "spec_repair",
+                            "rationale": "Stale issue report.",
+                        }]},
+                    },
+                },
+                raw_output="", duration_ms=0, timed_out=False,
+            ),
+            snapshot,
+        )
+
+        next_phase, updates = ctrl._coordinate_why_transition_state(
+            node, prepared, snapshot
+        )
+
+        assert next_phase == "phase1-what"
+        assert updates["iteration"] == 0
+        assert updates["quality_gate_remediation"]["evidence"] is None
 
     def test_consecutive_why_escalation_gives_an_actionable_question(self, tmp_path):
         ctrl, store = _controller(tmp_path)

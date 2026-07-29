@@ -81,6 +81,27 @@ def test_controller_repair_context_names_governance_report():
 
 
 @pytest.mark.unit
+def test_quality_remediation_context_requires_an_actual_spec_edit(tmp_path):
+    from harness.squad_executors import _render_controller_repair_context
+
+    report = tmp_path / "understanding.json"
+    report.write_text(
+        '{"gates": {"structure": {"pass": false, "score": 0.5, "threshold": 0.75}}}',
+        encoding="utf-8",
+    )
+
+    prompt = _render_controller_repair_context({
+        "quality_gate_remediation": {
+            "evidence": {"path": str(report)},
+        },
+    })
+
+    assert "structure (0.5 < required 0.75)" in prompt
+    assert "Edit `spec.md`" in prompt
+    assert "SHA-256" in prompt
+
+
+@pytest.mark.unit
 def test_issue_resolution_context_keeps_repaired_issue_available_for_retry():
     from harness.squad_executors import _render_issue_resolution_context
 
@@ -98,3 +119,5 @@ def test_issue_resolution_context_keeps_repaired_issue_available_for_retry():
 
     assert "ISS-001" in prompt
     assert "Use exponential backoff." in prompt
+    assert "targeted validation" in prompt
+    assert "OMIT this issue from `finding_routes`" in prompt

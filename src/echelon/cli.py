@@ -3409,6 +3409,20 @@ def _interrupted_retry_phase(run_state: dict) -> str | None:
     return _last_incomplete_dispatch_phase(run_state)
 
 
+def _spec_markdown_sha256_for_state(run_state: dict, project_root: Path) -> str | None:
+    """Return the active run's canonical spec digest, if it is available."""
+    spec_dir_ref = str(run_state.get("spec_dir") or "").strip()
+    if not spec_dir_ref:
+        return None
+    spec_dir = Path(spec_dir_ref)
+    if not spec_dir.is_absolute():
+        spec_dir = project_root / spec_dir
+    try:
+        return hashlib.sha256((spec_dir / "spec.md").read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 def _classify_run_recovery(
     run_state: dict,
     *,
@@ -3440,6 +3454,68 @@ def _classify_run_recovery(
     if status != "blocked":
         return _RunRecoveryAction("advance")
 
+    ledger = run_state.get("issue_resolution_ledger")
+    ledger_entries = (
+        [entry for entry in ledger.values() if isinstance(entry, dict)]
+        if isinstance(ledger, dict)
+        else []
+    )
+    all_ledger_entries_validated = bool(ledger_entries) and all(
+        entry.get("status") == "validated" for entry in ledger_entries
+    )
+
+    if reason == "issue_resolution_next":
+        if all_ledger_entries_validated:
+            return _RunRecoveryAction(
+                "retry_phase",
+                reason="quality_gate_remediation",
+                phase="phase1-what",
+                command="echelon spec continue",
+                note=(
+                    "All recorded issue resolutions are complete, but the certified "
+                    "quality gates still fail. Starting a fresh specification quality "
+                    "remediation cycle; no further `spec resolve` command applies."
+                ),
+            )
+        return _RunRecoveryAction(
+            "manual_recovery",
+            reason=reason,
+            command='echelon spec resolve ISS-<n> "<project decision>"',
+            note=(
+                "The previous issue repair was validated. Resolve the next "
+                "unresolved SAGE issue; Echelon will retain the issue ledger "
+                "and run only that issue's targeted repair."
+            ),
+        )
+
+    # Once every controller-recorded issue decision is validated, a stale WHY
+    # guard must not send the operator back to `spec resolve`. Resume the
+    # normal quality remediation path instead. With an outstanding selected
+    # repair, leave recovery handling below in charge of its declared edge.
+    if reason == "consecutive_why_fails" and all_ledger_entries_validated:
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="quality_gate_remediation",
+            phase="phase1-what",
+            command="echelon spec continue",
+            note=(
+                "All recorded issue resolutions are complete, but the certified "
+                "quality gates still fail. Starting a fresh specification quality "
+                "remediation cycle; no further `spec resolve` command applies."
+            ),
+        )
+
+    if reason == "quality_gates_failed_after_resolutions":
+        return _RunRecoveryAction(
+            "human_resume",
+            reason=reason,
+            command='echelon spec resume "<quality-gate decision>"',
+            note=(
+                "All recorded issue resolutions are complete, but the certified "
+                "quality gates still fail. No further `spec resolve` command applies."
+            ),
+        )
+
     try:
         instruction = _persisted_or_legacy_recovery_instruction(run_state)
     except RecoveryInstructionError as exc:
@@ -3468,6 +3544,34 @@ def _classify_run_recovery(
             phase=str(recovery.get("to_phase") or "").strip(),
             command="echelon spec continue",
             note="will validate and consume the declared issue-repair workflow edge",
+        )
+
+    # A prior version could finish the selected WHAT repair, then let SAGE
+    # re-list that same issue from stale generic reasoning.  Give the repaired
+    # issue one focused WHY2 validation pass before asking the operator to
+    # re-enter a decision they have already supplied.
+    selected_issue = str(run_state.get("selected_issue_resolution") or "").strip()
+    ledger = run_state.get("issue_resolution_ledger")
+    retried_issue = str(
+        run_state.get("issue_resolution_revalidation_attempted") or ""
+    ).strip()
+    if (
+        selected_issue
+        and selected_issue != retried_issue
+        and isinstance(ledger, dict)
+        and isinstance(ledger.get(selected_issue), dict)
+        and ledger[selected_issue].get("status") == "repaired"
+        and reason in {"consecutive_why_fails", "why2_metric_stagnation"}
+    ):
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="issue_resolution_revalidation",
+            phase="phase1-understanding",
+            command="echelon spec continue",
+            note=(
+                f"will revalidate the already-repaired {selected_issue} against "
+                "its recorded decision before requesting another resolution"
+            ),
         )
 
     if reason == "selected_issue_repair_no_artifact_progress":
@@ -3722,6 +3826,8 @@ def _current_issues_recap(
     candidates.append(_run_artifact_dir(project_root, squad_dir) / "issues.md")
 
     seen: set[Path] = set()
+    ledger = state.get("issue_resolution_ledger")
+    ledger = ledger if isinstance(ledger, dict) else {}
     for candidate in candidates:
         issues_path = candidate.resolve()
         if issues_path in seen:
@@ -3742,7 +3848,12 @@ def _current_issues_recap(
         issues: list[str] = []
         severity_counts: dict[str, int] = {}
         for title, body in issue_blocks:
+            issue_id_match = re.match(r"^(ISS-\d+):", title.strip())
+            issue_id = issue_id_match.group(1) if issue_id_match else ""
             if (
+                (issue_id and isinstance(ledger.get(issue_id), dict)
+                 and ledger[issue_id].get("status") == "validated")
+                or
                 "RESOLVED" in title.upper()
                 or re.search(r"\*\*Status:\*\*\s*[^\n]*\bRESOLVED\b", body, re.IGNORECASE)
                 or re.search(r"\bNo action required\b", body, re.IGNORECASE)
@@ -3865,10 +3976,15 @@ def _issue_resolution_screen_guidance(
         ("issues file", str(issues_path)),
         ("open issues", issues_path.as_uri()),
     ]
-    for request in _issue_resolution_requests(project_root, squad_dir, state):
-        entry = ledger.get(request["issue_id"])
-        if isinstance(entry, dict) and entry.get("status") == "validated":
-            continue
+    unresolved_requests = [
+        request
+        for request in _issue_resolution_requests(project_root, squad_dir, state)
+        if not (
+            isinstance(ledger.get(request["issue_id"]), dict)
+            and ledger[request["issue_id"]].get("status") == "validated"
+        )
+    ]
+    for index, request in enumerate(unresolved_requests):
         lines = [
             f"{request['title']} [{request['severity']}]",
             f"action: {request['guidance']}",
@@ -3889,7 +4005,10 @@ def _issue_resolution_screen_guidance(
         unknown = request.get("values_not_inferable", "")
         if unknown and unknown.lower() != "none":
             lines.append(f"user decides: {unknown}")
-        fields.append((request["issue_id"], "\n".join(lines)))
+        rendered = "\n".join(lines)
+        if index == 0:
+            fields.append(("next issue", rendered))
+        fields.append((request["issue_id"], rendered))
     return fields
 
 
@@ -3923,6 +4042,30 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     ledger = state.get("issue_resolution_ledger")
     if not isinstance(ledger, dict):
         ledger = {}
+    existing = ledger.get(issue_id)
+    if isinstance(existing, dict):
+        existing_status = str(existing.get("status") or "").strip()
+        existing_decision = " ".join(
+            str(existing.get("decision") or "").split()
+        )
+        normalized_decision = " ".join(decision.split())
+        if existing_status == "validated":
+            print(
+                f"[squad] {issue_id} is already validated; no resolution was changed.",
+                flush=True,
+            )
+            return
+        if (
+            existing_status in {"selected", "repaired"}
+            and existing_decision == normalized_decision
+        ):
+            print(
+                f"[squad] {issue_id} is already recorded with this decision; "
+                "no resolution was changed.\n"
+                "[squad] next: echelon spec continue",
+                flush=True,
+            )
+            return
     unresolved_before = [
         item["issue_id"]
         for item in requests
@@ -3942,6 +4085,9 @@ def _cmd_spec_resolve(args: list[str], *, project_root: Path, ext_dir: Path) -> 
     }
     state["issue_resolution_ledger"] = ledger
     state["selected_issue_resolution"] = issue_id
+    # A new decision starts a new targeted-validation allowance, even when it
+    # revisits an issue whose previous validation had to be retried.
+    state.pop("issue_resolution_revalidation_attempted", None)
     state["issue_resolution_repair_baseline"] = {
         "issue_id": issue_id,
         "repair_phase": "phase1-what",
@@ -7004,7 +7150,55 @@ def _cmd_continue(
             "the controller will validate it before dispatch.",
             flush=True,
         )
-        _cmd_run(resume_run_args(), project_root=project_root, ext_dir=ext_dir)
+        # ``_cmd_run`` preserves a terminal-blocked state verbatim.  In semi
+        # mode that makes the controller immediately return the same
+        # escalation rather than dispatching the requested repair.  Promote
+        # the controller-owned recovery edge back to its target phase first;
+        # keep its issue ledger/recovery payload so WHY2 can validate it.
+        repair_phase = str(issue_recovery.get("to_phase") or "phase1-what").strip()
+        start_phase(
+            repair_phase or "phase1-what",
+            verb="Continuing selected issue repair",
+            clear_recovery=True,
+        )
+        return
+
+    if action.reason == "issue_resolution_revalidation":
+        selected_issue = str(state.get("selected_issue_resolution") or "").strip()
+        state["issue_resolution_revalidation_attempted"] = selected_issue
+        state["why_fail_count"] = 0
+        state["why2_metric_stagnation_count"] = 0
+        state.pop("why_failure_baseline", None)
+        start_phase(
+            "phase1-understanding",
+            verb="Revalidating selected issue repair",
+            clear_recovery=True,
+        )
+        return
+
+    if action.reason == "quality_gate_remediation":
+        state["iteration"] = 0
+        state["why_fail_count"] = 0
+        state["why2_metric_stagnation_count"] = 0
+        state.pop("why_failure_baseline", None)
+        state["quality_gate_remediation"] = {
+            "evidence": state.get("understanding_evidence"),
+            "baseline_spec_sha256": _spec_markdown_sha256_for_state(
+                state, project_root
+            ),
+            "attempt": int(
+                (state.get("quality_gate_remediation") or {}).get("attempt", 0)
+            ) + 1 if isinstance(state.get("quality_gate_remediation"), dict) else 1,
+            "reason": (
+                "All named issue resolutions are complete, but certified quality "
+                "gates still fail. Begin a fresh remediation cycle."
+            ),
+        }
+        start_phase(
+            "phase1-what",
+            verb="Starting quality-gate remediation",
+            clear_recovery=True,
+        )
         return
 
     # Echelon versions before the banzai-routing fix persisted a COMMANDER
