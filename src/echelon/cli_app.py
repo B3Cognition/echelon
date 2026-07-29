@@ -96,6 +96,11 @@ spec_memory_app = typer.Typer(
     help="Mine and audit canonical spec memory in MemPalace.",
     no_args_is_help=True,
 )
+spec_graph_app = typer.Typer(
+    add_completion=False,
+    help="Build and audit deterministic spec artifact graphs.",
+    no_args_is_help=True,
+)
 memory_app = typer.Typer(
     add_completion=False,
     help="Search and inspect workspace memory in MemPalace.",
@@ -163,6 +168,7 @@ app.add_typer(admin_app, name="admin", hidden=True)
 workspace_app.add_typer(workspace_sources_app, name="sources")
 spec_app.add_typer(spec_checkpoint_app, name="checkpoint")
 spec_app.add_typer(spec_memory_app, name="memory")
+spec_app.add_typer(spec_graph_app, name="graph")
 spec_app.add_typer(spec_evidence_app, name="evidence")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
 re_app.add_typer(re_memory_app, name="memory")
@@ -277,6 +283,43 @@ def _memory_exit_code(status: str) -> int:
     if status in {"fail", "partial"}:
         return 1
     return 2
+
+
+def _graph_exit_code(status: str) -> int:
+    if status in {"pass", "warn"}:
+        return 0
+    if status == "fail":
+        return 1
+    return 2
+
+
+def _echo_spec_graph_summary(graph: object, *, action: str) -> None:
+    inputs = list(getattr(graph, "inputs", ()))
+    memory = [
+        str(getattr(item, "status", "unknown"))
+        for item in inputs
+        if getattr(item, "role", "") == "memory_audit_report"
+    ]
+    memory_status = ",".join(memory) if memory else "not-applicable"
+    typer.echo(
+        f"Spec graph {action}: spec={getattr(graph, 'spec_id')} "
+        f"nodes={len(getattr(graph, 'nodes', ()))} "
+        f"edges={len(getattr(graph, 'edges', ()))} "
+        f"memory={memory_status}"
+    )
+
+
+def _echo_spec_graph_audit(report: object) -> None:
+    findings = list(getattr(report, "findings", ()))
+    typer.echo(
+        f"Spec graph audit {getattr(report, 'status')}: "
+        f"spec={getattr(report, 'spec_id')} findings={len(findings)}"
+    )
+    for finding in findings:
+        typer.echo(
+            f"  [{getattr(finding, 'severity')}] "
+            f"{getattr(finding, 'code')}: {getattr(finding, 'message')}"
+        )
 
 
 def _cleanup_stale_memory_best_effort(project_root: Path, spec_selector: str) -> None:
@@ -1868,6 +1911,92 @@ def spec_checkpoint_commit(
     _extend_option(args, "--message", message)
     args.extend(list(ctx.args))
     run_checkpoint_command(args, project_root=Path.cwd())
+
+
+@spec_graph_app.command("build")
+def spec_graph_build(
+    spec_selector: str,
+    write: bool = typer.Option(False, "--write"),
+) -> None:
+    """Build a deterministic graph from current canonical sources."""
+    from echelon.mempalace_requirements import SpecMemoryError, resolve_spec_dir
+    from echelon.spec_graph import (
+        SpecGraphError,
+        build_spec_graph,
+        write_spec_graph,
+    )
+
+    try:
+        graph = build_spec_graph(Path.cwd(), spec_selector)
+        spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
+        if write:
+            write_spec_graph(graph, spec_dir)
+    except (SpecGraphError, SpecMemoryError, OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    _echo_spec_graph_summary(graph, action="built")
+
+
+@spec_graph_app.command("audit")
+def spec_graph_audit(
+    spec_selector: str,
+    as_json: bool = typer.Option(False, "--json"),
+    write: bool = typer.Option(False, "--write"),
+) -> None:
+    """Audit graph freshness and source coherence without mining memory."""
+    from echelon.mempalace_requirements import SpecMemoryError, resolve_spec_dir
+    from echelon.spec_graph import SpecGraphError
+    from echelon.spec_graph_audit import (
+        audit_spec_graph,
+        write_spec_graph_audit,
+    )
+
+    try:
+        report = audit_spec_graph(Path.cwd(), spec_selector)
+        if write:
+            spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
+            write_spec_graph_audit(report, spec_dir)
+    except (SpecGraphError, SpecMemoryError, OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json(report.to_dict())
+    else:
+        _echo_spec_graph_audit(report)
+    raise typer.Exit(code=_graph_exit_code(report.status))
+
+
+@spec_graph_app.command("refresh")
+def spec_graph_refresh(
+    spec_selector: str,
+    write: bool = typer.Option(False, "--write"),
+) -> None:
+    """Rebuild and audit the graph without refreshing MemPalace."""
+    from echelon.mempalace_requirements import SpecMemoryError, resolve_spec_dir
+    from echelon.spec_graph import (
+        SpecGraphError,
+        build_spec_graph,
+        write_spec_graph,
+    )
+    from echelon.spec_graph_audit import (
+        audit_spec_graph,
+        write_spec_graph_audit,
+    )
+
+    try:
+        spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
+        graph = build_spec_graph(Path.cwd(), spec_selector)
+        if write:
+            write_spec_graph(graph, spec_dir)
+        report = audit_spec_graph(Path.cwd(), spec_selector)
+        if write:
+            write_spec_graph_audit(report, spec_dir)
+    except (SpecGraphError, SpecMemoryError, OSError, ValueError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    _echo_spec_graph_summary(graph, action="refreshed")
+    _echo_spec_graph_audit(report)
+    raise typer.Exit(code=_graph_exit_code(report.status))
 
 
 @spec_memory_app.command("mine")
