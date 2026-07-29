@@ -1052,6 +1052,55 @@ def test_declared_provider_control_intents_are_promoted_not_provider_owned() -> 
     }
 
 
+def test_prepared_human_input_preserves_provider_recommendation_and_risk() -> None:
+    node = PhaseNode(
+        id="tracker",
+        type="agent",
+        allowed_state_updates=[
+            "status",
+            "blocked_reason",
+            "escalation_question",
+            "escalation_recommended_answer",
+            "escalation_risk_level",
+        ],
+    )
+    control_updates = {
+        "status": "blocked",
+        "blocked_reason": "investigation_access_required",
+    }
+
+    prepared = prepare_phase_result(
+        node,
+        _result(
+            {
+                **control_updates,
+                "escalation_question": "Which approved credential should Echelon use?",
+                "escalation_recommended_answer": "Use the read-only service account.",
+                "escalation_risk_level": "medium",
+            },
+            verdict="STOP_AND_ASK",
+        ),
+        controller_updates={},
+        control_updates=control_updates,
+    )
+
+    assert prepared.provider_update_keys == frozenset({
+        "escalation_question",
+        "escalation_recommended_answer",
+        "escalation_risk_level",
+    })
+    assert prepared.controller_update_keys == frozenset()
+    assert prepared.state_updates == {
+        "escalation_question": "Which approved credential should Echelon use?",
+        "escalation_recommended_answer": "Use the read-only service account.",
+        "escalation_risk_level": "medium",
+    }
+    assert prepared.as_squad_agent_result().state_updates == {
+        **control_updates,
+        **prepared.state_updates,
+    }
+
+
 def test_matching_control_payload_cannot_promote_undeclared_done_status() -> None:
     node = PhaseNode(
         id="provider",

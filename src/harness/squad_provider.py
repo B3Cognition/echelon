@@ -243,6 +243,38 @@ def _extract_echelon_result(raw: str) -> Optional[dict]:
     return None
 
 
+def _extract_strict_echelon_result(raw: str) -> Optional[dict]:
+    """Parse exactly one bare physical envelope without recovery."""
+    if not isinstance(raw, str):
+        return None
+    stripped = raw.strip()
+    if not stripped or "```" in stripped:
+        return None
+    lines = stripped.splitlines()
+    if not lines or lines[0] != "echelon_result:":
+        return None
+    if sum(line == "echelon_result:" for line in lines) != 1:
+        return None
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        if not line.startswith(" ") or line.startswith("\t"):
+            return None
+        if line.lstrip().startswith("#"):
+            return None
+    try:
+        parsed = yaml.safe_load(stripped)
+    except yaml.YAMLError:
+        return None
+    if (
+        not isinstance(parsed, dict)
+        or set(parsed) != {"echelon_result"}
+        or not isinstance(parsed["echelon_result"], dict)
+    ):
+        return None
+    return parsed["echelon_result"]
+
+
 def _validation_block_result(reason: str, debug_path: Optional[str] = None) -> dict:
     state_updates = {"blocked_reason": f"echelon_result validation failed: {reason}"}
     if debug_path:
@@ -350,6 +382,8 @@ class SquadCliProvider(AICodingCliProvider):
         timeout_ms: Optional[int] = None,
         result_contract: EchelonResultContract | None = None,
         prompt_metadata: Optional[dict[str, object]] = None,
+        allow_result_repair: bool = True,
+        strict_result_envelope: bool = False,
     ) -> SquadAgentResult:
         start = time.monotonic()
         git_before = _git_boundary_snapshot(project_root)
@@ -372,7 +406,11 @@ class SquadCliProvider(AICodingCliProvider):
                 backend_result.stdout,
                 backend_result.stderr,
             )
-        parsed_result = _extract_echelon_result(raw)
+        parsed_result = (
+            _extract_strict_echelon_result(raw)
+            if strict_result_envelope
+            else _extract_echelon_result(raw)
+        )
         (
             echelon_result,
             validation_reason,
@@ -390,7 +428,9 @@ class SquadCliProvider(AICodingCliProvider):
         repair_ended_at = ""
 
         if (
-            echelon_result is None
+            allow_result_repair
+            and not strict_result_envelope
+            and echelon_result is None
             and exit_code == 0
             and not timed_out
             and validation_reason

@@ -1083,5 +1083,9 @@ def test_investigator_has_structured_blocked_capability_fallback() -> None:
         root / "extension" / "agents" / "specialists" / "investigator.md"
     ).read_text(encoding="utf-8")
 
-    assert 'blocked_reason: "required research capabilities unavailable' in prompt
+    assert "verdict: STOP_AND_ASK" in prompt
+    assert (
+        'blocked_reason: "<investigation_access_required | '
+        'human_clarification_required>"'
+    ) in prompt
     assert "When the available evidence supports a defensible conclusion" in prompt

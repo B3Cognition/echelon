@@ -10,6 +10,13 @@ import types
 
 import pytest
 
+from harness.human_input import HumanInputPolicyRegistry
+
+
+class _EmptyPolicyGraph:
+    def human_input_policy_registry(self) -> HumanInputPolicyRegistry:
+        return HumanInputPolicyRegistry(())
+
 
 def test_requirement_folder_is_snapshotted_with_stable_catalog(tmp_path: Path) -> None:
     from echelon.product_inputs import parse_input_declaration, resolve_product_inputs
@@ -570,7 +577,14 @@ def test_controller_ignores_empty_exclusions_for_context_only_catalog_units(tmp_
         "phase1-what",
         product_inputs=resolution.state_payload(project),
     )
-    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    controller = SquadController(
+        object(),
+        store,
+        _EmptyPolicyGraph(),
+        project / "ext",
+        project,
+        squad_dir=run_dir,
+    )
     result = SquadAgentResult(
         exit_code=0,
         raw_output="",
@@ -644,7 +658,14 @@ def test_discover_ignores_reference_traceability_updates(tmp_path: Path) -> None
         "phase1-discover",
         product_inputs=resolution.state_payload(project),
     )
-    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    controller = SquadController(
+        object(),
+        store,
+        _EmptyPolicyGraph(),
+        project / "ext",
+        project,
+        squad_dir=run_dir,
+    )
     result = SquadAgentResult(
         exit_code=0,
         raw_output="",
@@ -749,7 +770,14 @@ def test_phase_plan_controller_rejects_bad_traceability_before_consensus(tmp_pat
     state = store.load()
     state["spec_dir"] = str(spec.relative_to(project))
     store.save(state)
-    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    controller = SquadController(
+        object(),
+        store,
+        _EmptyPolicyGraph(),
+        project / "ext",
+        project,
+        squad_dir=run_dir,
+    )
     result = SquadAgentResult(
         exit_code=0,
         raw_output="",
@@ -828,7 +856,14 @@ def test_consensus_controller_validates_run_local_traceability_without_requiring
     state = store.load()
     state["spec_dir"] = str(spec.relative_to(project))
     store.save(state)
-    controller = SquadController(object(), store, object(), project / "ext", project, squad_dir=run_dir)
+    controller = SquadController(
+        object(),
+        store,
+        _EmptyPolicyGraph(),
+        project / "ext",
+        project,
+        squad_dir=run_dir,
+    )
     result = SquadAgentResult(
         exit_code=0, raw_output="", duration_ms=0, timed_out=False,
         echelon_result={"verdict": "PASS"},
@@ -1019,7 +1054,7 @@ def test_phase_a_publication_copies_evidence_only_after_traceability_is_ready(tm
     from harness.squad import SquadController
     from harness.squad_state import SquadStateStore
 
-    class TerminalGraph:
+    class TerminalGraph(_EmptyPolicyGraph):
         def entry_phase(self) -> str:
             return "DONE"
 
@@ -1129,7 +1164,7 @@ def _product_effect_staging_fixture(
     controller = SquadController(
         object(),
         store,
-        object(),
+        _EmptyPolicyGraph(),
         project / "ext",
         project,
         squad_dir=run_dir,

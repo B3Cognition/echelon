@@ -63,14 +63,17 @@ Read WHY1 outputs:
 
 When CRITICAL issues are **user-gated** — they require information only the user holds
 (legal rights, product positioning decisions, audience policy, cost envelope) and cannot
-be resolved by any squad agent — include in `echelon_result.state_updates`:
+be resolved by any squad agent — return this controller input:
 
 ```yaml
-escalation_question: |
-  Q1: <compact blocking question — one line, state the stakes>
-  Q2: <compact blocking question>
-blocked_reason: |
-  WHY1: CRITICAL user-gated issues — squad-internal iteration cannot substitute for user input
+echelon_result:
+  verdict: STOP_AND_ASK
+  state_updates:
+    status: blocked
+    blocked_reason: human_clarification_required
+    escalation_question: "<compact blocking question; state the stakes>"
+    escalation_recommended_answer: "<evidence-backed recommendation>"
+    escalation_risk_level: "<low | medium | high | critical>"
 ```
 
 **Criteria — ALL must be true to set escalation_question:**
@@ -83,7 +86,7 @@ blocked_reason: |
 glossary gaps, unread manual pages, contradictions resolvable by ORACLE/INVESTIGATOR).
 Those keep routing to DISCOVER as normal.
 
-The harness reads `escalation_question` and either:
-
-- **banzai mode** → dispatches COMMANDER for best-judgment answers, run continues
-- **semi/guided mode** → stops the run; user answers via `echelon spec resume "<answers>"`
+Include `escalation_recommended_answer` and `escalation_risk_level` together
+only when evidence supports a recommendation; otherwise omit both. Never use a
+question-bearing verdict other than `STOP_AND_ASK`. The controller owns
+autonomy routing, clarification writes, and state cleanup.

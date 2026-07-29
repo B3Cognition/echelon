@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import secrets
 import stat
 import tempfile
 from contextlib import contextmanager
@@ -14,9 +15,15 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterable, Iterator, Literal, Mapping
 
-from harness.blocked_decision import ensure_blocked_decision
+from harness.blocked_decision import (
+    BlockedDecisionError,
+    build_blocked_decision_v2,
+    ensure_blocked_decision,
+    normalize_escalation_options,
+    validate_blocked_decision_v2,
+)
 from harness.controller_lock_order import controller_lock_order
 from harness.echelon_result_schema import (
     EchelonResultValidationError,
@@ -28,6 +35,13 @@ from harness.prepared_phase_result import (
     PreparedRoutingDecision,
     prepare_routing_decision as seal_routing_decision,
     verify_prepared_routing_decision_attestation,
+)
+from harness.human_input import HumanInputResolution, PreparedHumanInput
+from harness.recovery_instruction import (
+    RecoveryInstruction,
+    RecoveryInstructionError,
+    RecoveryKind,
+    validate_decision_recovery_pair,
 )
 from harness.squad_completion import (
     CompletionIntent,
@@ -105,6 +119,48 @@ _SHA256_CHARACTERS = frozenset("0123456789abcdef")
 _MAX_COMPLETION_DOCUMENT_BYTES = 4_194_304
 _MAX_COMPLETION_RECEIPTS_BYTES = 1_048_576
 _MAX_STATE_BYTES = 16_777_216
+_ACTIVE_HUMAN_INPUT_DECISION_STATUSES = frozenset(
+    {"pending", "resolving", "awaiting_human"}
+)
+_ACTIVE_HUMAN_INPUT_AUTHORITY_KEYS = frozenset(
+    {
+        "blocked_decision",
+        "recovery_instruction",
+        "phase",
+        "status",
+        "blocked_reason",
+        "escalation_question",
+        "escalation_options",
+    }
+)
+_HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS = frozenset(
+    {
+        "escalation_question",
+        "escalation_options",
+        "escalation_resolved",
+        "escalation_resolver",
+        "escalation_selected_option",
+        "escalation_risk_level",
+        "escalation_recommended_answer",
+        "escalation_default_answer",
+    }
+)
+_HUMAN_INPUT_PAIR_AUTHORITY_KEYS = frozenset(
+    {"blocked_decision", "recovery_instruction"}
+)
+_PROVIDER_ADVANCE_SAFEGUARD_PRODUCERS = frozenset(
+    {"consecutive_why_fails", "why2_metric_stagnation"}
+)
+_HUMAN_INPUT_STATE_EFFECT_RESERVED_KEYS = frozenset(
+    {
+        "blocked_decision",
+        "recovery_instruction",
+        "escalation_question",
+        "escalation_options",
+        "state_revision",
+        "updated_at",
+    }
+)
 
 
 class StateAdvanceError(RuntimeError):
@@ -759,26 +815,217 @@ def _validate_prepared_controller_completion(
     return marker, intent, receipts, receipts_sha256, prefix_kind
 
 
-def _state_matches_exact_save(
+def _is_human_input_decision_v2(value: object) -> bool:
+    return (
+        isinstance(value, Mapping)
+        and type(value.get("schema_version")) is int
+        and value.get("schema_version") == 2
+    )
+
+
+def _human_input_recovery_for_decision(
+    decision: Mapping[str, object],
+) -> RecoveryInstruction | None:
+    status = decision["status"]
+    if status == "resolved":
+        return None
+    kind, phase, requires_human_input = {
+        "pending": (
+            RecoveryKind.RESOLVE_DECISION,
+            decision["source_phase"],
+            False,
+        ),
+        "resolving": (
+            RecoveryKind.RESOLVE_DECISION,
+            decision["source_phase"],
+            False,
+        ),
+        "awaiting_human": (
+            RecoveryKind.AWAIT_HUMAN_ANSWER,
+            decision["source_phase"],
+            True,
+        ),
+        "failed": (RecoveryKind.MANUAL_DIAGNOSIS, "", False),
+    }[str(status)]
+    return RecoveryInstruction(
+        schema_version=2,
+        kind=kind,
+        reason_code=str(decision["reason_code"]),
+        phase=str(phase),
+        requires_human_input=requires_human_input,
+        decision_id=str(decision["id"]),
+    )
+
+
+def _validate_human_input_authority_write(
+    current: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+    *,
+    allow_update: bool,
+) -> None:
+    current_decision = current.get("blocked_decision")
+    candidate_decision = candidate.get("blocked_decision")
+    current_is_v2 = _is_human_input_decision_v2(current_decision)
+    candidate_is_v2 = _is_human_input_decision_v2(candidate_decision)
+
+    if candidate_is_v2:
+        try:
+            validate_decision_recovery_pair(
+                candidate_decision,
+                candidate.get("recovery_instruction"),
+            )
+        except BlockedDecisionError as exc:
+            raise StateAdvanceError(
+                f"invalid schema-v2 decision authority: {exc}",
+                json_path="$.blocked_decision",
+                validator="human_input_authority",
+            ) from exc
+        except RecoveryInstructionError as exc:
+            raise StateAdvanceError(
+                f"invalid schema-v2 recovery authority: {exc}",
+                json_path="$.recovery_instruction",
+                validator="human_input_authority",
+            ) from exc
+    if allow_update:
+        return
+    if current_is_v2 != candidate_is_v2:
+        raise StateAdvanceError(
+            "generic state writes cannot create or clear schema-v2 decision authority",
+            json_path="$.blocked_decision",
+            validator="human_input_authority",
+        )
+    if not current_is_v2:
+        return
+    if current_decision != candidate_decision:
+        raise StateAdvanceError(
+            "generic state writes cannot replace schema-v2 decision authority",
+            json_path="$.blocked_decision",
+            validator="human_input_authority",
+        )
+    if current.get("recovery_instruction") != candidate.get(
+        "recovery_instruction"
+    ):
+        raise StateAdvanceError(
+            "generic state writes cannot mutate schema-v2 recovery authority",
+            json_path="$.recovery_instruction",
+            validator="human_input_authority",
+        )
+    validated = validate_blocked_decision_v2(current_decision)
+    if validated["status"] not in _ACTIVE_HUMAN_INPUT_DECISION_STATUSES:
+        for key in _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS:
+            if current.get(key) != candidate.get(key):
+                raise StateAdvanceError(
+                    "generic state writes cannot mutate terminal "
+                    f"decision display field {key!r}",
+                    json_path=f"$.{key}",
+                    validator="human_input_authority",
+                )
+        return
+    for key in _ACTIVE_HUMAN_INPUT_AUTHORITY_KEYS:
+        if current.get(key) != candidate.get(key):
+            raise StateAdvanceError(
+                f"generic state writes cannot mutate active decision field {key!r}",
+                json_path=f"$.{key}",
+                validator="human_input_authority",
+            )
+
+
+def _prepare_exact_state_postimage(
     before: dict[str, Any],
     desired: dict[str, Any],
-    observed: dict[str, Any],
-) -> bool:
+) -> dict[str, Any]:
     old_revision = before.get("state_revision", 0)
     if type(old_revision) is not int or old_revision < 0:
-        return False
-    expected = deepcopy(desired)
-    ensure_blocked_decision(expected)
+        raise StateAdvanceError(
+            "persisted state revision is invalid",
+            json_path="$.state_revision",
+            validator="type",
+        )
+    attempted = deepcopy(desired)
+    ensure_blocked_decision(attempted)
     if (
-        expected.get("status") == "blocked"
-        and expected.get("escalation_question")
+        attempted.get("status") == "blocked"
+        and attempted.get("escalation_question")
     ):
-        expected["escalation_resolved"] = False
-    expected["state_revision"] = old_revision + 1
-    expected.pop("updated_at", None)
-    actual = deepcopy(observed)
-    actual.pop("updated_at", None)
-    return actual == expected
+        attempted["escalation_resolved"] = False
+    attempted["state_revision"] = old_revision + 1
+    attempted["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return attempted
+
+
+def _state_matches_exact_save(
+    attempted: dict[str, Any],
+    observed: dict[str, Any],
+) -> bool:
+    return observed == attempted
+
+
+def _validate_human_input_seal_path(
+    request: PreparedHumanInput,
+    *,
+    transaction: Literal["advance", "setter"],
+    from_phase: str | None = None,
+) -> None:
+    if type(request) is not PreparedHumanInput or request.schema_version != 1:
+        raise StateAdvanceError(
+            "human-input sealing requires a prepared request",
+            json_path="$.human_input",
+            validator="type",
+        )
+    if transaction == "advance":
+        accepted = (
+            request.source_kind == "provider_escalation"
+            or (
+                request.source_kind == "controller_safeguard"
+                and request.producer_id
+                in _PROVIDER_ADVANCE_SAFEGUARD_PRODUCERS
+            )
+        )
+        if request.phase_id != from_phase:
+            raise StateAdvanceError(
+                "human-input source phase does not match state advance",
+                json_path="$.human_input.phase_id",
+                validator="human_input_authority",
+            )
+    else:
+        accepted = (
+            request.source_kind in {"human_gate", "legacy_recovery"}
+            or (
+                request.source_kind == "controller_safeguard"
+                and request.producer_id == "phase_dispatch_limit"
+            )
+        )
+    if not accepted:
+        raise StateAdvanceError(
+            f"human-input source is invalid for {transaction} sealing",
+            json_path="$.human_input.source_kind",
+            validator="human_input_authority",
+        )
+
+
+def _validate_human_input_routing_effects(
+    *,
+    update_sets: Iterable[Mapping[str, Any]],
+    removal_sets: Iterable[Iterable[str]],
+) -> None:
+    for updates in update_sets:
+        forbidden = set(updates) & _HUMAN_INPUT_PAIR_AUTHORITY_KEYS
+        if forbidden:
+            key = sorted(forbidden)[0]
+            raise StateAdvanceError(
+                "human-input advance effects cannot write decision authority",
+                json_path=f"$.{key}",
+                validator="human_input_authority",
+            )
+    for removals in removal_sets:
+        forbidden = set(removals) & _HUMAN_INPUT_PAIR_AUTHORITY_KEYS
+        if forbidden:
+            key = sorted(forbidden)[0]
+            raise StateAdvanceError(
+                "human-input advance effects cannot remove decision authority",
+                json_path=f"$.{key}",
+                validator="human_input_authority",
+            )
 
 
 def _validate_routing_decision(
@@ -1273,9 +1520,15 @@ class SquadStateStore:
         with self._lock(exclusive=True):
             return self._confirm_durable_state_unlocked(expected)
 
-    def _save_unlocked(self, state: dict) -> dict:
+    def _save_unlocked(
+        self,
+        state: dict,
+        *,
+        allow_human_input_authority_update: bool = False,
+    ) -> dict:
         next_state = deepcopy(state)
         previous_revision = 0
+        current_state: dict[str, Any] = {}
         if self._path.exists():
             old_text = self._path.read_text()
             bak = self._path.with_suffix(".json.bak")
@@ -1285,6 +1538,8 @@ class SquadStateStore:
                 logger.warning("Could not write .bak file: %s", bak)
             try:
                 old_state = json.loads(old_text)
+                if type(old_state) is dict:
+                    current_state = old_state
                 self._check_monotonics(old_state, next_state)
                 old_revision = old_state.get("state_revision", 0)
                 if type(old_revision) is int and old_revision >= 0:
@@ -1292,14 +1547,25 @@ class SquadStateStore:
             except json.JSONDecodeError:
                 pass
 
-        next_state["state_revision"] = previous_revision + 1
-        ensure_blocked_decision(next_state)
-        if (
-            next_state.get("status") == "blocked"
-            and next_state.get("escalation_question")
-        ):
-            next_state["escalation_resolved"] = False
-        next_state["updated_at"] = datetime.now(timezone.utc).isoformat()
+        _validate_human_input_authority_write(
+            current_state,
+            next_state,
+            allow_update=allow_human_input_authority_update,
+        )
+        is_exact_postimage = (
+            type(next_state.get("state_revision")) is int
+            and next_state["state_revision"] == previous_revision + 1
+            and type(next_state.get("updated_at")) is str
+        )
+        if not is_exact_postimage:
+            next_state["state_revision"] = previous_revision + 1
+            ensure_blocked_decision(next_state)
+            if (
+                next_state.get("status") == "blocked"
+                and next_state.get("escalation_question")
+            ):
+                next_state["escalation_resolved"] = False
+            next_state["updated_at"] = datetime.now(timezone.utc).isoformat()
         content = json.dumps(next_state, indent=2)
         fd, tmp = tempfile.mkstemp(
             dir=str(self._squad_dir),
@@ -1360,6 +1626,560 @@ class SquadStateStore:
                         validator="stale_state",
                     )
             self._save_unlocked(state)
+
+    def _save_exact_state_unlocked(
+        self,
+        before: dict[str, Any],
+        desired: dict[str, Any],
+        *,
+        allow_human_input_authority_update: bool = False,
+        json_path: str,
+        error_message: str,
+    ) -> dict[str, Any]:
+        attempted = _prepare_exact_state_postimage(before, desired)
+        try:
+            if allow_human_input_authority_update:
+                return self._save_unlocked(
+                    attempted,
+                    allow_human_input_authority_update=True,
+                )
+            return self._save_unlocked(attempted)
+        except StateDurabilityError as exc:
+            if exc.stage == "post_replace":
+                raise
+            cause: Exception = exc
+        except Exception as exc:
+            cause = exc
+
+        observed = self._load_unlocked()
+        if _state_matches_exact_save(attempted, observed):
+            return self._confirm_durable_state_unlocked(attempted)
+        raise StateAdvanceError(
+            error_message,
+            json_path=json_path,
+            validator="save",
+        ) from cause
+
+    def _commit_human_input_state_unlocked(
+        self,
+        before: dict[str, Any],
+        desired: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._save_exact_state_unlocked(
+            before,
+            desired,
+            allow_human_input_authority_update=True,
+            json_path="$.blocked_decision",
+            error_message="atomic human-input state save failed",
+        )
+
+    def _seal_human_input_decision_unlocked(
+        self,
+        state: dict[str, Any],
+        request: PreparedHumanInput,
+        *,
+        initial_status: str,
+    ) -> dict[str, object]:
+        if type(request) is not PreparedHumanInput or request.schema_version != 1:
+            raise StateAdvanceError(
+                "human-input sealing requires a prepared request",
+                json_path="$.human_input",
+                validator="type",
+            )
+        if initial_status not in {"pending", "awaiting_human"}:
+            raise StateAdvanceError(
+                "human-input initial status is invalid",
+                json_path="$.blocked_decision.status",
+                validator="human_input_authority",
+            )
+        revision = state.get("state_revision", 0)
+        if type(revision) is not int or revision < 0:
+            raise StateAdvanceError(
+                "persisted state revision is invalid",
+                json_path="$.state_revision",
+                validator="type",
+            )
+        if request.source_state_revision != revision:
+            raise StateAdvanceError(
+                "human-input source state revision is stale",
+                json_path="$.state_revision",
+                validator="stale_state",
+            )
+
+        self._validate_human_input_replaceability_unlocked(state)
+
+        autonomy_mode = state.get("autonomy_mode")
+        if autonomy_mode not in AUTONOMY_MODES:
+            raise StateAdvanceError(
+                "persisted autonomy mode is invalid",
+                json_path="$.autonomy_mode",
+                validator="type",
+            )
+        options = [
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": option.recommended,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+                "outcome": option.outcome,
+            }
+            for option in request.options
+        ]
+        decision = build_blocked_decision_v2(
+            decision_id=f"dec-{secrets.token_hex(16)}",
+            status=initial_status,
+            source_kind=request.source_kind,
+            producer_id=request.producer_id,
+            source_phase=request.phase_id,
+            reason_code=request.reason_code,
+            classification=request.classification,
+            question=request.question,
+            options=options,
+            recommended_answer=request.recommended_answer,
+            risk_level=request.risk_level,
+            resolution_handler=request.resolution_handler,
+            autonomy_mode=str(autonomy_mode),
+            source_state_revision=request.source_state_revision,
+        )
+        recovery = _human_input_recovery_for_decision(decision)
+        if recovery is None:
+            raise StateAdvanceError(
+                "initial human-input decision requires recovery",
+                json_path="$.recovery_instruction",
+                validator="human_input_authority",
+            )
+        instruction = recovery.to_dict()
+        validate_decision_recovery_pair(decision, instruction)
+        state["status"] = "blocked"
+        state["blocked_decision"] = decision
+        state["recovery_instruction"] = instruction
+        state["blocked_reason"] = request.reason_code
+        state["escalation_question"] = request.question
+        state["escalation_options"] = normalize_escalation_options(options)
+        return decision
+
+    @staticmethod
+    def _validate_human_input_replaceability_unlocked(
+        state: Mapping[str, Any],
+    ) -> None:
+        existing = state.get("blocked_decision")
+        if _is_human_input_decision_v2(existing):
+            validated_existing = validate_blocked_decision_v2(existing)
+            validate_decision_recovery_pair(
+                validated_existing,
+                state.get("recovery_instruction"),
+            )
+            if (
+                validated_existing["status"]
+                in _ACTIVE_HUMAN_INPUT_DECISION_STATUSES
+            ):
+                raise StateAdvanceError(
+                    "an unresolved human-input decision already exists",
+                    json_path="$.blocked_decision",
+                    validator="human_input_authority",
+                )
+
+    def set_human_input_decision(
+        self,
+        request: PreparedHumanInput,
+        *,
+        initial_status: Literal["pending", "awaiting_human"],
+    ) -> dict[str, Any]:
+        _validate_human_input_seal_path(
+            request,
+            transaction="setter",
+        )
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            desired = deepcopy(before)
+            self._seal_human_input_decision_unlocked(
+                desired,
+                request,
+                initial_status=initial_status,
+            )
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def _human_input_decision_for_cas_unlocked(
+        self,
+        state: dict[str, Any],
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+        allowed_statuses: frozenset[str],
+    ) -> dict[str, object]:
+        revision = state.get("state_revision", 0)
+        if (
+            type(expected_state_revision) is not int
+            or type(revision) is not int
+            or revision != expected_state_revision
+        ):
+            raise StateAdvanceError(
+                "human-input state revision changed",
+                json_path="$.state_revision",
+                validator="stale_state",
+            )
+        decision = state.get("blocked_decision")
+        if not _is_human_input_decision_v2(decision):
+            raise StateAdvanceError(
+                "schema-v2 human-input decision is missing",
+                json_path="$.blocked_decision",
+                validator="human_input_authority",
+            )
+        validated = validate_blocked_decision_v2(decision)
+        validate_decision_recovery_pair(
+            validated,
+            state.get("recovery_instruction"),
+        )
+        if validated["id"] != decision_id:
+            raise StateAdvanceError(
+                "human-input decision id does not match",
+                json_path="$.blocked_decision.id",
+                validator="stale_state",
+            )
+        if validated["status"] not in allowed_statuses:
+            raise StateAdvanceError(
+                "human-input decision status does not permit this transition",
+                json_path="$.blocked_decision.status",
+                validator="human_input_authority",
+            )
+        return validated
+
+    def _replace_human_input_decision_unlocked(
+        self,
+        state: dict[str, Any],
+        decision: Mapping[str, object],
+    ) -> None:
+        validated = validate_blocked_decision_v2(decision)
+        recovery = _human_input_recovery_for_decision(validated)
+        instruction = recovery.to_dict() if recovery is not None else None
+        validate_decision_recovery_pair(validated, instruction)
+        state["blocked_decision"] = validated
+        if instruction is None:
+            state.pop("recovery_instruction", None)
+        else:
+            state["recovery_instruction"] = instruction
+
+    def claim_human_input_decision(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+    ) -> dict[str, Any]:
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=frozenset({"pending"}),
+            )
+            if (
+                type(decision.get("attempts")) is not int
+                or int(decision["attempts"]) >= 2
+            ):
+                raise StateAdvanceError(
+                    "human-input decision attempt limit is exhausted",
+                    json_path="$.blocked_decision.attempts",
+                    validator="human_input_authority",
+                )
+            desired = deepcopy(before)
+            resolving = {
+                **decision,
+                "status": "resolving",
+                "attempts": int(decision["attempts"]) + 1,
+            }
+            self._replace_human_input_decision_unlocked(
+                desired,
+                resolving,
+            )
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def fail_pending_human_input_decision(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+        failure_code: str,
+    ) -> dict[str, Any]:
+        """Fail deterministic pre-claim setup without consuming an attempt."""
+        if not isinstance(failure_code, str) or not failure_code.strip():
+            raise StateAdvanceError(
+                "human-input setup failure code is invalid",
+                json_path="$.blocked_decision.failure_code",
+                validator="type",
+            )
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=frozenset({"pending"}),
+            )
+            desired = deepcopy(before)
+            failed = {
+                **decision,
+                "status": "failed",
+                "failure_code": failure_code.strip(),
+            }
+            desired.pop("escalation_question", None)
+            self._replace_human_input_decision_unlocked(desired, failed)
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def block_unresolvable_dispatch_cap(
+        self,
+        *,
+        from_phase: str,
+        expected_state_revision: int,
+        reason_code: str,
+    ) -> bool:
+        """Install manual diagnosis without retaining unrelated terminal authority."""
+        if (
+            not isinstance(from_phase, str)
+            or not from_phase.strip()
+            or not isinstance(reason_code, str)
+            or not reason_code.strip()
+        ):
+            raise StateAdvanceError(
+                "dispatch-cap diagnosis identity is invalid",
+                json_path="$.blocked_reason",
+                validator="type",
+            )
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            if (
+                before.get("phase") != from_phase
+                or type(expected_state_revision) is not int
+                or before.get("state_revision", 0)
+                != expected_state_revision
+            ):
+                return False
+            raw_decision = before.get("blocked_decision")
+            if raw_decision is not None:
+                if not _is_human_input_decision_v2(raw_decision):
+                    raise StateAdvanceError(
+                        "dispatch-cap diagnosis cannot replace malformed authority",
+                        json_path="$.blocked_decision",
+                        validator="human_input_authority",
+                    )
+                decision = validate_blocked_decision_v2(raw_decision)
+                validate_decision_recovery_pair(
+                    decision,
+                    before.get("recovery_instruction"),
+                )
+                if decision["status"] != "resolved":
+                    raise StateAdvanceError(
+                        "dispatch-cap diagnosis cannot replace unresolved authority",
+                        json_path="$.blocked_decision.status",
+                        validator="human_input_authority",
+                    )
+
+            desired = deepcopy(before)
+            desired.pop("blocked_decision", None)
+            desired.pop("recovery_instruction", None)
+            for key in _HUMAN_INPUT_DISPLAY_AUTHORITY_KEYS:
+                desired.pop(key, None)
+            desired["status"] = "blocked"
+            desired["blocked_reason"] = reason_code.strip()
+            desired["recovery_instruction"] = RecoveryInstruction(
+                kind=RecoveryKind.MANUAL_DIAGNOSIS,
+                reason_code=reason_code.strip(),
+                phase="",
+                requires_human_input=False,
+            ).to_dict()
+            self._save_exact_state_unlocked(
+                before,
+                desired,
+                allow_human_input_authority_update=True,
+                json_path="$.recovery_instruction",
+                error_message="atomic dispatch-cap diagnosis save failed",
+            )
+            return True
+
+    def recover_interrupted_human_input_decision(self) -> dict[str, Any]:
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            raw_decision = before.get("blocked_decision")
+            if not _is_human_input_decision_v2(raw_decision):
+                return deepcopy(before)
+            decision = validate_blocked_decision_v2(raw_decision)
+            validate_decision_recovery_pair(
+                decision,
+                before.get("recovery_instruction"),
+            )
+            if decision["status"] != "resolving":
+                return deepcopy(before)
+            desired = deepcopy(before)
+            if int(decision["attempts"]) < 2:
+                recovered = {
+                    **decision,
+                    "status": "pending",
+                    "failure_code": None,
+                }
+            else:
+                recovered = {
+                    **decision,
+                    "status": "failed",
+                    "failure_code": "resolution_attempts_exhausted",
+                }
+                desired.pop("escalation_question", None)
+            self._replace_human_input_decision_unlocked(
+                desired,
+                recovered,
+            )
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def record_human_input_resolution_failure(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+        failure_code: str,
+        token_usage_delta: int = 0,
+    ) -> dict[str, Any]:
+        if type(token_usage_delta) is not int or token_usage_delta < 0:
+            raise StateAdvanceError(
+                "human-input token usage delta is invalid",
+                json_path="$.token_usage_delta",
+                validator="type",
+            )
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=frozenset({"resolving"}),
+            )
+            desired = deepcopy(before)
+            exhausted = int(decision["attempts"]) >= 2
+            failed = {
+                **decision,
+                "status": "failed" if exhausted else "pending",
+                "failure_code": failure_code if exhausted else None,
+            }
+            if exhausted:
+                desired.pop("escalation_question", None)
+            desired["token_usage"] = (
+                int(desired.get("token_usage") or 0) + token_usage_delta
+            )
+            self._replace_human_input_decision_unlocked(desired, failed)
+            return self._commit_human_input_state_unlocked(before, desired)
+
+    def apply_human_input_state_resolution(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+        resolution: HumanInputResolution,
+        state_updates: Mapping[str, Any],
+        state_removals: Iterable[str],
+        token_usage_delta: int = 0,
+    ) -> dict[str, Any]:
+        if type(resolution) is not HumanInputResolution:
+            raise StateAdvanceError(
+                "human-input resolution is invalid",
+                json_path="$.resolution",
+                validator="type",
+            )
+        if type(token_usage_delta) is not int or token_usage_delta < 0:
+            raise StateAdvanceError(
+                "human-input token usage delta is invalid",
+                json_path="$.token_usage_delta",
+                validator="type",
+            )
+        if not isinstance(state_updates, Mapping):
+            raise StateAdvanceError(
+                "human-input state updates are invalid",
+                json_path="$.state_updates",
+                validator="type",
+            )
+        try:
+            detached_updates = deepcopy(dict(state_updates))
+        except Exception as exc:
+            raise StateAdvanceError(
+                "human-input state updates are invalid",
+                json_path="$.state_updates",
+                validator="type",
+            ) from exc
+        if not all(isinstance(key, str) for key in detached_updates):
+            raise StateAdvanceError(
+                "human-input state updates are invalid",
+                json_path="$.state_updates",
+                validator="type",
+            )
+        if isinstance(state_removals, (str, bytes)):
+            raise StateAdvanceError(
+                "human-input state removals are invalid",
+                json_path="$.state_removals",
+                validator="type",
+            )
+        try:
+            removals = tuple(state_removals)
+        except TypeError as exc:
+            raise StateAdvanceError(
+                "human-input state removals are invalid",
+                json_path="$.state_removals",
+                validator="type",
+            ) from exc
+        if not all(isinstance(key, str) and key for key in removals):
+            raise StateAdvanceError(
+                "human-input state removals are invalid",
+                json_path="$.state_removals",
+                validator="type",
+            )
+        forbidden = (
+            set(detached_updates) | set(removals)
+        ) & _HUMAN_INPUT_STATE_EFFECT_RESERVED_KEYS
+        if forbidden:
+            key = sorted(forbidden)[0]
+            raise StateAdvanceError(
+                "resolution effects cannot write human-input authority",
+                json_path=f"$.{key}",
+                validator="human_input_authority",
+            )
+
+        with self._lock(exclusive=True):
+            before = self._load_unlocked()
+            decision = self._human_input_decision_for_cas_unlocked(
+                before,
+                decision_id,
+                expected_state_revision=expected_state_revision,
+                allowed_statuses=_ACTIVE_HUMAN_INPUT_DECISION_STATUSES,
+            )
+            resolved = validate_blocked_decision_v2(
+                {
+                    **decision,
+                    "status": "resolved",
+                    "selected_option_id": resolution.selected_option_id,
+                    "answer_text": resolution.answer_text,
+                    "resolved_by": resolution.resolved_by,
+                    "failure_code": None,
+                    "resolved_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            desired = deepcopy(before)
+            for key in removals:
+                desired.pop(key, None)
+            for key in (
+                "blocked_reason",
+                "escalation_question",
+                "escalation_options",
+                "escalation_resolved",
+            ):
+                desired.pop(key, None)
+            for key, value in detached_updates.items():
+                if key == "status":
+                    self._transition_status(desired, value)
+                else:
+                    desired[key] = value
+            desired["token_usage"] = (
+                int(desired.get("token_usage") or 0) + token_usage_delta
+            )
+            self._replace_human_input_decision_unlocked(desired, resolved)
+            return self._commit_human_input_state_unlocked(before, desired)
 
     def initialize(
         self,
@@ -1614,7 +2434,26 @@ class SquadStateStore:
         from_phase: str,
         to_phase: str,
         decision: PreparedRoutingDecision,
+        *,
+        human_input: PreparedHumanInput | None = None,
+        human_input_initial_status: Literal[
+            "pending",
+            "awaiting_human",
+        ]
+        | None = None,
     ) -> AdvanceReceipt:
+        if (human_input is None) != (human_input_initial_status is None):
+            raise StateAdvanceError(
+                "human-input request and initial status must be supplied together",
+                json_path="$.human_input",
+                validator="human_input_authority",
+            )
+        if human_input is not None:
+            _validate_human_input_seal_path(
+                human_input,
+                transaction="advance",
+                from_phase=from_phase,
+            )
         try:
             (
                 result,
@@ -1634,6 +2473,19 @@ class SquadStateStore:
                 "prepared result validation failed",
                 validator="prepared_result",
             ) from exc
+        if human_input is not None:
+            _validate_human_input_routing_effects(
+                update_sets=(
+                    result["state_updates"],
+                    queued_updates,
+                    prepared.control_updates,
+                    transaction_updates,
+                ),
+                removal_sets=(
+                    prepared.state_removals,
+                    transaction_removals,
+                ),
+            )
 
         with self._lock(exclusive=True):
             state = self._load_unlocked()
@@ -1662,6 +2514,8 @@ class SquadStateStore:
                     json_path="$.last_dispatch",
                     validator="stale_state",
                 )
+            if human_input is not None:
+                self._validate_human_input_replaceability_unlocked(state)
 
             next_state = deepcopy(state)
             logger.debug(
@@ -1814,44 +2668,22 @@ class SquadStateStore:
                 + decision.token_usage_delta
             )
             next_state.pop("controller_contract_error", None)
-            next_state.pop("recovery_instruction", None)
+            if human_input is None:
+                next_state.pop("recovery_instruction", None)
+            else:
+                self._seal_human_input_decision_unlocked(
+                    next_state,
+                    human_input,
+                    initial_status=str(human_input_initial_status),
+                )
 
-            try:
-                saved_state = self._save_unlocked(next_state)
-            except StateDurabilityError as exc:
-                if exc.stage == "post_replace":
-                    raise
-                observed = self._load_unlocked()
-                if _state_matches_exact_save(
-                    state,
-                    next_state,
-                    observed,
-                ):
-                    saved_state = (
-                        self._confirm_durable_state_unlocked(observed)
-                    )
-                else:
-                    raise StateAdvanceError(
-                        "atomic state save failed",
-                        json_path="$.state",
-                        validator="save",
-                    ) from exc
-            except Exception as exc:
-                observed = self._load_unlocked()
-                if _state_matches_exact_save(
-                    state,
-                    next_state,
-                    observed,
-                ):
-                    saved_state = (
-                        self._confirm_durable_state_unlocked(observed)
-                    )
-                else:
-                    raise StateAdvanceError(
-                        "atomic state save failed",
-                        json_path="$.state",
-                        validator="save",
-                    ) from exc
+            saved_state = self._save_exact_state_unlocked(
+                state,
+                next_state,
+                allow_human_input_authority_update=human_input is not None,
+                json_path="$.state",
+                error_message="atomic state save failed",
+            )
         return AdvanceReceipt(
             from_phase=from_phase,
             to_phase=to_phase,
@@ -2298,28 +3130,12 @@ class SquadStateStore:
         *,
         json_path: str,
     ) -> dict[str, Any]:
-        try:
-            return self._save_unlocked(desired)
-        except StateDurabilityError as exc:
-            if exc.stage == "post_replace":
-                raise
-            observed = self._load_unlocked()
-            if _state_matches_exact_save(before, desired, observed):
-                return self._confirm_durable_state_unlocked(observed)
-            raise StateAdvanceError(
-                "atomic controller completion state save failed",
-                json_path=json_path,
-                validator="save",
-            ) from exc
-        except Exception as exc:
-            observed = self._load_unlocked()
-            if _state_matches_exact_save(before, desired, observed):
-                return self._confirm_durable_state_unlocked(observed)
-            raise StateAdvanceError(
-                "atomic controller completion state save failed",
-                json_path=json_path,
-                validator="save",
-            ) from exc
+        return self._save_exact_state_unlocked(
+            before,
+            desired,
+            json_path=json_path,
+            error_message="atomic controller completion state save failed",
+        )
 
     @staticmethod
     def _require_controller_completion_marker(

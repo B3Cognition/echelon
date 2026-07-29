@@ -1,6 +1,7 @@
 """SquadController — deterministic phase routing for the pre-code squad run."""
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import logging
@@ -38,8 +39,25 @@ from harness.controller_state_contract_requirements import (
 from harness.echelon_result_schema import (
     EchelonResultContract,
     EchelonResultValidationError,
+    validate_decision_resolution_result,
     validate_echelon_result,
     validate_echelon_result_contract,
+)
+from harness.blocked_decision import (
+    BlockedDecisionError,
+    validate_blocked_decision_v2,
+)
+from harness.human_input import (
+    HUMAN_INPUT_MAX_OPTIONS,
+    HumanInputOption,
+    HumanInputPolicy,
+    HumanInputPolicyError,
+    HumanInputPolicyRegistry,
+    HumanInputResolution,
+    PreparedHumanInput,
+    gate_outcome_route_error,
+    legacy_recovery_policy_alias,
+    select_initial_decision_status,
 )
 from harness.phase_graph import PhaseGraph, PhaseNode
 from harness.phase_a_readiness import (
@@ -65,10 +83,12 @@ from harness.quality_scores import (
     resolve_quality_gate_thresholds,
 )
 from harness.recovery_instruction import (
+    RecoveryKind,
     RecoveryInstruction,
     controller_contract_recovery,
     retry_phase_recovery,
     trusted_executor_block_recovery,
+    validate_recovery_instruction,
 )
 from harness.published_re_context import attach_published_re_context
 from harness.run_history import append_phase_a_run
@@ -82,7 +102,6 @@ from harness.squad_executors import (
     DeterministicStructuralExecutor,
     DeterministicUnderstandingExecutor,
     ExecutorBlockedResult,
-    HumanGateExecutor,
     PhaseExecutor,
     StagedParallelExecutor,
     _MANDATORY_PHASE_OUTPUTS,
@@ -163,6 +182,10 @@ PRODUCT_INPUT_MAPPING_REPAIR_PROTOCOL_VERSION = 2
 PROJECT_MODES = {"greenfield", "brownfield", "self_analysis"}
 WHY2_METRIC_STAGNATION_LIMIT = 2
 WHY2_METRIC_MIN_DELTA = 0.01
+COMMANDER_DECISION_PROMPT_MAX_BYTES = 32_768
+DISPATCH_CAP_ISSUES_MAX_BYTES = 65_536
+_BOUNDED_TEXT_CHUNK_CHARS = 1_024
+_CONTEXT_FILE_READ_CHUNK_BYTES = 8_192
 _WHY2_CERTIFIED_METRICS = (
     "overall",
     "structure",
@@ -173,6 +196,113 @@ _WHY2_CERTIFIED_METRICS = (
     "readability",
     "depth",
 )
+
+
+class _DispatchCapEvidenceError(HumanInputPolicyError):
+    """A deterministic issue-evidence diagnosis with a closed reason code."""
+
+    def __init__(self, reason_code: str) -> None:
+        super().__init__("phase dispatch limit evidence is not resolvable")
+        self.reason_code = reason_code
+
+
+class _BoundedUtf8Builder:
+    """Accumulate text without encoding or retaining more than one byte budget."""
+
+    def __init__(self, byte_limit: int) -> None:
+        self._byte_limit = byte_limit
+        self._byte_size = 0
+        self._parts: list[str] = []
+        self.truncated = False
+
+    @property
+    def remaining(self) -> int:
+        return self._byte_limit - self._byte_size
+
+    def append(self, value: str) -> bool:
+        offset = 0
+        while offset < len(value):
+            if self.remaining <= 0:
+                self.truncated = True
+                return False
+            segment = value[
+                offset:offset + _BOUNDED_TEXT_CHUNK_CHARS
+            ]
+            encoded = segment.encode("utf-8")
+            if len(encoded) <= self.remaining:
+                self._parts.append(segment)
+                self._byte_size += len(encoded)
+                offset += len(segment)
+                continue
+            prefix = encoded[:self.remaining].decode(
+                "utf-8",
+                errors="ignore",
+            )
+            if prefix:
+                self._parts.append(prefix)
+                self._byte_size += len(prefix.encode("utf-8"))
+            self.truncated = True
+            return False
+        return True
+
+    def build(self) -> str:
+        return "".join(self._parts)
+
+
+def _append_bounded_json(
+    builder: _BoundedUtf8Builder,
+    value: object,
+    *,
+    depth: int = 0,
+) -> None:
+    """Write JSON-shaped durable state incrementally into a bounded builder."""
+    if builder.remaining <= 0:
+        builder.truncated = True
+        return
+    if depth > 64:
+        builder.append('"<depth-limit>"')
+        return
+    if value is None or type(value) in {bool, int, float}:
+        builder.append(json.dumps(value, ensure_ascii=False))
+        return
+    if isinstance(value, str):
+        if not builder.append('"'):
+            return
+        for offset in range(0, len(value), _BOUNDED_TEXT_CHUNK_CHARS):
+            escaped = json.dumps(
+                value[offset:offset + _BOUNDED_TEXT_CHUNK_CHARS],
+                ensure_ascii=False,
+            )[1:-1]
+            if not builder.append(escaped):
+                return
+        builder.append('"')
+        return
+    if isinstance(value, Mapping):
+        if not builder.append("{"):
+            return
+        for index, (key, item) in enumerate(value.items()):
+            if index and not builder.append(","):
+                return
+            _append_bounded_json(builder, str(key), depth=depth + 1)
+            if not builder.append(":"):
+                return
+            _append_bounded_json(builder, item, depth=depth + 1)
+            if builder.remaining <= 0:
+                return
+        builder.append("}")
+        return
+    if isinstance(value, (list, tuple)):
+        if not builder.append("["):
+            return
+        for index, item in enumerate(value):
+            if index and not builder.append(","):
+                return
+            _append_bounded_json(builder, item, depth=depth + 1)
+            if builder.remaining <= 0:
+                return
+        builder.append("]")
+        return
+    builder.append('"<unsupported-state-value>"')
 _PHASE_A_GENERATED_FILES = frozenset(
     {
         Path("constitution.md"),
@@ -234,13 +364,6 @@ JUDGMENT_STATE_UPDATE_KEYS = frozenset(
         "iteration",
         "status",
         "blocked_reason",
-        "escalation_question",
-        "escalation_options",
-        "escalation_resolved",
-        "escalation_resolver",
-        "escalation_risk_level",
-        "escalation_recommended_answer",
-        "escalation_default_answer",
         "issue_resolution_selection",
         "risk_level",
         "fallback_mode",
@@ -254,7 +377,6 @@ JUDGMENT_RESULT_CONTRACT = EchelonResultContract(
     state_update_types={
         "iteration": "integer",
         "status": "string",
-        "escalation_resolved": "boolean",
         "issue_resolution_selection": "object",
     },
     state_update_enums={
@@ -265,20 +387,6 @@ JUDGMENT_RESULT_CONTRACT = EchelonResultContract(
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _phase_dispatch_limit_phase(state: dict, fallback: str = "") -> str:
-    """Identify the phase to retry after a human-authorized dispatch-cap recovery."""
-    phase = str(state.get("phase_dispatch_limit_phase") or "").strip()
-    if phase:
-        return phase
-
-    question = str(state.get("escalation_question") or "")
-    match = re.search(r"Phase ['\"]([^'\"]+)['\"] has been dispatched", question)
-    if match:
-        return match.group(1)
-
-    return fallback if fallback not in TERMINAL_PHASES else ""
 
 
 def _spec_id_from_phase_a_dir(spec_dir: Path) -> str:
@@ -293,16 +401,6 @@ def _checkpoint_spec_id_from_state(state: dict, spec_dir: Path) -> str:
     if state_spec_id and spec_dir_id.startswith(f"{state_spec_id}-"):
         return spec_dir_id
     return state_spec_id or spec_dir_id
-
-
-def _state_autonomy_mode(state: dict, fallback: str) -> str:
-    autonomy = state.get("autonomy_mode")
-    if isinstance(autonomy, str) and autonomy:
-        return autonomy
-    legacy = state.get("mode")
-    if isinstance(legacy, str) and legacy in {"guided", "semi", "banzai"}:
-        return legacy
-    return fallback
 
 
 def _normalize_phase_recommendation(recommended: object, valid_phases: set[str]) -> str | None:
@@ -518,6 +616,32 @@ class _PhaseAReadinessCommitError(RuntimeError):
         self.readiness = readiness
 
 
+@dataclass(frozen=True)
+class _ProviderHumanInputAdvance:
+    """One already-attested provider route that may seal a human decision."""
+
+    from_phase: str
+    to_phase: str
+    decision: PreparedRoutingDecision
+
+
+@dataclass(frozen=True)
+class _PreparedControllerRouting:
+    """One attested route and an optional safeguard discovered while routing."""
+
+    decision: PreparedRoutingDecision
+    human_input: PreparedHumanInput | None = None
+
+
+@dataclass(frozen=True)
+class _HumanInputResolutionEffects:
+    """Controller-owned effects returned by one closed resolution handler."""
+
+    state_updates: Mapping[str, object]
+    state_removals: frozenset[str]
+    route: str
+
+
 class SquadController:
     """Drives the squad run phase graph deterministically.
 
@@ -571,6 +695,7 @@ class SquadController:
         )
         self._state_store = state_store
         self._graph = phase_graph
+        self._human_input_registry = phase_graph.human_input_policy_registry()
         self._ext_dir = ext_dir
         self._project_root = project_root
         self._token_budget = token_budget
@@ -590,7 +715,6 @@ class SquadController:
             "deterministic_understanding": DeterministicUnderstandingExecutor(phase_graph, ext_dir, project_root, self._squad_dir),
             "staged_parallel": StagedParallelExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
             "conditional_sequential": ConditionalSequentialExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
-            "human_gate": HumanGateExecutor(self._telemetry_provider, phase_graph, ext_dir, project_root, self._squad_dir),
         }
         self._cancelled = False
         self._phase_a_published_this_run = False
@@ -1876,6 +2000,1848 @@ class SquadController:
                 exc_info=True,
             )
 
+    @staticmethod
+    def _human_input_options_from_decision(
+        decision: Mapping[str, object],
+    ) -> tuple[HumanInputOption, ...]:
+        raw_options = decision.get("options")
+        if not isinstance(raw_options, list):
+            raise HumanInputPolicyError("sealed decision options are invalid")
+        try:
+            return tuple(
+                HumanInputOption(
+                    id=option["id"],
+                    label=option["label"],
+                    description=option["description"],
+                    recommended=option["recommended"],
+                    risk_level=option["risk_level"],
+                    next_phase=option["next_phase"],
+                    outcome=option["outcome"],
+                )
+                for option in raw_options
+                if isinstance(option, Mapping)
+            )
+        except (KeyError, TypeError, HumanInputPolicyError) as exc:
+            raise HumanInputPolicyError(
+                "sealed decision options are invalid"
+            ) from exc
+
+    @staticmethod
+    def _is_dynamic_dispatch_cap_policy(policy: HumanInputPolicy) -> bool:
+        return (
+            policy.source_kind in {
+                "controller_safeguard",
+                "legacy_recovery",
+            }
+            and policy.producer_id == "phase_dispatch_limit"
+            and policy.reason_code == "phase_dispatch_limit"
+            and policy.resolution_handler == "phase_dispatch_limit"
+        )
+
+    @staticmethod
+    def _dispatch_cap_candidate_from_option(
+        option: HumanInputOption,
+    ) -> dict[str, str]:
+        try:
+            raw_candidate = json.loads(option.description)
+        except (TypeError, ValueError) as exc:
+            raise HumanInputPolicyError(
+                "dispatch-cap option authority is invalid"
+            ) from exc
+        fields = {
+            "issue_id",
+            "title",
+            "decision_required",
+            "suggested_option",
+            "evidence_basis",
+        }
+        if (
+            not isinstance(raw_candidate, dict)
+            or set(raw_candidate) != fields
+            or not all(
+                isinstance(raw_candidate[field], str)
+                and raw_candidate[field].strip()
+                for field in fields
+            )
+        ):
+            raise HumanInputPolicyError(
+                "dispatch-cap option authority is invalid"
+            )
+        candidate = {
+            field: raw_candidate[field].strip()
+            for field in sorted(fields)
+        }
+        canonical = json.dumps(
+            candidate,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if (
+            option.id != candidate["issue_id"]
+            or option.label
+            != f"{candidate['issue_id']}: {candidate['title']}"
+            or option.description != canonical
+            or option.recommended
+            or option.risk_level != "medium"
+            or option.next_phase != "phase1-what"
+            or option.outcome is not None
+        ):
+            raise HumanInputPolicyError(
+                "dispatch-cap option authority is invalid"
+            )
+        return candidate
+
+    @classmethod
+    def _dispatch_cap_options(
+        cls,
+        candidates: list[dict[str, str]],
+    ) -> tuple[HumanInputOption, ...]:
+        if not candidates:
+            raise HumanInputPolicyError(
+                "phase dispatch limit requires an eligible issue option"
+            )
+        if len(candidates) > HUMAN_INPUT_MAX_OPTIONS:
+            raise HumanInputPolicyError(
+                "phase dispatch limit has too many eligible issue options"
+            )
+        options = tuple(
+            HumanInputOption(
+                id=candidate["issue_id"],
+                label=f"{candidate['issue_id']}: {candidate['title']}",
+                description=json.dumps(
+                    candidate,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                recommended=False,
+                risk_level="medium",
+                next_phase="phase1-what",
+                outcome=None,
+            )
+            for candidate in candidates
+        )
+        for option in options:
+            cls._dispatch_cap_candidate_from_option(option)
+        return options
+
+    def _legacy_policy_alias(
+        self,
+        *,
+        phase_id: str,
+        reason_code: str,
+        producer_id: str | None = None,
+    ) -> HumanInputPolicy:
+        candidates = [
+            policy
+            for policy in self._human_input_registry.policies
+            if policy.source_kind in {
+                "provider_escalation",
+                "controller_safeguard",
+            }
+            and policy.reason_code == reason_code
+            and phase_id in policy.allowed_phase_ids
+            and (
+                producer_id is None
+                or policy.producer_id == producer_id
+            )
+        ]
+        if len(candidates) != 1:
+            raise HumanInputPolicyError(
+                "legacy recovery does not identify one exact current policy"
+            )
+        return legacy_recovery_policy_alias(candidates[0])
+
+    @classmethod
+    def _legacy_escalation_options(
+        cls,
+        raw_options: object,
+        policy: HumanInputPolicy,
+    ) -> tuple[HumanInputOption, ...]:
+        if raw_options is None:
+            raw_options = []
+        if not isinstance(raw_options, list):
+            raise HumanInputPolicyError(
+                "legacy recovery options must be a list"
+            )
+        if not cls._is_dynamic_dispatch_cap_policy(policy):
+            if raw_options:
+                raise HumanInputPolicyError(
+                    "legacy recovery options do not match the current policy"
+                )
+            return ()
+        if not raw_options:
+            raise HumanInputPolicyError(
+                "legacy dispatch-cap recovery requires sealed issue options"
+            )
+        expected_fields = {
+            "id",
+            "label",
+            "description",
+            "recommended",
+            "risk_level",
+            "next_phase",
+        }
+        options: list[HumanInputOption] = []
+        for raw_option in raw_options:
+            if (
+                not isinstance(raw_option, Mapping)
+                or set(raw_option) != expected_fields
+            ):
+                raise HumanInputPolicyError(
+                    "legacy recovery options are malformed"
+                )
+            option = HumanInputOption(
+                id=raw_option["id"],
+                label=raw_option["label"],
+                description=raw_option["description"],
+                recommended=raw_option["recommended"],
+                risk_level=raw_option["risk_level"],
+                next_phase=raw_option["next_phase"],
+                outcome=None,
+            )
+            cls._dispatch_cap_candidate_from_option(option)
+            options.append(option)
+        return tuple(options)
+
+    def _validate_active_legacy_squad_decision(
+        self,
+        state: Mapping[str, object],
+        raw_decision: Mapping[str, object],
+        *,
+        phase_id: str,
+        reason_code: str,
+        question: str,
+        policy: HumanInputPolicy,
+    ) -> None:
+        from datetime import datetime, timedelta
+
+        required_fields = {
+            "schema_version",
+            "status",
+            "answer_type",
+            "question",
+            "blocked_reason",
+            "blocked_phase",
+            "blocked_at",
+        }
+        optional_fields = {
+            "risk_level",
+            "options",
+            "recommended_answer",
+            "default_answer",
+        }
+        if not all(isinstance(key, str) for key in raw_decision):
+            raise HumanInputPolicyError(
+                "legacy recovery decision field names must be strings"
+            )
+        unknown = set(raw_decision) - required_fields - optional_fields
+        missing = required_fields - set(raw_decision)
+        if unknown or missing:
+            raise HumanInputPolicyError(
+                "legacy recovery decision shape is invalid"
+            )
+        if (
+            type(raw_decision["schema_version"]) is not int
+            or raw_decision["schema_version"] != 1
+            or raw_decision["status"] != "pending"
+        ):
+            raise HumanInputPolicyError(
+                "legacy recovery decision is not an active schema-v1 decision"
+            )
+        if any(
+            not isinstance(raw_decision[field], str)
+            or not str(raw_decision[field]).strip()
+            for field in (
+                "answer_type",
+                "question",
+                "blocked_reason",
+                "blocked_phase",
+                "blocked_at",
+            )
+        ):
+            raise HumanInputPolicyError(
+                "legacy recovery decision strings are invalid"
+            )
+        if (
+            raw_decision["question"].strip() != question
+            or raw_decision["blocked_reason"].strip() != reason_code
+            or raw_decision["blocked_phase"].strip() != phase_id
+        ):
+            raise HumanInputPolicyError(
+                "legacy recovery decision projections do not match state"
+            )
+        try:
+            blocked_at = datetime.fromisoformat(
+                raw_decision["blocked_at"].replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            raise HumanInputPolicyError(
+                "legacy recovery blocked_at must be a UTC timestamp"
+            ) from exc
+        if blocked_at.tzinfo is None or blocked_at.utcoffset() != timedelta(0):
+            raise HumanInputPolicyError(
+                "legacy recovery blocked_at must be a UTC timestamp"
+            )
+
+        options = self._legacy_escalation_options(
+            state.get("escalation_options"),
+            policy,
+        )
+        expected_options = [
+            {
+                "id": option.id,
+                "label": option.label,
+                "description": option.description,
+                "recommended": option.recommended,
+                "risk_level": option.risk_level,
+                "next_phase": option.next_phase,
+            }
+            for option in options
+        ]
+        answer_type = "choice" if expected_options else "free_text"
+        if raw_decision["answer_type"] != answer_type:
+            raise HumanInputPolicyError(
+                "legacy recovery answer shape does not match the current policy"
+            )
+        if expected_options:
+            if raw_decision.get("options") != expected_options:
+                raise HumanInputPolicyError(
+                    "legacy recovery option projections do not match state"
+                )
+        elif "options" in raw_decision:
+            raise HumanInputPolicyError(
+                "legacy free-text recovery cannot declare options"
+            )
+
+        recommended = state.get("escalation_recommended_answer")
+        recommended = (
+            recommended.strip()
+            if isinstance(recommended, str) and recommended.strip()
+            else None
+        )
+        if recommended is None:
+            recommended_option = next(
+                (option for option in expected_options if option["recommended"]),
+                None,
+            )
+            if recommended_option is not None:
+                recommended = str(
+                    recommended_option["id"] or recommended_option["label"]
+                )
+        if (
+            recommended is None
+            and "recommended_answer" in raw_decision
+        ) or (
+            recommended is not None
+            and raw_decision.get("recommended_answer") != recommended
+        ):
+            raise HumanInputPolicyError(
+                "legacy recovery recommendation projection does not match state"
+            )
+        if recommended is not None and expected_options:
+            matches = [
+                option
+                for option in expected_options
+                if recommended in {option["id"], option["label"]}
+            ]
+            if len(matches) != 1:
+                raise HumanInputPolicyError(
+                    "legacy recovery recommendation is not one exact option"
+                )
+
+        default_answer = state.get("escalation_default_answer")
+        default_answer = (
+            default_answer.strip()
+            if isinstance(default_answer, str) and default_answer.strip()
+            else recommended
+        )
+        if (
+            default_answer is None
+            and "default_answer" in raw_decision
+        ) or (
+            default_answer is not None
+            and raw_decision.get("default_answer") != default_answer
+        ):
+            raise HumanInputPolicyError(
+                "legacy recovery default projection does not match state"
+            )
+        if default_answer is not None and expected_options:
+            matches = [
+                option
+                for option in expected_options
+                if default_answer in {option["id"], option["label"]}
+            ]
+            if len(matches) != 1:
+                raise HumanInputPolicyError(
+                    "legacy recovery default is not one exact option"
+                )
+
+        risk_level = state.get("escalation_risk_level")
+        if not isinstance(risk_level, str) or not risk_level.strip():
+            risk_level = state.get("risk_level")
+        risk_level = (
+            risk_level.strip().lower()
+            if isinstance(risk_level, str) and risk_level.strip()
+            else None
+        )
+        if risk_level not in {None, "low", "medium", "high", "critical"}:
+            raise HumanInputPolicyError(
+                "legacy recovery risk projection is invalid"
+            )
+        if (
+            risk_level is None
+            and "risk_level" in raw_decision
+        ) or (
+            risk_level is not None
+            and raw_decision.get("risk_level") != risk_level
+        ):
+            raise HumanInputPolicyError(
+                "legacy recovery risk projection does not match state"
+            )
+
+    def _prepare_legacy_human_input(
+        self,
+        state: Mapping[str, object],
+    ) -> PreparedHumanInput | None:
+        if state.get("status") != "blocked":
+            return None
+        run_kind = state.get("run_kind")
+        if run_kind not in {None, "", "squad"}:
+            return None
+        phase_id = state.get("phase")
+        reason_code = state.get("blocked_reason")
+        question = state.get("escalation_question")
+        if not all(
+            isinstance(value, str) and value.strip()
+            for value in (phase_id, reason_code, question)
+        ):
+            return None
+        phase_id = str(phase_id).strip()
+        reason_code = str(reason_code).strip()
+        question = str(question).strip()
+
+        raw_decision = state.get("blocked_decision")
+        if not isinstance(raw_decision, Mapping):
+            return None
+
+        try:
+            raw_instruction = state.get("recovery_instruction")
+            instruction = (
+                validate_recovery_instruction(raw_instruction)
+                if raw_instruction is not None
+                else None
+            )
+            source_phase = phase_id
+            if phase_id in TERMINAL_PHASES:
+                if reason_code == "phase_dispatch_limit":
+                    legacy_source_phase = state.get(
+                        "phase_dispatch_limit_phase"
+                    )
+                else:
+                    last_dispatch = state.get("last_dispatch")
+                    legacy_source_phase = (
+                        last_dispatch.get("phase_id")
+                        if isinstance(last_dispatch, Mapping)
+                        else None
+                    )
+                if (
+                    not isinstance(legacy_source_phase, str)
+                    or not legacy_source_phase.strip()
+                    or legacy_source_phase.strip() in TERMINAL_PHASES
+                ):
+                    return None
+                source_phase = legacy_source_phase.strip()
+
+            policy = self._legacy_policy_alias(
+                phase_id=source_phase,
+                reason_code=reason_code,
+            )
+            self._validate_active_legacy_squad_decision(
+                state,
+                raw_decision,
+                phase_id=phase_id,
+                reason_code=reason_code,
+                question=question,
+                policy=policy,
+            )
+            if (
+                phase_id in TERMINAL_PHASES
+                and policy.producer_id
+                not in {
+                    "phase_dispatch_limit",
+                    "consecutive_why_fails",
+                    "why2_metric_stagnation",
+                }
+            ):
+                return None
+            options = self._legacy_escalation_options(
+                state.get("escalation_options"),
+                policy,
+            )
+            expected_answer_type = "choice" if options else "free_text"
+            if raw_decision.get("answer_type") != expected_answer_type:
+                return None
+
+            expected_kind = (
+                RecoveryKind.RESOLVE_ISSUE
+                if self._is_dynamic_dispatch_cap_policy(policy)
+                else RecoveryKind.AWAIT_HUMAN_ANSWER
+            )
+            if instruction is not None:
+                if (
+                    instruction.schema_version != 1
+                    or instruction.kind is not expected_kind
+                    or instruction.reason_code != reason_code
+                    or instruction.phase != source_phase
+                    or not instruction.requires_human_input
+                ):
+                    return None
+
+            alias_registry = HumanInputPolicyRegistry((policy,))
+            request = alias_registry.prepare(
+                source_kind="legacy_recovery",
+                producer_id=policy.producer_id,
+                phase_id=source_phase,
+                reason_code=reason_code,
+                question=question,
+                recommended_answer=state.get(
+                    "escalation_recommended_answer"
+                ),
+                risk_level=state.get("escalation_risk_level"),
+                source_state_revision=int(state["state_revision"]),
+            )
+            if options:
+                request = replace(request, options=options)
+            return request
+        except (
+            HumanInputPolicyError,
+            KeyError,
+            TypeError,
+            ValueError,
+        ):
+            return None
+
+    def _policy_for_human_input_decision(
+        self,
+        decision: Mapping[str, object],
+    ) -> HumanInputPolicy:
+        if decision.get("source_kind") == "legacy_recovery":
+            policy = self._legacy_policy_alias(
+                phase_id=str(decision.get("source_phase") or ""),
+                producer_id=str(decision.get("producer_id") or ""),
+                reason_code=str(decision.get("reason_code") or ""),
+            )
+        else:
+            policy = self._human_input_registry.lookup(
+                str(decision.get("source_kind") or ""),
+                str(decision.get("producer_id") or ""),
+                str(decision.get("reason_code") or ""),
+            )
+        if (
+            decision.get("classification") != policy.classification
+            or decision.get("resolution_handler") != policy.resolution_handler
+            or decision.get("source_phase") not in policy.allowed_phase_ids
+        ):
+            raise HumanInputPolicyError(
+                "sealed decision does not match its registered policy"
+            )
+        options = self._human_input_options_from_decision(decision)
+        dynamic_dispatch_cap = self._is_dynamic_dispatch_cap_policy(policy)
+        if dynamic_dispatch_cap:
+            for option in options:
+                self._dispatch_cap_candidate_from_option(option)
+        elif (
+            policy.source_kind != "provider_escalation"
+            and options != policy.options
+        ):
+            raise HumanInputPolicyError(
+                "sealed decision options do not match their registered policy"
+            )
+        if any(
+            option.next_phase is not None
+            and option.next_phase not in policy.allowed_target_phases
+            for option in options
+        ):
+            raise HumanInputPolicyError(
+                "sealed decision option escapes registered targets"
+            )
+        if not dynamic_dispatch_cap and bool(options) == policy.allow_free_text:
+            raise HumanInputPolicyError(
+                "sealed decision answer shape does not match its registered policy"
+            )
+        return policy
+
+    def _validate_prepared_human_input(
+        self,
+        request: PreparedHumanInput,
+    ) -> HumanInputPolicy:
+        if type(request) is not PreparedHumanInput or request.schema_version != 1:
+            raise HumanInputPolicyError(
+                "controller requires a prepared human-input request"
+            )
+        if request.source_kind == "legacy_recovery":
+            policy = self._legacy_policy_alias(
+                phase_id=request.phase_id,
+                producer_id=request.producer_id,
+                reason_code=request.reason_code,
+            )
+        else:
+            policy = self._human_input_registry.lookup(
+                request.source_kind,
+                request.producer_id,
+                request.reason_code,
+            )
+        if (
+            request.phase_id not in policy.allowed_phase_ids
+            or request.classification != policy.classification
+            or request.resolution_handler != policy.resolution_handler
+        ):
+            raise HumanInputPolicyError(
+                "prepared request does not match its registered policy"
+            )
+        if self._is_dynamic_dispatch_cap_policy(policy):
+            if not request.options:
+                raise HumanInputPolicyError(
+                    "phase dispatch limit requires at least one eligible option"
+                )
+            for option in request.options:
+                self._dispatch_cap_candidate_from_option(option)
+        elif (
+            request.source_kind != "provider_escalation"
+            and request.options != policy.options
+        ):
+            raise HumanInputPolicyError(
+                "prepared request options do not match their registered policy"
+            )
+        if (
+            not self._is_dynamic_dispatch_cap_policy(policy)
+            and bool(request.options) == policy.allow_free_text
+        ):
+            raise HumanInputPolicyError(
+                "prepared request answer shape does not match its registered policy"
+            )
+        return policy
+
+    @staticmethod
+    def _provider_advance_required(request: PreparedHumanInput) -> bool:
+        return request.source_kind == "provider_escalation" or (
+            request.source_kind == "controller_safeguard"
+            and request.producer_id
+            in {"consecutive_why_fails", "why2_metric_stagnation"}
+        )
+
+    def _intercept_human_gate(self, node: PhaseNode) -> bool:
+        """Prepare and route one compiled gate without an executor result."""
+        if node.type != "human_gate" or len(node.human_input_policies) != 1:
+            raise HumanInputPolicyError(
+                "human gate requires exactly one compiled policy"
+            )
+        policy = node.human_input_policies[0]
+        snapshot = self._state_store.capture_routing_snapshot(
+            expected_phase=node.id,
+        )
+        spec_dir = str(snapshot.state.get("spec_dir") or "the active spec")
+        request = self._human_input_registry.prepare(
+            source_kind=policy.source_kind,
+            producer_id=policy.producer_id,
+            phase_id=node.id,
+            reason_code=policy.reason_code,
+            question=(
+                f"Review {node.label or node.id} artifacts in {spec_dir}. "
+                "Approve to continue or reject to stop for revision."
+            ),
+            source_state_revision=snapshot.state_revision,
+        )
+        return self.handle_human_input(request)
+
+    def handle_human_input(
+        self,
+        request: PreparedHumanInput,
+        *,
+        provider_advance: _ProviderHumanInputAdvance | None = None,
+    ) -> bool:
+        """Seal one prepared request, then route only from its durable decision."""
+        policy = self._validate_prepared_human_input(request)
+        needs_advance = self._provider_advance_required(request)
+        if needs_advance != (provider_advance is not None):
+            raise HumanInputPolicyError(
+                "human-input request used the wrong state sealing path"
+            )
+        if provider_advance is not None:
+            if type(provider_advance) is not _ProviderHumanInputAdvance:
+                raise HumanInputPolicyError(
+                    "provider human-input advance is invalid"
+                )
+            if (
+                provider_advance.from_phase != request.phase_id
+                or provider_advance.decision.from_phase
+                != provider_advance.from_phase
+                or provider_advance.decision.to_phase
+                != provider_advance.to_phase
+            ):
+                raise HumanInputPolicyError(
+                    "provider human-input advance does not match the request"
+                )
+
+        state = self._state_store.load()
+        autonomy_mode = state.get("autonomy_mode")
+        if autonomy_mode not in {"guided", "semi", "banzai"}:
+            raise HumanInputPolicyError(
+                "persisted autonomy mode is invalid"
+            )
+        initial_status = select_initial_decision_status(
+            str(autonomy_mode),
+            policy,
+            request,
+        )
+        if provider_advance is None:
+            self._state_store.set_human_input_decision(
+                request,
+                initial_status=initial_status,
+            )
+        else:
+            node = self._graph.get(provider_advance.from_phase)
+            receipt = self._advance_prepared_result_or_block(
+                node,
+                provider_advance.decision,
+                human_input=request,
+                human_input_initial_status=initial_status,
+            )
+            if receipt is None:
+                return False
+        return self.resume_pending_human_input()
+
+    def _semi_human_input_resolution(
+        self,
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+    ) -> HumanInputResolution | None:
+        if (
+            policy.classification != "operational"
+            or policy.semi_policy != "auto_if_recommended_low_risk"
+        ):
+            return None
+        options = self._human_input_options_from_decision(decision)
+        recommended = [option for option in options if option.recommended]
+        if len(recommended) == 1:
+            option = recommended[0]
+            effective_risk = option.risk_level or decision.get("risk_level")
+            if effective_risk == "low":
+                return HumanInputResolution(
+                    selected_option_id=option.id,
+                    answer_text=None,
+                    resolved_by="semi",
+                )
+            return None
+        recommended_answer = decision.get("recommended_answer")
+        if (
+            not options
+            and isinstance(recommended_answer, str)
+            and recommended_answer.strip()
+            and decision.get("risk_level") == "low"
+        ):
+            return HumanInputResolution(
+                selected_option_id=None,
+                answer_text=recommended_answer,
+                resolved_by="semi",
+            )
+        return None
+
+    @staticmethod
+    def _validate_human_input_resolver(
+        decision: Mapping[str, object],
+        resolution: HumanInputResolution,
+    ) -> None:
+        resolver_contract = {
+            "user": ("awaiting_human", None),
+            "semi": ("pending", "semi"),
+            "COMMANDER": ("resolving", "banzai"),
+        }
+        contract = resolver_contract.get(resolution.resolved_by)
+        if contract is None:
+            raise HumanInputPolicyError(
+                "human-input resolver is not registered"
+            )
+        expected_status, expected_mode = contract
+        if decision.get("status") != expected_status:
+            raise HumanInputPolicyError(
+                "human-input resolver is not permitted for decision status"
+            )
+        if (
+            expected_mode is not None
+            and decision.get("autonomy_mode") != expected_mode
+        ):
+            raise HumanInputPolicyError(
+                "human-input resolver is not permitted by autonomy mode"
+            )
+
+    def _validate_human_input_resolution_answer(
+        self,
+        decision: Mapping[str, object],
+        resolution: HumanInputResolution,
+    ) -> HumanInputOption | None:
+        options = self._human_input_options_from_decision(decision)
+        if options:
+            if (
+                not isinstance(resolution.selected_option_id, str)
+                or not resolution.selected_option_id
+                or resolution.answer_text is not None
+            ):
+                raise HumanInputPolicyError(
+                    "human-input resolution must select one registered option"
+                )
+            selected = next(
+                (
+                    option
+                    for option in options
+                    if option.id == resolution.selected_option_id
+                ),
+                None,
+            )
+            if selected is None:
+                raise HumanInputPolicyError(
+                    "human-input resolution selected an unknown option"
+                )
+            return selected
+        if (
+            resolution.selected_option_id is not None
+            or not isinstance(resolution.answer_text, str)
+            or not resolution.answer_text.strip()
+        ):
+            raise HumanInputPolicyError(
+                "human-input resolution requires one non-empty answer"
+            )
+        return None
+
+    def _validate_human_input_route(
+        self,
+        route: object,
+        policy: HumanInputPolicy,
+        *,
+        allow_source_phase: str | None = None,
+    ) -> str:
+        if not isinstance(route, str) or not route:
+            raise HumanInputPolicyError(
+                "human-input resolution route is invalid"
+            )
+        if route not in self._graph.all_phase_ids():
+            raise HumanInputPolicyError(
+                "human-input resolution route is outside the phase graph"
+            )
+        if (
+            route not in policy.allowed_target_phases
+            and route != allow_source_phase
+        ):
+            raise HumanInputPolicyError(
+                "human-input resolution route is not registered"
+            )
+        return route
+
+    def _read_clarification_receipts(
+        self,
+        state: Mapping[str, object],
+    ) -> tuple[str, int]:
+        roots = self._authoritative_human_input_roots(state)
+        staging = roots["{staging_dir}"]
+        if staging is None:
+            raise HumanInputPolicyError("staging root is unavailable")
+        opened = self._open_project_directory_chain(staging)
+        directory_fd = opened[-1]
+        file_fd = -1
+        keep_directory = False
+        try:
+            flags = (
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NONBLOCK", 0)
+            )
+            try:
+                file_fd = os.open(
+                    "user-clarifications.md",
+                    flags,
+                    dir_fd=directory_fd,
+                )
+            except FileNotFoundError:
+                keep_directory = True
+                return "", directory_fd
+            metadata = os.fstat(file_fd)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise HumanInputPolicyError(
+                    "clarification receipt must be a regular file"
+                )
+            if metadata.st_size > 1_048_576:
+                raise HumanInputPolicyError(
+                    "clarification receipt exceeds the byte limit"
+                )
+            chunks: list[bytes] = []
+            remaining = 1_048_576
+            while remaining > 0:
+                chunk = os.read(
+                    file_fd,
+                    min(remaining + 1, _CONTEXT_FILE_READ_CHUNK_BYTES),
+                )
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+                if remaining < 0:
+                    raise HumanInputPolicyError(
+                        "clarification receipt exceeds the byte limit"
+                    )
+            text = b"".join(chunks).decode("utf-8")
+            keep_directory = True
+            return text, directory_fd
+        except HumanInputPolicyError:
+            raise
+        except (OSError, UnicodeError) as exc:
+            raise HumanInputPolicyError(
+                "clarification receipt cannot follow a symlink or invalid file"
+            ) from exc
+        finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+            descriptors = opened[:-1] if keep_directory else opened
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
+
+    @staticmethod
+    def _replace_clarification_receipts(
+        directory_fd: int,
+        content: str,
+    ) -> None:
+        temporary = f".user-clarifications-{uuid.uuid4().hex}.tmp"
+        descriptor = -1
+        try:
+            descriptor = os.open(
+                temporary,
+                (
+                    os.O_WRONLY
+                    | os.O_CREAT
+                    | os.O_EXCL
+                    | getattr(os, "O_NOFOLLOW", 0)
+                    | getattr(os, "O_CLOEXEC", 0)
+                ),
+                0o600,
+                dir_fd=directory_fd,
+            )
+            payload = content.encode("utf-8")
+            offset = 0
+            while offset < len(payload):
+                written = os.write(descriptor, payload[offset:])
+                if written <= 0:
+                    raise OSError("clarification receipt write made no progress")
+                offset += written
+            os.fsync(descriptor)
+            os.close(descriptor)
+            descriptor = -1
+            os.replace(
+                temporary,
+                "user-clarifications.md",
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+            os.fsync(directory_fd)
+        except OSError as exc:
+            raise HumanInputPolicyError(
+                "clarification receipt replacement failed"
+            ) from exc
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+            try:
+                os.unlink(temporary, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+
+    def _clarification_resume_resolution(
+        self,
+        state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        selected: HumanInputOption | None,
+        resolution: HumanInputResolution,
+    ) -> _HumanInputResolutionEffects:
+        source_phase = str(decision["source_phase"])
+        route = self._validate_human_input_route(
+            (
+                selected.next_phase
+                if selected is not None and selected.next_phase is not None
+                else source_phase
+            ),
+            policy,
+            allow_source_phase=source_phase,
+        )
+        answer = (
+            selected.label
+            if selected is not None
+            else str(resolution.answer_text)
+        )
+        marker = f"## Decision {decision['id']}"
+        existing, directory_fd = self._read_clarification_receipts(state)
+        section = (
+            f"{marker}\n\n"
+            f"**Question:** {decision['question']}\n\n"
+            f"**Answer:** {answer}\n"
+        )
+        marker_matches = tuple(
+            re.finditer(
+                rf"^{re.escape(marker)}[ \t]*(?:\r?\n|\Z)",
+                existing,
+                re.MULTILINE,
+            )
+        )
+        if marker_matches:
+            start = marker_matches[0].start()
+            end = start + len(section)
+            remainder = existing[end:]
+            if (
+                len(marker_matches) != 1
+                or existing[start:end] != section
+                or (
+                    remainder
+                    and not remainder.startswith("\n## Decision ")
+                )
+            ):
+                os.close(directory_fd)
+                raise HumanInputPolicyError(
+                    "clarification receipt conflicts with the resolution"
+                )
+        else:
+            separator = "" if not existing or existing.endswith("\n\n") else (
+                "\n" if existing.endswith("\n") else "\n\n"
+            )
+            try:
+                self._replace_clarification_receipts(
+                    directory_fd,
+                    f"{existing}{separator}{section}",
+                )
+            finally:
+                os.close(directory_fd)
+            directory_fd = -1
+        if directory_fd >= 0:
+            os.close(directory_fd)
+        return _HumanInputResolutionEffects(
+            state_updates={"status": "running", "phase": route},
+            state_removals=frozenset(),
+            route=route,
+        )
+
+    def _gate_outcome_resolution(
+        self,
+        _state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        selected: HumanInputOption | None,
+        _resolution: HumanInputResolution,
+    ) -> _HumanInputResolutionEffects:
+        if selected is None or selected.outcome not in {"approved", "rejected"}:
+            raise HumanInputPolicyError(
+                "human gate outcome is not registered"
+            )
+        route = self._validate_human_input_route(
+            selected.next_phase,
+            policy,
+        )
+        route_error = gate_outcome_route_error(selected.outcome, route)
+        if route_error is not None:
+            raise HumanInputPolicyError(route_error)
+        updates: dict[str, object] = {
+            "phase": route,
+            "status": (
+                "blocked"
+                if selected.outcome == "rejected"
+                else "running"
+            ),
+        }
+        if selected.outcome == "rejected":
+            updates["blocked_reason"] = "gate_rejected"
+        return _HumanInputResolutionEffects(
+            state_updates=updates,
+            state_removals=frozenset(),
+            route=route,
+        )
+
+    def _phase_dispatch_limit_resolution(
+        self,
+        state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        selected: HumanInputOption | None,
+        resolution: HumanInputResolution,
+    ) -> _HumanInputResolutionEffects:
+        if selected is None:
+            raise HumanInputPolicyError(
+                "dispatch-cap resolution must select one sealed issue option"
+            )
+        candidate = self._dispatch_cap_candidate_from_option(selected)
+        raw_selection = {
+            "issue_id": candidate["issue_id"],
+            "decision": candidate["suggested_option"],
+            "rationale": candidate["evidence_basis"],
+            "confidence": "high",
+            "evidence_backed": True,
+        }
+        selection = self._validate_banzai_issue_resolution_selection(
+            raw_selection,
+            [candidate],
+        )
+        if selection is None:
+            raise HumanInputPolicyError(
+                "dispatch-cap resolution is not evidence-backed"
+            )
+        capped_phase = str(decision["source_phase"])
+        legacy_phase = state.get("phase_dispatch_limit_phase")
+        if legacy_phase is not None and (
+            not isinstance(legacy_phase, str)
+            or (
+                legacy_phase.strip()
+                and legacy_phase.strip() != capped_phase
+            )
+        ):
+            raise HumanInputPolicyError(
+                "dispatch-cap legacy phase conflicts with sealed source phase"
+            )
+        if (
+            not capped_phase
+            or capped_phase not in self._graph.all_phase_ids()
+            or capped_phase in TERMINAL_PHASES
+        ):
+            raise HumanInputPolicyError(
+                "dispatch-cap recovery target is invalid"
+            )
+        counts = state.get("phase_dispatch_counts")
+        next_counts = dict(counts) if isinstance(counts, dict) else {}
+        next_counts.pop(capped_phase, None)
+        route = self._validate_human_input_route(
+            selected.next_phase,
+            policy,
+        )
+        updates = self._issue_resolution_state_updates(
+            dict(state),
+            selection,
+        )
+        updates.update(
+            {
+                "status": "running",
+                "phase": route,
+                "phase_dispatch_counts": next_counts,
+                "phase_dispatch_limit_recovery": {
+                    "phase": capped_phase,
+                    "resolver": resolution.resolved_by,
+                },
+            }
+        )
+        return _HumanInputResolutionEffects(
+            state_updates=updates,
+            state_removals=frozenset(),
+            route=route,
+        )
+
+    def _reset_why_fail_count_resolution(
+        self,
+        _state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        _selected: HumanInputOption | None,
+        _resolution: HumanInputResolution,
+    ) -> _HumanInputResolutionEffects:
+        route = self._validate_human_input_route(
+            decision["source_phase"],
+            policy,
+        )
+        return _HumanInputResolutionEffects(
+            state_updates={
+                "status": "running",
+                "phase": route,
+                "why_fail_count": 0,
+            },
+            state_removals=frozenset(),
+            route=route,
+        )
+
+    def _reset_why2_stagnation_resolution(
+        self,
+        _state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        _selected: HumanInputOption | None,
+        _resolution: HumanInputResolution,
+    ) -> _HumanInputResolutionEffects:
+        route = self._validate_human_input_route(
+            decision["source_phase"],
+            policy,
+        )
+        return _HumanInputResolutionEffects(
+            state_updates={
+                "status": "running",
+                "phase": route,
+                "why_fail_count": 0,
+                "why2_metric_stagnation_count": 0,
+            },
+            state_removals=frozenset(),
+            route=route,
+        )
+
+    def apply_human_input_resolution(
+        self,
+        decision_id: str,
+        *,
+        expected_state_revision: int,
+        resolution: HumanInputResolution,
+        token_usage_delta: int = 0,
+    ) -> bool:
+        """Validate and apply one decision through its closed controller handler."""
+        if type(resolution) is not HumanInputResolution:
+            raise HumanInputPolicyError(
+                "human-input resolution is invalid"
+            )
+        if type(token_usage_delta) is not int or token_usage_delta < 0:
+            raise HumanInputPolicyError(
+                "human-input token usage delta is invalid"
+            )
+        state = self._state_store.load()
+        if (
+            not isinstance(decision_id, str)
+            or not decision_id
+            or type(expected_state_revision) is not int
+            or state.get("state_revision") != expected_state_revision
+        ):
+            raise HumanInputPolicyError(
+                "human-input decision id or revision is stale"
+            )
+        raw_decision = state.get("blocked_decision")
+        if not isinstance(raw_decision, Mapping):
+            raise HumanInputPolicyError(
+                "human-input decision is missing"
+            )
+        decision = validate_blocked_decision_v2(raw_decision)
+        if decision["id"] != decision_id:
+            raise HumanInputPolicyError(
+                "human-input decision id or revision is stale"
+            )
+        if decision["status"] not in {
+            "pending",
+            "resolving",
+            "awaiting_human",
+        }:
+            raise HumanInputPolicyError(
+                "human-input decision is not active"
+            )
+        policy = self._policy_for_human_input_decision(decision)
+        self._validate_human_input_resolver(decision, resolution)
+        selected = self._validate_human_input_resolution_answer(
+            decision,
+            resolution,
+        )
+        handlers = {
+            "clarification_resume": self._clarification_resume_resolution,
+            "gate_outcome": self._gate_outcome_resolution,
+            "phase_dispatch_limit": self._phase_dispatch_limit_resolution,
+            "reset_why_fail_count": self._reset_why_fail_count_resolution,
+            "reset_why2_stagnation": (
+                self._reset_why2_stagnation_resolution
+            ),
+        }
+        handler = handlers.get(str(decision["resolution_handler"]))
+        if handler is None:
+            raise HumanInputPolicyError(
+                "human-input resolution handler is not registered"
+            )
+        effects = handler(
+            state,
+            decision,
+            policy,
+            selected,
+            resolution,
+        )
+        if effects.route not in self._graph.all_phase_ids():
+            raise HumanInputPolicyError(
+                "human-input handler returned an invalid route"
+            )
+        resolved = self._state_store.apply_human_input_state_resolution(
+            decision_id,
+            expected_state_revision=expected_state_revision,
+            resolution=resolution,
+            state_updates=effects.state_updates,
+            state_removals=effects.state_removals,
+            token_usage_delta=token_usage_delta,
+        )
+        return (
+            resolved.get("status") == "running"
+            and resolved.get("phase") not in TERMINAL_PHASES
+        )
+
+    def _resolve_human_input_context_path(
+        self,
+        template: str,
+        state: Mapping[str, object],
+    ) -> tuple[Path, tuple[str, ...]]:
+        roots = self._authoritative_human_input_roots(state)
+        for marker, root in roots.items():
+            if template != marker and not template.startswith(f"{marker}/"):
+                continue
+            if root is None:
+                raise HumanInputPolicyError(
+                    f"context root {marker} is unavailable"
+                )
+            suffix = template[len(marker):].lstrip("/")
+            components = tuple(suffix.split("/")) if suffix else ()
+            if not components or any(
+                component in {"", ".", ".."} for component in components
+            ):
+                raise HumanInputPolicyError(
+                    "registered context path must name an in-root file"
+                )
+            return root, components
+        raise HumanInputPolicyError(
+            "context path does not use a registered root"
+        )
+
+    def _identity_path(
+        self,
+        value: object,
+        *,
+        base: Path | None = None,
+        field: str,
+    ) -> Path:
+        if not isinstance(value, (str, os.PathLike)):
+            raise HumanInputPolicyError(f"{field} root identity is invalid")
+        path = Path(value)
+        if not path.is_absolute():
+            path = (base or self._project_root) / path
+        return Path(os.path.abspath(os.fspath(path)))
+
+    def _project_contained_path(
+        self,
+        value: object,
+        *,
+        field: str,
+    ) -> Path:
+        project_root = self._identity_path(
+            self._project_root,
+            field="project",
+        )
+        path = self._identity_path(value, field=field)
+        try:
+            path.relative_to(project_root)
+        except ValueError as exc:
+            raise HumanInputPolicyError(
+                f"{field} root is outside the controller project"
+            ) from exc
+        return path
+
+    def _validated_spec_root(
+        self,
+        state: Mapping[str, object],
+        *,
+        state_key: str = "spec_dir",
+    ) -> Path | None:
+        raw_root = state.get(state_key)
+        if raw_root is None or not str(raw_root).strip():
+            return None
+        root = self._project_contained_path(
+            raw_root,
+            field=state_key,
+        )
+        spec_id = str(state.get("spec_id") or "").strip()
+        if spec_id:
+            actual_id = _spec_id_from_phase_a_dir(root)
+            if (
+                actual_id != spec_id
+                and not actual_id.startswith(f"{spec_id}-")
+            ):
+                raise HumanInputPolicyError(
+                    "spec root identity does not match the active spec"
+                )
+        return root
+
+    def _authoritative_human_input_roots(
+        self,
+        state: Mapping[str, object],
+    ) -> dict[str, Path | None]:
+        store_squad = self._project_contained_path(
+            self._state_store.squad_dir,
+            field="store squad",
+        )
+        controller_squad = self._project_contained_path(
+            self._squad_dir,
+            field="controller squad",
+        )
+        if controller_squad != store_squad:
+            raise HumanInputPolicyError(
+                "controller and store run root identities do not match"
+            )
+        expected = {
+            "squad_dir": store_squad,
+            "staging_dir": self._identity_path(
+                self._state_store.staging_dir,
+                field="store staging",
+            ),
+            "context_dir": self._identity_path(
+                store_squad / "context",
+                field="store context",
+            ),
+        }
+        for key, expected_root in expected.items():
+            persisted = self._identity_path(
+                state.get(key),
+                field=key,
+            )
+            if persisted != expected_root:
+                raise HumanInputPolicyError(
+                    f"persisted {key} root identity does not match the run"
+                )
+        return {
+            "{staging_dir}": expected["staging_dir"],
+            "{spec_dir}": self._validated_spec_root(state),
+            "{context_dir}": expected["context_dir"],
+            "{squad_dir}": expected["squad_dir"],
+        }
+
+    def _open_project_directory_chain(self, root: Path) -> list[int]:
+        no_follow = getattr(os, "O_NOFOLLOW", None)
+        if no_follow is None:
+            raise HumanInputPolicyError(
+                "context no-follow traversal is unavailable"
+            )
+        project_root = self._identity_path(
+            self._project_root,
+            field="project",
+        )
+        try:
+            relative = root.relative_to(project_root)
+        except ValueError as exc:
+            raise HumanInputPolicyError(
+                "context root is outside the controller project"
+            ) from exc
+        directory_flags = (
+            os.O_RDONLY
+            | no_follow
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        opened = [os.open(project_root, directory_flags)]
+        try:
+            current_fd = opened[0]
+            for component in relative.parts:
+                current_fd = os.open(
+                    component,
+                    directory_flags,
+                    dir_fd=current_fd,
+                )
+                opened.append(current_fd)
+            return opened
+        except Exception:
+            for descriptor in reversed(opened):
+                os.close(descriptor)
+            raise
+
+    def _read_human_input_context_file(
+        self,
+        template: str,
+        state: Mapping[str, object],
+        *,
+        byte_limit: int,
+    ) -> str:
+        """Read one regular UTF-8 file through descriptor-bound no-follow opens."""
+        if byte_limit <= 0:
+            return ""
+        no_follow = getattr(os, "O_NOFOLLOW", None)
+        if no_follow is None:
+            raise HumanInputPolicyError(
+                "context no-follow traversal is unavailable"
+            )
+        root, components = self._resolve_human_input_context_path(
+            template,
+            state,
+        )
+        file_flags = (
+            os.O_RDONLY
+            | no_follow
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        opened: list[int] = []
+        try:
+            opened = self._open_project_directory_chain(root)
+            current_fd = opened[-1]
+            for component in components[:-1]:
+                current_fd = os.open(
+                    component,
+                    (
+                        os.O_RDONLY
+                        | no_follow
+                        | getattr(os, "O_DIRECTORY", 0)
+                        | getattr(os, "O_CLOEXEC", 0)
+                    ),
+                    dir_fd=current_fd,
+                )
+                opened.append(current_fd)
+            file_fd = os.open(
+                components[-1],
+                file_flags,
+                dir_fd=current_fd,
+            )
+            opened.append(file_fd)
+            if not stat.S_ISREG(os.fstat(file_fd).st_mode):
+                raise HumanInputPolicyError(
+                    "registered context path must be a regular file"
+                )
+
+            chunks: list[bytes] = []
+            remaining = byte_limit
+            reached_eof = False
+            while remaining > 0:
+                chunk = os.read(
+                    file_fd,
+                    min(remaining, _CONTEXT_FILE_READ_CHUNK_BYTES),
+                )
+                if not chunk:
+                    reached_eof = True
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            decoder = codecs.getincrementaldecoder("utf-8")("strict")
+            return decoder.decode(
+                b"".join(chunks),
+                final=reached_eof,
+            )
+        except FileNotFoundError:
+            return "<missing>"
+        except HumanInputPolicyError:
+            raise
+        except (OSError, UnicodeError) as exc:
+            raise HumanInputPolicyError(
+                "context path cannot escape through a symlink or invalid file"
+            ) from exc
+        finally:
+            for descriptor in reversed(opened):
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+
+    def _render_commander_decision_prompt(
+        self,
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+        state: Mapping[str, object],
+    ) -> str:
+        """Render only registered context under the complete UTF-8 byte cap."""
+        validated = validate_blocked_decision_v2(decision)
+        registered = self._policy_for_human_input_decision(validated)
+        if registered != policy:
+            raise HumanInputPolicyError(
+                "COMMANDER context policy does not match the sealed decision"
+            )
+        request_payload = {
+            "decision_id": validated["id"],
+            "source_kind": validated["source_kind"],
+            "producer_id": validated["producer_id"],
+            "source_phase": validated["source_phase"],
+            "reason_code": validated["reason_code"],
+            "classification": validated["classification"],
+            "question": validated["question"],
+            "options": validated["options"],
+            "recommended_answer": validated["recommended_answer"],
+            "risk_level": validated["risk_level"],
+        }
+        instructions = (
+            "# COMMANDER DECISION RESOLUTION\n\n"
+            "Return exactly this envelope for a choice:\n\n"
+            "echelon_result:\n"
+            "  verdict: DECISION_RESOLVED\n"
+            "  state_updates: {}\n"
+            "  journal_entries: []\n"
+            "  decision:\n"
+            '    selected_option_id: "<exact allowed option id>"\n'
+            "    answer_text: null\n"
+            '    rationale: "<non-empty explanation, at most 2,000 characters>"\n'
+            "    confidence: high\n\n"
+            "For free text, selected_option_id must be null and answer_text "
+            "must be a non-empty string. Set exactly one of selected_option_id "
+            "or answer_text; the other must be null. Rationale is required and "
+            "confidence must be exactly high, medium, or low. Do not add "
+            "fields, state updates, journal entries, files, or another "
+            "envelope. Do not ask another question. Do not write files or "
+            "mutate state, counters, recovery, or routing.\n\n"
+            "## Prepared Request\n"
+            f"{json.dumps(request_payload, ensure_ascii=False, sort_keys=True)}\n\n"
+            "## Registered Context\n"
+        )
+        base_size = len(instructions.encode("utf-8"))
+        if base_size > COMMANDER_DECISION_PROMPT_MAX_BYTES:
+            raise HumanInputPolicyError(
+                "COMMANDER prepared request exceeds the prompt byte limit"
+            )
+
+        prompt = _BoundedUtf8Builder(
+            COMMANDER_DECISION_PROMPT_MAX_BYTES
+        )
+        if not prompt.append(instructions):
+            raise HumanInputPolicyError(
+                "COMMANDER prepared request exceeds the prompt byte limit"
+            )
+        context_state = {
+            key: state.get(key)
+            for key in policy.context_state_keys
+        }
+        prompt.append("### State\n")
+        _append_bounded_json(prompt, context_state)
+        prompt.append("\n")
+        for template in policy.context_paths:
+            if prompt.remaining <= 0:
+                break
+            if not prompt.append(f"\n### File {template}\n"):
+                break
+            content = self._read_human_input_context_file(
+                template,
+                state,
+                byte_limit=prompt.remaining,
+            )
+            prompt.append(content)
+            prompt.append("\n")
+        rendered = prompt.build()
+        if len(rendered.encode("utf-8")) > COMMANDER_DECISION_PROMPT_MAX_BYTES:
+            raise AssertionError("COMMANDER prompt byte bound was exceeded")
+        return rendered
+
+    def _dispatch_commander_human_input(
+        self,
+        state: Mapping[str, object],
+        decision: Mapping[str, object],
+        policy: HumanInputPolicy,
+    ) -> bool:
+        current_state = dict(state)
+        current_decision = dict(decision)
+        while current_decision.get("status") == "pending":
+            try:
+                prompt = self._render_commander_decision_prompt(
+                    current_decision,
+                    policy,
+                    current_state,
+                )
+            except (HumanInputPolicyError, BlockedDecisionError):
+                self._state_store.fail_pending_human_input_decision(
+                    str(current_decision["id"]),
+                    expected_state_revision=int(
+                        current_state["state_revision"]
+                    ),
+                    failure_code="decision_context_setup_failed",
+                )
+                return False
+            claimed = self._state_store.claim_human_input_decision(
+                str(current_decision["id"]),
+                expected_state_revision=int(current_state["state_revision"]),
+            )
+            claimed_decision = validate_blocked_decision_v2(
+                claimed["blocked_decision"]
+            )
+            attempt = int(claimed_decision["attempts"])
+            failure_code = "provider_failed"
+            resolved = None
+            with self._defer_routing_provider_usage() as usage:
+                try:
+                    with self._telemetry_provider.dispatch(
+                        DispatchContext(
+                            phase=str(claimed_decision["source_phase"]),
+                            agent="COMMANDER",
+                            kind="judgment",
+                            attempt=attempt,
+                            reason=(
+                                "initial" if attempt == 1 else "provider_retry"
+                            ),
+                        )
+                    ):
+                        raw_result = self._telemetry_provider.exec_agent(
+                            str(self._project_root),
+                            prompt,
+                            allow_result_repair=False,
+                            strict_result_envelope=True,
+                        )
+                    if (
+                        type(raw_result) is not SquadAgentResult
+                        or raw_result.exit_code != 0
+                        or raw_result.timed_out
+                        or type(raw_result.echelon_result) is not dict
+                    ):
+                        raise EchelonResultValidationError(
+                            "COMMANDER provider result failed"
+                        )
+                    failure_code = "invalid_resolution_result"
+                    resolved = validate_decision_resolution_result(
+                        raw_result.echelon_result,
+                        options=self._human_input_options_from_decision(
+                            claimed_decision
+                        ),
+                    )
+                except Exception:
+                    resolved = None
+
+            if resolved is None:
+                failed = self._state_store.record_human_input_resolution_failure(
+                    str(claimed_decision["id"]),
+                    expected_state_revision=int(claimed["state_revision"]),
+                    failure_code=failure_code,
+                    token_usage_delta=usage["tokens"],
+                )
+                current_state = failed
+                current_decision = validate_blocked_decision_v2(
+                    failed["blocked_decision"]
+                )
+                continue
+
+            try:
+                return self.apply_human_input_resolution(
+                    str(claimed_decision["id"]),
+                    expected_state_revision=int(claimed["state_revision"]),
+                    resolution=HumanInputResolution(
+                        selected_option_id=resolved.selected_option_id,
+                        answer_text=resolved.answer_text,
+                        resolved_by="COMMANDER",
+                    ),
+                    token_usage_delta=usage["tokens"],
+                )
+            except HumanInputPolicyError:
+                failed = self._state_store.record_human_input_resolution_failure(
+                    str(claimed_decision["id"]),
+                    expected_state_revision=int(claimed["state_revision"]),
+                    failure_code="invalid_resolution_result",
+                    token_usage_delta=usage["tokens"],
+                )
+                current_state = failed
+                current_decision = validate_blocked_decision_v2(
+                    failed["blocked_decision"]
+                )
+        return False
+
+    def resume_pending_human_input(self) -> bool:
+        """Recover an interrupted claim, then route one pending decision."""
+        state = self._state_store.recover_interrupted_human_input_decision()
+        raw_decision = state.get("blocked_decision")
+        if (
+            not isinstance(raw_decision, Mapping)
+            or raw_decision.get("schema_version") != 2
+        ):
+            return False
+        decision = validate_blocked_decision_v2(raw_decision)
+        if decision["status"] != "pending":
+            return False
+        policy = self._policy_for_human_input_decision(decision)
+        autonomy_mode = decision["autonomy_mode"]
+        if autonomy_mode == "guided":
+            return False
+        if autonomy_mode == "semi":
+            resolution = self._semi_human_input_resolution(
+                decision,
+                policy,
+            )
+            if resolution is None:
+                return False
+            return self.apply_human_input_resolution(
+                str(decision["id"]),
+                expected_state_revision=int(state["state_revision"]),
+                resolution=resolution,
+            )
+        if (
+            autonomy_mode == "banzai"
+            and decision["classification"] != "external_prerequisite"
+        ):
+            return self._dispatch_commander_human_input(
+                state,
+                decision,
+                policy,
+            )
+        return False
+
+    def resume_with_human_input(self, answer: str) -> bool:
+        """Apply one sealed awaiting-human answer through the registered handler."""
+        if not isinstance(answer, str) or not answer.strip():
+            raise HumanInputPolicyError("human-input answer is required")
+        state = self._state_store.load()
+        raw_decision = state.get("blocked_decision")
+        if not isinstance(raw_decision, Mapping):
+            raise HumanInputPolicyError("human-input decision is missing")
+        decision = validate_blocked_decision_v2(raw_decision)
+        from harness.recovery_instruction import validate_decision_recovery_pair
+
+        validate_decision_recovery_pair(
+            decision,
+            state.get("recovery_instruction"),
+        )
+        if decision["status"] != "awaiting_human":
+            raise HumanInputPolicyError(
+                "human-input decision is not awaiting a human answer"
+            )
+        if (
+            decision["autonomy_mode"] == "banzai"
+            and decision["classification"] != "external_prerequisite"
+        ):
+            raise HumanInputPolicyError(
+                "Banzai project decisions cannot be submitted as human input"
+            )
+
+        answer = answer.strip()
+        options = self._human_input_options_from_decision(decision)
+        if options:
+            id_matches = [option for option in options if answer == option.id]
+            if len(id_matches) == 1:
+                selected = id_matches[0]
+            elif len(id_matches) > 1:
+                raise HumanInputPolicyError("sealed decision option ids are ambiguous")
+            else:
+                label_matches = [option for option in options if answer == option.label]
+                if len(label_matches) != 1:
+                    raise HumanInputPolicyError(
+                        "human-input answer must exactly match one offered option id or label"
+                    )
+                selected = label_matches[0]
+            if selected is None:
+                raise HumanInputPolicyError(
+                    "human-input answer must exactly match an offered option id or label"
+                )
+            resolution = HumanInputResolution(
+                selected_option_id=selected.id,
+                answer_text=None,
+                resolved_by="user",
+            )
+        else:
+            resolution = HumanInputResolution(
+                selected_option_id=None,
+                answer_text=answer,
+                resolved_by="user",
+            )
+        return self.apply_human_input_resolution(
+            str(decision["id"]),
+            expected_state_revision=int(state["state_revision"]),
+            resolution=resolution,
+        )
+
+    def _unresolved_human_input_decision(
+        self,
+        state: Mapping[str, object],
+    ) -> dict[str, object] | None:
+        raw_decision = state.get("blocked_decision")
+        if not isinstance(raw_decision, Mapping) or raw_decision.get("schema_version") != 2:
+            return None
+        decision = validate_blocked_decision_v2(raw_decision)
+        from harness.recovery_instruction import validate_decision_recovery_pair
+
+        validate_decision_recovery_pair(
+            decision,
+            state.get("recovery_instruction"),
+        )
+        return decision if decision["status"] != "resolved" else None
+
+    @staticmethod
+    def _unresolved_human_input_result(state: Mapping[str, object]) -> SquadResult:
+        return SquadResult(
+            status="blocked",
+            phase=str(state.get("phase") or "unknown"),
+            run_id=str(state.get("run_id") or ""),
+        )
+
     def run(
         self,
         user_message: str = "",
@@ -1900,6 +3866,22 @@ class SquadController:
         existing_status = existing.get("status") if existing else None
         blocked_reason = (existing.get("blocked_reason") or "") if existing else ""
         force_resume = False  # set True by recovery paths to bypass message check
+
+        unresolved_decision = self._unresolved_human_input_decision(existing)
+        if unresolved_decision is not None:
+            if next_phase_override:
+                return self._unresolved_human_input_result(existing)
+            if unresolved_decision["status"] in {"pending", "resolving"}:
+                if self.resume_pending_human_input():
+                    existing = self._state_store.load()
+                    existing_status = existing.get("status")
+                    force_resume = True
+                else:
+                    return self._unresolved_human_input_result(
+                        self._state_store.load()
+                    )
+            else:
+                return self._unresolved_human_input_result(existing)
 
         # ── Recovery: token budget bumped ─────────────────────────────────
         if existing_status == "blocked" and blocked_reason == "token_budget_exhausted":
@@ -2026,38 +4008,26 @@ class SquadController:
 
         # ── Escalation block ──────────────────────────────────────────────
         elif existing_status == "blocked" and existing.get("escalation_question"):
-            q = existing.get("escalation_question", "")
-            mode_at_block = _state_autonomy_mode(existing, mode)
-            recovery_reason = str(existing.get("blocked_reason") or "")
-
-            if mode_at_block == "banzai":
-                print(
-                    f"\n[squad] escalation detected — banzai mode, "
-                    f"dispatching COMMANDER judgment\n"
-                    f"  Questions: {q[:120]}",
-                    flush=True,
-                )
-                self._judgment_dispatch_escalation(
-                    escalation_question=q,
-                    blocked_phase=existing.get("phase", "unknown"),
-                    recovery_reason=recovery_reason,
-                )
+            legacy_request = self._prepare_legacy_human_input(existing)
+            if legacy_request is not None:
+                resumed = self.handle_human_input(legacy_request)
+            else:
+                resumed = self.resume_pending_human_input()
+            if resumed:
                 recovered = self._state_store.load()
                 existing_status = recovered.get("status")
-                if existing_status == "blocked":
-                    return SquadResult.from_state(recovered)
                 force_resume = True
             else:
-                # semi / guided: stop and require echelon spec resume
+                recovered = self._state_store.load()
                 _blocked_banner(
-                    phase=existing.get("phase", "?"),
-                    reason=existing.get("blocked_reason", ""),
-                    question=q,
+                    phase=recovered.get("phase", "?"),
+                    reason=recovered.get("blocked_reason", ""),
+                    question=recovered.get("escalation_question", ""),
                 )
                 return SquadResult(
                     status="blocked",
-                    phase=existing.get("phase", "unknown"),
-                    run_id=existing.get("run_id", ""),
+                    phase=recovered.get("phase", "unknown"),
+                    run_id=recovered.get("run_id", ""),
                 )
 
         # ── Recovery: convergence already picked the next phase ─────────────
@@ -2267,33 +4237,71 @@ class SquadController:
                 else MAX_PHASE_DISPATCHES
             )
             if dispatch_count > phase_limit:
+                cap_state = self._state_store.load()
+                try:
+                    candidates = self._banzai_issue_resolution_candidates(
+                        cap_state
+                    )
+                    cap_options = self._dispatch_cap_options(candidates)
+                except _DispatchCapEvidenceError as exc:
+                    self._record_blocker_event(phase, exc.reason_code)
+                    self._block_unresolvable_dispatch_cap(
+                        phase,
+                        cap_state,
+                        exc.reason_code,
+                    )
+                    return SquadResult.from_state(
+                        self._state_store.load()
+                    )
+                except HumanInputPolicyError:
+                    reason_code = (
+                        "phase_dispatch_limit_evidence_malformed"
+                    )
+                    self._record_blocker_event(phase, reason_code)
+                    self._block_unresolvable_dispatch_cap(
+                        phase,
+                        cap_state,
+                        reason_code,
+                    )
+                    return SquadResult.from_state(
+                        self._state_store.load()
+                    )
                 escalation_q = (
                     f"Phase {phase!r} has been dispatched {dispatch_count} times "
                     f"(limit {phase_limit}) without converging or advancing. "
-                    f"Possible routing loop. How should I proceed?"
+                    "Select exactly one sealed evidence-backed issue resolution."
                 )
-                s = self._state_store.load()
-                s["escalation_question"] = escalation_q
-                s["blocked_reason"] = "phase_dispatch_limit"
-                s["phase_dispatch_limit_phase"] = phase
-                s["phase_dispatch_limit"] = phase_limit
-                s["status"] = "blocked"
-                self._state_store.save(s)
+                request = self._human_input_registry.prepare(
+                    source_kind="controller_safeguard",
+                    producer_id="phase_dispatch_limit",
+                    phase_id=phase,
+                    reason_code="phase_dispatch_limit",
+                    question=escalation_q,
+                    source_state_revision=cap_state["state_revision"],
+                )
+                request = replace(
+                    request,
+                    options=cap_options,
+                )
                 self._record_blocker_event(phase, "phase_dispatch_limit")
                 print(
                     f"[squad] ✗ phase dispatch limit: {phase!r} dispatched "
                     f"{dispatch_count}× (limit {phase_limit}) — forcing escalation",
                     flush=True,
                 )
-                s = self._state_store.load()
-                s["phase"] = PHASE_TERMINAL_BLOCKED
-                self._state_store.save(s)
+                if self.handle_human_input(request):
+                    continue
                 return SquadResult.from_state(self._state_store.load())
 
             print(
                 _format_phase_dispatch_line(node, self._graph, self._ext_dir),
                 flush=True,
             )
+
+            if node.type == "human_gate":
+                if self._intercept_human_gate(node):
+                    continue
+                return SquadResult.from_state(self._state_store.load())
 
             executor = self._executors.get(node.type)
             try:
@@ -2409,18 +4417,33 @@ class SquadController:
                 routing_updates[PENDING_EXTERNAL_PUBLICATION_KEY] = (
                     prepared_publication.marker.to_dict()
                 )
-            decision = self._construct_routing_decision_or_block(
+            routing = self._construct_routing_decision_or_block(
                 node,
                 prepared,
                 snapshot,
                 additional_state_updates=routing_updates,
             )
-            if decision is None:
+            if routing is None:
                 self._discard_publication_without_authority(
                     prepared_publication,
                 )
                 return SquadResult.from_state(self._state_store.load())
+            decision = routing.decision
             next_phase = decision.to_phase
+
+            human_input_result = (
+                self._handle_prepared_human_input_or_block(
+                    node,
+                    prepared,
+                    snapshot,
+                    routing,
+                    prepared_publication,
+                )
+            )
+            if human_input_result is not None:
+                if human_input_result:
+                    continue
+                return SquadResult.from_state(self._state_store.load())
 
             receipt = self._advance_prepared_result_or_block(
                 node,
@@ -2436,33 +4459,19 @@ class SquadController:
             # re-invocation to reach the top-of-loop escalation block.
             state_now = self._state_store.load()
             if state_now.get("status") == "blocked" and state_now.get("escalation_question") and not state_now.get("escalation_resolved"):
-                q = state_now["escalation_question"]
-                run_mode = _state_autonomy_mode(state_now, mode)
-                recovery_reason = str(state_now.get("blocked_reason") or "")
-                if run_mode == "banzai":
-                    print(
-                        f"[squad] ~ {node.id}  escalation — banzai COMMANDER judgment",
-                        flush=True,
-                    )
-                    self._judgment_dispatch_escalation(
-                        q,
-                        phase,
-                        recovery_reason=recovery_reason,
-                    )
-                    if self._state_store.load().get("status") == "blocked":
-                        return SquadResult.from_state(self._state_store.load())
-                    continue  # re-dispatch the same phase (e.g. phase1-why1) next iteration
-                else:
-                    _blocked_banner(
-                        phase=phase,
-                        reason=state_now.get("blocked_reason", ""),
-                        question=q,
-                    )
-                    return SquadResult(
-                        status="blocked",
-                        phase=phase,
-                        run_id=state_now.get("run_id", ""),
-                    )
+                if self.resume_pending_human_input():
+                    continue
+                state_now = self._state_store.load()
+                _blocked_banner(
+                    phase=phase,
+                    reason=state_now.get("blocked_reason", ""),
+                    question=state_now.get("escalation_question", ""),
+                )
+                return SquadResult(
+                    status="blocked",
+                    phase=phase,
+                    run_id=state_now.get("run_id", ""),
+                )
             else:
                 print(f"[squad] ✓ {node.id}  → {next_phase}", flush=True)
                 continue
@@ -2666,6 +4675,22 @@ class SquadController:
             raise KeyError(f"Phase not found in definition.yaml: {phase_id!r}")
 
         existing = self._state_store.load()
+        if self._unresolved_human_input_decision(existing) is not None:
+            return self._unresolved_human_input_result(existing)
+        if (
+            existing.get("status") == "blocked"
+            and existing.get("escalation_question")
+            and not (
+                isinstance(existing.get("blocked_decision"), Mapping)
+                and existing["blocked_decision"].get("schema_version") == 2
+            )
+        ):
+            legacy_request = self._prepare_legacy_human_input(existing)
+            if legacy_request is None:
+                return SquadResult.from_state(existing)
+            if not self.handle_human_input(legacy_request):
+                return SquadResult.from_state(self._state_store.load())
+            existing = self._state_store.load()
         if not existing:
             run_id = f"squad-{int(time.time())}"
             project_mode = self._detect_project_mode(mode)
@@ -2722,6 +4747,10 @@ class SquadController:
             ),
             flush=True,
         )
+
+        if node.type == "human_gate":
+            self._intercept_human_gate(node)
+            return SquadResult.from_state(self._state_store.load())
 
         executor = self._executors.get(node.type)
         try:
@@ -2832,20 +4861,30 @@ class SquadController:
             routing_updates[PENDING_EXTERNAL_PUBLICATION_KEY] = (
                 prepared_publication.marker.to_dict()
             )
-        decision = self._construct_routing_decision_or_block(
+        routing = self._construct_routing_decision_or_block(
             node,
             prepared,
             snapshot,
             additional_state_updates=routing_updates,
             manual_phase_run=True,
         )
-        if decision is None:
+        if routing is None:
             self._discard_publication_without_authority(
                 prepared_publication,
             )
             return SquadResult.from_state(self._state_store.load())
+        decision = routing.decision
         next_phase = decision.to_phase
 
+        human_input_result = self._handle_prepared_human_input_or_block(
+            node,
+            prepared,
+            snapshot,
+            routing,
+            prepared_publication,
+        )
+        if human_input_result is not None:
+            return SquadResult.from_state(self._state_store.load())
         receipt = self._advance_prepared_result_or_block(
             node,
             decision,
@@ -2909,14 +4948,25 @@ class SquadController:
             )
             if prepared is None:
                 return True
-            decision = self._construct_routing_decision_or_block(
+            routing = self._construct_routing_decision_or_block(
                 node,
                 prepared,
                 snapshot,
                 manual_phase_run=manual_phase_run,
                 conditional_skip=True,
             )
-            if decision is None:
+            if routing is None:
+                return True
+            decision = routing.decision
+            if routing.human_input is not None:
+                self.handle_human_input(
+                    routing.human_input,
+                    provider_advance=_ProviderHumanInputAdvance(
+                        from_phase=decision.from_phase,
+                        to_phase=decision.to_phase,
+                        decision=decision,
+                    ),
+                )
                 return True
             next_phase = decision.to_phase
             receipt = self._advance_prepared_result_or_block(
@@ -5679,6 +7729,14 @@ class SquadController:
                     "BLOCKED",
                     "STOP_AND_ASK",
                 }
+                quarantined = candidate.quarantined_state_updates
+                if (
+                    candidate.verdict == "STOP_AND_ASK"
+                    and quarantined == {"status": "blocked"}
+                ):
+                    provider_control_intents["status"] = "blocked"
+                    updates["status"] = "blocked"
+                    candidate.quarantined_state_updates = {}
                 sanitized_updates = dict(updates)
                 for key in ("status", "blocked_reason"):
                     if key in sanitized_updates and (
@@ -5814,12 +7872,103 @@ class SquadController:
             )
             return None
 
+    def _prepare_provider_human_input(
+        self,
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
+    ) -> PreparedHumanInput | None:
+        """Prepare canonical provider question facts without policy authority."""
+        updates = prepared.state_updates
+        question = updates.get("escalation_question")
+        if not isinstance(question, str) or not question.strip():
+            return None
+        control = prepared.control_updates
+        reason_code = control.get("blocked_reason")
+        if not isinstance(reason_code, str) or not reason_code.strip():
+            raise HumanInputPolicyError(
+                "provider question requires an exact reason code"
+            )
+        options = updates.get("escalation_options")
+        if options is not None and not isinstance(options, list):
+            raise HumanInputPolicyError(
+                "provider escalation options must be a list"
+            )
+        return self._human_input_registry.prepare(
+            source_kind="provider_escalation",
+            producer_id=node.id,
+            phase_id=node.id,
+            reason_code=reason_code,
+            question=question,
+            recommended_answer=updates.get(
+                "escalation_recommended_answer"
+            ),
+            risk_level=updates.get("escalation_risk_level"),
+            options=options,
+            source_state_revision=snapshot.state_revision,
+        )
+
+    def _handle_prepared_human_input_or_block(
+        self,
+        node: PhaseNode,
+        prepared: PreparedPhaseResult,
+        snapshot: RoutingStateSnapshot,
+        routing: _PreparedControllerRouting,
+        prepared_publication: PreparedSquadPublication | None,
+    ) -> bool | None:
+        """Share provider preparation, overlap rejection, and sealing."""
+        decision = routing.decision
+        try:
+            provider_request = self._prepare_provider_human_input(
+                node,
+                prepared,
+                snapshot,
+            )
+            if (
+                provider_request is not None
+                and routing.human_input is not None
+            ):
+                raise HumanInputPolicyError(
+                    "provider question and controller safeguard overlap"
+                )
+            request = provider_request or routing.human_input
+        except HumanInputPolicyError:
+            self._discard_publication_without_authority(
+                prepared_publication,
+            )
+            self._block_after_state_advance_failure(
+                node,
+                decision.from_phase,
+                StateAdvanceError(
+                    "provider human-input preparation failed",
+                    json_path="$.state_updates.escalation_question",
+                    validator="human_input_policy",
+                ),
+                decision=decision,
+                token_usage_delta=decision.token_usage_delta,
+                diagnostic_subject="provider human-input preparation",
+            )
+            return False
+
+        if request is None:
+            return None
+        return self.handle_human_input(
+            request,
+            provider_advance=_ProviderHumanInputAdvance(
+                from_phase=decision.from_phase,
+                to_phase=decision.to_phase,
+                decision=decision,
+            ),
+        )
+
     def _advance_prepared_result_or_block(
         self,
         node: PhaseNode,
         decision: PreparedRoutingDecision,
         *,
         prepared_publication: PreparedSquadPublication | None = None,
+        human_input: PreparedHumanInput | None = None,
+        human_input_initial_status: str | None = None,
     ) -> AdvanceReceipt | None:
         """Commit one sealed route or persist a separate redacted failure."""
         completion_marker = dict(
@@ -5861,11 +8010,20 @@ class SquadController:
                         ),
                         validator="ownership",
                     )
-            receipt = self._state_store.advance(
-                decision.from_phase,
-                decision.to_phase,
-                decision,
-            )
+            if human_input is None:
+                receipt = self._state_store.advance(
+                    decision.from_phase,
+                    decision.to_phase,
+                    decision,
+                )
+            else:
+                receipt = self._state_store.advance(
+                    decision.from_phase,
+                    decision.to_phase,
+                    decision,
+                    human_input=human_input,
+                    human_input_initial_status=human_input_initial_status,
+                )
             if not isinstance(receipt, AdvanceReceipt):
                 raise StateAdvanceError(
                     "state advance did not return a receipt",
@@ -6163,10 +8321,14 @@ class SquadController:
         node: PhaseNode,
         prepared: PreparedPhaseResult,
         snapshot: RoutingStateSnapshot,
-    ) -> tuple[str | None, dict[str, object]]:
-        """Return WHY routing and state effects without persisting them."""
+    ) -> tuple[
+        str | None,
+        dict[str, object],
+        PreparedHumanInput | None,
+    ]:
+        """Return WHY routing, state effects, and any routed safeguard."""
         if node.id not in WHY_PHASES:
-            return None, {}
+            return None, {}, None
 
         result, state, eval_state = self._transition_evaluation_inputs(
             node,
@@ -6178,7 +8340,7 @@ class SquadController:
             updates: dict[str, object] = {"status": "blocked"}
             if "blocked_reason" not in prepared.control_updates:
                 updates["blocked_reason"] = "WHY phase: agent escalation"
-            return node.id, updates
+            return node.id, updates, None
 
         verdict_upper = (result.verdict or "").upper()
         is_fail = (
@@ -6212,7 +8374,7 @@ class SquadController:
                         "issue_resolution_repair_baseline": None,
                     }
                 )
-            return None, updates
+            return None, updates, None
 
         # A selected issue is validated independently from the overall WHY2
         # verdict. A targeted WHAT repair is marked ``repaired`` only after
@@ -6312,9 +8474,9 @@ class SquadController:
                 "phase_id": node.id,
                 "recorded_at": datetime.now(timezone.utc).isoformat(),
             }
-            return None, updates
+            return None, updates, None
         if node.id != "phase1-why2":
-            return None, updates
+            return None, updates, None
 
         metrics_improved = _why2_certified_metrics_improved(
             eval_state.get("quality_scores")
@@ -6330,44 +8492,50 @@ class SquadController:
                 stagnation_count = 1
             updates["why2_metric_stagnation_count"] = stagnation_count
             if stagnation_count >= WHY2_METRIC_STAGNATION_LIMIT:
-                updates["escalation_question"] = (
+                question = (
                     "WHY2 certified metrics did not improve across "
                     f"{stagnation_count} consecutive repair cycles. "
                     "Provide new evidence, narrow scope, or authorize a "
                     "different repair strategy."
                 )
-                updates["blocked_reason"] = "why2_metric_stagnation"
-                updates["status"] = "blocked"
-                return PHASE_TERMINAL_BLOCKED, updates
+                request = self._human_input_registry.prepare(
+                    source_kind="controller_safeguard",
+                    producer_id="why2_metric_stagnation",
+                    phase_id=node.id,
+                    reason_code="why2_metric_stagnation",
+                    question=question,
+                    source_state_revision=snapshot.state_revision,
+                )
+                return PHASE_TERMINAL_BLOCKED, updates, request
 
         if fail_count < 2 or state.get("escalation_question"):
-            return None, updates
+            return None, updates, None
         if self._phase_artifacts_changed_since(baseline_ts, snapshot.state):
-            return None, updates
+            return None, updates, None
 
         print(
             f"[squad] ✗ consecutive-fail guard: {fail_count} {node.id} "
             "FAILs with no artifact progress — forcing escalation",
             flush=True,
         )
-        spec_dir_ref = str(state.get("spec_dir") or "").strip()
-        if spec_dir_ref:
-            issues_path = Path(spec_dir_ref)
-            if not issues_path.is_absolute():
-                issues_path = self._project_root / issues_path
-            issues_hint = str(issues_path / "issues.md")
-        else:
-            issues_hint = "issues.md was not available"
-        updates["escalation_question"] = (
+        question = (
             f"{node.id} still fails after {fail_count} assessments without "
-            "a spec artifact change. No retry is authorized. Resolve the "
-            f"first unresolved SAGE issue from {issues_hint} with "
-            "`echelon spec resolve ISS-<n> '<decision>'`; the controller "
-            "will run and revalidate only that issue's declared repair edge."
+            "a spec artifact change. No automatic retry is authorized. Run "
+            '`echelon spec resume "<your answer>"` with new evidence, narrowed '
+            "scope, or a concrete repair instruction. The resume records that "
+            "free-text answer, resets the consecutive WHY failure count, and "
+            "reopens phase1-why2. Then `echelon spec continue` retries that "
+            "phase under the normal validation gates."
         )
-        updates["blocked_reason"] = "consecutive_why_fails"
-        updates["status"] = "blocked"
-        return PHASE_TERMINAL_BLOCKED, updates
+        request = self._human_input_registry.prepare(
+            source_kind="controller_safeguard",
+            producer_id="consecutive_why_fails",
+            phase_id=node.id,
+            reason_code="consecutive_why_fails",
+            question=question,
+            source_state_revision=snapshot.state_revision,
+        )
+        return PHASE_TERMINAL_BLOCKED, updates, request
 
     def _construct_routing_decision_or_block(
         self,
@@ -6378,17 +8546,27 @@ class SquadController:
         additional_state_updates: Mapping[str, object] | None = None,
         manual_phase_run: bool = False,
         conditional_skip: bool = False,
-    ) -> PreparedRoutingDecision | None:
+    ) -> _PreparedControllerRouting | None:
         """Construct one route or record a redacted snapshot-bound failure."""
         with self._defer_routing_provider_usage() as usage:
             try:
-                return self._coordinate_transition_routing(
+                routed_human_input: list[PreparedHumanInput] = []
+                decision = self._coordinate_transition_routing(
                     node,
                     prepared,
                     snapshot,
                     additional_state_updates=additional_state_updates,
                     manual_phase_run=manual_phase_run,
                     conditional_skip=conditional_skip,
+                    human_input_collector=routed_human_input,
+                )
+                return _PreparedControllerRouting(
+                    decision=decision,
+                    human_input=(
+                        routed_human_input[0]
+                        if routed_human_input
+                        else None
+                    ),
                 )
             except (
                 ControllerStateContractViolation,
@@ -6441,6 +8619,7 @@ class SquadController:
         additional_state_updates: Mapping[str, object] | None = None,
         manual_phase_run: bool = False,
         conditional_skip: bool = False,
+        human_input_collector: list[PreparedHumanInput] | None = None,
     ) -> PreparedRoutingDecision:
         """Select and seal one route without mutating live success state."""
         self._matched_transition = None
@@ -6518,6 +8697,7 @@ class SquadController:
         judgment_results: list[SquadAgentResult] = []
         source = "transition"
         transition_index: int | None = None
+        routed_human_input: PreparedHumanInput | None = None
         if prepared.routing_override:
             next_phase = self._evaluate_transitions(
                 node,
@@ -6526,7 +8706,7 @@ class SquadController:
             )
             source = "controller_override"
         else:
-            why_override, why_updates = (
+            why_override, why_updates, routed_human_input = (
                 self._coordinate_why_transition_state(
                     node,
                     prepared,
@@ -6685,7 +8865,7 @@ class SquadController:
             completion.marker.to_dict()
         )
         try:
-            return self._state_store.prepare_routing_decision(
+            decision = self._state_store.prepare_routing_decision(
                 prepared,
                 snapshot=snapshot,
                 from_phase=node.id,
@@ -6704,6 +8884,16 @@ class SquadController:
                 )["tokens"],
                 dispatch_id=completion.marker.completion_id,
             )
+            if human_input_collector is not None and human_input_collector:
+                raise HumanInputPolicyError(
+                    "routing human-input collector is not empty"
+                )
+            if (
+                human_input_collector is not None
+                and routed_human_input is not None
+            ):
+                human_input_collector.append(routed_human_input)
+            return decision
         except BaseException:
             try:
                 completion.discard()
@@ -6784,478 +8974,187 @@ class SquadController:
         judgment = self._canonicalize_judgment_result(raw_judgment)
         return judgment
 
-    def _judgment_dispatch_escalation(
+    def _block_unresolvable_dispatch_cap(
         self,
-        escalation_question: str,
-        blocked_phase: str,
-        recovery_reason: str = "",
-    ) -> SquadAgentResult:
-        """Dispatch COMMANDER to resolve a user-gated escalation in banzai mode.
-
-        COMMANDER produces staging/user-clarifications.md with BANZAI-AUTO-RESOLVED
-        answers and returns state_updates that clear the block.
-        """
-        commander_path = self._ext_dir / "agents/control/commander.md"
-        snapshot = self._state_store.capture_routing_snapshot()
-        state = snapshot.state
-        # Recovery arguments are observational hints from an earlier caller
-        # load.  The captured immutable snapshot is the only routing authority.
-        snapshot_question = str(state.get("escalation_question") or "")
-        blocked_reason = str(state.get("blocked_reason") or "")
-        if (
-            not blocked_reason
-            and str(state.get("phase_dispatch_limit_phase") or "").strip()
-        ):
-            blocked_reason = "phase_dispatch_limit"
-        snapshot_phase = snapshot.phase
-        last_dispatch = state.get("last_dispatch")
-        last_dispatch_phase = (
-            str(last_dispatch.get("phase_id") or "").strip()
-            if isinstance(last_dispatch, dict)
-            else ""
+        phase: str,
+        state: Mapping[str, object],
+        reason_code: str,
+    ) -> None:
+        self._state_store.block_unresolvable_dispatch_cap(
+            from_phase=phase,
+            expected_state_revision=int(state.get("state_revision") or 0),
+            reason_code=reason_code,
         )
-        dispatch_limit_phase = _phase_dispatch_limit_phase(state)
-        blocked_origin_phase = snapshot_phase
-        if snapshot_phase == PHASE_TERMINAL_BLOCKED:
-            if (
-                dispatch_limit_phase
-                and dispatch_limit_phase in self._graph.all_phase_ids()
-                and dispatch_limit_phase not in TERMINAL_PHASES
-            ):
-                blocked_origin_phase = dispatch_limit_phase
-            elif (
-                last_dispatch_phase
-                and last_dispatch_phase in self._graph.all_phase_ids()
-                and last_dispatch_phase not in TERMINAL_PHASES
-            ):
-                blocked_origin_phase = last_dispatch_phase
-        reset_why_fail_count = blocked_reason == "consecutive_why_fails"
-        capped_phase = (
-            _phase_dispatch_limit_phase(state)
-            if blocked_reason == "phase_dispatch_limit"
-            else ""
-        )
-        banzai_candidates = self._banzai_issue_resolution_candidates(state)
 
-        staging_dir = Path(state.get("staging_dir", str(self._squad_dir / "staging")))
-        staging_context = ""
-        for f in sorted(staging_dir.glob("*.md"))[:8]:
+    def _read_dispatch_cap_issues(
+        self,
+        state: Mapping[str, object],
+    ) -> str:
+        state_key = (
+            "published_spec_dir"
+            if state.get("published_spec_dir")
+            else "spec_dir"
+        )
+        try:
+            spec_dir = self._validated_spec_root(
+                state,
+                state_key=state_key,
+            )
+        except HumanInputPolicyError as exc:
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_malformed"
+            ) from exc
+        if spec_dir is None:
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_missing"
+            )
+        opened: list[int] = []
+        file_fd = -1
+        try:
+            opened = self._open_project_directory_chain(spec_dir)
+            file_fd = os.open(
+                "issues.md",
+                (
+                    os.O_RDONLY
+                    | getattr(os, "O_NOFOLLOW", 0)
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_NONBLOCK", 0)
+                ),
+                dir_fd=opened[-1],
+            )
+            metadata = os.fstat(file_fd)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_malformed"
+                )
+            if metadata.st_size > DISPATCH_CAP_ISSUES_MAX_BYTES:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_oversized"
+                )
+            chunks: list[bytes] = []
+            remaining = DISPATCH_CAP_ISSUES_MAX_BYTES + 1
+            while remaining > 0:
+                chunk = os.read(
+                    file_fd,
+                    min(remaining, _CONTEXT_FILE_READ_CHUNK_BYTES),
+                )
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            payload = b"".join(chunks)
+            if len(payload) > DISPATCH_CAP_ISSUES_MAX_BYTES:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_oversized"
+                )
             try:
-                staging_context += f"\n---\n# {f.name}\n{f.read_text()[:3000]}\n"
-            except Exception:
-                pass
+                return payload.decode("utf-8")
+            except UnicodeError as exc:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_malformed"
+                ) from exc
+        except FileNotFoundError as exc:
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_missing"
+            ) from exc
+        except _DispatchCapEvidenceError:
+            raise
+        except (OSError, HumanInputPolicyError) as exc:
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_malformed"
+            ) from exc
+        finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+            for descriptor in reversed(opened):
+                os.close(descriptor)
 
-        context = (
-            f"# COMMANDER BANZAI ESCALATION JUDGMENT\n\n"
-            f"**Mode:** banzai — produce best-judgment answers and continue. "
-            f"Do NOT stop the run.\n\n"
-            f"**Phase blocked:** {blocked_origin_phase}\n\n"
-            f"**Blocking questions:**\n{snapshot_question}\n\n"
-            f"**Your task:**\n"
-            f"1. For each blocking question, produce a best-judgment answer.\n"
-            f"2. Write `{staging_dir}/user-clarifications.md` using the "
-            f"BANZAI-AUTO-RESOLVED format from commander.md §Banzai Escalation.\n"
-            f"3. Return echelon_result state_updates that clear the block:\n"
-            f"   escalation_question: null\n"
-            f"   escalation_resolved: true\n"
-            f"   escalation_resolver: COMMANDER-banzai\n"
-            f"   blocked_reason: null\n\n"
-            f"Do NOT return `why_fail_count`; it is controller-owned and the "
-            f"harness resets it after a valid consecutive-fail recovery.\n\n"
-            f"**Staging context:**\n{staging_context}"
-        )
-        if capped_phase:
-            candidate_text = json.dumps(banzai_candidates, indent=2) if banzai_candidates else "(none)"
-            context += (
-                "\n\n## Dispatch-cap recovery: issue-level decision required\n\n"
-                "You may clear this cap only by selecting exactly one candidate below. "
-                "Never invent a product, scope, policy, security, or quality-waiver decision. "
-                "If no candidate is present, or none is safe to accept, return no "
-                "`issue_resolution_selection`; the controller will keep the run blocked "
-                "for a human decision.\n\n"
-                "For a selection, return exactly:\n"
-                "```yaml\n"
-                "issue_resolution_selection:\n"
-                "  issue_id: ISS-001\n"
-                "  decision: <copy the candidate suggested_option exactly>\n"
-                "  rationale: <why its cited evidence supports this choice>\n"
-                "  confidence: high | medium\n"
-                "  evidence_backed: true\n"
-                "```\n\n"
-                f"**Eligible candidates:**\n```json\n{candidate_text}\n```"
+    def _banzai_issue_resolution_candidates(
+        self,
+        state: dict,
+    ) -> list[dict[str, str]]:
+        """Return a bounded, complete set of explicitly eligible issue options."""
+        issues_md = self._read_dispatch_cap_issues(state)
+        if not issues_md.strip():
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_empty"
             )
-        if commander_path.exists():
-            context = commander_path.read_text() + "\n\n" + context
-        else:
-            print(
-                f"[squad] warning: commander.md not found at {commander_path} — "
-                f"dispatching COMMANDER without preamble",
-                flush=True,
-            )
-
-        with self._defer_routing_provider_usage() as usage:
-            with self._telemetry_provider.dispatch(
-                DispatchContext(
-                    blocked_origin_phase,
-                    "COMMANDER",
-                    "escalation",
-                    1,
-                )
-            ):
-                raw_result = self._telemetry_provider.exec_agent(
-                    str(self._project_root),
-                    context,
-                )
-
-        validation_reason = ""
-        try:
-            result = self._canonicalize_judgment_result(raw_result)
-        except ControllerStateContractViolation:
-            validation_reason = "contract"
-            result = SquadAgentResult(
-                exit_code=0,
-                echelon_result={
-                    "verdict": "JUDGMENT_RESOLVED",
-                    "state_updates": {},
-                },
-                raw_output="",
-                duration_ms=0,
-                timed_out=False,
-            )
-        if result.quarantined_state_updates:
-            validation_reason = sorted(
-                result.quarantined_state_updates
-            )[0]
-        if not validation_reason and result.verdict != "JUDGMENT_RESOLVED":
-            validation_reason = "verdict"
-        cleanup = result.state_updates
-        if not validation_reason and not (
-            "escalation_question" in cleanup
-            and cleanup["escalation_question"] is None
-            and cleanup.get("escalation_resolved") is True
-            and cleanup.get("escalation_resolver") == "COMMANDER-banzai"
-            and "blocked_reason" in cleanup
-            and cleanup["blocked_reason"] is None
-            and (
-                "status" not in cleanup
-                or cleanup.get("status") == "running"
-            )
-        ):
-            validation_reason = "cleanup_intent"
-
-        issue_selection: dict[str, str] | None = None
-        if (
-            not validation_reason
-            and capped_phase
-            and cleanup.get("issue_resolution_selection") is not None
-        ):
-            issue_selection = self._validate_banzai_issue_resolution_selection(
-                cleanup.get("issue_resolution_selection"),
-                banzai_candidates,
-            )
-            if issue_selection is None:
-                self._block_banzai_issue_resolution(
-                    blocked_origin_phase,
-                    capped_phase,
-                    "COMMANDER did not select one evidence-backed SAGE issue",
-                )
-                return result
-
-        from_phase = snapshot.phase
-        requested_phase = str(
-            result.state_updates.get("next_phase")
-            or result.state_updates.get("phase")
-            or ""
-        ).strip()
-        if (
-            requested_phase
-            and requested_phase not in self._graph.all_phase_ids()
-        ):
-            validation_reason = "next_phase"
-
-        queued_updates: dict[str, object] = {}
-        removals: set[str] = set()
-        transaction_updates: dict[str, object] = {}
-        transaction_removals: set[str] = set()
-        target_phase = requested_phase or from_phase
-        source = "commander_recovery"
-        if validation_reason:
-            target_phase = PHASE_TERMINAL_BLOCKED
-            transaction_updates.update(
-                {
-                    "status": "blocked",
-                    "blocked_reason": (
-                        "judgment state_updates validation failed: "
-                        f"{validation_reason}"
-                    ),
-                }
-            )
-            source = "commander_recovery_rejected"
-        else:
-            for key, value in result.state_updates.items():
-                if key in {"next_phase", "phase", "issue_resolution_selection"}:
-                    continue
-                if key in STORE_OWNED_TRANSACTION_KEYS:
-                    valid_control_intent = (
-                        (key == "status" and value == "running")
-                        or (key == "blocked_reason" and value is None)
-                        or (
-                            key == "escalation_resolved"
-                            and value is True
-                        )
-                        or (
-                            key == "escalation_resolver"
-                            and value == "COMMANDER-banzai"
-                        )
-                    )
-                    if not valid_control_intent:
-                        validation_reason = "ownership"
-                        break
-                    continue
-                if value is None:
-                    removals.add(key)
-                else:
-                    queued_updates[key] = value
-            if validation_reason:
-                queued_updates.clear()
-                removals.clear()
-                transaction_updates.clear()
-                transaction_removals.clear()
-                target_phase = PHASE_TERMINAL_BLOCKED
-                transaction_updates.update(
-                    {
-                        "status": "blocked",
-                        "blocked_reason": (
-                            "judgment state_updates validation failed: "
-                            f"{validation_reason}"
-                        ),
-                    }
-                )
-                source = "commander_recovery_rejected"
-            else:
-                transaction_updates.update(
-                    {
-                        "status": "running",
-                        "escalation_resolved": True,
-                        "escalation_resolver": "COMMANDER-banzai",
-                    }
-                )
-                transaction_removals.add("blocked_reason")
-                removals.add("escalation_question")
-                if reset_why_fail_count:
-                    transaction_updates["why_fail_count"] = 0
-                if capped_phase:
-                    counts = state.get("phase_dispatch_counts")
-                    next_counts = (
-                        dict(counts) if isinstance(counts, dict) else {}
-                    )
-                    next_counts.pop(capped_phase, None)
-                    transaction_updates["phase_dispatch_counts"] = (
-                        next_counts
-                    )
-                    transaction_updates["phase_dispatch_limit_recovery"] = {
-                        "phase": capped_phase,
-                        "resolver": "COMMANDER-banzai",
-                    }
-                if issue_selection is not None:
-                    from datetime import datetime, timezone
-
-                    issue_id = issue_selection["issue_id"]
-                    ledger = state.get("issue_resolution_ledger")
-                    selected_ledger = dict(ledger) if isinstance(ledger, dict) else {}
-                    selected_ledger[issue_id] = {
-                        "issue_id": issue_id,
-                        "title": issue_selection["title"],
-                        "severity": "ISSUE",
-                        "guidance": issue_selection["decision_required"],
-                        "status": "selected",
-                        "decision": issue_selection["decision"],
-                        "repair_phase": "phase1-what",
-                        "rationale": issue_selection["rationale"],
-                        "confidence": issue_selection["confidence"],
-                        "evidence_backed": issue_selection["evidence_backed"],
-                    }
-                    queued_updates.update(
-                        {
-                            "issue_resolution_ledger": selected_ledger,
-                            "selected_issue_resolution": issue_id,
-                            "issue_resolution_repair_baseline": {
-                                "issue_id": issue_id,
-                                "repair_phase": "phase1-what",
-                                "recorded_at": datetime.now(timezone.utc).isoformat(),
-                            },
-                            "issue_resolution_recovery": {
-                                "issue_id": issue_id,
-                                "from_phase": "phase1-why2",
-                                "to_phase": "phase1-what",
-                                "reason": "issue_resolution",
-                            },
-                        }
-                    )
-                    target_phase = "phase1-what"
-                if (
-                    not requested_phase
-                    and from_phase == PHASE_TERMINAL_BLOCKED
-                    and blocked_origin_phase
-                    and blocked_origin_phase != PHASE_TERMINAL_BLOCKED
-                ):
-                    target_phase = blocked_origin_phase
-
-        payload = deepcopy(result.echelon_result or {})
-        payload["state_updates"] = {}
-        synthetic_result = detach_squad_agent_result(result)
-        synthetic_result.echelon_result = payload
-        recovery_node = PhaseNode(
-            id=from_phase,
-            type="commander_recovery",
-            allowed_state_updates=[],
-        )
-        completion: PreparedControllerCompletion | None = None
-        try:
-            prepared = prepare_phase_result(
-                recovery_node,
-                synthetic_result,
-                controller_updates={},
-                routing_override=target_phase,
-                state_removals=removals,
-            )
-            completion = self._prepare_controller_completion(
-                from_phase=from_phase,
-                to_phase=target_phase,
-                snapshot=snapshot,
-                manual_phase_run=False,
-                conditional_skip=False,
-                record_completion=False,
-                publication_marker=None,
-                judgments=(result,),
-            )
-            transaction_updates[
-                PENDING_CONTROLLER_COMPLETION_KEY
-            ] = completion.marker.to_dict()
-            decision = self._state_store.prepare_routing_decision(
-                prepared,
-                snapshot=snapshot,
-                from_phase=from_phase,
-                to_phase=target_phase,
-                queued_state_updates=queued_updates,
-                transaction_state_updates=transaction_updates,
-                transaction_state_removals=transaction_removals,
-                token_usage_delta=usage["tokens"],
-                judgment_payloads=(
-                    [result.echelon_result]
-                    if isinstance(result.echelon_result, dict)
-                    else []
-                ),
-                source=source,
-                record_completion=False,
-                dispatch_id=completion.marker.completion_id,
-            )
-            receipt = self._state_store.advance(
-                from_phase,
-                target_phase,
-                decision,
-            )
-            if not isinstance(receipt, AdvanceReceipt):
-                raise StateAdvanceError(
-                    "recovery state advance did not return a receipt",
-                    json_path="$.advance_receipt",
-                    validator="receipt",
-                )
-            recovery = self._drain_pending_controller_completion()
-            if (
-                not recovery.recovered
-                or recovery.completion_id
-                != completion.marker.completion_id
-            ):
-                return result
-        except (
-            ControllerStateContractViolation,
-            StateAdvanceError,
-        ) as exc:
-            if (
-                isinstance(exc, StateAdvanceError)
-                and exc.validator == "checkpoint_prestate"
-            ):
-                if usage["tokens"]:
-                    self._state_store.increment_token_usage(
-                        usage["tokens"]
-                    )
-                if completion is not None:
-                    self._discard_controller_completion_without_authority(
-                        completion.marker.to_dict()
-                    )
-                return result
-            error = (
-                StateAdvanceError(
-                    "recovery routing decision construction failed",
-                    json_path=exc.json_path,
-                    validator=exc.validator,
-                )
-                if isinstance(exc, ControllerStateContractViolation)
-                else exc
-            )
-            self._block_after_state_advance_failure(
-                recovery_node,
-                from_phase,
-                error,
-                snapshot=snapshot,
-                token_usage_delta=usage["tokens"],
-                diagnostic_contract=(
-                    exc.contract
-                    if isinstance(
-                        exc,
-                        ControllerStateContractViolation,
-                    )
-                    else "commander_recovery"
-                ),
-                diagnostic_subject="recovery routing decision",
-            )
-            if completion is not None:
-                self._discard_controller_completion_without_authority(
-                    completion.marker.to_dict()
-                )
-            return result
-        return result
-
-    def _banzai_issue_resolution_candidates(self, state: dict) -> list[dict[str, str]]:
-        """Read only explicitly auto-eligible SAGE suggestions from issues.md."""
-        spec_ref = str(state.get("published_spec_dir") or state.get("spec_dir") or "").strip()
-        if not spec_ref:
-            return []
-        spec_dir = Path(spec_ref)
-        if not spec_dir.is_absolute():
-            spec_dir = self._project_root / spec_dir
-        issues_path = spec_dir / "issues.md"
-        try:
-            issues_md = issues_path.read_text(errors="replace")
-        except OSError:
-            return []
-        candidates: list[dict[str, str]] = []
-        for title, body in re.findall(
+        issue_blocks = re.findall(
             r"^### (ISS-\d+:\s*[^\n]+)\n(.*?)(?=^### ISS-\d+:|\Z)",
             issues_md,
             re.MULTILINE | re.DOTALL,
-        ):
-            issue_match = re.match(r"^(ISS-\d+):\s*(.+)$", title.strip())
-            if not issue_match:
+        )
+        if not issue_blocks:
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_malformed"
+            )
+
+        candidates: list[dict[str, str]] = []
+        seen_issue_ids: set[str] = set()
+        for title, body in issue_blocks:
+            issue_match = re.fullmatch(
+                r"(ISS-\d+):\s*(\S(?:.*\S)?)",
+                title.strip(),
+            )
+            guidance = re.search(
+                r"^### Resolution Guidance[ \t]*\n(.*?)(?=^### |\Z)",
+                body,
+                re.MULTILINE | re.DOTALL,
+            )
+            if issue_match is None or guidance is None:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_malformed"
+                )
+            issue_id = issue_match.group(1)
+            if issue_id in seen_issue_ids:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_malformed"
+                )
+            seen_issue_ids.add(issue_id)
+            guidance_text = guidance.group(1)
+            field_patterns = {
+                "decision_required": "Decision required",
+                "suggested_option": "Suggested option",
+                "evidence_basis": "Evidence basis",
+            }
+            fields: dict[str, str] = {}
+            for field, label in field_patterns.items():
+                matches = re.findall(
+                    rf"^- \*\*{re.escape(label)}:\*\*[ \t]*(.+?)[ \t]*$",
+                    guidance_text,
+                    re.MULTILINE,
+                )
+                if len(matches) != 1 or not matches[0].strip():
+                    raise _DispatchCapEvidenceError(
+                        "phase_dispatch_limit_evidence_malformed"
+                    )
+                fields[field] = matches[0].strip()
+            eligibility = re.findall(
+                r"^- \*\*Banzai eligible:\*\*[ \t]*(yes|no)[ \t]*$",
+                guidance_text,
+                re.MULTILINE | re.IGNORECASE,
+            )
+            if len(eligibility) != 1:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_malformed"
+                )
+            if eligibility[0].lower() == "no":
                 continue
-            guidance = re.search(r"### Resolution Guidance\n(.*?)(?=^### |\Z)", body, re.DOTALL)
-            if not guidance:
-                continue
-            text = guidance.group(1)
-            eligible = re.search(r"- \*\*Banzai eligible:\*\*\s*yes\b", text, re.IGNORECASE)
-            suggested = re.search(r"- \*\*Suggested option:\*\*\s*(.+)", text)
-            evidence = re.search(r"- \*\*Evidence basis:\*\*\s*(.+)", text)
-            required = re.search(r"- \*\*Decision required:\*\*\s*(.+)", text)
-            if not eligible or not suggested or not evidence or not required:
-                continue
-            candidates.append({
-                "issue_id": issue_match.group(1),
-                "title": issue_match.group(2),
-                "decision_required": required.group(1).strip(),
-                "suggested_option": suggested.group(1).strip(),
-                "evidence_basis": evidence.group(1).strip(),
-            })
+            candidates.append(
+                {
+                    "issue_id": issue_id,
+                    "title": issue_match.group(2),
+                    **fields,
+                }
+            )
+            if len(candidates) > HUMAN_INPUT_MAX_OPTIONS:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_too_many_candidates"
+                )
+        if not candidates:
+            raise _DispatchCapEvidenceError(
+                "phase_dispatch_limit_evidence_ineligible"
+            )
         return candidates
 
     def _validate_banzai_issue_resolution_selection(
@@ -7281,21 +9180,44 @@ class SquadController:
             "evidence_backed": "true",
         }
 
-    def _block_banzai_issue_resolution(
-        self, blocked_phase: str, capped_phase: str, reason: str
-    ) -> None:
-        """Keep a capped run blocked when Banzai cannot safely choose for the user."""
-        state = self._state_store.load()
-        state["status"] = "blocked"
-        state["phase"] = PHASE_TERMINAL_BLOCKED
-        state["blocked_reason"] = "phase_dispatch_limit"
-        state["phase_dispatch_limit_phase"] = capped_phase
-        state["escalation_question"] = (
-            f"{reason}. Resolve one issue explicitly before retrying {capped_phase}: "
-            'echelon spec resolve ISS-<n> "<project decision>".'
-        )
-        self._state_store.save(state)
-        self._record_blocker_event(blocked_phase, "phase_dispatch_limit")
+    @staticmethod
+    def _issue_resolution_state_updates(
+        state: dict,
+        selection: dict[str, str],
+    ) -> dict[str, object]:
+        """Apply the existing selected-issue repair lifecycle in memory."""
+        from datetime import datetime, timezone
+
+        issue_id = selection["issue_id"]
+        ledger = state.get("issue_resolution_ledger")
+        selected_ledger = dict(ledger) if isinstance(ledger, dict) else {}
+        selected_ledger[issue_id] = {
+            "issue_id": issue_id,
+            "title": selection["title"],
+            "severity": "ISSUE",
+            "guidance": selection["decision_required"],
+            "status": "selected",
+            "decision": selection["decision"],
+            "repair_phase": "phase1-what",
+            "rationale": selection["rationale"],
+            "confidence": selection["confidence"],
+            "evidence_backed": selection["evidence_backed"],
+        }
+        return {
+            "issue_resolution_ledger": selected_ledger,
+            "selected_issue_resolution": issue_id,
+            "issue_resolution_repair_baseline": {
+                "issue_id": issue_id,
+                "repair_phase": "phase1-what",
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            },
+            "issue_resolution_recovery": {
+                "issue_id": issue_id,
+                "from_phase": "phase1-why2",
+                "to_phase": "phase1-what",
+                "reason": "issue_resolution",
+            },
+        }
 
     def _write_journal_entries(self, result: SquadAgentResult, phase_id: str) -> None:
         """Mirror executor journal writes through the shared durable store."""

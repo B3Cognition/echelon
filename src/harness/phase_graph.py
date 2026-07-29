@@ -17,6 +17,12 @@ from harness.controller_state_contract_requirements import (
     required_controller_contract_name,
     structural_phase_definition_errors,
 )
+from harness.human_input import (
+    HumanInputPolicy,
+    HumanInputPolicyRegistry,
+    compile_workflow_human_input_policies,
+    controller_safeguard_policies,
+)
 
 
 def _validate_controller_provider_allowlist(
@@ -74,6 +80,7 @@ class PhaseNode:
     unexpected_state_updates: str = "quarantine"
     evidence_routing: str = "none"
     transitions: list = field(default_factory=list)
+    human_input_policies: tuple[HumanInputPolicy, ...] = ()
 
     @property
     def controller_state_update_keys(self) -> frozenset[str]:
@@ -163,6 +170,12 @@ class PhaseGraph:
                 definition_path.parent / contracts_file
             )
         self._phases: dict[str, PhaseNode] = {}
+        phase_ids = frozenset(
+            phase["id"]
+            for phase in phases
+            if isinstance(phase, dict) and isinstance(phase.get("id"), str)
+        )
+        self._human_input_policies: list[HumanInputPolicy] = []
         for p in phases:
             structural_errors = structural_phase_definition_errors(p)
             if structural_errors:
@@ -255,8 +268,13 @@ class PhaseGraph:
                 ),
                 evidence_routing=p.get("evidence_routing", "none"),
                 transitions=p.get("transitions", []),
+                human_input_policies=compile_workflow_human_input_policies(
+                    p,
+                    known_phase_ids=phase_ids,
+                ),
             )
             self._phases[node.id] = node
+            self._human_input_policies.extend(node.human_input_policies)
 
         # Build dispatch-id → file path map from extension.yml
         self._agent_files: dict[str, str] = {}
@@ -285,6 +303,11 @@ class PhaseGraph:
 
     def all_phase_ids(self) -> list[str]:
         return list(self._phases.keys())
+
+    def human_input_policy_registry(self) -> HumanInputPolicyRegistry:
+        return HumanInputPolicyRegistry(
+            tuple(self._human_input_policies) + controller_safeguard_policies()
+        )
 
     def agent_file(self, dispatch_id: str) -> Optional[str]:
         """Return the relative file path for an agent dispatch id, or None."""

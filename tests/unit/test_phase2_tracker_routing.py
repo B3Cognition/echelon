@@ -7,6 +7,9 @@ agent explicitly writes one.
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
+from harness.controller_state_contracts import ControllerStateContractViolation
 from harness.phase_graph import PhaseGraph
 from harness.squad import SquadController
 from harness.squad_provider import SquadAgentResult
@@ -42,7 +45,7 @@ def _route_tracker_verdict(tmp_path: Path, phase_id: str, verdict: str) -> str:
             "state_updates": (
                 {
                     "status": "blocked",
-                    "blocked_reason": "tracker requested clarification",
+                    "blocked_reason": "human_clarification_required",
                     "escalation_question": "Should the tracker proceed?",
                 }
                 if verdict == "STOP_AND_ASK"
@@ -86,20 +89,18 @@ def test_tracker_drift_verdict_routes_to_specialists(tmp_path: Path) -> None:
     ) == "phase2-intent-alignment-structural"
 
 
-def test_tracker_legacy_drifting_verdict_routes_to_specialists(tmp_path: Path) -> None:
-    assert _route_phase2_tracker_verdict(
-        tmp_path, "DRIFTING"
-    ) == "phase2-intent-alignment-structural"
+def test_tracker_legacy_drifting_verdict_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ControllerStateContractViolation):
+        _route_phase2_tracker_verdict(tmp_path, "DRIFTING")
 
 
 def test_tracker_stop_and_ask_verdict_stays_on_alignment_phase(tmp_path: Path) -> None:
     assert _route_phase2_tracker_verdict(tmp_path, "STOP_AND_ASK") == "phase2-tracker-alignment"
 
 
-def test_tracker_legacy_escalate_verdict_stays_on_alignment_phase(tmp_path: Path) -> None:
-    assert _route_phase2_tracker_verdict(
-        tmp_path, "ESCALATE"
-    ) == "phase2-intent-alignment-structural"
+def test_tracker_legacy_escalate_verdict_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ControllerStateContractViolation):
+        _route_phase2_tracker_verdict(tmp_path, "ESCALATE")
 
 
 def test_phase1_tracker_clear_intent_routes_to_why1(tmp_path: Path) -> None:

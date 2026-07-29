@@ -327,6 +327,15 @@ Never mark a suggestion Banzai eligible merely because it is conventional,
 plausible, or convenient. Banzai may copy only an explicitly eligible option;
 it cannot invent, combine, or reinterpret one.
 
+When a WHY1 or WHY2 finding requires a project decision only the user can make,
+return `verdict: STOP_AND_ASK` with `status: blocked`,
+`blocked_reason: human_clarification_required`, and one concrete
+`escalation_question`. Include `escalation_recommended_answer` and
+`escalation_risk_level: low | medium | high | critical` together only when the
+recommendation is evidence-backed; otherwise omit both. Never attach a
+question to `FAIL`, `BLOCKED`, or `ESCALATE`. The controller owns
+clarification writes and state cleanup.
+
 ---
 
 ## Severity Definitions
@@ -436,7 +445,7 @@ When analysis is complete and all artifacts are written, output:
 ```
 WHY<1|2|3> COMPLETE — artifacts written to <spec_directory>
 Mode: <assumption-challenge | spec-validation>
-Verdict: <PASS | FAIL | BLOCKED>
+Verdict: <PASS | FAIL | STOP_AND_ASK | BLOCKED>
 Issues: <critical_count> CRITICAL, <high_count> HIGH, <medium_count> MEDIUM, <low_count> LOW
 Quality gates: <met_count>/<total_count> passing (spec-validation only)
 Blocking: <YES — must fix before proceeding | NO — can proceed with warnings>
@@ -446,9 +455,9 @@ Blocking: <YES — must fix before proceeding | NO — can proceed with warnings
 
 ## Output Block
 
-For `PASS` or `FAIL`, include one `quality_check` entry and one `challenge`
-entry per finding. Omit `challenge` entries if no issues are found (set
-`issues: []` in the `quality_check` entry).
+For `PASS`, `FAIL`, or `STOP_AND_ASK`, include one `quality_check` entry and one
+`challenge` entry per finding. Omit `challenge` entries if no issues are found
+(set `issues: []` in the `quality_check` entry).
 
 For `BLOCKED` because Certified Understanding Evidence is missing, do not invent
 scores or write quality artifacts. Return `output_files: []`, put the exact
@@ -456,7 +465,7 @@ missing evidence path in `state_updates.blocked_reason`, and return
 `journal_entries: []`.
 
 echelon_result:
-  verdict: <PASS | FAIL | BLOCKED>
+  verdict: <PASS | FAIL | STOP_AND_ASK | BLOCKED>
   output_files:
     - ${STAGING_DIR}/assumption-review.md
     - ${STAGING_DIR}/issues.md

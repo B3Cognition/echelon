@@ -66,7 +66,7 @@ def _tracker_provider(verdict: str) -> MagicMock:
     if verdict == "STOP_AND_ASK":
         state_updates = {
             "status": "blocked",
-            "blocked_reason": "phase1-tracker: user intent needs clarification",
+            "blocked_reason": "human_clarification_required",
             "escalation_question": "Which target repository should Echelon inspect?",
         }
 
@@ -117,8 +117,8 @@ def test_run_context_generation_uses_runs_directory(tmp_path: Path) -> None:
     assert result.stale_report.exists()
 
 
-@pytest.mark.parametrize("verdict", ["DONE", "ALIGNED", "DRIFT", "DRIFTING"])
-def test_phase1_tracker_done_and_alignment_verdicts_route_forward(
+@pytest.mark.parametrize("verdict", ["ALIGNED", "DRIFT"])
+def test_phase1_tracker_canonical_progress_verdicts_route_forward(
     tmp_path: Path,
     verdict: str,
 ) -> None:
@@ -142,12 +142,10 @@ def test_phase1_tracker_done_and_alignment_verdicts_route_forward(
     assert (context_dir / "stale-memory-report.md").exists()
 
 
-@pytest.mark.parametrize("verdict", ["STOP_AND_ASK", "ESCALATE"])
-def test_phase1_tracker_stop_and_escalate_verdicts_route_back(
+def test_phase1_tracker_stop_and_ask_verdict_routes_back(
     tmp_path: Path,
-    verdict: str,
 ) -> None:
-    provider = _tracker_provider(verdict)
+    provider = _tracker_provider("STOP_AND_ASK")
     ctrl, store = _controller(tmp_path, provider=provider)
 
     result = ctrl.run_single_phase("phase1-tracker", "build photo sharing", "semi")
@@ -155,12 +153,11 @@ def test_phase1_tracker_stop_and_escalate_verdicts_route_back(
 
     assert result.phase == "phase1-tracker"
     assert state["last_dispatch"]["phase_id"] == "phase1-tracker"
-    assert state["last_dispatch"]["verdict"] == verdict
+    assert state["last_dispatch"]["verdict"] == "STOP_AND_ASK"
     assert state["manual_phase_runs"][-1]["next_phase"] == "phase1-tracker"
-    if verdict == "STOP_AND_ASK":
-        assert result.status == "blocked"
-        assert state["blocked_reason"] == "phase1-tracker: user intent needs clarification"
-        assert state["escalation_question"] == "Which target repository should Echelon inspect?"
+    assert result.status == "blocked"
+    assert state["blocked_reason"] == "human_clarification_required"
+    assert state["escalation_question"] == "Which target repository should Echelon inspect?"
 
 
 def test_run_context_refresh_retrieves_and_reconciles_mempalace_drawers(tmp_path: Path) -> None:

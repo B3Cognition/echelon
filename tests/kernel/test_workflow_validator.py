@@ -76,6 +76,490 @@ def test_real_workflow_definition_is_valid() -> None:
     assert report.ok, report.format()
 
 
+def test_real_workflow_gate_edges_match_declared_outcomes() -> None:
+    definition = yaml.safe_load(DEFINITION.read_text(encoding="utf-8"))
+    phases = {phase["id"]: phase for phase in definition["phases"]}
+
+    assert phases["checkpoint-assess"]["transitions"] == [
+        {
+            "to": "phase2-decide",
+            "condition": "human_input_outcome = approved",
+            "outcome": "approved",
+        },
+        {
+            "to": "terminal-blocked",
+            "condition": "human_input_outcome = rejected",
+            "outcome": "rejected",
+        },
+    ]
+    assert phases["checkpoint-plan"]["transitions"] == [
+        {
+            "to": "phase4-document",
+            "condition": "human_input_outcome = approved",
+            "outcome": "approved",
+        },
+        {
+            "to": "terminal-blocked",
+            "condition": "human_input_outcome = rejected",
+            "outcome": "rejected",
+        },
+    ]
+
+
+def _human_input_provider_policy(*, reason_code: str = "human_clarification_required") -> dict:
+    return {
+        "reason_code": reason_code,
+        "classification": "material",
+        "semi_policy": "auto_if_recommended_low_risk",
+        "resolution_handler": "clarification_resume",
+        "allow_free_text": True,
+        "allowed_target_phases": ["done"],
+        "context_state_keys": ["user_message", "phase"],
+        "context_paths": ["{staging_dir}/user-intent.md"],
+        "options": [],
+    }
+
+
+def _human_input_gate_policy() -> dict:
+    return {
+        "reason_code": "checkpoint_plan_decision_required",
+        "classification": "operational",
+        "semi_policy": "auto_if_recommended_low_risk",
+        "resolution_handler": "gate_outcome",
+        "allow_free_text": False,
+        "allowed_target_phases": ["done", "terminal-blocked"],
+        "context_state_keys": ["user_message", "phase"],
+        "context_paths": ["{spec_dir}/plan.md"],
+        "options": [
+            {
+                "id": "approve",
+                "label": "Approve",
+                "description": "Continue.",
+                "recommended": True,
+                "risk_level": "low",
+                "next_phase": "done",
+                "outcome": "approved",
+            },
+            {
+                "id": "reject",
+                "label": "Reject",
+                "description": "Stop.",
+                "recommended": False,
+                "risk_level": "low",
+                "next_phase": "terminal-blocked",
+                "outcome": "rejected",
+            },
+        ],
+    }
+
+
+def test_workflow_validator_keeps_a_legacy_workflow_without_declarations_valid(tmp_path: Path) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "provider",
+                "type": "agent",
+                "allowed_state_updates": ["escalation_question"],
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert report.ok, report.format()
+
+
+def test_workflow_validator_allows_provider_policy_without_static_options(tmp_path: Path) -> None:
+    policy = _human_input_provider_policy()
+    policy.pop("options")
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "provider",
+                "type": "agent",
+                "allowed_state_updates": ["escalation_question"],
+                "human_input": [policy],
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert report.ok, report.format()
+
+
+def test_workflow_validator_requires_complete_provider_coverage_after_opt_in(tmp_path: Path) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "provider-a",
+                "type": "agent",
+                "allowed_state_updates": ["escalation_question"],
+                "human_input": [_human_input_provider_policy()],
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {
+                "id": "provider-b",
+                "type": "agent",
+                "allowed_state_updates": ["escalation_question"],
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    assert any(issue.phase_id == "provider-b" and "human_input policy" in issue.message for issue in report.issues)
+
+
+@pytest.mark.parametrize(
+    "mutation, expected",
+    [
+        (lambda policy: policy.update({"classification": "optional"}), "classification"),
+        (lambda policy: policy.update({"semi_policy": "sometimes"}), "semi_policy"),
+        (lambda policy: policy.update({"resolution_handler": "anything"}), "resolution_handler"),
+        (lambda policy: policy.update({"context_state_keys": ["write_anything"]}), "context_state_keys"),
+        (lambda policy: policy.update({"context_paths": ["/tmp/escape"]}), "context_paths"),
+        (lambda policy: policy.update({"allowed_target_phases": ["missing"]}), "allowed_target_phases"),
+        (lambda policy: policy.update({"options": "not-a-list"}), "options"),
+    ],
+)
+def test_workflow_validator_closes_human_input_declarations(tmp_path: Path, mutation, expected: str) -> None:
+    policy = _human_input_provider_policy()
+    mutation(policy)
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "provider",
+                "type": "agent",
+                "allowed_state_updates": ["escalation_question"],
+                "human_input": [policy],
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    assert any(expected in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_requires_list_mappings_unique_reasons_and_exact_gate_edges(tmp_path: Path) -> None:
+    gate_policy = _human_input_gate_policy()
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "provider",
+                "type": "agent",
+                "allowed_state_updates": ["escalation_question"],
+                "human_input": [
+                    _human_input_provider_policy(),
+                    _human_input_provider_policy(reason_code="investigation_access_required"),
+                ],
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {
+                "id": "checkpoint",
+                "type": "human_gate",
+                "human_input": [gate_policy],
+                "transitions": [
+                    {
+                        "to": "done",
+                        "condition": "human_input_outcome = denied",
+                        "outcome": "approved",
+                    },
+                    {
+                        "to": "terminal-blocked",
+                        "condition": "human_input_outcome = rejected",
+                        "outcome": "approved",
+                    },
+                ],
+            },
+            {"id": "done", "type": "terminal"},
+            {"id": "terminal-blocked", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    messages = "\n".join(issue.message for issue in report.issues)
+    assert "outcome must match" in messages
+    assert "outcome must be unique" in messages
+
+
+def _gate_workflow(
+    tmp_path: Path,
+    *,
+    policies: list[dict] | None = None,
+    transitions: list[dict] | None = None,
+) -> Path:
+    return _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "checkpoint",
+                "type": "human_gate",
+                "human_input": (
+                    [_human_input_gate_policy()]
+                    if policies is None
+                    else policies
+                ),
+                "transitions": transitions or [
+                    {
+                        "to": "done",
+                        "condition": "human_input_outcome = approved",
+                        "outcome": "approved",
+                    },
+                    {
+                        "to": "terminal-blocked",
+                        "condition": "human_input_outcome = rejected",
+                        "outcome": "rejected",
+                    },
+                ],
+            },
+            {"id": "done", "type": "terminal"},
+            {"id": "terminal-blocked", "type": "terminal"},
+        ],
+    )
+
+
+def _gate_report(tmp_path: Path, definition: Path):
+    return validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+
+def test_workflow_validator_rejects_multiple_gate_policies(tmp_path: Path) -> None:
+    second = _human_input_gate_policy()
+    second["reason_code"] = "another_gate_decision_required"
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(
+            tmp_path,
+            policies=[_human_input_gate_policy(), second],
+        ),
+    )
+
+    assert not report.ok
+    assert any("exactly one human_input policy" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_missing_gate_policy(tmp_path: Path) -> None:
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(tmp_path, policies=[]),
+    )
+
+    assert not report.ok
+    assert any("exactly one human_input policy" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_custom_gate_outcome(tmp_path: Path) -> None:
+    policy = _human_input_gate_policy()
+    policy["options"][0]["outcome"] = "continued"
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(
+            tmp_path,
+            policies=[policy],
+            transitions=[
+                {
+                    "to": "done",
+                    "condition": "human_input_outcome = continued",
+                    "outcome": "continued",
+                },
+                {
+                    "to": "terminal-blocked",
+                    "condition": "human_input_outcome = rejected",
+                    "outcome": "rejected",
+                },
+            ],
+        ),
+    )
+
+    assert not report.ok
+    assert any("exact approved/rejected outcomes" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_gate_handler_mismatch(tmp_path: Path) -> None:
+    policy = _human_input_gate_policy()
+    policy["resolution_handler"] = "clarification_resume"
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(tmp_path, policies=[policy]),
+    )
+
+    assert not report.ok
+    assert any("resolution_handler must be gate_outcome" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_gate_target_mismatch(tmp_path: Path) -> None:
+    transitions = [
+        {
+            "to": "terminal-blocked",
+            "condition": "human_input_outcome = approved",
+            "outcome": "approved",
+        },
+        {
+            "to": "terminal-blocked",
+            "condition": "human_input_outcome = rejected",
+            "outcome": "rejected",
+        },
+    ]
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(tmp_path, transitions=transitions),
+    )
+
+    assert not report.ok
+    assert any("target must match" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_approved_route_to_terminal_blocked(
+    tmp_path: Path,
+) -> None:
+    policy = _human_input_gate_policy()
+    policy["options"][0]["next_phase"] = "terminal-blocked"
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(
+            tmp_path,
+            policies=[policy],
+            transitions=[
+                {
+                    "to": "terminal-blocked",
+                    "condition": "human_input_outcome = approved",
+                    "outcome": "approved",
+                },
+                {
+                    "to": "terminal-blocked",
+                    "condition": "human_input_outcome = rejected",
+                    "outcome": "rejected",
+                },
+            ],
+        ),
+    )
+
+    assert not report.ok
+    assert any(
+        "approved human gate outcome cannot target terminal-blocked"
+        in issue.message
+        for issue in report.issues
+    )
+
+
+def test_workflow_validator_requires_rejected_route_to_terminal_blocked(
+    tmp_path: Path,
+) -> None:
+    policy = _human_input_gate_policy()
+    policy["options"][1]["next_phase"] = "done"
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(
+            tmp_path,
+            policies=[policy],
+            transitions=[
+                {
+                    "to": "done",
+                    "condition": "human_input_outcome = approved",
+                    "outcome": "approved",
+                },
+                {
+                    "to": "done",
+                    "condition": "human_input_outcome = rejected",
+                    "outcome": "rejected",
+                },
+            ],
+        ),
+    )
+
+    assert not report.ok
+    assert any(
+        "rejected human gate outcome must target terminal-blocked"
+        in issue.message
+        for issue in report.issues
+    )
+
+
+def test_workflow_validator_rejects_gate_condition_mismatch(tmp_path: Path) -> None:
+    transitions = [
+        {
+            "to": "done",
+            "condition": "human_input_outcome = rejected",
+            "outcome": "approved",
+        },
+        {
+            "to": "terminal-blocked",
+            "condition": "human_input_outcome = rejected",
+            "outcome": "rejected",
+        },
+    ]
+    report = _gate_report(
+        tmp_path,
+        _gate_workflow(tmp_path, transitions=transitions),
+    )
+
+    assert not report.ok
+    assert any("condition" in issue.message for issue in report.issues)
+
+
+def test_workflow_validator_rejects_duplicate_human_input_reason_code(tmp_path: Path) -> None:
+    definition = _write_definition(
+        tmp_path,
+        [
+            {
+                "id": "provider",
+                "type": "agent",
+                "allowed_state_updates": ["escalation_question"],
+                "human_input": [
+                    _human_input_provider_policy(),
+                    _human_input_provider_policy(),
+                ],
+                "transitions": [{"to": "done", "condition": "always"}],
+            },
+            {"id": "done", "type": "terminal"},
+        ],
+    )
+
+    report = validate_workflow_definition(
+        definition_path=definition,
+        extension_yml_path=_write_extension_yml(tmp_path),
+    )
+
+    assert not report.ok
+    assert any("duplicate human_input reason_code" in issue.message for issue in report.issues)
+
+
 @pytest.mark.parametrize(
     "condition",
     [

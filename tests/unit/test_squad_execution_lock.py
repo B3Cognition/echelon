@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from echelon.spec_lifecycle import SpecRunExecutionLock
+from harness.human_input import HumanInputPolicyRegistry
 from harness.squad import SquadController
 from harness.squad_state import SquadStateStore
 
@@ -49,6 +50,9 @@ class _TerminalGraph:
 
     def all_phase_ids(self) -> set[str]:
         return {"DONE"}
+
+    def human_input_policy_registry(self) -> HumanInputPolicyRegistry:
+        return HumanInputPolicyRegistry(())
 
 
 def _controller(tmp_path: Path) -> tuple[SquadController, SquadStateStore, MagicMock]:

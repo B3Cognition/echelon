@@ -10,6 +10,7 @@ from harness.state_transaction_namespace import (
     PROVIDER_CONTROL_INTENT_KEYS,
     STORE_OWNED_TRANSACTION_KEYS,
 )
+from harness.human_input import DecisionResolution, HumanInputOption
 
 
 class EchelonResultValidationError(ValueError):
@@ -66,6 +67,7 @@ ALLOWED_VERDICTS = frozenset({
     "CONCERNS",
     "CONSOLIDATED",
     "CONVERGING",
+    "DECISION_RESOLVED",
     "DEFER",
     "DONE",
     "DONE_WITH_CONCERNS",
@@ -172,6 +174,27 @@ def validate_echelon_result(
             raise EchelonResultValidationError(
                 "STOP_AND_ASK verdicts require state_updates.escalation_question"
             )
+        recommendation = state_updates.get("escalation_recommended_answer")
+        if recommendation is not None and (
+            not isinstance(recommendation, str) or not recommendation.strip()
+        ):
+            raise EchelonResultValidationError(
+                "escalation_recommended_answer must be a non-empty string when provided"
+            )
+        risk_level = state_updates.get("escalation_risk_level")
+        if risk_level is not None and (
+            not isinstance(risk_level, str)
+            or risk_level not in {"low", "medium", "high", "critical"}
+        ):
+            raise EchelonResultValidationError(
+                "escalation_risk_level must be low, medium, high, or critical"
+            )
+    else:
+        escalation_question = state_updates.get("escalation_question")
+        if escalation_question is not None and escalation_question != "":
+            raise EchelonResultValidationError(
+                "escalation_question is only valid with STOP_AND_ASK verdicts"
+            )
 
     allowed_keys = (
         frozenset(allowed_state_update_keys)
@@ -262,6 +285,126 @@ def validate_echelon_result(
     return result
 
 
+def validate_decision_resolution_result(
+    payload: Any,
+    *,
+    options: tuple[HumanInputOption, ...],
+) -> DecisionResolution:
+    """Validate the exact, non-mutating COMMANDER decision envelope."""
+    if type(payload) is not dict:
+        raise EchelonResultValidationError("decision resolution result must be an object")
+    if type(options) is not tuple or not all(
+        type(option) is HumanInputOption for option in options
+    ):
+        raise EchelonResultValidationError(
+            "decision resolution options must be a tuple of HumanInputOption values"
+        )
+
+    expected_fields = {"verdict", "state_updates", "journal_entries", "decision"}
+    if any(type(field) is not str for field in payload):
+        raise EchelonResultValidationError(
+            "decision resolution field names must be strings"
+        )
+    fields = set(payload)
+    unexpected = fields - expected_fields
+    if unexpected:
+        raise EchelonResultValidationError(
+            "decision resolution has unsupported field " + repr(min(unexpected))
+        )
+    missing = expected_fields - fields
+    if missing:
+        raise EchelonResultValidationError(
+            "decision resolution is missing required field " + repr(sorted(missing)[0])
+        )
+    if payload["verdict"] != "DECISION_RESOLVED":
+        raise EchelonResultValidationError(
+            "decision resolution verdict must be 'DECISION_RESOLVED'"
+        )
+    if type(payload["state_updates"]) is not dict or payload["state_updates"]:
+        raise EchelonResultValidationError(
+            "decision resolution state_updates must be an empty object"
+        )
+    if type(payload["journal_entries"]) is not list or payload["journal_entries"]:
+        raise EchelonResultValidationError(
+            "decision resolution journal_entries must be an empty list"
+        )
+
+    decision = payload["decision"]
+    if type(decision) is not dict:
+        raise EchelonResultValidationError("decision resolution decision must be an object")
+    if any(type(field) is not str for field in decision):
+        raise EchelonResultValidationError(
+            "decision resolution decision field names must be strings"
+        )
+    expected_decision_fields = {
+        "selected_option_id", "answer_text", "rationale", "confidence",
+    }
+    decision_fields = set(decision)
+    unexpected_decision = decision_fields - expected_decision_fields
+    if unexpected_decision:
+        raise EchelonResultValidationError(
+            "decision resolution decision has unsupported field "
+            + repr(min(unexpected_decision))
+        )
+    missing_decision = expected_decision_fields - decision_fields
+    if missing_decision:
+        raise EchelonResultValidationError(
+            "decision resolution decision is missing required field "
+            + repr(sorted(missing_decision)[0])
+        )
+
+    selected_option_id = decision["selected_option_id"]
+    answer_text = decision["answer_text"]
+    if (selected_option_id is None) == (answer_text is None):
+        raise EchelonResultValidationError(
+            "decision resolution requires exactly one of selected_option_id or answer_text"
+        )
+    if selected_option_id is not None:
+        if not isinstance(selected_option_id, str) or not selected_option_id.strip():
+            raise EchelonResultValidationError(
+                "decision resolution selected_option_id must be a non-empty string"
+            )
+        if selected_option_id not in {option.id for option in options}:
+            raise EchelonResultValidationError(
+                "decision resolution selected_option_id is not an allowed option"
+            )
+        if answer_text is not None:
+            raise EchelonResultValidationError(
+                "decision resolution choice answer_text must be null"
+            )
+    else:
+        if options:
+            raise EchelonResultValidationError(
+                "decision resolution choice requires an allowed selected_option_id"
+            )
+        if not isinstance(answer_text, str) or not answer_text.strip():
+            raise EchelonResultValidationError(
+                "decision resolution answer_text must be a non-empty string"
+            )
+
+    rationale = decision["rationale"]
+    if (
+        not isinstance(rationale, str)
+        or not rationale.strip()
+        or len(rationale) > 2_000
+    ):
+        raise EchelonResultValidationError(
+            "decision resolution rationale must be a non-empty string of at most 2,000 characters"
+        )
+    confidence = decision["confidence"]
+    if not isinstance(confidence, str) or confidence not in {"high", "medium", "low"}:
+        raise EchelonResultValidationError(
+            "decision resolution confidence must be high, medium, or low"
+        )
+
+    return DecisionResolution(
+        selected_option_id=selected_option_id,
+        answer_text=answer_text,
+        rationale=rationale,
+        confidence=confidence,
+    )
+
+
 def validate_echelon_result_contract(
     payload: Any,
     contract: EchelonResultContract,
@@ -299,6 +442,10 @@ def validate_echelon_result_contract(
         ),
     )
     verdict = result["verdict"]
+    if verdict == "DECISION_RESOLVED":
+        raise EchelonResultValidationError(
+            "DECISION_RESOLVED is only valid for the decision resolution contract"
+        )
     if contract.allowed_verdicts is not None and verdict not in contract.allowed_verdicts:
         allowed = ", ".join(sorted(contract.allowed_verdicts)) or "(none)"
         raise EchelonResultValidationError(

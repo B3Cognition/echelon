@@ -340,23 +340,33 @@ phases:
     outputs:
       - user-intent.md
       - stakeholder-model.md     # if multiple stakeholders are detectable
+    human_input:
+      - reason_code: human_clarification_required
+        classification: material
+        semi_policy: require_human
+        resolution_handler: clarification_resume
+        allow_free_text: true
+        allowed_target_phases: [phase1-tracker]
+        context_state_keys: [user_message, phase]
+        context_paths: ["{staging_dir}/user-intent.md"]
     allowed_state_updates:
       - status
       - blocked_reason
       - escalation_question
       - escalation_options
       - escalation_recommended_answer
-      - escalation_default_answer
+      - escalation_risk_level
       - shadow_output_recovered
     state_update_types:
       status: string
     state_update_enums:
       status: [blocked]
+    allowed_verdicts: [ALIGNED, DRIFT, STOP_AND_ASK]
     transitions:
       - to: phase1-tracker
-        condition: "verdict = STOP_AND_ASK OR verdict = ESCALATE"
+        condition: "verdict = STOP_AND_ASK"
       - to: phase1-why1
-        condition: "verdict = DONE OR verdict = ALIGNED OR verdict = DRIFT OR verdict = DRIFTING"
+        condition: "verdict = ALIGNED OR verdict = DRIFT"
 
   # --------------------------------------------------------------------------
   - id: phase1-why1
@@ -380,11 +390,29 @@ phases:
     outputs:
       - updated assumptions.md
       - quality_scores[pass=N] → state.json
+    human_input:
+      - reason_code: human_clarification_required
+        classification: material
+        semi_policy: require_human
+        resolution_handler: clarification_resume
+        allow_free_text: true
+        allowed_target_phases: [phase1-why1]
+        context_state_keys: [user_message, phase, quality_scores]
+        context_paths:
+          - "{staging_dir}/assumptions.md"
+          - "{staging_dir}/unknowns.md"
     allowed_state_updates:
       - quality_scores
+      - status
       - escalation_question
+      - escalation_recommended_answer
+      - escalation_risk_level
       - blocked_reason
       - shadow_output_recovered
+    state_update_types:
+      status: string
+    state_update_enums:
+      status: [blocked]
     transitions:
       - to: phase1-constitution
         condition: "quality_gates.pass OR convergence_detected"
@@ -508,12 +536,25 @@ phases:
       - quality-gates.md
       - issues.md
       - issues → state.json.issues_log (severity-tagged)
+    human_input:
+      - reason_code: human_clarification_required
+        classification: material
+        semi_policy: require_human
+        resolution_handler: clarification_resume
+        allow_free_text: true
+        allowed_target_phases: [phase1-why2]
+        context_state_keys: [user_message, phase, quality_scores]
+        context_paths:
+          - "{spec_dir}/spec.md"
+          - "{spec_dir}/issues.md"
     allowed_state_updates:
       - dependency_checks
       - evidence_resolution_status
       - evidence_requests
       - finding_routes
       - escalation_question
+      - escalation_recommended_answer
+      - escalation_risk_level
       - blocked_reason
       - status
       - shadow_output_recovered
@@ -572,9 +613,28 @@ phases:
       - evidence-resolution.md
       - evidence-grades.md
       - evidence-inventory.json
+    human_input:
+      - reason_code: human_clarification_required
+        classification: material
+        semi_policy: require_human
+        resolution_handler: clarification_resume
+        allow_free_text: true
+        allowed_target_phases: [phase1-investigate]
+        context_state_keys: [user_message, phase]
+        context_paths: ["{spec_dir}/evidence-resolution.md"]
+      - reason_code: investigation_access_required
+        classification: external_prerequisite
+        semi_policy: require_human
+        resolution_handler: clarification_resume
+        allow_free_text: true
+        allowed_target_phases: [phase1-investigate]
+        context_state_keys: [user_message, phase]
+        context_paths: ["{spec_dir}/evidence-resolution.md"]
     allowed_state_updates:
       - evidence_resolution_status
       - escalation_question
+      - escalation_recommended_answer
+      - escalation_risk_level
       - blocked_reason
       - status
       - shadow_output_recovered
@@ -639,13 +699,40 @@ phases:
   - id: checkpoint-assess
     label: "Phase 1 Checkpoint"
     type: human_gate
-    autonomy:
-      guided: pause_for_human
-      semi: pause_for_human
-      banzai: auto_proceed
+    human_input:
+      - reason_code: checkpoint_assess_decision_required
+        classification: material
+        semi_policy: require_human
+        resolution_handler: gate_outcome
+        allow_free_text: false
+        allowed_target_phases: [phase2-decide, terminal-blocked]
+        context_state_keys: [user_message, phase, quality_scores]
+        context_paths:
+          - "{spec_dir}/spec.md"
+          - "{spec_dir}/quality-gates.md"
+          - "{spec_dir}/issues.md"
+        options:
+          - id: approve
+            label: Approve
+            description: Continue to feasibility assessment.
+            recommended: false
+            risk_level: medium
+            next_phase: phase2-decide
+            outcome: approved
+          - id: reject
+            label: Reject
+            description: Stop for specification revision.
+            recommended: false
+            risk_level: low
+            next_phase: terminal-blocked
+            outcome: rejected
     transitions:
       - to: phase2-decide
-        condition: "autonomy = banzai OR human_approved"
+        condition: "human_input_outcome = approved"
+        outcome: approved
+      - to: terminal-blocked
+        condition: "human_input_outcome = rejected"
+        outcome: rejected
 
   # --------------------------------------------------------------------------
   - id: phase2-decide
@@ -741,20 +828,31 @@ phases:
       - strategic-overview.md
     outputs:
       - intent-alignment-check.md   # ALIGNED | DRIFT | STOP_AND_ASK
+    human_input:
+      - reason_code: human_clarification_required
+        classification: material
+        semi_policy: require_human
+        resolution_handler: clarification_resume
+        allow_free_text: true
+        allowed_target_phases: [phase2-tracker-alignment]
+        context_state_keys: [user_message, phase]
+        context_paths:
+          - "{spec_dir}/user-intent.md"
+          - "{spec_dir}/intent-alignment-check.md"
     allowed_state_updates:
       - status
       - blocked_reason
       - escalation_question
       - escalation_options
       - escalation_recommended_answer
-      - escalation_default_answer
+      - escalation_risk_level
       - shadow_output_recovered
     controller_state_contract: intent_alignment_authoring_verdict
     state_update_types:
       status: string
     state_update_enums:
       status: [blocked]
-    allowed_verdicts: [ALIGNED, DRIFT, DRIFTING, ESCALATE, STOP_AND_ASK]
+    allowed_verdicts: [ALIGNED, DRIFT, STOP_AND_ASK]
     transitions:
       - to: phase2-intent-alignment-structural
         condition: always
@@ -772,9 +870,7 @@ phases:
       - to: terminal-blocked
         condition: "structural_action = block"
       - to: phase3-specialists
-        condition: "structural_action in [proceed, proceed_with_warning] AND intent_alignment_verdict in [ALIGNED, DRIFT, DRIFTING]"
-      - to: phase2-tracker-alignment
-        condition: "structural_action in [proceed, proceed_with_warning] AND intent_alignment_verdict = ESCALATE"
+        condition: "structural_action in [proceed, proceed_with_warning] AND intent_alignment_verdict in [ALIGNED, DRIFT]"
 
   # --------------------------------------------------------------------------
   - id: phase3-how
@@ -1159,13 +1255,39 @@ phases:
   - id: checkpoint-plan
     label: "Phase 3 Checkpoint"
     type: human_gate
-    autonomy:
-      guided: pause_for_human
-      semi: auto_proceed
-      banzai: auto_proceed
+    human_input:
+      - reason_code: checkpoint_plan_decision_required
+        classification: operational
+        semi_policy: auto_if_recommended_low_risk
+        resolution_handler: gate_outcome
+        allow_free_text: false
+        allowed_target_phases: [phase4-document, terminal-blocked]
+        context_state_keys: [user_message, phase, quality_scores]
+        context_paths:
+          - "{spec_dir}/plan.md"
+          - "{spec_dir}/tasks.md"
+        options:
+          - id: approve
+            label: Approve
+            description: Continue to finalization.
+            recommended: true
+            risk_level: low
+            next_phase: phase4-document
+            outcome: approved
+          - id: reject
+            label: Reject
+            description: Stop for plan revision.
+            recommended: false
+            risk_level: low
+            next_phase: terminal-blocked
+            outcome: rejected
     transitions:
       - to: phase4-document
-        condition: "autonomy in [semi, banzai] OR human_approved"
+        condition: "human_input_outcome = approved"
+        outcome: approved
+      - to: terminal-blocked
+        condition: "human_input_outcome = rejected"
+        outcome: rejected
 
   # --------------------------------------------------------------------------
   - id: phase4-document

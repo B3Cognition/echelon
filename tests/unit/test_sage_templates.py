@@ -106,11 +106,12 @@ class TestSageTemplates:
         assert "--output /tmp/u_validate.json" not in text
         assert "/tmp/understanding_output.json" not in text
 
-    def test_sage_output_contract_allows_blocked_when_evidence_is_missing(self) -> None:
+    def test_sage_output_contract_separates_questions_from_missing_evidence(self) -> None:
         text = AGENT.read_text(encoding="utf-8")
 
-        assert "Verdict: <PASS | FAIL | BLOCKED>" in text
-        assert "verdict: <PASS | FAIL | BLOCKED>" in text
+        assert "Verdict: <PASS | FAIL | STOP_AND_ASK | BLOCKED>" in text
+        assert "verdict: <PASS | FAIL | STOP_AND_ASK | BLOCKED>" in text
+        assert "`blocked_reason: human_clarification_required`" in text
         assert "heuristic equivalents" not in text
 
     def test_why1_dispatch_includes_sage_templates(self) -> None:

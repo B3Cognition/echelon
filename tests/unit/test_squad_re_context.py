@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from harness.human_input import HumanInputPolicyRegistry
 from harness.re_fingerprint import ReFingerprintProfile, fingerprint_source
 from harness.re_quality_contract import QUALITY_CONTRACT_VERSION
 from harness.re_registry import ensure_re_layout
@@ -18,6 +19,9 @@ class _TerminalGraph:
 
     def all_phase_ids(self) -> set[str]:
         return {"DONE"}
+
+    def human_input_policy_registry(self) -> HumanInputPolicyRegistry:
+        return HumanInputPolicyRegistry(())
 
 
 def _write_source(root: Path, source_id: str) -> None:

@@ -15,6 +15,12 @@ from harness.controller_state_contract_requirements import (
 )
 from harness.echelon_result_schema import ALLOWED_VERDICTS, SUPPORTED_STATE_UPDATE_TYPES
 from harness.phase_graph import PhaseGraph, PhaseNode
+from harness.human_input import (
+    HumanInputPolicy,
+    HumanInputPolicyError,
+    compile_workflow_human_input_policies,
+    gate_outcome_route_error,
+)
 from harness.state_transaction_namespace import (
     PROVIDER_CONTROL_INTENT_KEYS,
     STORE_OWNED_TRANSACTION_KEYS,
@@ -26,6 +32,7 @@ SUPPORTED_TRANSITION_KEYS = frozenset({
     "condition",
     "action",
     "state_update",
+    "outcome",
 })
 
 # Runtime-only terminal used by SquadController guards and explicit evidence
@@ -69,6 +76,7 @@ KNOWN_CONDITION_FIELDS = frozenset({
     "more_tasks_in_phase_group",
     "no_more_phase_checkpoints",
     "phase_group_complete",
+    "human_input_outcome",
 })
 
 
@@ -224,6 +232,23 @@ def validate_workflow_definition(
         ])
 
     phase_ids = set(graph.all_phase_ids())
+    workflow_declares_human_input = any(
+        isinstance(phase, dict) and "human_input" in phase
+        for phase in phases
+    )
+    compiled_human_input: dict[str, tuple[HumanInputPolicy, ...]] = {}
+    for phase in phases:
+        if not isinstance(phase, dict) or not isinstance(phase.get("id"), str):
+            continue
+        try:
+            compiled_human_input[phase["id"]] = compile_workflow_human_input_policies(
+                phase,
+                known_phase_ids=frozenset(phase_ids),
+            )
+        except HumanInputPolicyError as exc:
+            issues.append(WorkflowValidationIssue(
+                str(exc), phase_id=phase["id"], path=path,
+            ))
     known_condition_fields = set(KNOWN_CONDITION_FIELDS)
     seen: set[str] = set()
 
@@ -448,6 +473,34 @@ def validate_workflow_definition(
                     path=path,
                 )
             )
+
+        policies = compiled_human_input.get(phase_id, ())
+        if workflow_declares_human_input and phase.get("type") == "human_gate":
+            issues.extend(_validate_human_gate_outcomes(
+                phase_id=phase_id,
+                transitions=transitions,
+                policies=policies,
+                path=path,
+            ))
+        elif any(isinstance(item, dict) and "outcome" in item for item in transitions):
+            issues.append(WorkflowValidationIssue(
+                "outcome is accepted only on human_gate transitions",
+                phase_id=phase_id,
+                path=path,
+            ))
+
+        if (
+            workflow_declares_human_input
+            and phase.get("type") == "agent"
+            and isinstance(phase.get("allowed_state_updates"), list)
+            and "escalation_question" in phase["allowed_state_updates"]
+            and not policies
+        ):
+            issues.append(WorkflowValidationIssue(
+                "question-capable provider requires at least one human_input policy after workflow opt-in",
+                phase_id=phase_id,
+                path=path,
+            ))
 
     return WorkflowValidationReport(issues)
 
@@ -817,6 +870,106 @@ def _validate_transition(
             )
         )
 
+    outcome = transition.get("outcome")
+    if outcome is not None and (not isinstance(outcome, str) or not outcome.strip()):
+        issues.append(WorkflowValidationIssue(
+            "transition.outcome must be a non-empty string when present",
+            phase_id=phase_id,
+            transition_index=transition_index,
+            path=path,
+        ))
+
+    return issues
+
+
+def _validate_human_gate_outcomes(
+    *,
+    phase_id: str,
+    transitions: object,
+    policies: tuple[HumanInputPolicy, ...],
+    path: str,
+) -> list[WorkflowValidationIssue]:
+    if not isinstance(transitions, list):
+        return []
+    issues: list[WorkflowValidationIssue] = []
+    if len(policies) != 1:
+        issues.append(WorkflowValidationIssue(
+            "human_gate requires exactly one human_input policy",
+            phase_id=phase_id,
+            path=path,
+        ))
+    policy = policies[0] if len(policies) == 1 else None
+    if policy is not None and policy.resolution_handler != "gate_outcome":
+        issues.append(WorkflowValidationIssue(
+            "human_gate resolution_handler must be gate_outcome",
+            phase_id=phase_id,
+            path=path,
+        ))
+
+    outcomes: dict[str, tuple[int, str]] = {}
+    for index, transition in enumerate(transitions):
+        if not isinstance(transition, dict):
+            continue
+        outcome = transition.get("outcome")
+        if outcome is None:
+            issues.append(WorkflowValidationIssue(
+                "human_gate transitions require outcome",
+                phase_id=phase_id, transition_index=index, path=path,
+            ))
+            continue
+        if not isinstance(outcome, str) or not outcome.strip():
+            continue
+        if outcome in outcomes:
+            issues.append(WorkflowValidationIssue(
+                "human_gate transition outcome must be unique",
+                phase_id=phase_id, transition_index=index, path=path,
+            ))
+        outcomes[outcome] = (index, str(transition.get("to") or ""))
+        if transition.get("condition") != f"human_input_outcome = {outcome}":
+            issues.append(WorkflowValidationIssue(
+                "human_gate outcome must match its exact condition",
+                phase_id=phase_id, transition_index=index, path=path,
+            ))
+
+    expected_outcomes = {"approved", "rejected"}
+    if len(outcomes) != 2 or set(outcomes) != expected_outcomes:
+        issues.append(WorkflowValidationIssue(
+            "human_gate transitions require exact approved/rejected outcomes",
+            phase_id=phase_id, path=path,
+        ))
+
+    option_outcomes: dict[str, str] = {}
+    if policy is not None:
+        for option in policy.options:
+            if option.outcome is not None and option.next_phase is not None:
+                if option.outcome in option_outcomes:
+                    issues.append(WorkflowValidationIssue(
+                        "human_gate option outcome must be unique",
+                        phase_id=phase_id,
+                        path=path,
+                    ))
+                option_outcomes[option.outcome] = option.next_phase
+                route_error = gate_outcome_route_error(
+                    option.outcome,
+                    option.next_phase,
+                )
+                if route_error is not None:
+                    issues.append(WorkflowValidationIssue(
+                        route_error,
+                        phase_id=phase_id,
+                        path=path,
+                    ))
+        if len(policy.options) != 2 or set(option_outcomes) != expected_outcomes:
+            issues.append(WorkflowValidationIssue(
+                "human_gate options require exact approved/rejected outcomes",
+                phase_id=phase_id, path=path,
+            ))
+        for outcome, (_, target) in outcomes.items():
+            if outcome in option_outcomes and option_outcomes[outcome] != target:
+                issues.append(WorkflowValidationIssue(
+                    "human_gate outcome target must match its option next_phase",
+                    phase_id=phase_id, path=path,
+                ))
     return issues
 
 
