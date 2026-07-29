@@ -189,6 +189,41 @@ def test_squad_initialization_records_absent_re_without_blocking(tmp_path: Path)
     }
 
 
+def test_phase_a_finalization_publishes_canonical_re_context(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    spec_dir = tmp_path / "specs" / "001-demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "constitution.md").write_text("# Constitution\n", encoding="utf-8")
+    controller = object.__new__(SquadController)
+    controller._project_root = tmp_path
+    monkeypatch.setattr(controller, "_write_plan_conformance_outputs", lambda _path: None)
+    monkeypatch.setattr(controller, "_write_final_overview", lambda _path, _state: None)
+    monkeypatch.setattr(controller, "_constitution_hash", lambda _path: "sha256:test")
+    monkeypatch.setattr(controller, "_write_squad_report", lambda _path, _state: None)
+    monkeypatch.setattr("harness.squad.append_phase_a_run", lambda *args, **kwargs: None)
+
+    controller._write_phase_a_finalization_outputs(
+        spec_dir,
+        {
+            "run_id": "spec-run",
+            "published_re_context": {
+                "status": "absent",
+                "generation": 0,
+                "artifacts": {},
+            },
+        },
+    )
+
+    assert json.loads((spec_dir / "re-context.json").read_text(encoding="utf-8")) == {
+        "schema_version": 1,
+        "status": "absent",
+        "generation": 0,
+        "artifacts": [],
+    }
+
+
 def test_squad_materializes_run_targets_into_active_spec_metadata(tmp_path: Path) -> None:
     root = tmp_path / "workspace"
     squad_dir = root / "runs" / "run-1"

@@ -90,7 +90,10 @@ from harness.recovery_instruction import (
     trusted_executor_block_recovery,
     validate_recovery_instruction,
 )
-from harness.published_re_context import attach_published_re_context
+from harness.published_re_context import (
+    attach_published_re_context,
+    write_canonical_re_context,
+)
 from harness.run_history import append_phase_a_run
 from harness.spec_frontmatter import find_spec_dir, write_targets
 from harness.spec_lexicon_gate import has_current_spec_lexicon_evidence
@@ -6040,6 +6043,13 @@ class SquadController:
         strict: bool = False,
     ) -> None:
         run_id = str(state.get("run_id") or "unknown")
+        published_re_context = state.get("published_re_context")
+        if isinstance(published_re_context, Mapping):
+            write_canonical_re_context(
+                self._project_root,
+                published_spec_dir,
+                published_re_context,
+            )
         try:
             from echelon.kb_proposals import publish_kb_reports
 
