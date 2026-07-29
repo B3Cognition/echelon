@@ -12,7 +12,10 @@ def write_evidence_workspace(tmp_path: Path) -> Path:
     )
     spec_dir = tmp_path / "specs" / "003-demo"
     spec_dir.mkdir(parents=True)
-    spec_dir.joinpath("spec.md").write_text("FR-001: Import.\n", encoding="utf-8")
+    spec_dir.joinpath("spec.md").write_text(
+        "---\nstatus: landed\n---\nFR-001: Import.\n",
+        encoding="utf-8",
+    )
     spec_dir.joinpath("fulfillment-report.md").write_text(
         "---\nverify_run_id: spec-20260728-120000\n---\n"
         "# Fulfillment Report\n\n| ID | Status | Evidence |\n"
@@ -39,8 +42,36 @@ def write_evidence_workspace(tmp_path: Path) -> Path:
         "# Implementation Map\n\nFR-001 maps to src/demo.py.\n",
         encoding="utf-8",
     )
+    verify_dir.joinpath("codegraph-evidence-map.json").write_text(
+        '{"requirements":{"FR-001":["src/demo.py"]}}\n',
+        encoding="utf-8",
+    )
+    verify_dir.joinpath("codegraph-evidence-map.md").write_text(
+        "# CodeGraph Evidence Map\n\nFR-001 -> src/demo.py\n",
+        encoding="utf-8",
+    )
+    verify_dir.joinpath("canonical-requirements.json").write_text(
+        '{"requirements":[{"id":"FR-001"}]}\n',
+        encoding="utf-8",
+    )
+    verify_dir.joinpath("canonical-requirements.md").write_text(
+        "# Canonical Requirements\n\nFR-001\n",
+        encoding="utf-8",
+    )
+    verify_dir.joinpath("requirement-audit.md").write_text(
+        "# Requirement Audit\n\nAll rows accounted for.\n",
+        encoding="utf-8",
+    )
     verify_dir.joinpath("progress-integrity.md").write_text(
         "# Progress Integrity\n\nValid: True\n",
+        encoding="utf-8",
+    )
+    verify_dir.joinpath("progress-integrity.json").write_text(
+        '{"status":"pass"}\n',
+        encoding="utf-8",
+    )
+    verify_dir.joinpath("debug.log").write_text(
+        "Do not publish.\n",
         encoding="utf-8",
     )
     verify_dir.joinpath("state.json").write_text(
@@ -54,6 +85,103 @@ def write_evidence_workspace(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     return spec_dir
+
+
+def mark_spec_unlanded(spec_dir: Path) -> None:
+    spec_dir.joinpath("spec.md").write_text(
+        "---\nstatus: ready_to_land\n---\nFR-001: Import.\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.unit
+def test_publish_spec_evidence_package_rejects_unlanded_specs(
+    tmp_path: Path,
+) -> None:
+    spec_dir = write_evidence_workspace(tmp_path)
+    mark_spec_unlanded(spec_dir)
+    from echelon.mempalace_requirements import SpecMemoryError
+    from echelon.mempalace_spec_evidence import publish_spec_evidence_package
+
+    with pytest.raises(SpecMemoryError, match="spec evidence requires landed spec"):
+        publish_spec_evidence_package(tmp_path, "003-demo")
+
+
+@pytest.mark.unit
+def test_mine_spec_evidence_memory_rejects_unlanded_specs(
+    tmp_path: Path,
+) -> None:
+    spec_dir = write_evidence_workspace(tmp_path)
+    mark_spec_unlanded(spec_dir)
+    from echelon.mempalace_requirements import SpecMemoryError
+    from echelon.mempalace_spec_evidence import mine_spec_evidence_memory
+
+    with pytest.raises(SpecMemoryError, match="spec evidence requires landed spec"):
+        mine_spec_evidence_memory(tmp_path, "003-demo", run_id="manual")
+
+
+@pytest.mark.unit
+def test_load_spec_evidence_snapshots_allows_explicit_unlanded_override(
+    tmp_path: Path,
+) -> None:
+    spec_dir = write_evidence_workspace(tmp_path)
+    mark_spec_unlanded(spec_dir)
+    from echelon.mempalace_spec_evidence import load_spec_evidence_artifact_snapshots
+
+    snapshots = load_spec_evidence_artifact_snapshots(
+        tmp_path,
+        "003-demo",
+        allow_unlanded=True,
+    )
+
+    assert len(snapshots) == 2
+
+
+@pytest.mark.unit
+def test_publish_spec_evidence_package_copies_curated_verify_artifacts(
+    tmp_path: Path,
+) -> None:
+    write_evidence_workspace(tmp_path)
+    from echelon.mempalace_spec_evidence import publish_spec_evidence_package
+
+    report = publish_spec_evidence_package(tmp_path, "003-demo")
+
+    evidence_dir = tmp_path / "specs" / "003-demo" / "evidence"
+    assert report.status == "published"
+    assert report.published_count == 8
+    assert sorted(path.name for path in evidence_dir.iterdir()) == [
+        "canonical-requirements.json",
+        "canonical-requirements.md",
+        "codegraph-evidence-map.json",
+        "codegraph-evidence-map.md",
+        "implementation-map.md",
+        "manifest.json",
+        "progress-integrity.json",
+        "progress-integrity.md",
+        "requirement-audit.md",
+    ]
+    assert not evidence_dir.joinpath("debug.log").exists()
+
+
+@pytest.mark.unit
+def test_load_spec_evidence_snapshots_includes_published_evidence_package(
+    tmp_path: Path,
+) -> None:
+    write_evidence_workspace(tmp_path)
+    from echelon.mempalace_spec_evidence import (
+        load_spec_evidence_artifact_snapshots,
+        publish_spec_evidence_package,
+    )
+
+    publish_spec_evidence_package(tmp_path, "003-demo")
+    snapshots = load_spec_evidence_artifact_snapshots(tmp_path, "003-demo")
+
+    assert "specs/003-demo/evidence/implementation-map.md" in [
+        snapshot.source for snapshot in snapshots
+    ]
+    assert "specs/003-demo/evidence/manifest.json" in [
+        snapshot.source for snapshot in snapshots
+    ]
 
 
 @pytest.mark.unit

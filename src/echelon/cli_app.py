@@ -2226,6 +2226,11 @@ def spec_evidence_memory_refresh(
     spec_selector: str,
     audit: bool = typer.Option(True, "--audit/--no-audit"),
     as_json: bool = typer.Option(False, "--json"),
+    allow_unlanded: bool = typer.Option(
+        False,
+        "--allow-unlanded",
+        help="Mine evidence for a spec whose frontmatter status is not landed.",
+    ),
 ) -> None:
     from echelon.mempalace_requirements import SpecMemoryError
     from echelon.mempalace_spec_evidence import (
@@ -2238,6 +2243,7 @@ def spec_evidence_memory_refresh(
             Path.cwd(),
             spec_selector,
             run_id="manual",
+            allow_unlanded=allow_unlanded,
         )
     except SpecMemoryError as exc:
         typer.echo(str(exc), err=True)
@@ -2255,7 +2261,11 @@ def spec_evidence_memory_refresh(
     if not audit:
         raise typer.Exit(code=_memory_exit_code(report.status))
     try:
-        audit_report = audit_spec_evidence_memory(Path.cwd(), spec_selector)
+        audit_report = audit_spec_evidence_memory(
+            Path.cwd(),
+            spec_selector,
+            allow_unlanded=allow_unlanded,
+        )
     except SpecMemoryError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
@@ -2270,12 +2280,21 @@ def spec_evidence_memory_refresh(
 def spec_evidence_memory_audit(
     spec_selector: str,
     as_json: bool = typer.Option(False, "--json"),
+    allow_unlanded: bool = typer.Option(
+        False,
+        "--allow-unlanded",
+        help="Audit evidence for a spec whose frontmatter status is not landed.",
+    ),
 ) -> None:
     from echelon.mempalace_requirements import SpecMemoryError
     from echelon.mempalace_spec_evidence import audit_spec_evidence_memory
 
     try:
-        report = audit_spec_evidence_memory(Path.cwd(), spec_selector)
+        report = audit_spec_evidence_memory(
+            Path.cwd(),
+            spec_selector,
+            allow_unlanded=allow_unlanded,
+        )
     except SpecMemoryError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc
@@ -2284,6 +2303,59 @@ def spec_evidence_memory_audit(
     else:
         typer.echo(_render_spec_evidence_memory_audit_markdown(report).rstrip())
     raise typer.Exit(code=_memory_exit_code(report.status))
+
+
+@spec_evidence_app.command("publish")
+def spec_evidence_publish(
+    spec_selector: Optional[str] = typer.Argument(None),
+    all_specs: bool = typer.Option(False, "--all", help="Publish evidence packages for all published specs."),
+    run_id: Optional[str] = typer.Option(None, "--from-run", help="Use a specific run id below runs/."),
+    as_json: bool = typer.Option(False, "--json"),
+    allow_unlanded: bool = typer.Option(
+        False,
+        "--allow-unlanded",
+        help="Publish evidence for a spec whose frontmatter status is not landed.",
+    ),
+) -> None:
+    from echelon.mempalace_requirements import SpecMemoryError
+    from echelon.mempalace_spec_evidence import (
+        publish_all_spec_evidence_packages,
+        publish_spec_evidence_package,
+    )
+
+    try:
+        if all_specs:
+            report = publish_all_spec_evidence_packages(
+                Path.cwd(),
+                allow_unlanded=allow_unlanded,
+            )
+        else:
+            if spec_selector is None:
+                typer.echo("spec selector is required unless --all is used", err=True)
+                raise typer.Exit(code=2)
+            report = publish_spec_evidence_package(
+                Path.cwd(),
+                spec_selector,
+                run_id=run_id,
+                allow_unlanded=allow_unlanded,
+            )
+    except SpecMemoryError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    if as_json:
+        _echo_json(report.to_dict())
+    elif all_specs:
+        typer.echo(
+            f"Spec evidence packages {report.status}: total={report.total_count} "
+            f"published={report.published_count} failed={report.failed_count}"
+        )
+    else:
+        typer.echo(
+            f"Spec evidence package {report.status}: spec={report.spec_id} "
+            f"artifacts={report.published_count} skipped={report.skipped_count}"
+        )
+        typer.echo(f"Evidence dir: {report.evidence_dir}")
+    raise typer.Exit(code=0 if report.status in {"published", "complete"} else 1)
 
 
 @spec_app.command(
