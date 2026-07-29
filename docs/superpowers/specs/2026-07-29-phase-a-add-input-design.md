@@ -180,6 +180,24 @@ request state or investigation artifacts. With the run now retryable,
 `echelon spec continue` resumes the active run and dispatches INVESTIGATOR from
 `phase1-investigate`.
 
+Because the input set has materially changed, the command must also reset only
+`phase_dispatch_counts["phase1-investigate"]` for a successful non-duplicate
+attachment. Record the previous count in the recovery marker. Do not reset
+other phase counters and do not reset the investigation counter for an
+idempotent all-duplicate invocation. This prevents a fresh authoritative
+evidence bundle from immediately tripping the generic phase dispatch cap while
+preserving the cap for unchanged retries.
+
+The command must not skip requirement or quality gates. When INVESTIGATOR
+returns `validated` or `conflicting`, the existing graph routes to
+`phase1-what`, where CARTOGRAPHER amends requirements from
+`evidence-resolution.md` and `evidence-grades.md`. The normal WHAT completion
+path clears stale Phase 1 quality and spec Lexicon certification fields, then
+the controller runs deterministic Understanding, SAGE WHY2, Lexicon derivation,
+and the deterministic Lexicon gate before checkpoint assessment. Tests should
+assert this post-investigation route rather than allowing `add-input` to jump
+directly to Understanding, Lexicon, checkpoint, or done.
+
 ## Validation and Routing
 
 After `echelon spec continue`, INVESTIGATOR reads the updated Product Input
