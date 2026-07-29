@@ -4980,6 +4980,60 @@ class TestSquadControllerBasics:
         assert updates["iteration"] == 0
         assert updates["quality_gate_remediation"]["evidence"] is None
 
+    def test_failing_why2_with_all_validated_issues_uses_current_quality_remediation(self, tmp_path):
+        ctrl, store = _controller(tmp_path)
+        store.initialize("r", "semi", "msg", 0, "phase1-why2", max_iterations=5)
+        state = store.load()
+        state.update(
+            {
+                "issue_resolution_ledger": {
+                    "ISS-006": {"status": "validated"},
+                    "ISS-007": {"status": "validated"},
+                },
+                "understanding_evidence": {
+                    "phase": "phase1-why2",
+                    "status": "completed",
+                    "path": "evidence/current.json",
+                },
+                "why_fail_count": 1,
+                "why2_metric_stagnation_count": 1,
+            }
+        )
+        store.save(state)
+        node = ctrl._graph.get("phase1-why2")
+        snapshot = store.capture_routing_snapshot(expected_phase=node.id)
+        prepared = ctrl._prepare_phase_result(
+            node,
+            SquadAgentResult(
+                exit_code=0,
+                echelon_result={
+                    "verdict": "FAIL",
+                    "state_updates": {
+                        "evidence_resolution_status": "not_required",
+                        "finding_routes": {"findings": [{
+                            "issue_id": "ISS-006",
+                            "route": "spec_repair",
+                            "rationale": "Historical stale finding.",
+                        }]},
+                    },
+                },
+                raw_output="", duration_ms=0, timed_out=False,
+            ),
+            snapshot,
+        )
+
+        next_phase, updates, human_input = ctrl._coordinate_why_transition_state(
+            node, prepared, snapshot
+        )
+
+        assert next_phase == "phase1-what"
+        assert human_input is None
+        assert updates["why_fail_count"] == 0
+        assert updates["why2_metric_stagnation_count"] == 0
+        assert updates["quality_gate_remediation"]["evidence"] == state[
+            "understanding_evidence"
+        ]
+
     def test_consecutive_why_escalation_gives_an_actionable_question(self, tmp_path):
         from echelon.cli import _classify_run_recovery
 
