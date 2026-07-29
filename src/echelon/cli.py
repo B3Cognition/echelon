@@ -7113,7 +7113,27 @@ def _cmd_status(project_root: Path) -> None:
         _print_next_steps(project_root, run_status or "done")
 
 
+def _format_squad_timestamp(timestamp: datetime) -> str:
+    """Render a concise, local-time boundary timestamp for CLI transcripts."""
+    return timestamp.astimezone().isoformat(timespec="seconds")
+
+
 def _cmd_continue(
+    args: list[str],
+    project_root: Path,
+    ext_dir: Path,
+) -> None:
+    """Run `spec continue` with explicit transcript timing boundaries."""
+    started_at = datetime.now(timezone.utc)
+    print(f"[squad] start: {_format_squad_timestamp(started_at)}", flush=True)
+    try:
+        _cmd_continue_impl(args, project_root=project_root, ext_dir=ext_dir)
+    finally:
+        ended_at = datetime.now(timezone.utc)
+        print(f"[squad] end:   {_format_squad_timestamp(ended_at)}", flush=True)
+
+
+def _cmd_continue_impl(
     args: list[str],
     project_root: Path,
     ext_dir: Path,

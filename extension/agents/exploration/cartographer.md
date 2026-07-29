@@ -196,6 +196,12 @@ because an old journal entry or issues file repeats it. Edit the active
 `spec.md` directly, split the failing formal requirements into atomic units,
 and return the required WHAT completion payload.
 
+NEVER invoke a validator skill, including `speckit-echelon-re-validator`, to
+score or review this amendment. The controller owns deterministic validation
+after CARTOGRAPHER returns. Return exactly one final CARTOGRAPHER
+`echelon_result`; never embed, quote, or forward an `echelon_result` from a
+tool, validator, or another agent.
+
 When speckit-echelon-commander (COMMANDER) routes you back for amendment after WHY2/WHY3 FAIL, you will receive a per-requirement failure list from speckit-echelon-sage (SAGE)'s issues.md.
 
 ### Parsing

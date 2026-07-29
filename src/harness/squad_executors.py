@@ -460,6 +460,7 @@ def _render_controller_repair_context(state: dict) -> str:
         evidence = quality_remediation.get("evidence")
         report = evidence.get("path") if isinstance(evidence, dict) else ""
         failed_gates: list[str] = []
+        weak_requirements: dict[str, list[str]] = {}
         if isinstance(report, str) and report:
             try:
                 payload = json.loads(Path(report).read_text(encoding="utf-8"))
@@ -473,6 +474,39 @@ def _render_controller_repair_context(state: dict) -> str:
                         failed_gates.append(
                             f"{name} ({score} < required {threshold})"
                         )
+                        if name == "overall":
+                            continue
+                        weak_requirements[str(name)] = []
+                    per_requirement = payload.get("per_requirement")
+                    if isinstance(per_requirement, list):
+                        for item in per_requirement:
+                            if not isinstance(item, dict):
+                                continue
+                            requirement_id = str(
+                                item.get("requirement_id") or ""
+                            ).strip()
+                            metrics = item.get("metrics")
+                            categories = (
+                                metrics.get("category_averages")
+                                if isinstance(metrics, dict)
+                                else None
+                            )
+                            if not requirement_id or not isinstance(categories, dict):
+                                continue
+                            for category in weak_requirements:
+                                gate = gates_payload.get(category)
+                                threshold = (
+                                    gate.get("threshold")
+                                    if isinstance(gate, dict)
+                                    else None
+                                )
+                                score = categories.get(category)
+                                if (
+                                    isinstance(threshold, (int, float))
+                                    and isinstance(score, (int, float))
+                                    and score < threshold
+                                ):
+                                    weak_requirements[category].append(requirement_id)
             except (OSError, ValueError, TypeError):
                 # The evidence path is advisory context. The deterministic
                 # gate remains the source of truth if an old report is gone.
@@ -491,6 +525,9 @@ def _render_controller_repair_context(state: dict) -> str:
             f"Read the certified report at `{report}` before editing." if report else "Read the current certified Understanding report before editing.",
             "Certified failing gates: " + ", ".join(failed_gates)
             if failed_gates else "Use the failing gates in the certified report as the repair checklist.",
+            "The Understanding gate scores only formal AC/FR/NFR requirement "
+            "statements. Do not append diagrams, narrative, matrices, or test "
+            "appendices as a substitute for editing those scored statements.",
             "Rewrite the affected requirements into atomic, independently testable "
             "statements with explicit actor, trigger, action, observable outcome, "
             "and measurable acceptance criteria. Add explicit conditional/error "
@@ -509,6 +546,14 @@ def _render_controller_repair_context(state: dict) -> str:
             "specification remediation.",
             "",
         ])
+        for category, requirement_ids in weak_requirements.items():
+            if requirement_ids:
+                sections.append(
+                    "Certified weak requirement IDs for "
+                    f"`{category}`: {', '.join(requirement_ids)}."
+                )
+        if weak_requirements:
+            sections.append("")
     for pass_key, report_key, artifact in gates:
         if state.get(pass_key) is not False:
             continue
@@ -739,15 +784,32 @@ def _render_certified_understanding_context(state: dict, dispatch: str) -> str:
     failing_gates = failing if isinstance(failing, list) else []
     rendered_failing = ", ".join(f"`{gate}`" for gate in failing_gates) or "none"
     certified_pass = str(bool(evidence.get("pass"))).lower()
+    scores_line = ""
+    report_ref = str(evidence.get("path") or "").strip()
+    if report_ref:
+        try:
+            payload = json.loads(Path(report_ref).read_text(encoding="utf-8"))
+            scores = payload.get("scores")
+            if isinstance(scores, dict):
+                scores_line = "- Certified scores: " + ", ".join(
+                    f"{name}={value}"
+                    for name, value in sorted(scores.items())
+                    if isinstance(value, (int, float))
+                ) + "\n"
+        except (OSError, ValueError, TypeError):
+            pass
     return (
         "# Certified Understanding Evidence\n"
         "The Echelon controller produced this report before provider dispatch. "
-        "Interpret it; do not recalculate or override its scores.\n"
+        "Interpret it; do not recalculate or override its scores. These are the "
+        "only current scores; never quote older scores from state.json, issues.md, "
+        "or the reasoning journal.\n"
         f"- Report: `{evidence.get('path')}`\n"
         f"- Digest: `{evidence.get('digest')}`\n"
         f"- Iteration: `{evidence.get('iteration')}`\n"
         f"- Certified pass: `{certified_pass}`\n"
         f"- Failing gates: {rendered_failing}\n\n"
+        f"{scores_line}\n"
     )
 
 

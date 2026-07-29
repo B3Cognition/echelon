@@ -8406,6 +8406,48 @@ class SquadController:
             for finding in findings
             if isinstance(finding, Mapping)
         } if isinstance(findings, list) else set()
+
+        # Once every controller-recorded issue decision is validated, SAGE's
+        # historical prose must not create another manual issue-resolution or
+        # consecutive-failure loop. The current deterministic Understanding
+        # evidence is authoritative and starts a fresh, score-directed WHAT
+        # remediation cycle.
+        ledger_entries = (
+            [entry for entry in ledger.values() if isinstance(entry, Mapping)]
+            if isinstance(ledger, Mapping)
+            else []
+        )
+        if (
+            node.id == "phase1-why2"
+            and not selected
+            and ledger_entries
+            and all(entry.get("status") == "validated" for entry in ledger_entries)
+        ):
+            existing_remediation = state.get("quality_gate_remediation")
+            try:
+                prior_attempt = int(
+                    existing_remediation.get("attempt")
+                    if isinstance(existing_remediation, Mapping)
+                    else 0
+                )
+            except (TypeError, ValueError):
+                prior_attempt = 0
+            return "phase1-what", {
+                "why_fail_count": 0,
+                "why2_metric_stagnation_count": 0,
+                "why_failure_baseline": None,
+                "iteration": 0,
+                "quality_gate_remediation": {
+                    "evidence": state.get("understanding_evidence"),
+                    "baseline_spec_sha256": self._spec_markdown_sha256(state),
+                    "attempt": prior_attempt + 1,
+                    "reason": (
+                        "All named issue resolutions are complete. Repair only the "
+                        "current certified Understanding failures in formal "
+                        "requirements; historical SAGE issue prose is not actionable."
+                    ),
+                },
+            }, None
         if (
             node.id == "phase1-why2"
             and selected

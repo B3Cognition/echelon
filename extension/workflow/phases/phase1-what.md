@@ -65,6 +65,8 @@ The active runtime dispatches this role with the following request:
 
   Controller-Owned Validation Contract:
   - The harness owns formal Understanding analysis in `phase1-understanding` and `phase3-understanding`; do not calculate or report deterministic scores.
+  - Do not invoke `speckit-echelon-re-validator`, any validator skill, or another Echelon phase from this dispatch. The controller runs the canonical validation after your one completion payload.
+  - Return exactly one final CARTOGRAPHER `echelon_result` using this phase's allowed `state_updates`. Never embed, quote, or forward another agent's result block.
   - After this phase, deterministic Understanding and SAGE WHY2 validate the current `spec.md`.
   - Do not create or repair the derived Lexicon artifact. A dedicated node runs only after spec quality passes.
 
