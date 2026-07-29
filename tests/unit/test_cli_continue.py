@@ -1306,6 +1306,20 @@ def test_consecutive_why_failure_after_all_resolutions_restarts_quality_remediat
     assert action.phase == "phase1-what"
 
 
+def test_quality_remediation_no_progress_retries_authoring_without_resolve() -> None:
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "terminal-blocked",
+            "blocked_reason": "quality_gate_remediation_no_artifact_progress",
+        }
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "quality_gate_remediation"
+    assert action.command == "echelon spec continue"
+
+
 def test_persisted_runtime_sync_recovery_retries_after_compatible_sync(
     tmp_path: Path,
     monkeypatch,

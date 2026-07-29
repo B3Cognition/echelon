@@ -3516,6 +3516,19 @@ def _classify_run_recovery(
             ),
         )
 
+    if reason == "quality_gate_remediation_no_artifact_progress":
+        return _RunRecoveryAction(
+            "retry_phase",
+            reason="quality_gate_remediation",
+            phase="phase1-what",
+            command="echelon spec continue",
+            note=(
+                "The prior quality remediation did not modify spec.md. Retrying "
+                "CARTOGRAPHER with the controller's mandatory atomic-requirement "
+                "repair contract; no `spec resolve` command applies."
+            ),
+        )
+
     try:
         instruction = _persisted_or_legacy_recovery_instruction(run_state)
     except RecoveryInstructionError as exc:

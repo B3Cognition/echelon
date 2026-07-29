@@ -1489,6 +1489,7 @@ def _prepare_state_effects(
         "blocked_reason",
         "lexicon_gate_exhausted",
         "lexicon_repair_no_artifact_progress",
+        "quality_gate_remediation_no_artifact_progress",
     }
     if set(normalized) - allowed:
         raise ControllerStateContractViolation(
@@ -1536,6 +1537,17 @@ def _prepare_state_effects(
             "lexicon repair progress metadata must be true",
             contract="preparation",
             json_path="$.control_updates.lexicon_repair_no_artifact_progress",
+            validator="state_effects",
+        )
+    if "quality_gate_remediation_no_artifact_progress" in normalized and (
+        normalized["quality_gate_remediation_no_artifact_progress"] is not True
+    ):
+        raise ControllerStateContractViolation(
+            "quality remediation progress metadata must be true",
+            contract="preparation",
+            json_path=(
+                "$.control_updates.quality_gate_remediation_no_artifact_progress"
+            ),
             validator="state_effects",
         )
     return removals, transaction_removals, normalized
