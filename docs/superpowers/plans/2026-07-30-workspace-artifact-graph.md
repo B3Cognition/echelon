@@ -440,8 +440,12 @@ monkeypatch these to fail if invoked:
 mine_spec_requirements
 mine_re_memory
 mine_spec_evidence_memory
-build_spec_graph
+write_spec_graph
 ```
+
+The existing live per-spec audit may call `build_spec_graph` to reconstruct a
+current in-memory candidate for comparison. That is read-only and is not an
+upstream persisted rebuild.
 
 For `refresh --write`, assert:
 
