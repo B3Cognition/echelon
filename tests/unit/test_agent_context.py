@@ -12,6 +12,7 @@ from harness.agent_context import (
 )
 
 from harness.agent_context import (
+    PromptRenderReport,
     RenderedSection,
     build_context_budget_report,
     write_context_budget_report,
@@ -202,7 +203,7 @@ def test_render_directory_marks_unreadable_child_unavailable(tmp_path: Path, mon
 
 
 def test_build_context_budget_report_compares_legacy_and_bounded() -> None:
-    report = build_context_budget_report(
+    report: PromptRenderReport = build_context_budget_report(
         phase_id="phase1-why2",
         agent_id="speckit-echelon-sage",
         mode="WHY2",
@@ -224,6 +225,7 @@ def test_build_context_budget_report_compares_legacy_and_bounded() -> None:
     assert report["bounded"]["bytes"] == 700
     assert report["savings"]["bytes"] == 3300
     assert report["savings"]["reduction_pct"] == 82
+    assert all("text" not in section for section in report["legacy"]["top_sections"])
 
 
 def test_write_context_budget_report_persists_json(tmp_path: Path) -> None:
@@ -243,3 +245,15 @@ def test_write_context_budget_report_persists_json(tmp_path: Path) -> None:
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert path.parent == tmp_path / "context-budget"
     assert payload["phase"] == "phase1-why2"
+
+
+def test_write_context_budget_report_skips_existing_sequence_gaps(tmp_path: Path) -> None:
+    out_dir = tmp_path / "context-budget"
+    out_dir.mkdir()
+    for sequence in (1, 3):
+        (out_dir / f"dispatch-{sequence:04d}-phase1-why2-agent.json").write_text("{}", encoding="utf-8")
+
+    path = write_context_budget_report(tmp_path, {"phase": "phase1-why2", "agent": "agent"})
+
+    assert path.name == "dispatch-0002-phase1-why2-agent.json"
+    assert path.read_text(encoding="utf-8") != "{}"

@@ -8,7 +8,7 @@ import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, TypedDict
 
 
 RENDER_MODES = {"bounded", "legacy"}
@@ -34,6 +34,31 @@ class RenderedSection:
     text: str
     bytes: int
     omitted: dict[str, int | str]
+
+
+class PromptSectionReport(TypedDict):
+    name: str
+    bytes: int
+    omitted: dict[str, int | str]
+
+
+class PromptSummary(TypedDict):
+    bytes: int
+    approx_tokens: int
+    top_sections: list[PromptSectionReport]
+
+
+class PromptRenderReport(TypedDict):
+    schema_version: int
+    timestamp: str
+    phase: str
+    agent: str
+    mode: str
+    selected_render_mode: str
+    strict: bool
+    legacy: PromptSummary
+    bounded: PromptSummary
+    savings: dict[str, int]
 
 
 STATE_ALWAYS_KEYS = (
@@ -359,7 +384,7 @@ def build_context_budget_report(
     legacy_sections: list[RenderedSection],
     bounded_sections: list[RenderedSection],
     strict: bool,
-) -> dict[str, object]:
+) -> PromptRenderReport:
     legacy = _section_summary(legacy_sections)
     bounded = _section_summary(bounded_sections)
     legacy_bytes = int(legacy["bytes"])
@@ -390,7 +415,13 @@ def write_context_budget_report(squad_dir: Path, report: Mapping[str, object]) -
     out_dir.mkdir(parents=True, exist_ok=True)
     phase = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(report.get("phase") or "unknown"))
     agent = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(report.get("agent") or "agent"))
-    existing = len(list(out_dir.glob("dispatch-*.json"))) + 1
-    path = out_dir / f"dispatch-{existing:04d}-{phase}-{agent}.json"
-    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return path
+    sequence = 1
+    while True:
+        path = out_dir / f"dispatch-{sequence:04d}-{phase}-{agent}.json"
+        try:
+            with path.open("x", encoding="utf-8") as handle:
+                handle.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        except FileExistsError:
+            sequence += 1
+            continue
+        return path
