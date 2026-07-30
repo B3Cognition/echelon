@@ -97,9 +97,9 @@ spec_memory_app = typer.Typer(
     help="Mine and audit canonical spec memory in MemPalace.",
     no_args_is_help=True,
 )
-spec_graph_app = typer.Typer(
+graph_app = typer.Typer(
     add_completion=False,
-    help="Build and audit deterministic spec artifact graphs.",
+    help="Build and audit artifact graphs rooted at a specification.",
     no_args_is_help=True,
 )
 memory_app = typer.Typer(
@@ -161,6 +161,7 @@ app.add_typer(stack_app, name="stack")
 app.add_typer(delivery_app, name="delivery")
 app.add_typer(harness_app, name="harness", hidden=True)
 app.add_typer(llm_app, name="llm")
+app.add_typer(graph_app, name="graph")
 app.add_typer(memory_app, name="memory")
 app.add_typer(re_app, name="re")
 app.add_typer(kb_app, name="kb")
@@ -169,7 +170,6 @@ app.add_typer(admin_app, name="admin", hidden=True)
 workspace_app.add_typer(workspace_sources_app, name="sources")
 spec_app.add_typer(spec_checkpoint_app, name="checkpoint")
 spec_app.add_typer(spec_memory_app, name="memory")
-spec_app.add_typer(spec_graph_app, name="graph")
 spec_app.add_typer(spec_evidence_app, name="evidence")
 delivery_app.add_typer(delivery_checkpoint_app, name="checkpoint")
 re_app.add_typer(re_memory_app, name="memory")
@@ -1939,8 +1939,8 @@ def spec_checkpoint_commit(
     run_checkpoint_command(args, project_root=Path.cwd())
 
 
-@spec_graph_app.command("build")
-def spec_graph_build(
+@graph_app.command("build")
+def graph_build(
     spec_selector: str,
     write: bool = typer.Option(False, "--write"),
 ) -> None:
@@ -1963,8 +1963,8 @@ def spec_graph_build(
     _echo_spec_graph_summary(graph, action="built")
 
 
-@spec_graph_app.command("audit")
-def spec_graph_audit(
+@graph_app.command("audit")
+def graph_audit(
     spec_selector: str,
     as_json: bool = typer.Option(False, "--json"),
     write: bool = typer.Option(False, "--write"),
@@ -1992,8 +1992,8 @@ def spec_graph_audit(
     raise typer.Exit(code=_graph_exit_code(report.status))
 
 
-@spec_graph_app.command("refresh")
-def spec_graph_refresh(
+@graph_app.command("refresh")
+def graph_refresh(
     spec_selector: str,
     write: bool = typer.Option(False, "--write"),
 ) -> None:

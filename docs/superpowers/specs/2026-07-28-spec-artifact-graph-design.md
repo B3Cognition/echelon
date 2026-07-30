@@ -151,9 +151,9 @@ but not interchangeable authorities:
   after the core graph is stable.
 - Published curated `re/` artifacts through the RE snapshot discovery and
   `echelon re memory audit`. RE never reads run-local state or unpublished RE
-  worktrees. Because RE is workspace-scoped, a spec graph creates RE artifact
-  nodes and records RE audit input only for artifacts named by the selected
-  spec's canonical `re-context.json`.
+  worktrees. Because RE is workspace-scoped, a spec-rooted graph creates RE
+  artifact nodes and records RE audit input only for artifacts named by the
+  selected spec's canonical `re-context.json`.
 - Curated per-spec verification and fulfillment artifacts through the spec
   evidence snapshot discovery and `echelon spec evidence memory audit <spec>`.
   These include the currently supported evidence allowlist; their rooms and
@@ -219,7 +219,7 @@ normalized status, expected and present counts, and SHA-256 digest. Each
 The RE audit is workspace-wide, so the graph hashes only its deterministic
 projection for linked RE artifacts: the planned drawer IDs and audit findings
 whose drawer IDs match that set. Unrelated RE findings do not stale or fail a
-spec graph.
+spec-rooted graph.
 
 ### Drawer Nodes
 
@@ -552,12 +552,17 @@ implementation, while still making the deferred work visible.
 
 ## CLI
 
+The graph is a top-level Echelon capability because it consumes canonical spec,
+RE, evidence, task, amendment, deferral, and MemPalace state. V1 still requires
+a spec selector as the graph's provenance and incremental-build root; that root
+does not make the graph spec-only.
+
 Add normal lifecycle commands:
 
 ```bash
-echelon spec graph build <spec-id-or-path> [--write]
-echelon spec graph audit <spec-id-or-path> [--json] [--write]
-echelon spec graph refresh <spec-id-or-path> [--write]
+echelon graph build <spec-id-or-path> [--write]
+echelon graph audit <spec-id-or-path> [--json] [--write]
+echelon graph refresh <spec-id-or-path> [--write]
 ```
 
 `build` creates an in-memory graph and writes graph artifacts only with
@@ -573,8 +578,8 @@ status.
 `refresh` runs:
 
 ```text
-echelon spec graph build <spec> --write
-echelon spec graph audit <spec> --write
+echelon graph build <spec> --write
+echelon graph audit <spec> --write
 ```
 
 Build and audit each use the applicable native memory audit APIs. `refresh`
@@ -622,7 +627,7 @@ Unit tests:
 - every source returned by an applicable native memory planner has an
   `Artifact` node and valid `STORED_AS` endpoints;
 - derived artifact references cannot create requirement nodes;
-- workspace RE artifacts appear in a spec graph only through canonical
+- workspace RE artifacts appear in a spec-rooted graph only through canonical
   `re-context.json`;
 - legacy specs without `re-context.json` warn without creating RE edges;
 - attached RE paths and hashes are normalized from the immutable run snapshot;
@@ -645,9 +650,9 @@ Unit tests:
 
 CLI tests:
 
-- `echelon spec graph build <id> --write` writes stable graph JSON;
-- `echelon spec graph audit <id> --json` emits valid JSON only;
-- `echelon spec graph refresh <id> --write` builds and audits without mining
+- `echelon graph build <id> --write` writes stable graph JSON;
+- `echelon graph audit <id> --json` emits valid JSON only;
+- `echelon graph refresh <id> --write` builds and audits without mining
   MemPalace;
 - stale input hashes produce exit code 1;
 - unavailable required inputs produce exit code 2.
@@ -686,7 +691,7 @@ Integration tests:
    renderer.
 3. Add read-only graph audit for existing graph files.
 4. Add graph build from canonical spec artifacts.
-5. Wire `echelon spec graph build/audit/refresh`.
+5. Wire `echelon graph build/audit/refresh` with a required spec root.
 6. Add hash staleness, deferral, amendment, RE, and MemPalace audit tests.
 7. Keep automatic lifecycle integration off until manual reports are stable.
 8. Later, allow GraphRAG features to consume the audited graph as discovery
@@ -703,7 +708,7 @@ Implemented on 2026-07-29:
   lifecycle edges.
 - `echelon.spec_graph_audit` audits graph freshness, memory freshness, input
   identity changes, and lifecycle coherence independently.
-- `echelon spec graph build`, `audit`, and `refresh` expose the workflow without
+- `echelon graph build`, `audit`, and `refresh` expose the workflow without
   mining MemPalace.
 
 Verification:

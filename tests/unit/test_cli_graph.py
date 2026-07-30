@@ -39,10 +39,10 @@ def _workspace(tmp_path: Path) -> Path:
 
 
 @pytest.mark.unit
-def test_spec_graph_help_exposes_build_audit_and_refresh() -> None:
+def test_graph_help_exposes_build_audit_and_refresh() -> None:
     from echelon.cli_app import app
 
-    result = CliRunner().invoke(app, ["spec", "graph", "--help"])
+    result = CliRunner().invoke(app, ["graph", "--help"])
 
     assert result.exit_code == 0
     assert "build" in result.output
@@ -51,7 +51,17 @@ def test_spec_graph_help_exposes_build_audit_and_refresh() -> None:
 
 
 @pytest.mark.unit
-def test_spec_graph_build_does_not_write_without_flag(
+def test_spec_graph_route_is_not_available() -> None:
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["spec", "graph", "--help"])
+
+    assert result.exit_code != 0
+    assert "No such command 'graph'" in result.output
+
+
+@pytest.mark.unit
+def test_graph_build_does_not_write_without_flag(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -63,7 +73,7 @@ def test_spec_graph_build_does_not_write_without_flag(
     )
     from echelon.cli_app import app
 
-    result = CliRunner().invoke(app, ["spec", "graph", "build", "001-demo"])
+    result = CliRunner().invoke(app, ["graph", "build", "001-demo"])
 
     assert result.exit_code == 0
     assert "nodes=1" in result.output
@@ -71,7 +81,7 @@ def test_spec_graph_build_does_not_write_without_flag(
 
 
 @pytest.mark.unit
-def test_spec_graph_build_writes_with_flag(
+def test_graph_build_writes_with_flag(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -85,7 +95,7 @@ def test_spec_graph_build_writes_with_flag(
 
     result = CliRunner().invoke(
         app,
-        ["spec", "graph", "build", "001-demo", "--write"],
+        ["graph", "build", "001-demo", "--write"],
     )
 
     assert result.exit_code == 0
@@ -96,7 +106,7 @@ def test_spec_graph_build_writes_with_flag(
 
 
 @pytest.mark.unit
-def test_spec_graph_audit_json_is_machine_readable(
+def test_graph_audit_json_is_machine_readable(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -124,7 +134,7 @@ def test_spec_graph_audit_json_is_machine_readable(
 
     result = CliRunner().invoke(
         app,
-        ["spec", "graph", "audit", "001-demo", "--json"],
+        ["graph", "audit", "001-demo", "--json"],
     )
 
     assert result.exit_code == 0
@@ -132,7 +142,7 @@ def test_spec_graph_audit_json_is_machine_readable(
 
 
 @pytest.mark.unit
-def test_spec_graph_audit_maps_fail_and_unavailable_exit_codes(
+def test_graph_audit_maps_fail_and_unavailable_exit_codes(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -151,15 +161,15 @@ def test_spec_graph_audit_maps_fail_and_unavailable_exit_codes(
     )
     from echelon.cli_app import app
 
-    failed = CliRunner().invoke(app, ["spec", "graph", "audit", "001-demo"])
-    unavailable = CliRunner().invoke(app, ["spec", "graph", "audit", "001-demo"])
+    failed = CliRunner().invoke(app, ["graph", "audit", "001-demo"])
+    unavailable = CliRunner().invoke(app, ["graph", "audit", "001-demo"])
 
     assert failed.exit_code == 1
     assert unavailable.exit_code == 2
 
 
 @pytest.mark.unit
-def test_spec_graph_refresh_writes_graph_then_audit_without_mining(
+def test_graph_refresh_writes_graph_then_audit_without_mining(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -189,7 +199,7 @@ def test_spec_graph_refresh_writes_graph_then_audit_without_mining(
 
     result = CliRunner().invoke(
         app,
-        ["spec", "graph", "refresh", "001-demo", "--write"],
+        ["graph", "refresh", "001-demo", "--write"],
     )
 
     assert result.exit_code == 0
