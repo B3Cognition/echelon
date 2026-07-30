@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -209,3 +210,102 @@ def test_duplicate_unit_ids_are_rejected():
             documents=(_document(),),
             units=(_unit(), _unit()),
         )
+
+
+def test_markdown_adapter_preserves_explicit_requirement_id(tmp_path):
+    path = tmp_path / "requirements.md"
+    path.write_text("# Requirements\n\n- **FR-001**: The system MUST save.\n")
+    bundle = source.load_source_bundle(path)
+    assert [unit.id for unit in bundle.units] == ["FR-001"]
+    assert bundle.units[0].text == "The system MUST save."
+    assert bundle.units[0].source_refs[0].locator == "L3-L3"
+
+
+def test_markdown_adapter_recognizes_requirement_heading(tmp_path):
+    path = tmp_path / "requirements.md"
+    path.write_text("# FR-002: The system SHALL retain audit history.\n")
+    bundle = source.load_source_bundle(path)
+    assert bundle.units[0].id == "FR-002"
+    assert bundle.units[0].normative_level == "must"
+
+
+def test_lexicon_adapter_extracts_controlled_situation(tmp_path):
+    path = tmp_path / "rules.lex"
+    path.write_text(
+        "REQ: REQ-001\n"
+        "GIVEN: an authenticated user\n"
+        "WHEN: the user saves\n"
+        "THEN: the record persists\n"
+    )
+    bundle = source.load_source_bundle(path)
+    situation = bundle.units[0].situation
+    assert situation.given == "an authenticated user"
+    assert situation.when == "the user saves"
+    assert situation.then == "the record persists"
+
+
+def test_normative_bullet_gets_locator_id(tmp_path):
+    path = tmp_path / "requirements.md"
+    path.write_text("# Rules\n\n- The cache MUST expire after 10 minutes.\n")
+    bundle = source.load_source_bundle(path)
+    assert bundle.units[0].id.endswith(":L3-L3")
+    assert bundle.units[0].normative_level == "must"
+
+
+def test_unstructured_prose_is_inconclusive(tmp_path):
+    path = tmp_path / "notes.md"
+    path.write_text("Some thoughts about a future product.\n")
+    with pytest.raises(source.SUESourceError) as error:
+        source.load_source_bundle(path)
+    assert error.value.code == "INCONCLUSIVE_INPUT"
+
+
+def _manifest(document: str = "requirements.txt"):
+    return {
+        "schema_version": 1,
+        "bundle_id": "payments",
+        "documents": [{"id": "rules", "path": document, "media_type": "text/plain"}],
+        "units": [{
+            "id": "PAYMENT-RETRY",
+            "kind": "rule",
+            "text": "Payment retries stop after three attempts.",
+            "normative_level": "must",
+            "source_refs": [{
+                "document_id": "rules", "locator_kind": "line-range", "locator": "L1-L1",
+            }],
+        }],
+        "glossary": [],
+    }
+
+
+def test_manifest_accepts_non_echelon_unit_ids(tmp_path):
+    document = tmp_path / "requirements.txt"
+    document.write_text("Payment retries stop after three attempts.\n")
+    manifest = tmp_path / "requirements.sue.json"
+    manifest.write_text(json.dumps(_manifest()))
+    bundle = source.load_source_bundle(manifest, "manifest")
+    assert bundle.units[0].id == "PAYMENT-RETRY"
+
+
+@pytest.mark.parametrize("change", [
+    lambda data: data["documents"][0].update(path="../outside.txt"),
+    lambda data: data["units"][0].update(text="Different text."),
+    lambda data: data["documents"][0].update(digest="0" * 64),
+    lambda data: data["units"][0]["source_refs"][0].update(document_id="missing"),
+    lambda data: data["units"][0].update(declared_relations=[{
+        "predicate": "depends-on", "target_unit_id": "missing", "source_refs": [],
+    }]),
+    lambda data: data.update(glossary=[
+        {"canonical": "first", "aliases": ["shared"], "source_refs": []},
+        {"canonical": "second", "aliases": ["shared"], "source_refs": []},
+    ]),
+])
+def test_manifest_rejects_invalid_provenance_or_ambiguous_aliases(tmp_path, change):
+    document = tmp_path / "requirements.txt"
+    document.write_text("Payment retries stop after three attempts.\n")
+    data = _manifest()
+    change(data)
+    manifest = tmp_path / "requirements.sue.json"
+    manifest.write_text(json.dumps(data))
+    with pytest.raises(source.SUESourceError):
+        source.load_source_bundle(manifest, "manifest")

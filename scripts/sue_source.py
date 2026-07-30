@@ -11,11 +11,27 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass, is_dataclass, replace
+from pathlib import Path
 from typing import Any
 
 
 _LINE_RANGE_RE = re.compile(r"L([1-9][0-9]*)-L([1-9][0-9]*)\Z")
 _LOCATOR_KINDS = frozenset({"line-range", "json-pointer", "xml-id", "page-paragraph"})
+_EXPLICIT_UNIT_RE = re.compile(
+    r"^\s*(?:(?:#{1,6}|[-*+])\s+)?(?:\*\*)?((?:FR|REQ|AC)[-_][A-Za-z0-9-]+)(?:\*\*)?\s*:\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+_NORMATIVE_RE = re.compile(r"\b(MUST|SHALL|SHOULD|MAY)\b", re.IGNORECASE)
+_LEXICON_RE = re.compile(r"^(REQ|AC|GIVEN|WHEN|THEN):\s*(.*?)\s*$", re.IGNORECASE)
+
+
+class SUESourceError(ValueError):
+    """A source input cannot be represented with trustworthy provenance."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(f"{code}: {message}")
 
 
 @dataclass(frozen=True)
@@ -256,3 +272,210 @@ def resolve_source_ref(bundle: SUESourceBundle, ref: SourceRef) -> str:
     elif selected.endswith(("\n", "\r")):
         selected = selected[:-1]
     return document_text[start_offset : start_offset + len(selected)]
+
+
+def _read_utf8(path: Path) -> str:
+    try:
+        with path.open("r", encoding="utf-8", newline="") as handle:
+            return handle.read()
+    except (OSError, UnicodeDecodeError) as error:
+        raise SUESourceError("INPUT_ERROR", f"cannot read {path}: {error}") from error
+
+
+def _media_type(path: Path) -> str:
+    return "text/markdown" if path.suffix.lower() in {".md", ".markdown"} else "text/plain"
+
+
+def _normative_level(text: str) -> str:
+    match = _NORMATIVE_RE.search(text)
+    return match.group(1).lower().replace("shall", "must") if match else "unspecified"
+
+
+def load_markdown_lexicon(path: Path) -> SUESourceBundle:
+    """Load the small, explicit Markdown and lexicon source subset."""
+    path = Path(path)
+    text = _read_utf8(path)
+    document_id = path.stem
+    document = SourceDocument.from_text(
+        id=document_id, source_uri=str(path), media_type=_media_type(path), text=text
+    )
+    units: list[SourceUnit] = []
+    lines = text.splitlines()
+    lexicon: dict[str, tuple[str, int]] = {}
+
+    def flush_lexicon() -> None:
+        nonlocal lexicon
+        if "REQ" not in lexicon and "AC" not in lexicon:
+            return
+        key = "REQ" if "REQ" in lexicon else "AC"
+        unit_id, id_line = lexicon[key]
+        end = max(line for _, line in lexicon.values())
+        block_text = "\n".join(lines[id_line - 1 : end])
+        situation = None
+        if all(label in lexicon for label in ("GIVEN", "WHEN", "THEN")):
+            situation = ControlledSituation(
+                given=lexicon["GIVEN"][0], when=lexicon["WHEN"][0], then=lexicon["THEN"][0]
+            )
+        units.append(SourceUnit(
+            id=unit_id,
+            kind="requirement" if key == "REQ" else "acceptance-criterion",
+            text=block_text,
+            normative_level=_normative_level(block_text),
+            source_refs=(SourceRef(document_id, "line-range", f"L{id_line}-L{end}"),),
+            declared_relations=(), situation=situation,
+        ))
+        lexicon = {}
+
+    for number, line in enumerate(lines, start=1):
+        lexicon_match = _LEXICON_RE.fullmatch(line)
+        if lexicon_match:
+            label, value = lexicon_match.groups()
+            label = label.upper()
+            if label in {"REQ", "AC"} and lexicon:
+                flush_lexicon()
+            lexicon[label] = (value, number)
+            continue
+        if lexicon:
+            flush_lexicon()
+        explicit = _EXPLICIT_UNIT_RE.fullmatch(line)
+        if explicit:
+            unit_id, unit_text = explicit.groups()
+            kind = "acceptance-criterion" if unit_id.upper().startswith("AC") else "requirement"
+        else:
+            bullet = re.fullmatch(r"\s*[-*+]\s+(.+?)\s*", line)
+            if bullet and _NORMATIVE_RE.search(bullet.group(1)):
+                unit_id = f"{document_id}:L{number}-L{number}"
+                unit_text = bullet.group(1)
+                kind = "requirement"
+            else:
+                continue
+        units.append(SourceUnit(
+            id=unit_id, kind=kind, text=unit_text,
+            normative_level=_normative_level(unit_text),
+            source_refs=(SourceRef(document_id, "line-range", f"L{number}-L{number}"),),
+            declared_relations=(), situation=None,
+        ))
+    flush_lexicon()
+    if not units:
+        raise SUESourceError(
+            "INCONCLUSIVE_INPUT",
+            "no explicit requirement, acceptance criterion, lexicon block, or normative bullet found",
+        )
+    try:
+        return make_bundle(bundle_id=document_id, adapter_id="markdown-lexicon", documents=(document,), units=tuple(units))
+    except ValueError as error:
+        raise SUESourceError("INVALID_INPUT", str(error)) from error
+
+
+def _source_error(code: str, message: str) -> None:
+    raise SUESourceError(code, message)
+
+
+def _manifest_refs(value: object) -> tuple[SourceRef, ...]:
+    if not isinstance(value, list):
+        _source_error("INVALID_MANIFEST", "source_refs must be a list")
+    try:
+        return tuple(SourceRef(**ref) for ref in value)
+    except (TypeError, ValueError) as error:
+        _source_error("INVALID_MANIFEST", f"invalid source reference: {error}")
+
+
+def load_generic_manifest(path: Path) -> SUESourceBundle:
+    """Load a generic JSON manifest without fetching or inferring source data."""
+    path = Path(path)
+    try:
+        data = json.loads(_read_utf8(path))
+    except json.JSONDecodeError as error:
+        _source_error("INVALID_MANIFEST", f"invalid JSON: {error.msg}")
+    if not isinstance(data, dict):
+        _source_error("INVALID_MANIFEST", "manifest root must be an object")
+    directory = path.parent.resolve()
+    documents: list[SourceDocument] = []
+    for record in data.get("documents", []):
+        if not isinstance(record, dict):
+            _source_error("INVALID_MANIFEST", "document must be an object")
+        relative_path = record.get("path")
+        if not isinstance(relative_path, str):
+            _source_error("INVALID_MANIFEST", "document path must be a string")
+        candidate = (directory / relative_path).resolve()
+        try:
+            candidate.relative_to(directory)
+        except ValueError:
+            _source_error("PATH_ESCAPE", f"document path escapes manifest directory: {relative_path}")
+        if not candidate.is_file():
+            _source_error("MISSING_DOCUMENT", f"document does not exist: {relative_path}")
+        content = _read_utf8(candidate)
+        document = SourceDocument.from_text(
+            id=record.get("id"), source_uri=relative_path,
+            media_type=record.get("media_type"), text=content,
+        )
+        supplied_digest = record.get("digest")
+        if supplied_digest is not None and supplied_digest != document.digest:
+            _source_error("DIGEST_MISMATCH", f"document digest does not match: {document.id}")
+        documents.append(document)
+
+    units: list[SourceUnit] = []
+    for record in data.get("units", []):
+        if not isinstance(record, dict):
+            _source_error("INVALID_MANIFEST", "unit must be an object")
+        relations = []
+        for relation in record.get("declared_relations", []):
+            if not isinstance(relation, dict):
+                _source_error("INVALID_MANIFEST", "declared relation must be an object")
+            relations.append(DeclaredRelation(
+                predicate=relation.get("predicate"), target_unit_id=relation.get("target_unit_id"),
+                source_refs=_manifest_refs(relation.get("source_refs", [])),
+            ))
+        raw_situation = record.get("situation")
+        try:
+            situation = ControlledSituation(**raw_situation) if raw_situation is not None else None
+            units.append(SourceUnit(
+                id=record.get("id"), kind=record.get("kind"), text=record.get("text"),
+                normative_level=record.get("normative_level", "unspecified"),
+                source_refs=_manifest_refs(record.get("source_refs", [])),
+                declared_relations=tuple(relations), situation=situation,
+            ))
+        except TypeError as error:
+            _source_error("INVALID_MANIFEST", f"invalid unit: {error}")
+
+    glossary: list[GlossaryTerm] = []
+    aliases: dict[str, str] = {}
+    for record in data.get("glossary", []):
+        if not isinstance(record, dict):
+            _source_error("INVALID_MANIFEST", "glossary term must be an object")
+        term = GlossaryTerm(record.get("canonical"), tuple(record.get("aliases", [])), _manifest_refs(record.get("source_refs", [])))
+        for alias in term.aliases:
+            previous = aliases.setdefault(alias.casefold(), term.canonical)
+            if previous != term.canonical:
+                _source_error("AMBIGUOUS_ALIAS", f"alias maps to multiple terms: {alias}")
+        glossary.append(term)
+    try:
+        bundle = make_bundle(
+            bundle_id=data.get("bundle_id"), adapter_id="manifest", schema_version=data.get("schema_version", 1),
+            documents=tuple(documents), units=tuple(units), glossary=tuple(glossary),
+        )
+        unit_ids = {unit.id for unit in bundle.units}
+        for unit in bundle.units:
+            for relation in unit.declared_relations:
+                if relation.target_unit_id not in unit_ids:
+                    _source_error("UNRESOLVED_TARGET", f"unknown relation target: {relation.target_unit_id}")
+            for ref in unit.source_refs:
+                if resolve_source_ref(bundle, ref) != unit.text:
+                    _source_error("SOURCE_TEXT_MISMATCH", f"unit text does not match {ref.locator}")
+        return bundle
+    except SUESourceError:
+        raise
+    except ValueError as error:
+        raise SUESourceError("INVALID_MANIFEST", str(error)) from error
+
+
+def load_source_bundle(path: Path, source_format: str = "auto") -> SUESourceBundle:
+    """Load one supported source shape, preserving only explicit evidence."""
+    path = Path(path)
+    if source_format == "auto":
+        source_format = "manifest" if path.name.endswith(".sue.json") else "markdown-lexicon"
+    if source_format == "manifest":
+        return load_generic_manifest(path)
+    if source_format in {"markdown", "lexicon", "markdown-lexicon"}:
+        return load_markdown_lexicon(path)
+    raise SUESourceError("UNSUPPORTED_FORMAT", f"unsupported source format: {source_format}")
