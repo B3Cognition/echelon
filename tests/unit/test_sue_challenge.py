@@ -70,6 +70,41 @@ def _make_stub(path: Path, body: str) -> str:
     return str(path)
 
 
+def _cold_result(request, final_output: str, **overrides):
+    values = {
+        "run_id": request.run_id,
+        "status": "success",
+        "provider": request.provider,
+        "model_requested": request.model,
+        "model_reported": "reported-model",
+        "reasoning_effort": request.reasoning_effort,
+        "protocol": "codex-jsonl-stdin",
+        "argv_redacted": ("codex", "exec", "<output-schema>", "-"),
+        "duration_seconds": 0.25,
+        "exit_code": 0,
+        "raw_output": '{"type":"turn.completed"}\n',
+        "final_output": final_output,
+        "stderr": "provider warning\n",
+        "raw_output_digest": "a" * 64,
+        "final_output_digest": "b" * 64,
+        "usage": {
+            "input_tokens": 101,
+            "cached_input_tokens": 11,
+            "output_tokens": 23,
+            "reasoning_output_tokens": 7,
+        },
+        "started_at_utc": "2026-07-31T00:01:02Z",
+        "timeout_seconds": request.timeout_seconds,
+        "provider_cli_version": "codex-cli 0.146.0",
+        "provider_cli_version_status": "reported",
+        "prompt_digest": "c" * 64,
+        "schema_digest": "d" * 64,
+        "stderr_digest": "e" * 64,
+    }
+    values.update(overrides)
+    return sue.runner.ColdReaderResult(**values)
+
+
 # ---------------------------------------------------------------------------
 # T-001 — shared constants and dataclasses (contract anchor, ISS-206)
 # ---------------------------------------------------------------------------
@@ -145,9 +180,37 @@ class TestDataclasses:
                     "model_requested",
                     "model_reported",
                     "reasoning_effort",
+                    "status",
+                    "provider",
+                    "started_at_utc",
+                    "timeout_seconds",
+                    "exit_code",
+                    "protocol",
+                    "argv_redacted",
+                    "provider_cli_version",
+                    "provider_cli_version_status",
+                    "prompt_digest",
+                    "schema_digest",
+                    "stderr_digest",
+                    "raw_output",
+                    "final_output",
+                    "raw_output_digest",
+                    "final_output_digest",
+                    "usage",
                 },
             ),
-            ("CallEvidence", {"round_no", "attempt_no", "outcome"}),
+            (
+                "CallEvidence",
+                {
+                    "round_no",
+                    "attempt_no",
+                    "outcome",
+                    "metadata_ref",
+                    "raw_output_ref",
+                    "final_output_ref",
+                    "stderr_ref",
+                },
+            ),
             ("ParseFailure", {"reason", "is_timeout"}),
         ],
     )
@@ -442,7 +505,7 @@ class TestPreflight:
         output = capsys.readouterr().out
         profile = output.index(
             "Preflight: provider=codex, requested_model=gpt-5.6-requested, "
-            "reasoning_effort=high"
+            "reasoning_effort=high, transport=v1-schema"
         )
         report = output.index("Report:")
         assert profile < report
@@ -549,23 +612,10 @@ class TestRunModelCall:
         def fake_run(request):
             captured["request"] = request
             final_output = '{"questions":[]}'
-            return sue.runner.ColdReaderResult(
-                run_id=request.run_id,
-                status="success",
-                provider=request.provider,
-                model_requested=request.model,
-                model_reported=request.model,
-                reasoning_effort=request.reasoning_effort,
-                protocol="codex-stdin",
-                argv_redacted=("codex", "exec", "-"),
-                duration_seconds=0.1,
-                exit_code=0,
-                raw_output="",
-                final_output=final_output,
-                stderr="",
-                raw_output_digest=hashlib.sha256(b"").hexdigest(),
-                final_output_digest=hashlib.sha256(final_output.encode()).hexdigest(),
-                usage=None,
+            return _cold_result(
+                request,
+                final_output,
+                model_reported="gpt-5.6-reported",
             )
 
         monkeypatch.setattr(sue.runner, "run_cold_reader", fake_run)
@@ -589,8 +639,25 @@ class TestRunModelCall:
         assert captured["request"].reasoning_effort == "low"
         assert captured["request"].output_schema == sue.ROUND1_OUTPUT_SCHEMA
         assert outcome.model_requested == "gpt-5.6-luna"
-        assert outcome.model_reported == "gpt-5.6-luna"
+        assert outcome.model_reported == "gpt-5.6-reported"
         assert outcome.reasoning_effort == "low"
+        assert outcome.status == "success"
+        assert outcome.provider == "codex"
+        assert outcome.started_at_utc == "2026-07-31T00:01:02Z"
+        assert outcome.timeout_seconds == 10
+        assert outcome.exit_code == 0
+        assert outcome.protocol == "codex-jsonl-stdin"
+        assert outcome.argv_redacted == ("codex", "exec", "<output-schema>", "-")
+        assert outcome.provider_cli_version == "codex-cli 0.146.0"
+        assert outcome.provider_cli_version_status == "reported"
+        assert outcome.prompt_digest == "c" * 64
+        assert outcome.schema_digest == "d" * 64
+        assert outcome.stderr_digest == "e" * 64
+        assert outcome.raw_output == '{"type":"turn.completed"}\n'
+        assert outcome.final_output == '{"questions":[]}'
+        assert outcome.raw_output_digest == "a" * 64
+        assert outcome.final_output_digest == "b" * 64
+        assert outcome.usage["reasoning_output_tokens"] == 7
 
     def test_codex_request_configuration_failure_returns_failed_outcome(self, tmp_path):
         config = sue.RunConfig(
@@ -608,6 +675,53 @@ class TestRunModelCall:
         assert outcome.kind == "failed"
         assert outcome.stdout == ""
         assert "require a model" in outcome.stderr
+
+    def test_unexpected_codex_runner_failure_never_raises(self, tmp_path, monkeypatch):
+        def broken_runner(_request):
+            raise RuntimeError("runner broke")
+
+        monkeypatch.setattr(sue.runner, "run_cold_reader", broken_runner)
+        config = sue.RunConfig(
+            spec_path=tmp_path / "spec.md",
+            max_questions=1,
+            model_command="codex",
+            timeout_seconds=10,
+            model_protocol="codex-stdin",
+            model="requested-model",
+            reasoning_effort="low",
+        )
+
+        outcome = sue.run_model_call(
+            config, "PROMPT", output_schema=sue.ROUND1_OUTPUT_SCHEMA
+        )
+
+        assert outcome.kind == "failed"
+        assert outcome.stdout == ""
+        assert "RuntimeError: runner broke" in outcome.stderr
+
+    def test_non_v1_codex_call_uses_legacy_transport_not_runner(self, tmp_path, monkeypatch):
+        def unexpected_runner_call(_request):
+            raise AssertionError("non-V1 Codex call entered the scientific runner")
+
+        monkeypatch.setattr(sue.runner, "run_cold_reader", unexpected_runner_call)
+        executable = _make_stub(
+            tmp_path / "legacy-codex.sh",
+            'cat > /dev/null\nprintf \'{"legacy":true}\'\n',
+        )
+        config = sue.RunConfig(
+            spec_path=tmp_path / "spec.md",
+            max_questions=1,
+            model_command=shlex.quote(executable),
+            timeout_seconds=10,
+            model_protocol="codex-stdin",
+        )
+
+        outcome = sue.run_model_call(config, "NON-V1 PROMPT")
+
+        assert outcome.kind == "ok"
+        assert outcome.stdout == '{"legacy":true}'
+        assert outcome.status is None
+        assert outcome.raw_output == ""
 
     def test_claude_and_copilot_calls_do_not_use_codex_runner(self, tmp_path, monkeypatch):
         def unexpected_runner_call(_request):
@@ -650,6 +764,7 @@ class TestRunModelCall:
             _spec_dir,
             output_schema=None,
             _call_evidence=None,
+            _evidence_dir=None,
         ):
             schemas.append(output_schema)
             return ([question], False) if round_no == 1 else [answer]
@@ -1279,6 +1394,68 @@ class TestExecuteRound:
             (1, 2, "round1-valid", "reported-b"),
         ]
 
+    def test_codex_retry_reuses_round_schema_and_persists_each_attempt(
+        self, tmp_path, monkeypatch
+    ):
+        requests = []
+        outputs = iter(["not JSON", _round1_reply("Q1")])
+        reported = iter(["reported-first", "reported-second"])
+
+        def fake_run(request):
+            requests.append(request)
+            attempt = len(requests)
+            return _cold_result(
+                request,
+                next(outputs),
+                run_id="../../unsafe" if attempt == 1 else request.run_id,
+                model_reported=next(reported),
+                raw_output=f'{{"attempt":{attempt}}}\n',
+                raw_output_digest=str(attempt) * 64,
+                final_output_digest=str(attempt + 2) * 64,
+            )
+
+        monkeypatch.setattr(sue.runner, "run_cold_reader", fake_run)
+        config = sue.RunConfig(
+            spec_path=tmp_path / "spec.md",
+            max_questions=1,
+            model_command="codex",
+            timeout_seconds=10,
+            model_protocol="codex-stdin",
+            model="requested-model",
+            reasoning_effort="low",
+        )
+        evidence_dir = tmp_path / sue.EVIDENCE_DIR_NAME / "challenge-test"
+        evidence_dir.mkdir(parents=True)
+        evidence = []
+
+        result = sue.execute_round(
+            config,
+            "PROMPT",
+            self._r1_validator,
+            1,
+            tmp_path,
+            sue.ROUND1_OUTPUT_SCHEMA,
+            evidence,
+            evidence_dir,
+        )
+
+        questions, _ = result
+        assert [question.id for question in questions] == ["Q1"]
+        assert [request.output_schema for request in requests] == [
+            sue.ROUND1_OUTPUT_SCHEMA,
+            sue.ROUND1_OUTPUT_SCHEMA,
+        ]
+        assert [item.outcome.model_reported for item in evidence] == [
+            "reported-first",
+            "reported-second",
+        ]
+        assert len(list(evidence_dir.glob("*.evidence.json"))) == 2
+        assert len(list(evidence_dir.glob("*.raw.jsonl"))) == 2
+        assert len(list(evidence_dir.glob("*.final.txt"))) == 2
+        assert len(list(evidence_dir.glob("*.stderr.txt"))) == 2
+        assert all(".." not in path.name for path in evidence_dir.iterdir())
+        assert not (tmp_path / sue.DEBUG_DIR_NAME).exists()
+
     def test_invalid_then_valid_is_two_invocations(self, tmp_path):
         # AC-016: first output invalid, retry valid — exactly 2 invocations.
         stub, count, stub_dir = _make_replay_stub(
@@ -1339,6 +1516,23 @@ class TestExecuteRound:
                 model_requested="requested-one",
                 model_reported="reported-one",
                 reasoning_effort="low",
+                status="transport_error",
+                provider="codex",
+                started_at_utc="2026-07-31T01:00:00Z",
+                timeout_seconds=10.0,
+                exit_code=7,
+                protocol="codex-jsonl-stdin",
+                argv_redacted=("codex", "exec", "<output-schema>", "-"),
+                provider_cli_version="codex-cli 0.146.0",
+                provider_cli_version_status="reported",
+                prompt_digest="1" * 64,
+                schema_digest="2" * 64,
+                stderr_digest="3" * 64,
+                raw_output='{"failed":1}\n',
+                final_output="BAD-ONE",
+                raw_output_digest="4" * 64,
+                final_output_digest="5" * 64,
+                usage={"input_tokens": 10, "output_tokens": 2},
             ),
             sue.CallOutcome(
                 kind="failed",
@@ -1349,9 +1543,29 @@ class TestExecuteRound:
                 model_requested="requested-two",
                 model_reported="reported-two",
                 reasoning_effort="high",
+                status="unusable_output",
+                provider="codex",
+                started_at_utc="2026-07-31T01:01:00Z",
+                timeout_seconds=10.0,
+                exit_code=0,
+                protocol="codex-jsonl-stdin",
+                argv_redacted=("codex", "exec", "<output-schema>", "-"),
+                provider_cli_version="unavailable",
+                provider_cli_version_status="unavailable",
+                prompt_digest="6" * 64,
+                schema_digest="7" * 64,
+                stderr_digest="8" * 64,
+                raw_output='{"failed":2}\n',
+                final_output="BAD-TWO",
+                raw_output_digest="9" * 64,
+                final_output_digest="a" * 64,
+                usage=None,
             ),
         ])
         monkeypatch.setattr(sue, "run_model_call", lambda *_args: next(outcomes))
+        evidence_dir = tmp_path / sue.EVIDENCE_DIR_NAME / "challenge-failed"
+        evidence_dir.mkdir(parents=True)
+        call_evidence = []
 
         result = sue.execute_round(
             self._config("codex"),
@@ -1360,33 +1574,44 @@ class TestExecuteRound:
             2,
             tmp_path,
             sue.ROUND2_OUTPUT_SCHEMA,
+            call_evidence,
+            evidence_dir,
         )
 
         assert isinstance(result, sue.RoundExit)
         evidence = json.loads(
             (tmp_path / sue.DEBUG_DIR_NAME / "round2-call-evidence.json").read_text()
         )
-        assert evidence == {
-            "round": 2,
-            "attempts": [
-                {
-                    "attempt": 1,
-                    "reasoning_effort": "low",
-                    "reported_model": "reported-one",
-                    "requested_model": "requested-one",
-                    "run_id": "failed-run-one",
-                    "status": "failed",
-                },
-                {
-                    "attempt": 2,
-                    "reasoning_effort": "high",
-                    "reported_model": "reported-two",
-                    "requested_model": "requested-two",
-                    "run_id": "failed-run-two",
-                    "status": "failed",
-                },
-            ],
-        }
+        assert evidence["round"] == 2
+        assert len(evidence["attempts"]) == 2
+        first, second = evidence["attempts"]
+        assert (first["attempt"], first["run_id"]) == (1, "failed-run-one")
+        assert (second["attempt"], second["run_id"]) == (2, "failed-run-two")
+        assert first["status"] == "transport_error"
+        assert second["status"] == "unusable_output"
+        assert first["requested_model"] == "requested-one"
+        assert first["reported_model"] == "reported-one"
+        assert first["provider"] == "codex"
+        assert first["started_at_utc"] == "2026-07-31T01:00:00Z"
+        assert first["timeout_seconds"] == 10.0
+        assert first["duration_seconds"] == 0.1
+        assert first["exit_code"] == 7
+        assert first["protocol"] == "codex-jsonl-stdin"
+        assert first["argv_redacted"][-1] == "-"
+        assert first["provider_cli_version"] == "codex-cli 0.146.0"
+        assert first["provider_cli_version_status"] == "reported"
+        assert first["prompt_digest"] == "1" * 64
+        assert first["schema_digest"] == "2" * 64
+        assert first["stderr_digest"] == "3" * 64
+        assert first["raw_output_digest"] == "4" * 64
+        assert first["final_output_digest"] == "5" * 64
+        assert first["usage"] == {"input_tokens": 10, "output_tokens": 2}
+        for item in evidence["attempts"]:
+            assert (tmp_path / item["metadata_ref"]).is_file()
+            assert (tmp_path / item["raw_output_ref"]).is_file()
+            assert (tmp_path / item["final_output_ref"]).is_file()
+            assert (tmp_path / item["stderr_ref"]).is_file()
+        assert len(call_evidence) == 2
 
     def test_double_timeout_exits_3_with_timeout_prefixed_dumps(self, tmp_path):
         # AC-017 + FR-029 + FR-013: timeout retries re-issue the identical
@@ -1901,23 +2126,11 @@ class TestMainPipeline:
                 else _round2_reply({"Q1": "ANSWERED"})
             )
             reported = next(reported_models)
-            return sue.runner.ColdReaderResult(
-                run_id=request.run_id,
-                status="success",
-                provider=request.provider,
-                model_requested=request.model,
+            return _cold_result(
+                request,
+                final_output,
                 model_reported=reported,
-                reasoning_effort=request.reasoning_effort,
-                protocol="codex-stdin",
-                argv_redacted=("codex", "exec", "-"),
-                duration_seconds=0.1,
-                exit_code=0,
-                raw_output="",
-                final_output=final_output,
-                stderr="",
-                raw_output_digest=hashlib.sha256(b"").hexdigest(),
-                final_output_digest=hashlib.sha256(final_output.encode()).hexdigest(),
-                usage=None,
+                raw_output=f'{{"reported":"{reported}"}}\n',
             )
 
         monkeypatch.setattr(sue.runner, "run_cold_reader", fake_run)
@@ -1934,6 +2147,42 @@ class TestMainPipeline:
         assert "requested=requested-model; reported=reported-round-1" in report
         assert "requested=requested-model; reported=reported-round-2" in report
         assert report.count("**Model call round") == 2
+        evidence_runs = list((spec.parent / sue.EVIDENCE_DIR_NAME).iterdir())
+        assert len(evidence_runs) == 1
+        evidence_dir = evidence_runs[0]
+        metadata_paths = sorted(evidence_dir.glob("*.evidence.json"))
+        assert len(metadata_paths) == 2
+        metadata = [json.loads(path.read_text()) for path in metadata_paths]
+        assert [item["reported_model"] for item in metadata] == [
+            "reported-round-1",
+            "reported-round-2",
+        ]
+        assert all(item["requested_model"] == "requested-model" for item in metadata)
+        assert all(item["provider"] == "codex" for item in metadata)
+        assert all(item["started_at_utc"] == "2026-07-31T00:01:02Z" for item in metadata)
+        assert all(item["timeout_seconds"] == 300.0 for item in metadata)
+        assert all(item["duration_seconds"] == 0.25 for item in metadata)
+        assert all(item["exit_code"] == 0 for item in metadata)
+        assert all(item["protocol"] == "codex-jsonl-stdin" for item in metadata)
+        assert all(item["argv_redacted"][-1] == "-" for item in metadata)
+        assert all(item["provider_cli_version"] == "codex-cli 0.146.0" for item in metadata)
+        assert all(item["provider_cli_version_status"] == "reported" for item in metadata)
+        assert all(item["prompt_digest"] == "c" * 64 for item in metadata)
+        assert all(item["schema_digest"] == "d" * 64 for item in metadata)
+        assert all(item["stderr_digest"] == "e" * 64 for item in metadata)
+        assert all(item["raw_output_digest"] == "a" * 64 for item in metadata)
+        assert all(item["final_output_digest"] == "b" * 64 for item in metadata)
+        assert all(item["usage"]["input_tokens"] == 101 for item in metadata)
+        for item in metadata:
+            assert (spec.parent / item["raw_output_ref"]).read_text().startswith(
+                '{"reported":'
+            )
+            assert (spec.parent / item["final_output_ref"]).read_text()
+            assert (spec.parent / item["stderr_ref"]).read_text() == "provider warning\n"
+            assert item["metadata_ref"] in report
+        serialized = "\n".join(path.read_text() for path in metadata_paths)
+        assert "The system does X." not in serialized
+        assert '"properties"' not in serialized
         assert capsys.readouterr().err == ""
 
     def test_stdout_summary_states_counts_and_top_findings(self, tmp_path, capsys):

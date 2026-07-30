@@ -273,6 +273,33 @@ def _write_spec(tmp_path: Path) -> Path:
 
 
 class TestScenario:
+    def test_non_v1_codex_reader_keeps_legacy_transport(self, tmp_path, monkeypatch):
+        responses = [
+            _round1([("Q1", "REQ-001")]),
+            _round2({"Q1": "UNANSWERABLE"}, {"Q1": [1]}),
+        ]
+        stub = _replay_stub(tmp_path, responses)
+        spec_path = _write_spec(tmp_path)
+        config = v1.RunConfig(
+            spec_path=spec_path,
+            max_questions=1,
+            model_command=shlex.quote(stub),
+            timeout_seconds=10.0,
+            model_protocol="codex-stdin",
+        )
+        spec = v1.SpecDocument(path=spec_path, lines=_SPEC.splitlines())
+
+        def unexpected_runner_call(_request):
+            raise AssertionError("non-V1 consensus calls must not use the V1 runner")
+
+        monkeypatch.setattr(v1.runner, "run_cold_reader", unexpected_runner_call)
+        result = v2.run_reader(config, spec, tmp_path, 1, v2.FRAMINGS[0])
+
+        assert isinstance(result, v2.ReaderResult)
+        assert result.reader_no == 1
+        assert result.framing == "structural"
+        assert len(result.findings) == 1
+
     def test_full_run_stable_finding_with_chain(self, tmp_path, capsys):
         # 3 readers ask about REQ-001 line 1; readers 1+2 get UNANSWERABLE
         # (stable), reader 3 ANSWERED. Elenchus chains on the survivor.

@@ -25,6 +25,7 @@ the model command (NFR-003); see ``--help``.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -82,6 +83,7 @@ QUESTION_ID_RE = re.compile(r"^Q[1-9][0-9]*$")
 
 REPORT_FILENAME = "socratic-challenge.md"
 DEBUG_DIR_NAME = ".sue-debug"
+EVIDENCE_DIR_NAME = "sue-evidence"
 
 EXIT_SUCCESS = 0
 EXIT_BAD_INPUT = 1
@@ -369,6 +371,23 @@ class CallOutcome:
     model_requested: str | None = None
     model_reported: str | None = None
     reasoning_effort: str | None = None
+    status: str | None = None
+    provider: str | None = None
+    started_at_utc: str | None = None
+    timeout_seconds: float | None = None
+    exit_code: int | None = None
+    protocol: str | None = None
+    argv_redacted: tuple[str, ...] = ()
+    provider_cli_version: str | None = None
+    provider_cli_version_status: str | None = None
+    prompt_digest: str | None = None
+    schema_digest: str | None = None
+    stderr_digest: str | None = None
+    raw_output: str = ""
+    final_output: str = ""
+    raw_output_digest: str | None = None
+    final_output_digest: str | None = None
+    usage: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -378,6 +397,10 @@ class CallEvidence:
     round_no: int
     attempt_no: int
     outcome: CallOutcome
+    metadata_ref: str | None = None
+    raw_output_ref: str | None = None
+    final_output_ref: str | None = None
+    stderr_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -677,6 +700,21 @@ def build_model_invocation(config: RunConfig, prompt: str) -> ModelInvocation:
 def run_model_call(
     config: RunConfig, prompt: str, output_schema: dict | None = None
 ) -> CallOutcome:
+    """Run one model call and convert every unexpected failure to an outcome."""
+    try:
+        return _run_model_call(config, prompt, output_schema)
+    except Exception as exc:
+        return CallOutcome(
+            kind="failed",
+            stdout="",
+            stderr=f"model call failed unexpectedly: {exc.__class__.__name__}: {exc}",
+            duration_seconds=0.0,
+        )
+
+
+def _run_model_call(
+    config: RunConfig, prompt: str, output_schema: dict | None = None
+) -> CallOutcome:
     """One model subprocess invocation per the frozen contract shape.
 
     The default Claude protocol appends ``-p`` and sends the prompt on stdin.
@@ -684,7 +722,10 @@ def run_model_call(
     always a fresh neutral temp directory created and removed here (FR-010).
     Never raises to callers.
     """
-    if config.model_protocol == "codex-stdin":
+    # Only the V1 challenge supplies a strict output schema. Other SUE tools
+    # continue to use the established Codex transport below until they are
+    # deliberately migrated with their own schema and evidence contracts.
+    if config.model_protocol == "codex-stdin" and output_schema is not None:
         try:
             request = runner.ColdReaderRequest(
                 run_id=f"sue-challenge-{uuid.uuid4().hex}",
@@ -695,7 +736,7 @@ def run_model_call(
                 prompt=prompt,
                 timeout_seconds=config.timeout_seconds,
                 output_schema=output_schema,
-                scientific=output_schema is not None,
+                scientific=True,
             )
         except runner.RunnerConfigurationError as exc:
             return CallOutcome(
@@ -718,6 +759,23 @@ def run_model_call(
             model_requested=result.model_requested,
             model_reported=result.model_reported,
             reasoning_effort=result.reasoning_effort,
+            status=result.status,
+            provider=result.provider,
+            started_at_utc=result.started_at_utc,
+            timeout_seconds=result.timeout_seconds,
+            exit_code=result.exit_code,
+            protocol=result.protocol,
+            argv_redacted=result.argv_redacted,
+            provider_cli_version=result.provider_cli_version,
+            provider_cli_version_status=result.provider_cli_version_status,
+            prompt_digest=result.prompt_digest,
+            schema_digest=result.schema_digest,
+            stderr_digest=result.stderr_digest,
+            raw_output=result.raw_output,
+            final_output=result.final_output,
+            raw_output_digest=result.raw_output_digest,
+            final_output_digest=result.final_output_digest,
+            usage=result.usage,
         )
 
     try:
@@ -1075,10 +1133,106 @@ def _attempt_result(
     return validator(extracted)
 
 
+def _create_evidence_run_dir(spec_dir: Path) -> Path:
+    """Create a fresh V1 evidence directory without reusing prior-run state."""
+    root = spec_dir / EVIDENCE_DIR_NAME
+    root.mkdir(exist_ok=True)
+    run_dir = root / f"challenge-{uuid.uuid4().hex}"
+    run_dir.mkdir(exist_ok=False)
+    return run_dir
+
+
+def _artifact_ref(spec_dir: Path, path: Path) -> str:
+    """Return a durable report reference, relative when kept beside the spec."""
+    try:
+        return str(path.relative_to(spec_dir))
+    except ValueError:
+        return str(path.resolve())
+
+
+def _write_exclusive_text(path: Path, text: str) -> None:
+    """Write one immutable evidence artifact, refusing any overwrite."""
+    with path.open("x", encoding="utf-8", newline="") as stream:
+        stream.write(text)
+
+
+def _call_evidence_payload(evidence: CallEvidence) -> dict:
+    """Serialize runner-owned evidence without recalculation or inference."""
+    outcome = evidence.outcome
+    return {
+        "round": evidence.round_no,
+        "attempt": evidence.attempt_no,
+        "run_id": outcome.run_id,
+        "status": outcome.status,
+        "compatibility_kind": outcome.kind,
+        "provider": outcome.provider,
+        "requested_model": outcome.model_requested,
+        "reported_model": outcome.model_reported,
+        "reasoning_effort": outcome.reasoning_effort,
+        "started_at_utc": outcome.started_at_utc,
+        "timeout_seconds": outcome.timeout_seconds,
+        "duration_seconds": outcome.duration_seconds,
+        "exit_code": outcome.exit_code,
+        "protocol": outcome.protocol,
+        "argv_redacted": outcome.argv_redacted,
+        "provider_cli_version": outcome.provider_cli_version,
+        "provider_cli_version_status": outcome.provider_cli_version_status,
+        "prompt_digest": outcome.prompt_digest,
+        "schema_digest": outcome.schema_digest,
+        "stderr_digest": outcome.stderr_digest,
+        "raw_output_digest": outcome.raw_output_digest,
+        "final_output_digest": outcome.final_output_digest,
+        "usage": outcome.usage,
+        "metadata_ref": evidence.metadata_ref,
+        "raw_output_ref": evidence.raw_output_ref,
+        "final_output_ref": evidence.final_output_ref,
+        "stderr_ref": evidence.stderr_ref,
+    }
+
+
+def _persist_call_evidence(
+    spec_dir: Path,
+    evidence_dir: Path,
+    evidence: CallEvidence,
+) -> CallEvidence:
+    """Persist one runner result exactly once and return its durable references."""
+    run_identity = evidence.outcome.run_id or "run-id-unavailable"
+    identity_digest = hashlib.sha256(run_identity.encode("utf-8")).hexdigest()[:16]
+    stem = (
+        f"round{evidence.round_no:02d}-attempt{evidence.attempt_no:02d}-"
+        f"{identity_digest}"
+    )
+    metadata_path = evidence_dir / f"{stem}.evidence.json"
+    raw_output_path = evidence_dir / f"{stem}.raw.jsonl"
+    final_output_path = evidence_dir / f"{stem}.final.txt"
+    stderr_path = evidence_dir / f"{stem}.stderr.txt"
+    persisted = replace(
+        evidence,
+        metadata_ref=_artifact_ref(spec_dir, metadata_path),
+        raw_output_ref=_artifact_ref(spec_dir, raw_output_path),
+        final_output_ref=_artifact_ref(spec_dir, final_output_path),
+        stderr_ref=_artifact_ref(spec_dir, stderr_path),
+    )
+    _write_exclusive_text(raw_output_path, evidence.outcome.raw_output)
+    _write_exclusive_text(final_output_path, evidence.outcome.final_output)
+    _write_exclusive_text(stderr_path, evidence.outcome.stderr)
+    _write_exclusive_text(
+        metadata_path,
+        json.dumps(
+            _call_evidence_payload(persisted),
+            indent=2,
+            sort_keys=True,
+            allow_nan=False,
+        )
+        + "\n",
+    )
+    return persisted
+
+
 def _write_debug_dump(
     spec_dir: Path,
     round_no: int,
-    attempts: list[tuple[CallOutcome, ParseFailure]],
+    attempts: list[tuple[CallEvidence, ParseFailure]],
     timeout_seconds: float,
 ) -> Path:
     """Save both failing attempts' raw output and provenance under .sue-debug.
@@ -1089,9 +1243,10 @@ def _write_debug_dump(
     """
     debug_dir = spec_dir / DEBUG_DIR_NAME
     debug_dir.mkdir(exist_ok=True)
-    for attempt_no, (outcome, failure) in enumerate(attempts, start=1):
+    for evidence, failure in attempts:
+        outcome = evidence.outcome
         prefix = f"TIMEOUT after {timeout_seconds:g}s\n" if failure.is_timeout else ""
-        stem = f"round{round_no}-attempt{attempt_no}"
+        stem = f"round{round_no}-attempt{evidence.attempt_no}"
         (debug_dir / f"{stem}-stdout.txt").write_text(
             prefix + outcome.stdout, encoding="utf-8", errors="replace"
         )
@@ -1101,15 +1256,8 @@ def _write_debug_dump(
     evidence = {
         "round": round_no,
         "attempts": [
-            {
-                "attempt": attempt_no,
-                "run_id": outcome.run_id,
-                "requested_model": outcome.model_requested,
-                "reported_model": outcome.model_reported,
-                "reasoning_effort": outcome.reasoning_effort,
-                "status": outcome.kind,
-            }
-            for attempt_no, (outcome, _failure) in enumerate(attempts, start=1)
+            _call_evidence_payload(call)
+            for call, _failure in attempts
         ],
     }
     (debug_dir / f"round{round_no}-call-evidence.json").write_text(
@@ -1127,6 +1275,7 @@ def execute_round(
     spec_dir: Path,
     output_schema: dict | None = None,
     call_evidence: list[CallEvidence] | None = None,
+    evidence_dir: Path | None = None,
 ) -> object:
     """Run one round: at most 2 attempts, then dump and request exit 3.
 
@@ -1136,22 +1285,32 @@ def execute_round(
     sequential calls in main with no cross-round loop, so a round-2 failure
     never re-runs round 1 (FR-031).
     """
-    attempts: list[tuple[CallOutcome, ParseFailure]] = []
+    attempts: list[tuple[CallEvidence, ParseFailure]] = []
     current_prompt = prompt
     for attempt_no in (1, 2):
         outcome = run_model_call(config, current_prompt, output_schema)
-        if call_evidence is not None:
-            call_evidence.append(
-                CallEvidence(
-                    round_no=round_no,
-                    attempt_no=attempt_no,
-                    outcome=outcome,
+        evidence = CallEvidence(
+            round_no=round_no,
+            attempt_no=attempt_no,
+            outcome=outcome,
+        )
+        if evidence_dir is not None:
+            try:
+                evidence = _persist_call_evidence(spec_dir, evidence_dir, evidence)
+            except (OSError, TypeError, ValueError) as exc:
+                return RoundExit(
+                    exit_code=EXIT_BAD_INPUT,
+                    diagnostic=(
+                        "bad input: cannot persist model call evidence "
+                        f"for round {round_no} attempt {attempt_no}: {exc}"
+                    ),
                 )
-            )
+        if call_evidence is not None:
+            call_evidence.append(evidence)
         result = _attempt_result(outcome, validator)
         if not isinstance(result, ParseFailure):
             return result
-        attempts.append((outcome, result))
+        attempts.append((evidence, result))
         if attempt_no == 1:
             current_prompt = build_retry_prompt(prompt, result)
     try:
@@ -1302,11 +1461,15 @@ def render_report(
             if outcome.reasoning_effort
             else "not-reported"
         )
-        lines.append(
+        status = _one_line(outcome.status or outcome.kind)
+        call_line = (
             f"- **Model call round {evidence.round_no} attempt "
             f"{evidence.attempt_no}:** run_id={run_id}; requested={requested}; "
-            f"reported={reported}; reasoning_effort={effort}; status={outcome.kind}"
+            f"reported={reported}; reasoning_effort={effort}; status={status}"
         )
+        if evidence.metadata_ref is not None:
+            call_line += f"; evidence={_one_line(evidence.metadata_ref)}"
+        lines.append(call_line)
     lines += [
         f"- **Questions:** {len(questions)}",
         f"- **Findings:** {len(findings)}",
@@ -1395,7 +1558,8 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "Preflight: provider=codex, "
             f"requested_model={config.model}, "
-            f"reasoning_effort={config.reasoning_effort}"
+            f"reasoning_effort={config.reasoning_effort}, "
+            "transport=v1-schema"
         )
 
     try:
@@ -1416,6 +1580,15 @@ def main(argv: list[str] | None = None) -> int:
         )
     spec_dir = config.spec_path.resolve().parent
     call_evidence: list[CallEvidence] = []
+    evidence_dir: Path | None = None
+    if config.model_protocol == "codex-stdin":
+        try:
+            evidence_dir = _create_evidence_run_dir(spec_dir)
+        except OSError as exc:
+            return fail(
+                EXIT_BAD_INPUT,
+                f"bad input: cannot create V1 evidence directory: {exc}",
+            )
 
     # Exactly 2 logical model calls per run (FR-008): the rounds are two
     # sequential execute_round calls with no cross-round loop, so a round-2
@@ -1428,6 +1601,7 @@ def main(argv: list[str] | None = None) -> int:
         spec_dir,
         ROUND1_OUTPUT_SCHEMA,
         call_evidence,
+        evidence_dir,
     )
     if isinstance(round1, RoundExit):
         return fail(round1.exit_code, round1.diagnostic)
@@ -1443,6 +1617,7 @@ def main(argv: list[str] | None = None) -> int:
             spec_dir,
             ROUND2_OUTPUT_SCHEMA,
             call_evidence,
+            evidence_dir,
         )
         if isinstance(round2, RoundExit):
             return fail(round2.exit_code, round2.diagnostic)
