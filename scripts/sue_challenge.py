@@ -69,6 +69,9 @@ EXIT_UNUSABLE_OUTPUT = 3
 DEFAULT_QUESTION_COUNT = 15
 DEFAULT_MODEL_COMMAND = "claude"
 DEFAULT_TIMEOUT_SECONDS = 300.0
+DEFAULT_CODEX_MODEL = "gpt-5.6-luna"
+DEFAULT_CODEX_REASONING_EFFORT = "low"
+CODEX_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 EGRESS_DISCLOSURE = (
     "Privacy disclosure: challenged specification content\n"
@@ -239,6 +242,8 @@ class RunConfig:
     model_command: str
     timeout_seconds: float
     model_protocol: str = "claude-stdin"
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -346,7 +351,7 @@ def _positive_float(value: str) -> float:
 
 
 def parse_args(argv: list[str]) -> RunConfig:
-    """Parse the frozen v1 surface: 1 positional argument, 3 options."""
+    """Parse the challenge CLI invocation and provider-specific options."""
     parser = _Parser(
         prog="sue_challenge.py",
         description=(
@@ -390,6 +395,23 @@ def parse_args(argv: list[str]) -> RunConfig:
         metavar="SECONDS",
         help="per-model-call budget in seconds (default: 300)",
     )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help=(
+            "Codex model override; Codex defaults visibly to "
+            f"{DEFAULT_CODEX_MODEL!r}"
+        ),
+    )
+    parser.add_argument(
+        "--reasoning-effort",
+        choices=CODEX_REASONING_EFFORTS,
+        default=None,
+        help=(
+            "Codex reasoning effort; Codex defaults visibly to "
+            f"{DEFAULT_CODEX_REASONING_EFFORT!r}"
+        ),
+    )
     namespace = parser.parse_args(argv)
     command, protocol = resolve_model_command(namespace.claude_cmd)
     try:
@@ -398,12 +420,27 @@ def parse_args(argv: list[str]) -> RunConfig:
         raise ArgumentFailure(f"model command is not shell-parseable: {exc}") from None
     if not words:
         raise ArgumentFailure("model command splits to zero words")
+    if protocol != "codex-stdin":
+        if namespace.model is not None:
+            raise ArgumentFailure("--model is supported only for codex")
+        if namespace.reasoning_effort is not None:
+            raise ArgumentFailure("--reasoning-effort is supported only for codex")
+    model = DEFAULT_CODEX_MODEL if protocol == "codex-stdin" else None
+    reasoning_effort = (
+        DEFAULT_CODEX_REASONING_EFFORT if protocol == "codex-stdin" else None
+    )
+    if namespace.model is not None:
+        model = namespace.model
+    if namespace.reasoning_effort is not None:
+        reasoning_effort = namespace.reasoning_effort
     return RunConfig(
         spec_path=namespace.spec_path,
         max_questions=namespace.questions,
         model_command=command,
         timeout_seconds=namespace.timeout,
         model_protocol=protocol,
+        model=model,
+        reasoning_effort=reasoning_effort,
     )
 
 

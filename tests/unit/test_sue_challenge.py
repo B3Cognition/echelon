@@ -125,6 +125,8 @@ class TestDataclasses:
                     "model_command",
                     "timeout_seconds",
                     "model_protocol",
+                    "model",
+                    "reasoning_effort",
                 },
             ),
             ("ModelInvocation", {"argv", "stdin_text"}),
@@ -180,12 +182,40 @@ def _one_stderr_line(capsys) -> str:
 
 
 class TestArgumentHandling:
-    def test_defaults_are_15_claude_300(self):
+    def test_defaults_are_15_claude_300(self, monkeypatch):
+        monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+        monkeypatch.delenv("CODEX_CI", raising=False)
+        monkeypatch.delenv("ECHELON_LLM", raising=False)
         config = sue.parse_args(["spec.md"])
         assert config.spec_path == Path("spec.md")
         assert config.max_questions == 15
         assert config.model_command == "claude"
         assert config.timeout_seconds == 300
+
+    def test_codex_uses_visible_economical_model_profile(self):
+        config = sue.parse_args([
+            "spec.md", "--model-cmd", "codex=codex",
+        ])
+        assert config.model == "gpt-5.6-luna"
+        assert config.reasoning_effort == "low"
+
+    def test_codex_model_and_reasoning_can_be_overridden(self):
+        config = sue.parse_args([
+            "spec.md",
+            "--model-cmd", "codex=codex",
+            "--model", "gpt-5.6-terra",
+            "--reasoning-effort", "medium",
+        ])
+        assert config.model == "gpt-5.6-terra"
+        assert config.reasoning_effort == "medium"
+
+    def test_non_codex_model_override_is_rejected(self, capsys):
+        assert sue.main([
+            "spec.md",
+            "--model-cmd", "claude=claude",
+            "--model", "gpt-5.6-luna",
+        ]) == sue.EXIT_BAD_INPUT
+        assert "--model is supported only for codex" in capsys.readouterr().err
 
     def test_option_overrides(self):
         config = sue.parse_args(

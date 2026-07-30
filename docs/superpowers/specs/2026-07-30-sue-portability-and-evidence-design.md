@@ -375,8 +375,10 @@ output flags, the smoke stops before the second call.
 
 - Scientific commands require an explicit provider-prefixed command.
 - The economical Codex profile is `gpt-5.6-luna` with `low` reasoning. SUE
-  exposes both values as explicit arguments, writes both into the invocation
-  and evidence, and never relies on Codex's ambient model selection.
+  exposes both values through `--model` and `--reasoning-effort`. The challenge
+  CLI stores the resolved values in its `RunConfig`; the shared cold runner
+  carries them into the invocation and evidence. SUE never relies on Codex's
+  ambient model selection.
 - Ordinary Codex runs may select that economical profile by an explicit SUE
   default shown in the preflight summary; operators may override it.
 - `sue_auto` ordinary use resolves the ambient/default provider through the
