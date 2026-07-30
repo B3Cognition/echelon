@@ -140,9 +140,15 @@ def _byte_len(text: str) -> int:
 def _bounded_text(text: str, cap_bytes: int) -> tuple[str, bool]:
     if _byte_len(text) <= cap_bytes:
         return text, False
-    encoded = text.encode("utf-8")[: max(cap_bytes - 128, 0)]
-    trimmed = encoded.decode("utf-8", errors="ignore")
-    return trimmed + "\n[context truncated by Echelon context budget]\n", True
+    if cap_bytes <= 0:
+        return "", True
+    long_notice = "\n[context truncated by Echelon context budget]\n"
+    notice = long_notice if _byte_len(long_notice) <= cap_bytes else "[...]"
+    if _byte_len(notice) > cap_bytes:
+        return notice.encode("utf-8")[:cap_bytes].decode("utf-8", errors="ignore"), True
+    content_bytes = cap_bytes - _byte_len(notice)
+    trimmed = text.encode("utf-8")[:content_bytes].decode("utf-8", errors="ignore")
+    return trimmed + notice, True
 
 
 def _phase_matches(value: object, pattern: str) -> bool:
@@ -179,21 +185,33 @@ def render_journal(path: Path, filters: Mapping[str, str], cap_bytes: int) -> Re
                 entries.append(parsed)
     except OSError:
         text = f"\n---\n# {resolved}\n[Journal unavailable]"
-        return RenderedSection(str(resolved), text, _byte_len(text), {"matched": 0, "included": 0, "malformed": malformed})
+        text, truncated = _bounded_text(text, cap_bytes)
+        omitted = {"matched": 0, "included": 0, "malformed": malformed}
+        if truncated:
+            omitted["truncated"] = "true"
+        return RenderedSection(str(resolved), text, _byte_len(text), omitted)
 
     selected = [entry for entry in entries if _entry_matches(entry, filters)]
     rendered: list[str] = []
-    used = 0
     for entry in reversed(selected):
         line = json.dumps(entry, ensure_ascii=False, sort_keys=True)
         line_bytes = _byte_len(line) + 1
         if line_bytes > cap_bytes:
             continue
-        if rendered and used + line_bytes > cap_bytes:
-            break
-        rendered.append(line)
-        used += line_bytes
-    rendered.reverse()
+        candidate = [line, *rendered]
+        selector = ", ".join(f"{key}={value}" for key, value in sorted(filters.items()))
+        candidate_header = (
+            f"\n---\n# {resolved}\n"
+            f"[Journal context: {len(candidate)}/{len(selected)} matching entries"
+            f"{f'; {selector}' if selector else ''}; newest entries retained; malformed={malformed}]"
+        )
+        candidate_text = candidate_header + "\n" + "\n".join(candidate)
+        if _byte_len(candidate_text) > cap_bytes:
+            if rendered:
+                break
+            continue
+        rendered = candidate
+
     selector = ", ".join(f"{key}={value}" for key, value in sorted(filters.items()))
     header = (
         f"\n---\n# {resolved}\n"
@@ -201,11 +219,15 @@ def render_journal(path: Path, filters: Mapping[str, str], cap_bytes: int) -> Re
         f"{f'; {selector}' if selector else ''}; newest entries retained; malformed={malformed}]"
     )
     text = header + ("\n" + "\n".join(rendered) if rendered else "\n[No matching entries]")
+    bounded, truncated = _bounded_text(text, cap_bytes)
+    omitted = {"matched": len(selected), "included": len(rendered), "malformed": malformed}
+    if truncated:
+        omitted["truncated"] = "true"
     return RenderedSection(
         str(resolved),
-        text,
-        _byte_len(text),
-        {"matched": len(selected), "included": len(rendered), "malformed": malformed},
+        bounded,
+        _byte_len(bounded),
+        omitted,
     )
 
 
@@ -239,9 +261,12 @@ def _render_file(path_ref: str, candidate: Path, policy: ContextPolicy) -> Rende
         raw = candidate.read_text(encoding="utf-8", errors="replace")
     except OSError:
         text = f"\n---\n# {resolved}\n[File unavailable]"
-        return RenderedSection(str(resolved), text, _byte_len(text), {"unavailable": "true"})
-    bounded, truncated = _bounded_text(raw, policy.cap_bytes)
-    text = f"\n---\n# {resolved}\n{bounded}"
+        text, truncated = _bounded_text(text, policy.cap_bytes)
+        omitted = {"unavailable": "true"}
+        if truncated:
+            omitted["truncated"] = "true"
+        return RenderedSection(str(resolved), text, _byte_len(text), omitted)
+    text, truncated = _bounded_text(f"\n---\n# {resolved}\n{raw}", policy.cap_bytes)
     return RenderedSection(str(resolved), text, _byte_len(text), {"truncated": str(truncated).lower()})
 
 
@@ -257,9 +282,14 @@ def _render_directory(path_ref: str, candidate: Path, policy: ContextPolicy) -> 
     chunks = ["\n".join(manifest_lines)]
     used = _byte_len(chunks[0])
     included = 0
+    unavailable = 0
     for path in files:
         rel = path.relative_to(candidate).as_posix()
-        body = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            body = "[File unavailable]"
+            unavailable += 1
         entry = f"\n## {resolved.as_posix().rstrip('/')}/{rel}\n{body}"
         entry_bytes = _byte_len(entry)
         if used + entry_bytes > policy.cap_bytes:
@@ -270,12 +300,15 @@ def _render_directory(path_ref: str, candidate: Path, policy: ContextPolicy) -> 
     truncated = included < len(files)
     if truncated:
         chunks.append(f"\n[Directory bodies truncated: included {included}/{len(files)} files]")
-    text = "\n".join(chunks)
+    text, bounded = _bounded_text("\n".join(chunks), policy.cap_bytes)
+    omitted = {"files": len(files), "included_files": included, "truncated": str(truncated or bounded).lower()}
+    if unavailable:
+        omitted["unavailable_files"] = unavailable
     return RenderedSection(
         str(resolved),
         text,
         _byte_len(text),
-        {"files": len(files), "included_files": included, "truncated": str(truncated).lower()},
+        omitted,
     )
 
 
@@ -292,7 +325,11 @@ def render_context_path(
     if candidate.name == "state.json" and state is not None:
         text = json.dumps(compact_state_projection(state, phase_id), indent=2, sort_keys=True)
         rendered = f"\n---\n# Current controller state (compact projection)\n{text}"
-        return RenderedSection(str(candidate.resolve()), rendered, _byte_len(rendered), {"projection": "compact"})
+        rendered, truncated = _bounded_text(rendered, policy.cap_bytes)
+        omitted = {"projection": "compact"}
+        if truncated:
+            omitted["truncated"] = "true"
+        return RenderedSection(str(candidate.resolve()), rendered, _byte_len(rendered), omitted)
     if candidate.is_dir():
         return _render_directory(path_ref, candidate, policy)
     return _render_file(path_ref, candidate, policy)

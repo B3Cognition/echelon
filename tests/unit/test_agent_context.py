@@ -141,3 +141,55 @@ def test_render_contracts_directory_preserves_manifest_when_body_capped(tmp_path
     assert "a.md" in section.text
     assert "b.md" in section.text
     assert section.omitted["truncated"] == "true"
+
+
+def test_render_file_keeps_section_within_cap(tmp_path: Path) -> None:
+    document = tmp_path / "document.md"
+    document.write_text("content" * 100, encoding="utf-8")
+    policy = ContextPolicy("important", "full_file", 32, "truncate_with_notice")
+
+    section = render_context_path("document.md", document, policy, {})
+
+    assert section.bytes <= 32
+
+
+def test_render_journal_keeps_section_within_tiny_cap(tmp_path: Path) -> None:
+    journal = tmp_path / "reasoning-journal.jsonl"
+    journal.write_text(json.dumps({"type": "decision", "phase": "phase1-what"}) + "\n", encoding="utf-8")
+
+    section = render_journal(journal, {}, cap_bytes=8)
+
+    assert section.bytes <= 8
+
+
+def test_render_directory_keeps_section_within_cap(tmp_path: Path) -> None:
+    contracts = tmp_path / "contracts"
+    contracts.mkdir()
+    (contracts / "a.md").write_text("a" * 5000, encoding="utf-8")
+    policy = ContextPolicy("must_preserve", "directory_bounded_files", 64, "manifest_only")
+
+    section = render_context_path("contracts/", contracts, policy, {})
+
+    assert section.bytes <= 64
+
+
+def test_render_directory_marks_unreadable_child_unavailable(tmp_path: Path, monkeypatch) -> None:
+    contracts = tmp_path / "contracts"
+    contracts.mkdir()
+    readable = contracts / "a.md"
+    unreadable = contracts / "b.md"
+    readable.write_text("readable", encoding="utf-8")
+    unreadable.write_text("unreadable", encoding="utf-8")
+    original_read_text = Path.read_text
+
+    def fail_unreadable(path: Path, *args, **kwargs):
+        if path == unreadable:
+            raise OSError("permission denied")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", fail_unreadable)
+    policy = ContextPolicy("must_preserve", "directory_bounded_files", 4096, "manifest_only")
+
+    section = render_context_path("contracts/", contracts, policy, {})
+
+    assert "File unavailable" in section.text
