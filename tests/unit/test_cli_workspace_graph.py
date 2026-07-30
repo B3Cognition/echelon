@@ -135,6 +135,8 @@ def test_workspace_refresh_uses_service_candidate_audit_and_exit_status(
 
     assert result.exit_code == 2
     assert seen == [False]
+    assert "Workspace graph previewed" in result.output
+    assert "Workspace graph refreshed" not in result.output
     assert "Workspace graph audit unavailable" in result.output
 
 

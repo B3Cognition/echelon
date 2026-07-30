@@ -48,7 +48,7 @@ def _workspace_document() -> dict[str, object]:
             },
             {
                 "id": "source:service-api",
-                "type": "Source",
+                "type": "SourceRoot",
                 "properties": {"source_id": "service-api", "path": "services/api"},
             },
             {
@@ -152,12 +152,12 @@ def _isolated_workspace_document() -> dict[str, object]:
     document["nodes"] = [
         {
             "id": "source:isolated-a",
-            "type": "Source",
+            "type": "SourceRoot",
             "properties": {"source_id": "isolated-a", "path": "services/isolated-a"},
         },
         {
             "id": "source:isolated-b",
-            "type": "Source",
+            "type": "SourceRoot",
             "properties": {"source_id": "isolated-b", "path": "services/isolated-b"},
         },
         {
@@ -330,7 +330,11 @@ def test_workspace_html_portfolio_rule_seeds_isolated_node_types() -> None:
     )
     payload = _viewer_payload(html)
 
-    assert payload["lens_node_types"]["portfolio"] == ["Source", "Spec", "Workspace"]
+    assert payload["lens_node_types"]["portfolio"] == [
+        "SourceRoot",
+        "Spec",
+        "Workspace",
+    ]
     assert {
         element["data"]["id"]
         for element in payload["elements"]

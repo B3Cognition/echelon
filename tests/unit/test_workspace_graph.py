@@ -148,6 +148,27 @@ def test_discovery_is_direct_sorted_and_ignores_symlinks(tmp_path: Path) -> None
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("target_inside_workspace", [True, False])
+def test_discovery_rejects_symlinked_spec_file(
+    tmp_path: Path,
+    target_inside_workspace: bool,
+) -> None:
+    root = tmp_path / "workspace"
+    _write_config(root)
+    spec_dir = _spec_dir(root, "001-alpha")
+    target = (
+        root / "shared-spec.md"
+        if target_inside_workspace
+        else tmp_path / "outside-spec.md"
+    )
+    target.write_text("# linked specification\n", encoding="utf-8")
+    spec_dir.joinpath("spec.md").unlink()
+    spec_dir.joinpath("spec.md").symlink_to(target)
+
+    assert discover_canonical_spec_dirs(root) == ()
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("config", "message"),
     [
@@ -554,6 +575,7 @@ def test_merges_shared_identity_and_adds_workspace_relationships(
         "001-alpha",
         "002-beta",
     ]
+    assert nodes["source:app"].type == "SourceRoot"
     shared_edge = edges[("artifact:re/workspace/overview.md", "STORED_AS", "drawer:shared-re-drawer")]
     assert shared_edge.properties["member_specs"] == ["001-alpha", "002-beta"]
     assert ("workspace:current", "CONTAINS_SPEC", "spec:001-alpha") in edges
@@ -595,7 +617,7 @@ def test_reports_unresolved_workspace_relationships(
     ("node", "sources"),
     [
         (GraphNode("workspace:current", "Workspace", {}), []),
-        (GraphNode("source:app", "Source", {}), [{"id": "app", "path": "app"}]),
+        (GraphNode("source:app", "SourceRoot", {}), [{"id": "app", "path": "app"}]),
     ],
 )
 def test_rejects_reserved_workspace_node_identities(

@@ -160,7 +160,10 @@ def discover_canonical_spec_dirs(project_root: Path) -> tuple[Path, ...]:
     return tuple(
         candidate
         for candidate in sorted(specs_root.iterdir(), key=lambda value: value.name)
-        if candidate.is_dir() and not candidate.is_symlink() and (candidate / "spec.md").is_file()
+        if candidate.is_dir()
+        and not candidate.is_symlink()
+        and (candidate / "spec.md").is_file()
+        and not (candidate / "spec.md").is_symlink()
     )
 
 
@@ -652,7 +655,7 @@ def _add_workspace_nodes(
             records,
             GraphNode(
                 f"source:{source.id}",
-                "Source",
+                "SourceRoot",
                 {"source_id": source.id, "path": source.path},
             ),
         )

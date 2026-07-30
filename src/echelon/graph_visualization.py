@@ -21,7 +21,7 @@ _LENS_EDGE_TYPES = {
 }
 
 _LENS_NODE_TYPES = {
-    "portfolio": {"Workspace", "Spec", "Source"},
+    "portfolio": {"Workspace", "Spec", "SourceRoot"},
 }
 
 _NODE_STYLE = {

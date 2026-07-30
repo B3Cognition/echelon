@@ -2057,7 +2057,10 @@ def graph_workspace_refresh(
             f"Workspace refresh {outcome.action}: {outcome.subject_id} "
             f"{outcome.domain} ({outcome.status or outcome.detail or 'unknown'})"
         )
-    _echo_workspace_graph_summary(result.candidate, action="refreshed")
+    _echo_workspace_graph_summary(
+        result.candidate,
+        action="refreshed" if write else "previewed",
+    )
     _echo_workspace_graph_audit(result.report)
     raise typer.Exit(code=_graph_exit_code(result.report.status))
 
