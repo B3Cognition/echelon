@@ -36,10 +36,32 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from typing import Callable
+
+
+def _load_runner():
+    """Load the standalone cold-reader runner beside this script."""
+    import importlib.util
+
+    module_name = "sue_runner"
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+    path = Path(__file__).resolve().parent / "sue_runner.py"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"could not load SUE runner from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+runner = _load_runner()
 
 # ---------------------------------------------------------------------------
 # Shared constants — the three-way contract anchor between prompts,
@@ -228,6 +250,54 @@ verdict.
 """
 
 
+ROUND1_OUTPUT_SCHEMA = {
+    "type": "object",
+    "required": ["questions"],
+    "additionalProperties": False,
+    "properties": {
+        "questions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id", "question", "target", "lines", "category"],
+                "additionalProperties": False,
+                "properties": {
+                    "id": {"type": "string", "pattern": r"^Q[1-9][0-9]*$"},
+                    "question": {"type": "string", "minLength": 1},
+                    "target": {"type": "string", "minLength": 1},
+                    "lines": {"type": "array", "items": {"type": "integer"}},
+                    "category": {"type": "string", "enum": list(CATEGORIES)},
+                },
+            },
+        },
+    },
+}
+
+ROUND2_OUTPUT_SCHEMA = {
+    "type": "object",
+    "required": ["answers"],
+    "additionalProperties": False,
+    "properties": {
+        "answers": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id", "verdict", "answer", "evidence_lines"],
+                "additionalProperties": False,
+                "properties": {
+                    "id": {"type": "string", "minLength": 1},
+                    "verdict": {"type": "string", "enum": list(VERDICTS)},
+                    "answer": {"type": "string", "minLength": 1},
+                    "evidence_lines": {
+                        "type": "array", "items": {"type": "integer"}
+                    },
+                },
+            },
+        },
+    },
+}
+
+
 # ---------------------------------------------------------------------------
 # Dataclasses (data-model.md runtime entities)
 # ---------------------------------------------------------------------------
@@ -246,12 +316,7 @@ class RunConfig:
     reasoning_effort: str | None = None
 
 
-@dataclass(frozen=True)
-class ModelInvocation:
-    """Provider-specific argv and prompt transport for one model call."""
-
-    argv: list[str]
-    stdin_text: str | None
+ModelInvocation = runner.ModelInvocation
 
 
 @dataclass(frozen=True)
@@ -596,7 +661,9 @@ def build_model_invocation(config: RunConfig, prompt: str) -> ModelInvocation:
     return ModelInvocation(argv=words + ["-p"], stdin_text=prompt)
 
 
-def run_model_call(config: RunConfig, prompt: str) -> CallOutcome:
+def run_model_call(
+    config: RunConfig, prompt: str, output_schema: dict | None = None
+) -> CallOutcome:
     """One model subprocess invocation per the frozen contract shape.
 
     The default Claude protocol appends ``-p`` and sends the prompt on stdin.
@@ -604,6 +671,34 @@ def run_model_call(config: RunConfig, prompt: str) -> CallOutcome:
     always a fresh neutral temp directory created and removed here (FR-010).
     Never raises to callers.
     """
+    if config.model_protocol == "codex-stdin":
+        result = runner.run_cold_reader(
+            runner.ColdReaderRequest(
+                run_id=f"sue-challenge-{uuid.uuid4().hex}",
+                provider="codex",
+                command=config.model_command,
+                model=config.model,
+                reasoning_effort=config.reasoning_effort,
+                prompt=prompt,
+                timeout_seconds=config.timeout_seconds,
+                output_schema=output_schema,
+                scientific=output_schema is not None,
+            )
+        )
+        kind_map = {
+            "success": "ok",
+            "timeout": "timeout",
+            "launch_missing": "launch_missing",
+            "transport_error": "failed",
+            "unusable_output": "failed",
+        }
+        return CallOutcome(
+            kind=kind_map.get(result.status, "failed"),
+            stdout=result.final_output,
+            stderr=result.stderr,
+            duration_seconds=result.duration_seconds,
+        )
+
     try:
         invocation = build_model_invocation(config, prompt)
     except ArgvTransportOverflow as exc:
@@ -989,6 +1084,7 @@ def execute_round(
     validator: Callable[[dict], object],
     round_no: int,
     spec_dir: Path,
+    output_schema: dict | None = None,
 ) -> object:
     """Run one round: at most 2 attempts, then dump and request exit 3.
 
@@ -1001,7 +1097,7 @@ def execute_round(
     attempts: list[tuple[CallOutcome, ParseFailure]] = []
     current_prompt = prompt
     for attempt_no in (1, 2):
-        outcome = run_model_call(config, current_prompt)
+        outcome = run_model_call(config, current_prompt, output_schema)
         result = _attempt_result(outcome, validator)
         if not isinstance(result, ParseFailure):
             return result
@@ -1232,6 +1328,7 @@ def main(argv: list[str] | None = None) -> int:
         lambda obj: validate_round1(obj, config.max_questions),
         1,
         spec_dir,
+        ROUND1_OUTPUT_SCHEMA,
     )
     if isinstance(round1, RoundExit):
         return fail(round1.exit_code, round1.diagnostic)
@@ -1245,6 +1342,7 @@ def main(argv: list[str] | None = None) -> int:
             lambda obj: validate_round2(obj, questions),
             2,
             spec_dir,
+            ROUND2_OUTPUT_SCHEMA,
         )
         if isinstance(round2, RoundExit):
             return fail(round2.exit_code, round2.diagnostic)

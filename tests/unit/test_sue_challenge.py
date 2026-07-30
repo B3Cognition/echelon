@@ -503,6 +503,97 @@ class TestRunModelCall:
             timeout_seconds=timeout,
         )
 
+    def test_codex_round_invocation_uses_schema_and_final_output(self, tmp_path, monkeypatch):
+        captured = {}
+
+        def fake_run(request):
+            captured["request"] = request
+            final_output = '{"questions":[]}'
+            return sue.runner.ColdReaderResult(
+                run_id=request.run_id,
+                status="success",
+                provider=request.provider,
+                model_requested=request.model,
+                model_reported=request.model,
+                reasoning_effort=request.reasoning_effort,
+                protocol="codex-stdin",
+                argv_redacted=("codex", "exec", "-"),
+                duration_seconds=0.1,
+                exit_code=0,
+                raw_output="",
+                final_output=final_output,
+                stderr="",
+                raw_output_digest=hashlib.sha256(b"").hexdigest(),
+                final_output_digest=hashlib.sha256(final_output.encode()).hexdigest(),
+                usage=None,
+            )
+
+        monkeypatch.setattr(sue.runner, "run_cold_reader", fake_run)
+        config = sue.RunConfig(
+            spec_path=tmp_path / "spec.md",
+            max_questions=1,
+            model_command="codex",
+            timeout_seconds=10,
+            model_protocol="codex-stdin",
+            model="gpt-5.6-luna",
+            reasoning_effort="low",
+        )
+
+        outcome = sue.run_model_call(
+            config, "PROMPT", output_schema=sue.ROUND1_OUTPUT_SCHEMA
+        )
+
+        assert outcome.stdout == '{"questions":[]}'
+        assert captured["request"].model == "gpt-5.6-luna"
+        assert captured["request"].reasoning_effort == "low"
+        assert captured["request"].output_schema == sue.ROUND1_OUTPUT_SCHEMA
+
+    def test_claude_and_copilot_calls_do_not_use_codex_runner(self, tmp_path, monkeypatch):
+        def unexpected_runner_call(_request):
+            raise AssertionError("only Codex calls may use sue_runner")
+
+        monkeypatch.setattr(sue.runner, "run_cold_reader", unexpected_runner_call)
+        claude = _make_stub(tmp_path / "claude.sh", 'cat > /dev/null\necho claude')
+        copilot = _make_stub(tmp_path / "copilot.sh", 'echo copilot')
+
+        claude_outcome = sue.run_model_call(
+            sue.RunConfig(tmp_path / "spec.md", 1, shlex.quote(claude), 10), "PROMPT"
+        )
+        copilot_outcome = sue.run_model_call(
+            sue.RunConfig(
+                tmp_path / "spec.md", 1, shlex.quote(copilot), 10,
+                model_protocol="copilot-argv",
+            ),
+            "PROMPT",
+        )
+
+        assert claude_outcome.kind == "ok"
+        assert copilot_outcome.kind == "ok"
+
+    def test_rounds_receive_distinct_strict_output_schemas(self, tmp_path, monkeypatch):
+        spec = tmp_path / "spec.md"
+        spec.write_text("# Spec\nA requirement.\n")
+        schemas = []
+        question = sue.SocraticQuestion(
+            id="Q1", question="What?", target="general", lines=[1], category="ambiguity"
+        )
+        answer = sue.Answer(
+            id="Q1", verdict="ANSWERED", answer="The text says so.", evidence_lines=[1]
+        )
+
+        def fake_execute(_config, _prompt, _validator, round_no, _spec_dir, output_schema=None):
+            schemas.append(output_schema)
+            return ([question], False) if round_no == 1 else [answer]
+
+        monkeypatch.setattr(sue, "preflight", lambda _config: None)
+        monkeypatch.setattr(sue, "execute_round", fake_execute)
+
+        assert sue.main([str(spec), "--claude-cmd", "claude"]) == sue.EXIT_SUCCESS
+        assert schemas == [sue.ROUND1_OUTPUT_SCHEMA, sue.ROUND2_OUTPUT_SCHEMA]
+        assert schemas[0] != schemas[1]
+        assert schemas[0]["required"] == ["questions"]
+        assert schemas[1]["required"] == ["answers"]
+
     def test_explicit_selection_overrides_all_env_signals(self):
         # Design test 1: explicit beats ECHELON_LLM and runtime markers.
         env = {"ECHELON_LLM": "claude", "CODEX_THREAD_ID": "t-1"}
