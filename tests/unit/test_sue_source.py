@@ -86,6 +86,77 @@ def test_line_range_resolves_exact_original_text():
     assert source.resolve_source_ref(bundle, ref) == "Line two\nLine three"
 
 
+def test_line_range_preserves_crlf_in_original_text():
+    document = source.SourceDocument.from_text(
+        id="requirements",
+        source_uri="requirements.md",
+        media_type="text/markdown",
+        text="# Checkout\r\nLine two\r\nLine three\r\n",
+    )
+    bundle = source.make_bundle(
+        bundle_id="checkout",
+        adapter_id="markdown-lexicon",
+        documents=(document,),
+        units=(),
+    )
+    ref = source.SourceRef("requirements", "line-range", "L2-L3")
+    assert source.resolve_source_ref(bundle, ref) == "Line two\r\nLine three"
+
+
+def test_bundle_copies_caller_owned_collections_before_hashing():
+    document = _document()
+    documents = [document]
+    unit_refs = [source.SourceRef("requirements", "line-range", "L1-L1")]
+    relation_refs = [source.SourceRef("requirements", "line-range", "L1-L1")]
+    relations = [source.DeclaredRelation("depends-on", "FR-001", relation_refs)]
+    units = [
+        source.SourceUnit(
+            id="FR-001",
+            kind="requirement",
+            text="The system MUST save.",
+            normative_level="must",
+            source_refs=unit_refs,
+            declared_relations=relations,
+            situation=None,
+        )
+    ]
+    aliases = ["save operation"]
+    glossary_refs = [source.SourceRef("requirements", "line-range", "L1-L1")]
+    glossary = [source.GlossaryTerm("save", aliases, glossary_refs)]
+
+    bundle = source.make_bundle(
+        bundle_id="checkout",
+        adapter_id="manifest",
+        documents=documents,
+        units=units,
+        glossary=glossary,
+    )
+    digest = bundle.snapshot_digest
+
+    documents.clear()
+    unit_refs.clear()
+    relation_refs.clear()
+    relations.clear()
+    aliases.clear()
+    glossary_refs.clear()
+    glossary.clear()
+
+    assert isinstance(bundle.documents, tuple)
+    assert isinstance(bundle.units, tuple)
+    assert isinstance(bundle.glossary, tuple)
+    assert bundle.units[0].source_refs == (
+        source.SourceRef("requirements", "line-range", "L1-L1"),
+    )
+    assert bundle.units[0].declared_relations[0].source_refs == (
+        source.SourceRef("requirements", "line-range", "L1-L1"),
+    )
+    assert bundle.glossary[0].aliases == ("save operation",)
+    assert bundle.glossary[0].source_refs == (
+        source.SourceRef("requirements", "line-range", "L1-L1"),
+    )
+    assert bundle.snapshot_digest == digest
+
+
 def test_changed_document_changes_snapshot_digest():
     first = _bundle_with_text("The system MUST save.")
     second = _bundle_with_text("The system MUST not save.")

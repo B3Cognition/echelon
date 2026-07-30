@@ -152,6 +152,36 @@ def _validate_references(
         _validate_ref(documents, ref)
 
 
+def _normalize_relation(relation: DeclaredRelation) -> DeclaredRelation:
+    return DeclaredRelation(
+        predicate=relation.predicate,
+        target_unit_id=relation.target_unit_id,
+        source_refs=tuple(relation.source_refs),
+    )
+
+
+def _normalize_unit(unit: SourceUnit) -> SourceUnit:
+    return SourceUnit(
+        id=unit.id,
+        kind=unit.kind,
+        text=unit.text,
+        normative_level=unit.normative_level,
+        source_refs=tuple(unit.source_refs),
+        declared_relations=tuple(
+            _normalize_relation(relation) for relation in unit.declared_relations
+        ),
+        situation=unit.situation,
+    )
+
+
+def _normalize_glossary_term(term: GlossaryTerm) -> GlossaryTerm:
+    return GlossaryTerm(
+        canonical=term.canonical,
+        aliases=tuple(term.aliases),
+        source_refs=tuple(term.source_refs),
+    )
+
+
 def make_bundle(
     *,
     bundle_id: str,
@@ -168,6 +198,10 @@ def make_bundle(
     _require_identifier(adapter_version, "adapter version")
     if schema_version < 1:
         raise ValueError("schema version must be positive")
+
+    documents = tuple(documents)
+    units = tuple(_normalize_unit(unit) for unit in units)
+    glossary = tuple(_normalize_glossary_term(term) for term in glossary)
 
     document_map: dict[str, SourceDocument] = {}
     for document in documents:
@@ -213,4 +247,12 @@ def resolve_source_ref(bundle: SUESourceBundle, ref: SourceRef) -> str:
     if ref.locator_kind != "line-range":
         raise ValueError(f"cannot resolve locator kind: {ref.locator_kind}")
     start, end = _line_bounds(ref.locator)
-    return "\n".join(documents[ref.document_id].text.splitlines()[start - 1 : end])
+    document_text = documents[ref.document_id].text
+    lines = document_text.splitlines(keepends=True)
+    start_offset = sum(len(line) for line in lines[: start - 1])
+    selected = "".join(lines[start - 1 : end])
+    if selected.endswith("\r\n"):
+        selected = selected[:-2]
+    elif selected.endswith(("\n", "\r")):
+        selected = selected[:-1]
+    return document_text[start_offset : start_offset + len(selected)]
