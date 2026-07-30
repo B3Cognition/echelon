@@ -1,10 +1,10 @@
 # SUE Portability and Evidence Design
 
 **Date:** 2026-07-30
-**Status:** proposed implementation contract; implementation begins after
-explicit review approval
-**Branch baseline:** `f648e7be` plus the Socratic Understanding handoff and
-reassessment commits
+**Status:** approved zero-call foundation implemented; V3 migration, live smoke,
+A1, and workflow integration remain gated
+**Implementation baseline:** `b7ab289b9a372c059fa0754c760fe3dce3acb85a`;
+the documentation-only reconciliation commit necessarily follows it
 **Scope:** source portability, Codex cold readers, evidence integrity, the A1
 gate, and the Research enhancements that are consistent with the authoritative
 SUE decisions
@@ -59,7 +59,8 @@ contracts: deterministic provenance-preserving source bundles, and scientific
 Codex runs that pin provider, model, and reasoning effort. The initial
 economical profile is `codex`, `gpt-5.6-luna`, and `low` reasoning effort. It
 is an experiment condition, not an A1 result or a claim that the profile is
-fit for scientific use. A live smoke and A1 remain separate, unrun stages.
+fit for scientific use. The planned Codex smoke and Luna/low A1 campaign remain
+separate, unrun stages.
 
 ## 3. Research disposition
 
@@ -131,10 +132,11 @@ private InterpretationGraph    private InterpretationGraph
           DivergenceMap + evidence package
 ```
 
-The source map contains only facts deterministically declared by the source or
-adapter. It never contains an aggregate interpretation. Each reader receives
-the same permitted source view and cannot see another run, prior output,
-repository instructions, squad state, or reasoning journal.
+The immutable source map contains only facts deterministically declared by the
+source or adapter. It never contains an inferred relation or aggregate
+interpretation. Cold V1 Codex calls receive only the supplied prompt through an
+enforced no-tool/minimal-environment execution boundary; this does not assert a
+universal OS-level filesystem-secrecy guarantee.
 
 ### 4.1 Shared modules
 
@@ -142,8 +144,8 @@ Two standard-library modules are added beside the current tools:
 
 - `scripts/sue_source.py` — source schema, adapters, canonical serialization,
   digests, prompt rendering, and locator validation;
-- `scripts/sue_runner.py` — provider resolution, cold invocation, structured
-  output capture, execution identity, and call accounting.
+- `scripts/sue_runner.py` — hardened Codex cold invocation, structured output
+  capture, execution identity, and call accounting.
 
 The six existing entry points remain:
 
@@ -154,9 +156,10 @@ The six existing entry points remain:
 - `sue_jgraph.py`
 - `sue_auto.py`
 
-They dynamically load the shared modules using the existing standalone pattern.
-No Echelon CLI or installed-extension dependency is introduced in the first
-slice.
+The V1 challenge dynamically loads the cold runner using the existing
+standalone pattern. The source module is the implemented portability foundation
+for the separately gated V3 migration. No Echelon CLI or installed-extension
+dependency is introduced.
 
 ## 5. Source contract
 
@@ -184,7 +187,7 @@ units:
     normative_level: must | should | may | unspecified
     source_refs:
       - document_id: string
-        locator_kind: line-range | json-pointer | xml-id | page-paragraph
+        locator_kind: line-range | json-pointer
         locator: string
     declared_relations: []
     situation:
@@ -222,11 +225,16 @@ content.
 
 Synthetic IDs identify a source location, not a semantic interpretation.
 
+`xml-id` and `page-paragraph` remain reserved design locators, but the current
+V1 constructor rejects them as `UNSUPPORTED_LOCATOR` until their post-A1
+adapters exist.
+
 ### 5.3 Markdown/Lexicon adapter
 
 The first adapter recognizes the existing SUE definition shapes plus:
 
-- Markdown headings with requirement IDs;
+- Markdown headings with requirement IDs, preserving the exact heading and
+  multiline body through the line before the next requirement-ID heading;
 - ID-prefixed paragraphs and list items;
 - Lexicon `REQ` and `AC` blocks;
 - normative list items containing `MUST`, `SHALL`, `SHOULD`, or `MAY`; and
@@ -237,13 +245,18 @@ Conflicting or one-to-many aliases remain ambiguous and never canonicalize.
 
 ### 5.4 Generic manifest adapter
 
-The generic manifest is JSON matching the bundle fields above, except that the
-adapter computes and verifies all digests. It is the escape hatch for custom,
-proprietary, generated, or already-parsed formats.
+The generic manifest is strict schema V1 JSON matching the bundle fields above,
+except that the adapter computes and verifies all digests. It validates the
+four approved unit kinds and normative levels, media types, controlled
+situations, grounded units and declared relations, and resolvable relation
+targets. It is the escape hatch for custom, proprietary, generated, or
+already-parsed formats.
 
 Every source reference must resolve to a listed document. Embedded document
 text is allowed only when its bytes and digest are present in the manifest.
 External URLs are recorded as identifiers but are never fetched implicitly.
+JSON Pointers implement RFC 6901 token unescaping and must resolve to a scalar;
+strings retain their exact decoded value and other scalars use canonical JSON.
 
 “Any specification” therefore means “any source that can produce a valid,
 provenance-preserving bundle,” not “silently parse every file format.”
@@ -315,47 +328,51 @@ normalized outcomes, witness kind, and source anchors. They remain
 
 ### 7.1 Request and result
 
-`ColdReaderRequest` contains:
+The implemented `ColdReaderRequest` is Codex-specific and contains:
 
 ```yaml
-run_id: uuid
-provider: claude | codex | copilot
-model_command: explicit command
+run_id: string
+provider: codex
+command: explicit command
+model: explicit-model-or-null
+reasoning_effort: explicit-effort-or-null
 prompt: string
-prompt_digest: sha256
-output_schema_path: path-or-null
-output_schema_digest: sha256-or-null
 timeout_seconds: number
-experiment_id: string-or-null
-condition_id: string-or-null
+output_schema: object-or-null
+scientific: boolean
 ```
 
 `ColdReaderResult` contains:
 
 ```yaml
-run_id: uuid
-status: success | timeout | transport_error | unusable_output
+run_id: string
+status: success | timeout | launch_missing | transport_error | unusable_output
 provider: string
 model_requested: string-or-unknown
 model_reported: string-or-unknown
-cli_version: string-or-unknown
+reasoning_effort: string-or-unknown
+provider_cli_version: string-or-unavailable
+provider_cli_version_status: reported | unavailable
 protocol: string
 argv_redacted: [string]
-cwd_policy: neutral-temporary-directory
-session_policy: ephemeral
-configuration_policy: ignored-user-config | provider-equivalent
-started_at: rfc3339
-duration_ms: integer
+started_at_utc: rfc3339
+timeout_seconds: number
+duration_seconds: number
 exit_code: integer-or-null
-stdout_digest: sha256
+prompt_digest: sha256
+schema_digest: sha256-or-null
 stderr_digest: sha256
-raw_output_ref: string
-final_output_ref: string
-token_usage: object-or-null
+raw_output_digest: sha256
+final_output_digest: sha256
+raw_output: string
+final_output: string
+stderr: string
+usage: object-or-null
 ```
 
-Raw output and final structured output are stored inside the immutable
-experiment package, not beside or inside the challenged source.
+The runner returns these values to its controller. For schema-bearing V1 Codex
+challenge calls, the controller writes an exclusive metadata file plus raw
+JSONL, final output, and stderr for every attempt.
 
 ### 7.2 Codex invocation
 
@@ -367,22 +384,42 @@ codex exec
   --skip-git-repo-check
   --sandbox read-only
   --ignore-user-config
+  --ignore-rules
+  --strict-config
+  -c shell_environment_policy.inherit=none
+  -c tools.web_search="disabled"
+  -c mcp_servers={}
+  --disable <each installed model-facing feature>
   --output-schema <schema-file>
   --json
   --output-last-message <final-file>
   -
 ```
 
-The prompt is supplied on stdin. The runner does not expose the repository,
-MCP tools, AGENTS instructions, prior sessions, or another reader's files. The
-exact Codex CLI version and the requested/reported model identity are evidence.
+The prompt is supplied on stdin. The subprocess receives an explicit allowlist
+for executable discovery, `CODEX_HOME`, TLS/proxy routing, locale/timezone,
+temporary-file operation, and documented platform launch necessities. Ambient
+API keys, unrelated credentials, Echelon state, and Codex thread markers are
+not inherited. Shell, browser, web, computer-use, app/plugin, skill, memory,
+multi-agent, hook, and related model-facing capabilities are disabled; MCP
+servers and shell environment inheritance are also disabled.
+
+The call uses a fresh neutral temporary cwd, ephemeral mode, ignored user
+configuration and rules, strict configuration, and a read-only sandbox. These
+controls establish the implemented no-tool/minimal-environment boundary. They
+do not claim general OS-level secrecy. Authentication intentionally uses the
+credential store under `CODEX_HOME`; explicitly configured TLS/proxy variables
+remain available to the trusted CLI transport. The local CLI version and
+requested/reported model identity are evidence.
 
 If the installed CLI cannot combine the required isolation and structured
 output flags, the smoke stops before the second call.
 
 ### 7.3 Provider policy
 
-- Scientific commands require an explicit provider-prefixed command.
+- The future smoke/A1 entrypoints require an explicit provider-prefixed
+  command. The current ordinary V1 challenge may still resolve its provider
+  from ambient markers, which is not sufficient scientific-run provenance.
 - The economical Codex profile is `gpt-5.6-luna` with `low` reasoning. SUE
   exposes both values through `--model` and `--reasoning-effort`. The challenge
   CLI stores the resolved values in its `RunConfig`; the shared cold runner
@@ -390,9 +427,12 @@ output flags, the smoke stops before the second call.
   ambient model selection.
 - Ordinary Codex runs may select that economical profile by an explicit SUE
   default shown in the preflight summary; operators may override it.
-- `sue_auto` ordinary use resolves the ambient/default provider through the
-  shared runner and records that it is non-scientific.
-- Scientific A1 runs reject ambient provider or model selection.
+- Only schema-bearing V1 Codex challenge calls currently use the hardened
+  runner. Non-V1 Codex consensus, reproducibility, dialectic, jgraph, and
+  orchestration paths intentionally retain legacy transport until each receives
+  a separately reviewed schema and evidence migration.
+- The future scientific A1 entrypoint must reject ambient provider or model
+  selection.
 - A provider transport may differ operationally, but its differences are
   recorded as experiment conditions.
 - The current Sonnet dialogue default is retained only as a compatibility alias
@@ -408,47 +448,41 @@ python3 scripts/sue_challenge.py requirements.md \
 ```
 
 It sends the input source to Codex. It is suitable only for an approved,
-non-confidential input and records the selected/requested and reported model in
-the preflight/evidence. Lower reasoning effort is a cost-quality trade-off;
+non-confidential input. Preflight records provider, requested model, reasoning,
+and V1 transport; each attempt preserves requested/reported model identity and
+the complete runner metadata. Lower reasoning effort is a cost-quality
+trade-off; the planned Codex smoke and Luna/low A1 campaign have not run, and
 A1 determines whether this exact pinned profile is usable.
 
 ## 8. Evidence package
 
-Each experiment writes to a newly created output directory:
+The implemented V1 challenge foundation writes every attempt—success, retry,
+or terminal failure—exclusively under a fresh directory:
 
 ```text
-sue-evidence/<experiment-id>/
-  experiment.json
-  source-bundle.json
-  source-documents.json
-  prompts/
-  raw/
-  interpretations/
-  aggregate.json
-  report.md
-  checksums.json
+sue-evidence/challenge-<uuid>/
+  round<NN>-attempt<NN>-<run-id-digest>.evidence.json
+  round<NN>-attempt<NN>-<run-id-digest>.raw.jsonl
+  round<NN>-attempt<NN>-<run-id-digest>.final.txt
+  round<NN>-attempt<NN>-<run-id-digest>.stderr.txt
 ```
 
-`experiment.json` records:
+The metadata copies, without recomputation or inference:
 
-- repository commit and dirty-state flag;
-- source, decision-context, tool, prompt, and schema digests;
-- provider/model/framing/pass matrix;
-- exact same-condition and changed-condition labels;
-- thresholds locked before calls;
-- call, timeout, wall-clock, and privacy policy;
-- per-call outcomes, including failures;
-- final gate result; and
-- stop reason.
+- round, attempt, run ID, status, and compatibility kind;
+- provider, requested/reported model, and reasoning effort;
+- UTC start, timeout, duration, and exit code;
+- protocol, redacted argv, CLI version and version-evidence status;
+- prompt, schema, stderr, raw-output, and final-output digests;
+- usage and references to all four artifacts.
 
-The evidence package is append-only while running and sealed by
-`checksums.json` at completion. A specification, decision context, tool/schema,
-provider/model/framing policy, or prompt mismatch makes an old package stale.
-Historical packages remain readable but cannot supply current findings.
+Successful reports reference their attempt artifacts. Corrective retries retain
+both attempts. Terminal-failure sidecars retain both attempts and the same
+artifact references. Prompt and schema content are not copied into metadata.
 
-Standalone Markdown reports remain available for compatibility. Their headers
-link to the evidence package and identify whether they are current,
-historical/stale, or incomplete.
+The larger sealed experiment package (`experiment.json`, source bundle,
+interpretations, aggregate, checksums, and stale-artifact policy) remains the
+separately gated V3/evidence migration. It is not claimed by this foundation.
 
 ## 9. Decision context
 
@@ -477,7 +511,8 @@ Materiality automation remains gated on OQ-003 and bounded mutation evidence.
 3. Add `sue_runner.py` and fake provider/Codex runners.
 4. Move provider resolution and cold execution behind compatibility wrappers in
    `sue_challenge.py`.
-5. Fix the ambient-provider test by passing an explicit empty environment.
+5. Fix the ambient-provider test by clearing `CODEX_THREAD_ID`, `CODEX_CI`, and
+   `ECHELON_LLM` while retaining the rest of `os.environ`.
 6. Add evidence identity, redaction, and digest tests.
 
 Acceptance:
@@ -643,8 +678,9 @@ Every campaign stops when:
   after the zero-call tests pass.
 - Old raw Markdown CLI invocations continue to work through the default
   Markdown/Lexicon adapter.
-- Existing report filenames remain compatibility views; immutable experiment
-  packages are the authoritative new evidence.
+- Existing report filenames remain compatibility views. V1 reports reference
+  immutable per-attempt artifacts; the full sealed experiment package remains
+  a subsequent gated slice.
 - Reports clearly distinguish measured findings from hypotheses and historical
   artifacts.
 - The six SUE tools remain diagnose-only and never edit source requirements.

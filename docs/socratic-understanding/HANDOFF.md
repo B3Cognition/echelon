@@ -1,11 +1,12 @@
 # Socratic Understanding handoff
 
-**Inspection date:** 2026-07-30
-**Repository baseline:** `ade12d5813eb4a5235b3992f4a3037c895b3a381` on
-`sue-source-codex-foundation`
+**Inspection date:** 2026-07-31
+**Implementation baseline:** `b7ab289b9a372c059fa0754c760fe3dce3acb85a`
+on `sue-source-codex-foundation`; the documentation-only commit that records
+this inspection necessarily follows that implementation commit.
 **Implementation authorization:** the approved zero-call source and Codex
-foundation is implemented and documented below. Live smoke and A1 remain
-unrun.
+foundation is implemented and documented below. The planned Codex smoke and
+Luna/low A1 campaign remain unrun.
 
 ## Authority and transcript limitation
 
@@ -52,38 +53,41 @@ journal contracts.
 
 | Proposed capability | Current status | Exact evidence |
 |---|---|---|
-| Deterministic portable source bundle and source knowledge map | Implemented | [`SUESourceBundle`](../../scripts/sue_source.py#L109), [`SourceKnowledgeMap`](../../scripts/sue_source.py#L120), [`load_markdown_lexicon`](../../scripts/sue_source.py#L372), and [`load_generic_manifest`](../../scripts/sue_source.py#L466) preserve source units and locators without provider calls. |
-| Isolated, auditable Codex cold-runner transport | Implemented; no live run claimed | [`ColdReaderRequest`](../../scripts/sue_runner.py#L30), [`build_model_invocation`](../../scripts/sue_runner.py#L104), and [`run_cold_reader`](../../scripts/sue_runner.py#L227) pin Codex invocation details, use a neutral temporary directory, and capture requested/reported model evidence. |
-| Deterministic requirements-quality baseline | Implemented | [`analyze_spec_bundle`](../../src/understanding/service.py#L229) parses requirements, computes per-requirement diagnostics, evaluates gates, and can generate diagrams. |
+| Deterministic portable source bundle and source knowledge map | Implemented foundation; not yet the V3 source of truth | [`SUESourceBundle`](../../scripts/sue_source.py#L120), [`SourceKnowledgeMap`](../../scripts/sue_source.py#L131), and [`build_source_knowledge_map`](../../scripts/sue_source.py#L190) provide immutable, declared-only records and indexes. [`load_markdown_lexicon`](../../scripts/sue_source.py#L629) preserves complete multiline requirement-heading sections; [`load_generic_manifest`](../../scripts/sue_source.py#L842) enforces schema V1 and resolvable scalar JSON Pointers. `xml-id` and `page-paragraph` are explicitly unsupported until their post-A1 adapters exist. |
+| Isolated, auditable V1 Codex cold-runner transport | Implemented; no live run claimed | [`ColdReaderRequest`](../../scripts/sue_runner.py#L95), [`build_subprocess_environment`](../../scripts/sue_runner.py#L192), [`build_model_invocation`](../../scripts/sue_runner.py#L224), and [`run_cold_reader`](../../scripts/sue_runner.py#L408) enforce an allowlisted environment, neutral temporary cwd, ephemeral/no-rules/no-user-config strict execution, disabled model-facing tools, no MCP/web/shell inheritance, and auditable result metadata. This is not a universal OS-level filesystem-secrecy guarantee. |
+| Per-attempt V1 Codex evidence | Implemented for success, retry, and terminal failure | [`run_model_call`](../../scripts/sue_challenge.py#L700) copies runner results; [`_persist_call_evidence`](../../scripts/sue_challenge.py#L1193) exclusively writes metadata, raw JSONL, final output, and stderr for every attempt. Reports and terminal-failure sidecars retain references and the complete runner metadata. Non-V1 Codex SUE tools remain on legacy transport pending separate migration. |
+| Deterministic requirements-quality baseline | Implemented | [`analyze_spec_bundle`](../../src/understanding/service.py#L260) parses requirements, computes per-requirement diagnostics, evaluates gates, and can generate diagrams. |
 | Immutable, controller-owned quality evidence | Implemented | [`run_understanding_gate`](../../src/harness/understanding_gate.py#L69) writes digest-addressed evidence; [`UnderstandingGateResult.state_updates`](../../src/harness/understanding_gate.py#L32) owns `quality_scores` and `understanding_evidence`. |
-| Workflow placement before qualitative WHY checks | Implemented for deterministic Understanding | `phase3-understanding` transitions to `phase3-consensus` and owns `quality_scores`/`understanding_evidence` in [`definition.yaml`](../../extension/workflow/definition.yaml#L912). |
-| Quick Socratic question → spec-only answer filter | Implemented | [`ROUND1_PROMPT_TEMPLATE`, `ROUND2_PROMPT_TEMPLATE`](../../scripts/sue_challenge.py#L156), strict validators, and [`main`](../../scripts/sue_challenge.py#L1156). |
-| Fresh isolated model calls | Implemented at process level | [`build_model_invocation`](../../scripts/sue_challenge.py#L518) and [`run_model_call`](../../scripts/sue_challenge.py#L562) use provider-specific transport and a fresh neutral temporary directory. |
+| Workflow placement before qualitative WHY checks | Implemented for deterministic Understanding | [`phase3-understanding`](../../extension/workflow/definition.yaml#L1087) transitions to `phase3-consensus`. |
+| Quick Socratic question → spec-only answer filter | Implemented | [`ROUND1_PROMPT_TEMPLATE`](../../scripts/sue_challenge.py#L183), [`ROUND2_PROMPT_TEMPLATE`](../../scripts/sue_challenge.py#L217), strict validators, and [`main`](../../scripts/sue_challenge.py#L1543). |
+| Provider-specific compatibility transport | Implemented | [`build_model_invocation`](../../scripts/sue_challenge.py#L656) and [`run_model_call`](../../scripts/sue_challenge.py#L700) preserve legacy provider behavior while routing only schema-bearing V1 Codex calls through the hardened cold runner. |
 | Independent multi-reader reconstruction with stable/noise split | Implemented | [`run_reader`](../../scripts/sue_consensus.py#L373), [`cluster_findings`](../../scripts/sue_consensus.py#L111), and [`split_stable`](../../scripts/sue_consensus.py#L146). |
-| Typed interpretation graphs with behavioural assertions | Implemented | `Edge`, `Assertion`, `ReqInterpretation`, and `ReaderGraph` in [`sue_reproducibility.py`](../../scripts/sue_reproducibility.py#L83); extraction contract in [`build_extraction_prompt`](../../scripts/sue_reproducibility.py#L355). |
+| Typed interpretation graphs with behavioural assertions | Implemented | [`Edge`](../../scripts/sue_reproducibility.py#L87), [`Assertion`](../../scripts/sue_reproducibility.py#L100), [`ReqInterpretation`](../../scripts/sue_reproducibility.py#L112), and [`ReaderGraph`](../../scripts/sue_reproducibility.py#L119); extraction contract in [`build_extraction_prompt`](../../scripts/sue_reproducibility.py#L355). |
 | Cross-run noise floor and stable-low fractures | Implemented | [`aggregate_passes`](../../scripts/sue_reproducibility.py#L511) computes SR mean/stdev, per-requirement variance, extraction-noise floor, and the all-passes `stable_low` intersection. |
-| Behavioural divergence candidates | Partially implemented | [`Witness`](../../scripts/sue_reproducibility.py#L156) and [`find_witnesses`](../../scripts/sue_reproducibility.py#L613) produce heuristic candidates; the current report explicitly labels them unverified. |
-| Bounded adaptive Socratic drill | Implemented as a manual/Forensic instrument | `LENSES`, [`next_step`](../../scripts/sue_dialectic.py#L306), and [`run_dialogue`](../../scripts/sue_dialectic.py#L411) implement deterministic operators, a one-revision budget, retention flags, and aporia terminal states. |
-| Justification graph with claims, evidence, assumptions, conflicts | Implemented as an instrumented pilot | `Claim`, [`consensus_conflicts`](../../scripts/sue_jgraph.py#L140), and [`convergence_metrics`](../../scripts/sue_jgraph.py#L192). |
+| Behavioural divergence candidates | Partially implemented | [`Witness`](../../scripts/sue_reproducibility.py#L157) and [`find_witnesses`](../../scripts/sue_reproducibility.py#L613) produce heuristic candidates; the current report explicitly labels them unverified. |
+| Bounded adaptive Socratic drill | Implemented as a manual/Forensic instrument | [`LENSES`](../../scripts/sue_dialectic.py#L132), [`next_step`](../../scripts/sue_dialectic.py#L306), and [`run_dialogue`](../../scripts/sue_dialectic.py#L411) implement deterministic operators, a one-revision budget, retention flags, and aporia terminal states. |
+| Justification graph with claims, evidence, assumptions, conflicts | Implemented as an instrumented pilot | [`Claim`](../../scripts/sue_jgraph.py#L42), [`consensus_conflicts`](../../scripts/sue_jgraph.py#L140), and [`convergence_metrics`](../../scripts/sue_jgraph.py#L192). |
 | One-command tier orchestration | Implemented | [`PROFILES`](../../scripts/sue_auto.py#L59), [`select_drills`](../../scripts/sue_auto.py#L116), and [`main`](../../scripts/sue_auto.py#L334). |
-| Diagnose-only and no silent spec rewrite | Implemented | The orchestrator states and enforces the boundary in [`sue_auto.py`](../../scripts/sue_auto.py#L1); the challenged file is read through `SpecDocument` and report collision guards prevent overwrites. |
+| Diagnose-only and no silent spec rewrite | Implemented | The orchestrator states the boundary in [`sue_auto.py`](../../scripts/sue_auto.py#L1); the challenged file is read through [`SpecDocument`](../../scripts/sue_challenge.py#L325), and [`sue_auto.main`](../../scripts/sue_auto.py#L334) applies report collision guards. |
 | Live evidence that the pipeline runs | Present | The checked-in [`sue-dossier.md`](../../specs/030-build-sue-challenge-script/sue-dossier.md#L1) records successful v2, v3, and drill tiers and concrete aporias/stable findings. |
-| Full SRP experimental validation | Not complete | The smoke run reports A1 agreement `0.346` against a `≥0.80` target and calls the result inconclusive in [`2026-07-18-srp-v0-smoke-run.md`](../superpowers/plans/2026-07-18-srp-v0-smoke-run.md#L18). The full corpus remains an unchecked, A1-gated task in [`2026-07-20-sue-100-percent-closure.md`](../superpowers/plans/2026-07-20-sue-100-percent-closure.md#L418). |
+| Full SRP experimental validation | Not complete | The historical smoke run reports A1 agreement `0.346` against a `≥0.80` target and calls the result inconclusive in [`2026-07-18-srp-v0-smoke-run.md`](../superpowers/plans/2026-07-18-srp-v0-smoke-run.md#L30). The full corpus remains an unchecked, A1-gated task in [`2026-07-20-sue-100-percent-closure.md`](../superpowers/plans/2026-07-20-sue-100-percent-closure.md#L418). No live run has tested the new Luna/low profile. |
 | Glossary-canonical graph alignment | Planned, not present at the inspected commit | The closure plan defines `parse_glossary_terms` and `canonicalize` under Task 1, but those symbols are absent from `scripts/sue_reproducibility.py`; see [`Task 1`](../superpowers/plans/2026-07-20-sue-100-percent-closure.md#L69). |
-| Cross-pass stable witness intersection | Planned, not present | Current [`main`](../../scripts/sue_reproducibility.py#L1107) uses the last pass for witnesses while aggregating only scores. Task 3 names the missing `stable_witness_keys` seam. |
+| Cross-pass stable witness intersection | Planned, not present | The current [`last-pass rich-evidence seam`](../../scripts/sue_reproducibility.py#L1107) uses the last pass for witnesses while aggregating only scores. Task 3 names the missing `stable_witness_keys` seam. |
 | Exhibited incompatibility for behavioural witnesses | Planned, not present | Task 5 specifies `--verify-witnesses` and `validate_witness_verdict`; neither exists at the inspected commit. See [`Task 5`](../superpowers/plans/2026-07-20-sue-100-percent-closure.md#L282). |
 | Blind H-D2 justification-graph adjudication | Instrumentation implemented; rigor experiment not run | The remaining blinded protocol and decision rule are recorded in [`Task 4`](../superpowers/plans/2026-07-20-sue-100-percent-closure.md#L248). |
-| SUE evidence in Echelon Phase 3 | Not implemented | `phase3-consensus` has no SUE context/state in [`definition.yaml`](../../extension/workflow/definition.yaml#L926), the phase contract reads only Certified Understanding Evidence in [`phase3-consensus.md`](../../extension/workflow/phases/phase3-consensus.md#L12), and the journal registry contains no SUE entry type. |
+| SUE evidence in Echelon Phase 3 | Not implemented | [`phase3-consensus`](../../extension/workflow/definition.yaml#L1098) has no SUE context/state, the phase contract reads only [`Certified Understanding Evidence`](../../extension/workflow/phases/phase3-consensus.md#L21), and the journal registry contains no SUE entry type. |
 
 ## Verification performed for this handoff
 
 The source and runner foundation is covered by the eight focused SUE suites,
 including [`test_sue_source.py`](../../tests/unit/test_sue_source.py) and
 [`test_sue_runner.py`](../../tests/unit/test_sue_runner.py). The suite must pass
-both in the ambient environment and with `CODEX_THREAD_ID`, `CODEX_CI`, and
-`ECHELON_LLM` cleared. The provider-default test now supplies its own explicit
-environment, so ambient Codex detection remains runtime behaviour rather than
-test input. These zero-call tests do not constitute a Codex smoke or A1 result.
+both in the ambient environment and with the provider markers
+`CODEX_THREAD_ID`, `CODEX_CI`, and `ECHELON_LLM` cleared while retaining the
+rest of `os.environ`. The provider-default test clears those three markers, so
+ambient Codex detection remains runtime behaviour rather than test input.
+At the implementation baseline, all 459 tests passed in each environment.
+These zero-call tests do not constitute a Codex smoke or A1 result.
 
 ## Where SUE should integrate
 
@@ -138,10 +142,11 @@ No implementation work should begin until the user approves this plan.
 ### P0 — Reconcile and freeze the experimental baseline
 
 - Record the inspected commit and SUE tool/schema versions in every experiment.
-- Fix the provider-default unit test's ambient-environment dependency.
+- Keep the provider-default unit test independent by clearing the three
+  provider markers while retaining the rest of `os.environ`.
 - Decide whether this handoff supersedes or indexes the older SUE design docs.
-- Acceptance: 353/353 focused tests pass both inside and outside a Codex-marked
-  environment; no model calls.
+- Acceptance: all focused tests pass both with ambient markers and with the
+  three provider markers cleared; no model calls.
 
 ### P1 — Extraction-Stability Gate Slice
 

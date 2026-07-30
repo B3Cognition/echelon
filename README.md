@@ -345,10 +345,9 @@ echelon delivery target 001                      # target-specific verify detect
 
 ### Spec quality: SUE (Socratic Understanding Engine)
 
-Five standalone, stdlib-only tools (`scripts/sue_*.py`) that challenge a
-specification for ambiguity and contradiction by having isolated model readers
-interpret it and surface where they disagree. No echelon imports; reports are
-written beside the spec.
+Six standalone, stdlib-only tools (`scripts/sue_*.py`) challenge a
+specification for ambiguity and contradiction and surface where model readers
+disagree. No echelon imports; reports are written beside the spec.
 
 ```bash
 # One command — runs the whole pipeline and writes a fix-ready dossier:
@@ -374,11 +373,21 @@ python3 scripts/sue_challenge.py requirements.md \
 ```
 
 This sends the source content to the selected provider. The preflight and
-evidence record the selected/requested model (and the runner records the model
-reported by Codex); do not use it for secrets or private specifications without
-an approved provider and retention policy. `low` reduces cost but may reduce
-extraction quality. It is only the first economical experiment profile: A1,
-not this default, decides whether `gpt-5.6-luna`/`low` is usable.
+per-attempt V1 evidence record the requested profile and model reported by
+Codex. Each V1 attempt—success, retry, or terminal failure—gets exclusive
+metadata, raw JSONL, final-output, and stderr artifacts under a fresh
+`sue-evidence/challenge-*` directory. Do not use it for secrets or private
+specifications without an approved provider and retention policy. `low`
+reduces cost but may reduce extraction quality. It is only the first economical
+experiment profile: A1, not this default, decides whether
+`gpt-5.6-luna`/`low` is usable.
+
+V1 Codex challenge calls run from a neutral temporary directory with an
+allowlisted process environment, ephemeral/no-rules/no-user-config operation,
+disabled model-facing tools, no MCP servers or web search, and no shell
+environment inheritance. These are enforced isolation controls, not a general
+OS-level filesystem-secrecy claim. Other, non-V1 Codex SUE tools intentionally
+retain their legacy transport until separately migrated.
 
 Docs: **[walkthrough / start here](docs/sue-walkthrough.md)** ·
 **[full usage reference](docs/sue-usage.md)** ·

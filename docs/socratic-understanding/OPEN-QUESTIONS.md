@@ -150,13 +150,13 @@ correlation.
 
 ## OQ-015 — Test isolation under Codex markers — Resolved
 
-**Resolution:** fixed. Provider-default tests now pass an explicit empty
-environment to `resolve_model_command`; runtime marker resolution remains
-unchanged.
+**Resolution:** fixed. Provider-default tests now clear `CODEX_THREAD_ID`,
+`CODEX_CI`, and `ECHELON_LLM` while retaining the rest of `os.environ`;
+runtime marker resolution remains unchanged.
 
-**Evidence:** the focused SUE suite is required to pass both with ambient Codex
-markers and with `CODEX_THREAD_ID`, `CODEX_CI`, and `ECHELON_LLM` cleared. This
-is test isolation only, not a live-provider or A1 result.
+**Evidence:** the focused SUE suite is required to pass both with ambient
+provider markers and with those three provider markers cleared. This is test
+isolation only, not a live-provider or A1 result.
 
 ## OQ-016 — Transcript and evidence redaction
 

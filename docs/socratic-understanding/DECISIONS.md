@@ -154,13 +154,21 @@ configuration.
 **Rationale:** reproducibility, confidentiality, and operational viability
 depend on these facts.
 
+**Repository alignment:** each schema-bearing V1 Codex challenge attempt writes
+exclusive metadata, raw JSONL, final-output, and stderr artifacts. The metadata
+preserves status, provider, requested/reported model, reasoning, timing,
+protocol, redacted argv, CLI provenance, runner-owned digests, usage, and
+artifact references across success, retry, and terminal failure.
+
 ### SU-D018 — Source portability uses deterministic provenance-preserving bundles
 
 **Decision:** SUE accepts only deterministically normalized source bundles that
 preserve verbatim unit text, source locators, declared relations, and immutable
-source digests. Markdown/Lexicon and generic-manifest adapters are the initial
-supported paths; unsupported or locator-losing input is `INCONCLUSIVE_INPUT`,
-not silently interpreted.
+source digests. Markdown requirement headings retain their complete multiline
+sections. The generic-manifest adapter accepts schema version exactly `1` and
+resolves scalar JSON Pointers. `xml-id`, `page-paragraph`, unsupported schemas,
+or locator-losing input are rejected explicitly rather than silently
+interpreted. The source knowledge map is immutable and declaration-only.
 
 **Rationale:** portability must not trade away the original evidence needed to
 audit an interpretation or distinguish source ambiguity from extraction error.
@@ -170,6 +178,13 @@ audit an interpretation or distinguish source ambiguity from extraction error.
 **Decision:** a scientific Codex run explicitly pins its provider command,
 model, and reasoning effort, and records the requested and reported model in
 its evidence. Ambient provider or model selection is not scientific evidence.
+
+The V1 Codex transport also uses a minimal allowlisted subprocess environment,
+a neutral temporary cwd, ephemeral/no-rules/no-user-config strict execution,
+disabled model-facing tools, no MCP servers or web search, and no shell
+environment inheritance. These controls do not claim universal OS-level
+filesystem secrecy. Non-V1 Codex SUE tools remain on their legacy transport
+until separately migrated.
 
 **Rationale:** a reproducibility experiment cannot attribute a result to an
 unstated execution condition.
