@@ -90,6 +90,126 @@ def test_requirement_pdf_revision_creates_page_traceability_units(
     assert (base_inputs / "manifest.json").read_text(encoding="utf-8") == '{"base": true}\n'
 
 
+def test_product_input_attachment_appends_revision_and_rebuilds_aggregate(tmp_path: Path) -> None:
+    from echelon.product_inputs import (
+        attach_product_input_revision,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+
+    project = tmp_path / "workspace"
+    base_source = project / "sources" / "base"
+    added_source = project / "sources" / "DE-OPTA-SCHEMA-MAPPING"
+    base_source.mkdir(parents=True)
+    added_source.mkdir(parents=True)
+    (base_source / "brief.md").write_text("Initial requirement\n", encoding="utf-8")
+    (added_source / "mapping.csv").write_text(
+        "filter_id,table_name,column_name\nPBS-E-57,events,player_id\n",
+        encoding="utf-8",
+    )
+    run_dir = project / "runs" / "run-1"
+    base = resolve_product_inputs(
+        project,
+        run_dir,
+        [parse_input_declaration("reference:sources/base")],
+    )
+    original_snapshot = (
+        base.inputs_dir / "snapshots" / "reference" / "reference-001" / "brief.md"
+    ).read_bytes()
+
+    result = attach_product_input_revision(
+        project,
+        base.inputs_dir,
+        [parse_input_declaration("reference:sources/DE-OPTA-SCHEMA-MAPPING")],
+        command="echelon spec add-input",
+        evidence_requests={"requests": [{"id": "ER-001", "question": "Need mapping"}]},
+    )
+
+    assert result.added
+    assert result.attachment_id == "001"
+    assert (base.inputs_dir / "attachments" / "001" / "manifest.json").is_file()
+    assert (
+        base.inputs_dir / "snapshots" / "reference" / "reference-001" / "brief.md"
+    ).read_bytes() == original_snapshot
+    aggregate_manifest = json.loads((base.inputs_dir / "manifest.json").read_text(encoding="utf-8"))
+    accepted = [item for item in aggregate_manifest["resources"] if item.get("status") == "accepted"]
+    assert any(item["source_locator"].endswith("sources/base/brief.md") for item in accepted)
+    assert any(
+        item["source_locator"].endswith("sources/DE-OPTA-SCHEMA-MAPPING/mapping.csv")
+        for item in accepted
+    )
+    ledger = json.loads((base.inputs_dir / "attachment-ledger.json").read_text(encoding="utf-8"))
+    assert ledger["attachments"][0]["id"] == "001"
+    assert ledger["attachments"][0]["command"] == "echelon spec add-input"
+    assert ledger["attachments"][0]["linked_evidence_request_ids"] == ["ER-001"]
+
+
+def test_product_input_attachment_all_duplicate_source_is_idempotent(tmp_path: Path) -> None:
+    from echelon.product_inputs import (
+        attach_product_input_revision,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+
+    project = tmp_path / "workspace"
+    source = project / "sources" / "base"
+    source.mkdir(parents=True)
+    (source / "brief.md").write_text("Same evidence\n", encoding="utf-8")
+    base = resolve_product_inputs(
+        project,
+        project / "runs" / "run-1",
+        [parse_input_declaration("reference:sources/base")],
+    )
+    before = (base.inputs_dir / "manifest.json").read_text(encoding="utf-8")
+
+    result = attach_product_input_revision(
+        project,
+        base.inputs_dir,
+        [parse_input_declaration("reference:sources/base")],
+        command="echelon spec add-input",
+    )
+
+    assert not result.added
+    assert result.duplicates
+    assert not (base.inputs_dir / "attachments" / "001").exists()
+    assert (base.inputs_dir / "manifest.json").read_text(encoding="utf-8") == before
+
+
+def test_product_input_attachment_duplicate_content_is_reported_without_duplicate_catalog_unit(
+    tmp_path: Path,
+) -> None:
+    from echelon.product_inputs import (
+        attach_product_input_revision,
+        parse_input_declaration,
+        resolve_product_inputs,
+    )
+
+    project = tmp_path / "workspace"
+    first = project / "sources" / "first"
+    second = project / "sources" / "second"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    (first / "a.md").write_text("Same evidence\n", encoding="utf-8")
+    (second / "b.md").write_text("Same evidence\n", encoding="utf-8")
+    base = resolve_product_inputs(
+        project,
+        project / "runs" / "run-1",
+        [parse_input_declaration("reference:sources/first")],
+    )
+
+    result = attach_product_input_revision(
+        project,
+        base.inputs_dir,
+        [parse_input_declaration("reference:sources/second")],
+        command="echelon spec add-input",
+    )
+
+    assert not result.added
+    assert result.duplicates[0]["reason"] == "duplicate content"
+    catalog = json.loads((base.inputs_dir / "catalog.json").read_text(encoding="utf-8"))
+    assert len(catalog["units"]) == 1
+
+
 def test_product_input_revision_refuses_to_replace_existing_evidence(tmp_path: Path) -> None:
     from echelon.product_inputs import (
         ProductInputError,
@@ -921,6 +1041,48 @@ def test_product_input_context_includes_controller_mapping_repair() -> None:
     assert "Product Input Mapping Repair" in prompt
     assert "IN-REQ-1: unresolved disposition open_question" in prompt
     assert "Do not return COMPLETE" in prompt
+
+
+def test_product_input_context_renders_added_reference_material() -> None:
+    from harness.squad_executors import _render_product_input_context
+
+    prompt = _render_product_input_context({
+        "product_inputs": {
+            "manifest": "runs/run-1/inputs/manifest.json",
+            "catalog": "runs/run-1/inputs/catalog.json",
+            "traceability": "runs/run-1/inputs/traceability.json",
+            "requirement_context": "runs/run-1/inputs/requirement-context.md",
+            "reference_context": "runs/run-1/inputs/reference-context.md",
+        },
+        "product_input_attachments": [
+            {
+                "id": "001",
+                "declarations": [
+                    {
+                        "role": "reference",
+                        "location": "sources/DE-OPTA-SCHEMA-MAPPING",
+                    }
+                ],
+                "resources": [
+                    {
+                        "snapshot": (
+                            "attachments/001/snapshots/reference/"
+                            "reference-001/mapping.csv"
+                        )
+                    }
+                ],
+                "linked_evidence_request_ids": ["ER-001"],
+            }
+        ],
+        "evidence_requests": {
+            "requests": [{"id": "ER-001", "question": "Need mapping"}]
+        },
+    })
+
+    assert "## Added Reference Material" in prompt
+    assert "sources/DE-OPTA-SCHEMA-MAPPING" in prompt
+    assert "ER-001" in prompt
+    assert "Preserve and extend prior investigation artifacts" in prompt
 
 
 def test_product_input_context_makes_phase_one_id_repair_allowlist_explicit() -> None:

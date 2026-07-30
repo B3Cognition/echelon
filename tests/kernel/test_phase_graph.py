@@ -542,6 +542,29 @@ class TestPhaseGraph:
             },
         ]
 
+    def test_phase1_investigate_validated_routes_back_to_requirements_before_gates(self):
+        investigate = self.graph.get("phase1-investigate")
+        what = self.graph.get("phase1-what")
+        understanding = self.graph.get("phase1-understanding")
+        why2 = self.graph.get("phase1-why2")
+        lexicon_derive = self.graph.get("phase1-lexicon-derive")
+        lexicon = self.graph.get("phase1-lexicon")
+
+        assert investigate.transitions[0] == {
+            "to": "phase1-what",
+            "condition": "evidence_resolution_status in [validated, conflicting]",
+        }
+        assert what.transitions[-1] == {"to": "phase1-understanding", "condition": "always"}
+        assert understanding.type == "deterministic_understanding"
+        assert understanding.transitions == [{"to": "phase1-why2", "condition": "always"}]
+        assert any(
+            transition["to"] == "phase1-lexicon-derive"
+            for transition in why2.transitions
+        )
+        assert lexicon_derive.transitions == [{"to": "phase1-lexicon", "condition": "always"}]
+        assert lexicon.type == "deterministic_lexicon"
+        assert lexicon.transitions[-1] == {"to": "checkpoint-assess", "condition": "always"}
+
     def test_phase3_consensus_context_packs_cover_spec_plan_and_tasks(self):
         """Consensus agents must receive enough artifacts to validate plan/tasks."""
         node = self.graph.get("phase3-consensus")

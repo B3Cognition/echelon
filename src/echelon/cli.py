@@ -16,6 +16,7 @@ Auto-detected from ECHELON_LLM (default: claude).
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -9585,6 +9586,7 @@ def _cmd_spec(args: list[str]) -> None:
             "  continue [--mode semi|banzai|guided]\n"
             "                                      Run the next no-input Phase A recovery action\n"
             "  resume <answers>                    Answer escalation questions from a blocked run\n"
+            "  add-input --input <role:path>...     Add evidence to a parked investigation run\n"
             "  resolve ISS-<n> <decision>          Record one issue decision and run its targeted repair\n"
             "  rewind <phase-id> [--commit <sha>]  Rewind the active squad run to a checkpoint\n"
             "  repair-traceability [--confirm]     Remove safely-prunable contextual task references\n"
@@ -9613,6 +9615,8 @@ def _cmd_spec(args: list[str]) -> None:
         _cmd_spec_continue(args[1:])
     elif subcmd == "resume":
         _cmd_spec_resume(args[1:])
+    elif subcmd == "add-input":
+        _cmd_spec_add_input(args[1:])
     elif subcmd == "resolve":
         project_root = Path.cwd()
         ext_dir = _installed_extension_or_exit(project_root)
@@ -9757,6 +9761,71 @@ def _cmd_spec_resume(args: list[str]) -> None:
     _require_provider_capability("echelon spec resume", ProviderCapability.ARTIFACT, project_dir=project_root)
     _require_phase_a_git_ownership(project_root, command_name="echelon spec resume")
     _cmd_resume(args, project_root=project_root, ext_dir=ext_dir)
+
+
+def _cmd_spec_add_input(args: list[str]) -> None:
+    from echelon.product_inputs import ProductInputError
+    from echelon.spec_add_input import SpecAddInputError, add_input_to_active_run
+
+    input_values: list[str] = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--input":
+            if i + 1 >= len(args):
+                print("✗ echelon spec add-input: --input requires role:path", file=sys.stderr)
+                raise SystemExit(2)
+            input_values.append(args[i + 1].strip())
+            i += 2
+        elif args[i].startswith("--input="):
+            input_values.append(args[i].split("=", 1)[1].strip())
+            i += 1
+        else:
+            print(
+                f"✗ echelon spec add-input: unknown argument {args[i]!r}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+    if not input_values:
+        print(
+            "Usage: echelon spec add-input --input reference:<path> [--input reference:<path>...]",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    try:
+        result = add_input_to_active_run(Path.cwd(), input_values)
+    except (ProductInputError, SpecAddInputError) as exc:
+        print(f"✗ echelon spec add-input: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    _banner(
+        "INPUT ADDED" if result.added_count else "INPUT ALREADY DECLARED",
+        [
+            ("Run", result.run_dir.name),
+            ("Attachment", result.attachment_id),
+            ("Added resources", str(result.added_count)),
+            ("Duplicate resources", str(result.duplicate_count)),
+            (
+                "Original inputs",
+                _format_product_input_declarations(result.original_declarations),
+            ),
+            (
+                "Attached inputs",
+                _format_product_input_declarations(result.attached_declarations),
+            ),
+            ("Next", result.next_command),
+        ],
+    )
+
+
+def _format_product_input_declarations(
+    declarations: Sequence[Mapping[str, object]],
+) -> str:
+    rendered = [
+        f"{item.get('role')}:{item.get('location')}"
+        for item in declarations
+        if isinstance(item, Mapping)
+    ]
+    return ", ".join(rendered) if rendered else "(none)"
 
 
 def _run_spec_target_git(

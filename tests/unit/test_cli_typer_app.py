@@ -129,6 +129,39 @@ def test_spec_amend_routes_product_inputs_and_dry_run(monkeypatch):
 
 
 @pytest.mark.unit
+def test_spec_add_input_routes_product_inputs(monkeypatch):
+    from echelon.cli_app import run
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr("echelon.cli._cmd_spec_add_input", lambda args: calls.append(args))
+
+    run([
+        "spec",
+        "add-input",
+        "--input",
+        "reference:sources/DE-OPTA-SCHEMA-MAPPING",
+        "--input",
+        "reference:sources/DE-RESOLVER-BENCHMARK",
+    ])
+
+    assert calls == [[
+        "--input",
+        "reference:sources/DE-OPTA-SCHEMA-MAPPING",
+        "--input",
+        "reference:sources/DE-RESOLVER-BENCHMARK",
+    ]]
+
+
+@pytest.mark.unit
+def test_spec_add_input_help_declares_input_option():
+    result = invoke_help("spec", "add-input")
+
+    assert result.exit_code == 0
+    assert "--input" in result.output
+    assert "parked investigation" in result.output
+
+
+@pytest.mark.unit
 def test_spec_amend_help_declares_input_and_dry_run_options():
     result = invoke_help("spec", "amend")
 
