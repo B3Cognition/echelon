@@ -76,3 +76,18 @@
 - [x] Exercise both commands on `md_distribution` and `optasearch`, validate
       generated HTML, and render one DOT export to SVG with Graphviz.
 - [x] Commit only graph visualization files and graph-specific CLI hunks.
+
+### Task 4: Operator Documentation
+
+**Files:**
+- Modify: `README.md`
+
+**Interfaces:**
+- Documents: publication, MemPalace reconciliation, graph build/audit, and
+  visualization/export commands.
+
+- [x] Verify every documented command and option against current CLI help.
+- [x] Document independent RE, spec, and evidence publication timing.
+- [x] Document the normal memory-refresh and graph-refresh sequence.
+- [x] Explain hash-based stale-state detection and read-only viewer behavior.
+- [x] Add the memory and graph commands to the README command reference.

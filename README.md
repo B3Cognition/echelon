@@ -291,6 +291,57 @@ echelon delivery land 001                  # lands the target repo branch, then 
 echelon review 001 --pr-url https://github.com/org/repo/pull/42
 ```
 
+### Artifact graph workflow
+
+The artifact graph connects a canonical specification with the published RE and
+verification evidence that apply to it. Those sources are published
+independently: RE is optional and normally precedes spec authoring, while
+verification evidence normally becomes available after delivery and landing.
+The graph uses whichever canonical sources are present; it never reads
+unpublished run-local artifacts.
+
+Before building the graph, refresh the MemPalace projections for the source
+domains that exist. Each refresh mines only its own canonical source and audits
+the result, so the graph does not duplicate mining:
+
+```bash
+# Publish canonical sources as they become available.
+echelon re publish <run-id>                 # optional brownfield context
+echelon spec publish <spec>                 # canonical spec on local default branch
+echelon spec evidence publish <spec>        # normally after land
+
+# Reconcile each applicable canonical source with MemPalace.
+echelon re memory refresh                   # when published RE is attached
+echelon spec memory refresh <spec> --write
+echelon spec evidence memory refresh <spec> # when evidence is published
+
+# Build, persist, and audit the graph, then inspect it.
+echelon graph refresh <spec> --write
+echelon graph view <spec>
+```
+
+`graph refresh --write` is the normal shorthand for a persisted build followed
+by a persisted audit. Automation may run the stages separately:
+
+```bash
+echelon graph build <spec> --write
+echelon graph audit <spec> --write
+echelon graph view <spec> --no-open
+echelon graph export <spec> --format dot --output graph.dot
+```
+
+Every graph records hashes for its canonical input set and its MemPalace audit
+receipts. The audits distinguish three stale transitions:
+
+- a canonical artifact changed after its MemPalace projection was refreshed;
+- a canonical graph input changed after the graph was built;
+- MemPalace was refreshed after the graph was built.
+
+Refresh the affected memory domain first, then rebuild the graph. `view` and
+`export` are read-only and do not repair stale state. They still produce output
+when the live graph audit fails, but return exit code `1` and show the findings;
+missing or invalid graph state returns `2`.
+
 ### Product inputs: requirements versus references
 
 `--input` is repeatable and deliberately separates product obligations from
@@ -910,6 +961,13 @@ This keeps commands readable and makes individual phases independently editable 
 | `echelon spec publish <numeric-id>` | — | Copy the matching committed `specs/<id>/` snapshot from its unique canonical local branch to the local default branch and commit it; source branches are retained and nothing is pushed |
 | `echelon spec publish <canonical-branch>` | — | Publish one exact canonical local spec branch by full name without merging implementation history |
 | `echelon spec publish --all` | — | Atomically publish every unambiguous canonical local spec branch in one local default-branch commit |
+| `echelon spec memory refresh <id> [--write]` | — | Mine canonical spec artifacts into MemPalace and immediately audit reconciliation; optionally persist the audit reports |
+| `echelon re memory refresh` | — | Mine published RE artifacts into MemPalace and immediately audit reconciliation |
+| `echelon spec evidence publish <id>` | — | Publish the canonical verification-evidence package for a landed spec |
+| `echelon spec evidence memory refresh <id>` | — | Mine published spec evidence into MemPalace and immediately audit reconciliation |
+| `echelon graph refresh <id> --write` | — | Build and audit the persisted artifact graph from current canonical artifacts and MemPalace receipts without mining memory |
+| `echelon graph view <id> [--lens <lens>] [--no-open]` | — | Generate an offline interactive graph viewer with live audit findings |
+| `echelon graph export <id> --format dot [--output <path>]` | — | Export the persisted graph as deterministic DOT without rebuilding or mining |
 | `echelon spec targets <id>` | — | Read-only task ownership report: display every canonical task grouped by explicit `target=` ownership, including `UNOWNED`, `CROSS-TARGET`, and target/path mismatch diagnostics; exits nonzero when ownership is invalid |
 | `echelon spec artifacts <id>` | — | Generate or refresh `specs/<id>-*/ARTIFACTS.md`, the deterministic human map of spec-folder outputs |
 | `echelon wiki build` | — | Build the local, read-only human-navigation vault from canonical `specs/` and published `re/` artifacts |
