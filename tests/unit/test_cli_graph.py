@@ -64,6 +64,7 @@ def test_graph_help_exposes_build_audit_and_refresh() -> None:
     assert "build" in result.output
     assert "audit" in result.output
     assert "refresh" in result.output
+    assert "workspace" in result.output
 
 
 @pytest.mark.unit
