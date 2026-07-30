@@ -10,10 +10,18 @@ Status: DONE_WITH_CONCERNS
 ## Commits
 
 - `1e48ea46 feat: render bounded agent context`
+- `ffb71cfb fix: bound rendered context sections`
 
 ## Tests
 
 - `PYTHONPATH=src uv run pytest tests/unit/test_agent_context.py -v`: 11 passed.
+- `git diff --check`: passed.
+
+## Review fix round
+
+- Added inclusive byte-cap regression tests for file, journal, and directory rendering.
+- Added unreadable directory-child coverage and unavailable notices.
+- `uv run pytest tests/unit/test_agent_context.py -v`: 15 passed.
 - `git diff --check`: passed.
 
 ## Concerns
