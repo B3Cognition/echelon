@@ -193,8 +193,9 @@ def test_write_summary_outputs_json_and_markdown(tmp_path: Path) -> None:
     json_path, md_path = write_summary(tmp_path, records)
 
     assert json.loads(json_path.read_text(encoding="utf-8"))["best_variant"] == "baseline"
-    assert "| baseline | complete | - | - | 0 | 0 | 8 | 2 | 1 | 2 | 3 | 600.0 |" in md_path.read_text(
-        encoding="utf-8"
+    assert (
+        "| baseline | bounded | complete | - | - | 0 | 0 | 8 | 2 | 1 | 2 | 3 | 0 | 0 | 0 | 600.0 |"
+        in md_path.read_text(encoding="utf-8")
     )
 
 
@@ -216,6 +217,28 @@ def test_collect_benchmark_record_reads_squad_and_delivery_state(tmp_path: Path)
                     {"pass": True, "pass_id": "WHY2-iter-1"},
                 ],
                 "cost_usd": 12.5,
+            }
+        ),
+        encoding="utf-8",
+    )
+    budget_dir = squad_dir / "context-budget"
+    budget_dir.mkdir()
+    (budget_dir / "dispatch-001.json").write_text(
+        json.dumps(
+            {
+                "selected_render_mode": "bounded",
+                "bounded": {"bytes": 4000, "approx_tokens": 1000},
+                "savings": {"reduction_pct": 40},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (budget_dir / "dispatch-002.json").write_text(
+        json.dumps(
+            {
+                "selected_render_mode": "bounded",
+                "bounded": {"bytes": 2000, "approx_tokens": 500},
+                "savings": {"reduction_pct": 20},
             }
         ),
         encoding="utf-8",
@@ -252,6 +275,10 @@ def test_collect_benchmark_record_reads_squad_and_delivery_state(tmp_path: Path)
     assert record.spec_id == "001"
     assert record.run_id == "squad-1"
     assert record.delivery_run_id == "build-1"
+    assert record.context_render == "bounded"
+    assert record.context_prompt_bytes == 6000
+    assert record.context_prompt_tokens_estimate == 1500
+    assert record.context_reduction_pct == 30
     assert record.phase_a_dispatches == 4
     assert record.why_failures == 1
     assert record.build_dispatches == 3
@@ -293,6 +320,26 @@ def test_benchmark_dry_run_prints_commands(tmp_path: Path, capsys) -> None:
     assert "phase-exp-constitution-quality" in out
     assert "phase-exp-tasks-quality" in out
     assert "echelon delivery run RESOLVE_SPEC_ID_FROM_CURRENT_RUN mode=banzai" in out
+
+
+def test_benchmark_dry_run_includes_context_render_env(tmp_path: Path, capsys) -> None:
+    _cmd_benchmark(
+        [
+            "run",
+            "tiny-notes",
+            "--variant",
+            "baseline",
+            "--baseline-ref",
+            "baseline-artifacts",
+            "--context-render",
+            "bounded",
+            "--dry-run",
+        ],
+        project_root=tmp_path,
+    )
+
+    out = capsys.readouterr().out
+    assert "ECHELON_CONTEXT_RENDER_MODE=bounded echelon spec run --mode banzai" in out
 
 
 def test_benchmark_artifact_only_dry_run_skips_delivery(tmp_path: Path, capsys) -> None:
@@ -343,6 +390,17 @@ def test_benchmark_rejects_unknown_variant(tmp_path: Path, capsys) -> None:
     assert "Unknown benchmark variant" in capsys.readouterr().err
 
 
+def test_benchmark_rejects_unknown_context_render(tmp_path: Path, capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        _cmd_benchmark(
+            ["run", "tiny-notes", "--variant", "baseline", "--context-render", "bad"],
+            project_root=tmp_path,
+        )
+
+    assert exc.value.code == 1
+    assert "Unknown context render mode" in capsys.readouterr().err
+
+
 def test_benchmark_suggests_run_subcommand_for_fixture_argument(tmp_path: Path, capsys) -> None:
     with pytest.raises(SystemExit) as exc:
         _cmd_benchmark(["tiny-notes"], project_root=tmp_path)
@@ -384,6 +442,7 @@ def test_benchmark_run_allows_missing_baseline_ref(monkeypatch: pytest.MonkeyPat
         *,
         baseline_ref: str | None = None,
         artifact_only: bool = False,
+        context_render: str = "bounded",
     ) -> Path:
         calls.append(
             {
@@ -392,6 +451,7 @@ def test_benchmark_run_allows_missing_baseline_ref(monkeypatch: pytest.MonkeyPat
                 "variant_id": variant_id,
                 "baseline_ref": baseline_ref,
                 "artifact_only": artifact_only,
+                "context_render": context_render,
             }
         )
         output_dir = tmp_path / "runs" / "benchmarks" / "fake" / variant_id
@@ -409,8 +469,36 @@ def test_benchmark_run_allows_missing_baseline_ref(monkeypatch: pytest.MonkeyPat
             "variant_id": "baseline",
             "baseline_ref": None,
             "artifact_only": False,
+            "context_render": "bounded",
         }
     ]
+
+
+def test_benchmark_run_passes_context_render(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    def fake_run_benchmark_variant(
+        project_root: Path,
+        fixture_id: str,
+        variant_id: str,
+        *,
+        baseline_ref: str | None = None,
+        artifact_only: bool = False,
+        context_render: str = "bounded",
+    ) -> Path:
+        calls.append({"context_render": context_render, "variant_id": variant_id})
+        output_dir = tmp_path / "runs" / "benchmarks" / "fake" / variant_id
+        output_dir.mkdir(parents=True)
+        return output_dir
+
+    monkeypatch.setattr("echelon.benchmark.run_benchmark_variant", fake_run_benchmark_variant)
+
+    _cmd_benchmark(
+        ["run", "tiny-notes", "--variant", "baseline", "--context-render", "legacy"],
+        project_root=tmp_path,
+    )
+
+    assert calls == [{"context_render": "legacy", "variant_id": "baseline"}]
 
 
 def test_run_benchmark_variant_writes_summary_with_injected_runner(tmp_path: Path) -> None:
@@ -471,6 +559,50 @@ def test_run_benchmark_variant_writes_summary_with_injected_runner(tmp_path: Pat
     assert summary["variants"]["constitution"]["spec_id"] == "001"
     assert summary["variants"]["constitution"]["delivery_run_id"] == "build-1"
     assert (output_dir / "summary.md").exists()
+
+
+def test_run_benchmark_variant_both_uses_same_baseline_and_qualified_records(tmp_path: Path) -> None:
+    commands: list[tuple[str, ...]] = []
+    render_modes: list[str] = []
+
+    def runner(command: tuple[str, ...]) -> int:
+        commands.append(command)
+        if command[:3] == ("echelon", "spec", "run"):
+            render_modes.append(__import__("os").environ["ECHELON_CONTEXT_RENDER_MODE"])
+            run_number = len(render_modes)
+            squad_dir = tmp_path / "runs" / f"spec-20260704-120000-00000{run_number}"
+            squad_dir.mkdir(parents=True)
+            (tmp_path / "runs" / ".current").write_text(f"{squad_dir.name}\n", encoding="utf-8")
+            (squad_dir / "state.json").write_text(
+                json.dumps({"run_id": f"squad-{run_number}", "status": "done", "spec_id": f"00{run_number}"}),
+                encoding="utf-8",
+            )
+        return 0
+
+    output_dir = run_benchmark_variant(
+        tmp_path,
+        "tiny-notes",
+        "baseline",
+        baseline_ref="baseline-artifacts",
+        runner=runner,
+        timestamp="20260701-120000",
+        artifact_only=True,
+        context_render="both",
+    )
+
+    summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+    assert output_dir == tmp_path / "runs" / "benchmarks" / "20260701-120000-tiny-notes" / "baseline"
+    assert render_modes == ["legacy", "bounded"]
+    assert set(summary["variants"]) == {"baseline:legacy", "baseline:bounded"}
+    assert summary["variants"]["baseline:legacy"]["context_render"] == "legacy"
+    assert summary["variants"]["baseline:legacy"]["base_variant_id"] == "baseline"
+    assert summary["variants"]["baseline:bounded"]["context_render"] == "bounded"
+    assert [command for command in commands if command[:3] == ("git", "reset", "--hard")] == [
+        ("git", "reset", "--hard", "baseline-artifacts"),
+        ("git", "reset", "--hard", "baseline-artifacts"),
+        ("git", "reset", "--hard", "baseline-artifacts"),
+        ("git", "reset", "--hard", "baseline-artifacts"),
+    ]
 
 
 def test_run_benchmark_variant_artifact_only_skips_delivery(tmp_path: Path) -> None:

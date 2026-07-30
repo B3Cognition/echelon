@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 from dataclasses import asdict, dataclass
@@ -39,6 +40,11 @@ class BenchmarkCommandPlan:
 class BenchmarkRunRecord:
     variant_id: str
     status: str
+    context_render: str = "bounded"
+    base_variant_id: str = ""
+    context_prompt_bytes: int = 0
+    context_prompt_tokens_estimate: int = 0
+    context_reduction_pct: int = 0
     phase_a_dispatches: int = 0
     why_failures: int = 0
     build_dispatches: int = 0
@@ -100,6 +106,8 @@ _VARIANTS = (
         ),
     ),
 )
+
+CONTEXT_RENDER_MODES = {"legacy", "bounded", "both"}
 
 
 def list_fixtures() -> list[BenchmarkFixture]:
@@ -187,16 +195,18 @@ def write_summary(output_dir: Path, records: list[BenchmarkRunRecord]) -> tuple[
     lines = [
         "# Benchmark Summary",
         "",
-        "| Variant | Status | Spec | Delivery | Phase A | WHY Fails | Dispatches | Retries | Blocks | Verify Failures | Fulfillment Gaps | Seconds |",
-        "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Variant | Render | Status | Spec | Delivery | Phase A | WHY Fails | Dispatches | Retries | Blocks | Verify Failures | Fulfillment Gaps | Context Bytes | Context Tokens | Context Reduction | Seconds |",
+        "|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for record in records:
         lines.append(
-            f"| {record.variant_id} | {record.status} | {record.spec_id or '-'} | "
+            f"| {record.variant_id} | {record.context_render} | {record.status} | {record.spec_id or '-'} | "
             f"{record.delivery_run_id or '-'} | {record.phase_a_dispatches} | "
             f"{record.why_failures} | {record.build_dispatches} | {record.retries} | "
             f"{record.blocked_states} | {record.verification_failures} | "
-            f"{record.fulfillment_gaps} | {record.elapsed_seconds:.1f} |"
+            f"{record.fulfillment_gaps} | {record.context_prompt_bytes} | "
+            f"{record.context_prompt_tokens_estimate} | {record.context_reduction_pct} | "
+            f"{record.elapsed_seconds:.1f} |"
         )
     md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return json_path, md_path
@@ -207,6 +217,31 @@ CommandRunner = Callable[[tuple[str, ...]], int]
 
 def _default_runner(command: tuple[str, ...]) -> int:
     return subprocess.run(command, check=False).returncode
+
+
+def _format_context_command(command: tuple[str, ...], context_render: str) -> str:
+    if command and command[0] == "git":
+        return " ".join(command)
+    return f"ECHELON_CONTEXT_RENDER_MODE={context_render} " + " ".join(command)
+
+
+def _run_with_context(
+    run: CommandRunner,
+    command: tuple[str, ...],
+    context_render: str,
+) -> int:
+    if command and command[0] == "git":
+        return run(command)
+
+    previous = os.environ.get("ECHELON_CONTEXT_RENDER_MODE")
+    os.environ["ECHELON_CONTEXT_RENDER_MODE"] = context_render
+    try:
+        return run(command)
+    finally:
+        if previous is None:
+            os.environ.pop("ECHELON_CONTEXT_RENDER_MODE", None)
+        else:
+            os.environ["ECHELON_CONTEXT_RENDER_MODE"] = previous
 
 
 def _git(
@@ -265,6 +300,26 @@ def _delivery_state(project_root: Path, spec_id: str) -> tuple[Path | None, dict
     return project_root / "runs" / build_id, _read_json(state_file)
 
 
+def _context_budget_totals(squad_dir: Path | None) -> dict[str, int]:
+    totals = {"bytes": 0, "approx_tokens": 0, "reduction_pct": 0}
+    if squad_dir is None:
+        return totals
+
+    reductions: list[int] = []
+    for report in sorted((squad_dir / "context-budget").glob("dispatch-*.json")):
+        payload = _read_json(report)
+        selected = str(payload.get("selected_render_mode") or "bounded")
+        selected_payload = payload.get(selected)
+        if isinstance(selected_payload, dict):
+            totals["bytes"] += int(selected_payload.get("bytes") or 0)
+            totals["approx_tokens"] += int(selected_payload.get("approx_tokens") or 0)
+        savings = payload.get("savings")
+        if isinstance(savings, dict):
+            reductions.append(int(savings.get("reduction_pct") or 0))
+    totals["reduction_pct"] = round(sum(reductions) / len(reductions)) if reductions else 0
+    return totals
+
+
 def _count_why_failures(squad_state: dict[str, Any]) -> int:
     scores = squad_state.get("quality_scores")
     if not isinstance(scores, list):
@@ -313,13 +368,16 @@ def collect_benchmark_record(
     variant_id: str,
     *,
     status: str,
+    context_render: str = "bounded",
+    base_variant_id: str = "",
     retries: int = 0,
     elapsed_seconds: float = 0.0,
     failure_kind: str = "",
 ) -> BenchmarkRunRecord:
-    _squad_dir, squad_state = _current_squad_state(project_root)
+    squad_dir, squad_state = _current_squad_state(project_root)
     spec_id = str(squad_state.get("spec_id") or "")
     _build_dir, delivery_state = _delivery_state(project_root, spec_id)
+    context_totals = _context_budget_totals(squad_dir)
 
     squad_blocked = str(squad_state.get("status") or "").lower() == "blocked"
     delivery_blocked = str(delivery_state.get("status") or "").lower() == "blocked"
@@ -328,6 +386,11 @@ def collect_benchmark_record(
     return BenchmarkRunRecord(
         variant_id=variant_id,
         status=status,
+        context_render=context_render,
+        base_variant_id=base_variant_id,
+        context_prompt_bytes=context_totals["bytes"],
+        context_prompt_tokens_estimate=context_totals["approx_tokens"],
+        context_reduction_pct=context_totals["reduction_pct"],
         phase_a_dispatches=_phase_a_dispatches(squad_state),
         why_failures=_count_why_failures(squad_state),
         build_dispatches=int(delivery_state.get("outer_iter") or 0),
@@ -508,7 +571,11 @@ def snapshot_benchmark_baseline(project_root: Path) -> str:
 def variant_execution_commands(
     plan: BenchmarkCommandPlan,
     baseline_ref: str,
+    *,
+    context_render: str = "bounded",
 ) -> tuple[tuple[str, ...], ...]:
+    if context_render not in CONTEXT_RENDER_MODES:
+        raise ValueError(f"Unknown context render mode: {context_render}")
     reset_commands = baseline_reset_commands(baseline_ref)
     return reset_commands + plan.commands + reset_commands
 
@@ -522,71 +589,95 @@ def run_benchmark_variant(
     runner: CommandRunner | None = None,
     timestamp: str | None = None,
     artifact_only: bool = False,
+    context_render: str = "bounded",
 ) -> Path:
+    if context_render not in CONTEXT_RENDER_MODES:
+        raise ValueError(f"Unknown context render mode: {context_render}")
+
     plan = plan_variant_commands(fixture_id, variant_id, artifact_only=artifact_only)
     run = runner or _default_runner
     resolved_baseline_ref = baseline_ref or snapshot_benchmark_baseline(project_root)
 
-    status = "complete"
-    retries = 0
-    failure_kind = ""
-    started = time.monotonic()
     output_dir = project_root / "runs" / "benchmarks" / f"{timestamp or _timestamp()}-{fixture_id}" / variant_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    def run_one(command: tuple[str, ...], kind: str) -> bool:
-        nonlocal status, retries, failure_kind
-        exit_code = run(command)
-        if exit_code != 0:
-            status = "failed"
-            retries += 1
-            failure_kind = kind
-            return False
-        return True
+    def run_pass(render_mode: str) -> BenchmarkRunRecord:
+        status = "complete"
+        retries = 0
+        failure_kind = ""
+        started = time.monotonic()
 
-    for reset_command in baseline_reset_commands(resolved_baseline_ref):
-        if not run_one(reset_command, "baseline_reset"):
-            break
+        def run_one(command: tuple[str, ...], kind: str) -> bool:
+            nonlocal status, retries, failure_kind
+            exit_code = _run_with_context(run, command, render_mode)
+            if exit_code != 0:
+                status = "failed"
+                retries += 1
+                failure_kind = kind
+                return False
+            return True
 
-    if status == "complete" and not run_one(plan.commands[0], "spec_run"):
-        pass
-
-    _squad_dir, squad_state = _current_squad_state(project_root)
-    spec_id = str(squad_state.get("spec_id") or "")
-    if status == "complete" and str(squad_state.get("status") or "").lower() == "blocked":
-        status = "failed"
-        retries += 1
-        failure_kind = "spec_run_blocked"
-    if status == "complete" and not spec_id:
-        status = "failed"
-        retries += 1
-        failure_kind = "spec_id_missing"
-
-    if status == "complete":
-        phase_commands = plan.commands[1:] if artifact_only else plan.commands[1:-1]
-        for phase_command in phase_commands:
-            command = tuple(spec_id if part == "RESOLVE_SPEC_ID_FROM_CURRENT_RUN" else part for part in phase_command)
-            if not run_one(command, "cleanse_phase"):
+        for reset_command in baseline_reset_commands(resolved_baseline_ref):
+            if not run_one(reset_command, "baseline_reset"):
                 break
 
-    if status == "complete" and not artifact_only:
-        delivery_command = tuple(
-            spec_id if part == "RESOLVE_SPEC_ID_FROM_CURRENT_RUN" else part for part in plan.commands[-1]
+        if status == "complete" and not run_one(plan.commands[0], "spec_run"):
+            pass
+
+        _squad_dir, squad_state = _current_squad_state(project_root)
+        spec_id = str(squad_state.get("spec_id") or "")
+        if status == "complete" and str(squad_state.get("status") or "").lower() == "blocked":
+            status = "failed"
+            retries += 1
+            failure_kind = "spec_run_blocked"
+        if status == "complete" and not spec_id:
+            status = "failed"
+            retries += 1
+            failure_kind = "spec_id_missing"
+
+        if status == "complete":
+            phase_commands = plan.commands[1:] if artifact_only else plan.commands[1:-1]
+            for phase_command in phase_commands:
+                command = tuple(spec_id if part == "RESOLVE_SPEC_ID_FROM_CURRENT_RUN" else part for part in phase_command)
+                if not run_one(command, "cleanse_phase"):
+                    break
+
+        if status == "complete" and not artifact_only:
+            delivery_command = tuple(
+                spec_id if part == "RESOLVE_SPEC_ID_FROM_CURRENT_RUN" else part for part in plan.commands[-1]
+            )
+            run_one(delivery_command, "delivery_run")
+
+        elapsed = time.monotonic() - started
+
+        for reset_command in baseline_reset_commands(resolved_baseline_ref):
+            _run_with_context(run, reset_command, render_mode)
+
+        record_variant_id = f"{variant_id}:{render_mode}" if context_render == "both" else variant_id
+        return collect_benchmark_record(
+            project_root,
+            record_variant_id,
+            status=status,
+            context_render=render_mode,
+            base_variant_id=variant_id,
+            retries=retries,
+            elapsed_seconds=elapsed,
+            failure_kind=failure_kind,
         )
-        run_one(delivery_command, "delivery_run")
 
-    elapsed = time.monotonic() - started
-
-    for reset_command in baseline_reset_commands(resolved_baseline_ref):
-        run(reset_command)
-
-    record = collect_benchmark_record(
-        project_root,
-        variant_id,
-        status=status,
-        retries=retries,
-        elapsed_seconds=elapsed,
-        failure_kind=failure_kind,
-    )
-    write_summary(output_dir, [record])
+    render_modes = ("legacy", "bounded") if context_render == "both" else (context_render,)
+    records = [run_pass(render_mode) for render_mode in render_modes]
+    write_summary(output_dir, records)
     return output_dir
+
+
+def format_variant_execution_commands(
+    plan: BenchmarkCommandPlan,
+    baseline_ref: str,
+    *,
+    context_render: str = "bounded",
+) -> tuple[str, ...]:
+    return tuple(
+        _format_context_command(command, context_render)
+        for command in variant_execution_commands(plan, baseline_ref, context_render=context_render)
+    )
