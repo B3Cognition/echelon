@@ -33,6 +33,6 @@ Task 4: complete
 - review: approved (spec compliance and code quality)
 
 Task 5: complete
-- commits: pending
+- commits: 04d4aaeb
 - verification: focused staged bounded-renderer tests passed; git diff --check passed
 - review: local verification pass
