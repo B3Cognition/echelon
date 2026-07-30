@@ -451,6 +451,14 @@ def _compare_graphs(
     if not reference:
         return []
     findings: list[WorkspaceGraphFinding] = []
+    if reference.get("workspace_name") != current.workspace_name:
+        findings.append(
+            WorkspaceGraphFinding(
+                "error",
+                "workspace_identity_stale",
+                "workspace name differs from fresh composition",
+            )
+        )
     old_members = _members_by_spec(reference.get("members", []))
     new_members = {member.spec_id: member for member in current.members}
     if (

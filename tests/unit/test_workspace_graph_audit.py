@@ -271,6 +271,47 @@ def test_audit_rejects_tampered_persisted_receipts_and_workspace_coherence(
 
 
 @pytest.mark.unit
+def test_audit_rejects_tampered_persisted_member_state_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _candidate()
+    write_workspace_graph(current.graph, tmp_path)
+    path = workspace_graph_path(tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["member_state_digest"] = "sha256:tampered"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph", lambda project_root: current
+    )
+
+    report = audit_workspace_graph(tmp_path)
+
+    assert report.status == "fail"
+    assert [finding.code for finding in report.findings] == ["workspace_graph_invalid"]
+
+
+@pytest.mark.unit
+def test_audit_reports_tampered_persisted_workspace_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _candidate()
+    write_workspace_graph(current.graph, tmp_path)
+    path = workspace_graph_path(tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["workspace_name"] = "tampered-workspace"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph", lambda project_root: current
+    )
+
+    report = audit_workspace_graph(tmp_path)
+
+    assert [finding.code for finding in report.findings] == ["workspace_identity_stale"]
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "mutate",
     [
