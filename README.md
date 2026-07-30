@@ -342,6 +342,45 @@ Refresh the affected memory domain first, then rebuild the graph. `view` and
 when the live graph audit fails, but return exit code `1` and show the findings;
 missing or invalid graph state returns `2`.
 
+#### Workspace artifact graph
+
+The workspace graph is a local, replaceable composition of the persisted
+canonical `specs/<id>/spec-artifact-graph.json` files. It uses live per-spec
+audits and workspace inputs, but does not treat per-spec audit sidecars or
+run-local artifacts as authority. It records the exact member-graph hash, each
+member's source-set and memory-state receipts, and workspace source/member-state
+digests, so the audit can identify whether canonical inputs, memory, a member,
+or the composed graph became stale.
+
+Use the conditional repair path when a workspace audit reports stale state:
+
+```bash
+# Repair in audit-first order, then persist the composed graph and its audit.
+echelon graph refresh <spec> --write
+echelon graph workspace refresh --write
+
+# Inspect current persisted workspace state without repairing upstream members.
+echelon graph workspace audit --json
+echelon graph workspace view --no-open
+echelon graph workspace export --format dot --output workspace.dot
+```
+
+`workspace refresh --write` audits shared published RE once, then audits each
+canonical spec's applicable requirement and evidence-memory domains and its
+member graph. It refreshes only stale applicable domains and rebuilds only
+missing or stale member graphs before composing exact persisted member bytes.
+One member failure does not stop the remaining repairs; the member stays as an
+excluded placeholder with its diagnosis. `build`, `audit`, `view`, `export`,
+and `refresh` without `--write` are dry/read-only with respect to memory and
+persisted member graphs.
+
+`refresh --write` writes `.echelon/runtime/graph/workspace-artifact-graph.json`
+and its audit; `view` writes an offline `workspace.html`; `export` writes DOT
+to stdout or `--output`. `pass` and `warn` exit `0`, a usable graph with stale
+or excluded members exits `1`, and unavailable or missing/invalid persisted
+workspace state exits `2`. View and export still write valid output for a
+`fail` or placeholder-only `unavailable` graph, then return that audit status.
+
 ### Product inputs: requirements versus references
 
 `--input` is repeatable and deliberately separates product obligations from
