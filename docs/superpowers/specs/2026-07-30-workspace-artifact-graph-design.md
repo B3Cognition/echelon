@@ -309,8 +309,11 @@ the audit result.
 
 `audit` is read-only unless `--write` is supplied.
 
-`refresh` composes and audits. With `--write`, it writes both artifacts.
-It never refreshes memory or per-spec graphs.
+`refresh` composes and audits the newly composed in-memory candidate. Without
+`--write`, it is a dry preview and does not audit an older persisted workspace
+graph. With `--write`, it atomically replaces the workspace graph, audits that
+exact candidate, and writes the audit artifact. It never refreshes memory or
+per-spec graphs.
 
 `view` and `export` consume the persisted workspace graph and run a live
 workspace audit. They produce output even for `fail`, then return the audit exit
