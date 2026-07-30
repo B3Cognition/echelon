@@ -13,18 +13,25 @@ import re
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, is_dataclass, replace
 from pathlib import Path
-from typing import Any
 from types import MappingProxyType
+from typing import Any
 
 
 _LINE_RANGE_RE = re.compile(r"L([1-9][0-9]*)-L([1-9][0-9]*)\Z")
-_LOCATOR_KINDS = frozenset({"line-range", "json-pointer", "xml-id", "page-paragraph"})
+_MEDIA_TYPE_RE = re.compile(
+    r"[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+\Z"
+)
+_UNIT_KINDS = frozenset(
+    {"requirement", "acceptance-criterion", "constraint", "rule"}
+)
+_NORMATIVE_LEVELS = frozenset({"must", "should", "may", "unspecified"})
 _EXPLICIT_UNIT_RE = re.compile(
     r"^\s*(?:(?:#{1,6}|[-*+])\s+)?(?:\*\*)?((?:FR|REQ|AC)[-_][A-Za-z0-9-]+)(?:\*\*)?\s*:\s*(.+?)\s*$",
     re.IGNORECASE,
 )
 _HEADING_UNIT_RE = re.compile(
-    r"^\s*#+\s+((?:FR|REQ|AC)[-_][A-Za-z0-9-]+)\b", re.IGNORECASE
+    r"^\s*(#{1,6})\s+((?:FR|REQ|AC)[-_][A-Za-z0-9-]+)\b(.*)$",
+    re.IGNORECASE,
 )
 _NORMATIVE_RE = re.compile(r"\b(MUST|SHALL|SHOULD|MAY)\b", re.IGNORECASE)
 _LEXICON_RE = re.compile(r"^(REQ|AC|GIVEN|WHEN|THEN):\s*(.*?)\s*$", re.IGNORECASE)
@@ -37,6 +44,10 @@ class SUESourceError(ValueError):
         self.code = code
         self.message = message
         super().__init__(f"{code}: {message}")
+
+
+def _source_error(code: str, message: str) -> None:
+    raise SUESourceError(code, message)
 
 
 @dataclass(frozen=True)
@@ -206,70 +217,81 @@ def canonical_glossary_match(knowledge_map: SourceKnowledgeMap, label: str) -> s
     return matches[0] if len(matches) == 1 else None
 
 
-def _require_identifier(value: str, label: str) -> None:
+def _require_identifier(value: object, label: str) -> None:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{label} must be a non-empty string")
+        _source_error("INVALID_IDENTIFIER", f"{label} must be a non-empty string")
+
+
+def _require_string(
+    value: object, label: str, *, nonempty: bool = False, code: str = "INVALID_SCHEMA"
+) -> str:
+    if not isinstance(value, str) or (nonempty and not value.strip()):
+        qualifier = "non-empty " if nonempty else ""
+        _source_error(code, f"{label} must be a {qualifier}string")
+    return value
+
+
+def _require_collection(value: object, label: str) -> tuple[object, ...]:
+    if not isinstance(value, (list, tuple)):
+        _source_error("INVALID_COLLECTION", f"{label} must be a list or tuple")
+    return tuple(value)
 
 
 def _line_bounds(locator: str) -> tuple[int, int]:
     match = _LINE_RANGE_RE.fullmatch(locator)
     if match is None:
-        raise ValueError(f"invalid line-range locator: {locator!r}")
+        _source_error("INVALID_LOCATOR", f"invalid line-range locator: {locator!r}")
     start, end = (int(group) for group in match.groups())
     if start > end:
-        raise ValueError(f"invalid line-range locator: {locator!r}")
+        _source_error("INVALID_LOCATOR", f"invalid line-range locator: {locator!r}")
     return start, end
 
 
 def _validate_ref(documents: dict[str, SourceDocument], ref: SourceRef) -> None:
+    if not isinstance(ref, SourceRef):
+        _source_error("INVALID_SOURCE_REF", "source reference must be a SourceRef")
     _require_identifier(ref.document_id, "source reference document ID")
     if ref.document_id not in documents:
-        raise ValueError(f"unknown document in source reference: {ref.document_id}")
-    if ref.locator_kind not in _LOCATOR_KINDS:
-        raise ValueError(f"unknown locator kind: {ref.locator_kind}")
-    _require_identifier(ref.locator, "source reference locator")
+        _source_error(
+            "UNKNOWN_DOCUMENT",
+            f"unknown document in source reference: {ref.document_id}",
+        )
+    _require_string(
+        ref.locator_kind,
+        "source reference locator kind",
+        nonempty=True,
+        code="INVALID_LOCATOR",
+    )
+    _require_string(
+        ref.locator,
+        "source reference locator",
+        code="INVALID_LOCATOR",
+    )
+    document = documents[ref.document_id]
     if ref.locator_kind == "line-range":
         start, end = _line_bounds(ref.locator)
-        line_count = len(documents[ref.document_id].text.splitlines())
+        line_count = len(document.text.splitlines())
         if start > line_count or end > line_count:
-            raise ValueError(f"line-range locator out of range: {ref.locator!r}")
+            _source_error(
+                "INVALID_LOCATOR",
+                f"line-range locator out of range: {ref.locator!r}",
+            )
+    elif ref.locator_kind == "json-pointer":
+        _resolve_json_pointer(document, ref.locator)
+    else:
+        _source_error(
+            "UNSUPPORTED_LOCATOR",
+            f"locator kind is not implemented: {ref.locator_kind}",
+        )
 
 
 def _validate_references(
-    documents: dict[str, SourceDocument], refs: tuple[SourceRef, ...]
-) -> None:
-    for ref in refs:
+    documents: dict[str, SourceDocument], refs: object
+) -> tuple[SourceRef, ...]:
+    normalized = _require_collection(refs, "source references")
+    for ref in normalized:
         _validate_ref(documents, ref)
-
-
-def _normalize_relation(relation: DeclaredRelation) -> DeclaredRelation:
-    return DeclaredRelation(
-        predicate=relation.predicate,
-        target_unit_id=relation.target_unit_id,
-        source_refs=tuple(relation.source_refs),
-    )
-
-
-def _normalize_unit(unit: SourceUnit) -> SourceUnit:
-    return SourceUnit(
-        id=unit.id,
-        kind=unit.kind,
-        text=unit.text,
-        normative_level=unit.normative_level,
-        source_refs=tuple(unit.source_refs),
-        declared_relations=tuple(
-            _normalize_relation(relation) for relation in unit.declared_relations
-        ),
-        situation=unit.situation,
-    )
-
-
-def _normalize_glossary_term(term: GlossaryTerm) -> GlossaryTerm:
-    return GlossaryTerm(
-        canonical=term.canonical,
-        aliases=tuple(term.aliases),
-        source_refs=tuple(term.source_refs),
-    )
+    return normalized
 
 
 def make_bundle(
@@ -286,46 +308,189 @@ def make_bundle(
     _require_identifier(bundle_id, "bundle ID")
     _require_identifier(adapter_id, "adapter ID")
     _require_identifier(adapter_version, "adapter version")
-    if schema_version < 1:
-        raise ValueError("schema version must be positive")
+    if (
+        not isinstance(schema_version, int)
+        or isinstance(schema_version, bool)
+        or schema_version != 1
+    ):
+        _source_error(
+            "UNSUPPORTED_SCHEMA",
+            f"schema_version must be exactly 1, got {schema_version!r}",
+        )
 
-    documents = tuple(documents)
-    units = tuple(_normalize_unit(unit) for unit in units)
-    glossary = tuple(_normalize_glossary_term(term) for term in glossary)
+    raw_documents = _require_collection(documents, "documents")
+    raw_units = _require_collection(units, "units")
+    raw_glossary = _require_collection(glossary, "glossary")
 
     document_map: dict[str, SourceDocument] = {}
-    for document in documents:
+    normalized_documents: list[SourceDocument] = []
+    for document in raw_documents:
+        if not isinstance(document, SourceDocument):
+            _source_error("INVALID_DOCUMENT", "document must be a SourceDocument")
         _require_identifier(document.id, "document ID")
         if document.id in document_map:
-            raise ValueError(f"duplicate document ID: {document.id}")
+            _source_error(
+                "DUPLICATE_DOCUMENT", f"duplicate document ID: {document.id}"
+            )
+        _require_string(
+            document.source_uri,
+            "document source URI",
+            nonempty=True,
+            code="INVALID_DOCUMENT",
+        )
+        media_type = _require_string(
+            document.media_type,
+            "document media type",
+            nonempty=True,
+            code="INVALID_MEDIA_TYPE",
+        )
+        if _MEDIA_TYPE_RE.fullmatch(media_type) is None:
+            _source_error(
+                "INVALID_MEDIA_TYPE",
+                f"invalid document media type: {media_type!r}",
+            )
+        _require_string(document.text, "document text", code="INVALID_DOCUMENT")
+        _require_string(document.digest, "document digest", code="INVALID_DIGEST")
         if document.digest != sha256_text(document.text):
-            raise ValueError(f"document digest does not match text: {document.id}")
+            _source_error(
+                "DIGEST_MISMATCH",
+                f"document digest does not match text: {document.id}",
+            )
         document_map[document.id] = document
+        normalized_documents.append(document)
 
     unit_ids: set[str] = set()
-    for unit in units:
+    normalized_units: list[SourceUnit] = []
+    for unit in raw_units:
+        if not isinstance(unit, SourceUnit):
+            _source_error("INVALID_UNIT", "unit must be a SourceUnit")
         _require_identifier(unit.id, "unit ID")
         if unit.id in unit_ids:
-            raise ValueError(f"duplicate unit ID: {unit.id}")
+            _source_error("DUPLICATE_UNIT", f"duplicate unit ID: {unit.id}")
         unit_ids.add(unit.id)
-        _validate_references(document_map, unit.source_refs)
-        for relation in unit.declared_relations:
+        kind = _require_string(
+            unit.kind, "unit kind", code="INVALID_UNIT_KIND"
+        )
+        if kind not in _UNIT_KINDS:
+            _source_error("INVALID_UNIT_KIND", f"invalid unit kind: {kind!r}")
+        _require_string(unit.text, "unit text", code="INVALID_UNIT")
+        normative_level = _require_string(
+            unit.normative_level,
+            "unit normative level",
+            code="INVALID_NORMATIVE_LEVEL",
+        )
+        if normative_level not in _NORMATIVE_LEVELS:
+            _source_error(
+                "INVALID_NORMATIVE_LEVEL",
+                f"invalid normative level: {normative_level!r}",
+            )
+        source_refs = _validate_references(document_map, unit.source_refs)
+        if not source_refs:
+            _source_error(
+                "UNGROUNDED_UNIT",
+                f"unit {unit.id} requires at least one source reference",
+            )
+        raw_relations = _require_collection(
+            unit.declared_relations, "declared relations"
+        )
+        normalized_relations: list[DeclaredRelation] = []
+        for relation in raw_relations:
+            if not isinstance(relation, DeclaredRelation):
+                _source_error(
+                    "INVALID_RELATION",
+                    "declared relation must be a DeclaredRelation",
+                )
             _require_identifier(relation.predicate, "relation predicate")
-            _require_identifier(relation.target_unit_id, "relation target unit ID")
-            _validate_references(document_map, relation.source_refs)
+            _require_identifier(
+                relation.target_unit_id, "relation target unit ID"
+            )
+            relation_refs = _validate_references(
+                document_map, relation.source_refs
+            )
+            if not relation_refs:
+                _source_error(
+                    "UNGROUNDED_RELATION",
+                    f"relation to {relation.target_unit_id} requires a source reference",
+                )
+            normalized_relations.append(
+                DeclaredRelation(
+                    relation.predicate,
+                    relation.target_unit_id,
+                    relation_refs,
+                )
+            )
+        situation = unit.situation
+        if situation is not None:
+            if not isinstance(situation, ControlledSituation):
+                _source_error(
+                    "INVALID_SITUATION",
+                    "unit situation must be a ControlledSituation or null",
+                )
+            for label, value in (
+                ("given", situation.given),
+                ("when", situation.when),
+                ("then", situation.then),
+            ):
+                _require_string(
+                    value,
+                    f"situation {label}",
+                    code="INVALID_SITUATION",
+                )
+        normalized_units.append(
+            SourceUnit(
+                id=unit.id,
+                kind=kind,
+                text=unit.text,
+                normative_level=normative_level,
+                source_refs=source_refs,
+                declared_relations=tuple(normalized_relations),
+                situation=situation,
+            )
+        )
 
-    for term in glossary:
+    for unit in normalized_units:
+        for relation in unit.declared_relations:
+            if relation.target_unit_id not in unit_ids:
+                _source_error(
+                    "UNRESOLVED_TARGET",
+                    f"unknown relation target: {relation.target_unit_id}",
+                )
+        for ref in unit.source_refs:
+            resolved = _resolve_ref_from_documents(document_map, ref)
+            if resolved != unit.text:
+                _source_error(
+                    "SOURCE_TEXT_MISMATCH",
+                    f"unit {unit.id} text does not match {ref.locator}",
+                )
+
+    normalized_glossary: list[GlossaryTerm] = []
+    for term in raw_glossary:
+        if not isinstance(term, GlossaryTerm):
+            _source_error(
+                "INVALID_GLOSSARY", "glossary term must be a GlossaryTerm"
+            )
         _require_identifier(term.canonical, "glossary canonical term")
-        _validate_references(document_map, term.source_refs)
+        aliases = _require_collection(term.aliases, "glossary aliases")
+        for alias in aliases:
+            _require_string(
+                alias,
+                "glossary alias",
+                nonempty=True,
+                code="INVALID_GLOSSARY",
+            )
+        refs = _validate_references(document_map, term.source_refs)
+        normalized_glossary.append(
+            GlossaryTerm(term.canonical, aliases, refs)
+        )
 
     unsigned = SUESourceBundle(
         schema_version=schema_version,
         bundle_id=bundle_id,
         snapshot_digest="",
         adapter=SourceAdapter(adapter_id, adapter_version),
-        documents=documents,
-        units=units,
-        glossary=glossary,
+        documents=tuple(normalized_documents),
+        units=tuple(normalized_units),
+        glossary=tuple(normalized_glossary),
     )
     return replace(unsigned, snapshot_digest=sha256_text(canonical_json(unsigned)))
 
@@ -334,10 +499,102 @@ def resolve_source_ref(bundle: SUESourceBundle, ref: SourceRef) -> str:
     """Resolve a supported provenance reference without changing source text."""
     documents = {document.id: document for document in bundle.documents}
     _validate_ref(documents, ref)
+    return _resolve_ref_from_documents(documents, ref)
+
+
+def _resolve_ref_from_documents(
+    documents: dict[str, SourceDocument], ref: SourceRef
+) -> str:
+    document = documents[ref.document_id]
+    if ref.locator_kind == "json-pointer":
+        return _resolve_json_pointer(document, ref.locator)
     if ref.locator_kind != "line-range":
-        raise ValueError(f"cannot resolve locator kind: {ref.locator_kind}")
+        _source_error(
+            "UNSUPPORTED_LOCATOR",
+            f"locator kind is not implemented: {ref.locator_kind}",
+        )
     start, end = _line_bounds(ref.locator)
-    return _line_range_text(documents[ref.document_id].text, start, end)
+    return _line_range_text(document.text, start, end)
+
+
+def _resolve_json_pointer(document: SourceDocument, pointer: str) -> str:
+    media_type = document.media_type.casefold()
+    if media_type != "application/json" and not media_type.endswith("+json"):
+        _source_error(
+            "INVALID_LOCATOR",
+            f"json-pointer requires a JSON document: {document.id}",
+        )
+    try:
+        value: object = json.loads(
+            document.text, parse_constant=_reject_json_constant
+        )
+    except (json.JSONDecodeError, ValueError) as error:
+        _source_error(
+            "INVALID_JSON_DOCUMENT",
+            f"document {document.id} is not valid JSON: {error}",
+        )
+    if pointer == "":
+        tokens: list[str] = []
+    elif pointer.startswith("/"):
+        tokens = pointer[1:].split("/")
+    else:
+        _source_error(
+            "INVALID_LOCATOR",
+            f"JSON Pointer must be empty or begin with '/': {pointer!r}",
+        )
+
+    current = value
+    for encoded_token in tokens:
+        if re.search(r"~(?:[^01]|$)", encoded_token):
+            _source_error(
+                "INVALID_LOCATOR",
+                f"invalid JSON Pointer escape in token: {encoded_token!r}",
+            )
+        token = encoded_token.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, dict):
+            if token not in current:
+                _source_error(
+                    "INVALID_LOCATOR",
+                    f"JSON Pointer object key does not exist: {token!r}",
+                )
+            current = current[token]
+        elif isinstance(current, list):
+            if re.fullmatch(r"0|[1-9][0-9]*", token) is None:
+                _source_error(
+                    "INVALID_LOCATOR",
+                    f"invalid JSON Pointer array index: {token!r}",
+                )
+            index = int(token)
+            if index >= len(current):
+                _source_error(
+                    "INVALID_LOCATOR",
+                    f"JSON Pointer array index out of range: {index}",
+                )
+            current = current[index]
+        else:
+            _source_error(
+                "INVALID_LOCATOR",
+                "JSON Pointer cannot traverse through a scalar value",
+            )
+
+    if isinstance(current, (dict, list)):
+        _source_error(
+            "NON_SCALAR_LOCATOR",
+            "JSON Pointer must resolve to a scalar value",
+        )
+    if isinstance(current, str):
+        return current
+    return json.dumps(
+        current,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def _reject_json_constant(constant: str) -> None:
+    raise ValueError(f"invalid JSON constant: {constant}")
 
 
 def _line_range_text(document_text: str, start: int, end: int) -> str:
@@ -377,9 +634,58 @@ def load_markdown_lexicon(path: Path) -> SUESourceBundle:
     document = SourceDocument.from_text(
         id=document_id, source_uri=str(path), media_type=_media_type(path), text=text
     )
-    units: list[SourceUnit] = []
     lines = text.splitlines()
+    located_units: list[tuple[int, SourceUnit]] = []
     lexicon: dict[str, tuple[str, int]] = {}
+    heading_sites: list[tuple[int, str, str]] = []
+    covered_heading_lines: set[int] = set()
+
+    for number, line in enumerate(lines, start=1):
+        heading = _HEADING_UNIT_RE.fullmatch(line)
+        if heading:
+            _, unit_id, suffix = heading.groups()
+            heading_sites.append((number, unit_id, suffix))
+
+    for index, (start, unit_id, suffix) in enumerate(heading_sites):
+        end = (
+            heading_sites[index + 1][0] - 1
+            if index + 1 < len(heading_sites)
+            else len(lines)
+        )
+        body_has_text = any(line.strip() for line in lines[start:end])
+        title_has_text = bool(suffix.strip().lstrip(":").strip())
+        if not body_has_text and not title_has_text:
+            _source_error(
+                "INCONCLUSIVE_INPUT",
+                f"requirement heading {unit_id} has no semantic title or body",
+            )
+        unit_text = _line_range_text(text, start, end)
+        kind = (
+            "acceptance-criterion"
+            if unit_id.upper().startswith("AC")
+            else "requirement"
+        )
+        located_units.append(
+            (
+                start,
+                SourceUnit(
+                    id=unit_id,
+                    kind=kind,
+                    text=unit_text,
+                    normative_level=_normative_level(unit_text),
+                    source_refs=(
+                        SourceRef(
+                            document_id,
+                            "line-range",
+                            f"L{start}-L{end}",
+                        ),
+                    ),
+                    declared_relations=(),
+                    situation=None,
+                ),
+            )
+        )
+        covered_heading_lines.update(range(start, end + 1))
 
     def flush_lexicon() -> None:
         nonlocal lexicon
@@ -394,17 +700,37 @@ def load_markdown_lexicon(path: Path) -> SUESourceBundle:
             situation = ControlledSituation(
                 given=lexicon["GIVEN"][0], when=lexicon["WHEN"][0], then=lexicon["THEN"][0]
             )
-        units.append(SourceUnit(
-            id=unit_id,
-            kind="requirement" if key == "REQ" else "acceptance-criterion",
-            text=block_text,
-            normative_level=_normative_level(block_text),
-            source_refs=(SourceRef(document_id, "line-range", f"L{id_line}-L{end}"),),
-            declared_relations=(), situation=situation,
-        ))
+        located_units.append(
+            (
+                id_line,
+                SourceUnit(
+                    id=unit_id,
+                    kind=(
+                        "requirement"
+                        if key == "REQ"
+                        else "acceptance-criterion"
+                    ),
+                    text=block_text,
+                    normative_level=_normative_level(block_text),
+                    source_refs=(
+                        SourceRef(
+                            document_id,
+                            "line-range",
+                            f"L{id_line}-L{end}",
+                        ),
+                    ),
+                    declared_relations=(),
+                    situation=situation,
+                ),
+            )
+        )
         lexicon = {}
 
     for number, line in enumerate(lines, start=1):
+        if number in covered_heading_lines:
+            if lexicon:
+                flush_lexicon()
+            continue
         lexicon_match = _LEXICON_RE.fullmatch(line)
         if lexicon_match:
             label, value = lexicon_match.groups()
@@ -420,47 +746,97 @@ def load_markdown_lexicon(path: Path) -> SUESourceBundle:
             unit_id, _ = explicit.groups()
             kind = "acceptance-criterion" if unit_id.upper().startswith("AC") else "requirement"
         else:
-            heading = _HEADING_UNIT_RE.match(line)
-            if heading:
-                unit_id = heading.group(1)
-                kind = "acceptance-criterion" if unit_id.upper().startswith("AC") else "requirement"
+            bullet = re.fullmatch(r"\s*[-*+]\s+(.+?)\s*", line)
+            if bullet and _NORMATIVE_RE.search(bullet.group(1)):
+                unit_id = f"{document_id}:L{number}-L{number}"
+                kind = "requirement"
             else:
-                bullet = re.fullmatch(r"\s*[-*+]\s+(.+?)\s*", line)
-                if bullet and _NORMATIVE_RE.search(bullet.group(1)):
-                    unit_id = f"{document_id}:L{number}-L{number}"
-                    kind = "requirement"
-                else:
-                    continue
+                continue
         unit_text = _line_range_text(text, number, number)
-        units.append(SourceUnit(
-            id=unit_id, kind=kind, text=unit_text,
-            normative_level=_normative_level(unit_text),
-            source_refs=(SourceRef(document_id, "line-range", f"L{number}-L{number}"),),
-            declared_relations=(), situation=None,
-        ))
+        located_units.append(
+            (
+                number,
+                SourceUnit(
+                    id=unit_id,
+                    kind=kind,
+                    text=unit_text,
+                    normative_level=_normative_level(unit_text),
+                    source_refs=(
+                        SourceRef(
+                            document_id,
+                            "line-range",
+                            f"L{number}-L{number}",
+                        ),
+                    ),
+                    declared_relations=(),
+                    situation=None,
+                ),
+            )
+        )
     flush_lexicon()
+    units = tuple(unit for _, unit in sorted(located_units, key=lambda item: item[0]))
     if not units:
         raise SUESourceError(
             "INCONCLUSIVE_INPUT",
             "no explicit requirement, acceptance criterion, lexicon block, or normative bullet found",
         )
-    try:
-        return make_bundle(bundle_id=document_id, adapter_id="markdown-lexicon", documents=(document,), units=tuple(units))
-    except ValueError as error:
-        raise SUESourceError("INVALID_INPUT", str(error)) from error
-
-
-def _source_error(code: str, message: str) -> None:
-    raise SUESourceError(code, message)
+    return make_bundle(
+        bundle_id=document_id,
+        adapter_id="markdown-lexicon",
+        documents=(document,),
+        units=units,
+    )
 
 
 def _manifest_refs(value: object) -> tuple[SourceRef, ...]:
     if not isinstance(value, list):
         _source_error("INVALID_MANIFEST", "source_refs must be a list")
-    try:
-        return tuple(SourceRef(**ref) for ref in value)
-    except (TypeError, ValueError) as error:
-        _source_error("INVALID_MANIFEST", f"invalid source reference: {error}")
+    refs: list[SourceRef] = []
+    for record in value:
+        if not isinstance(record, dict):
+            _source_error(
+                "INVALID_MANIFEST", "source reference must be an object"
+            )
+        document_id = _manifest_string(record, "document_id")
+        locator_kind = _manifest_string(record, "locator_kind")
+        locator = _manifest_string(record, "locator", nonempty=False)
+        refs.append(SourceRef(document_id, locator_kind, locator))
+    return tuple(refs)
+
+
+def _manifest_list(
+    record: Mapping[str, object],
+    key: str,
+    *,
+    default: object | None = None,
+) -> list[object]:
+    if key not in record:
+        if default is None:
+            _source_error("INVALID_MANIFEST", f"missing manifest field: {key}")
+        value = default
+    else:
+        value = record[key]
+    if not isinstance(value, list):
+        _source_error("INVALID_MANIFEST", f"{key} must be a list")
+    return value
+
+
+def _manifest_string(
+    record: Mapping[str, object],
+    key: str,
+    *,
+    nonempty: bool = True,
+) -> str:
+    if key not in record:
+        _source_error("INVALID_MANIFEST", f"missing manifest field: {key}")
+    value = record[key]
+    if not isinstance(value, str) or (nonempty and not value.strip()):
+        qualifier = "non-empty " if nonempty else ""
+        _source_error(
+            "INVALID_MANIFEST",
+            f"{key} must be a {qualifier}string",
+        )
+    return value
 
 
 def load_generic_manifest(path: Path) -> SUESourceBundle:
@@ -472,87 +848,179 @@ def load_generic_manifest(path: Path) -> SUESourceBundle:
         _source_error("INVALID_MANIFEST", f"invalid JSON: {error.msg}")
     if not isinstance(data, dict):
         _source_error("INVALID_MANIFEST", "manifest root must be an object")
+    if data.get("schema_version") != 1 or isinstance(
+        data.get("schema_version"), bool
+    ):
+        _source_error(
+            "UNSUPPORTED_SCHEMA",
+            f"schema_version must be exactly 1, got {data.get('schema_version')!r}",
+        )
+    bundle_id = _manifest_string(data, "bundle_id")
+    document_records = _manifest_list(data, "documents")
+    unit_records = _manifest_list(data, "units")
+    glossary_records = _manifest_list(data, "glossary")
+
     directory = path.parent.resolve()
     documents: list[SourceDocument] = []
-    for record in data.get("documents", []):
+    for record in document_records:
         if not isinstance(record, dict):
             _source_error("INVALID_MANIFEST", "document must be an object")
-        relative_path = record.get("path")
-        if not isinstance(relative_path, str):
-            _source_error("INVALID_MANIFEST", "document path must be a string")
-        candidate = (directory / relative_path).resolve()
-        try:
-            candidate.relative_to(directory)
-        except ValueError:
-            _source_error("PATH_ESCAPE", f"document path escapes manifest directory: {relative_path}")
-        if not candidate.is_file():
-            _source_error("MISSING_DOCUMENT", f"document does not exist: {relative_path}")
-        content = _read_utf8(candidate)
+        document_id = _manifest_string(record, "id")
+        media_type = _manifest_string(record, "media_type")
+        if "path" in record:
+            relative_path = _manifest_string(record, "path")
+            if "text" in record:
+                _source_error(
+                    "INVALID_MANIFEST",
+                    f"document {document_id} cannot contain both path and text",
+                )
+            candidate = (directory / relative_path).resolve()
+            try:
+                candidate.relative_to(directory)
+            except ValueError:
+                _source_error(
+                    "PATH_ESCAPE",
+                    f"document path escapes manifest directory: {relative_path}",
+                )
+            if not candidate.is_file():
+                _source_error(
+                    "MISSING_DOCUMENT",
+                    f"document does not exist: {relative_path}",
+                )
+            content = _read_utf8(candidate)
+            source_uri = relative_path
+        elif "text" in record:
+            content = _manifest_string(record, "text", nonempty=False)
+            source_uri = _manifest_string(record, "source_uri")
+            if "digest" not in record:
+                _source_error(
+                    "INVALID_MANIFEST",
+                    f"embedded document {document_id} requires a digest",
+                )
+        else:
+            _source_error(
+                "INVALID_MANIFEST",
+                f"document {document_id} requires path or embedded text",
+            )
         document = SourceDocument.from_text(
-            id=record.get("id"), source_uri=relative_path,
-            media_type=record.get("media_type"), text=content,
+            id=document_id,
+            source_uri=source_uri,
+            media_type=media_type,
+            text=content,
         )
         supplied_digest = record.get("digest")
-        if supplied_digest is not None and supplied_digest != document.digest:
-            _source_error("DIGEST_MISMATCH", f"document digest does not match: {document.id}")
+        if supplied_digest is not None:
+            if not isinstance(supplied_digest, str):
+                _source_error(
+                    "INVALID_MANIFEST", "document digest must be a string"
+                )
+            if supplied_digest != document.digest:
+                _source_error(
+                    "DIGEST_MISMATCH",
+                    f"document digest does not match: {document.id}",
+                )
         documents.append(document)
 
     units: list[SourceUnit] = []
-    for record in data.get("units", []):
+    for record in unit_records:
         if not isinstance(record, dict):
             _source_error("INVALID_MANIFEST", "unit must be an object")
-        relations = []
-        for relation in record.get("declared_relations", []):
+        relations: list[DeclaredRelation] = []
+        for relation in _manifest_list(
+            record, "declared_relations", default=[]
+        ):
             if not isinstance(relation, dict):
-                _source_error("INVALID_MANIFEST", "declared relation must be an object")
-            relations.append(DeclaredRelation(
-                predicate=relation.get("predicate"), target_unit_id=relation.get("target_unit_id"),
-                source_refs=_manifest_refs(relation.get("source_refs", [])),
-            ))
+                _source_error(
+                    "INVALID_MANIFEST",
+                    "declared relation must be an object",
+                )
+            relations.append(
+                DeclaredRelation(
+                    predicate=_manifest_string(relation, "predicate"),
+                    target_unit_id=_manifest_string(
+                        relation, "target_unit_id"
+                    ),
+                    source_refs=_manifest_refs(
+                        _manifest_list(
+                            relation, "source_refs", default=[]
+                        )
+                    ),
+                )
+            )
         raw_situation = record.get("situation")
-        try:
-            situation = ControlledSituation(**raw_situation) if raw_situation is not None else None
-            source_refs = _manifest_refs(record.get("source_refs", []))
-            if not source_refs:
-                _source_error("UNGROUNDED_UNIT", "manifest units require at least one source reference")
-            units.append(SourceUnit(
-                id=record.get("id"), kind=record.get("kind"), text=record.get("text"),
-                normative_level=record.get("normative_level", "unspecified"),
-                source_refs=source_refs,
-                declared_relations=tuple(relations), situation=situation,
-            ))
-        except TypeError as error:
-            _source_error("INVALID_MANIFEST", f"invalid unit: {error}")
+        if raw_situation is None:
+            situation = None
+        elif isinstance(raw_situation, dict):
+            if set(raw_situation) != {"given", "when", "then"}:
+                _source_error(
+                    "INVALID_MANIFEST",
+                    "situation requires exactly given, when, and then",
+                )
+            situation = ControlledSituation(
+                given=_manifest_string(
+                    raw_situation, "given", nonempty=False
+                ),
+                when=_manifest_string(raw_situation, "when", nonempty=False),
+                then=_manifest_string(raw_situation, "then", nonempty=False),
+            )
+        else:
+            _source_error(
+                "INVALID_MANIFEST", "situation must be an object or null"
+            )
+        units.append(
+            SourceUnit(
+                id=_manifest_string(record, "id"),
+                kind=_manifest_string(record, "kind"),
+                text=_manifest_string(record, "text", nonempty=False),
+                normative_level=_manifest_string(
+                    record, "normative_level"
+                ),
+                source_refs=_manifest_refs(
+                    _manifest_list(record, "source_refs", default=[])
+                ),
+                declared_relations=tuple(relations),
+                situation=situation,
+            )
+        )
 
     glossary: list[GlossaryTerm] = []
     aliases: dict[str, str] = {}
-    for record in data.get("glossary", []):
+    for record in glossary_records:
         if not isinstance(record, dict):
             _source_error("INVALID_MANIFEST", "glossary term must be an object")
-        term = GlossaryTerm(record.get("canonical"), tuple(record.get("aliases", [])), _manifest_refs(record.get("source_refs", [])))
+        raw_aliases = _manifest_list(record, "aliases")
+        term_aliases = tuple(
+            _require_string(
+                alias,
+                "glossary alias",
+                nonempty=True,
+                code="INVALID_MANIFEST",
+            )
+            for alias in raw_aliases
+        )
+        term = GlossaryTerm(
+            _manifest_string(record, "canonical"),
+            term_aliases,
+            _manifest_refs(
+                _manifest_list(record, "source_refs", default=[])
+            ),
+        )
         for alias in term.aliases:
             previous = aliases.setdefault(alias.casefold(), term.canonical)
             if previous != term.canonical:
-                _source_error("AMBIGUOUS_ALIAS", f"alias maps to multiple terms: {alias}")
+                _source_error(
+                    "AMBIGUOUS_ALIAS",
+                    f"alias maps to multiple terms: {alias}",
+                )
         glossary.append(term)
-    try:
-        bundle = make_bundle(
-            bundle_id=data.get("bundle_id"), adapter_id="manifest", schema_version=data.get("schema_version", 1),
-            documents=tuple(documents), units=tuple(units), glossary=tuple(glossary),
-        )
-        unit_ids = {unit.id for unit in bundle.units}
-        for unit in bundle.units:
-            for relation in unit.declared_relations:
-                if relation.target_unit_id not in unit_ids:
-                    _source_error("UNRESOLVED_TARGET", f"unknown relation target: {relation.target_unit_id}")
-            for ref in unit.source_refs:
-                if resolve_source_ref(bundle, ref) != unit.text:
-                    _source_error("SOURCE_TEXT_MISMATCH", f"unit text does not match {ref.locator}")
-        return bundle
-    except SUESourceError:
-        raise
-    except ValueError as error:
-        raise SUESourceError("INVALID_MANIFEST", str(error)) from error
+    return make_bundle(
+        bundle_id=bundle_id,
+        adapter_id="manifest",
+        schema_version=data["schema_version"],
+        documents=tuple(documents),
+        units=tuple(units),
+        glossary=tuple(glossary),
+    )
 
 
 def load_source_bundle(path: Path, source_format: str = "auto") -> SUESourceBundle:

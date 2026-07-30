@@ -45,11 +45,28 @@ def _unit(unit_id: str = "FR-001", *, document_id: str = "requirements"):
 
 
 def _bundle_with_text(text: str):
+    first_line = text.splitlines()[0]
     return source.make_bundle(
         bundle_id="checkout",
         adapter_id="manifest",
         documents=(_document(text),),
-        units=(_unit(),),
+        units=(
+            source.SourceUnit(
+                id="FR-001",
+                kind="requirement",
+                text=first_line,
+                normative_level=(
+                    "must" if "MUST" in first_line else "unspecified"
+                ),
+                source_refs=(
+                    source.SourceRef(
+                        "requirements", "line-range", "L1-L1"
+                    ),
+                ),
+                declared_relations=(),
+                situation=None,
+            ),
+        ),
     )
 
 
@@ -294,10 +311,20 @@ def test_malformed_line_range_is_rejected(locator: str):
             bundle_id="checkout",
             adapter_id="manifest",
             documents=(_document(),),
-            units=(_unit(),),
+            units=(
+                source.SourceUnit(
+                    id="FR-001",
+                    kind="requirement",
+                    text="The system MUST save.",
+                    normative_level="must",
+                    source_refs=(
+                        source.SourceRef("requirements", "line-range", locator),
+                    ),
+                    declared_relations=(),
+                    situation=None,
+                ),
+            ),
         )
-        # Exercise validation at resolution too, for refs supplied externally.
-        source.resolve_source_ref(_bundle_with_text("one\ntwo\n"), source.SourceRef("requirements", "line-range", locator))
 
 
 def test_out_of_range_line_is_rejected():
@@ -355,7 +382,9 @@ def test_markdown_adapter_recognizes_requirement_heading_without_colon(tmp_path)
     path.write_text("# FR-002\nThe system SHALL retain audit history.\n")
     bundle = source.load_source_bundle(path)
     assert bundle.units[0].id == "FR-002"
-    assert bundle.units[0].text == "# FR-002"
+    assert bundle.units[0].text == "# FR-002\nThe system SHALL retain audit history."
+    assert bundle.units[0].source_refs[0].locator == "L1-L2"
+    assert bundle.units[0].normative_level == "must"
 
 
 def test_markdown_adapter_recognizes_requirement_heading_with_title(tmp_path):
@@ -365,6 +394,48 @@ def test_markdown_adapter_recognizes_requirement_heading_with_title(tmp_path):
     unit = bundle.units[0]
     assert unit.id == "FR-002"
     assert unit.text == source.resolve_source_ref(bundle, unit.source_refs[0])
+
+
+def test_markdown_heading_sections_end_before_adjacent_requirement(tmp_path):
+    path = tmp_path / "requirements.md"
+    path.write_text(
+        "# FR-001 Save records\n"
+        "The system MUST save each record.\n"
+        "# FR-002 Delete records\n"
+        "The system SHOULD delete expired records.\n"
+    )
+    bundle = source.load_source_bundle(path)
+    assert [unit.id for unit in bundle.units] == ["FR-001", "FR-002"]
+    assert [ref.locator for unit in bundle.units for ref in unit.source_refs] == [
+        "L1-L2",
+        "L3-L4",
+    ]
+    assert bundle.units[0].text == (
+        "# FR-001 Save records\nThe system MUST save each record."
+    )
+    assert bundle.units[1].normative_level == "should"
+
+
+def test_markdown_heading_body_preserves_crlf(tmp_path):
+    path = tmp_path / "requirements.md"
+    path.write_bytes(
+        b"# FR-001 Save records\r\n"
+        b"The system MUST save each record.\r\n"
+        b"# FR-002 Delete records\r\n"
+        b"The system MAY delete expired records.\r\n"
+    )
+    bundle = source.load_source_bundle(path)
+    unit = bundle.units[0]
+    assert unit.text == "# FR-001 Save records\r\nThe system MUST save each record."
+    assert unit.text == source.resolve_source_ref(bundle, unit.source_refs[0])
+
+
+def test_id_only_heading_is_inconclusive(tmp_path):
+    path = tmp_path / "requirements.md"
+    path.write_text("# FR-001\n")
+    with pytest.raises(source.SUESourceError) as error:
+        source.load_source_bundle(path)
+    assert error.value.code == "INCONCLUSIVE_INPUT"
 
 
 def test_lexicon_adapter_extracts_controlled_situation(tmp_path):
@@ -477,3 +548,233 @@ def test_manifest_rejects_invalid_provenance_or_ambiguous_aliases(tmp_path, chan
     manifest.write_text(json.dumps(data))
     with pytest.raises(source.SUESourceError):
         source.load_source_bundle(manifest, "manifest")
+
+
+@pytest.mark.parametrize("schema_version", (0, 2, "1", True))
+def test_make_bundle_rejects_non_v1_schema(schema_version):
+    with pytest.raises(source.SUESourceError) as error:
+        source.make_bundle(
+            bundle_id="checkout",
+            adapter_id="manifest",
+            documents=(_document(),),
+            units=(_unit(),),
+            schema_version=schema_version,
+        )
+    assert error.value.code == "UNSUPPORTED_SCHEMA"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("documents", {}), ("units", {}), ("glossary", {})),
+)
+def test_manifest_rejects_non_list_collections(tmp_path, field, value):
+    document = tmp_path / "requirements.txt"
+    document.write_text("Payment retries stop after three attempts.\n")
+    data = _manifest()
+    data[field] = value
+    manifest = tmp_path / "requirements.sue.json"
+    manifest.write_text(json.dumps(data))
+    with pytest.raises(source.SUESourceError) as error:
+        source.load_source_bundle(manifest, "manifest")
+    assert error.value.code == "INVALID_MANIFEST"
+
+
+def test_make_bundle_rejects_invalid_document_media_type():
+    document = source.SourceDocument.from_text(
+        id="requirements",
+        source_uri="requirements.md",
+        media_type="markdown",
+        text="The system MUST save.\n",
+    )
+    with pytest.raises(source.SUESourceError) as error:
+        source.make_bundle(
+            bundle_id="checkout",
+            adapter_id="manifest",
+            documents=(document,),
+            units=(_unit(),),
+        )
+    assert error.value.code == "INVALID_MEDIA_TYPE"
+
+
+@pytest.mark.parametrize(
+    ("change", "code"),
+    (
+        ({"kind": "story"}, "INVALID_UNIT_KIND"),
+        ({"kind": []}, "INVALID_UNIT_KIND"),
+        ({"normative_level": "shall"}, "INVALID_NORMATIVE_LEVEL"),
+        ({"normative_level": []}, "INVALID_NORMATIVE_LEVEL"),
+        (
+            {"situation": source.ControlledSituation("user", 7, "saved")},
+            "INVALID_SITUATION",
+        ),
+    ),
+)
+def test_make_bundle_rejects_invalid_unit_contract(change, code):
+    fields = {
+        "id": "FR-001",
+        "kind": "requirement",
+        "text": "The system MUST save.",
+        "normative_level": "must",
+        "source_refs": (
+            source.SourceRef("requirements", "line-range", "L1-L1"),
+        ),
+        "declared_relations": (),
+        "situation": None,
+    }
+    fields.update(change)
+    with pytest.raises(source.SUESourceError) as error:
+        source.make_bundle(
+            bundle_id="checkout",
+            adapter_id="manifest",
+            documents=(_document(),),
+            units=(source.SourceUnit(**fields),),
+        )
+    assert error.value.code == code
+
+
+def test_make_bundle_rejects_ungrounded_unit():
+    unit = source.SourceUnit(
+        id="FR-001",
+        kind="requirement",
+        text="The system MUST save.",
+        normative_level="must",
+        source_refs=(),
+        declared_relations=(),
+        situation=None,
+    )
+    with pytest.raises(source.SUESourceError) as error:
+        source.make_bundle(
+            bundle_id="checkout",
+            adapter_id="manifest",
+            documents=(_document(),),
+            units=(unit,),
+        )
+    assert error.value.code == "UNGROUNDED_UNIT"
+
+
+def test_make_bundle_rejects_unresolved_relation_target():
+    relation = source.DeclaredRelation(
+        "depends-on",
+        "FR-MISSING",
+        (source.SourceRef("requirements", "line-range", "L1-L1"),),
+    )
+    unit = source.SourceUnit(
+        id="FR-001",
+        kind="requirement",
+        text="The system MUST save.",
+        normative_level="must",
+        source_refs=(source.SourceRef("requirements", "line-range", "L1-L1"),),
+        declared_relations=(relation,),
+        situation=None,
+    )
+    with pytest.raises(source.SUESourceError) as error:
+        source.make_bundle(
+            bundle_id="checkout",
+            adapter_id="manifest",
+            documents=(_document(),),
+            units=(unit,),
+        )
+    assert error.value.code == "UNRESOLVED_TARGET"
+
+
+def _json_bundle(text: str):
+    document = source.SourceDocument.from_text(
+        id="rules",
+        source_uri="rules.json",
+        media_type="application/json",
+        text=text,
+    )
+    return source.make_bundle(
+        bundle_id="rules",
+        adapter_id="manifest",
+        documents=(document,),
+        units=(),
+    )
+
+
+def test_json_pointer_resolves_escaped_tokens_and_array_index():
+    bundle = _json_bundle(
+        '{"requirements":{"save/record":{"~label":[{"text":"Save exactly."}]}}}'
+    )
+    ref = source.SourceRef(
+        "rules",
+        "json-pointer",
+        "/requirements/save~1record/~0label/0/text",
+    )
+    assert source.resolve_source_ref(bundle, ref) == "Save exactly."
+
+
+@pytest.mark.parametrize(
+    ("document_text", "expected"),
+    (
+        ('{"value":"exact text"}', "exact text"),
+        ('{"value":true}', "true"),
+        ('{"value":null}', "null"),
+        ('{"value":42}', "42"),
+    ),
+)
+def test_json_pointer_uses_string_value_or_canonical_scalar_text(
+    document_text, expected
+):
+    bundle = _json_bundle(document_text)
+    ref = source.SourceRef("rules", "json-pointer", "/value")
+    assert source.resolve_source_ref(bundle, ref) == expected
+
+
+@pytest.mark.parametrize(
+    ("locator", "code"),
+    (
+        ("/items/01", "INVALID_LOCATOR"),
+        ("/items/x", "INVALID_LOCATOR"),
+        ("/items/2", "INVALID_LOCATOR"),
+        ("/bad~2escape", "INVALID_LOCATOR"),
+        ("/items/0", "NON_SCALAR_LOCATOR"),
+    ),
+)
+def test_json_pointer_rejects_invalid_path_or_non_scalar(locator, code):
+    bundle = _json_bundle('{"items":[{"text":"one"}]}')
+    with pytest.raises(source.SUESourceError) as error:
+        source.resolve_source_ref(
+            bundle, source.SourceRef("rules", "json-pointer", locator)
+        )
+    assert error.value.code == code
+
+
+def test_manifest_json_pointer_text_must_match_resolved_scalar(tmp_path):
+    document = tmp_path / "requirements.json"
+    document.write_text('{"rules":{"retry":"Stop after three attempts."}}')
+    data = _manifest("requirements.json")
+    data["documents"][0]["media_type"] = "application/json"
+    data["units"][0]["text"] = "Stop after three attempts."
+    data["units"][0]["source_refs"][0] = {
+        "document_id": "rules",
+        "locator_kind": "json-pointer",
+        "locator": "/rules/retry",
+    }
+    manifest = tmp_path / "requirements.sue.json"
+    manifest.write_text(json.dumps(data))
+    bundle = source.load_source_bundle(manifest, "manifest")
+    assert bundle.units[0].text == "Stop after three attempts."
+
+
+@pytest.mark.parametrize("locator_kind", ("xml-id", "page-paragraph"))
+def test_make_bundle_rejects_advertised_but_unsupported_locator(locator_kind):
+    unit = source.SourceUnit(
+        id="FR-001",
+        kind="requirement",
+        text="The system MUST save.",
+        normative_level="must",
+        source_refs=(
+            source.SourceRef("requirements", locator_kind, "requirement-1"),
+        ),
+        declared_relations=(),
+        situation=None,
+    )
+    with pytest.raises(source.SUESourceError) as error:
+        source.make_bundle(
+            bundle_id="checkout",
+            adapter_id="manifest",
+            documents=(_document(),),
+            units=(unit,),
+        )
+    assert error.value.code == "UNSUPPORTED_LOCATOR"
