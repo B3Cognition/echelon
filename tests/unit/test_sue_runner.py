@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import stat
 import sys
@@ -110,6 +111,30 @@ def test_parse_codex_jsonl_extracts_usage_and_reported_model():
     assert usage["input_tokens"] == 100
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        json.dumps({
+            "type": "turn.completed",
+            "model": "gpt-5.6-luna",
+            "usage": {},
+        }),
+        "\n".join([
+            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+            json.dumps({"type": "turn.completed", "usage": {}}),
+        ]),
+    ],
+)
+def test_parse_codex_jsonl_requires_thread_and_reported_model(raw):
+    with pytest.raises(ValueError, match="thread_id and model"):
+        runner.parse_codex_jsonl(raw)
+
+
+def test_request_rejects_non_json_serializable_output_schema():
+    with pytest.raises(runner.RunnerConfigurationError, match="JSON-serializable"):
+        _codex_request(output_schema={"invalid": object()})
+
+
 def _make_fake_codex(tmp_path: Path, body: str) -> str:
     executable = tmp_path / "fake-codex"
     executable.write_text("#!/usr/bin/env python3\n" + body, encoding="utf-8")
@@ -169,6 +194,23 @@ print(json.dumps({'type': 'turn.completed', 'model': 'gpt-5.6-luna', 'usage': {}
     )
     result = runner.run_cold_reader(_codex_request(fake))
     assert result.status == "unusable_output"
+
+
+def test_runner_preserves_final_output_when_jsonl_is_unusable(tmp_path):
+    fake = _make_fake_codex(
+        tmp_path,
+        """import pathlib, sys
+args = sys.argv[1:]
+pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('{\"questions\": []}')
+print('not json')
+""",
+    )
+    result = runner.run_cold_reader(_codex_request(fake))
+    assert result.status == "unusable_output"
+    assert result.final_output == '{"questions": []}'
+    assert result.final_output_digest == hashlib.sha256(
+        result.final_output.encode("utf-8")
+    ).hexdigest()
 
 
 def test_runner_uses_neutral_temporary_workdir(tmp_path):

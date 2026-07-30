@@ -62,6 +62,13 @@ class ColdReaderRequest:
             raise RunnerConfigurationError("invalid Codex reasoning effort")
         if self.output_schema is not None and not isinstance(self.output_schema, dict):
             raise RunnerConfigurationError("output schema must be an object")
+        if self.output_schema is not None:
+            try:
+                json.dumps(self.output_schema, allow_nan=False)
+            except (TypeError, ValueError) as exc:
+                raise RunnerConfigurationError(
+                    "output schema must be JSON-serializable"
+                ) from exc
         if self.scientific and not self.model:
             raise RunnerConfigurationError("scientific Codex runs require a model")
         if self.scientific and not self.output_schema:
@@ -118,7 +125,9 @@ def build_model_invocation(request: ColdReaderRequest, workdir: Path) -> ModelIn
         argv.extend(["-c", f'model_reasoning_effort="{request.reasoning_effort}"'])
     if request.output_schema is not None:
         schema_path = workdir / "output-schema.json"
-        schema_path.write_text(json.dumps(request.output_schema), encoding="utf-8")
+        schema_path.write_text(
+            json.dumps(request.output_schema, allow_nan=False), encoding="utf-8"
+        )
         argv.extend(["--output-schema", str(schema_path)])
     argv.extend(["--json", "--output-last-message", str(final_path), "-"])
     return ModelInvocation(
@@ -149,8 +158,15 @@ def parse_codex_jsonl(raw: str) -> tuple[dict | None, dict | None]:
                 metadata["model_reported"] = event["model"]
             if isinstance(event.get("usage"), dict):
                 usage = event["usage"]
-    if not saw_event or not metadata or usage is None:
-        raise _RunnerOutputError("Codex JSONL is missing required metadata or usage")
+    if (
+        not saw_event
+        or not metadata.get("thread_id")
+        or not metadata.get("model_reported")
+        or usage is None
+    ):
+        raise _RunnerOutputError(
+            "Codex JSONL is missing required thread_id and model metadata or usage"
+        )
     return metadata, usage
 
 
@@ -278,6 +294,7 @@ def run_cold_reader(request: ColdReaderRequest) -> ColdReaderResult:
                 stderr=stderr,
             )
         final_path = workdir / "final.json"
+        final_output = ""
         try:
             final_output = final_path.read_text(encoding="utf-8")
             if not final_output:
@@ -291,6 +308,7 @@ def run_cold_reader(request: ColdReaderRequest) -> ColdReaderResult:
                 duration_seconds=duration,
                 exit_code=process.returncode,
                 raw_output=raw_output,
+                final_output=final_output,
                 stderr=stderr if stderr else str(exc),
             )
         return _result(
