@@ -114,6 +114,16 @@ class SUESourceBundle:
     glossary: tuple[GlossaryTerm, ...]
 
 
+@dataclass(frozen=True)
+class SourceKnowledgeMap:
+    """Deterministic, declaration-only indexes for one source bundle."""
+
+    bundle_id: str
+    units_by_id: dict[str, SourceUnit]
+    outgoing: dict[str, tuple[DeclaredRelation, ...]]
+    glossary_by_alias: dict[str, tuple[str, ...]]
+
+
 def _json_value(value: object) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return _json_value(asdict(value))
@@ -133,6 +143,65 @@ def canonical_json(value: object) -> str:
 
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _normalize_glossary_label(label: str) -> str:
+    normalized = " ".join(label.casefold().split())
+    for article in ("a ", "an ", "the "):
+        if normalized.startswith(article):
+            normalized = normalized[len(article) :]
+            break
+    return " ".join(_singular(word) for word in normalized.split())
+
+
+def _singular(word: str) -> str:
+    """Apply the conservative singularization rule used by V3."""
+    if len(word) > 4 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 3 and word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
+
+
+def _relation_sort_key(relation: DeclaredRelation) -> tuple[object, ...]:
+    return (
+        relation.predicate,
+        relation.target_unit_id,
+        tuple(
+            (ref.document_id, ref.locator_kind, ref.locator)
+            for ref in relation.source_refs
+        ),
+    )
+
+
+def build_source_knowledge_map(bundle: SUESourceBundle) -> SourceKnowledgeMap:
+    """Build deterministic indexes without deriving relations from source text."""
+    units_by_id = {unit.id: unit for unit in sorted(bundle.units, key=lambda unit: unit.id)}
+    outgoing = {
+        unit_id: tuple(sorted(unit.declared_relations, key=_relation_sort_key))
+        for unit_id, unit in units_by_id.items()
+    }
+    aliases: dict[str, set[str]] = {}
+    for term in bundle.glossary:
+        for label in (term.canonical, *term.aliases):
+            alias = _normalize_glossary_label(label)
+            aliases.setdefault(alias, set()).add(term.canonical)
+    glossary_by_alias = {
+        alias: tuple(sorted(canonicals))
+        for alias, canonicals in sorted(aliases.items())
+    }
+    return SourceKnowledgeMap(
+        bundle_id=bundle.bundle_id,
+        units_by_id=units_by_id,
+        outgoing=outgoing,
+        glossary_by_alias=glossary_by_alias,
+    )
+
+
+def canonical_glossary_match(knowledge_map: SourceKnowledgeMap, label: str) -> str | None:
+    """Return an exact declared glossary match only when it is unambiguous."""
+    matches = knowledge_map.glossary_by_alias.get(_normalize_glossary_label(label), ())
+    return matches[0] if len(matches) == 1 else None
 
 
 def _require_identifier(value: str, label: str) -> None:

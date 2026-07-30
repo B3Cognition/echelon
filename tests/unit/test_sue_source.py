@@ -53,6 +53,106 @@ def _bundle_with_text(text: str):
     )
 
 
+def _bundle_with_declared_dependency(source_unit_id: str, target_unit_id: str):
+    document = _document("Payment retry depends on payment limit.\n")
+    relation = source.DeclaredRelation(
+        "depends-on",
+        target_unit_id,
+        (source.SourceRef("requirements", "line-range", "L1-L1"),),
+    )
+    return source.make_bundle(
+        bundle_id="payments",
+        adapter_id="manifest",
+        documents=(document,),
+        units=(
+            source.SourceUnit(
+                id=source_unit_id,
+                kind="rule",
+                text="Payment retry depends on payment limit.",
+                normative_level="must",
+                source_refs=(source.SourceRef("requirements", "line-range", "L1-L1"),),
+                declared_relations=(relation,),
+                situation=None,
+            ),
+            source.SourceUnit(
+                id=target_unit_id,
+                kind="rule",
+                text="Payment retry depends on payment limit.",
+                normative_level="must",
+                source_refs=(source.SourceRef("requirements", "line-range", "L1-L1"),),
+                declared_relations=(),
+                situation=None,
+            ),
+        ),
+    )
+
+
+def _bundle_with_glossary(canonical: str, aliases: tuple[str, ...]):
+    return source.make_bundle(
+        bundle_id="checkout",
+        adapter_id="manifest",
+        documents=(_document(),),
+        units=(),
+        glossary=(
+            source.GlossaryTerm(
+                canonical,
+                aliases,
+                (source.SourceRef("requirements", "line-range", "L1-L1"),),
+            ),
+        ),
+    )
+
+
+def _bundle_with_two_terms_sharing_alias(alias: str):
+    return source.make_bundle(
+        bundle_id="checkout",
+        adapter_id="manifest",
+        documents=(_document(),),
+        units=(),
+        glossary=(
+            source.GlossaryTerm(
+                "audit record",
+                (alias,),
+                (source.SourceRef("requirements", "line-range", "L1-L1"),),
+            ),
+            source.GlossaryTerm(
+                "payment record",
+                (alias,),
+                (source.SourceRef("requirements", "line-range", "L1-L1"),),
+            ),
+        ),
+    )
+
+
+def test_source_map_contains_only_declared_relations():
+    bundle = _bundle_with_declared_dependency("PAYMENT-RETRY", "PAYMENT-LIMIT")
+    knowledge = source.build_source_knowledge_map(bundle)
+    assert tuple(knowledge.units_by_id) == ("PAYMENT-LIMIT", "PAYMENT-RETRY")
+    assert knowledge.outgoing["PAYMENT-RETRY"][0].target_unit_id == "PAYMENT-LIMIT"
+    assert knowledge.outgoing["PAYMENT-LIMIT"] == ()
+
+
+def test_unambiguous_declared_alias_canonicalizes():
+    knowledge = source.build_source_knowledge_map(
+        _bundle_with_glossary("customer", ("user", "account holder"))
+    )
+    assert source.canonical_glossary_match(knowledge, "users") == "customer"
+
+
+def test_article_and_plural_canonical_term_canonicalizes():
+    knowledge = source.build_source_knowledge_map(
+        _bundle_with_glossary("payment policy", ())
+    )
+    assert source.canonical_glossary_match(knowledge, "the payment policies") == "payment policy"
+
+
+def test_ambiguous_alias_remains_unmatched():
+    knowledge = source.build_source_knowledge_map(
+        _bundle_with_two_terms_sharing_alias("record")
+    )
+    assert source.canonical_glossary_match(knowledge, "record") is None
+
+
 def test_bundle_digest_is_canonical_and_stable():
     bundle_a = source.make_bundle(
         bundle_id="checkout",
