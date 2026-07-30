@@ -52,6 +52,15 @@ The user's approved ordering resolves these implementation choices:
 
 Approval of this design does **not** promote SUE to a blocking quality gate.
 
+### 2.1 Accepted foundation decisions
+
+The zero-call foundation now implements the accepted portability and execution
+contracts: deterministic provenance-preserving source bundles, and scientific
+Codex runs that pin provider, model, and reasoning effort. The initial
+economical profile is `codex`, `gpt-5.6-luna`, and `low` reasoning effort. It
+is an experiment condition, not an A1 result or a claim that the profile is
+fit for scientific use. A live smoke and A1 remain separate, unrun stages.
+
 ## 3. Research disposition
 
 ### Implement in the pre-A1 slice
@@ -388,6 +397,20 @@ output flags, the smoke stops before the second call.
   recorded as experiment conditions.
 - The current Sonnet dialogue default is retained only as a compatibility alias
   during deprecation; it is not silently used for a Codex-selected run.
+
+The exact low-cost command is:
+
+```bash
+python3 scripts/sue_challenge.py requirements.md \
+  --model-cmd 'codex=codex' \
+  --model gpt-5.6-luna \
+  --reasoning-effort low
+```
+
+It sends the input source to Codex. It is suitable only for an approved,
+non-confidential input and records the selected/requested and reported model in
+the preflight/evidence. Lower reasoning effort is a cost-quality trade-off;
+A1 determines whether this exact pinned profile is usable.
 
 ## 8. Evidence package
 

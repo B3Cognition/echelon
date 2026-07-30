@@ -148,16 +148,15 @@ clarification events.
 version. Pre-register covariates and avoid causal claims from simple
 correlation.
 
-## OQ-015 — Test isolation under Codex markers
+## OQ-015 — Test isolation under Codex markers — Resolved
 
-**Question:** Should provider-default tests explicitly pass an empty environment
-to `resolve_model_command`?
+**Resolution:** fixed. Provider-default tests now pass an explicit empty
+environment to `resolve_model_command`; runtime marker resolution remains
+unchanged.
 
-**Evidence:** the focused suite passes 353/353 without `CODEX_THREAD_ID` and
-`CODEX_CI`, but one default-provider assertion fails inside this Codex task.
-
-**Proposed fix:** make the test explicit; do not change runtime marker
-resolution.
+**Evidence:** the focused SUE suite is required to pass both with ambient Codex
+markers and with `CODEX_THREAD_ID`, `CODEX_CI`, and `ECHELON_LLM` cleared. This
+is test isolation only, not a live-provider or A1 result.
 
 ## OQ-016 — Transcript and evidence redaction
 

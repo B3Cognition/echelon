@@ -1,10 +1,11 @@
 # Socratic Understanding handoff
 
 **Inspection date:** 2026-07-30
-**Repository baseline:** `cbbe5a1e` on
-`030-build-sue-challenge-script`
-**Implementation authorization:** documentation only; no implementation code
-was changed for this handoff.
+**Repository baseline:** `ade12d5813eb4a5235b3992f4a3037c895b3a381` on
+`sue-source-codex-foundation`
+**Implementation authorization:** the approved zero-call source and Codex
+foundation is implemented and documented below. Live smoke and A1 remain
+unrun.
 
 ## Authority and transcript limitation
 
@@ -51,6 +52,8 @@ journal contracts.
 
 | Proposed capability | Current status | Exact evidence |
 |---|---|---|
+| Deterministic portable source bundle and source knowledge map | Implemented | [`SUESourceBundle`](../../scripts/sue_source.py#L109), [`SourceKnowledgeMap`](../../scripts/sue_source.py#L120), [`load_markdown_lexicon`](../../scripts/sue_source.py#L372), and [`load_generic_manifest`](../../scripts/sue_source.py#L466) preserve source units and locators without provider calls. |
+| Isolated, auditable Codex cold-runner transport | Implemented; no live run claimed | [`ColdReaderRequest`](../../scripts/sue_runner.py#L25), [`build_model_invocation`](../../scripts/sue_runner.py#L93), and [`run_cold_reader`](../../scripts/sue_runner.py#L223) pin Codex invocation details, use a neutral temporary directory, and capture requested/reported model evidence. |
 | Deterministic requirements-quality baseline | Implemented | [`analyze_spec_bundle`](../../src/understanding/service.py#L229) parses requirements, computes per-requirement diagnostics, evaluates gates, and can generate diagrams. |
 | Immutable, controller-owned quality evidence | Implemented | [`run_understanding_gate`](../../src/harness/understanding_gate.py#L69) writes digest-addressed evidence; [`UnderstandingGateResult.state_updates`](../../src/harness/understanding_gate.py#L32) owns `quality_scores` and `understanding_evidence`. |
 | Workflow placement before qualitative WHY checks | Implemented for deterministic Understanding | `phase3-understanding` transitions to `phase3-consensus` and owns `quality_scores`/`understanding_evidence` in [`definition.yaml`](../../extension/workflow/definition.yaml#L912). |
@@ -74,18 +77,13 @@ journal contracts.
 
 ## Verification performed for this handoff
 
-The focused suite contains 353 tests.
-
-- With this Codex task's ambient `CODEX_THREAD_ID`, 352 passed and
-  `TestArgumentHandling.test_defaults_are_15_claude_300` failed because runtime
-  provider resolution selected `codex`.
-- With `CODEX_THREAD_ID` and `CODEX_CI` removed, all 353 passed.
-
-This is a test-isolation gap, not evidence that the provider resolver is broken:
-[`resolve_model_command`](../../scripts/sue_challenge.py#L96) intentionally uses
-Codex runtime markers. A future code plan should make the default-provider unit
-test supply an explicit empty environment instead of relying on the process
-environment.
+The source and runner foundation is covered by the eight focused SUE suites,
+including [`test_sue_source.py`](../../tests/unit/test_sue_source.py) and
+[`test_sue_runner.py`](../../tests/unit/test_sue_runner.py). The suite must pass
+both in the ambient environment and with `CODEX_THREAD_ID`, `CODEX_CI`, and
+`ECHELON_LLM` cleared. The provider-default test now supplies its own explicit
+environment, so ambient Codex detection remains runtime behaviour rather than
+test input. These zero-call tests do not constitute a Codex smoke or A1 result.
 
 ## Where SUE should integrate
 

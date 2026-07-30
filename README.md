@@ -363,6 +363,23 @@ python3 scripts/sue_reproducibility.py <spec.md> --passes 2 # measure interpreta
 python3 scripts/sue_dialectic.py <spec.md> --lens theaetetus --seed "<claim>"  # drill one gap
 ```
 
+The first economical Codex experiment profile is explicit (and must be used
+only with a non-confidential requirement file):
+
+```bash
+python3 scripts/sue_challenge.py requirements.md \
+  --model-cmd 'codex=codex' \
+  --model gpt-5.6-luna \
+  --reasoning-effort low
+```
+
+This sends the source content to the selected provider. The preflight and
+evidence record the selected/requested model (and the runner records the model
+reported by Codex); do not use it for secrets or private specifications without
+an approved provider and retention policy. `low` reduces cost but may reduce
+extraction quality. It is only the first economical experiment profile: A1,
+not this default, decides whether `gpt-5.6-luna`/`low` is usable.
+
 Docs: **[walkthrough / start here](docs/sue-walkthrough.md)** ·
 **[full usage reference](docs/sue-usage.md)** ·
 **[Socratic lenses reference](docs/sue-socratic-lenses.md)**.

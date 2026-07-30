@@ -154,6 +154,35 @@ configuration.
 **Rationale:** reproducibility, confidentiality, and operational viability
 depend on these facts.
 
+### SU-D018 — Source portability uses deterministic provenance-preserving bundles
+
+**Decision:** SUE accepts only deterministically normalized source bundles that
+preserve verbatim unit text, source locators, declared relations, and immutable
+source digests. Markdown/Lexicon and generic-manifest adapters are the initial
+supported paths; unsupported or locator-losing input is `INCONCLUSIVE_INPUT`,
+not silently interpreted.
+
+**Rationale:** portability must not trade away the original evidence needed to
+audit an interpretation or distinguish source ambiguity from extraction error.
+
+### SU-D019 — Scientific Codex runs pin their execution profile
+
+**Decision:** a scientific Codex run explicitly pins its provider command,
+model, and reasoning effort, and records the requested and reported model in
+its evidence. Ambient provider or model selection is not scientific evidence.
+
+**Rationale:** a reproducibility experiment cannot attribute a result to an
+unstated execution condition.
+
+### SU-D020 — Luna/low is the first economical experiment profile
+
+**Decision:** the first economical Codex experiment profile is
+`gpt-5.6-luna` with `low` reasoning effort. This is a cost-bounded starting
+condition only; it neither asserts nor implies that this profile satisfies A1.
+
+**Rationale:** the profile makes the initial smoke and A1 campaign concrete
+while preserving A1 as the measurement that decides whether it is usable.
+
 ## Decisions explicitly not yet accepted
 
 The following are proposals, not decisions:
