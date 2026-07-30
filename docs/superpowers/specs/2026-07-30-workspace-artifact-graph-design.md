@@ -319,7 +319,9 @@ graph or mutate upstream state. With `--write`, it:
 1. audits shared RE memory once and refreshes it only when stale;
 2. audits each spec's requirement and evidence memory and refreshes only stale
    applicable domains;
-3. audits each per-spec graph and rebuilds only missing or stale graphs;
+3. audits each per-spec graph and rebuilds only missing, invalid, or
+   source/input/memory-stale graphs; coherence failures such as missing
+   verification or task mappings remain visible but are not rewritten;
 4. composes the exact persisted member graph bytes;
 5. atomically replaces the workspace graph and writes its audit.
 

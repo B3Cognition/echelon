@@ -454,6 +454,8 @@ For `refresh --write`, assert:
   only when stale and applicable;
 - current member graphs are not rewritten;
 - missing or stale member graphs are rebuilt through the existing builder;
+- current member graphs with non-rebuildable coherence findings are reported
+  but not rewritten on every refresh;
 - one member failure does not prevent later members from refreshing;
 - the final candidate is composed from the exact persisted member graph bytes.
 

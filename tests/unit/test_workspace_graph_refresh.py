@@ -9,6 +9,7 @@ import pytest
 @dataclass(frozen=True)
 class _Report:
     status: str
+    findings: tuple[object, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -17,8 +18,46 @@ class _MineReport:
 
 
 @dataclass(frozen=True)
+class _Finding:
+    code: str
+
+
+@dataclass(frozen=True)
 class _Candidate:
     graph: object
+
+
+@pytest.mark.unit
+def test_spec_graph_coherence_failure_is_not_rebuilt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.workspace_graph_refresh import _refresh_spec_graph
+
+    spec_dir = tmp_path / "specs" / "001-alpha"
+    spec_dir.mkdir(parents=True)
+    report = _Report(
+        "fail",
+        (_Finding("requirement_verification_missing"),),
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph_refresh.audit_spec_graph",
+        lambda root, selector: report,
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph_refresh.build_spec_graph",
+        lambda root, selector: pytest.fail(
+            "a current graph with coherence findings must not be rebuilt"
+        ),
+    )
+
+    outcome = _refresh_spec_graph(tmp_path, spec_dir)
+
+    assert (outcome.action, outcome.status, outcome.detail) == (
+        "skipped",
+        "fail",
+        "not_stale",
+    )
 
 
 @pytest.mark.unit
@@ -125,7 +164,10 @@ def test_write_refresh_continues_after_member_failure_and_uses_final_candidate(
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.audit_spec_graph",
-        lambda root, selector: _Report("fail"),
+        lambda root, selector: _Report(
+            "fail",
+            (_Finding("graph_source_set_stale"),),
+        ),
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.build_spec_graph",
@@ -186,7 +228,13 @@ def test_second_write_refresh_is_a_no_op_for_current_upstream_members(
     calls: list[str] = []
     re_statuses = iter(("fail", "pass", "pass"))
     requirements_statuses = iter(("fail", "pass", "pass"))
-    graph_statuses = iter(("fail", "pass", "pass"))
+    graph_reports = iter(
+        (
+            _Report("fail", (_Finding("graph_source_set_stale"),)),
+            _Report("pass"),
+            _Report("pass"),
+        )
+    )
     candidate = _Candidate(graph=object())
 
     monkeypatch.setattr(
@@ -232,7 +280,7 @@ def test_second_write_refresh_is_a_no_op_for_current_upstream_members(
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.audit_spec_graph",
         lambda root, selector: calls.append("audit-graph")
-        or _Report(next(graph_statuses)),
+        or next(graph_reports),
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.build_spec_graph",

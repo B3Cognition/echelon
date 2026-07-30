@@ -10,7 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from echelon.spec_graph import GraphNode, SpecArtifactGraph, write_spec_graph
-from echelon.spec_graph_audit import SpecGraphAuditReport
+from echelon.spec_graph_audit import GraphFinding, SpecGraphAuditReport
 
 
 @dataclass(frozen=True)
@@ -132,7 +132,13 @@ def test_workspace_graph_cli_repairs_stale_domains_and_keeps_failure_outputs(
                 spec_id=selector,
                 graph_hash=None,
                 status="fail",
-                findings=(),
+                findings=(
+                    GraphFinding(
+                        "error",
+                        "graph_missing",
+                        "member graph is missing",
+                    ),
+                ),
             )
         return _live_audit(root, selector)
 

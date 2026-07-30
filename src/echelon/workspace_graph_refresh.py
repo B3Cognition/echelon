@@ -31,6 +31,18 @@ from echelon.workspace_graph_audit import (
 
 
 _CURRENT_STATUSES = frozenset({"pass", "warn"})
+_REBUILDABLE_GRAPH_FINDINGS = frozenset(
+    {
+        "graph_missing",
+        "graph_invalid",
+        "graph_inputs_invalid",
+        "graph_source_set_stale",
+        "graph_memory_state_stale",
+        "graph_input_added",
+        "graph_input_removed",
+        "graph_input_changed",
+    }
+)
 _DOMAIN_ORDER = {
     "re_memory": 0,
     "evidence_memory": 1,
@@ -186,6 +198,14 @@ def _refresh_spec_graph(root: Path, spec_dir: Path) -> WorkspaceGraphRefreshOutc
         return _failed(spec_id, "spec_graph", exc)
     if _is_current(report):
         return _outcome(spec_id, "spec_graph", "skipped", _status(report))
+    if not _spec_graph_needs_rebuild(report):
+        return _outcome(
+            spec_id,
+            "spec_graph",
+            "skipped",
+            _status(report),
+            "not_stale",
+        )
     try:
         graph = build_spec_graph(root, spec_id)
         write_spec_graph(graph, spec_dir)
@@ -206,6 +226,14 @@ def _evidence_is_applicable(root: Path, spec_dir: Path) -> bool:
 
 def _is_current(report: object) -> bool:
     return _status(report) in _CURRENT_STATUSES
+
+
+def _spec_graph_needs_rebuild(report: object) -> bool:
+    findings = getattr(report, "findings", ())
+    return any(
+        getattr(finding, "code", None) in _REBUILDABLE_GRAPH_FINDINGS
+        for finding in findings
+    )
 
 
 def _status(report: object) -> str | None:
