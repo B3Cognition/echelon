@@ -349,7 +349,7 @@ def load_markdown_lexicon(path: Path) -> SUESourceBundle:
             unit_id, _ = explicit.groups()
             kind = "acceptance-criterion" if unit_id.upper().startswith("AC") else "requirement"
         else:
-            heading = _HEADING_UNIT_RE.fullmatch(line)
+            heading = _HEADING_UNIT_RE.match(line)
             if heading:
                 unit_id = heading.group(1)
                 kind = "acceptance-criterion" if unit_id.upper().startswith("AC") else "requirement"

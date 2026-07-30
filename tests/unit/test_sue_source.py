@@ -245,6 +245,15 @@ def test_markdown_adapter_recognizes_requirement_heading_without_colon(tmp_path)
     assert bundle.units[0].text == "# FR-002"
 
 
+def test_markdown_adapter_recognizes_requirement_heading_with_title(tmp_path):
+    path = tmp_path / "requirements.md"
+    path.write_text("# FR-002 Retain audit history\n")
+    bundle = source.load_source_bundle(path)
+    unit = bundle.units[0]
+    assert unit.id == "FR-002"
+    assert unit.text == source.resolve_source_ref(bundle, unit.source_refs[0])
+
+
 def test_lexicon_adapter_extracts_controlled_situation(tmp_path):
     path = tmp_path / "rules.lex"
     path.write_text(
