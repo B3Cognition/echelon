@@ -166,3 +166,104 @@ personal data, provider prompts, or credentials?
 
 **Rule pending approval:** review/redact before commit while preserving a
 separate secure original if required. Never copy secrets into the repository.
+
+## OQ-017 — Is the extraction instrument valid, not merely consistent?
+
+**Question:** Against a human-adjudicated reference, does the extractor recover
+the correct typed relations, assumptions, and behavioural assertions?
+
+**Risk:** A1 measures agreement. Multiple readers can agree on the same false
+edge, while semantically equivalent edges can look different after extraction.
+
+**Experiment:** dual human annotation plus adjudication on a stratified
+three-to-five-spec calibration corpus. Report per-type precision/recall,
+missing/ungrounded rate, human agreement, and run agreement with confidence
+intervals.
+
+**Stop rule:** do not treat SR or closure as a measurement of the specification
+until the extraction instrument demonstrates acceptable validity and
+reliability.
+
+## OQ-018 — Which conditions are repeatability versus reproducibility?
+
+**Question:** How much variation is attributable to stochastic repeats,
+presentation order, prompt family, sampling parameters, model/provider, and
+time?
+
+**Risk:** changing several axes inside the same `K=5` batch confounds them and
+does not support the stated variance decomposition.
+
+**Experiment:** a crossed, replicated design with explicit same-condition
+repeats and one controlled perturbation at a time. State all changed and
+unchanged conditions in the report.
+
+## OQ-019 — Are the A1–A6 thresholds calibrated?
+
+**Question:** What loss, risk tolerance, or empirical distribution justifies
+each cutoff?
+
+**Current status:** the thresholds are provisional engineering targets, not
+validated scientific constants.
+
+**Experiment:** tune only on a named calibration set, lock the policy, then
+report uncertainty and sensitivity on a separate validation set. Preserve
+component-level failures rather than allowing a weighted score to compensate
+for them.
+
+## OQ-020 — Can A5 be evaluated without leakage and severe overfitting?
+
+**Question:** Is there enough independent historical data to estimate the
+incremental value of semantic features over 34 deterministic metrics?
+
+**Risk:** ten to fifteen source specs cannot support the proposed feature set,
+coefficient-significance rule, confounders, and validation. Mutants derived from
+the same source spec are not independent.
+
+**Proposed split:** evaluate mutant detection as an instrument study first.
+Defer historical rework prediction until the sample-size and label audit
+supports a pre-registered model, with whole specifications held out.
+
+## OQ-021 — What authority do the two supplied research PDFs have?
+
+**Question:** Should any proposed mechanisms from the English or Czech
+AI-generated research memo be promoted into the authoritative specification?
+
+**Second-pass default:** no. Keep the PDFs as research inputs. `QScore`,
+Semantic Closure Score, Fracture Localization Index, philosopher personas,
+automatic rewriting, and CI enforcement remain unapproved hypotheses where
+they do not already conflict with accepted decisions.
+
+## OQ-022 — Does close prior art change the intended IP strategy?
+
+**Question:** Is the goal publication, patentability review, trade-secret
+protection, defensive publication, or simply good engineering?
+
+**Evidence:** ClarifyGPT, SpecFix, structured uncertainty clarification,
+pragmatic-ambiguity comparison, and patent publications including
+`CN121918799A` disclose overlapping individual mechanisms and make broad
+novelty assertions unsafe. This preliminary review does not establish how any
+specific claim is affected; professional, jurisdiction-specific assessment is
+required.
+
+**Constraint:** this repository review is non-legal and non-exhaustive. Do not
+draft or file claims, or make freedom-to-operate conclusions, without qualified
+patent counsel and a professional search.
+
+## OQ-023 — How are stale SUE artifacts invalidated?
+
+**Question:** What immutable identity must bind a SUE report to its exact input
+and execution conditions?
+
+**Evidence:** the checked-in `semantic-reproducibility.json` predates a later
+specification correction, stores no input digest, and still reports the
+resolved four-versus-five-header-facts contradiction.
+
+**Proposed invariant:** every evidence package records the specification
+digest and commit, run/pass identity, provider/model, prompt/schema/tool
+versions, decision context, and raw-output references. Any mismatch marks the
+artifact historical/stale and prevents it from supplying current findings.
+
+**Experiment:** attempt the no-new-call reconstruction audit described in
+`RESEARCH.md`. If exact inputs and complete pass outputs cannot be recovered,
+record that as an evidence-lifecycle failure rather than regenerating a
+plausible history.
