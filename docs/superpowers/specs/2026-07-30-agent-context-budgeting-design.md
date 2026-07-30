@@ -51,6 +51,30 @@ Strict mode does not change rendering. It changes over-budget behavior from warn
 
 ## Context Rendering
 
+The renderer must not apply one uniform truncation rule to every context-pack item. Echelon phases use context for different purposes: SAGE validates cross-artifact consistency, SENTINEL derives test coverage, INVESTIGATOR repairs evidence, and experimental quality phases audit already-written artifacts. A dumb first-N truncation policy would break those contracts.
+
+Each rendered context section therefore has a phase-aware policy with:
+
+- `criticality`: `must_preserve`, `important`, `history`, or `advisory`
+- `renderer`: `full_file`, `compact_json`, `filtered_journal`, `directory_manifest`, `directory_bounded_files`, or `summary_pointer`
+- `cap_bytes`: the section cap after higher-priority sections are allocated
+- `overflow_action`: `truncate_with_notice`, `summarize_with_notice`, `manifest_only`, or `legacy_fallback_warning`
+
+The default policy is conservative: preserve current normative artifacts before historical material. If a phase needs a more specific rule, the renderer uses the phase id, agent id, mode, and context-pack item path to select it.
+
+### Priority Order
+
+When total context must shrink, drop or summarize in this order:
+
+1. Advisory history: stale memory reports, prior-spec context, calibration history, old journal entries.
+2. Filtered journal context beyond the matching-entry cap.
+3. Directory bodies after the directory manifest is preserved.
+4. Large state ledgers after compact state fields are preserved.
+5. Current phase evidence artifacts.
+6. Current normative artifacts required by the phase contract.
+
+Current normative artifacts are last to shrink because truncating them is most likely to change agent behavior. Examples include `spec.md` for SAGE and GATEKEEPER, `plan.md` and `data-model.md` for SENTINEL, `tasks.md` and `coverage-map.md` for WHY3 consensus, and the selected repair report for targeted repair dispatches.
+
 ### Journal Entries
 
 Context-pack entries such as:
@@ -105,6 +129,30 @@ Single files are included up to a per-section byte limit. Directories are render
 - omitted file and byte counts
 
 This keeps directory context useful without letting `contracts/`, investigation outputs, or generated artifacts dominate the request.
+
+Directory rendering is path-aware:
+
+- `contracts/`: preserve a manifest of every contract file and include bounded bodies for each file in deterministic order. If the directory exceeds its cap, preserve file names and headings so agents can see the interface surface that exists.
+- `investigation/`: include the current evidence inventory and a manifest first. Prior investigation reports are treated as retry evidence, not normative truth, and can be summarized before current spec artifacts.
+- `adr/`: preserve ADR filenames, titles, status lines, and decision summaries before body text.
+- unknown directories: render a manifest first, then bounded file bodies.
+
+Glob-like entries such as `adr/ADR-*.md` should be resolved explicitly and rendered with the same path-aware policy rather than treated as plain unresolved prose.
+
+### Phase and Node Policy
+
+The implementation should ship with an explicit policy table for the high-risk nodes observed in `extension/workflow/definition.yaml`:
+
+- `phase1-why2` / SAGE WHY2: preserve full `spec.md`, constitution snapshot, and assumptions when possible; filter journal to phase1 WHAT routing decisions; compact state to certified Understanding and active issue/repair fields.
+- `phase1-investigate`: preserve `spec.md`, `assumptions.md`, `unknowns.md`, and `issues.md`; treat prior `investigation/` and `evidence-resolution.md` as retry context that can be omitted during invalid-inventory repair.
+- `phase2-decide` and `phase2-strategic-overview`: preserve current spec and gatekeeper inputs; summarize phase1 journal history.
+- `phase3-how`: preserve spec, constitution, requirements overview, gatekeeper constraints, and specialist outputs; journal history is secondary.
+- `phase3-sentinel`: preserve plan, data-model, spec acceptance criteria, contracts manifest, and quality-gates testability details; historical journal context is secondary.
+- `phase3-plan`: preserve spec, architecture, ADR summaries, and test strategy; calibrations and history are secondary.
+- `phase3-consensus` staged agents: preserve the artifact set required by each agent entry. Directory bodies may be bounded, but the artifact manifest must remain complete so missing or inconsistent artifacts remain visible.
+- experimental quality phases: preserve the target artifact under audit and summarize full journal context.
+
+If no explicit policy matches a node, use the generic priority order above and record `policy: default` in the context budget report. This makes unknown behavior visible without blocking rollout.
 
 ## Telemetry
 
