@@ -2409,6 +2409,34 @@ def test_dispatch_cap_without_resolvable_evidence_fails_manual_diagnosis_in_all_
     provider.exec_agent.assert_not_called()
 
 
+def test_dispatch_cap_uses_active_spec_when_published_copy_is_stale(
+    tmp_path: Path,
+) -> None:
+    policy = replace(
+        _safeguard_policy("phase_dispatch_limit", phase_id="phase1-what"),
+        allow_free_text=False,
+        allowed_target_phases=frozenset({"phase1-what"}),
+    )
+    controller, store, _provider = _controller(
+        tmp_path,
+        autonomy_mode="semi",
+        policy=policy,
+    )
+    active_spec = Path(store.load()["spec_dir"])
+    active_spec.mkdir(parents=True)
+    (active_spec / "issues.md").write_text("active issues", encoding="utf-8")
+    state = store.load()
+    state.update(
+        {
+            "spec_id": "spec",
+            "published_spec_dir": "specs/spec",
+        }
+    )
+    store.save(state)
+
+    assert controller._read_dispatch_cap_issues(store.load()) == "active issues"
+
+
 @pytest.mark.parametrize(
     ("evidence", "expected_reason"),
     [

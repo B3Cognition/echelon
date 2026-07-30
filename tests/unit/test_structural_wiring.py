@@ -9,9 +9,11 @@ Tests that:
 4. definition.yaml's phase2-tracker-alignment node has the structural gate re-dispatch
    transition as its FIRST transition, with the correct evaluable condition.
 """
+import pathlib
+import json
+
 import pytest
 import yaml
-import pathlib
 
 
 @pytest.mark.unit
@@ -107,6 +109,65 @@ def test_quality_remediation_context_requires_an_actual_spec_edit(tmp_path):
     assert "`ISS-042`" in prompt
     assert "ISS-006" not in prompt
     assert "Do NOT invoke any `echelon spec resolve`" in prompt
+
+
+@pytest.mark.unit
+def test_why_journal_context_honors_phase_type_filter_and_byte_bound(tmp_path):
+    from harness.squad_executors import _render_context_candidate
+
+    journal = tmp_path / "reasoning-journal.jsonl"
+    retained = {
+        "type": "decision",
+        "phase": "phase1-what",
+        "data": {"detail": "keep"},
+    }
+    excluded = {
+        "type": "challenge",
+        "phase": "phase1-why2",
+        "data": {"detail": "exclude"},
+    }
+    oversized = {
+        "type": "decision",
+        "phase": "phase1-what",
+        "data": {"detail": "x" * 30_000},
+    }
+    journal.write_text(
+        "\n".join(json.dumps(item) for item in (retained, excluded, oversized)),
+        encoding="utf-8",
+    )
+
+    rendered = _render_context_candidate(
+        "reasoning-journal.jsonl [type=routing_decision, phase=phase1-what]",
+        journal,
+        filters={"type": "routing_decision", "phase": "phase1-what"},
+    )
+
+    assert '"detail": "keep"' in rendered
+    assert "exclude" not in rendered
+    assert len(rendered.encode("utf-8")) < 25_000
+
+
+@pytest.mark.unit
+def test_why_state_context_excludes_large_historical_payloads():
+    from harness.squad_executors import _render_why_state_context
+
+    rendered = _render_why_state_context(
+        {
+            "run_id": "run-1",
+            "phase": "phase1-why2",
+            "iteration": 2,
+            "issue_resolution_ledger": {
+                "ISS-001": {"status": "validated", "guidance": "large" * 1000},
+            },
+            "published_re_context": {"artifacts": "large" * 10_000},
+            "product_input_mapping_repair": {"details": "large" * 10_000},
+        }
+    )
+
+    assert "run-1" in rendered
+    assert "ISS-001" in rendered
+    assert "published_re_context" not in rendered
+    assert "product_input_mapping_repair" not in rendered
 
 
 @pytest.mark.unit

@@ -15,6 +15,8 @@ from echelon.cli import (
     _ensure_active_continue_spec_context,
     _next_continue_phase,
     _phase_a_readiness_candidate_dirs,
+    _reset_quality_remediation_dispatch_counts,
+    _supersede_quality_guard_decision,
 )
 from harness.phase_checkpoints import PhaseCheckpoint, record_checkpoint_metadata
 from harness.blocked_decision import build_blocked_decision_v2
@@ -1525,6 +1527,37 @@ def test_consecutive_why_failure_after_all_resolutions_restarts_quality_remediat
     assert action.phase == "phase1-what"
 
 
+def test_quality_remediation_supersedes_only_its_stale_why_safeguard() -> None:
+    decision = build_blocked_decision_v2(
+        decision_id="dec-quality-guard",
+        status="awaiting_human",
+        source_kind="controller_safeguard",
+        producer_id="consecutive_why_fails",
+        source_phase="phase1-why2",
+        reason_code="consecutive_why_fails",
+        classification="material",
+        question="Provide a repair instruction.",
+        options=[],
+        recommended_answer=None,
+        risk_level=None,
+        resolution_handler="reset_why_fail_count",
+        autonomy_mode="semi",
+        source_state_revision=3,
+        now="2026-07-29T00:00:00+00:00",
+    )
+    state = {
+        "quality_gate_remediation": {"attempt": 1},
+        "issue_resolution_ledger": {"ISS-042": {"status": "validated"}},
+        "blocked_decision": decision,
+        "recovery_instruction": {"stale": "instruction"},
+    }
+
+    assert _supersede_quality_guard_decision(state) is True
+    assert state["blocked_decision"]["status"] == "resolved"
+    assert state["blocked_decision"]["resolved_by"] == "COMMANDER"
+    assert "recovery_instruction" not in state
+
+
 def test_quality_remediation_no_progress_retries_authoring_without_resolve() -> None:
     action = _classify_run_recovery(
         {
@@ -1537,6 +1570,44 @@ def test_quality_remediation_no_progress_retries_authoring_without_resolve() -> 
     assert action.kind == "retry_phase"
     assert action.reason == "quality_gate_remediation"
     assert action.command == "echelon spec continue"
+
+
+def test_dispatch_cap_missing_published_evidence_retries_active_spec(
+    tmp_path: Path,
+) -> None:
+    active_spec = tmp_path / "runs" / "run" / "specs" / "001-demo"
+    active_spec.mkdir(parents=True)
+    (active_spec / "issues.md").write_text("# Issues\n", encoding="utf-8")
+
+    action = _classify_run_recovery(
+        {
+            "status": "blocked",
+            "phase": "phase1-understanding",
+            "blocked_reason": "phase_dispatch_limit_evidence_missing",
+            "spec_dir": str(active_spec),
+            "published_spec_dir": "specs/001-demo",
+        },
+        project_root=tmp_path,
+    )
+
+    assert action.kind == "retry_phase"
+    assert action.reason == "phase_dispatch_limit_evidence_retry"
+    assert action.phase == "phase1-understanding"
+
+
+def test_quality_remediation_resets_its_authoring_quality_phase_counts() -> None:
+    state = {
+        "phase_dispatch_counts": {
+            "phase1-what": 8,
+            "phase1-lexicon": 6,
+            "phase1-understanding": 6,
+            "phase1-why2": 5,
+            "phase1-discover": 3,
+        },
+    }
+    _reset_quality_remediation_dispatch_counts(state)
+
+    assert state["phase_dispatch_counts"] == {"phase1-discover": 3}
 
 
 def test_spec_continue_prints_start_and_end_timestamps(

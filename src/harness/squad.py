@@ -162,6 +162,9 @@ ITERATIVE_PHASES = WHY_PHASES | frozenset(
     {
         "phase1-what",
         "phase1-lexicon",
+        # Understanding verifies every WHAT amendment. It is a bounded
+        # remediation-cycle phase, not a one-shot phase with a five-run cap.
+        "phase1-understanding",
         "phase3-how",
         "phase3-sentinel",
         "phase3-plan",
@@ -173,8 +176,9 @@ ITERATIVE_PHASES = WHY_PHASES | frozenset(
 # force-advancing. Protects against agents that re-assert convergence on every dispatch.
 MAX_CONVERGENCE_GUARD_FIRES = 3
 
-# Max dispatches of any single phase per run before forcing escalation.
-# WHY phases are governed separately by why_fail_count; this cap applies to all others.
+# Max dispatches of a non-iterative phase per run before forcing escalation.
+# Iterative authoring and verification phases use the configured repair-cycle
+# budget; their no-progress safeguards remain the authority for stopping loops.
 MAX_PHASE_DISPATCHES = 5
 # An authoring or planning agent gets the original pass plus two
 # controller-directed repairs to resolve its own product-input mapping errors.
@@ -4231,8 +4235,8 @@ class SquadController:
             self._start_declared_phase_timing(node)
 
             # Per-phase dispatch cap — prevents runaway loops on any phase.
-            # WHY phases use max_iterations as their cap (they legitimately iterate).
-            # All other phases use MAX_PHASE_DISPATCHES.
+            # Iterative authoring and verification phases use max_iterations;
+            # one-shot phases use the lower general cap.
             dispatch_count = self._state_store.increment_phase_dispatch_count(phase)
             phase_limit = (
                 self._max_iterations + 1
@@ -8490,7 +8494,7 @@ class SquadController:
                         ),
                     },
                 }
-                return "phase1-what", updates
+                return "phase1-what", updates, None
             updates = {
                 "issue_resolution_ledger": validated_ledger,
                 "selected_issue_resolution": None,
@@ -8501,7 +8505,7 @@ class SquadController:
                 "blocked_reason": blocked_reason,
                 "escalation_question": escalation_question,
             }
-            return PHASE_TERMINAL_BLOCKED, updates
+            return PHASE_TERMINAL_BLOCKED, updates, None
 
         from datetime import datetime, timezone
 
@@ -9042,24 +9046,44 @@ class SquadController:
         self,
         state: Mapping[str, object],
     ) -> str:
-        state_key = (
-            "published_spec_dir"
-            if state.get("published_spec_dir")
-            else "spec_dir"
-        )
-        try:
-            spec_dir = self._validated_spec_root(
-                state,
-                state_key=state_key,
-            )
-        except HumanInputPolicyError as exc:
-            raise _DispatchCapEvidenceError(
-                "phase_dispatch_limit_evidence_malformed"
-            ) from exc
-        if spec_dir is None:
+        roots: list[Path] = []
+        for state_key in ("published_spec_dir", "spec_dir"):
+            if state_key == "published_spec_dir" and not state.get(state_key):
+                continue
+            try:
+                spec_dir = self._validated_spec_root(
+                    state,
+                    state_key=state_key,
+                )
+            except HumanInputPolicyError as exc:
+                raise _DispatchCapEvidenceError(
+                    "phase_dispatch_limit_evidence_malformed"
+                ) from exc
+            if spec_dir is not None and spec_dir not in roots:
+                roots.append(spec_dir)
+        if not roots:
             raise _DispatchCapEvidenceError(
                 "phase_dispatch_limit_evidence_missing"
             )
+
+        last_missing: _DispatchCapEvidenceError | None = None
+        for spec_dir in roots:
+            try:
+                return self._read_dispatch_cap_issues_from_root(spec_dir)
+            except _DispatchCapEvidenceError as exc:
+                # A stale or not-yet-published Phase A copy must not hide the
+                # active run-local spec, which is the authoritative source
+                # during authoring and remediation.
+                if exc.reason_code == "phase_dispatch_limit_evidence_missing":
+                    last_missing = exc
+                    continue
+                raise
+        raise last_missing or _DispatchCapEvidenceError(
+            "phase_dispatch_limit_evidence_missing"
+        )
+
+    def _read_dispatch_cap_issues_from_root(self, spec_dir: Path) -> str:
+        """Read a bounded issues artifact from one already-validated root."""
         opened: list[int] = []
         file_fd = -1
         try:
