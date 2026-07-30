@@ -40,3 +40,20 @@ Task 5: complete
 Task 5: fix round 1
 - reviewer requested complete directory manifests for manifest-preserving staged context
 - verification: focused agent-context and staged prompt tests passed; git diff --check passed
+
+Task 5: complete
+- commits: 04d4aaeb, b8bd4599, e334776c
+- review: approved after fix round 1; oversized directory manifests preserved, bodies truncated with notice
+
+Task 6: implemented
+- commits: 5cabde64
+- review: pending
+
+Task 6: fix round 1
+- reviewer requested collecting benchmark metrics before trailing git clean can remove runs/ state
+- fix commit: f56adc45
+- review: pending
+
+Task 6: complete
+- commits: 5cabde64, f56adc45
+- review: approved after fix round 1; benchmark metrics captured before trailing cleanup
