@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -92,11 +93,29 @@ def _write_member_graph(spec_dir: Path, graph: SpecArtifactGraph) -> None:
     spec_dir.joinpath("spec-artifact-graph.json").write_bytes(render_spec_graph(graph))
 
 
-def _pass_audit(spec_id: str, status: str = "pass") -> SimpleNamespace:
+def _pass_audit(
+    spec_id: str,
+    status: str = "pass",
+    graph_hash: str | None = None,
+) -> SimpleNamespace:
     return SimpleNamespace(
         spec_id=spec_id,
         status=status,
-        to_dict=lambda: {"schema_version": 1, "spec_id": spec_id, "status": status},
+        graph_hash=graph_hash,
+        to_dict=lambda: {
+            "schema_version": 1,
+            "spec_id": spec_id,
+            "graph_hash": graph_hash,
+            "status": status,
+        },
+    )
+
+
+def _audit_for_current_graph(spec_dir: Path, status: str = "pass") -> SimpleNamespace:
+    return _pass_audit(
+        spec_dir.name,
+        status,
+        "sha256:" + hashlib.sha256(spec_dir.joinpath("spec-artifact-graph.json").read_bytes()).hexdigest(),
     )
 
 
@@ -148,6 +167,32 @@ def test_build_rejects_empty_canonical_spec_set(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("sources", "message"),
+    [
+        (
+            [{"id": "app", "path": "app-a"}, {"id": "app", "path": "app-b"}],
+            "duplicate workspace source id: app",
+        ),
+        ([{"id": "missing", "path": "missing"}], "workspace source path does not exist"),
+        ([{"id": "outside", "path": "../outside"}], "workspace source path escapes project root"),
+    ],
+)
+def test_build_rejects_invalid_configured_source_roots(
+    tmp_path: Path,
+    sources: list[dict[str, str]],
+    message: str,
+) -> None:
+    _spec_dir(tmp_path, "001-alpha")
+    (tmp_path / "app-a").mkdir()
+    (tmp_path / "app-b").mkdir()
+    _write_config(tmp_path, sources=sources)
+
+    with pytest.raises(WorkspaceGraphError, match=message):
+        build_workspace_graph(tmp_path)
+
+
+@pytest.mark.unit
 def test_rendering_is_deterministic_and_workspace_scoped(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -159,7 +204,7 @@ def test_rendering_is_deterministic_and_workspace_scoped(
     _write_member_graph(beta, _member_graph("002-beta"))
     monkeypatch.setattr(
         "echelon.workspace_graph.audit_spec_graph",
-        lambda root, selector: _pass_audit(Path(selector).name),
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
     )
 
     first = build_workspace_graph(tmp_path)
@@ -195,7 +240,10 @@ def test_member_audits_control_partial_composition(
     statuses = {"001-alpha": "warn", "002-beta": "fail"}
     monkeypatch.setattr(
         "echelon.workspace_graph.audit_spec_graph",
-        lambda root, selector: _pass_audit(Path(selector).name, statuses[Path(selector).name]),
+        lambda root, selector: _audit_for_current_graph(
+            Path(selector),
+            statuses[Path(selector).name],
+        ),
     )
 
     result = build_workspace_graph(tmp_path)
@@ -303,10 +351,63 @@ def test_unhealthy_member_graphs_become_placeholders_without_rebuilding(
 
 
 @pytest.mark.unit
+def test_missing_member_graph_becomes_placeholder_after_live_audit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path)
+    alpha = _spec_dir(tmp_path, "001-alpha")
+    calls: list[str] = []
+
+    def audit(root: Path, selector: Path) -> SimpleNamespace:
+        calls.append("audit")
+        return _pass_audit("001-alpha", "unavailable")
+
+    monkeypatch.setattr("echelon.workspace_graph.audit_spec_graph", audit)
+
+    result = build_workspace_graph(tmp_path)
+
+    assert calls == ["audit"]
+    assert result.graph.members[0].graph_hash is None
+    assert result.graph.members[0].exclusion_reason == "member_graph_invalid"
+    assert result.issues[0].code == "member_graph_invalid"
+
+
+@pytest.mark.unit
+def test_excludes_member_when_live_audit_observes_replaced_graph(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path)
+    alpha = _spec_dir(tmp_path, "001-alpha")
+    _write_member_graph(alpha, _member_graph("001-alpha"))
+    graph_path = alpha / "spec-artifact-graph.json"
+    replacement = render_spec_graph(
+        _member_graph("001-alpha", artifact_path="re/workspace/replaced.md")
+    )
+
+    def audit(root: Path, selector: Path) -> SimpleNamespace:
+        graph_path.write_bytes(replacement)
+        return _pass_audit(
+            "001-alpha",
+            graph_hash="sha256:" + hashlib.sha256(replacement).hexdigest(),
+        )
+
+    monkeypatch.setattr("echelon.workspace_graph.audit_spec_graph", audit)
+
+    result = build_workspace_graph(tmp_path)
+
+    assert result.graph.members[0].included is False
+    assert result.graph.members[0].exclusion_reason == "member_graph_changed"
+    assert result.issues[0].code == "member_graph_changed"
+
+
+@pytest.mark.unit
 def test_merges_shared_identity_and_adds_workspace_relationships(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    (tmp_path / "apps" / "app").mkdir(parents=True)
     _write_config(tmp_path, sources=[{"id": "app", "path": "apps/app"}])
     alpha = _spec_dir(tmp_path, "001-alpha", targets=[{"id": "app", "path": "wrong"}])
     beta = _spec_dir(tmp_path, "002-beta", targets=[{"path": "apps/app"}])
@@ -323,7 +424,7 @@ def test_merges_shared_identity_and_adds_workspace_relationships(
     _write_member_graph(beta, _member_graph("002-beta"))
     monkeypatch.setattr(
         "echelon.workspace_graph.audit_spec_graph",
-        lambda root, selector: _pass_audit(Path(selector).name),
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
     )
 
     result = build_workspace_graph(tmp_path)
@@ -351,6 +452,7 @@ def test_reports_unresolved_workspace_relationships(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    (tmp_path / "apps" / "app").mkdir(parents=True)
     _write_config(tmp_path, sources=[{"id": "app", "path": "apps/app"}])
     alpha = _spec_dir(tmp_path, "001-alpha", targets=[{"id": "missing", "path": "none"}])
     alpha.joinpath("spec.md").write_text(
@@ -360,7 +462,7 @@ def test_reports_unresolved_workspace_relationships(
     _write_member_graph(alpha, _member_graph("001-alpha"))
     monkeypatch.setattr(
         "echelon.workspace_graph.audit_spec_graph",
-        lambda root, selector: _pass_audit("001-alpha"),
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
     )
 
     result = build_workspace_graph(tmp_path)
@@ -370,6 +472,61 @@ def test_reports_unresolved_workspace_relationships(
         "target_unresolved",
     ]
     assert all(issue.severity == "warning" for issue in result.issues)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("node", "sources"),
+    [
+        (GraphNode("workspace:current", "Workspace", {}), []),
+        (GraphNode("source:app", "Source", {}), [{"id": "app", "path": "app"}]),
+    ],
+)
+def test_rejects_reserved_workspace_node_identities(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    node: GraphNode,
+    sources: list[dict[str, str]],
+) -> None:
+    if sources:
+        (tmp_path / "app").mkdir()
+    _write_config(tmp_path, sources=sources)
+    alpha = _spec_dir(tmp_path, "001-alpha")
+    _write_member_graph(alpha, _member_graph("001-alpha", extra_nodes=(node,)))
+    monkeypatch.setattr(
+        "echelon.workspace_graph.audit_spec_graph",
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
+    )
+
+    with pytest.raises(WorkspaceGraphError, match="reserved workspace node identity"):
+        build_workspace_graph(tmp_path)
+
+
+@pytest.mark.unit
+def test_rejects_reserved_workspace_edge_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path)
+    alpha = _spec_dir(tmp_path, "001-alpha")
+    alpha.joinpath("spec.md").write_text(
+        "---\nsupersedes: 001-alpha\n---\n# 001-alpha\n",
+        encoding="utf-8",
+    )
+    _write_member_graph(
+        alpha,
+        _member_graph(
+            "001-alpha",
+            extra_edges=(GraphEdge("spec:001-alpha", "SUPERSEDES", "spec:001-alpha", {}),),
+        ),
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph.audit_spec_graph",
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
+    )
+
+    with pytest.raises(WorkspaceGraphError, match="reserved workspace edge identity"):
+        build_workspace_graph(tmp_path)
 
 
 @pytest.mark.unit
@@ -384,7 +541,7 @@ def test_rejects_conflicting_normalized_properties_before_write(
     _write_member_graph(beta, _member_graph("002-beta", artifact_role="other"))
     monkeypatch.setattr(
         "echelon.workspace_graph.audit_spec_graph",
-        lambda root, selector: _pass_audit(Path(selector).name),
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
     )
 
     with pytest.raises(WorkspaceGraphError, match="conflicting normalized node properties"):
@@ -401,7 +558,7 @@ def test_write_is_atomic_and_preserves_previous_bytes_on_structural_failure(
     _write_member_graph(alpha, _member_graph("001-alpha"))
     monkeypatch.setattr(
         "echelon.workspace_graph.audit_spec_graph",
-        lambda root, selector: _pass_audit("001-alpha"),
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
     )
     graph = build_workspace_graph(tmp_path).graph
     path = write_workspace_graph(graph, tmp_path)
@@ -426,6 +583,13 @@ def test_write_is_atomic_and_preserves_previous_bytes_on_structural_failure(
 
 
 @pytest.mark.unit
+def test_workspace_graph_path_uses_canonical_runtime_directory(tmp_path: Path) -> None:
+    assert workspace_graph_path(tmp_path) == (
+        tmp_path / ".echelon" / "runtime" / "graph" / "workspace-artifact-graph.json"
+    )
+
+
+@pytest.mark.unit
 def test_write_preserves_the_publication_failure_when_temp_cleanup_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -435,7 +599,7 @@ def test_write_preserves_the_publication_failure_when_temp_cleanup_fails(
     _write_member_graph(alpha, _member_graph("001-alpha"))
     monkeypatch.setattr(
         "echelon.workspace_graph.audit_spec_graph",
-        lambda root, selector: _pass_audit("001-alpha"),
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
     )
     graph = build_workspace_graph(tmp_path).graph
     cleanup_attempted: list[Path] = []

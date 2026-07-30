@@ -161,7 +161,7 @@ def discover_canonical_spec_dirs(project_root: Path) -> tuple[Path, ...]:
 
 
 def build_workspace_graph(project_root: Path) -> WorkspaceGraphBuildResult:
-    """Compose healthy persisted member graphs without rebuilding individual specs."""
+    """Compose persisted member graphs using authoritative live audits."""
     root = project_root.resolve()
     workspace_role, sources, config_digest = _load_workspace_config(root)
     spec_dirs = discover_canonical_spec_dirs(root)
@@ -176,10 +176,16 @@ def build_workspace_graph(project_root: Path) -> WorkspaceGraphBuildResult:
 
     for spec_dir in spec_dirs:
         spec_id = spec_dir.name
-        audit_status, audit_hash = _audit_receipt(root, spec_dir)
         graph_hash, nodes, edges, invalid_reason = _read_member_graph(spec_dir, spec_id)
+        audit_status, audit_hash, audited_graph_hash = _audit_receipt(root, spec_dir)
+        snapshot_mismatch = graph_hash is not None and audited_graph_hash != graph_hash
         included = invalid_reason is None and audit_status in {"pass", "warn"}
-        exclusion_reason = invalid_reason or _audit_exclusion_reason(audit_status)
+        exclusion_reason = (
+            invalid_reason
+            or ("member_graph_changed" if snapshot_mismatch else None)
+            or _audit_exclusion_reason(audit_status)
+        )
+        included = included and exclusion_reason is None
         members.append(
             WorkspaceGraphMember(
                 spec_id=spec_id,
@@ -223,6 +229,7 @@ def build_workspace_graph(project_root: Path) -> WorkspaceGraphBuildResult:
         assert nodes is not None and edges is not None
         remapped_ids: dict[str, str] = {}
         for node in nodes:
+            _ensure_member_node_identity_is_not_reserved(node.id)
             normalized = _normalized_node_id(node)
             remapped_ids[node.id] = normalized
             properties = dict(node.properties)
@@ -280,7 +287,13 @@ def render_workspace_graph(graph: WorkspaceArtifactGraph) -> bytes:
 
 
 def workspace_graph_path(project_root: Path) -> Path:
-    return project_root.resolve() / WORKSPACE_GRAPH_FILENAME
+    return (
+        project_root.resolve()
+        / ".echelon"
+        / "runtime"
+        / "graph"
+        / WORKSPACE_GRAPH_FILENAME
+    )
 
 
 def write_workspace_graph(graph: WorkspaceArtifactGraph, project_root: Path) -> Path:
@@ -363,7 +376,15 @@ def _load_workspace_config(root: Path) -> tuple[str | None, tuple[_Source, ...],
         source_path = source_path.strip()
         if source_id in source_ids:
             raise WorkspaceGraphError(f"duplicate workspace source id: {source_id}")
-        _resolve_workspace_path(root, source_path)
+        resolved_source_path = _resolve_workspace_path(root, source_path)
+        if not resolved_source_path.exists():
+            raise WorkspaceGraphError(
+                f"workspace source path does not exist: {source_path}"
+            )
+        if not resolved_source_path.is_dir():
+            raise WorkspaceGraphError(
+                f"workspace source path is not a directory: {source_path}"
+            )
         source_ids.add(source_id)
         sources.append(_Source(source_id, source_path))
     projection = {
@@ -445,15 +466,17 @@ def _properties(value: object) -> Mapping[str, object]:
     return value
 
 
-def _audit_receipt(root: Path, spec_dir: Path) -> tuple[str, str]:
+def _audit_receipt(root: Path, spec_dir: Path) -> tuple[str, str, str | None]:
     try:
         report = audit_spec_graph(root, spec_dir)
         status = str(report.status)
         payload = report.to_dict()
+        graph_hash = report.graph_hash if isinstance(report.graph_hash, str) else None
     except Exception as exc:
         status = "unavailable"
         payload = {"schema_version": 1, "status": status, "error": type(exc).__name__}
-    return status, _canonical_digest(payload)
+        graph_hash = None
+    return status, _canonical_digest(payload), graph_hash
 
 
 def _audit_exclusion_reason(status: str) -> str | None:
@@ -539,12 +562,33 @@ def _add_workspace_nodes(
     properties: dict[str, object] = {"workspace_name": workspace_name}
     if git_role is not None:
         properties["git_role"] = git_role
-    records["workspace:current"] = (GraphNode("workspace:current", "Workspace", properties), set())
+    _add_workspace_node(
+        records,
+        GraphNode("workspace:current", "Workspace", properties),
+    )
     for source in sources:
-        records[f"source:{source.id}"] = (
-            GraphNode(f"source:{source.id}", "Source", {"source_id": source.id, "path": source.path}),
-            set(),
+        _add_workspace_node(
+            records,
+            GraphNode(
+                f"source:{source.id}",
+                "Source",
+                {"source_id": source.id, "path": source.path},
+            ),
         )
+
+
+def _ensure_member_node_identity_is_not_reserved(node_id: str) -> None:
+    if node_id == "workspace:current" or node_id.startswith("source:"):
+        raise WorkspaceGraphError(f"reserved workspace node identity: {node_id}")
+
+
+def _add_workspace_node(
+    records: dict[str, tuple[GraphNode, set[str]]],
+    node: GraphNode,
+) -> None:
+    if node.id in records:
+        raise WorkspaceGraphError(f"reserved workspace node identity: {node.id}")
+    records[node.id] = (node, set())
 
 
 def _add_workspace_relationships(
@@ -597,7 +641,17 @@ def _add_workspace_edge(
     edge_type: str,
     target: str,
 ) -> None:
-    records[(source, edge_type, target)] = (GraphEdge(source, edge_type, target, {}), set())
+    identity = (source, edge_type, target)
+    existing = records.get(identity)
+    if existing is not None:
+        _, member_specs = existing
+        if member_specs:
+            raise WorkspaceGraphError(
+                "reserved workspace edge identity: "
+                f"{source} {edge_type} {target}"
+            )
+        return
+    records[identity] = (GraphEdge(source, edge_type, target, {}), set())
 
 
 def _superseded_spec_ids(value: object) -> tuple[str, ...]:
