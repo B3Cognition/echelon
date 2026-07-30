@@ -1081,9 +1081,11 @@ def _write_debug_dump(
     attempts: list[tuple[CallOutcome, ParseFailure]],
     timeout_seconds: float,
 ) -> Path:
-    """Save both failing attempts' raw output under .sue-debug (FR-030).
+    """Save both failing attempts' raw output and provenance under .sue-debug.
 
     Timeout attempts carry a first line naming the exhausted budget (ISS-207).
+    Model identity fields preserve provider-reported values verbatim; absent
+    values serialize as JSON null rather than being inferred.
     """
     debug_dir = spec_dir / DEBUG_DIR_NAME
     debug_dir.mkdir(exist_ok=True)
@@ -1096,6 +1098,24 @@ def _write_debug_dump(
         (debug_dir / f"{stem}-stderr.txt").write_text(
             prefix + outcome.stderr, encoding="utf-8", errors="replace"
         )
+    evidence = {
+        "round": round_no,
+        "attempts": [
+            {
+                "attempt": attempt_no,
+                "run_id": outcome.run_id,
+                "requested_model": outcome.model_requested,
+                "reported_model": outcome.model_reported,
+                "reasoning_effort": outcome.reasoning_effort,
+                "status": outcome.kind,
+            }
+            for attempt_no, (outcome, _failure) in enumerate(attempts, start=1)
+        ],
+    }
+    (debug_dir / f"round{round_no}-call-evidence.json").write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     return debug_dir
 
 

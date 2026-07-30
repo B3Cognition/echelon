@@ -1302,8 +1302,8 @@ class TestExecuteRound:
         assert second_stdin != first_stdin
         assert "GARBAGE-MARKER-XYZ" not in second_stdin
 
-    def test_double_failure_exits_3_with_four_dump_files(self, tmp_path):
-        # AC-015: second failure → exit 3, raw output of both attempts dumped.
+    def test_double_failure_exits_3_with_dumps_and_evidence(self, tmp_path):
+        # AC-015: second failure → exit 3, raw output and evidence are dumped.
         stub, count, _ = _make_replay_stub(tmp_path, "bad", ["BAD-ONE", "BAD-TWO"])
         spec_dir = tmp_path / "specdir"
         spec_dir.mkdir()
@@ -1321,9 +1321,72 @@ class TestExecuteRound:
             "round1-attempt1-stdout.txt",
             "round1-attempt2-stderr.txt",
             "round1-attempt2-stdout.txt",
+            "round1-call-evidence.json",
         ]
         assert (debug_dir / "round1-attempt1-stdout.txt").read_text() == "BAD-ONE"
         assert (debug_dir / "round1-attempt2-stdout.txt").read_text() == "BAD-TWO"
+
+    def test_terminal_failure_persists_both_attributable_call_evidence_records(
+        self, tmp_path, monkeypatch
+    ):
+        outcomes = iter([
+            sue.CallOutcome(
+                kind="failed",
+                stdout="BAD-ONE",
+                stderr="first error",
+                duration_seconds=0.1,
+                run_id="failed-run-one",
+                model_requested="requested-one",
+                model_reported="reported-one",
+                reasoning_effort="low",
+            ),
+            sue.CallOutcome(
+                kind="failed",
+                stdout="BAD-TWO",
+                stderr="second error",
+                duration_seconds=0.2,
+                run_id="failed-run-two",
+                model_requested="requested-two",
+                model_reported="reported-two",
+                reasoning_effort="high",
+            ),
+        ])
+        monkeypatch.setattr(sue, "run_model_call", lambda *_args: next(outcomes))
+
+        result = sue.execute_round(
+            self._config("codex"),
+            "PROMPT",
+            self._r1_validator,
+            2,
+            tmp_path,
+            sue.ROUND2_OUTPUT_SCHEMA,
+        )
+
+        assert isinstance(result, sue.RoundExit)
+        evidence = json.loads(
+            (tmp_path / sue.DEBUG_DIR_NAME / "round2-call-evidence.json").read_text()
+        )
+        assert evidence == {
+            "round": 2,
+            "attempts": [
+                {
+                    "attempt": 1,
+                    "reasoning_effort": "low",
+                    "reported_model": "reported-one",
+                    "requested_model": "requested-one",
+                    "run_id": "failed-run-one",
+                    "status": "failed",
+                },
+                {
+                    "attempt": 2,
+                    "reasoning_effort": "high",
+                    "reported_model": "reported-two",
+                    "requested_model": "requested-two",
+                    "run_id": "failed-run-two",
+                    "status": "failed",
+                },
+            ],
+        }
 
     def test_double_timeout_exits_3_with_timeout_prefixed_dumps(self, tmp_path):
         # AC-017 + FR-029 + FR-013: timeout retries re-issue the identical
@@ -1440,7 +1503,7 @@ class TestExecuteRound:
         # Exactly 2 round-2 attempts on top of the single round-1 call.
         assert int(count.read_text()) == 3
         names = sorted(p.name for p in (spec_dir / sue.DEBUG_DIR_NAME).iterdir())
-        assert len(names) == 4
+        assert len(names) == 5
         assert all(name.startswith("round2-") for name in names)
 
 
