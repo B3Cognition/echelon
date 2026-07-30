@@ -217,8 +217,16 @@ def test_markdown_adapter_preserves_explicit_requirement_id(tmp_path):
     path.write_text("# Requirements\n\n- **FR-001**: The system MUST save.\n")
     bundle = source.load_source_bundle(path)
     assert [unit.id for unit in bundle.units] == ["FR-001"]
-    assert bundle.units[0].text == "The system MUST save."
+    assert bundle.units[0].text == "- **FR-001**: The system MUST save."
     assert bundle.units[0].source_refs[0].locator == "L3-L3"
+
+
+def test_markdown_adapter_unit_text_round_trips_to_source_ref(tmp_path):
+    path = tmp_path / "requirements.md"
+    path.write_text("# Requirements\n\n- **FR-001**: The system MUST save.\n")
+    bundle = source.load_source_bundle(path)
+    unit = bundle.units[0]
+    assert unit.text == source.resolve_source_ref(bundle, unit.source_refs[0])
 
 
 def test_markdown_adapter_recognizes_requirement_heading(tmp_path):
@@ -227,6 +235,14 @@ def test_markdown_adapter_recognizes_requirement_heading(tmp_path):
     bundle = source.load_source_bundle(path)
     assert bundle.units[0].id == "FR-002"
     assert bundle.units[0].normative_level == "must"
+
+
+def test_markdown_adapter_recognizes_requirement_heading_without_colon(tmp_path):
+    path = tmp_path / "requirements.md"
+    path.write_text("# FR-002\nThe system SHALL retain audit history.\n")
+    bundle = source.load_source_bundle(path)
+    assert bundle.units[0].id == "FR-002"
+    assert bundle.units[0].text == "# FR-002"
 
 
 def test_lexicon_adapter_extracts_controlled_situation(tmp_path):
@@ -242,6 +258,20 @@ def test_lexicon_adapter_extracts_controlled_situation(tmp_path):
     assert situation.given == "an authenticated user"
     assert situation.when == "the user saves"
     assert situation.then == "the record persists"
+
+
+def test_lexicon_adapter_preserves_crlf_source_ref_round_trip(tmp_path):
+    path = tmp_path / "rules.lex"
+    path.write_bytes(
+        b"REQ: REQ-001\r\n"
+        b"GIVEN: an authenticated user\r\n"
+        b"WHEN: the user saves\r\n"
+        b"THEN: the record persists\r\n"
+    )
+    bundle = source.load_source_bundle(path)
+    unit = bundle.units[0]
+    assert unit.text == source.resolve_source_ref(bundle, unit.source_refs[0])
+    assert "\r\n" in unit.text
 
 
 def test_normative_bullet_gets_locator_id(tmp_path):
@@ -285,6 +315,22 @@ def test_manifest_accepts_non_echelon_unit_ids(tmp_path):
     manifest.write_text(json.dumps(_manifest()))
     bundle = source.load_source_bundle(manifest, "manifest")
     assert bundle.units[0].id == "PAYMENT-RETRY"
+
+
+@pytest.mark.parametrize("source_refs", (None, []))
+def test_manifest_rejects_ungrounded_unit(tmp_path, source_refs):
+    document = tmp_path / "requirements.txt"
+    document.write_text("Payment retries stop after three attempts.\n")
+    data = _manifest()
+    if source_refs is None:
+        data["units"][0].pop("source_refs")
+    else:
+        data["units"][0]["source_refs"] = source_refs
+    manifest = tmp_path / "requirements.sue.json"
+    manifest.write_text(json.dumps(data))
+    with pytest.raises(source.SUESourceError) as error:
+        source.load_source_bundle(manifest, "manifest")
+    assert error.value.code == "UNGROUNDED_UNIT"
 
 
 @pytest.mark.parametrize("change", [

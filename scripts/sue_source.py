@@ -21,6 +21,9 @@ _EXPLICIT_UNIT_RE = re.compile(
     r"^\s*(?:(?:#{1,6}|[-*+])\s+)?(?:\*\*)?((?:FR|REQ|AC)[-_][A-Za-z0-9-]+)(?:\*\*)?\s*:\s*(.+?)\s*$",
     re.IGNORECASE,
 )
+_HEADING_UNIT_RE = re.compile(
+    r"^\s*#+\s+((?:FR|REQ|AC)[-_][A-Za-z0-9-]+)\b", re.IGNORECASE
+)
 _NORMATIVE_RE = re.compile(r"\b(MUST|SHALL|SHOULD|MAY)\b", re.IGNORECASE)
 _LEXICON_RE = re.compile(r"^(REQ|AC|GIVEN|WHEN|THEN):\s*(.*?)\s*$", re.IGNORECASE)
 
@@ -263,7 +266,11 @@ def resolve_source_ref(bundle: SUESourceBundle, ref: SourceRef) -> str:
     if ref.locator_kind != "line-range":
         raise ValueError(f"cannot resolve locator kind: {ref.locator_kind}")
     start, end = _line_bounds(ref.locator)
-    document_text = documents[ref.document_id].text
+    return _line_range_text(documents[ref.document_id].text, start, end)
+
+
+def _line_range_text(document_text: str, start: int, end: int) -> str:
+    """Return a line range exactly as source-reference resolution exposes it."""
     lines = document_text.splitlines(keepends=True)
     start_offset = sum(len(line) for line in lines[: start - 1])
     selected = "".join(lines[start - 1 : end])
@@ -310,7 +317,7 @@ def load_markdown_lexicon(path: Path) -> SUESourceBundle:
         key = "REQ" if "REQ" in lexicon else "AC"
         unit_id, id_line = lexicon[key]
         end = max(line for _, line in lexicon.values())
-        block_text = "\n".join(lines[id_line - 1 : end])
+        block_text = _line_range_text(text, id_line, end)
         situation = None
         if all(label in lexicon for label in ("GIVEN", "WHEN", "THEN")):
             situation = ControlledSituation(
@@ -339,16 +346,21 @@ def load_markdown_lexicon(path: Path) -> SUESourceBundle:
             flush_lexicon()
         explicit = _EXPLICIT_UNIT_RE.fullmatch(line)
         if explicit:
-            unit_id, unit_text = explicit.groups()
+            unit_id, _ = explicit.groups()
             kind = "acceptance-criterion" if unit_id.upper().startswith("AC") else "requirement"
         else:
-            bullet = re.fullmatch(r"\s*[-*+]\s+(.+?)\s*", line)
-            if bullet and _NORMATIVE_RE.search(bullet.group(1)):
-                unit_id = f"{document_id}:L{number}-L{number}"
-                unit_text = bullet.group(1)
-                kind = "requirement"
+            heading = _HEADING_UNIT_RE.fullmatch(line)
+            if heading:
+                unit_id = heading.group(1)
+                kind = "acceptance-criterion" if unit_id.upper().startswith("AC") else "requirement"
             else:
-                continue
+                bullet = re.fullmatch(r"\s*[-*+]\s+(.+?)\s*", line)
+                if bullet and _NORMATIVE_RE.search(bullet.group(1)):
+                    unit_id = f"{document_id}:L{number}-L{number}"
+                    kind = "requirement"
+                else:
+                    continue
+        unit_text = _line_range_text(text, number, number)
         units.append(SourceUnit(
             id=unit_id, kind=kind, text=unit_text,
             normative_level=_normative_level(unit_text),
@@ -429,10 +441,13 @@ def load_generic_manifest(path: Path) -> SUESourceBundle:
         raw_situation = record.get("situation")
         try:
             situation = ControlledSituation(**raw_situation) if raw_situation is not None else None
+            source_refs = _manifest_refs(record.get("source_refs", []))
+            if not source_refs:
+                _source_error("UNGROUNDED_UNIT", "manifest units require at least one source reference")
             units.append(SourceUnit(
                 id=record.get("id"), kind=record.get("kind"), text=record.get("text"),
                 normative_level=record.get("normative_level", "unspecified"),
-                source_refs=_manifest_refs(record.get("source_refs", [])),
+                source_refs=source_refs,
                 declared_relations=tuple(relations), situation=situation,
             ))
         except TypeError as error:
