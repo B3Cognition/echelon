@@ -820,6 +820,7 @@ def test_benchmark_help_declares_run_and_show_contracts():
     assert "--variant" in run_help.output
     assert "--baseline-ref" in run_help.output
     assert "--artifact-only" in run_help.output
+    assert "--context-render" in run_help.output
     assert "--dry-run" in run_help.output
     assert show_help.exit_code == 0
     assert "TARGET" in show_help.output

@@ -1347,6 +1347,11 @@ def benchmark_run(
         "--artifact-only",
         help="Run only spec/Phase A artifact generation and skip delivery/build.",
     ),
+    context_render: str = typer.Option(
+        "bounded",
+        "--context-render",
+        help="Context render mode: bounded, legacy, or both.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print planned commands without running them."),
 ) -> None:
     """Run or print an artifact-quality benchmark variant."""
@@ -1355,6 +1360,7 @@ def benchmark_run(
     args = ["run", fixture_id]
     _extend_option(args, "--variant", variant)
     _extend_option(args, "--baseline-ref", baseline_ref)
+    _extend_option(args, "--context-render", context_render)
     if artifact_only:
         args.append("--artifact-only")
     if dry_run:

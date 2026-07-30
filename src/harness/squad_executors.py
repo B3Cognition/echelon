@@ -22,6 +22,16 @@ from harness.quality_scores import (
     render_quality_gate_context,
     resolve_quality_gate_thresholds,
 )
+from harness.agent_context import (
+    RenderedSection,
+    build_context_budget_report,
+    compact_state_projection,
+    parse_context_pack_item,
+    policy_for_context,
+    render_context_path,
+    resolve_context_render_mode,
+    write_context_budget_report,
+)
 from harness.spec_lexicon_gate import run_spec_lexicon_gate
 from harness.state_transaction_namespace import store_owned_update_keys
 from harness.tasks_lexicon_gate import run_tasks_lexicon_gate
@@ -1532,9 +1542,48 @@ class PhaseExecutor(ABC):
             "- NEVER resolve it as `${EXTENSION_DIR}/extension/templates/foo.md` or add an extra `extension/` path segment.\n\n"
         )
 
+    def _render_context_pack_item(
+        self,
+        *,
+        item: str,
+        node_id: str,
+        agent_id: str,
+        mode: str,
+        state: dict,
+        search_bases: list[Path],
+        translate_ref,
+    ) -> RenderedSection | None:
+        selector = parse_context_pack_item(item)
+        if not selector.path_ref or selector.path_ref.startswith("#"):
+            return None
+        resolved = translate_ref(selector.path_ref)
+        candidates = [Path(resolved)] if resolved.startswith("/") else [
+            base / resolved for base in search_bases
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                policy = policy_for_context(
+                    phase_id=node_id,
+                    agent_id=agent_id,
+                    mode=mode,
+                    path_ref=selector.path_ref,
+                )
+                return render_context_path(
+                    selector.path_ref,
+                    candidate,
+                    policy,
+                    selector.filters,
+                    state=state,
+                    phase_id=node_id,
+                )
+        return None
+
     def _assemble_prompt(self, node: "PhaseNode", state: dict) -> str:
         static_parts: list[str] = []
-        dynamic_parts: list[str] = []
+        selected_dynamic_parts: list[str] = []
+        legacy_sections: list[RenderedSection] = []
+        bounded_sections: list[RenderedSection] = []
+        selected_render_mode = resolve_context_render_mode()
         output_recovery = state.get("phase_output_recovery")
         isolated_invalid_inventory_repair = (
             node.id == "phase1-investigate"
@@ -1558,6 +1607,13 @@ class PhaseExecutor(ABC):
             r = r.replace(".specify/squad", squad_dir_str)
             return r
 
+        def _translate_context_ref(ref: str) -> str:
+            return _translate_squad_path(
+                ref.replace("{spec_dir}", spec_dir_ref)
+                .replace("{context_dir}", context_dir_str)
+                .replace("{staging_dir}", staging_dir_str)
+            )
+
         # 1. Agent file (role + instructions)
         if node.agent:
             rel = self._graph.agent_file(node.agent)
@@ -1575,7 +1631,10 @@ class PhaseExecutor(ABC):
         # 3. Context pack files (read each that exists on disk).
         # Translate .specify/squad/ paths before resolving — definition.yaml context_pack
         # items may reference these legacy paths (e.g. .specify/squad/staging/glossary.md).
-        spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
+        spec_dir_ref = _normalize_spec_dir_ref(
+            str(state.get("spec_dir") or "").strip(),
+            self._project_root,
+        )
         search_bases = _spec_search_bases(spec_dir_ref, self._project_root, staging_dir_str)
         for item in node.context_pack:
             if isolated_invalid_inventory_repair and (
@@ -1585,37 +1644,96 @@ class PhaseExecutor(ABC):
                 or item.startswith(".specify/squad/reasoning-journal.jsonl")
             ):
                 continue
-            # Items may have inline comments: ".specify/echelon/re/state.json — current run state"
-            file_ref = item.split(" ")[0].split("(")[0].rstrip()
+            selector = parse_context_pack_item(item)
+            file_ref = selector.path_ref
             if not file_ref or file_ref.startswith("#"):
                 continue
-            context_filters = _context_pack_filters(item)
-            resolved = _translate_squad_path(
-                file_ref.replace("{spec_dir}", spec_dir_ref)
-                .replace("{context_dir}", context_dir_str)
-                .replace("{staging_dir}", staging_dir_str)
-            )
+            resolved = _translate_context_ref(file_ref)
             if resolved.startswith("/"):
                 candidates = [Path(resolved)]
             else:
                 candidates = [base / resolved for base in search_bases]
+            legacy_section = None
             for candidate in candidates:
                 if candidate.exists():
-                    dynamic_parts.append(
-                        _render_context_candidate(
-                            file_ref,
-                            candidate,
-                            filters=context_filters,
-                        )
+                    legacy_text = _render_context_candidate(
+                        file_ref,
+                        candidate,
+                        filters=selector.filters,
                     )
+                    legacy_section = RenderedSection(
+                        str(candidate.resolve()),
+                        legacy_text,
+                        len(legacy_text.encode("utf-8")),
+                        {},
+                    )
+                    legacy_sections.append(legacy_section)
                     break
+            bounded_section = self._render_context_pack_item(
+                item=item,
+                node_id=node.id,
+                agent_id=str(node.agent or ""),
+                mode=str(getattr(node, "mode", "") or node.id),
+                state=state,
+                search_bases=search_bases,
+                translate_ref=_translate_context_ref,
+            )
+            if bounded_section is not None:
+                bounded_sections.append(bounded_section)
+            if selected_render_mode == "legacy":
+                if legacy_section is not None:
+                    selected_dynamic_parts.append(legacy_section.text)
+            elif bounded_section is not None:
+                selected_dynamic_parts.append(bounded_section.text)
 
         # 4. Current state.json for context
         state_path = self._squad_dir / "state.json"
+        legacy_state_text = ""
         if node.id in {"phase1-why1", "phase1-why2"}:
-            dynamic_parts.append(_render_why_state_context(state))
+            legacy_state_text = _render_why_state_context(state)
         elif state_path.exists():
-            dynamic_parts.append(f"\n---\n# Current state.json\n{state_path.read_text()}")
+            legacy_state_text = f"\n---\n# Current state.json\n{state_path.read_text()}"
+        if legacy_state_text:
+            legacy_sections.append(
+                RenderedSection(
+                    "Current state.json",
+                    legacy_state_text,
+                    len(legacy_state_text.encode("utf-8")),
+                    {},
+                )
+            )
+        bounded_state = dict(state)
+        if state_path.exists():
+            try:
+                persisted_state = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                persisted_state = {}
+            if isinstance(persisted_state, dict):
+                bounded_state = {**persisted_state, **state}
+        state_projection = compact_state_projection(
+            bounded_state,
+            node.id,
+            getattr(node, "allowed_state_updates", None),
+        )
+        if (
+            isinstance(state_projection.get("understanding_evidence"), dict)
+            and state_projection["understanding_evidence"].get("phase") == node.id
+        ):
+            state_projection.pop("understanding_evidence", None)
+        state_text = json.dumps(state_projection, indent=2, ensure_ascii=False, sort_keys=True)
+        bounded_state_text = "\n---\n# Current controller state (compact projection)\n" + state_text
+        bounded_state_section = RenderedSection(
+            "Current controller state (compact projection)",
+            bounded_state_text,
+            len(bounded_state_text.encode("utf-8")),
+            {"projection": "compact"},
+        )
+        bounded_sections.append(bounded_state_section)
+        if selected_render_mode == "legacy":
+            if legacy_state_text:
+                selected_dynamic_parts.append(legacy_state_text)
+        else:
+            selected_dynamic_parts.append(bounded_state_text)
         # Inject squad run context so agents know where to write
         context_preamble = (
             f"# Squad Run Context\n"
@@ -1654,7 +1772,7 @@ class PhaseExecutor(ABC):
                 "in place.\n\n"
             )
 
-        prompt = "\n\n".join(static_parts + [context_preamble] + dynamic_parts)
+        prompt = "\n\n".join(static_parts + [context_preamble] + selected_dynamic_parts)
         prompt = prompt.replace("{spec_dir}", spec_dir_ref)
         prompt = prompt.replace("{context_dir}", context_dir_str)
         prompt = prompt.replace("{staging_dir}", staging_dir_str)
@@ -1679,6 +1797,23 @@ class PhaseExecutor(ABC):
             )
             + _canonical_echelon_result_contract(self._ext_dir)
         )
+
+        report = build_context_budget_report(
+            phase_id=node.id,
+            agent_id=str(node.agent or ""),
+            mode=str(getattr(node, "mode", "") or node.id),
+            selected_render_mode=selected_render_mode,
+            legacy_sections=legacy_sections,
+            bounded_sections=bounded_sections,
+            strict=False,
+        )
+        try:
+            report_path = write_context_budget_report(self._squad_dir, report)
+        except OSError as exc:
+            print(f"[squad] context budget report unavailable for {node.id}: {exc}", flush=True)
+        else:
+            if report["bounded"]["bytes"] < report["legacy"]["bytes"]:
+                print(f"[squad] context bounded for {node.id}; report={report_path}", flush=True)
 
         return _shared_agent_contract() + prompt
 
@@ -2319,6 +2454,7 @@ class StagedParallelExecutor(PhaseExecutor):
         state_update_types: object = None,
         state_update_enums: object = None,
         allowed_verdicts: object = None,
+        phase_id: str = "phase3-consensus",
     ) -> str:
         """Build a prompt for a single staged agent.
 
@@ -2336,6 +2472,9 @@ class StagedParallelExecutor(PhaseExecutor):
 
         static_parts: list[str] = []
         dynamic_parts: list[str] = []
+        legacy_sections: list[RenderedSection] = []
+        bounded_sections: list[RenderedSection] = []
+        selected_render_mode = resolve_context_render_mode()
 
         # 1. Agent role file (protocol + identity)
         rel = self._graph.agent_file(agent_id)
@@ -2354,23 +2493,62 @@ class StagedParallelExecutor(PhaseExecutor):
         spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
         search_bases = _spec_search_bases(spec_dir_ref, self._project_root, staging_dir_str)
 
-        for item in agent_entry.get("context_pack", []):
-            file_ref = item.split(" ")[0].split("(")[0].rstrip()
-            if not file_ref or file_ref.startswith("#"):
-                continue
-            resolved_ref = (
-                file_ref.replace("{spec_dir}", spec_dir_ref)
+        def _translate_squad_path(ref: str) -> str:
+            r = ref.replace(".specify/squad/staging/", f"{staging_dir_str}/")
+            r = r.replace(".specify/squad/staging", staging_dir_str)
+            r = r.replace(".specify/squad/", f"{squad_dir_str}/")
+            r = r.replace(".specify/squad", squad_dir_str)
+            return r
+
+        def _translate_context_ref(ref: str) -> str:
+            return _translate_squad_path(
+                ref.replace("{spec_dir}", spec_dir_ref)
                 .replace("{context_dir}", context_dir_str)
                 .replace("{staging_dir}", staging_dir_str)
             )
+
+        for item in agent_entry.get("context_pack", []):
+            selector = parse_context_pack_item(item)
+            file_ref = selector.path_ref
+            if not file_ref or file_ref.startswith("#"):
+                continue
+            resolved_ref = _translate_context_ref(file_ref)
             if resolved_ref.startswith("/"):
                 candidates = [Path(resolved_ref)]
             else:
                 candidates = [base / resolved_ref for base in search_bases]
+            legacy_section = None
             for candidate in candidates:
                 if candidate.exists():
-                    dynamic_parts.append(_render_context_candidate(file_ref, candidate))
+                    legacy_text = _render_context_candidate(
+                        file_ref,
+                        candidate,
+                        filters=selector.filters,
+                    )
+                    legacy_section = RenderedSection(
+                        str(candidate.resolve()),
+                        legacy_text,
+                        len(legacy_text.encode("utf-8")),
+                        {},
+                    )
+                    legacy_sections.append(legacy_section)
                     break
+            bounded_section = self._render_context_pack_item(
+                item=item,
+                node_id=phase_id,
+                agent_id=agent_id,
+                mode=mode_label,
+                state=state,
+                search_bases=search_bases,
+                translate_ref=_translate_context_ref,
+            )
+            if bounded_section is not None:
+                bounded_sections.append(bounded_section)
+            if selected_render_mode == "legacy":
+                if legacy_section is not None:
+                    dynamic_parts.append(legacy_section.text)
+            elif bounded_section is not None:
+                dynamic_parts.append(bounded_section.text)
 
         # 3. Any extra files (e.g. implementability-report.md for PLAN2)
         for extra_path in (extra_files or []):
@@ -2399,6 +2577,30 @@ class StagedParallelExecutor(PhaseExecutor):
         prompt = prompt.replace("{spec_dir}", spec_dir_ref)
         prompt = prompt.replace("{context_dir}", context_dir_str)
         prompt = prompt.replace("{staging_dir}", staging_dir_str)
+
+        report = build_context_budget_report(
+            phase_id=phase_id,
+            agent_id=agent_id,
+            mode=mode_label,
+            selected_render_mode=selected_render_mode,
+            legacy_sections=legacy_sections,
+            bounded_sections=bounded_sections,
+            strict=False,
+        )
+        try:
+            report_path = write_context_budget_report(self._squad_dir, report)
+        except OSError as exc:
+            print(
+                f"[squad] context budget report unavailable for {phase_id}/{agent_id}: {exc}",
+                flush=True,
+            )
+        else:
+            if report["bounded"]["bytes"] < report["legacy"]["bytes"]:
+                print(
+                    f"[squad] context bounded for {phase_id}/{agent_id}; report={report_path}",
+                    flush=True,
+                )
+
         return (
             _shared_agent_contract()
             + prompt
@@ -2442,6 +2644,7 @@ class StagedParallelExecutor(PhaseExecutor):
                     state_update_types=result_contract.state_update_types,
                     state_update_enums=result_contract.state_update_enums,
                     allowed_verdicts=result_contract.allowed_verdicts,
+                    phase_id=node.id,
                 )
                 futures[pool.submit(
                     self._exec_agent_with_contract, prompt, result_contract
@@ -2522,6 +2725,7 @@ class StagedParallelExecutor(PhaseExecutor):
                 state_update_types=result_contract.state_update_types,
                 state_update_enums=result_contract.state_update_enums,
                 allowed_verdicts=result_contract.allowed_verdicts,
+                phase_id=node.id,
             )
             stage2_result = self._exec_agent_with_contract(prompt, result_contract)
             stage2_result = self._validate_result_state_updates(
