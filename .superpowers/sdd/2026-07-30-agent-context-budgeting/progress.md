@@ -27,3 +27,12 @@ Task 4: complete
 - commits: see feat: bound normal squad agent context
 - verification: focused Task 4 prompt tests passed; full journal executor file passed; git diff --check passed
 - review: local verification pass
+
+Task 4: complete
+- commits: 67b4034c
+- review: approved (spec compliance and code quality)
+
+Task 5: complete
+- commits: pending
+- verification: focused staged bounded-renderer tests passed; git diff --check passed
+- review: local verification pass

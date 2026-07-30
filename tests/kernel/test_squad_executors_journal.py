@@ -2420,6 +2420,60 @@ def test_staged_prompt_includes_directory_context_pack_contents(tmp_path):
     assert "CONTRACT CONTENT" in prompt
 
 
+def test_staged_prompt_bounded_contracts_preserves_manifest(tmp_path):
+    """Large staged directory context keeps a manifest and omits oversized bodies."""
+    squad_dir = tmp_path / "squad" / "run-test"
+    staging_dir = squad_dir / "staging"
+    staging_dir.mkdir(parents=True)
+    ext_dir = tmp_path / "ext"
+    agent_dir = ext_dir / "agents"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "assess2.md").write_text("# ASSESS2\nRole-specific instructions.")
+
+    spec_dir = tmp_path / "specs" / "001-demo"
+    contracts = spec_dir / "contracts"
+    contracts.mkdir(parents=True)
+    small_contract = contracts / "00-index.md"
+    huge_contract = contracts / "99-huge.md"
+    small_contract.write_text("INDEX CONTRACT", encoding="utf-8")
+    huge_contract.write_text("HUGE_CONTRACT_BODY\n" + ("X" * 120_000), encoding="utf-8")
+
+    provider = MagicMock()
+    graph = MagicMock()
+    graph.agent_file.return_value = "agents/assess2.md"
+    graph.all_phase_ids.return_value = []
+    ex = StagedParallelExecutor(provider, graph, ext_dir, tmp_path, squad_dir)
+
+    prompt = ex._build_agent_prompt(
+        {"id": "ASSESS2", "mode": "ASSESS2", "context_pack": ["contracts/"]},
+        {
+            "squad_dir": str(squad_dir),
+            "staging_dir": str(staging_dir),
+            "spec_dir": "specs/001-demo",
+        },
+    )
+
+    assert f"# {contracts.resolve()}/" in prompt
+    assert "## Directory manifest" in prompt
+    assert "- 00-index.md" in prompt
+    assert "- 99-huge.md" in prompt
+    assert "INDEX CONTRACT" in prompt
+    assert "HUGE_CONTRACT_BODY" not in prompt
+    assert "[Directory bodies truncated: included 1/2 files]" in prompt
+
+    reports = sorted((squad_dir / "context-budget").glob("dispatch-*.json"))
+    assert len(reports) == 1
+    report = json.loads(reports[0].read_text(encoding="utf-8"))
+    assert report["phase"] == "phase3-consensus"
+    assert report["agent"] == "ASSESS2"
+    assert report["mode"] == "ASSESS2"
+    assert report["selected_render_mode"] == "bounded"
+    assert report["bounded"]["bytes"] < report["legacy"]["bytes"]
+    serialized_report = json.dumps(report)
+    assert "HUGE_CONTRACT_BODY" not in serialized_report
+    assert "INDEX CONTRACT" not in serialized_report
+
+
 def test_assemble_prompt_translates_legacy_paths(tmp_path):
     """Legacy .specify/squad/staging/ references in spec content are replaced."""
     squad_dir = tmp_path / "squad" / "run-test"

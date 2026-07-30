@@ -1631,7 +1631,10 @@ class PhaseExecutor(ABC):
         # 3. Context pack files (read each that exists on disk).
         # Translate .specify/squad/ paths before resolving — definition.yaml context_pack
         # items may reference these legacy paths (e.g. .specify/squad/staging/glossary.md).
-        spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
+        spec_dir_ref = _normalize_spec_dir_ref(
+            str(state.get("spec_dir") or "").strip(),
+            self._project_root,
+        )
         search_bases = _spec_search_bases(spec_dir_ref, self._project_root, staging_dir_str)
         for item in node.context_pack:
             if isolated_invalid_inventory_repair and (
@@ -2451,6 +2454,7 @@ class StagedParallelExecutor(PhaseExecutor):
         state_update_types: object = None,
         state_update_enums: object = None,
         allowed_verdicts: object = None,
+        phase_id: str = "phase3-consensus",
     ) -> str:
         """Build a prompt for a single staged agent.
 
@@ -2468,6 +2472,9 @@ class StagedParallelExecutor(PhaseExecutor):
 
         static_parts: list[str] = []
         dynamic_parts: list[str] = []
+        legacy_sections: list[RenderedSection] = []
+        bounded_sections: list[RenderedSection] = []
+        selected_render_mode = resolve_context_render_mode()
 
         # 1. Agent role file (protocol + identity)
         rel = self._graph.agent_file(agent_id)
@@ -2486,23 +2493,62 @@ class StagedParallelExecutor(PhaseExecutor):
         spec_dir_ref = _normalize_spec_dir_ref(str(state.get("spec_dir") or "").strip(), self._project_root)
         search_bases = _spec_search_bases(spec_dir_ref, self._project_root, staging_dir_str)
 
-        for item in agent_entry.get("context_pack", []):
-            file_ref = item.split(" ")[0].split("(")[0].rstrip()
-            if not file_ref or file_ref.startswith("#"):
-                continue
-            resolved_ref = (
-                file_ref.replace("{spec_dir}", spec_dir_ref)
+        def _translate_squad_path(ref: str) -> str:
+            r = ref.replace(".specify/squad/staging/", f"{staging_dir_str}/")
+            r = r.replace(".specify/squad/staging", staging_dir_str)
+            r = r.replace(".specify/squad/", f"{squad_dir_str}/")
+            r = r.replace(".specify/squad", squad_dir_str)
+            return r
+
+        def _translate_context_ref(ref: str) -> str:
+            return _translate_squad_path(
+                ref.replace("{spec_dir}", spec_dir_ref)
                 .replace("{context_dir}", context_dir_str)
                 .replace("{staging_dir}", staging_dir_str)
             )
+
+        for item in agent_entry.get("context_pack", []):
+            selector = parse_context_pack_item(item)
+            file_ref = selector.path_ref
+            if not file_ref or file_ref.startswith("#"):
+                continue
+            resolved_ref = _translate_context_ref(file_ref)
             if resolved_ref.startswith("/"):
                 candidates = [Path(resolved_ref)]
             else:
                 candidates = [base / resolved_ref for base in search_bases]
+            legacy_section = None
             for candidate in candidates:
                 if candidate.exists():
-                    dynamic_parts.append(_render_context_candidate(file_ref, candidate))
+                    legacy_text = _render_context_candidate(
+                        file_ref,
+                        candidate,
+                        filters=selector.filters,
+                    )
+                    legacy_section = RenderedSection(
+                        str(candidate.resolve()),
+                        legacy_text,
+                        len(legacy_text.encode("utf-8")),
+                        {},
+                    )
+                    legacy_sections.append(legacy_section)
                     break
+            bounded_section = self._render_context_pack_item(
+                item=item,
+                node_id=phase_id,
+                agent_id=agent_id,
+                mode=mode_label,
+                state=state,
+                search_bases=search_bases,
+                translate_ref=_translate_context_ref,
+            )
+            if bounded_section is not None:
+                bounded_sections.append(bounded_section)
+            if selected_render_mode == "legacy":
+                if legacy_section is not None:
+                    dynamic_parts.append(legacy_section.text)
+            elif bounded_section is not None:
+                dynamic_parts.append(bounded_section.text)
 
         # 3. Any extra files (e.g. implementability-report.md for PLAN2)
         for extra_path in (extra_files or []):
@@ -2531,6 +2577,30 @@ class StagedParallelExecutor(PhaseExecutor):
         prompt = prompt.replace("{spec_dir}", spec_dir_ref)
         prompt = prompt.replace("{context_dir}", context_dir_str)
         prompt = prompt.replace("{staging_dir}", staging_dir_str)
+
+        report = build_context_budget_report(
+            phase_id=phase_id,
+            agent_id=agent_id,
+            mode=mode_label,
+            selected_render_mode=selected_render_mode,
+            legacy_sections=legacy_sections,
+            bounded_sections=bounded_sections,
+            strict=False,
+        )
+        try:
+            report_path = write_context_budget_report(self._squad_dir, report)
+        except OSError as exc:
+            print(
+                f"[squad] context budget report unavailable for {phase_id}/{agent_id}: {exc}",
+                flush=True,
+            )
+        else:
+            if report["bounded"]["bytes"] < report["legacy"]["bytes"]:
+                print(
+                    f"[squad] context bounded for {phase_id}/{agent_id}; report={report_path}",
+                    flush=True,
+                )
+
         return (
             _shared_agent_contract()
             + prompt
@@ -2574,6 +2644,7 @@ class StagedParallelExecutor(PhaseExecutor):
                     state_update_types=result_contract.state_update_types,
                     state_update_enums=result_contract.state_update_enums,
                     allowed_verdicts=result_contract.allowed_verdicts,
+                    phase_id=node.id,
                 )
                 futures[pool.submit(
                     self._exec_agent_with_contract, prompt, result_contract
@@ -2654,6 +2725,7 @@ class StagedParallelExecutor(PhaseExecutor):
                 state_update_types=result_contract.state_update_types,
                 state_update_enums=result_contract.state_update_enums,
                 allowed_verdicts=result_contract.allowed_verdicts,
+                phase_id=node.id,
             )
             stage2_result = self._exec_agent_with_contract(prompt, result_contract)
             stage2_result = self._validate_result_state_updates(
