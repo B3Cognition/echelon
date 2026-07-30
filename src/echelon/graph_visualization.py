@@ -20,6 +20,10 @@ _LENS_EDGE_TYPES = {
     "portfolio": {"CONTAINS_SPEC", "TARGETS", "SUPERSEDES"},
 }
 
+_LENS_NODE_TYPES = {
+    "portfolio": {"Workspace", "Spec", "Source"},
+}
+
 _NODE_STYLE = {
     "Spec": ("#1d4ed8", "box"),
     "Requirement": ("#0f766e", "box"),
@@ -167,6 +171,11 @@ def filter_graph(
             for edge in selected_edges
             for endpoint in (edge["source"], edge["target"])
         }
+        selected_ids.update(
+            node_id
+            for node_id, node in nodes.items()
+            if node.get("type") in _LENS_NODE_TYPES.get(lens, set())
+        )
 
     return {
         "nodes": [
@@ -265,6 +274,11 @@ def render_graph_html(
             lens: sorted(_LENS_EDGE_TYPES[lens])
             for lens in lenses
             if lens in _LENS_EDGE_TYPES
+        },
+        "lens_node_types": {
+            lens: sorted(_LENS_NODE_TYPES[lens])
+            for lens in lenses
+            if lens in _LENS_NODE_TYPES
         },
         "exception_subject_ids": sorted(
             str(subject_id)
@@ -558,7 +572,11 @@ _HTML_TEMPLATE = """<!doctype html>
           }
         } else {
           const edgeTypes = new Set(payload.lens_edge_types[lens] || []);
+          const nodeTypes = new Set(payload.lens_node_types[lens] || []);
           selectedEdges = edges.filter((edge) => edgeTypes.has(edge.data.type));
+          nodes
+            .filter((node) => nodeTypes.has(node.data.type))
+            .forEach((node) => selectedIds.add(node.data.id));
           selectedEdges.forEach((edge) => {
             selectedIds.add(edge.data.source);
             selectedIds.add(edge.data.target);

@@ -3,11 +3,14 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 from pathlib import Path
+import shutil
+import subprocess
 
 import pytest
 
 from echelon.graph_visualization import (
     GraphVisualizationError,
+    filter_graph,
     load_graph_document,
     render_graph_dot,
     render_graph_html,
@@ -45,7 +48,7 @@ def _workspace_document() -> dict[str, object]:
             },
             {
                 "id": "source:service-api",
-                "type": "SourceRoot",
+                "type": "Source",
                 "properties": {"source_id": "service-api", "path": "services/api"},
             },
             {
@@ -144,6 +147,87 @@ def _audit(status: str = "fail") -> WorkspaceGraphAuditReport:
     )
 
 
+def _isolated_workspace_document() -> dict[str, object]:
+    document = _workspace_document()
+    document["nodes"] = [
+        {
+            "id": "source:isolated-a",
+            "type": "Source",
+            "properties": {"source_id": "isolated-a", "path": "services/isolated-a"},
+        },
+        {
+            "id": "source:isolated-b",
+            "type": "Source",
+            "properties": {"source_id": "isolated-b", "path": "services/isolated-b"},
+        },
+        {
+            "id": "spec:003-isolated",
+            "type": "Spec",
+            "properties": {"spec_id": "003-isolated"},
+        },
+        {
+            "id": "workspace:current",
+            "type": "Workspace",
+            "properties": {"workspace_name": "delivery-board"},
+        },
+    ]
+    document["edges"] = []
+    return document
+
+
+def _viewer_payload(html: str) -> dict[str, object]:
+    return json.loads(
+        html.split("window.ECHELON_GRAPH = ", 1)[1].split(";\n    (() =>", 1)[0]
+    )
+
+
+def _viewer_script(html: str) -> str:
+    start = html.index("    window.ECHELON_GRAPH = ")
+    end = html.index("\n  </script>", start)
+    return html[start:end]
+
+
+def _rendered_viewer_elements(html: str, tmp_path: Path) -> list[dict[str, object]]:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable")
+    script_path = tmp_path / "workspace-viewer-filter.js"
+    script_path.write_text(
+        """const elements = {
+  "graph-title": {},
+  "audit-status": {},
+  "graph-lens": { value: "", addEventListener() {} },
+  "graph-search": { value: "", addEventListener() {} },
+  "selection": {},
+  "findings": {},
+  "cy": {},
+  "one-hop": { addEventListener() {} },
+  "two-hop": { addEventListener() {} },
+  "fit": { addEventListener() {} },
+  "reset": { addEventListener() {} },
+};
+global.window = {};
+global.document = { getElementById(id) { return elements[id]; } };
+let rendered;
+global.cytoscape = (config) => {
+  rendered = config.elements;
+  return {
+    nodes() { return { length: 0 }; },
+    elements() { return { toggleClass() {} }; },
+    on() {},
+  };
+};
+"""
+        + _viewer_script(html)
+        + "\nconsole.log(JSON.stringify(rendered));\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run([node, str(script_path)], capture_output=True)
+
+    assert result.returncode == 0, result.stderr.decode()
+    return json.loads(result.stdout)
+
+
 @pytest.mark.unit
 def test_workspace_html_embeds_one_filterable_payload_and_portfolio_lens() -> None:
     html = render_graph_html(
@@ -158,9 +242,7 @@ def test_workspace_html_embeds_one_filterable_payload_and_portfolio_lens() -> No
     assert 'value="portfolio"' in html
     assert '"views"' not in html
     assert html.count('"elements"') == 1
-    payload = json.loads(
-        html.split("window.ECHELON_GRAPH = ", 1)[1].split(";\n    (() =>", 1)[0]
-    )
+    payload = _viewer_payload(html)
     assert payload["lens_edge_types"]["portfolio"] == [
         "CONTAINS_SPEC",
         "SUPERSEDES",
@@ -211,11 +293,156 @@ def test_workspace_viewer_ignores_unknown_exception_subjects() -> None:
         cytoscape_source="window.cytoscape = function () {};",
         initial_lens="exceptions",
     )
-    payload = json.loads(
-        html.split("window.ECHELON_GRAPH = ", 1)[1].split(";\n    (() =>", 1)[0]
-    )
+    payload = _viewer_payload(html)
 
     assert payload["exception_subject_ids"] == []
+
+
+@pytest.mark.unit
+def test_portfolio_lens_keeps_isolated_workspace_spec_and_source_nodes() -> None:
+    document = _isolated_workspace_document()
+    filtered = filter_graph(document, _audit(status="unavailable"), lens="portfolio")
+    dot = render_graph_dot(document, _audit(status="unavailable"), lens="portfolio")
+
+    assert [node["id"] for node in filtered["nodes"]] == [
+        "source:isolated-a",
+        "source:isolated-b",
+        "spec:003-isolated",
+        "workspace:current",
+    ]
+    assert filtered["edges"] == []
+    for node_id in (
+        "source:isolated-a",
+        "source:isolated-b",
+        "spec:003-isolated",
+        "workspace:current",
+    ):
+        assert f'"{node_id}"' in dot
+
+
+@pytest.mark.unit
+def test_workspace_html_portfolio_rule_seeds_isolated_node_types() -> None:
+    html = render_graph_html(
+        _isolated_workspace_document(),
+        _audit(status="unavailable"),
+        cytoscape_source="window.cytoscape = function () {};",
+        initial_lens="portfolio",
+    )
+    payload = _viewer_payload(html)
+
+    assert payload["lens_node_types"]["portfolio"] == ["Source", "Spec", "Workspace"]
+    assert {
+        element["data"]["id"]
+        for element in payload["elements"]
+        if element["group"] == "nodes"
+    } == {
+        "source:isolated-a",
+        "source:isolated-b",
+        "spec:003-isolated",
+        "workspace:current",
+    }
+
+
+@pytest.mark.unit
+def test_workspace_viewer_script_is_syntactically_valid_when_node_is_available(
+    tmp_path: Path,
+) -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is unavailable")
+    html = render_graph_html(
+        _isolated_workspace_document(),
+        _audit(status="unavailable"),
+        cytoscape_source="window.cytoscape = function () {};",
+        initial_lens="portfolio",
+    )
+    script_path = tmp_path / "workspace-viewer.js"
+    script_path.write_text(
+        _viewer_script(html),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run([node, "--check", str(script_path)], capture_output=True)
+
+    assert result.returncode == 0, result.stderr.decode()
+
+
+@pytest.mark.unit
+def test_workspace_viewer_filters_portfolio_with_type_seeds_and_closed_edges(
+    tmp_path: Path,
+) -> None:
+    isolated_html = render_graph_html(
+        _isolated_workspace_document(),
+        _audit(status="unavailable"),
+        cytoscape_source="",
+        initial_lens="portfolio",
+    )
+    isolated_elements = _rendered_viewer_elements(isolated_html, tmp_path)
+    assert {
+        element["data"]["id"]
+        for element in isolated_elements
+        if element["group"] == "nodes"
+    } == {
+        "source:isolated-a",
+        "source:isolated-b",
+        "spec:003-isolated",
+        "workspace:current",
+    }
+    assert [element for element in isolated_elements if element["group"] == "edges"] == []
+
+    connected_html = render_graph_html(
+        _workspace_document(),
+        _audit(status="unavailable"),
+        cytoscape_source="",
+        initial_lens="portfolio",
+    )
+    elements = _rendered_viewer_elements(connected_html, tmp_path)
+    node_ids = {
+        element["data"]["id"]
+        for element in elements
+        if element["group"] == "nodes"
+    }
+    edges = [element for element in elements if element["group"] == "edges"]
+    assert node_ids == {
+        "source:service-api",
+        "spec:001-alpha",
+        "spec:002-beta",
+        "workspace:current",
+    }
+    assert {edge["data"]["type"] for edge in edges} == {
+        "CONTAINS_SPEC",
+        "SUPERSEDES",
+        "TARGETS",
+    }
+    assert all(
+        edge["data"]["source"] in node_ids and edge["data"]["target"] in node_ids
+        for edge in edges
+    )
+
+
+@pytest.mark.unit
+def test_workspace_html_and_dot_are_deterministic_when_document_order_changes() -> None:
+    document = _workspace_document()
+    reordered = dict(document)
+    reordered["nodes"] = list(reversed(document["nodes"]))
+    reordered["edges"] = list(reversed(document["edges"]))
+
+    assert render_graph_dot(document, _audit(), lens="portfolio") == render_graph_dot(
+        reordered,
+        _audit(),
+        lens="portfolio",
+    )
+    assert render_graph_html(
+        document,
+        _audit(),
+        cytoscape_source="window.cytoscape = function () {};",
+        initial_lens="portfolio",
+    ) == render_graph_html(
+        reordered,
+        _audit(),
+        cytoscape_source="window.cytoscape = function () {};",
+        initial_lens="portfolio",
+    )
 
 
 @pytest.mark.unit
