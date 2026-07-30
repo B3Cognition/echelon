@@ -248,6 +248,7 @@ def build_workspace_graph(project_root: Path) -> WorkspaceGraphBuildResult:
             properties = dict(node.properties)
             if node.type == "Spec":
                 properties["composition_status"] = "included"
+                properties["member_audit_status"] = audit_status
             _merge_node(
                 node_records,
                 GraphNode(normalized, node.type, properties),

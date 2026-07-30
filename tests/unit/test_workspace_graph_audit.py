@@ -8,7 +8,13 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from echelon.spec_graph import GraphInput, GraphNode, SpecArtifactGraph, render_spec_graph
+from echelon.spec_graph import (
+    GraphEdge,
+    GraphInput,
+    GraphNode,
+    SpecArtifactGraph,
+    render_spec_graph,
+)
 from echelon.workspace_graph import (
     WorkspaceArtifactGraph,
     WorkspaceGraphBuildResult,
@@ -53,8 +59,22 @@ def _candidate(
         generator_version="test",
         members=(member,),
         inputs=inputs,
-        nodes=(GraphNode(f"spec:{spec_id}", "Spec", {"spec_id": spec_id}),),
-        edges=(),
+        nodes=(
+            GraphNode("workspace:current", "Workspace", {"workspace_name": "workspace"}),
+            GraphNode(
+                f"spec:{spec_id}",
+                "Spec",
+                {
+                    "spec_id": spec_id,
+                    "composition_status": "included" if included else "excluded",
+                    "member_audit_status": audit_status,
+                    **({} if included else {"exclusion_reason": "member_graph_stale"}),
+                },
+            ),
+        ),
+        edges=(
+            GraphEdge("workspace:current", "CONTAINS_SPEC", f"spec:{spec_id}", {}),
+        ),
     )
     return WorkspaceGraphBuildResult(graph=graph, issues=issues)
 
@@ -220,6 +240,65 @@ def test_audit_rejects_invalid_persisted_graph_body(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload.update({"source_set_digest": "sha256:tampered"}),
+        lambda payload: payload["members"][0].update({"graph_hash": None}),
+        lambda payload: payload["nodes"].pop(),
+        lambda payload: payload["nodes"][0].update({"id": "workspace:other"}),
+    ],
+)
+def test_audit_rejects_tampered_persisted_receipts_and_workspace_coherence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutate,
+) -> None:
+    current = _candidate()
+    write_workspace_graph(current.graph, tmp_path)
+    path = workspace_graph_path(tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mutate(payload)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph", lambda project_root: current
+    )
+
+    report = audit_workspace_graph(tmp_path)
+
+    assert report.status == "fail"
+    assert [finding.code for finding in report.findings] == ["workspace_graph_invalid"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload["nodes"][0]["properties"].update({"title": "tampered"}),
+        lambda payload: payload["edges"][0]["properties"].update({"title": "tampered"}),
+    ],
+)
+def test_audit_reports_valid_but_stale_workspace_graph_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutate,
+) -> None:
+    current = _candidate()
+    write_workspace_graph(current.graph, tmp_path)
+    path = workspace_graph_path(tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mutate(payload)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph", lambda project_root: current
+    )
+
+    report = audit_workspace_graph(tmp_path)
+
+    assert [finding.code for finding in report.findings] == ["workspace_graph_body_stale"]
+
+
+@pytest.mark.unit
 def test_audit_reports_member_add_remove_and_graph_receipt_transitions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -234,6 +313,7 @@ def test_audit_reports_member_add_remove_and_graph_receipt_transitions(
     report = audit_workspace_graph(tmp_path)
 
     assert {finding.code for finding in report.findings} == {
+        "workspace_graph_body_stale",
         "workspace_member_added",
         "workspace_member_removed",
         "workspace_member_state_stale",
@@ -258,6 +338,30 @@ def test_audit_reports_changed_member_graph_and_live_audit_receipts(
     assert {finding.code for finding in report.findings} == {
         "workspace_member_graph_changed",
         "workspace_member_audit_changed",
+        "workspace_member_state_stale",
+    }
+
+
+@pytest.mark.unit
+def test_audit_reports_member_source_and_memory_receipt_staleness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = _candidate()
+    write_workspace_graph(stored.graph, tmp_path)
+    current = _candidate(
+        member_source_set_digest="sha256:new-source",
+        member_memory_state_digest="sha256:new-memory",
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph", lambda project_root: current
+    )
+
+    report = audit_workspace_graph(tmp_path)
+
+    assert {finding.code for finding in report.findings} == {
+        "workspace_member_source_set_stale",
+        "workspace_member_memory_state_stale",
         "workspace_member_state_stale",
     }
 
@@ -372,7 +476,7 @@ def test_candidate_audit_hash_and_comparison_use_one_rendered_byte_sequence(
 ) -> None:
     candidate = _candidate()
     rendered = candidate.graph.to_dict()
-    rendered["source_set_digest"] = "sha256:captured"
+    rendered["nodes"][0]["properties"]["title"] = "captured"
     captured_bytes = (json.dumps(rendered, indent=2, sort_keys=True) + "\n").encode("utf-8")
     monkeypatch.setattr(
         "echelon.workspace_graph_audit.render_workspace_graph",
@@ -385,7 +489,7 @@ def test_candidate_audit_hash_and_comparison_use_one_rendered_byte_sequence(
     report = audit_workspace_graph(tmp_path, candidate=candidate)
 
     assert report.graph_hash == f"sha256:{hashlib.sha256(captured_bytes).hexdigest()}"
-    assert [finding.code for finding in report.findings] == ["workspace_source_set_stale"]
+    assert [finding.code for finding in report.findings] == ["workspace_graph_body_stale"]
 
 
 @pytest.mark.unit

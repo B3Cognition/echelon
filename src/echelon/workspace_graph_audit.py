@@ -171,8 +171,9 @@ def _reference_graph(
 ]:
     if candidate is not None:
         graph_bytes = render_workspace_graph(candidate.graph)
+        document, _ = _parse_workspace_graph_document(graph_bytes)
         return (
-            _parse_workspace_graph_document(graph_bytes),
+            document,
             candidate.issues,
             _sha256(graph_bytes),
             [],
@@ -207,7 +208,7 @@ def _reference_graph(
             ],
         )
     try:
-        document = _parse_workspace_graph_document(graph_bytes)
+        document, _ = _parse_workspace_graph_document(graph_bytes)
     except WorkspaceGraphError:
         return (
             {},
@@ -242,7 +243,9 @@ def _canonical_members_were_removed(exc: WorkspaceGraphError) -> bool:
     return "no canonical spec directories" in str(exc)
 
 
-def _parse_workspace_graph_document(graph_bytes: bytes) -> dict[str, object]:
+def _parse_workspace_graph_document(
+    graph_bytes: bytes,
+) -> tuple[dict[str, object], WorkspaceArtifactGraph]:
     try:
         document = json.loads(graph_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -253,11 +256,24 @@ def _parse_workspace_graph_document(graph_bytes: bytes) -> dict[str, object]:
         nodes = tuple(_parse_node(item) for item in document["nodes"])
         edges = tuple(_parse_edge(item) for item in document["edges"])
         _validate_graph(nodes, edges)
-        _validate_inputs(document["inputs"])
-        _validate_members(document["members"])
+        inputs = _parse_inputs(document["inputs"])
+        members = _parse_members(document["members"])
+        graph = WorkspaceArtifactGraph(
+            workspace_name=document["workspace_name"],
+            generator_version=document["generator_version"],
+            members=members,
+            inputs=inputs,
+            nodes=nodes,
+            edges=edges,
+        )
+        if document["source_set_digest"] != graph.source_set_digest:
+            raise ValueError("workspace source-set digest")
+        if document["member_state_digest"] != graph.member_state_digest:
+            raise ValueError("workspace member-state digest")
+        _validate_workspace_node_coherence(graph)
     except (KeyError, TypeError, ValueError, SpecGraphError) as exc:
         raise WorkspaceGraphError("workspace graph document is invalid") from exc
-    return document
+    return document, graph
 
 
 def _is_workspace_graph_document(document: Mapping[str, object]) -> bool:
@@ -307,7 +323,7 @@ def _parse_edge(value: object) -> GraphEdge:
     return GraphEdge(source, edge_type, target, properties)
 
 
-def _validate_inputs(value: object) -> None:
+def _parse_inputs(value: object) -> tuple[GraphInput, ...]:
     if not isinstance(value, list):
         raise ValueError("workspace inputs")
     inputs: list[GraphInput] = []
@@ -332,13 +348,15 @@ def _validate_inputs(value: object) -> None:
     identities = [(item.role, item.path) for item in inputs]
     if len(set(identities)) != len(identities):
         raise ValueError("duplicate workspace input")
+    return tuple(inputs)
 
 
-def _validate_members(value: object) -> None:
+def _parse_members(value: object) -> tuple[WorkspaceGraphMember, ...]:
     if not isinstance(value, list):
         raise ValueError("workspace members")
     spec_ids: set[str] = set()
     graph_paths: set[str] = set()
+    members: list[WorkspaceGraphMember] = []
     for item in value:
         if not isinstance(item, dict):
             raise ValueError("workspace member")
@@ -373,10 +391,57 @@ def _validate_members(value: object) -> None:
         exclusion_reason = item.get("exclusion_reason")
         if exclusion_reason is not None and not isinstance(exclusion_reason, str):
             raise ValueError("workspace member")
+        if included:
+            if (
+                not isinstance(graph_hash, str)
+                or not isinstance(source_set_digest, str)
+                or not isinstance(memory_state_digest, str)
+                or audit_status not in {"pass", "warn"}
+                or exclusion_reason is not None
+            ):
+                raise ValueError("included workspace member")
+        elif not isinstance(exclusion_reason, str) or not exclusion_reason:
+            raise ValueError("excluded workspace member")
         if spec_id in spec_ids or graph_path in graph_paths:
             raise ValueError("duplicate workspace member")
         spec_ids.add(spec_id)
         graph_paths.add(graph_path)
+        members.append(
+            WorkspaceGraphMember(
+                spec_id=spec_id,
+                graph_path=graph_path,
+                graph_hash=graph_hash,
+                member_source_set_digest=source_set_digest,
+                member_memory_state_digest=memory_state_digest,
+                audit_hash=audit_hash,
+                audit_status=audit_status,
+                included=included,
+                exclusion_reason=exclusion_reason,
+            )
+        )
+    return tuple(members)
+
+
+def _validate_workspace_node_coherence(graph: WorkspaceArtifactGraph) -> None:
+    workspace_nodes = [node for node in graph.nodes if node.id == "workspace:current"]
+    if len(workspace_nodes) != 1 or workspace_nodes[0].type != "Workspace":
+        raise ValueError("workspace root node")
+    members_by_spec = {member.spec_id: member for member in graph.members}
+    spec_nodes = [node for node in graph.nodes if node.type == "Spec"]
+    if len(spec_nodes) != len(members_by_spec):
+        raise ValueError("workspace spec node count")
+    for node in spec_nodes:
+        spec_id = node.properties.get("spec_id")
+        if not isinstance(spec_id, str) or node.id != f"spec:{spec_id}":
+            raise ValueError("workspace spec node identity")
+        member = members_by_spec.get(spec_id)
+        if member is None:
+            raise ValueError("undeclared workspace spec node")
+        expected_status = "included" if member.included else "excluded"
+        if node.properties.get("composition_status") != expected_status:
+            raise ValueError("workspace spec composition status")
+        if node.properties.get("member_audit_status") != member.audit_status:
+            raise ValueError("workspace spec audit status")
 
 
 def _compare_graphs(
@@ -405,6 +470,18 @@ def _compare_graphs(
                 "error",
                 "workspace_member_state_stale",
                 "workspace member-state digest differs from current member receipts",
+            )
+        )
+    current_document = current.to_dict()
+    if (
+        reference.get("nodes") != current_document["nodes"]
+        or reference.get("edges") != current_document["edges"]
+    ):
+        findings.append(
+            WorkspaceGraphFinding(
+                "error",
+                "workspace_graph_body_stale",
+                "workspace graph nodes or edges differ from fresh composition",
             )
         )
     for spec_id in sorted(new_members.keys() - old_members.keys()):
@@ -444,6 +521,24 @@ def _compare_graphs(
                     "error",
                     "workspace_member_audit_changed",
                     f"live member audit receipt changed after workspace graph composition: {spec_id}",
+                    subject_id,
+                )
+            )
+        if old.get("member_source_set_digest") != new.member_source_set_digest:
+            findings.append(
+                WorkspaceGraphFinding(
+                    "error",
+                    "workspace_member_source_set_stale",
+                    f"member source-set digest differs from fresh receipt: {spec_id}",
+                    subject_id,
+                )
+            )
+        if old.get("member_memory_state_digest") != new.member_memory_state_digest:
+            findings.append(
+                WorkspaceGraphFinding(
+                    "error",
+                    "workspace_member_memory_state_stale",
+                    f"member memory-state digest differs from fresh receipt: {spec_id}",
                     subject_id,
                 )
             )
@@ -490,37 +585,7 @@ def _members_by_spec(value: object) -> dict[str, Mapping[str, object]]:
 
 
 def _members_from_document(document: Mapping[str, object]) -> tuple[WorkspaceGraphMember, ...]:
-    members = _members_by_spec(document.get("members", []))
-    return tuple(
-        WorkspaceGraphMember(
-            spec_id=spec_id,
-            graph_path=str(member.get("graph_path", "")),
-            graph_hash=(
-                member.get("graph_hash")
-                if isinstance(member.get("graph_hash"), str)
-                else None
-            ),
-            member_source_set_digest=(
-                member.get("member_source_set_digest")
-                if isinstance(member.get("member_source_set_digest"), str)
-                else None
-            ),
-            member_memory_state_digest=(
-                member.get("member_memory_state_digest")
-                if isinstance(member.get("member_memory_state_digest"), str)
-                else None
-            ),
-            audit_hash=str(member.get("audit_hash", "")),
-            audit_status=str(member.get("audit_status", "unavailable")),
-            included=bool(member.get("included")),
-            exclusion_reason=(
-                member.get("exclusion_reason")
-                if isinstance(member.get("exclusion_reason"), str)
-                else None
-            ),
-        )
-        for spec_id, member in sorted(members.items())
-    )
+    return _parse_members(document.get("members", []))
 
 
 def _issue_findings(
