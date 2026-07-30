@@ -10,11 +10,12 @@ Status: DONE
 ## Commits
 
 - `0af2830f feat: report agent context budget savings`
+- `427e1bc0 fix: complete Task 3 context budget telemetry`
 
 ## Tests
 
-- `PYTHONPATH=src uv run pytest tests/unit/test_agent_context.py -v`: 17 passed.
-- `git diff --check`: passed before implementation commit.
+- `PYTHONPATH=src uv run pytest tests/unit/test_agent_context.py -v`: 18 passed.
+- `git diff --check`: passed.
 
 ## Concerns
 
