@@ -16,7 +16,11 @@ from echelon.mempalace_spec_evidence import (
     mine_spec_evidence_memory,
 )
 from echelon.spec_graph import build_spec_graph, write_spec_graph
-from echelon.spec_graph_audit import audit_spec_graph, write_spec_graph_audit
+from echelon.spec_graph_audit import (
+    audit_spec_graph,
+    classify_spec_graph_audit,
+    write_spec_graph_audit,
+)
 from echelon.workspace_graph import (
     WorkspaceGraphBuildResult,
     build_workspace_graph,
@@ -31,18 +35,6 @@ from echelon.workspace_graph_audit import (
 
 
 _CURRENT_STATUSES = frozenset({"pass", "warn"})
-_REBUILDABLE_GRAPH_FINDINGS = frozenset(
-    {
-        "graph_missing",
-        "graph_invalid",
-        "graph_inputs_invalid",
-        "graph_source_set_stale",
-        "graph_memory_state_stale",
-        "graph_input_added",
-        "graph_input_removed",
-        "graph_input_changed",
-    }
-)
 _DOMAIN_ORDER = {
     "re_memory": 0,
     "evidence_memory": 1,
@@ -196,15 +188,20 @@ def _refresh_spec_graph(root: Path, spec_dir: Path) -> WorkspaceGraphRefreshOutc
         report = audit_spec_graph(root, spec_id)
     except Exception as exc:
         return _failed(spec_id, "spec_graph", exc)
-    if _is_current(report):
+    classification = classify_spec_graph_audit(report)
+    if classification == "current":
         return _outcome(spec_id, "spec_graph", "skipped", _status(report))
-    if not _spec_graph_needs_rebuild(report):
+    if classification != "stale":
         return _outcome(
             spec_id,
             "spec_graph",
             "skipped",
             _status(report),
-            "not_stale",
+            (
+                "source_unavailable"
+                if classification == "unavailable"
+                else "non_rebuildable"
+            ),
         )
     try:
         graph = build_spec_graph(root, spec_id)
@@ -226,14 +223,6 @@ def _evidence_is_applicable(root: Path, spec_dir: Path) -> bool:
 
 def _is_current(report: object) -> bool:
     return _status(report) in _CURRENT_STATUSES
-
-
-def _spec_graph_needs_rebuild(report: object) -> bool:
-    findings = getattr(report, "findings", ())
-    return any(
-        getattr(finding, "code", None) in _REBUILDABLE_GRAPH_FINDINGS
-        for finding in findings
-    )
 
 
 def _status(report: object) -> str | None:

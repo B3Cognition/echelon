@@ -40,6 +40,7 @@ def _candidate(
     audit_hash: str = "sha256:audit",
     audit_status: str = "pass",
     included: bool = True,
+    exclusion_reason: str = "member_graph_stale",
     inputs: tuple[GraphInput, ...] = (),
     issues: tuple[WorkspaceCompositionIssue, ...] = (),
 ) -> WorkspaceGraphBuildResult:
@@ -52,7 +53,7 @@ def _candidate(
         audit_hash=audit_hash,
         audit_status=audit_status,
         included=included,
-        exclusion_reason=None if included else "member_graph_stale",
+        exclusion_reason=None if included else exclusion_reason,
     )
     graph = WorkspaceArtifactGraph(
         workspace_name="workspace",
@@ -68,7 +69,7 @@ def _candidate(
                     "spec_id": spec_id,
                     "composition_status": "included" if included else "excluded",
                     "member_audit_status": audit_status,
-                    **({} if included else {"exclusion_reason": "member_graph_stale"}),
+                    **({} if included else {"exclusion_reason": exclusion_reason}),
                 },
             ),
         ),
@@ -172,6 +173,38 @@ def test_audit_orders_findings_and_maps_warning_failure_and_unavailable_statuses
         "echelon.workspace_graph_audit.build_workspace_graph", lambda project_root: failed
     )
     assert audit_workspace_graph(tmp_path, candidate=failed).status == "unavailable"
+
+
+@pytest.mark.unit
+def test_unhealthy_member_recommends_spec_repair_without_futile_refresh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unhealthy = _candidate(
+        audit_status="fail",
+        included=False,
+        exclusion_reason="member_graph_unhealthy",
+        issues=(
+            WorkspaceCompositionIssue(
+                "error",
+                "member_graph_unhealthy",
+                "spec member is excluded from workspace composition: 001-alpha",
+                "spec:001-alpha",
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph",
+        lambda project_root: unhealthy,
+    )
+
+    report = audit_workspace_graph(tmp_path, candidate=unhealthy)
+
+    assert report.status == "unavailable"
+    assert report.recommendations == (
+        "Inspect affected specs with `echelon graph audit <spec> --json` and repair "
+        "the reported findings.",
+    )
 
 
 @pytest.mark.unit

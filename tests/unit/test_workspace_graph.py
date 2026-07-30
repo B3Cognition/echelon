@@ -98,25 +98,37 @@ def _pass_audit(
     spec_id: str,
     status: str = "pass",
     graph_hash: str | None = None,
+    finding_codes: tuple[str, ...] = (),
 ) -> SimpleNamespace:
+    findings = tuple(
+        SimpleNamespace(code=code)
+        for code in finding_codes
+    )
     return SimpleNamespace(
         spec_id=spec_id,
         status=status,
         graph_hash=graph_hash,
+        findings=findings,
         to_dict=lambda: {
             "schema_version": 1,
             "spec_id": spec_id,
             "graph_hash": graph_hash,
             "status": status,
+            "findings": [{"code": code} for code in finding_codes],
         },
     )
 
 
-def _audit_for_current_graph(spec_dir: Path, status: str = "pass") -> SimpleNamespace:
+def _audit_for_current_graph(
+    spec_dir: Path,
+    status: str = "pass",
+    finding_codes: tuple[str, ...] = (),
+) -> SimpleNamespace:
     return _pass_audit(
         spec_dir.name,
         status,
         "sha256:" + hashlib.sha256(spec_dir.joinpath("spec-artifact-graph.json").read_bytes()).hexdigest(),
+        finding_codes,
     )
 
 
@@ -244,6 +256,11 @@ def test_member_audits_control_partial_composition(
         lambda root, selector: _audit_for_current_graph(
             Path(selector),
             statuses[Path(selector).name],
+            (
+                ("graph_source_set_stale",)
+                if Path(selector).name == "002-beta"
+                else ()
+            ),
         ),
     )
 
@@ -261,6 +278,32 @@ def test_member_audits_control_partial_composition(
     }
     assert [member.included for member in result.graph.members] == [True, False]
     assert result.issues[0].subject_id == "spec:002-beta"
+
+
+@pytest.mark.unit
+def test_current_member_with_coherence_failure_is_unhealthy_not_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path)
+    alpha = _spec_dir(tmp_path, "001-alpha")
+    _write_member_graph(alpha, _member_graph("001-alpha"))
+    monkeypatch.setattr(
+        "echelon.workspace_graph.audit_spec_graph",
+        lambda root, selector: _audit_for_current_graph(
+            Path(selector),
+            "fail",
+            ("requirement_verification_missing",),
+        ),
+    )
+
+    result = build_workspace_graph(tmp_path)
+    member = result.graph.members[0]
+    spec_node = next(node for node in result.graph.nodes if node.type == "Spec")
+
+    assert member.exclusion_reason == "member_graph_unhealthy"
+    assert spec_node.properties["exclusion_reason"] == "member_graph_unhealthy"
+    assert result.issues[0].code == "member_graph_unhealthy"
 
 
 @pytest.mark.unit

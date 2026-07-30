@@ -23,7 +23,7 @@ from echelon.spec_graph import (
     _validate_graph,
     build_spec_graph,
 )
-from echelon.spec_graph_audit import audit_spec_graph
+from echelon.spec_graph_audit import audit_spec_graph, classify_spec_graph_audit
 from harness.spec_frontmatter import read_frontmatter, read_target_entries
 
 
@@ -188,13 +188,18 @@ def build_workspace_graph(project_root: Path) -> WorkspaceGraphBuildResult:
             edges,
             invalid_reason,
         ) = _read_member_graph(spec_dir, spec_id)
-        audit_status, audit_hash, audited_graph_hash = _audit_receipt(root, spec_dir)
+        (
+            audit_status,
+            audit_hash,
+            audited_graph_hash,
+            audit_classification,
+        ) = _audit_receipt(root, spec_dir)
         snapshot_mismatch = graph_hash is not None and audited_graph_hash != graph_hash
         included = invalid_reason is None and audit_status in {"pass", "warn"}
         exclusion_reason = (
             invalid_reason
             or ("member_graph_changed" if snapshot_mismatch else None)
-            or _audit_exclusion_reason(audit_status)
+            or _audit_exclusion_reason(audit_classification)
         )
         included = included and exclusion_reason is None
         members.append(
@@ -535,24 +540,31 @@ def _properties(value: object) -> Mapping[str, object]:
     return value
 
 
-def _audit_receipt(root: Path, spec_dir: Path) -> tuple[str, str, str | None]:
+def _audit_receipt(
+    root: Path,
+    spec_dir: Path,
+) -> tuple[str, str, str | None, str]:
     try:
         report = audit_spec_graph(root, spec_dir)
         status = str(report.status)
         payload = report.to_dict()
         graph_hash = report.graph_hash if isinstance(report.graph_hash, str) else None
+        classification = classify_spec_graph_audit(report)
     except Exception as exc:
         status = "unavailable"
         payload = {"schema_version": 1, "status": status, "error": type(exc).__name__}
         graph_hash = None
-    return status, _canonical_digest(payload), graph_hash
+        classification = "unavailable"
+    return status, _canonical_digest(payload), graph_hash, classification
 
 
-def _audit_exclusion_reason(status: str) -> str | None:
-    if status in {"pass", "warn"}:
+def _audit_exclusion_reason(classification: str) -> str | None:
+    if classification == "current":
         return None
-    if status == "fail":
+    if classification == "stale":
         return "member_graph_stale"
+    if classification == "unhealthy":
+        return "member_graph_unhealthy"
     return "member_graph_unavailable"
 
 

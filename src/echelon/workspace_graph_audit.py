@@ -31,6 +31,25 @@ from echelon.workspace_graph import (
 
 
 WORKSPACE_GRAPH_AUDIT_FILENAME = "workspace-artifact-graph-audit.json"
+_REFRESHABLE_FINDING_CODES = frozenset(
+    {
+        "member_graph_changed",
+        "member_graph_invalid",
+        "member_graph_stale",
+        "workspace_graph_body_stale",
+        "workspace_graph_invalid",
+        "workspace_graph_missing",
+        "workspace_identity_stale",
+        "workspace_member_added",
+        "workspace_member_audit_changed",
+        "workspace_member_graph_changed",
+        "workspace_member_memory_state_stale",
+        "workspace_member_removed",
+        "workspace_member_source_set_stale",
+        "workspace_member_state_stale",
+        "workspace_source_set_stale",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -644,9 +663,18 @@ def _report(
 
 
 def _recommendations(findings: Iterable[WorkspaceGraphFinding]) -> tuple[str, ...]:
-    if not tuple(findings):
-        return ()
-    return ("Run `echelon graph workspace refresh --write` to repair stale workspace state.",)
+    codes = {finding.code for finding in findings}
+    recommendations: list[str] = []
+    if codes & _REFRESHABLE_FINDING_CODES:
+        recommendations.append(
+            "Run `echelon graph workspace refresh --write` to repair stale workspace state."
+        )
+    if "member_graph_unhealthy" in codes:
+        recommendations.append(
+            "Inspect affected specs with `echelon graph audit <spec> --json` and repair "
+            "the reported findings."
+        )
+    return tuple(recommendations)
 
 
 def _sha256(value: bytes) -> str:

@@ -56,7 +56,40 @@ def test_spec_graph_coherence_failure_is_not_rebuilt(
     assert (outcome.action, outcome.status, outcome.detail) == (
         "skipped",
         "fail",
-        "not_stale",
+        "non_rebuildable",
+    )
+
+
+@pytest.mark.unit
+def test_spec_graph_with_unavailable_sources_is_not_rebuilt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from echelon.workspace_graph_refresh import _refresh_spec_graph
+
+    spec_dir = tmp_path / "specs" / "001-alpha"
+    spec_dir.mkdir(parents=True)
+    report = _Report(
+        "unavailable",
+        (_Finding("graph_source_unavailable"),),
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph_refresh.audit_spec_graph",
+        lambda root, selector: report,
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph_refresh.build_spec_graph",
+        lambda root, selector: pytest.fail(
+            "a graph with unavailable sources cannot be rebuilt"
+        ),
+    )
+
+    outcome = _refresh_spec_graph(tmp_path, spec_dir)
+
+    assert (outcome.action, outcome.status, outcome.detail) == (
+        "skipped",
+        "unavailable",
+        "source_unavailable",
     )
 
 
