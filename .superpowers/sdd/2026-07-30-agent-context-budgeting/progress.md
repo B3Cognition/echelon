@@ -36,3 +36,7 @@ Task 5: complete
 - commits: 04d4aaeb
 - verification: focused staged bounded-renderer tests passed; git diff --check passed
 - review: local verification pass
+
+Task 5: fix round 1
+- reviewer requested complete directory manifests for manifest-preserving staged context
+- verification: focused agent-context and staged prompt tests passed; git diff --check passed

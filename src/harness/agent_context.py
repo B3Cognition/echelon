@@ -305,8 +305,9 @@ def _render_directory(path_ref: str, candidate: Path, policy: ContextPolicy) -> 
     files = _directory_manifest(candidate)
     manifest_lines = ["\n---", f"# {resolved.as_posix().rstrip('/')}/", "## Directory manifest"]
     manifest_lines.extend(f"- {path.relative_to(candidate).as_posix()}" for path in files)
-    chunks = ["\n".join(manifest_lines)]
-    used = _byte_len(chunks[0])
+    manifest_text = "\n".join(manifest_lines)
+    chunks = [manifest_text]
+    used = _byte_len(manifest_text)
     included = 0
     unavailable = 0
     for path in files:
@@ -326,8 +327,15 @@ def _render_directory(path_ref: str, candidate: Path, policy: ContextPolicy) -> 
     truncated = included < len(files)
     if truncated:
         chunks.append(f"\n[Directory bodies truncated: included {included}/{len(files)} files]")
-    text, bounded = _bounded_text("\n".join(chunks), policy.cap_bytes)
-    omitted = {"files": len(files), "included_files": included, "truncated": str(truncated or bounded).lower()}
+    text = "\n".join(chunks)
+    bounded = False
+    if policy.overflow_action != "manifest_only":
+        text, bounded = _bounded_text(text, policy.cap_bytes)
+    omitted = {
+        "files": len(files),
+        "included_files": included,
+        "truncated": str(truncated or bounded).lower(),
+    }
     if unavailable:
         omitted["unavailable_files"] = unavailable
     return RenderedSection(

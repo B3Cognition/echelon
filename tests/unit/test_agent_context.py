@@ -150,6 +150,30 @@ def test_render_contracts_directory_preserves_manifest_when_body_capped(tmp_path
     assert section.omitted["truncated"] == "true"
 
 
+def test_render_contracts_directory_preserves_manifest_when_manifest_exceeds_cap(
+    tmp_path: Path,
+) -> None:
+    contracts = tmp_path / "contracts"
+    contracts.mkdir()
+    for index in range(300):
+        (contracts / f"contract-{index:03d}.md").write_text(
+            f"BODY-{index:03d}",
+            encoding="utf-8",
+        )
+    policy = ContextPolicy("must_preserve", "directory_bounded_files", 128, "manifest_only")
+
+    section = render_context_path("contracts/", contracts, policy, {}, phase_id="phase3-sentinel")
+
+    assert "## Directory manifest" in section.text
+    assert "- contract-000.md" in section.text
+    assert "- contract-299.md" in section.text
+    assert "BODY-000" not in section.text
+    assert "[Directory bodies truncated: included 0/300 files]" in section.text
+    assert section.omitted["files"] == 300
+    assert section.omitted["included_files"] == 0
+    assert section.omitted["truncated"] == "true"
+
+
 def test_render_file_keeps_section_within_cap(tmp_path: Path) -> None:
     document = tmp_path / "document.md"
     document.write_text("content" * 100, encoding="utf-8")
@@ -169,7 +193,7 @@ def test_render_journal_keeps_section_within_tiny_cap(tmp_path: Path) -> None:
     assert section.bytes <= 8
 
 
-def test_render_directory_keeps_section_within_cap(tmp_path: Path) -> None:
+def test_render_directory_keeps_body_content_within_remaining_cap(tmp_path: Path) -> None:
     contracts = tmp_path / "contracts"
     contracts.mkdir()
     (contracts / "a.md").write_text("a" * 5000, encoding="utf-8")
@@ -177,7 +201,8 @@ def test_render_directory_keeps_section_within_cap(tmp_path: Path) -> None:
 
     section = render_context_path("contracts/", contracts, policy, {})
 
-    assert section.bytes <= 64
+    assert "- a.md" in section.text
+    assert "a" * 100 not in section.text
 
 
 def test_render_directory_marks_unreadable_child_unavailable(tmp_path: Path, monkeypatch) -> None:
