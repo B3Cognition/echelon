@@ -2025,6 +2025,121 @@ def graph_refresh(
     raise typer.Exit(code=_graph_exit_code(report.status))
 
 
+@graph_app.command("export")
+def graph_export(
+    spec_selector: str,
+    output_format: str = typer.Option("dot", "--format"),
+    lens: str = typer.Option("all", "--lens"),
+    output: Optional[Path] = typer.Option(None, "--output"),
+) -> None:
+    """Export a persisted artifact graph without building or mining."""
+    from echelon.graph_visualization import (
+        GraphVisualizationError,
+        load_graph_document,
+        render_graph_dot,
+    )
+    from echelon.mempalace_requirements import (
+        SpecMemoryError,
+        resolve_spec_dir,
+    )
+    from echelon.spec_graph import GRAPH_FILENAME, SpecGraphError
+    from echelon.spec_graph_audit import audit_spec_graph
+
+    try:
+        if output_format != "dot":
+            raise GraphVisualizationError(
+                f"unsupported graph export format {output_format!r}; expected dot"
+            )
+        spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
+        document = load_graph_document(spec_dir / GRAPH_FILENAME)
+        report = audit_spec_graph(Path.cwd(), spec_selector)
+        rendered = render_graph_dot(document, report, lens=lens)
+        if output is None:
+            typer.echo(rendered, nl=False)
+        else:
+            output_path = output if output.is_absolute() else Path.cwd() / output
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(rendered, encoding="utf-8")
+            typer.echo(f"Graph DOT: {output_path}")
+    except (
+        GraphVisualizationError,
+        SpecGraphError,
+        SpecMemoryError,
+        OSError,
+        ValueError,
+    ) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    raise typer.Exit(code=_graph_exit_code(report.status))
+
+
+@graph_app.command("view")
+def graph_view(
+    spec_selector: str,
+    lens: Optional[str] = typer.Option(None, "--lens"),
+    output: Optional[Path] = typer.Option(None, "--output"),
+    open_browser: bool = typer.Option(True, "--open/--no-open"),
+) -> None:
+    """Create and optionally open an offline persisted-graph viewer."""
+    import webbrowser
+
+    from echelon.graph_visualization import (
+        GRAPH_LENSES,
+        GraphVisualizationError,
+        load_cytoscape_source,
+        load_graph_document,
+        render_graph_html,
+    )
+    from echelon.mempalace_requirements import (
+        SpecMemoryError,
+        resolve_spec_dir,
+    )
+    from echelon.spec_graph import GRAPH_FILENAME, SpecGraphError
+    from echelon.spec_graph_audit import audit_spec_graph
+
+    try:
+        spec_dir = resolve_spec_dir(Path.cwd(), spec_selector)
+        document = load_graph_document(spec_dir / GRAPH_FILENAME)
+        report = audit_spec_graph(Path.cwd(), spec_selector)
+        initial_lens = lens or (
+            "exceptions" if report.findings else "traceability"
+        )
+        if initial_lens not in GRAPH_LENSES:
+            raise GraphVisualizationError(
+                f"unknown graph lens {initial_lens!r}; "
+                f"expected one of {', '.join(GRAPH_LENSES)}"
+            )
+        html = render_graph_html(
+            document,
+            report,
+            cytoscape_source=load_cytoscape_source(),
+            initial_lens=initial_lens,
+        )
+        output_path = output or (
+            Path.cwd() / ".echelon" / "graph" / f"{spec_dir.name}.html"
+        )
+        if not output_path.is_absolute():
+            output_path = Path.cwd() / output_path
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(html, encoding="utf-8")
+        typer.echo(
+            f"Graph viewer: {output_path} "
+            f"(audit={report.status}, findings={len(report.findings)})"
+        )
+        if open_browser:
+            webbrowser.open(output_path.resolve().as_uri())
+    except (
+        GraphVisualizationError,
+        SpecGraphError,
+        SpecMemoryError,
+        OSError,
+        ValueError,
+    ) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from exc
+    raise typer.Exit(code=_graph_exit_code(report.status))
+
+
 @spec_memory_app.command("mine")
 def spec_memory_mine(
     spec_selector: str,

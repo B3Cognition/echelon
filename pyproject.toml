@@ -52,6 +52,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "codegen" = ["soar/*.soar", "library/packs/**/*.yaml"]
+"echelon" = ["assets/*.js", "assets/licenses/*"]
 "lexicon" = ["*.lark"]
 
 [tool.pytest.ini_options]

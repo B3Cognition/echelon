@@ -592,6 +592,42 @@ echelon re memory refresh
 echelon spec evidence memory refresh <spec>
 ```
 
+### Visualization And Export
+
+Graph inspection is useful before graph context or GraphRAG retrieval is
+enabled. V1 adds:
+
+```bash
+echelon graph view <spec> [--lens <lens>] [--output <path>] [--no-open]
+echelon graph export <spec> [--format dot] [--lens <lens>] [--output <path>]
+```
+
+Supported lenses are `all`, `exceptions`, `traceability`, `memory`, and
+`delivery`. The interactive viewer exposes all lenses at runtime and uses the
+CLI lens only as its initial selection. The default is `exceptions` when the
+live audit has findings and `traceability` otherwise.
+
+`view` reads the persisted graph, runs the existing read-only graph audit, and
+writes a self-contained HTML document to
+`.echelon/graph/<spec-id>.html` unless `--output` is provided. It embeds the
+packaged Cytoscape.js browser bundle and therefore needs no network service.
+The page provides lens selection, node/property search, one-hop and two-hop
+neighbourhood views, audit findings, node details, and fit/reset controls.
+Audit failures are displayed prominently rather than preventing inspection.
+The command opens a `file:` URL through the system browser unless `--no-open`
+is supplied.
+
+`export` emits deterministic directed DOT to stdout unless `--output` is
+provided. DOT generation does not invoke Graphviz; operators may render it
+with tools such as `dot -Tsvg`. Node and edge ordering is canonical, labels are
+escaped, lens filtering retains valid endpoints, and audit failures are
+represented as graph metadata.
+
+Neither command builds the graph, writes an audit report, refreshes MemPalace,
+or mines any source. Missing or invalid persisted graphs exit `2`. Audit
+`pass`/`warn`, `fail`, and `unavailable` map to exit codes `0`, `1`, and `2`
+after successful output generation.
+
 ## Error Handling
 
 Errors must be bounded and artifact-specific:

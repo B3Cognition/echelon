@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from echelon.spec_graph import GraphNode, SpecArtifactGraph
+from echelon.spec_graph import GraphNode, SpecArtifactGraph, write_spec_graph
 from echelon.spec_graph_audit import GraphFinding, SpecGraphAuditReport
 
 
@@ -36,6 +36,22 @@ def _workspace(tmp_path: Path) -> Path:
     spec_dir.mkdir(parents=True)
     (spec_dir / "spec.md").write_text("FR-001\n", encoding="utf-8")
     return spec_dir
+
+
+def _persist_graph(tmp_path: Path) -> Path:
+    spec_dir = _workspace(tmp_path)
+    write_spec_graph(_graph(), spec_dir)
+    return spec_dir
+
+
+def _audit(status: str = "pass") -> SpecGraphAuditReport:
+    return SpecGraphAuditReport(
+        schema_version=1,
+        spec_id="001-demo",
+        graph_hash="sha256:graph",
+        status=status,
+        findings=(),
+    )
 
 
 @pytest.mark.unit
@@ -206,3 +222,127 @@ def test_graph_refresh_writes_graph_then_audit_without_mining(
     assert calls == ["build", "audit"]
     assert (spec_dir / "spec-artifact-graph.json").is_file()
     assert (spec_dir / "spec-artifact-graph-audit.json").is_file()
+
+
+@pytest.mark.unit
+def test_graph_export_writes_dot_to_stdout_without_mining(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _persist_graph(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.audit_spec_graph",
+        lambda project_root, selector: _audit(),
+    )
+    monkeypatch.setattr(
+        "echelon.mempalace_requirements.mine_spec_requirements",
+        lambda *args, **kwargs: pytest.fail("export must not mine memory"),
+    )
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        ["graph", "export", "001-demo", "--format", "dot", "--lens", "all"],
+    )
+
+    assert result.exit_code == 0
+    assert result.output.startswith('digraph "001-demo" {')
+    assert '"spec:001-demo"' in result.output
+
+
+@pytest.mark.unit
+def test_graph_export_writes_file_and_preserves_failed_audit_exit(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _persist_graph(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.audit_spec_graph",
+        lambda project_root, selector: _audit("fail"),
+    )
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "graph",
+            "export",
+            "001-demo",
+            "--output",
+            "reports/graph.dot",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert (tmp_path / "reports" / "graph.dot").read_text().startswith(
+        'digraph "001-demo" {'
+    )
+
+
+@pytest.mark.unit
+def test_graph_view_writes_offline_html_and_opens_browser(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _persist_graph(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    opened: list[str] = []
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.audit_spec_graph",
+        lambda project_root, selector: _audit(),
+    )
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url) or True)
+    from echelon.cli_app import app
+
+    result = CliRunner().invoke(app, ["graph", "view", "001-demo"])
+
+    output = tmp_path / ".echelon" / "graph" / "001-demo.html"
+    assert result.exit_code == 0
+    assert output.is_file()
+    html = output.read_text(encoding="utf-8")
+    assert "window.ECHELON_GRAPH" in html
+    assert '.version="3.34.0"' in html
+    assert opened == [output.resolve().as_uri()]
+
+
+@pytest.mark.unit
+def test_graph_view_no_open_uses_requested_lens_and_rejects_unknown_lens(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _persist_graph(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "echelon.spec_graph_audit.audit_spec_graph",
+        lambda project_root, selector: _audit(),
+    )
+    monkeypatch.setattr(
+        "webbrowser.open",
+        lambda url: pytest.fail("browser must remain closed"),
+    )
+    from echelon.cli_app import app
+
+    viewed = CliRunner().invoke(
+        app,
+        ["graph", "view", "001-demo", "--lens", "memory", "--no-open"],
+    )
+    rejected = CliRunner().invoke(
+        app,
+        ["graph", "view", "001-demo", "--lens", "unknown", "--no-open"],
+    )
+    bad_format = CliRunner().invoke(
+        app,
+        ["graph", "export", "001-demo", "--format", "json"],
+    )
+
+    assert viewed.exit_code == 0
+    html = (
+        tmp_path / ".echelon" / "graph" / "001-demo.html"
+    ).read_text(encoding="utf-8")
+    assert '"initial_lens": "memory"' in html
+    assert rejected.exit_code == 2
+    assert "unknown graph lens" in rejected.stderr
+    assert bad_format.exit_code == 2
+    assert "unsupported graph export format" in bad_format.stderr
