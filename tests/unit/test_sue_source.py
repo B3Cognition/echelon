@@ -153,6 +153,19 @@ def test_ambiguous_alias_remains_unmatched():
     assert source.canonical_glossary_match(knowledge, "record") is None
 
 
+def test_source_map_indexes_are_immutable():
+    knowledge = source.build_source_knowledge_map(
+        _bundle_with_declared_dependency("PAYMENT-RETRY", "PAYMENT-LIMIT")
+    )
+
+    with pytest.raises(TypeError):
+        knowledge.units_by_id["INFERRED-UNIT"] = _unit("INFERRED-UNIT")
+    with pytest.raises(TypeError):
+        knowledge.outgoing["PAYMENT-RETRY"] = ()
+    with pytest.raises(TypeError):
+        knowledge.glossary_by_alias["inferred"] = ("inferred",)
+
+
 def test_bundle_digest_is_canonical_and_stable():
     bundle_a = source.make_bundle(
         bundle_id="checkout",

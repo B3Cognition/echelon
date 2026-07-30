@@ -10,9 +10,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, is_dataclass, replace
 from pathlib import Path
 from typing import Any
+from types import MappingProxyType
 
 
 _LINE_RANGE_RE = re.compile(r"L([1-9][0-9]*)-L([1-9][0-9]*)\Z")
@@ -119,9 +121,9 @@ class SourceKnowledgeMap:
     """Deterministic, declaration-only indexes for one source bundle."""
 
     bundle_id: str
-    units_by_id: dict[str, SourceUnit]
-    outgoing: dict[str, tuple[DeclaredRelation, ...]]
-    glossary_by_alias: dict[str, tuple[str, ...]]
+    units_by_id: Mapping[str, SourceUnit]
+    outgoing: Mapping[str, tuple[DeclaredRelation, ...]]
+    glossary_by_alias: Mapping[str, tuple[str, ...]]
 
 
 def _json_value(value: object) -> Any:
@@ -192,9 +194,9 @@ def build_source_knowledge_map(bundle: SUESourceBundle) -> SourceKnowledgeMap:
     }
     return SourceKnowledgeMap(
         bundle_id=bundle.bundle_id,
-        units_by_id=units_by_id,
-        outgoing=outgoing,
-        glossary_by_alias=glossary_by_alias,
+        units_by_id=MappingProxyType(units_by_id),
+        outgoing=MappingProxyType(outgoing),
+        glossary_by_alias=MappingProxyType(glossary_by_alias),
     )
 
 
