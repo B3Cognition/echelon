@@ -10,7 +10,14 @@ from pathlib import Path
 import tempfile
 from typing import Iterable, Mapping
 
-from echelon.spec_graph import GRAPH_SCHEMA_VERSION
+from echelon.spec_graph import (
+    GRAPH_SCHEMA_VERSION,
+    GraphEdge,
+    GraphInput,
+    GraphNode,
+    SpecGraphError,
+    _validate_graph,
+)
 from echelon.workspace_graph import (
     WorkspaceArtifactGraph,
     WorkspaceCompositionIssue,
@@ -18,7 +25,6 @@ from echelon.workspace_graph import (
     WorkspaceGraphError,
     WorkspaceGraphMember,
     build_workspace_graph,
-    load_workspace_graph_document,
     render_workspace_graph,
     workspace_graph_path,
 )
@@ -86,13 +92,19 @@ def audit_workspace_graph(
         current = build_workspace_graph(root)
     except WorkspaceGraphError as exc:
         code, unavailable = _composition_failure(exc)
+        members = _members_from_document(reference)
         return _report(
             workspace_name=reference.get("workspace_name", root.name),
             graph_hash=graph_hash,
-            members=_members_from_document(reference),
+            members=members,
             findings=[
                 *load_findings,
                 *_issue_findings(reference_issues),
+                *(
+                    _removed_member_findings(members)
+                    if _canonical_members_were_removed(exc)
+                    else []
+                ),
                 WorkspaceGraphFinding(
                     "error",
                     code,
@@ -105,6 +117,7 @@ def audit_workspace_graph(
     findings = [*load_findings]
     findings.extend(_issue_findings(reference_issues))
     findings.extend(_compare_graphs(reference, current.graph))
+    findings.extend(_member_audit_findings(current.graph.members))
     findings.extend(_issue_findings(current.issues))
     return _report(
         workspace_name=current.graph.workspace_name,
@@ -150,24 +163,52 @@ def write_workspace_graph_audit(
 def _reference_graph(
     root: Path,
     candidate: WorkspaceGraphBuildResult | None,
-) -> tuple[dict[str, object], tuple[WorkspaceCompositionIssue, ...], str | None, list[WorkspaceGraphFinding]]:
+) -> tuple[
+    dict[str, object],
+    tuple[WorkspaceCompositionIssue, ...],
+    str | None,
+    list[WorkspaceGraphFinding],
+]:
     if candidate is not None:
+        graph_bytes = render_workspace_graph(candidate.graph)
         return (
-            candidate.graph.to_dict(),
+            _parse_workspace_graph_document(graph_bytes),
             candidate.issues,
-            _sha256(render_workspace_graph(candidate.graph)),
+            _sha256(graph_bytes),
             [],
         )
+    path = workspace_graph_path(root)
     try:
-        document = load_workspace_graph_document(root)
-    except WorkspaceGraphError as exc:
+        graph_bytes = path.read_bytes()
+    except FileNotFoundError as exc:
         return (
             {},
             (),
             None,
-            [WorkspaceGraphFinding("error", _load_code(exc), str(exc))],
+            [
+                WorkspaceGraphFinding(
+                    "error",
+                    "workspace_graph_missing",
+                    f"workspace graph artifact is missing: {path}",
+                )
+            ],
         )
-    if not _is_workspace_graph_document(document):
+    except OSError as exc:
+        return (
+            {},
+            (),
+            None,
+            [
+                WorkspaceGraphFinding(
+                    "error",
+                    "workspace_graph_invalid",
+                    f"workspace graph artifact is unreadable: {path}",
+                )
+            ],
+        )
+    try:
+        document = _parse_workspace_graph_document(graph_bytes)
+    except WorkspaceGraphError:
         return (
             {},
             (),
@@ -180,11 +221,7 @@ def _reference_graph(
                 )
             ],
         )
-    return document, (), _sha256(workspace_graph_path(root).read_bytes()), []
-
-
-def _load_code(exc: WorkspaceGraphError) -> str:
-    return "workspace_graph_missing" if "is missing" in str(exc) else "workspace_graph_invalid"
+    return document, (), _sha256(graph_bytes), []
 
 
 def _composition_failure(exc: WorkspaceGraphError) -> tuple[str, bool]:
@@ -201,6 +238,28 @@ def _composition_failure(exc: WorkspaceGraphError) -> tuple[str, bool]:
     return "workspace_composition_failed", False
 
 
+def _canonical_members_were_removed(exc: WorkspaceGraphError) -> bool:
+    return "no canonical spec directories" in str(exc)
+
+
+def _parse_workspace_graph_document(graph_bytes: bytes) -> dict[str, object]:
+    try:
+        document = json.loads(graph_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise WorkspaceGraphError("workspace graph JSON is malformed") from exc
+    if not isinstance(document, dict) or not _is_workspace_graph_document(document):
+        raise WorkspaceGraphError("workspace graph document is invalid")
+    try:
+        nodes = tuple(_parse_node(item) for item in document["nodes"])
+        edges = tuple(_parse_edge(item) for item in document["edges"])
+        _validate_graph(nodes, edges)
+        _validate_inputs(document["inputs"])
+        _validate_members(document["members"])
+    except (KeyError, TypeError, ValueError, SpecGraphError) as exc:
+        raise WorkspaceGraphError("workspace graph document is invalid") from exc
+    return document
+
+
 def _is_workspace_graph_document(document: Mapping[str, object]) -> bool:
     required_strings = (
         "generator_version",
@@ -209,9 +268,115 @@ def _is_workspace_graph_document(document: Mapping[str, object]) -> bool:
         "member_state_digest",
     )
     required_lists = ("members", "inputs", "nodes", "edges")
-    return all(isinstance(document.get(key), str) for key in required_strings) and all(
-        isinstance(document.get(key), list) for key in required_lists
+    return (
+        document.get("schema_version") == GRAPH_SCHEMA_VERSION
+        and document.get("scope") == "workspace"
+        and all(isinstance(document.get(key), str) for key in required_strings)
+        and all(
+            isinstance(document.get(key), list) for key in required_lists
+        )
     )
+
+
+def _parse_node(value: object) -> GraphNode:
+    if not isinstance(value, dict):
+        raise ValueError("workspace node")
+    node_id = value.get("id")
+    node_type = value.get("type")
+    properties = value.get("properties")
+    if (
+        not isinstance(node_id, str)
+        or not isinstance(node_type, str)
+        or not isinstance(properties, dict)
+    ):
+        raise ValueError("workspace node")
+    return GraphNode(node_id, node_type, properties)
+
+
+def _parse_edge(value: object) -> GraphEdge:
+    if not isinstance(value, dict):
+        raise ValueError("workspace edge")
+    source = value.get("source")
+    edge_type = value.get("type")
+    target = value.get("target")
+    properties = value.get("properties")
+    if not all(
+        isinstance(item, str) for item in (source, edge_type, target)
+    ) or not isinstance(properties, dict):
+        raise ValueError("workspace edge")
+    return GraphEdge(source, edge_type, target, properties)
+
+
+def _validate_inputs(value: object) -> None:
+    if not isinstance(value, list):
+        raise ValueError("workspace inputs")
+    inputs: list[GraphInput] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("workspace input")
+        path = item.get("path")
+        digest = item.get("hash")
+        role = item.get("role")
+        required = item.get("required")
+        if not all(
+            isinstance(field, str) for field in (path, digest, role)
+        ) or not isinstance(required, bool):
+            raise ValueError("workspace input")
+        status = item.get("status")
+        source_set_digest = item.get("source_set_digest")
+        if status is not None and not isinstance(status, str):
+            raise ValueError("workspace input")
+        if source_set_digest is not None and not isinstance(source_set_digest, str):
+            raise ValueError("workspace input")
+        inputs.append(GraphInput(path, digest, role, required, status, source_set_digest))
+    identities = [(item.role, item.path) for item in inputs]
+    if len(set(identities)) != len(identities):
+        raise ValueError("duplicate workspace input")
+
+
+def _validate_members(value: object) -> None:
+    if not isinstance(value, list):
+        raise ValueError("workspace members")
+    spec_ids: set[str] = set()
+    graph_paths: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValueError("workspace member")
+        spec_id = item.get("spec_id")
+        graph_path = item.get("graph_path")
+        graph_hash = item.get("graph_hash")
+        source_set_digest = item.get("member_source_set_digest")
+        memory_state_digest = item.get("member_memory_state_digest")
+        audit_hash = item.get("audit_hash")
+        audit_status = item.get("audit_status")
+        included = item.get("included")
+        if (
+            not isinstance(spec_id, str)
+            or not spec_id
+            or not isinstance(graph_path, str)
+            or not graph_path
+            or (graph_hash is not None and not isinstance(graph_hash, str))
+            or (
+                source_set_digest is not None
+                and not isinstance(source_set_digest, str)
+            )
+            or (
+                memory_state_digest is not None
+                and not isinstance(memory_state_digest, str)
+            )
+            or not isinstance(audit_hash, str)
+            or not isinstance(audit_status, str)
+            or audit_status not in {"pass", "warn", "fail", "unavailable"}
+            or not isinstance(included, bool)
+        ):
+            raise ValueError("workspace member")
+        exclusion_reason = item.get("exclusion_reason")
+        if exclusion_reason is not None and not isinstance(exclusion_reason, str):
+            raise ValueError("workspace member")
+        if spec_id in spec_ids or graph_path in graph_paths:
+            raise ValueError("duplicate workspace member")
+        spec_ids.add(spec_id)
+        graph_paths.add(graph_path)
 
 
 def _compare_graphs(
@@ -285,6 +450,35 @@ def _compare_graphs(
     return findings
 
 
+def _member_audit_findings(
+    members: Iterable[WorkspaceGraphMember],
+) -> list[WorkspaceGraphFinding]:
+    return [
+        WorkspaceGraphFinding(
+            "warning",
+            "workspace_member_audit_warning",
+            f"live member audit has warnings: {member.spec_id}",
+            f"spec:{member.spec_id}",
+        )
+        for member in members
+        if member.included and member.audit_status == "warn"
+    ]
+
+
+def _removed_member_findings(
+    members: Iterable[WorkspaceGraphMember],
+) -> list[WorkspaceGraphFinding]:
+    return [
+        WorkspaceGraphFinding(
+            "error",
+            "workspace_member_removed",
+            f"canonical spec was removed after workspace graph composition: {member.spec_id}",
+            f"spec:{member.spec_id}",
+        )
+        for member in members
+    ]
+
+
 def _members_by_spec(value: object) -> dict[str, Mapping[str, object]]:
     if not isinstance(value, list):
         return {}
@@ -300,8 +494,22 @@ def _members_from_document(document: Mapping[str, object]) -> tuple[WorkspaceGra
     return tuple(
         WorkspaceGraphMember(
             spec_id=spec_id,
-            path=str(member.get("path", "")),
-            graph_hash=member.get("graph_hash") if isinstance(member.get("graph_hash"), str) else None,
+            graph_path=str(member.get("graph_path", "")),
+            graph_hash=(
+                member.get("graph_hash")
+                if isinstance(member.get("graph_hash"), str)
+                else None
+            ),
+            member_source_set_digest=(
+                member.get("member_source_set_digest")
+                if isinstance(member.get("member_source_set_digest"), str)
+                else None
+            ),
+            member_memory_state_digest=(
+                member.get("member_memory_state_digest")
+                if isinstance(member.get("member_memory_state_digest"), str)
+                else None
+            ),
             audit_hash=str(member.get("audit_hash", "")),
             audit_status=str(member.get("audit_status", "unavailable")),
             included=bool(member.get("included")),

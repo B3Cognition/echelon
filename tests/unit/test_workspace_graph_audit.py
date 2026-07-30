@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import yaml
 
-from echelon.spec_graph import GraphInput, GraphNode
+from echelon.spec_graph import GraphInput, GraphNode, SpecArtifactGraph, render_spec_graph
 from echelon.workspace_graph import (
     WorkspaceArtifactGraph,
     WorkspaceGraphBuildResult,
@@ -25,6 +29,8 @@ def _candidate(
     *,
     spec_id: str = "001-alpha",
     graph_hash: str | None = "sha256:member",
+    member_source_set_digest: str | None = "sha256:member-source",
+    member_memory_state_digest: str | None = "sha256:member-memory",
     audit_hash: str = "sha256:audit",
     audit_status: str = "pass",
     included: bool = True,
@@ -33,8 +39,10 @@ def _candidate(
 ) -> WorkspaceGraphBuildResult:
     member = WorkspaceGraphMember(
         spec_id=spec_id,
-        path=f"specs/{spec_id}",
+        graph_path=f"specs/{spec_id}/spec-artifact-graph.json",
         graph_hash=graph_hash,
+        member_source_set_digest=member_source_set_digest,
+        member_memory_state_digest=member_memory_state_digest,
         audit_hash=audit_hash,
         audit_status=audit_status,
         included=included,
@@ -49,6 +57,53 @@ def _candidate(
         edges=(),
     )
     return WorkspaceGraphBuildResult(graph=graph, issues=issues)
+
+
+def _write_real_workspace(root: Path) -> Path:
+    source = root / "apps" / "app"
+    source.mkdir(parents=True)
+    config_path = root / ".echelon" / "config.yml"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "workspace": {"git_role": "orchestration"},
+                "sources": [{"id": "app", "path": "apps/app"}],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    spec_dir = root / "specs" / "001-alpha"
+    spec_dir.mkdir(parents=True)
+    spec_dir.joinpath("spec.md").write_text(
+        "---\nsupersedes: 000-old\n---\n# alpha\n",
+        encoding="utf-8",
+    )
+    spec_dir.joinpath("targets.yml").write_text(
+        "targets:\n  - id: app\n    path: apps/app\n",
+        encoding="utf-8",
+    )
+    graph = SpecArtifactGraph(
+        spec_id="001-alpha",
+        generator_version="test",
+        inputs=(),
+        nodes=(GraphNode("spec:001-alpha", "Spec", {"spec_id": "001-alpha"}),),
+        edges=(),
+        memory_receipts=(),
+    )
+    spec_dir.joinpath("spec-artifact-graph.json").write_bytes(render_spec_graph(graph))
+    return spec_dir
+
+
+def _current_member_audit(spec_dir: Path) -> SimpleNamespace:
+    graph_bytes = spec_dir.joinpath("spec-artifact-graph.json").read_bytes()
+    graph_hash = f"sha256:{hashlib.sha256(graph_bytes).hexdigest()}"
+    return SimpleNamespace(
+        status="pass",
+        graph_hash=graph_hash,
+        to_dict=lambda: {"schema_version": 1, "status": "pass", "graph_hash": graph_hash},
+    )
 
 
 @pytest.mark.unit
@@ -128,6 +183,43 @@ def test_audit_reports_missing_or_malformed_persisted_workspace_graph(
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload["nodes"].append(dict(payload["nodes"][0])),
+        lambda payload: payload["edges"].append(
+            {
+                "source": "missing",
+                "type": "BROKEN",
+                "target": "spec:001-alpha",
+                "properties": {},
+            }
+        ),
+        lambda payload: payload.update({"members": [{"spec_id": "001-alpha"}]}),
+    ],
+)
+def test_audit_rejects_invalid_persisted_graph_body(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutate,
+) -> None:
+    current = _candidate()
+    write_workspace_graph(current.graph, tmp_path)
+    path = workspace_graph_path(tmp_path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mutate(payload)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph", lambda project_root: current
+    )
+
+    report = audit_workspace_graph(tmp_path)
+
+    assert report.status == "fail"
+    assert [finding.code for finding in report.findings] == ["workspace_graph_invalid"]
+
+
+@pytest.mark.unit
 def test_audit_reports_member_add_remove_and_graph_receipt_transitions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -189,6 +281,134 @@ def test_audit_reports_workspace_source_set_transition(
     report = audit_workspace_graph(tmp_path)
 
     assert {finding.code for finding in report.findings} == {"workspace_source_set_stale"}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "path",
+    ["specs/001-alpha/spec.md", "specs/001-alpha/targets.yml"],
+)
+def test_audit_reports_workspace_metadata_source_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    stored = _candidate(
+        inputs=(GraphInput(path, "sha256:old", "workspace_metadata", True),)
+    )
+    write_workspace_graph(stored.graph, tmp_path)
+    current = _candidate(
+        inputs=(GraphInput(path, "sha256:new", "workspace_metadata", True),)
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph", lambda project_root: current
+    )
+
+    report = audit_workspace_graph(tmp_path)
+
+    assert [finding.code for finding in report.findings] == ["workspace_source_set_stale"]
+
+
+@pytest.mark.unit
+def test_audit_detects_real_spec_and_targets_relationship_source_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_dir = _write_real_workspace(tmp_path)
+    monkeypatch.setattr(
+        "echelon.workspace_graph.audit_spec_graph",
+        lambda root, selector: _current_member_audit(Path(selector)),
+    )
+    from echelon.workspace_graph import build_workspace_graph
+
+    write_workspace_graph(build_workspace_graph(tmp_path).graph, tmp_path)
+    original_member_bytes = spec_dir.joinpath("spec-artifact-graph.json").read_bytes()
+    original_config_bytes = (tmp_path / ".echelon" / "config.yml").read_bytes()
+
+    spec_dir.joinpath("spec.md").write_text(
+        "---\nsupersedes: 001-alpha\n---\n# alpha\n",
+        encoding="utf-8",
+    )
+    spec_report = audit_workspace_graph(tmp_path)
+    write_workspace_graph(build_workspace_graph(tmp_path).graph, tmp_path)
+    spec_dir.joinpath("targets.yml").write_text(
+        "targets:\n  - id: missing\n    path: missing\n",
+        encoding="utf-8",
+    )
+    targets_report = audit_workspace_graph(tmp_path)
+
+    assert "workspace_source_set_stale" in {
+        finding.code for finding in spec_report.findings
+    }
+    assert "workspace_source_set_stale" in {
+        finding.code for finding in targets_report.findings
+    }
+    assert spec_dir.joinpath("spec-artifact-graph.json").read_bytes() == original_member_bytes
+    assert (tmp_path / ".echelon" / "config.yml").read_bytes() == original_config_bytes
+
+
+@pytest.mark.unit
+def test_included_warn_member_produces_workspace_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    warning = _candidate(audit_status="warn", audit_hash="sha256:warning")
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph", lambda project_root: warning
+    )
+
+    report = audit_workspace_graph(tmp_path, candidate=warning)
+
+    assert report.status == "warn"
+    assert [(finding.code, finding.subject_id) for finding in report.findings] == [
+        ("workspace_member_audit_warning", "spec:001-alpha")
+    ]
+
+
+@pytest.mark.unit
+def test_candidate_audit_hash_and_comparison_use_one_rendered_byte_sequence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _candidate()
+    rendered = candidate.graph.to_dict()
+    rendered["source_set_digest"] = "sha256:captured"
+    captured_bytes = (json.dumps(rendered, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.render_workspace_graph",
+        lambda graph: captured_bytes,
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph", lambda project_root: candidate
+    )
+
+    report = audit_workspace_graph(tmp_path, candidate=candidate)
+
+    assert report.graph_hash == f"sha256:{hashlib.sha256(captured_bytes).hexdigest()}"
+    assert [finding.code for finding in report.findings] == ["workspace_source_set_stale"]
+
+
+@pytest.mark.unit
+def test_final_member_removal_is_unavailable_and_keeps_member_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = _candidate()
+    write_workspace_graph(stored.graph, tmp_path)
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph",
+        lambda project_root: (_ for _ in ()).throw(
+            WorkspaceGraphError("no canonical spec directories were found")
+        ),
+    )
+
+    report = audit_workspace_graph(tmp_path)
+
+    assert report.status == "unavailable"
+    assert {finding.code for finding in report.findings} == {
+        "workspace_discovery_unavailable",
+        "workspace_member_removed",
+    }
 
 
 @pytest.mark.unit
@@ -266,3 +486,35 @@ def test_write_workspace_audit_is_atomic_and_deterministic(
     assert path.name == WORKSPACE_GRAPH_AUDIT_FILENAME
     assert path.read_bytes().endswith(b"\n")
     assert replaced and replaced[0][1] == path
+
+
+@pytest.mark.unit
+def test_repeated_audit_and_failed_audit_write_preserve_deterministic_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _candidate(
+        issues=(
+            WorkspaceCompositionIssue(
+                "warning", "target_unresolved", "target is not configured", "spec:001-alpha"
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.build_workspace_graph", lambda project_root: current
+    )
+    first = audit_workspace_graph(tmp_path, candidate=current)
+    second = audit_workspace_graph(tmp_path, candidate=current)
+    path = write_workspace_graph_audit(first, tmp_path)
+    previous = path.read_bytes()
+
+    monkeypatch.setattr(
+        "echelon.workspace_graph_audit.os.replace",
+        lambda source, target: (_ for _ in ()).throw(OSError("replace failed")),
+    )
+    with pytest.raises(OSError, match="replace failed"):
+        write_workspace_graph_audit(second, tmp_path)
+
+    assert first.to_dict() == second.to_dict()
+    assert path.read_bytes() == previous
+    assert not list(path.parent.glob(f".{path.name}.*.tmp"))

@@ -263,6 +263,78 @@ def test_member_audits_control_partial_composition(
 
 
 @pytest.mark.unit
+def test_member_receipts_preserve_graph_and_per_spec_digests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_config(tmp_path)
+    alpha = _spec_dir(tmp_path, "001-alpha")
+    member_graph = _member_graph("001-alpha")
+    _write_member_graph(alpha, member_graph)
+    monkeypatch.setattr(
+        "echelon.workspace_graph.audit_spec_graph",
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
+    )
+
+    result = build_workspace_graph(tmp_path)
+    member = result.graph.members[0]
+
+    assert member.graph_path == "specs/001-alpha/spec-artifact-graph.json"
+    assert member.member_source_set_digest == member_graph.source_set_digest
+    assert member.member_memory_state_digest == member_graph.memory_state_digest
+    assert {
+        (item.path, item.role)
+        for item in result.graph.inputs
+    } == {
+        (".echelon/config.yml", "workspace_config"),
+        ("specs", "canonical_spec_set"),
+        ("specs/001-alpha/spec-artifact-graph.json", "member_graph"),
+        ("specs/001-alpha/spec.md", "workspace_spec"),
+    }
+
+
+@pytest.mark.unit
+def test_source_receipts_change_for_workspace_spec_and_targets_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "apps" / "app").mkdir(parents=True)
+    _write_config(tmp_path, sources=[{"id": "app", "path": "apps/app"}])
+    alpha = _spec_dir(tmp_path, "001-alpha")
+    alpha.joinpath("spec.md").write_text(
+        "---\nsupersedes: 000-old\n---\n# alpha\n",
+        encoding="utf-8",
+    )
+    alpha.joinpath("targets.yml").write_text(
+        "targets:\n  - id: app\n    path: apps/app\n",
+        encoding="utf-8",
+    )
+    _write_member_graph(alpha, _member_graph("001-alpha"))
+    monkeypatch.setattr(
+        "echelon.workspace_graph.audit_spec_graph",
+        lambda root, selector: _audit_for_current_graph(Path(selector)),
+    )
+
+    initial = build_workspace_graph(tmp_path).graph
+    alpha.joinpath("spec.md").write_text(
+        "---\nsupersedes: 001-alpha\n---\n# alpha\n",
+        encoding="utf-8",
+    )
+    spec_changed = build_workspace_graph(tmp_path).graph
+    alpha.joinpath("targets.yml").write_text(
+        "targets:\n  - id: missing\n    path: missing\n",
+        encoding="utf-8",
+    )
+    targets_changed = build_workspace_graph(tmp_path).graph
+
+    assert initial.source_set_digest != spec_changed.source_set_digest
+    assert spec_changed.source_set_digest != targets_changed.source_set_digest
+    assert ("specs/001-alpha/targets.yml", "workspace_targets") in {
+        (item.path, item.role) for item in targets_changed.inputs
+    }
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "payload",
     [

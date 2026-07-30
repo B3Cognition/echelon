@@ -55,8 +55,10 @@ class WorkspaceCompositionIssue:
 @dataclass(frozen=True)
 class WorkspaceGraphMember:
     spec_id: str
-    path: str
+    graph_path: str
     graph_hash: str | None
+    member_source_set_digest: str | None
+    member_memory_state_digest: str | None
     audit_hash: str
     audit_status: str
     included: bool
@@ -65,8 +67,10 @@ class WorkspaceGraphMember:
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
             "spec_id": self.spec_id,
-            "path": self.path,
+            "graph_path": self.graph_path,
             "graph_hash": self.graph_hash,
+            "member_source_set_digest": self.member_source_set_digest,
+            "member_memory_state_digest": self.member_memory_state_digest,
             "audit_hash": self.audit_hash,
             "audit_status": self.audit_status,
             "included": self.included,
@@ -176,7 +180,14 @@ def build_workspace_graph(project_root: Path) -> WorkspaceGraphBuildResult:
 
     for spec_dir in spec_dirs:
         spec_id = spec_dir.name
-        graph_hash, nodes, edges, invalid_reason = _read_member_graph(spec_dir, spec_id)
+        (
+            graph_hash,
+            member_source_set_digest,
+            member_memory_state_digest,
+            nodes,
+            edges,
+            invalid_reason,
+        ) = _read_member_graph(spec_dir, spec_id)
         audit_status, audit_hash, audited_graph_hash = _audit_receipt(root, spec_dir)
         snapshot_mismatch = graph_hash is not None and audited_graph_hash != graph_hash
         included = invalid_reason is None and audit_status in {"pass", "warn"}
@@ -189,8 +200,10 @@ def build_workspace_graph(project_root: Path) -> WorkspaceGraphBuildResult:
         members.append(
             WorkspaceGraphMember(
                 spec_id=spec_id,
-                path=_relative_path(root, spec_dir),
+                graph_path=_relative_path(root, spec_dir / GRAPH_FILENAME),
                 graph_hash=graph_hash,
+                member_source_set_digest=member_source_set_digest,
+                member_memory_state_digest=member_memory_state_digest,
                 audit_hash=audit_hash,
                 audit_status=audit_status,
                 included=included,
@@ -261,18 +274,12 @@ def build_workspace_graph(project_root: Path) -> WorkspaceGraphBuildResult:
         sources,
         issues,
     )
+    inputs = _workspace_inputs(root, spec_dirs, members, config_digest)
     graph = WorkspaceArtifactGraph(
         workspace_name=root.name,
         generator_version=_generator_version(),
         members=tuple(sorted(members, key=lambda value: value.spec_id)),
-        inputs=(
-            GraphInput(
-                ".echelon/config.yml",
-                config_digest,
-                "workspace_config",
-                True,
-            ),
-        ),
+        inputs=inputs,
         nodes=tuple(record[0] for _, record in sorted(node_records.items())),
         edges=tuple(record[0] for _, record in sorted(edge_records.items())),
     )
@@ -400,12 +407,19 @@ def _load_workspace_config(root: Path) -> tuple[str | None, tuple[_Source, ...],
 def _read_member_graph(
     spec_dir: Path,
     spec_id: str,
-) -> tuple[str | None, tuple[GraphNode, ...] | None, tuple[GraphEdge, ...] | None, str | None]:
+) -> tuple[
+    str | None,
+    str | None,
+    str | None,
+    tuple[GraphNode, ...] | None,
+    tuple[GraphEdge, ...] | None,
+    str | None,
+]:
     path = spec_dir / GRAPH_FILENAME
     try:
         graph_bytes = path.read_bytes()
     except OSError:
-        return None, None, None, "member_graph_invalid"
+        return None, None, None, None, None, "member_graph_invalid"
     graph_hash = _sha256(graph_bytes)
     try:
         document = json.loads(graph_bytes)
@@ -415,6 +429,12 @@ def _read_member_graph(
             raise ValueError("schema")
         if document.get("spec_id") != spec_id:
             raise ValueError("spec id")
+        source_set_digest = document.get("source_set_digest")
+        memory_state_digest = document.get("memory_state_digest")
+        if not isinstance(source_set_digest, str) or not isinstance(
+            memory_state_digest, str
+        ):
+            raise ValueError("member digests")
         nodes, edges = _parse_member_graph(document)
         spec_nodes = [node for node in nodes if node.type == "Spec"]
         if len(spec_nodes) != 1:
@@ -431,8 +451,52 @@ def _read_member_graph(
         ValueError,
         SpecGraphError,
     ):
-        return graph_hash, None, None, "member_graph_invalid"
-    return graph_hash, nodes, edges, None
+        return graph_hash, None, None, None, None, "member_graph_invalid"
+    return graph_hash, source_set_digest, memory_state_digest, nodes, edges, None
+
+
+def _workspace_inputs(
+    root: Path,
+    spec_dirs: tuple[Path, ...],
+    members: list[WorkspaceGraphMember],
+    config_digest: str,
+) -> tuple[GraphInput, ...]:
+    inputs = [
+        GraphInput(".echelon/config.yml", config_digest, "workspace_config", True),
+        GraphInput(
+            "specs",
+            _canonical_digest([spec_dir.name for spec_dir in spec_dirs]),
+            "canonical_spec_set",
+            True,
+        ),
+    ]
+    for member in members:
+        inputs.append(
+            GraphInput(
+                member.graph_path,
+                member.graph_hash or "sha256:missing",
+                "member_graph",
+                True,
+            )
+        )
+    for spec_dir in spec_dirs:
+        inputs.append(
+            _workspace_file_input(root, spec_dir / "spec.md", "workspace_spec")
+        )
+        targets_path = spec_dir / "targets.yml"
+        if targets_path.is_file():
+            inputs.append(
+                _workspace_file_input(root, targets_path, "workspace_targets")
+            )
+    return tuple(inputs)
+
+
+def _workspace_file_input(root: Path, path: Path, role: str) -> GraphInput:
+    try:
+        digest = _sha256(path.read_bytes())
+    except OSError as exc:
+        raise WorkspaceGraphError(f"workspace input is unreadable: {path}") from exc
+    return GraphInput(_relative_path(root, path), digest, role, True)
 
 
 def _parse_member_graph(document: Mapping[str, object]) -> tuple[tuple[GraphNode, ...], tuple[GraphEdge, ...]]:
