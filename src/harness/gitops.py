@@ -1485,13 +1485,56 @@ class GitOpsManager:
         """
         default_branch = self.get_default_branch()
         label = f"{spec_id} — {spec_name}" if spec_name else spec_id
-        _run_git(["checkout", default_branch], cwd=str(self._mirror_path))
-        _run_git(
-            ["merge", "--no-ff", push_branch, "-m", f"merge: {label}"],
-            cwd=str(self._mirror_path),
-        )
-        _run_git(["push", "upstream", default_branch], cwd=str(self._mirror_path))
-        logger.info("Local merge: %s → %s", push_branch, default_branch)
+
+        target_url = self._config.target_repo
+        if target_url == ".":
+            target_url = str(self._base_dir)
+        else:
+            candidate = Path(target_url)
+            if not candidate.is_absolute():
+                resolved = (self._base_dir / candidate).resolve()
+                if resolved.exists():
+                    target_url = str(resolved)
+        try:
+            _run_git(
+                ["remote", "add", "upstream", target_url],
+                cwd=str(self._mirror_path),
+            )
+        except GitOpsError:
+            _run_git(
+                ["remote", "set-url", "upstream", target_url],
+                cwd=str(self._mirror_path),
+            )
+
+        landing_parent = _runs_dir_fn(self._base_dir) / "worktrees"
+        landing_parent.mkdir(parents=True, exist_ok=True)
+        safe_label = re.sub(r"[^A-Za-z0-9._-]+", "-", f"{spec_id}-{push_branch}")
+        landing_dir = landing_parent / f"land-{safe_label}-{os.getpid()}"
+
+        try:
+            if landing_dir.exists():
+                shutil.rmtree(landing_dir)
+            _run_git(
+                ["worktree", "add", str(landing_dir), default_branch],
+                cwd=str(self._mirror_path),
+            )
+            _run_git(
+                ["merge", "--no-ff", push_branch, "-m", f"merge: {label}"],
+                cwd=str(landing_dir),
+            )
+            _run_git(
+                ["merge-base", "--is-ancestor", push_branch, default_branch],
+                cwd=str(landing_dir),
+            )
+            _run_git(["push", "upstream", default_branch], cwd=str(landing_dir))
+            logger.info("Local merge: %s → %s", push_branch, default_branch)
+        finally:
+            _run_git(
+                ["worktree", "remove", "--force", str(landing_dir)],
+                cwd=str(self._mirror_path),
+                check=False,
+            )
+            _run_git(["worktree", "prune"], cwd=str(self._mirror_path), check=False)
 
     # === Safety ===
 

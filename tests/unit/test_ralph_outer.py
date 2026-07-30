@@ -141,6 +141,56 @@ class MockProvider(SandboxProvider):
         self.destroyed = True
 
 
+class SyntheticBuildProvider(SandboxProvider):
+    """SandboxProvider that mutates the real git worktree without invoking an LLM."""
+
+    def __init__(self) -> None:
+        self.worktree: Optional[Path] = None
+        self.created = False
+        self.destroyed = False
+
+    def create(self, spec: SandboxSpec) -> SandboxHandle:
+        self.created = True
+        self.worktree = Path(spec.worktree_mount)
+        return SandboxHandle(id="synthetic-sandbox-1", session_id="synthetic")
+
+    def exec(
+        self,
+        handle: SandboxHandle,
+        cmd: str,
+        cwd: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+        timeout_ms: int = 1_200_000,
+    ) -> ExecResult:
+        del handle, cwd, env, timeout_ms
+        if "verify" in cmd:
+            return ExecResult(
+                exit_code=0,
+                stdout=json.dumps({"passed": True, "failures": []}),
+                stderr="",
+                duration_ms=100,
+                resource_stats=None,
+            )
+        assert self.worktree is not None
+        (self.worktree / "built.txt").write_text("synthetic delivery\n", encoding="utf-8")
+        return ExecResult(
+            exit_code=0,
+            stdout="synthetic build complete",
+            stderr="",
+            duration_ms=100,
+            resource_stats=None,
+        )
+
+    def write_file(self, handle: SandboxHandle, path: str, content: bytes) -> None:
+        pass
+
+    def read_file(self, handle: SandboxHandle, path: str) -> bytes:
+        return b""
+
+    def destroy(self, handle: SandboxHandle) -> None:
+        self.destroyed = True
+
+
 # === Fixtures ===
 
 
@@ -158,6 +208,8 @@ def _make_gitops() -> MagicMock:
     gitops.destroy_worktree.return_value = None
     gitops.commit.return_value = "abc123"
     gitops.push.return_value = None
+    gitops.get_default_branch.return_value = "main"
+    gitops.local_merge.return_value = None
     gitops.create_draft_pr.return_value = "https://github.com/test/repo/pull/1"
     gitops.promote_pr_ready.return_value = None
     gitops.base_dir = Path("/tmp/project")
@@ -2071,6 +2123,121 @@ class TestOuterLoopConvergence:
         assert provider.destroyed is True
         gitops.create_worktree.assert_called_once()
         gitops.promote_pr_ready.assert_called_once()
+        gitops.local_merge.assert_called_once_with(
+            "harness/spec-001-default-iter-0",
+            "spec-001",
+        )
+
+    def test_merge_failure_blocks_convergence(self, tmp_path: Path) -> None:
+        """Verified branch cannot be reported converged until it lands on default."""
+        controller, provider, gitops, state_store = _make_controller(
+            tmp_path,
+            verify_results=[{"passed": True, "failures": []}],
+        )
+        gitops.local_merge.side_effect = RuntimeError("merge conflict")
+
+        result = controller.run_loop(max_outer=5, max_inner=3)
+
+        assert result.status == "blocked"
+        assert result.termination_reason == "target_merge_failed"
+        gitops.local_merge.assert_called_once_with(
+            "harness/spec-001-default-iter-0",
+            "spec-001",
+        )
+        gitops.promote_pr_ready.assert_not_called()
+        assert provider.destroyed is True
+        gitops.destroy_worktree.assert_not_called()
+        final_state = state_store.read()
+        assert final_state["status"] == "blocked"
+        assert final_state["target_merge"]["error"] == "merge conflict"
+
+    @pytest.mark.integration
+    def test_synthetic_run_lands_verified_work_on_target_main(
+        self, tmp_path: Path
+    ) -> None:
+        """Ralph + real GitOps lands synthetic build output on target main."""
+        from harness.gitops import GitOpsManager
+
+        target = tmp_path / "sources" / "synthetic"
+        target.mkdir(parents=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=target, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=target,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=target,
+            check=True,
+        )
+        (target / "README.md").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=target, check=True)
+        subprocess.run(["git", "commit", "-m", "base"], cwd=target, check=True)
+        subprocess.run(
+            ["git", "config", "receive.denyCurrentBranch", "updateInstead"],
+            cwd=target,
+            check=True,
+        )
+
+        harness_root = tmp_path / "workspace"
+        harness_root.mkdir()
+        config = HarnessConfig(
+            target_repo=str(target),
+            target_default_branch="main",
+            provider="docker",
+            pr_host="none",
+        )
+        gitops = GitOpsManager(config=config, base_dir=str(harness_root))
+        gitops.clone_mirror(str(target))
+        gitops.sync_runtime_extension = MagicMock(return_value=None)
+
+        provider = SyntheticBuildProvider()
+        state_dir = harness_root / "runs" / "state"
+        state_store = StateStore(state_dir, "909", "default")
+        state_store.initialize("synthetic-run", "semi")
+        state_store.transition("running")
+
+        controller = RalphController(
+            provider=provider,
+            gitops=gitops,
+            state_store=state_store,
+            mode_controller=ModeController("semi"),
+            escalation_handler=EscalationHandler(str(harness_root / "runs")),
+            spec_id="909",
+            strategy_id="default",
+            config=config,
+        )
+
+        result = controller.run_loop(
+            max_outer=1,
+            max_inner=0,
+            token_budget=100_000,
+            build_command="synthetic build",
+        )
+
+        assert result.status == "converged"
+        assert provider.created is True
+        assert provider.destroyed is True
+        assert (target / "built.txt").read_text(encoding="utf-8") == (
+            "synthetic delivery\n"
+        )
+        branch = result.branch
+        assert branch == "harness/909/default/iter-0"
+        contains = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", branch, "main"],
+            cwd=gitops.mirror_path,
+            check=False,
+        )
+        assert contains.returncode == 0
+        final_state = state_store.read()
+        assert final_state["status"] == "converged"
+        assert final_state["target_merge"] == {
+            "branch": branch,
+            "default_branch": "main",
+            "verified": True,
+            "pushed": True,
+        }
 
     def test_convergence_writes_ready_to_land_status(self, tmp_path: Path) -> None:
         """Ralph owns the implemented-but-not-landed status transition."""

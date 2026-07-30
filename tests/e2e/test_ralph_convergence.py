@@ -67,6 +67,8 @@ class TestRalphConvergence:
         assert result.outer_iterations <= 3, (
             f"Expected convergence within 3 iterations, got {result.outer_iterations}"
         )
+        assert gitops.local_merges, "Verified branch must be merged into default branch"
+        assert gitops.local_merges[-1]["default_branch"] == "main"
 
     def test_pr_created_and_promoted(
         self, tmp_harness_dir: Path, harness_config: HarnessConfig,
@@ -99,6 +101,7 @@ class TestRalphConvergence:
         assert result.status == "converged"
         assert gitops.pr_created, "Draft PR should have been created"
         assert gitops.pr_promoted, "PR should have been promoted after convergence"
+        assert gitops.local_merges, "Default branch merge must happen before convergence"
         assert result.pr_url is not None
 
     def test_state_file_shows_converged(

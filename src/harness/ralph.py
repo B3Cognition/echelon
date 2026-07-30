@@ -819,7 +819,6 @@ class RalphController:
                         )
 
                     if verify_result.passed:
-                        # Converged!
                         if not self._mark_spec_ready_to_land(worktree_path):
                             preserve_worktree = True
                             return self._finalize(
@@ -833,6 +832,31 @@ class RalphController:
                             )
                         try:
                             branch = self._commit_and_push(worktree_path, outer_iter)
+                        except CommitPushError as e:
+                            preserve_worktree = True
+                            return self._finalize(
+                                status="blocked",
+                                reason="publish_failed",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url,
+                                tokens_used=tokens_used,
+                                final_verify=verify_result,
+                                branch=e.branch,
+                            )
+                        if not self._merge_verified_branch(worktree_path, branch, verify_result):
+                            preserve_worktree = True
+                            return self._finalize(
+                                status="blocked",
+                                reason="target_merge_failed",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url,
+                                tokens_used=tokens_used,
+                                final_verify=verify_result,
+                                branch=branch,
+                            )
+                        try:
                             self._commit_orchestration_spec_artifacts(
                                 worktree_path, outer_iter, branch=branch
                             )
@@ -924,6 +948,33 @@ class RalphController:
                             )
                         try:
                             branch = self._commit_and_push(worktree_path, outer_iter)
+                        except CommitPushError as e:
+                            preserve_worktree = True
+                            return self._finalize(
+                                status="blocked",
+                                reason="publish_failed",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url,
+                                tokens_used=tokens_used,
+                                final_verify=inner_result.get("final_verify"),
+                                branch=e.branch,
+                            )
+                        if not self._merge_verified_branch(
+                            worktree_path, branch, inner_result.get("final_verify")
+                        ):
+                            preserve_worktree = True
+                            return self._finalize(
+                                status="blocked",
+                                reason="target_merge_failed",
+                                outer_iterations=outer_iter + 1,
+                                inner_iterations=total_inner_iterations,
+                                pr_url=pr_url,
+                                tokens_used=tokens_used,
+                                final_verify=inner_result.get("final_verify"),
+                                branch=branch,
+                            )
+                        try:
                             self._commit_orchestration_spec_artifacts(
                                 worktree_path, outer_iter, branch=branch
                             )
@@ -4227,6 +4278,61 @@ class RalphController:
                 branch=branch,
                 worktree_path=worktree_path,
             ) from e
+
+    def _merge_verified_branch(
+        self,
+        worktree_path: str,
+        branch: str,
+        verify_result: Optional[VerifyResult],
+    ) -> bool:
+        """Merge a verified delivery branch into the target default branch."""
+        if verify_result is None or not verify_result.passed:
+            return False
+
+        default_branch = None
+        try:
+            default_branch = self._gitops.get_default_branch()
+            self._gitops.local_merge(branch, self._spec_id)
+            evidence: Dict[str, Any] = {
+                "branch": branch,
+                "default_branch": default_branch,
+                "verified": True,
+                "pushed": True,
+            }
+            try:
+                state = self._state_store.read()
+                state["target_merge"] = evidence
+                self._state_store.write(state)
+            except Exception as state_exc:
+                logger.warning("Could not persist target merge evidence: %s", state_exc)
+            logger.info(
+                "Merged verified delivery branch %s into %s for %s",
+                branch,
+                default_branch,
+                self._spec_id,
+            )
+            return True
+        except Exception as exc:
+            logger.warning(
+                "Target default branch merge failed for %s -> %s: %s",
+                branch,
+                default_branch or "(unknown default)",
+                exc,
+            )
+            try:
+                state = self._state_store.read()
+                state["target_merge"] = {
+                    "branch": branch,
+                    "default_branch": default_branch,
+                    "verified": True,
+                    "pushed": False,
+                    "error": str(exc),
+                    "worktree_path": worktree_path,
+                }
+                self._state_store.write(state)
+            except Exception as state_exc:
+                logger.warning("Could not persist target merge failure: %s", state_exc)
+            return False
 
     def _commit_orchestration_spec_artifacts(
         self,
