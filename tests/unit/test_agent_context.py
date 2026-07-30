@@ -11,6 +11,12 @@ from harness.agent_context import (
     render_journal,
 )
 
+from harness.agent_context import (
+    RenderedSection,
+    build_context_budget_report,
+    write_context_budget_report,
+)
+
 
 def test_parse_context_pack_item_extracts_filters_and_path() -> None:
     selector = parse_context_pack_item(
@@ -193,3 +199,47 @@ def test_render_directory_marks_unreadable_child_unavailable(tmp_path: Path, mon
     section = render_context_path("contracts/", contracts, policy, {})
 
     assert "File unavailable" in section.text
+
+
+def test_build_context_budget_report_compares_legacy_and_bounded() -> None:
+    report = build_context_budget_report(
+        phase_id="phase1-why2",
+        agent_id="speckit-echelon-sage",
+        mode="WHY2",
+        selected_render_mode="bounded",
+        legacy_sections=[
+            RenderedSection("state.json", "x" * 1000, 1000, {}),
+            RenderedSection("reasoning-journal.jsonl", "x" * 3000, 3000, {}),
+        ],
+        bounded_sections=[
+            RenderedSection("state.json", "x" * 200, 200, {"projection": "compact"}),
+            RenderedSection("reasoning-journal.jsonl", "x" * 500, 500, {"included": 2}),
+        ],
+        strict=False,
+    )
+
+    assert report["phase"] == "phase1-why2"
+    assert report["selected_render_mode"] == "bounded"
+    assert report["legacy"]["bytes"] == 4000
+    assert report["bounded"]["bytes"] == 700
+    assert report["savings"]["bytes"] == 3300
+    assert report["savings"]["reduction_pct"] == 82
+
+
+def test_write_context_budget_report_persists_json(tmp_path: Path) -> None:
+    path = write_context_budget_report(
+        tmp_path,
+        {
+            "phase": "phase1-why2",
+            "agent": "speckit-echelon-sage",
+            "mode": "WHY2",
+            "selected_render_mode": "bounded",
+            "legacy": {"bytes": 10, "approx_tokens": 3, "top_sections": []},
+            "bounded": {"bytes": 5, "approx_tokens": 2, "top_sections": []},
+            "savings": {"bytes": 5, "approx_tokens": 1, "reduction_pct": 50},
+        },
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert path.parent == tmp_path / "context-budget"
+    assert payload["phase"] == "phase1-why2"

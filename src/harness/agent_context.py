@@ -6,6 +6,7 @@ import json
 import os
 import re
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -333,3 +334,63 @@ def render_context_path(
     if candidate.is_dir():
         return _render_directory(path_ref, candidate, policy)
     return _render_file(path_ref, candidate, policy)
+
+
+def _approx_tokens(byte_count: int) -> int:
+    return max(1, round(byte_count / 4))
+
+
+def _section_summary(sections: list[RenderedSection]) -> dict[str, object]:
+    total = sum(section.bytes for section in sections)
+    top_sections = sorted(
+        ({"name": section.title, "bytes": section.bytes, "omitted": section.omitted} for section in sections),
+        key=lambda item: int(item["bytes"]),
+        reverse=True,
+    )[:10]
+    return {"bytes": total, "approx_tokens": _approx_tokens(total), "top_sections": top_sections}
+
+
+def build_context_budget_report(
+    *,
+    phase_id: str,
+    agent_id: str,
+    mode: str,
+    selected_render_mode: str,
+    legacy_sections: list[RenderedSection],
+    bounded_sections: list[RenderedSection],
+    strict: bool,
+) -> dict[str, object]:
+    legacy = _section_summary(legacy_sections)
+    bounded = _section_summary(bounded_sections)
+    legacy_bytes = int(legacy["bytes"])
+    bounded_bytes = int(bounded["bytes"])
+    saved_bytes = max(0, legacy_bytes - bounded_bytes)
+    saved_tokens = max(0, int(legacy["approx_tokens"]) - int(bounded["approx_tokens"]))
+    reduction_pct = round((saved_bytes / legacy_bytes) * 100) if legacy_bytes else 0
+    return {
+        "schema_version": 1,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "phase": phase_id,
+        "agent": agent_id,
+        "mode": mode,
+        "selected_render_mode": selected_render_mode,
+        "strict": strict,
+        "legacy": legacy,
+        "bounded": bounded,
+        "savings": {
+            "bytes": saved_bytes,
+            "approx_tokens": saved_tokens,
+            "reduction_pct": reduction_pct,
+        },
+    }
+
+
+def write_context_budget_report(squad_dir: Path, report: Mapping[str, object]) -> Path:
+    out_dir = squad_dir / "context-budget"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    phase = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(report.get("phase") or "unknown"))
+    agent = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(report.get("agent") or "agent"))
+    existing = len(list(out_dir.glob("dispatch-*.json"))) + 1
+    path = out_dir / f"dispatch-{existing:04d}-{phase}-{agent}.json"
+    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
