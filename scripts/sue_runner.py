@@ -11,11 +11,76 @@ import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 
 _CODEX_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
+CODEX_DISABLED_FEATURES = (
+    "apps",
+    "browser_use",
+    "browser_use_external",
+    "browser_use_full_cdp_access",
+    "chronicle",
+    "code_mode",
+    "code_mode_buffered_exec",
+    "code_mode_host",
+    "code_mode_only",
+    "computer_use",
+    "deferred_executor",
+    "enable_mcp_apps",
+    "external_agent_memory_import",
+    "hooks",
+    "in_app_browser",
+    "memories",
+    "multi_agent",
+    "multi_agent_v2",
+    "plugin_sharing",
+    "plugins",
+    "remote_plugin",
+    "shell_snapshot",
+    "shell_tool",
+    "shell_zsh_fork",
+    "skill_mcp_dependency_install",
+    "skill_search",
+    "standalone_web_search",
+    "tool_suggest",
+    "unified_exec",
+    "unified_exec_zsh_fork",
+)
+COLD_READER_ENV_ALLOWLIST = (
+    # Executable discovery and Codex's explicit auth/config root.
+    "PATH",
+    "CODEX_HOME",
+    # TLS trust and explicitly configured proxy routing.
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "NODE_EXTRA_CA_CERTS",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+    # Localization and temporary-file operation.
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    # Windows process-launch necessities; absent on other platforms.
+    "SYSTEMROOT",
+    "WINDIR",
+    "COMSPEC",
+    "PATHEXT",
+    # macOS may synthesize this locale/encoding process variable at exec.
+    "__CF_USER_TEXT_ENCODING",
+)
 
 
 class RunnerConfigurationError(ValueError):
@@ -71,6 +136,10 @@ class ColdReaderRequest:
                 ) from exc
         if self.scientific and not self.model:
             raise RunnerConfigurationError("scientific Codex runs require a model")
+        if self.scientific and not self.reasoning_effort:
+            raise RunnerConfigurationError(
+                "scientific Codex runs require a reasoning effort"
+            )
         if self.scientific and not self.output_schema:
             raise RunnerConfigurationError("scientific Codex runs require an output schema")
 
@@ -99,6 +168,57 @@ class ColdReaderResult:
     raw_output_digest: str
     final_output_digest: str
     usage: dict | None
+    started_at_utc: str = ""
+    timeout_seconds: float = 0.0
+    provider_cli_version: str = "unavailable"
+    provider_cli_version_status: str = "unavailable"
+    prompt_digest: str = ""
+    schema_digest: str | None = None
+    stderr_digest: str = ""
+
+
+def _default_codex_home() -> str:
+    """Resolve Codex auth/config home without forwarding ambient HOME."""
+    if os.name == "posix":
+        try:
+            import pwd
+
+            return str(Path(pwd.getpwuid(os.getuid()).pw_dir) / ".codex")
+        except (KeyError, OSError):
+            pass
+    return str(Path.home() / ".codex")
+
+
+def build_subprocess_environment(
+    parent_env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Return the explicit cold-reader process environment.
+
+    API keys, repository/Echelon state, Codex thread markers, and unrelated
+    credentials are deliberately not inherited. Codex authentication is
+    available only through the explicit ``CODEX_HOME`` credential store.
+    """
+    source = os.environ if parent_env is None else parent_env
+    environment = {
+        key: value
+        for key in COLD_READER_ENV_ALLOWLIST
+        if (value := source.get(key))
+    }
+    environment.setdefault("PATH", os.defpath)
+    environment.setdefault("CODEX_HOME", _default_codex_home())
+    return environment
+
+
+def _canonical_schema(output_schema: dict[str, Any] | None) -> str | None:
+    if output_schema is None:
+        return None
+    return json.dumps(
+        output_schema,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
 
 
 def build_model_invocation(request: ColdReaderRequest, workdir: Path) -> ModelInvocation:
@@ -118,16 +238,27 @@ def build_model_invocation(request: ColdReaderRequest, workdir: Path) -> ModelIn
         "--sandbox", "read-only",
         "--ignore-user-config",
         "--ignore-rules",
+        "--strict-config",
+        "-c", "shell_environment_policy.inherit=none",
+        "-c", 'tools.web_search="disabled"',
+        "-c", "mcp_servers={}",
     ]
+    for feature in CODEX_DISABLED_FEATURES:
+        argv.extend(["--disable", feature])
     if request.model:
         argv.extend(["--model", request.model])
     if request.reasoning_effort:
         argv.extend(["-c", f'model_reasoning_effort="{request.reasoning_effort}"'])
     if request.output_schema is not None:
         schema_path = workdir / "output-schema.json"
-        schema_path.write_text(
-            json.dumps(request.output_schema, allow_nan=False), encoding="utf-8"
-        )
+        try:
+            schema_path.write_text(
+                _canonical_schema(request.output_schema) or "", encoding="utf-8"
+            )
+        except OSError as exc:
+            raise RunnerConfigurationError(
+                f"could not construct hardened Codex schema input: {exc}"
+            ) from exc
         argv.extend(["--output-schema", str(schema_path)])
     argv.extend(["--json", "--output-last-message", str(final_path), "-"])
     return ModelInvocation(
@@ -182,6 +313,45 @@ def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _query_provider_cli_version(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+) -> tuple[str, str]:
+    """Query the local CLI binary without sending a prompt or provider request."""
+    try:
+        process = subprocess.Popen(
+            command + ["--version"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=cwd,
+            env=dict(env),
+            text=True,
+            start_new_session=True,
+        )
+    except OSError:
+        return "unavailable", "unavailable"
+    try:
+        stdout, _stderr = process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        _kill_process_group(process)
+        try:
+            process.communicate(timeout=1)
+        except subprocess.TimeoutExpired:
+            pass
+        return "unavailable", "unavailable"
+    version = next((line.strip() for line in stdout.splitlines() if line.strip()), "")
+    if process.returncode == 0 and version:
+        return version[:256], "reported"
+    return "unavailable", "unavailable"
+
+
 def _redact_argv(argv: list[str], workdir: Path) -> tuple[str, ...]:
     schema_path = str(workdir / "output-schema.json")
     final_path = str(workdir / "final.json")
@@ -203,7 +373,11 @@ def _result(
     stderr: str = "",
     model_reported: str | None = None,
     usage: dict | None = None,
+    started_at_utc: str = "",
+    provider_cli_version: str = "unavailable",
+    provider_cli_version_status: str = "unavailable",
 ) -> ColdReaderResult:
+    schema = _canonical_schema(request.output_schema)
     return ColdReaderResult(
         run_id=request.run_id,
         status=status,
@@ -221,19 +395,39 @@ def _result(
         raw_output_digest=_digest(raw_output),
         final_output_digest=_digest(final_output),
         usage=usage,
+        started_at_utc=started_at_utc,
+        timeout_seconds=float(request.timeout_seconds),
+        provider_cli_version=provider_cli_version,
+        provider_cli_version_status=provider_cli_version_status,
+        prompt_digest=_digest(request.prompt),
+        schema_digest=_digest(schema) if schema is not None else None,
+        stderr_digest=_digest(stderr),
     )
 
 
 def run_cold_reader(request: ColdReaderRequest) -> ColdReaderResult:
     """Run one Codex cold reader in a temporary neutral working directory."""
+    started_at_utc = _utc_now()
     start = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="sue-reader-") as directory:
         workdir = Path(directory)
         try:
             invocation = build_model_invocation(request, workdir)
         except RunnerConfigurationError as exc:
-            return _result(request, status="transport_error", stderr=str(exc))
+            return _result(
+                request,
+                status="transport_error",
+                stderr=str(exc),
+                started_at_utc=started_at_utc,
+            )
         argv_redacted = _redact_argv(invocation.argv, workdir)
+        process_env = build_subprocess_environment()
+        command_length = len(shlex.split(request.command))
+        provider_cli_version, provider_cli_version_status = _query_provider_cli_version(
+            invocation.argv[:command_length],
+            cwd=workdir,
+            env=process_env,
+        )
         try:
             process = subprocess.Popen(
                 invocation.argv,
@@ -241,6 +435,7 @@ def run_cold_reader(request: ColdReaderRequest) -> ColdReaderResult:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=workdir,
+                env=process_env,
                 text=True,
                 start_new_session=True,
             )
@@ -250,6 +445,9 @@ def run_cold_reader(request: ColdReaderRequest) -> ColdReaderResult:
                 status="launch_missing",
                 argv_redacted=argv_redacted,
                 duration_seconds=time.monotonic() - start,
+                started_at_utc=started_at_utc,
+                provider_cli_version=provider_cli_version,
+                provider_cli_version_status=provider_cli_version_status,
             )
         except OSError as exc:
             return _result(
@@ -258,6 +456,9 @@ def run_cold_reader(request: ColdReaderRequest) -> ColdReaderResult:
                 argv_redacted=argv_redacted,
                 duration_seconds=time.monotonic() - start,
                 stderr=str(exc),
+                started_at_utc=started_at_utc,
+                provider_cli_version=provider_cli_version,
+                provider_cli_version_status=provider_cli_version_status,
             )
         try:
             raw_output, stderr = process.communicate(
@@ -278,6 +479,9 @@ def run_cold_reader(request: ColdReaderRequest) -> ColdReaderResult:
                 exit_code=process.returncode,
                 raw_output=raw_output or "",
                 stderr=stderr or "",
+                started_at_utc=started_at_utc,
+                provider_cli_version=provider_cli_version,
+                provider_cli_version_status=provider_cli_version_status,
             )
 
         raw_output = raw_output or ""
@@ -292,6 +496,9 @@ def run_cold_reader(request: ColdReaderRequest) -> ColdReaderResult:
                 exit_code=process.returncode,
                 raw_output=raw_output,
                 stderr=stderr,
+                started_at_utc=started_at_utc,
+                provider_cli_version=provider_cli_version,
+                provider_cli_version_status=provider_cli_version_status,
             )
         final_path = workdir / "final.json"
         final_output = ""
@@ -310,6 +517,9 @@ def run_cold_reader(request: ColdReaderRequest) -> ColdReaderResult:
                 raw_output=raw_output,
                 final_output=final_output,
                 stderr=stderr if stderr else str(exc),
+                started_at_utc=started_at_utc,
+                provider_cli_version=provider_cli_version,
+                provider_cli_version_status=provider_cli_version_status,
             )
         return _result(
             request,
@@ -322,4 +532,7 @@ def run_cold_reader(request: ColdReaderRequest) -> ColdReaderResult:
             stderr=stderr,
             model_reported=metadata.get("model_reported"),
             usage=usage,
+            started_at_utc=started_at_utc,
+            provider_cli_version=provider_cli_version,
+            provider_cli_version_status=provider_cli_version_status,
         )

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-import importlib.util
+import dataclasses
 import hashlib
+import importlib.util
 import json
 import stat
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -29,6 +32,39 @@ def _load_module(name: str = "sue_runner"):
 
 runner = _load_module()
 
+EXPECTED_DISABLED_FEATURES = (
+    "apps",
+    "browser_use",
+    "browser_use_external",
+    "browser_use_full_cdp_access",
+    "chronicle",
+    "code_mode",
+    "code_mode_buffered_exec",
+    "code_mode_host",
+    "code_mode_only",
+    "computer_use",
+    "deferred_executor",
+    "enable_mcp_apps",
+    "external_agent_memory_import",
+    "hooks",
+    "in_app_browser",
+    "memories",
+    "multi_agent",
+    "multi_agent_v2",
+    "plugin_sharing",
+    "plugins",
+    "remote_plugin",
+    "shell_snapshot",
+    "shell_tool",
+    "shell_zsh_fork",
+    "skill_mcp_dependency_install",
+    "skill_search",
+    "standalone_web_search",
+    "tool_suggest",
+    "unified_exec",
+    "unified_exec_zsh_fork",
+)
+
 
 def _codex_request(command: str = "codex", **overrides):
     values = {
@@ -47,28 +83,45 @@ def _codex_request(command: str = "codex", **overrides):
 
 def test_codex_invocation_is_cold_and_explicit(tmp_path):
     invocation = runner.build_model_invocation(_codex_request(), tmp_path)
-    assert invocation.argv == [
+    expected = [
         "codex", "exec",
         "--ephemeral",
         "--skip-git-repo-check",
         "--sandbox", "read-only",
         "--ignore-user-config",
         "--ignore-rules",
+        "--strict-config",
+        "-c", "shell_environment_policy.inherit=none",
+        "-c", 'tools.web_search="disabled"',
+        "-c", "mcp_servers={}",
+    ]
+    for feature in EXPECTED_DISABLED_FEATURES:
+        expected.extend(["--disable", feature])
+    expected.extend([
         "--model", "gpt-5.6-luna",
         "-c", 'model_reasoning_effort="low"',
         "--output-schema", str(tmp_path / "output-schema.json"),
         "--json",
         "--output-last-message", str(tmp_path / "final.json"),
         "-",
-    ]
+    ])
+    assert invocation.argv == expected
     assert invocation.stdin_text == "PROMPT"
     assert invocation.argv[-1] == "-"
     assert "PROMPT" not in invocation.argv
+    assert set(runner.build_subprocess_environment()) <= set(
+        runner.COLD_READER_ENV_ALLOWLIST
+    )
 
 
 def test_scientific_codex_request_rejects_missing_model():
     with pytest.raises(runner.RunnerConfigurationError):
         _codex_request(model=None, scientific=True)
+
+
+def test_scientific_codex_request_rejects_missing_reasoning_effort():
+    with pytest.raises(runner.RunnerConfigurationError, match="reasoning effort"):
+        _codex_request(reasoning_effort=None, scientific=True)
 
 
 @pytest.mark.parametrize(
@@ -137,32 +190,114 @@ def test_request_rejects_non_json_serializable_output_schema():
 
 def _make_fake_codex(tmp_path: Path, body: str) -> str:
     executable = tmp_path / "fake-codex"
-    executable.write_text("#!/usr/bin/env python3\n" + body, encoding="utf-8")
+    executable.write_text(
+        """#!/usr/bin/env python3
+import sys
+if sys.argv[1:] == ["--version"]:
+    print("codex-cli 0.146.0-test")
+    raise SystemExit(0)
+"""
+        + body,
+        encoding="utf-8",
+    )
     executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
     return str(executable)
 
 
-def test_fake_codex_runner_captures_final_output_and_usage(tmp_path):
+def test_fake_codex_runner_captures_final_output_and_usage(tmp_path, monkeypatch):
+    repository_sentinel = REPO_ROOT / "AGENTS.md"
+    assert repository_sentinel.exists()
+    monkeypatch.setenv("SUE_SENTINEL_CREDENTIAL", "must-not-leak")
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-leak")
+    monkeypatch.setenv("CODEX_THREAD_ID", "must-not-leak")
+    monkeypatch.setenv("CODEX_CI", "must-not-leak")
+    monkeypatch.setenv("ECHELON_LLM", "must-not-leak")
     fake = _make_fake_codex(
         tmp_path,
-        """import json, pathlib, sys
+        f"""import json, os, pathlib, sys
 args = sys.argv[1:]
-assert args[:2] == ['exec', '--ephemeral']
+expected = [
+    'exec', '--ephemeral', '--skip-git-repo-check',
+    '--sandbox', 'read-only', '--ignore-user-config', '--ignore-rules',
+    '--strict-config',
+    '-c', 'shell_environment_policy.inherit=none',
+    '-c', 'tools.web_search="disabled"',
+    '-c', 'mcp_servers={{}}',
+]
+for feature in {EXPECTED_DISABLED_FEATURES!r}:
+    expected.extend(['--disable', feature])
+expected.extend([
+    '--model', 'gpt-5.6-luna',
+    '-c', 'model_reasoning_effort="low"',
+    '--output-schema', args[args.index('--output-schema') + 1],
+    '--json',
+    '--output-last-message', args[args.index('--output-last-message') + 1],
+    '-',
+])
+assert args == expected, (args, expected)
+assert pathlib.Path(args[args.index('--output-schema') + 1]).resolve().parent == pathlib.Path.cwd().resolve()
+assert pathlib.Path(args[args.index('--output-last-message') + 1]).resolve().parent == pathlib.Path.cwd().resolve()
 assert sys.stdin.read() == 'PROMPT'
-pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('{\"questions\": []}')
-print(json.dumps({'type': 'thread.started', 'thread_id': 'thread-1'}))
-print(json.dumps({'type': 'turn.completed', 'model': 'gpt-5.6-luna', 'usage': {'input_tokens': 12}}))
+assert not (pathlib.Path.cwd() / {repository_sentinel.name!r}).exists()
+assert not (pathlib.Path.cwd() / '.git').exists()
+for forbidden in (
+    'SUE_SENTINEL_CREDENTIAL', 'OPENAI_API_KEY', 'CODEX_THREAD_ID',
+    'CODEX_CI', 'ECHELON_LLM',
+):
+    assert forbidden not in os.environ
+pathlib.Path(args[args.index('--output-last-message') + 1]).write_text(
+    json.dumps({{'questions': [], 'env_keys': sorted(os.environ)}})
+)
+print(json.dumps({{'type': 'thread.started', 'thread_id': 'thread-1'}}))
+print(json.dumps({{
+    'type': 'turn.completed',
+    'model': 'gpt-5.6-luna',
+    'usage': {{'input_tokens': 12}},
+}}))
 """,
     )
     result = runner.run_cold_reader(_codex_request(fake))
-    assert result.status == "success"
-    assert json.loads(result.final_output) == {"questions": []}
+    assert result.status == "success", result.stderr
+    final = json.loads(result.final_output)
+    assert final["questions"] == []
+    assert set(final["env_keys"]) <= set(runner.COLD_READER_ENV_ALLOWLIST)
     assert result.usage["input_tokens"] == 12
     assert result.model_requested == "gpt-5.6-luna"
     assert result.argv_redacted[-1] == "-"
     assert "PROMPT" not in result.argv_redacted
     assert result.raw_output_digest
     assert result.final_output_digest
+
+
+def test_success_result_captures_complete_immutable_execution_metadata(tmp_path):
+    fake = _make_fake_codex(
+        tmp_path,
+        """import json, pathlib, sys
+args = sys.argv[1:]
+pathlib.Path(args[args.index('--output-last-message') + 1]).write_text('{}')
+print(json.dumps({'type': 'thread.started', 'thread_id': 'thread-1'}))
+print(json.dumps({'type': 'turn.completed', 'model': 'gpt-5.6-luna', 'usage': {}}))
+""",
+    )
+    request = _codex_request(fake, prompt="EXACT PROMPT", timeout_seconds=17)
+    result = runner.run_cold_reader(request)
+    assert result.status == "success"
+    assert datetime.fromisoformat(result.started_at_utc.replace("Z", "+00:00")).tzinfo
+    assert result.timeout_seconds == 17
+    assert result.provider_cli_version == "codex-cli 0.146.0-test"
+    assert result.provider_cli_version_status == "reported"
+    assert result.prompt_digest == hashlib.sha256(b"EXACT PROMPT").hexdigest()
+    canonical_schema = json.dumps(
+        request.output_schema,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    assert result.schema_digest == hashlib.sha256(canonical_schema.encode()).hexdigest()
+    assert result.stderr_digest == hashlib.sha256(result.stderr.encode()).hexdigest()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        result.timeout_seconds = 99
 
 
 @pytest.mark.parametrize(
@@ -226,3 +361,21 @@ print(json.dumps({'type': 'turn.completed', 'model': 'gpt-5.6-luna', 'usage': {}
 """,
     )
     assert runner.run_cold_reader(_codex_request(fake)).status == "success"
+
+
+def test_timeout_kills_descendant_holding_output_pipes(tmp_path):
+    fake = _make_fake_codex(
+        tmp_path,
+        """import subprocess, sys, time
+subprocess.Popen(
+    [sys.executable, '-c', 'import time; time.sleep(60)'],
+    stdout=sys.stdout,
+    stderr=sys.stderr,
+)
+time.sleep(60)
+""",
+    )
+    started = time.monotonic()
+    result = runner.run_cold_reader(_codex_request(fake, timeout_seconds=0.1))
+    assert result.status == "timeout"
+    assert time.monotonic() - started < 3
