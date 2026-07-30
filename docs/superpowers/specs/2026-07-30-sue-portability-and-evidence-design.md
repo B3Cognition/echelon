@@ -374,6 +374,11 @@ output flags, the smoke stops before the second call.
 ### 7.3 Provider policy
 
 - Scientific commands require an explicit provider-prefixed command.
+- The economical Codex profile is `gpt-5.6-luna` with `low` reasoning. SUE
+  exposes both values as explicit arguments, writes both into the invocation
+  and evidence, and never relies on Codex's ambient model selection.
+- Ordinary Codex runs may select that economical profile by an explicit SUE
+  default shown in the preflight summary; operators may override it.
 - `sue_auto` ordinary use resolves the ambient/default provider through the
   shared runner and records that it is non-scientific.
 - Scientific A1 runs reject ambient provider or model selection.
@@ -488,7 +493,8 @@ or evidence-sealing failure.
 
 A1 then uses:
 
-- one explicitly selected provider and model command;
+- `codex` with explicitly selected `gpt-5.6-luna` and `low` reasoning for the
+  first preregistered campaign;
 - two approved, non-confidential, one-chunk clean specifications;
 - with-glossary and without-glossary conditions;
 - three readers;
