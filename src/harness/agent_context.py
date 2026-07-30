@@ -1,11 +1,13 @@
 """Phase-aware bounded rendering for Echelon agent dispatch context."""
 from __future__ import annotations
 
+import fnmatch
+import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
 
 RENDER_MODES = {"bounded", "legacy"}
@@ -23,6 +25,35 @@ class ContextPolicy:
     renderer: str
     cap_bytes: int
     overflow_action: str
+
+
+@dataclass(frozen=True)
+class RenderedSection:
+    title: str
+    text: str
+    bytes: int
+    omitted: dict[str, int | str]
+
+
+STATE_ALWAYS_KEYS = (
+    "run_id",
+    "spec_id",
+    "phase",
+    "status",
+    "iteration",
+    "max_iterations",
+    "autonomy_mode",
+    "squad_dir",
+    "staging_dir",
+    "context_dir",
+    "spec_dir",
+    "published_spec_dir",
+    "implementation_targets",
+    "selected_issue_resolution",
+    "quality_gate_remediation",
+    "understanding_evidence",
+    "product_inputs",
+)
 
 
 DEFAULT_FILE_CAP_BYTES = 96 * 1024
@@ -100,3 +131,168 @@ def policy_for_context(
         return ContextPolicy("advisory", "summary_pointer", DEFAULT_HISTORY_CAP_BYTES, "summarize_with_notice")
 
     return ContextPolicy("important", "full_file", DEFAULT_FILE_CAP_BYTES, "truncate_with_notice")
+
+
+def _byte_len(text: str) -> int:
+    return len(text.encode("utf-8"))
+
+
+def _bounded_text(text: str, cap_bytes: int) -> tuple[str, bool]:
+    if _byte_len(text) <= cap_bytes:
+        return text, False
+    encoded = text.encode("utf-8")[: max(cap_bytes - 128, 0)]
+    trimmed = encoded.decode("utf-8", errors="ignore")
+    return trimmed + "\n[context truncated by Echelon context budget]\n", True
+
+
+def _phase_matches(value: object, pattern: str) -> bool:
+    phase = str(value or "")
+    return fnmatch.fnmatchcase(phase, pattern)
+
+
+def _entry_matches(entry: dict[str, Any], filters: Mapping[str, str]) -> bool:
+    requested_type = filters.get("type")
+    if requested_type == "routing_decision":
+        requested_type = "decision"
+    if requested_type and entry.get("type") != requested_type:
+        return False
+    phase = filters.get("phase")
+    if phase and not _phase_matches(entry.get("phase"), phase):
+        return False
+    return True
+
+
+def render_journal(path: Path, filters: Mapping[str, str], cap_bytes: int) -> RenderedSection:
+    resolved = path.resolve()
+    malformed = 0
+    entries: list[dict[str, Any]] = []
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                malformed += 1
+                continue
+            if isinstance(parsed, dict):
+                entries.append(parsed)
+    except OSError:
+        text = f"\n---\n# {resolved}\n[Journal unavailable]"
+        return RenderedSection(str(resolved), text, _byte_len(text), {"matched": 0, "included": 0, "malformed": malformed})
+
+    selected = [entry for entry in entries if _entry_matches(entry, filters)]
+    rendered: list[str] = []
+    used = 0
+    for entry in reversed(selected):
+        line = json.dumps(entry, ensure_ascii=False, sort_keys=True)
+        line_bytes = _byte_len(line) + 1
+        if line_bytes > cap_bytes:
+            continue
+        if rendered and used + line_bytes > cap_bytes:
+            break
+        rendered.append(line)
+        used += line_bytes
+    rendered.reverse()
+    selector = ", ".join(f"{key}={value}" for key, value in sorted(filters.items()))
+    header = (
+        f"\n---\n# {resolved}\n"
+        f"[Journal context: {len(rendered)}/{len(selected)} matching entries"
+        f"{f'; {selector}' if selector else ''}; newest entries retained; malformed={malformed}]"
+    )
+    text = header + ("\n" + "\n".join(rendered) if rendered else "\n[No matching entries]")
+    return RenderedSection(
+        str(resolved),
+        text,
+        _byte_len(text),
+        {"matched": len(selected), "included": len(rendered), "malformed": malformed},
+    )
+
+
+def compact_state_projection(
+    state: Mapping[str, object],
+    phase_id: str,
+    allowed_state_updates: object = None,
+) -> dict[str, object]:
+    projection = {key: state[key] for key in STATE_ALWAYS_KEYS if key in state}
+    ledger = state.get("issue_resolution_ledger")
+    if isinstance(ledger, dict):
+        projection["issue_resolution_statuses"] = {
+            str(issue_id): str(entry.get("status") or "unknown")
+            for issue_id, entry in ledger.items()
+            if isinstance(entry, dict)
+        }
+    quality_scores = state.get("quality_scores")
+    if isinstance(quality_scores, list):
+        projection["quality_scores_summary"] = {
+            "count": len(quality_scores),
+            "latest": quality_scores[-1] if quality_scores else None,
+        }
+    if allowed_state_updates is not None:
+        projection["allowed_state_updates"] = sorted(str(key) for key in allowed_state_updates)
+    return projection
+
+
+def _render_file(path_ref: str, candidate: Path, policy: ContextPolicy) -> RenderedSection:
+    resolved = candidate.resolve()
+    try:
+        raw = candidate.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = f"\n---\n# {resolved}\n[File unavailable]"
+        return RenderedSection(str(resolved), text, _byte_len(text), {"unavailable": "true"})
+    bounded, truncated = _bounded_text(raw, policy.cap_bytes)
+    text = f"\n---\n# {resolved}\n{bounded}"
+    return RenderedSection(str(resolved), text, _byte_len(text), {"truncated": str(truncated).lower()})
+
+
+def _directory_manifest(candidate: Path) -> list[Path]:
+    return sorted(path for path in candidate.rglob("*") if path.is_file())
+
+
+def _render_directory(path_ref: str, candidate: Path, policy: ContextPolicy) -> RenderedSection:
+    resolved = candidate.resolve()
+    files = _directory_manifest(candidate)
+    manifest_lines = ["\n---", f"# {resolved.as_posix().rstrip('/')}/", "## Directory manifest"]
+    manifest_lines.extend(f"- {path.relative_to(candidate).as_posix()}" for path in files)
+    chunks = ["\n".join(manifest_lines)]
+    used = _byte_len(chunks[0])
+    included = 0
+    for path in files:
+        rel = path.relative_to(candidate).as_posix()
+        body = path.read_text(encoding="utf-8", errors="replace")
+        entry = f"\n## {resolved.as_posix().rstrip('/')}/{rel}\n{body}"
+        entry_bytes = _byte_len(entry)
+        if used + entry_bytes > policy.cap_bytes:
+            break
+        chunks.append(entry)
+        used += entry_bytes
+        included += 1
+    truncated = included < len(files)
+    if truncated:
+        chunks.append(f"\n[Directory bodies truncated: included {included}/{len(files)} files]")
+    text = "\n".join(chunks)
+    return RenderedSection(
+        str(resolved),
+        text,
+        _byte_len(text),
+        {"files": len(files), "included_files": included, "truncated": str(truncated).lower()},
+    )
+
+
+def render_context_path(
+    path_ref: str,
+    candidate: Path,
+    policy: ContextPolicy,
+    filters: Mapping[str, str],
+    state: Mapping[str, object] | None = None,
+    phase_id: str = "",
+) -> RenderedSection:
+    if candidate.name == "reasoning-journal.jsonl":
+        return render_journal(candidate, filters, policy.cap_bytes)
+    if candidate.name == "state.json" and state is not None:
+        text = json.dumps(compact_state_projection(state, phase_id), indent=2, sort_keys=True)
+        rendered = f"\n---\n# Current controller state (compact projection)\n{text}"
+        return RenderedSection(str(candidate.resolve()), rendered, _byte_len(rendered), {"projection": "compact"})
+    if candidate.is_dir():
+        return _render_directory(path_ref, candidate, policy)
+    return _render_file(path_ref, candidate, policy)
