@@ -102,6 +102,7 @@ def test_workspace_graph_cli_repairs_stale_domains_and_keeps_failure_outputs(
     snapshot_requests: list[str] = []
     graph_audits: Counter[str] = Counter()
     rebuilt_graphs: list[str] = []
+    repaired_marker = "repaired"
 
     def audit_re_memory(root: Path) -> _StatusReport:
         nonlocal re_audits
@@ -173,7 +174,7 @@ def test_workspace_graph_cli_repairs_stale_domains_and_keeps_failure_outputs(
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.build_spec_graph",
         lambda root, selector: rebuilt_graphs.append(str(selector))
-        or _graph(str(selector), marker="repaired"),
+        or _graph(str(selector), marker=repaired_marker),
     )
 
     from echelon.cli_app import app
@@ -191,6 +192,11 @@ def test_workspace_graph_cli_repairs_stale_domains_and_keeps_failure_outputs(
     assert snapshot_requests == [memory_spec.name]
     assert graph_audits == Counter({memory_spec.name: 1, graph_spec.name: 2})
     assert rebuilt_graphs == [graph_spec.name]
+    rebuilt_bytes = (graph_spec / "spec-artifact-graph.json").read_bytes()
+    rebuilt_document = json.loads(rebuilt_bytes)
+    repaired_node_id = f"artifact:{graph_spec.name}/{repaired_marker}.md"
+    assert repaired_marker.encode("utf-8") in rebuilt_bytes
+    assert any(node["id"] == repaired_node_id for node in rebuilt_document["nodes"])
     assert f"Workspace refresh refreshed: workspace re_memory (pass)" in refreshed.output
     assert (
         f"Workspace refresh refreshed: {memory_spec.name} requirements_memory (pass)"
@@ -240,4 +246,13 @@ def test_workspace_graph_cli_repairs_stale_domains_and_keeps_failure_outputs(
     assert html
     assert "<!doctype html>" in html
     assert "<title>Echelon Graph</title>" in html
-    assert stale_dot_path.read_text(encoding="utf-8").startswith('digraph "')
+    assert "</html>" in html
+    assert '"scope": "workspace"' in html
+    assert f'"title": "{tmp_path.name}"' in html
+    assert graph_spec.name in html
+    dot = stale_dot_path.read_text(encoding="utf-8")
+    assert dot.startswith('digraph "')
+    assert dot.endswith("}\n")
+    assert '"workspace:current"' in dot
+    assert f'"spec:{graph_spec.name}"' in dot
+    assert "CONTAINS_SPEC" in dot

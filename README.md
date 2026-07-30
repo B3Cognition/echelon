@@ -373,7 +373,9 @@ snapshots, and each member graph. Only stale applicable domains are refreshed
 and only missing or stale member graphs are rebuilt before composition uses
 their exact persisted bytes.
 One member failure does not stop the remaining repairs; the member stays as an
-excluded placeholder with its diagnosis.
+excluded placeholder with its diagnosis. With `--write`, refresh persists both
+the workspace graph and workspace audit, then returns the final workspace audit
+exit code: `0` for `pass`/`warn`, `1` for `fail`, or `2` for `unavailable`.
 
 `workspace build [--write]` only composes current persisted member graphs;
 `--write` persists the composed workspace graph. A successful composition exits
