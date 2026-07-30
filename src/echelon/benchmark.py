@@ -650,11 +650,8 @@ def run_benchmark_variant(
 
         elapsed = time.monotonic() - started
 
-        for reset_command in baseline_reset_commands(resolved_baseline_ref):
-            _run_with_context(run, reset_command, render_mode)
-
         record_variant_id = f"{variant_id}:{render_mode}" if context_render == "both" else variant_id
-        return collect_benchmark_record(
+        record = collect_benchmark_record(
             project_root,
             record_variant_id,
             status=status,
@@ -664,6 +661,11 @@ def run_benchmark_variant(
             elapsed_seconds=elapsed,
             failure_kind=failure_kind,
         )
+
+        for reset_command in baseline_reset_commands(resolved_baseline_ref):
+            _run_with_context(run, reset_command, render_mode)
+
+        return record
 
     render_modes = ("legacy", "bounded") if context_render == "both" else (context_render,)
     records = [run_pass(render_mode) for render_mode in render_modes]

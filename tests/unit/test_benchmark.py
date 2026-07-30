@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -559,6 +560,77 @@ def test_run_benchmark_variant_writes_summary_with_injected_runner(tmp_path: Pat
     assert summary["variants"]["constitution"]["spec_id"] == "001"
     assert summary["variants"]["constitution"]["delivery_run_id"] == "build-1"
     assert (output_dir / "summary.md").exists()
+
+
+def test_run_benchmark_variant_records_metrics_before_trailing_clean(tmp_path: Path) -> None:
+    commands: list[tuple[str, ...]] = []
+
+    def simulate_git_clean_removing_run_state() -> None:
+        runs_dir = tmp_path / "runs"
+        for marker in (runs_dir / ".current", runs_dir / ".current-build-001"):
+            marker.unlink(missing_ok=True)
+        for run_dir in runs_dir.glob("*"):
+            if run_dir.name == "benchmarks":
+                continue
+            if run_dir.is_dir():
+                shutil.rmtree(run_dir)
+
+    def runner(command: tuple[str, ...]) -> int:
+        commands.append(command)
+        if command == ("git", "clean", "-fd", "-e", "runs/benchmarks/"):
+            simulate_git_clean_removing_run_state()
+        if command[:3] == ("echelon", "spec", "run"):
+            squad_dir = tmp_path / "runs" / "spec-20260704-120000-000001"
+            budget_dir = squad_dir / "context-budget"
+            budget_dir.mkdir(parents=True)
+            (tmp_path / "runs" / ".current").write_text(f"{squad_dir.name}\n", encoding="utf-8")
+            (squad_dir / "state.json").write_text(
+                json.dumps({"run_id": "squad-1", "status": "done", "spec_id": "001", "cost_usd": 2.5}),
+                encoding="utf-8",
+            )
+            (budget_dir / "dispatch-001.json").write_text(
+                json.dumps(
+                    {
+                        "selected_render_mode": "bounded",
+                        "bounded": {"bytes": 1200, "approx_tokens": 300},
+                        "savings": {"reduction_pct": 25},
+                    }
+                ),
+                encoding="utf-8",
+            )
+        if command[:3] == ("echelon", "delivery", "run"):
+            build_dir = tmp_path / "runs" / "build-20260704-130000-000001"
+            state_dir = build_dir / "state"
+            state_dir.mkdir(parents=True)
+            (tmp_path / "runs" / ".current-build-001").write_text(f"{build_dir.name}\n", encoding="utf-8")
+            (state_dir / "default.json").write_text(
+                json.dumps({"run_id": "build-1", "status": "converged", "outer_iter": 2}),
+                encoding="utf-8",
+            )
+        return 0
+
+    output_dir = run_benchmark_variant(
+        tmp_path,
+        "tiny-notes",
+        "baseline",
+        baseline_ref="baseline-artifacts",
+        runner=runner,
+        timestamp="20260701-120000",
+    )
+
+    summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+    record = summary["variants"]["baseline"]
+    assert record["spec_id"] == "001"
+    assert record["run_id"] == "squad-1"
+    assert record["delivery_run_id"] == "build-1"
+    assert record["context_prompt_bytes"] == 1200
+    assert record["context_prompt_tokens_estimate"] == 300
+    assert record["context_reduction_pct"] == 25
+    assert commands[-2:] == [
+        ("git", "reset", "--hard", "baseline-artifacts"),
+        ("git", "clean", "-fd", "-e", "runs/benchmarks/"),
+    ]
+    assert not (tmp_path / "runs" / ".current").exists()
 
 
 def test_run_benchmark_variant_both_uses_same_baseline_and_qualified_records(tmp_path: Path) -> None:
