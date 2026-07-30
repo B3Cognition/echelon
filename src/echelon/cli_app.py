@@ -2074,24 +2074,28 @@ def graph_workspace_export(
         load_graph_document,
         render_graph_dot,
     )
-    from echelon.workspace_graph import workspace_graph_path
-    from echelon.workspace_graph_audit import audit_workspace_graph
+    from echelon.workspace_graph import workspace_graph_path, write_workspace_graph_bytes
+    from echelon.workspace_graph_audit import (
+        audit_workspace_graph,
+        persisted_workspace_graph_is_invalid,
+    )
 
     try:
         if output_format != "dot":
             raise GraphVisualizationError(
                 f"unsupported graph export format {output_format!r}; expected dot"
-            )
+        )
         root = Path.cwd()
-        document = load_graph_document(workspace_graph_path(root))
         report = audit_workspace_graph(root)
+        if persisted_workspace_graph_is_invalid(report):
+            raise GraphVisualizationError("workspace graph artifact fails its full contract")
+        document = load_graph_document(workspace_graph_path(root))
         rendered = render_graph_dot(document, report, lens=lens)
         if output is None:
             typer.echo(rendered, nl=False)
         else:
             output_path = output if output.is_absolute() else root / output
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_text(rendered, encoding="utf-8")
+            write_workspace_graph_bytes(output_path, rendered.encode("utf-8"))
             typer.echo(f"Workspace graph DOT: {output_path}")
     except (GraphVisualizationError, OSError, ValueError) as exc:
         typer.echo(str(exc), err=True)
@@ -2114,13 +2118,18 @@ def graph_workspace_view(
         load_graph_document,
         render_graph_html,
     )
-    from echelon.workspace_graph import workspace_graph_path
-    from echelon.workspace_graph_audit import audit_workspace_graph
+    from echelon.workspace_graph import workspace_graph_path, write_workspace_graph_bytes
+    from echelon.workspace_graph_audit import (
+        audit_workspace_graph,
+        persisted_workspace_graph_is_invalid,
+    )
 
     try:
         root = Path.cwd()
-        document = load_graph_document(workspace_graph_path(root))
         report = audit_workspace_graph(root)
+        if persisted_workspace_graph_is_invalid(report):
+            raise GraphVisualizationError("workspace graph artifact fails its full contract")
+        document = load_graph_document(workspace_graph_path(root))
         initial_lens = lens or ("exceptions" if report.findings else "portfolio")
         html = render_graph_html(
             document,
@@ -2131,14 +2140,19 @@ def graph_workspace_view(
         output_path = output or workspace_graph_path(root).with_name("workspace.html")
         if not output_path.is_absolute():
             output_path = root / output_path
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(html, encoding="utf-8")
+        write_workspace_graph_bytes(output_path, html.encode("utf-8"))
         typer.echo(
             f"Workspace graph viewer: {output_path} "
             f"(audit={report.status}, findings={len(report.findings)})"
         )
         if open_browser:
-            webbrowser.open(output_path.resolve().as_uri())
+            try:
+                opened = webbrowser.open(output_path.resolve().as_uri())
+            except webbrowser.Error:
+                typer.echo("warning: workspace graph viewer was not opened", err=True)
+            else:
+                if not opened:
+                    typer.echo("warning: workspace graph viewer was not opened", err=True)
     except (GraphVisualizationError, OSError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=2) from exc

@@ -307,8 +307,12 @@ def workspace_graph_path(project_root: Path) -> Path:
 def write_workspace_graph(graph: WorkspaceArtifactGraph, project_root: Path) -> Path:
     """Atomically publish a rendered workspace graph beside its project root."""
     path = workspace_graph_path(project_root)
+    return write_workspace_graph_bytes(path, render_workspace_graph(graph))
+
+
+def write_workspace_graph_bytes(path: Path, data: bytes) -> Path:
+    """Atomically replace one workspace-derived output with exact bytes."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = render_workspace_graph(graph)
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(

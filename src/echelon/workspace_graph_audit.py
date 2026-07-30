@@ -79,6 +79,14 @@ class WorkspaceGraphAuditReport:
         }
 
 
+def persisted_workspace_graph_is_invalid(report: WorkspaceGraphAuditReport) -> bool:
+    """Whether the persisted artifact failed the full workspace graph contract."""
+    return any(
+        finding.code in {"workspace_graph_missing", "workspace_graph_invalid"}
+        for finding in report.findings
+    )
+
+
 def audit_workspace_graph(
     project_root: Path,
     candidate: WorkspaceGraphBuildResult | None = None,

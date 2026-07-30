@@ -16,6 +16,7 @@ from echelon.workspace_graph import (
     load_workspace_graph_document,
     render_workspace_graph,
     workspace_graph_path,
+    write_workspace_graph_bytes,
     write_workspace_graph,
 )
 
@@ -652,6 +653,30 @@ def test_write_is_atomic_and_preserves_previous_bytes_on_structural_failure(
         build_workspace_graph(tmp_path)
     assert path.read_bytes() == previous
     assert load_workspace_graph_document(tmp_path)["scope"] == "workspace"
+
+
+@pytest.mark.unit
+def test_write_workspace_graph_bytes_is_atomic_and_preserves_previous_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / ".echelon" / "runtime" / "graph" / "workspace.html"
+    output.parent.mkdir(parents=True)
+    output.write_bytes(b"previous")
+    replaced: list[tuple[Path, Path]] = []
+
+    def failed_replace(source: Path, target: Path) -> None:
+        replaced.append((Path(source), Path(target)))
+        raise OSError("replace failed")
+
+    monkeypatch.setattr("echelon.workspace_graph.os.replace", failed_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        write_workspace_graph_bytes(output, b"replacement")
+
+    assert output.read_bytes() == b"previous"
+    assert replaced and replaced[0][1] == output
+    assert not list(output.parent.glob(f".{output.name}.*.tmp"))
 
 
 @pytest.mark.unit

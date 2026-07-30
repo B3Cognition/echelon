@@ -195,7 +195,7 @@ def test_second_write_refresh_is_a_no_op_for_current_upstream_members(
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.audit_re_memory",
-        lambda root: _Report(next(re_statuses)),
+        lambda root: calls.append("audit-re") or _Report(next(re_statuses)),
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.mine_re_memory",
@@ -203,7 +203,8 @@ def test_second_write_refresh_is_a_no_op_for_current_upstream_members(
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.audit_spec_memory",
-        lambda root, selector: _Report(next(requirements_statuses)),
+        lambda root, selector: calls.append("audit-requirements")
+        or _Report(next(requirements_statuses)),
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.mine_spec_requirements",
@@ -215,11 +216,23 @@ def test_second_write_refresh_is_a_no_op_for_current_upstream_members(
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh._evidence_is_applicable",
-        lambda root, spec_dir: False,
+        lambda root, spec_dir: True,
+    )
+    evidence_statuses = iter(("fail", "pass", "pass"))
+    monkeypatch.setattr(
+        "echelon.workspace_graph_refresh.audit_spec_evidence_memory",
+        lambda root, selector, *, allow_unlanded=False: calls.append("audit-evidence")
+        or _Report(next(evidence_statuses)),
+    )
+    monkeypatch.setattr(
+        "echelon.workspace_graph_refresh.mine_spec_evidence_memory",
+        lambda root, selector, *, run_id, allow_unlanded=False: calls.append("mine-evidence")
+        or _MineReport("complete"),
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.audit_spec_graph",
-        lambda root, selector: _Report(next(graph_statuses)),
+        lambda root, selector: calls.append("audit-graph")
+        or _Report(next(graph_statuses)),
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.build_spec_graph",
@@ -235,7 +248,7 @@ def test_second_write_refresh_is_a_no_op_for_current_upstream_members(
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.build_workspace_graph",
-        lambda root: candidate,
+        lambda root: calls.append("compose") or candidate,
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.write_workspace_graph",
@@ -243,7 +256,7 @@ def test_second_write_refresh_is_a_no_op_for_current_upstream_members(
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.audit_workspace_graph",
-        lambda root, candidate: _Report("pass"),
+        lambda root, candidate: calls.append("audit-workspace") or _Report("pass"),
     )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.write_workspace_graph_audit",
@@ -254,15 +267,32 @@ def test_second_write_refresh_is_a_no_op_for_current_upstream_members(
     refresh_workspace_graph(tmp_path, write=True)
 
     assert calls == [
+        "audit-re",
         "mine-re",
+        "audit-re",
+        "audit-requirements",
         "mine-requirements",
         "cleanup",
+        "audit-requirements",
+        "audit-evidence",
+        "mine-evidence",
+        "audit-evidence",
+        "audit-graph",
         "build-graph",
         "write-graph",
+        "audit-graph",
         "write-graph-audit",
+        "compose",
         "write-workspace",
+        "audit-workspace",
         "write-workspace-audit",
+        "audit-re",
+        "audit-requirements",
+        "audit-evidence",
+        "audit-graph",
+        "compose",
         "write-workspace",
+        "audit-workspace",
         "write-workspace-audit",
     ]
 
@@ -348,6 +378,16 @@ def test_dry_refresh_has_no_upstream_or_persisted_mutation(
     from echelon.workspace_graph_refresh import refresh_workspace_graph
 
     candidate = object()
+    for target in (
+        "mine_spec_requirements",
+        "mine_re_memory",
+        "mine_spec_evidence_memory",
+        "build_spec_graph",
+    ):
+        monkeypatch.setattr(
+            f"echelon.workspace_graph_refresh.{target}",
+            lambda *args, **kwargs: pytest.fail(f"dry refresh invoked {target}"),
+        )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.discover_canonical_spec_dirs",
         lambda root: pytest.fail("dry refresh must not discover refresh members"),
