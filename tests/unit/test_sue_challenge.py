@@ -134,7 +134,20 @@ class TestDataclasses:
             ("SocraticQuestion", {"id", "question", "target", "lines", "category"}),
             ("Answer", {"id", "verdict", "answer", "evidence_lines"}),
             ("Finding", {"rank", "question", "answer"}),
-            ("CallOutcome", {"kind", "stdout", "stderr", "duration_seconds"}),
+            (
+                "CallOutcome",
+                {
+                    "kind",
+                    "stdout",
+                    "stderr",
+                    "duration_seconds",
+                    "run_id",
+                    "model_requested",
+                    "model_reported",
+                    "reasoning_effort",
+                },
+            ),
+            ("CallEvidence", {"round_no", "attempt_no", "outcome"}),
             ("ParseFailure", {"reason", "is_timeout"}),
         ],
     )
@@ -407,6 +420,33 @@ class TestPreflight:
         assert spec.read_text() == content
         capsys.readouterr()
 
+    def test_codex_preflight_prints_explicit_execution_profile(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        spec = tmp_path / "spec.md"
+        spec.write_text("# Spec\nA requirement.\n")
+        executable = _make_stub(tmp_path / "codex-stub.sh", "exit 99\n")
+
+        def fake_execute(_config, _prompt, _validator, round_no, _spec_dir, *_args):
+            assert round_no == 1
+            return [], False
+
+        monkeypatch.setattr(sue, "execute_round", fake_execute)
+
+        assert sue.main([
+            str(spec),
+            "--model-cmd", f"codex={shlex.quote(executable)}",
+            "--model", "gpt-5.6-requested",
+            "--reasoning-effort", "high",
+        ]) == sue.EXIT_SUCCESS
+        output = capsys.readouterr().out
+        profile = output.index(
+            "Preflight: provider=codex, requested_model=gpt-5.6-requested, "
+            "reasoning_effort=high"
+        )
+        report = output.index("Report:")
+        assert profile < report
+
 
 class TestLoadSpec:
     def test_lines_are_newline_stripped_and_ordered(self, tmp_path):
@@ -544,9 +584,13 @@ class TestRunModelCall:
         )
 
         assert outcome.stdout == '{"questions":[]}'
+        assert outcome.run_id == captured["request"].run_id
         assert captured["request"].model == "gpt-5.6-luna"
         assert captured["request"].reasoning_effort == "low"
         assert captured["request"].output_schema == sue.ROUND1_OUTPUT_SCHEMA
+        assert outcome.model_requested == "gpt-5.6-luna"
+        assert outcome.model_reported == "gpt-5.6-luna"
+        assert outcome.reasoning_effort == "low"
 
     def test_codex_request_configuration_failure_returns_failed_outcome(self, tmp_path):
         config = sue.RunConfig(
@@ -598,7 +642,15 @@ class TestRunModelCall:
             id="Q1", verdict="ANSWERED", answer="The text says so.", evidence_lines=[1]
         )
 
-        def fake_execute(_config, _prompt, _validator, round_no, _spec_dir, output_schema=None):
+        def fake_execute(
+            _config,
+            _prompt,
+            _validator,
+            round_no,
+            _spec_dir,
+            output_schema=None,
+            _call_evidence=None,
+        ):
             schemas.append(output_schema)
             return ([question], False) if round_no == 1 else [answer]
 
@@ -1174,6 +1226,59 @@ class TestExecuteRound:
         assert int(count.read_text()) == 1
         assert not (spec_dir / sue.DEBUG_DIR_NAME).exists()
 
+    def test_retry_records_each_call_metadata_without_reusing_stale_values(
+        self, tmp_path, monkeypatch
+    ):
+        outcomes = iter([
+            sue.CallOutcome(
+                kind="ok",
+                stdout="not JSON",
+                stderr="",
+                duration_seconds=0.1,
+                run_id="round1-invalid",
+                model_requested="requested-a",
+                model_reported="reported-a",
+                reasoning_effort="low",
+            ),
+            sue.CallOutcome(
+                kind="ok",
+                stdout=_round1_reply("Q1"),
+                stderr="",
+                duration_seconds=0.2,
+                run_id="round1-valid",
+                model_requested="requested-b",
+                model_reported="reported-b",
+                reasoning_effort="high",
+            ),
+        ])
+        monkeypatch.setattr(sue, "run_model_call", lambda *_args: next(outcomes))
+        evidence = []
+
+        result = sue.execute_round(
+            self._config("codex"),
+            "PROMPT",
+            self._r1_validator,
+            1,
+            tmp_path,
+            sue.ROUND1_OUTPUT_SCHEMA,
+            evidence,
+        )
+
+        questions, _ = result
+        assert [question.id for question in questions] == ["Q1"]
+        assert [
+            (
+                item.round_no,
+                item.attempt_no,
+                item.outcome.run_id,
+                item.outcome.model_reported,
+            )
+            for item in evidence
+        ] == [
+            (1, 1, "round1-invalid", "reported-a"),
+            (1, 2, "round1-valid", "reported-b"),
+        ]
+
     def test_invalid_then_valid_is_two_invocations(self, tmp_path):
         # AC-016: first output invalid, retry valid — exactly 2 invocations.
         stub, count, stub_dir = _make_replay_stub(
@@ -1464,6 +1569,43 @@ class TestRenderReport:
         assert len([l for l in head.splitlines() if l.startswith("- **")]) == 5
         assert "truncated" not in head
 
+    def test_requested_and_reported_model_mismatch_survives_report_serialization(self):
+        report = sue.render_report(
+            _report_spec(),
+            "2026-07-18",
+            [],
+            [],
+            [],
+            False,
+            provider="codex",
+            requested_model="gpt-5.6-requested",
+            reasoning_effort="low",
+            call_evidence=[
+                sue.CallEvidence(
+                    round_no=1,
+                    attempt_no=1,
+                    outcome=sue.CallOutcome(
+                        kind="ok",
+                        stdout='{"questions":[]}',
+                        stderr="",
+                        duration_seconds=0.1,
+                        run_id="challenge-round-1",
+                        model_requested="gpt-5.6-requested",
+                        model_reported="gpt-5.6-reported",
+                        reasoning_effort="low",
+                    ),
+                )
+            ],
+        )
+
+        assert "- **Requested model:** gpt-5.6-requested" in report
+        assert "- **Reasoning effort:** low" in report
+        assert (
+            "- **Model call round 1 attempt 1:** run_id=challenge-round-1; "
+            "requested=gpt-5.6-requested; reported=gpt-5.6-reported; "
+            "reasoning_effort=low; status=ok"
+        ) in report
+
     def test_truncation_note_renders_only_when_flag_set(self):
         # AC-020/FR-019/FR-036: exactly 1 truncation note when the flag is set.
         report = self._report(truncated=True)
@@ -1681,6 +1823,54 @@ class TestMainPipeline:
         assert "### 1. [CONTRADICTED] Is X contradicted?" in report
         assert "  > line 2: The system does X." in report
         assert "<summary>Audit appendix — 1 ANSWERED question(s)</summary>" in report
+        assert capsys.readouterr().err == ""
+
+    def test_codex_runner_metadata_is_persisted_per_round(self, tmp_path, monkeypatch, capsys):
+        spec = _write_fixture_spec(tmp_path)
+        executable = _make_stub(tmp_path / "codex-stub.sh", "exit 99\n")
+        reported_models = iter(["reported-round-1", "reported-round-2"])
+
+        def fake_run(request):
+            is_round1 = "questions" in request.output_schema["properties"]
+            final_output = (
+                _full_round1_reply([("Q1", "What does the text require?")])
+                if is_round1
+                else _round2_reply({"Q1": "ANSWERED"})
+            )
+            reported = next(reported_models)
+            return sue.runner.ColdReaderResult(
+                run_id=request.run_id,
+                status="success",
+                provider=request.provider,
+                model_requested=request.model,
+                model_reported=reported,
+                reasoning_effort=request.reasoning_effort,
+                protocol="codex-stdin",
+                argv_redacted=("codex", "exec", "-"),
+                duration_seconds=0.1,
+                exit_code=0,
+                raw_output="",
+                final_output=final_output,
+                stderr="",
+                raw_output_digest=hashlib.sha256(b"").hexdigest(),
+                final_output_digest=hashlib.sha256(final_output.encode()).hexdigest(),
+                usage=None,
+            )
+
+        monkeypatch.setattr(sue.runner, "run_cold_reader", fake_run)
+
+        assert sue.main([
+            str(spec),
+            "--model-cmd", f"codex={shlex.quote(executable)}",
+            "--model", "requested-model",
+            "--reasoning-effort", "xhigh",
+        ]) == sue.EXIT_SUCCESS
+        report = (spec.parent / sue.REPORT_FILENAME).read_text()
+        assert "- **Requested model:** requested-model" in report
+        assert "- **Reasoning effort:** xhigh" in report
+        assert "requested=requested-model; reported=reported-round-1" in report
+        assert "requested=requested-model; reported=reported-round-2" in report
+        assert report.count("**Model call round") == 2
         assert capsys.readouterr().err == ""
 
     def test_stdout_summary_states_counts_and_top_findings(self, tmp_path, capsys):

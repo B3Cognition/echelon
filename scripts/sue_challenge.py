@@ -365,6 +365,19 @@ class CallOutcome:
     stdout: str
     stderr: str
     duration_seconds: float
+    run_id: str | None = None
+    model_requested: str | None = None
+    model_reported: str | None = None
+    reasoning_effort: str | None = None
+
+
+@dataclass(frozen=True)
+class CallEvidence:
+    """One round attempt and its independently preserved transport evidence."""
+
+    round_no: int
+    attempt_no: int
+    outcome: CallOutcome
 
 
 @dataclass(frozen=True)
@@ -701,6 +714,10 @@ def run_model_call(
             stdout=result.final_output,
             stderr=result.stderr,
             duration_seconds=result.duration_seconds,
+            run_id=result.run_id,
+            model_requested=result.model_requested,
+            model_reported=result.model_reported,
+            reasoning_effort=result.reasoning_effort,
         )
 
     try:
@@ -1089,6 +1106,7 @@ def execute_round(
     round_no: int,
     spec_dir: Path,
     output_schema: dict | None = None,
+    call_evidence: list[CallEvidence] | None = None,
 ) -> object:
     """Run one round: at most 2 attempts, then dump and request exit 3.
 
@@ -1102,6 +1120,14 @@ def execute_round(
     current_prompt = prompt
     for attempt_no in (1, 2):
         outcome = run_model_call(config, current_prompt, output_schema)
+        if call_evidence is not None:
+            call_evidence.append(
+                CallEvidence(
+                    round_no=round_no,
+                    attempt_no=attempt_no,
+                    outcome=outcome,
+                )
+            )
         result = _attempt_result(outcome, validator)
         if not isinstance(result, ParseFailure):
             return result
@@ -1207,6 +1233,9 @@ def render_report(
     audit_entries: list[tuple[SocraticQuestion, Answer]],
     truncated: bool,
     provider: str = "claude",
+    requested_model: str | None = None,
+    reasoning_effort: str | None = None,
+    call_evidence: list[CallEvidence] | None = None,
 ) -> str:
     """Render the full ``socratic-challenge.md`` body (contracts/report-format.md).
 
@@ -1221,6 +1250,44 @@ def render_report(
         f"- **Specification:** {spec.path}",
         f"- **Run date:** {run_date}",
         f"- **Provider:** {provider}",
+    ]
+    if requested_model is not None:
+        lines.append(f"- **Requested model:** {_one_line(requested_model)}")
+    if reasoning_effort is not None:
+        lines.append(f"- **Reasoning effort:** {_one_line(reasoning_effort)}")
+    for evidence in call_evidence or []:
+        outcome = evidence.outcome
+        if not any(
+            (
+                outcome.run_id,
+                outcome.model_requested,
+                outcome.model_reported,
+                outcome.reasoning_effort,
+            )
+        ):
+            continue
+        run_id = _one_line(outcome.run_id) if outcome.run_id else "not-reported"
+        requested = (
+            _one_line(outcome.model_requested)
+            if outcome.model_requested
+            else "not-reported"
+        )
+        reported = (
+            _one_line(outcome.model_reported)
+            if outcome.model_reported
+            else "not-reported"
+        )
+        effort = (
+            _one_line(outcome.reasoning_effort)
+            if outcome.reasoning_effort
+            else "not-reported"
+        )
+        lines.append(
+            f"- **Model call round {evidence.round_no} attempt "
+            f"{evidence.attempt_no}:** run_id={run_id}; requested={requested}; "
+            f"reported={reported}; reasoning_effort={effort}; status={outcome.kind}"
+        )
+    lines += [
         f"- **Questions:** {len(questions)}",
         f"- **Findings:** {len(findings)}",
     ]
@@ -1304,6 +1371,12 @@ def main(argv: list[str] | None = None) -> int:
     failure = preflight(config)
     if failure is not None:
         return fail(*failure)
+    if config.model_protocol == "codex-stdin":
+        print(
+            "Preflight: provider=codex, "
+            f"requested_model={config.model}, "
+            f"reasoning_effort={config.reasoning_effort}"
+        )
 
     try:
         spec = load_spec(config.spec_path)
@@ -1322,6 +1395,7 @@ def main(argv: list[str] | None = None) -> int:
             "whitespace-only — nothing to challenge",
         )
     spec_dir = config.spec_path.resolve().parent
+    call_evidence: list[CallEvidence] = []
 
     # Exactly 2 logical model calls per run (FR-008): the rounds are two
     # sequential execute_round calls with no cross-round loop, so a round-2
@@ -1333,6 +1407,7 @@ def main(argv: list[str] | None = None) -> int:
         1,
         spec_dir,
         ROUND1_OUTPUT_SCHEMA,
+        call_evidence,
     )
     if isinstance(round1, RoundExit):
         return fail(round1.exit_code, round1.diagnostic)
@@ -1347,6 +1422,7 @@ def main(argv: list[str] | None = None) -> int:
             2,
             spec_dir,
             ROUND2_OUTPUT_SCHEMA,
+            call_evidence,
         )
         if isinstance(round2, RoundExit):
             return fail(round2.exit_code, round2.diagnostic)
@@ -1357,7 +1433,11 @@ def main(argv: list[str] | None = None) -> int:
     ranked = rank_findings(findings)
     report = render_report(
         spec, date.today().isoformat(), questions, ranked, audit_entries,
-        truncated, provider=provider_of_protocol(config.model_protocol),
+        truncated,
+        provider=provider_of_protocol(config.model_protocol),
+        requested_model=config.model,
+        reasoning_effort=config.reasoning_effort,
+        call_evidence=call_evidence,
     )
     report_path = spec_dir / REPORT_FILENAME
     try:
