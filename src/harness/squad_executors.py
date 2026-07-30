@@ -54,7 +54,6 @@ _WHY_STATE_CONTEXT_KEYS = (
     "autonomy_mode",
     "implementation_targets",
     "user_message",
-    "understanding_evidence",
     "quality_gate_remediation",
     "selected_issue_resolution",
 )

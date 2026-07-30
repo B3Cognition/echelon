@@ -636,7 +636,11 @@ def _add_evidence_memory(
         load_spec_evidence_artifact_snapshots,
     )
 
-    snapshots = load_spec_evidence_artifact_snapshots(root, spec_dir)
+    snapshots = load_spec_evidence_artifact_snapshots(
+        root,
+        spec_dir,
+        allow_unlanded=True,
+    )
     if not snapshots:
         return
     _add_artifact_memory_domain(
