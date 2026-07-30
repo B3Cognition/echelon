@@ -5,16 +5,19 @@
 > superpowers:executing-plans to implement this plan task-by-task. Steps use
 > checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Compose persisted per-spec artifact graphs into one deterministic,
-auditable, viewable workspace graph without rebuilding specs or mining memory.
+**Goal:** Prepare and compose per-spec artifact graphs into one deterministic,
+auditable, viewable workspace graph using the existing memory and graph
+pipelines.
 
 **Architecture:** A new `workspace_graph` module discovers canonical specs,
 classifies their persisted graphs through the existing live per-spec audit,
-normalizes shared identities, and writes a local derived graph. A separate
-workspace audit recomputes the same receipts and compares them with persisted
-state. Existing visualization becomes scope-neutral and filters one embedded
-graph client-side; Typer exposes the lifecycle beneath `echelon graph
-workspace`.
+normalizes shared identities, and writes a local derived graph. The explicit
+workspace refresh operation audits and invokes existing memory and per-spec
+graph refresh APIs only where stale; other workspace commands do not mutate
+upstream state. A separate workspace audit recomputes receipts and compares
+them with persisted state. Existing visualization becomes scope-neutral and
+filters one embedded graph client-side; Typer exposes the lifecycle beneath
+`echelon graph workspace`.
 
 **Tech Stack:** Python 3.11+, dataclasses, JSON/YAML, Typer, Cytoscape.js,
 pytest.
@@ -22,7 +25,12 @@ pytest.
 ## Global Constraints
 
 - Persisted per-spec graphs remain the only per-spec graph authority.
-- Workspace commands never call memory mining/refresh or per-spec graph build.
+- `workspace refresh --write` may orchestrate existing memory refresh and
+  per-spec graph build APIs; it must not duplicate their logic.
+- `workspace build`, `audit`, `view`, and `export`, plus refresh without
+  `--write`, never mutate memory or persisted per-spec graphs.
+- Audit before refresh, refresh shared RE once, and skip current memory domains
+  and current per-spec graphs.
 - Read only canonical direct children of `specs/`; exclude symlinks and runs.
 - Read only canonical `.echelon/config.yml`; do not use heuristic or legacy
   workspace discovery.
@@ -268,8 +276,8 @@ Assert exact codes such as:
 `workspace refresh` without `--write` previews the newly composed graph rather
 than an older file.
 
-Recompute current state through `build_workspace_graph`; do not write, mine, or
-build per-spec graphs. Compare digests first, then emit member-specific
+Recompute current state through `build_workspace_graph`; do not write or
+refresh upstream state. Compare digests first, then emit member-specific
 diagnostics. Normalize duplicate `(code, subject_id)` findings.
 
 - [ ] **Step 4: Implement status and atomic audit writes**
@@ -421,9 +429,10 @@ assert all(name in result.output for name in ("build", "audit", "refresh", "view
 Test build without `--write`, build with `--write`, JSON-only audit output,
 refresh candidate audit behavior, and `0/1/2` status mapping.
 
-- [ ] **Step 2: Add no-upstream-side-effect tests**
+- [ ] **Step 2: Add bounded upstream-refresh tests**
 
-Monkeypatch these to fail if invoked:
+For `build`, `audit`, `view`, `export`, and refresh without `--write`,
+monkeypatch these to fail if invoked:
 
 ```python
 mine_spec_requirements
@@ -432,7 +441,15 @@ mine_spec_evidence_memory
 build_spec_graph
 ```
 
-Exercise all five workspace commands.
+For `refresh --write`, assert:
+
+- shared RE is audited and refreshed at most once;
+- requirement and evidence memory are audited per canonical spec and mined
+  only when stale and applicable;
+- current member graphs are not rewritten;
+- missing or stale member graphs are rebuilt through the existing builder;
+- one member failure does not prevent later members from refreshing;
+- the final candidate is composed from the exact persisted member graph bytes.
 
 - [ ] **Step 3: Register and implement the workspace sub-Typer**
 
@@ -441,11 +458,13 @@ Add `graph_workspace_app` beneath `graph_app`. Keep existing
 
 `refresh` must:
 
-1. build one candidate;
-2. optionally write that candidate;
-3. audit that exact candidate;
-4. optionally write the audit;
-5. return the audit exit code.
+1. remain non-mutating without `--write`;
+2. with `--write`, audit and conditionally refresh shared RE once;
+3. audit and conditionally refresh each spec's requirement and evidence memory;
+4. audit and conditionally rebuild each missing or stale per-spec graph;
+5. continue after a bounded member failure;
+6. build and atomically write one candidate from persisted member graph bytes;
+7. audit that exact candidate, write the audit, and return its exit code.
 
 - [ ] **Step 4: Implement view and export semantics**
 
@@ -523,8 +542,9 @@ echelon graph workspace refresh --write
 echelon graph workspace view
 ```
 
-Explain that workspace refresh composes persisted member graphs and identifies
-which upstream spec needs memory or graph repair.
+Explain that workspace refresh repairs stale memory and member graphs through
+their existing pipelines before composition, while the other workspace
+commands only inspect or compose current persisted state.
 
 - [ ] **Step 3: Run the complete focused regression matrix**
 
@@ -556,7 +576,7 @@ a healthy synthetic workspace viewer and inspect:
 - nonblank canvas;
 - no horizontal overflow or browser console errors.
 
-- [ ] **Step 5: Smoke-test real workspaces without upstream mutation**
+- [ ] **Step 5: Smoke-test real workspace refresh**
 
 Run in both `/Users/michalbachorik/work/md_distribution` and
 `/Users/michalbachorik/work/optasearch`:
@@ -568,9 +588,10 @@ echelon graph workspace export --format dot --output /tmp/workspace-graph.dot
 dot -Tsvg /tmp/workspace-graph.dot -o /tmp/workspace-graph.svg
 ```
 
-Do not refresh memory or per-spec graphs during this smoke. Record healthy,
-excluded, and unavailable member counts and verify each exit code matches the
-workspace audit.
+Record which memory domains and per-spec graphs were skipped as current or
+refreshed as stale, plus healthy, excluded, and unavailable member counts.
+Verify a second refresh is a no-op for upstream state and that each exit code
+matches the workspace audit.
 
 - [ ] **Step 6: Run final diff and artifact checks**
 
