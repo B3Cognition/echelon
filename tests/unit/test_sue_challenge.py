@@ -548,6 +548,23 @@ class TestRunModelCall:
         assert captured["request"].reasoning_effort == "low"
         assert captured["request"].output_schema == sue.ROUND1_OUTPUT_SCHEMA
 
+    def test_codex_request_configuration_failure_returns_failed_outcome(self, tmp_path):
+        config = sue.RunConfig(
+            spec_path=tmp_path / "spec.md",
+            max_questions=1,
+            model_command="codex",
+            timeout_seconds=10,
+            model_protocol="codex-stdin",
+        )
+
+        outcome = sue.run_model_call(
+            config, "PROMPT", output_schema=sue.ROUND1_OUTPUT_SCHEMA
+        )
+
+        assert outcome.kind == "failed"
+        assert outcome.stdout == ""
+        assert "require a model" in outcome.stderr
+
     def test_claude_and_copilot_calls_do_not_use_codex_runner(self, tmp_path, monkeypatch):
         def unexpected_runner_call(_request):
             raise AssertionError("only Codex calls may use sue_runner")

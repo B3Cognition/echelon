@@ -672,8 +672,8 @@ def run_model_call(
     Never raises to callers.
     """
     if config.model_protocol == "codex-stdin":
-        result = runner.run_cold_reader(
-            runner.ColdReaderRequest(
+        try:
+            request = runner.ColdReaderRequest(
                 run_id=f"sue-challenge-{uuid.uuid4().hex}",
                 provider="codex",
                 command=config.model_command,
@@ -684,7 +684,11 @@ def run_model_call(
                 output_schema=output_schema,
                 scientific=output_schema is not None,
             )
-        )
+        except runner.RunnerConfigurationError as exc:
+            return CallOutcome(
+                kind="failed", stdout="", stderr=str(exc), duration_seconds=0.0
+            )
+        result = runner.run_cold_reader(request)
         kind_map = {
             "success": "ok",
             "timeout": "timeout",
