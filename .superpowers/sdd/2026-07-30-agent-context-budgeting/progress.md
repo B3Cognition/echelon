@@ -18,3 +18,12 @@ Task 3: fix round 1
 Task 3: complete
 - commits: 0af2830f, dd83d479, 427e1bc0
 - review: approved after fix round 1
+
+Task 3: complete
+- commits: 0af2830f, dd83d479, 427e1bc0, a2173d60
+- review: approved after fix round 1
+
+Task 4: complete
+- commits: see feat: bound normal squad agent context
+- verification: focused Task 4 prompt tests passed; full journal executor file passed; git diff --check passed
+- review: local verification pass

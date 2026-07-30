@@ -1167,6 +1167,80 @@ def test_assemble_prompt_injects_resolved_project_quality_gates(tmp_path):
     assert "Never substitute thresholds copied from agent or phase files" in prompt
 
 
+def test_assemble_prompt_bounded_journal_applies_declared_filter(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    (squad_dir / "staging").mkdir()
+    (squad_dir / "reasoning-journal.jsonl").write_text(
+        json.dumps({"type": "decision", "phase": "phase1-what", "data": {"keep": True}}) + "\n"
+        + json.dumps({"type": "decision", "phase": "phase1-old", "data": {"drop": True}}) + "\n",
+        encoding="utf-8",
+    )
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(
+            id="phase1-why2",
+            type="agent",
+            context_pack=[
+                ".specify/squad/reasoning-journal.jsonl [type=routing_decision, phase=phase1-what]"
+            ],
+        ),
+        {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")},
+    )
+
+    assert '"keep": true' in prompt
+    assert "phase1-old" not in prompt
+
+
+def test_assemble_prompt_bounded_state_omits_large_raw_ledger(tmp_path):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    (squad_dir / "staging").mkdir()
+    (squad_dir / "state.json").write_text(
+        json.dumps({"phase": "phase1-why2", "token_ledger": {"raw": "X" * 20_000}}),
+        encoding="utf-8",
+    )
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="phase1-why2", type="agent"),
+        {
+            "squad_dir": str(squad_dir),
+            "staging_dir": str(squad_dir / "staging"),
+            "phase": "phase1-why2",
+        },
+    )
+
+    assert "Current controller state (compact projection)" in prompt
+    assert "X" * 1000 not in prompt
+
+
+def test_assemble_prompt_legacy_mode_preserves_raw_state_json(tmp_path, monkeypatch):
+    squad_dir = tmp_path / "squad" / "run-test"
+    squad_dir.mkdir(parents=True)
+    (squad_dir / "staging").mkdir()
+    raw_marker = "RAW_STATE_LEDGER_MARKER"
+    (squad_dir / "state.json").write_text(
+        json.dumps({"phase": "phase1-test", "token_ledger": {"raw": raw_marker}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("ECHELON_CONTEXT_RENDER_MODE", "legacy")
+    ex = _executor(tmp_path, squad_dir=squad_dir)
+    from harness.phase_graph import PhaseNode
+
+    prompt = ex._assemble_prompt(
+        PhaseNode(id="init", type="agent"),
+        {"squad_dir": str(squad_dir), "staging_dir": str(squad_dir / "staging")},
+    )
+
+    assert "# Current state.json" in prompt
+    assert raw_marker in prompt
+    assert "Current controller state (compact projection)" not in prompt
+
+
 def test_why2_prompt_injects_certified_understanding_evidence_once(tmp_path):
     squad_dir = tmp_path / "runs" / "run-test"
     squad_dir.mkdir(parents=True)
