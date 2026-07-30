@@ -382,11 +382,14 @@ def test_dry_refresh_has_no_upstream_or_persisted_mutation(
         "mine_spec_requirements",
         "mine_re_memory",
         "mine_spec_evidence_memory",
-        "build_spec_graph",
+        "write_spec_graph",
     ):
+        def forbidden(*args: object, _target: str = target, **kwargs: object) -> None:
+            pytest.fail(f"dry refresh invoked {_target}")
+
         monkeypatch.setattr(
             f"echelon.workspace_graph_refresh.{target}",
-            lambda *args, **kwargs: pytest.fail(f"dry refresh invoked {target}"),
+            forbidden,
         )
     monkeypatch.setattr(
         "echelon.workspace_graph_refresh.discover_canonical_spec_dirs",

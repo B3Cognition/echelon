@@ -2084,7 +2084,7 @@ def graph_workspace_export(
         if output_format != "dot":
             raise GraphVisualizationError(
                 f"unsupported graph export format {output_format!r}; expected dot"
-        )
+            )
         root = Path.cwd()
         report = audit_workspace_graph(root)
         if persisted_workspace_graph_is_invalid(report):

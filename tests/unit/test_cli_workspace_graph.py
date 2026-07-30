@@ -47,11 +47,14 @@ def _forbid_upstream_mutations(monkeypatch: pytest.MonkeyPatch) -> None:
         "echelon.mempalace_requirements.mine_spec_requirements",
         "echelon.mempalace_re.mine_re_memory",
         "echelon.mempalace_spec_evidence.mine_spec_evidence_memory",
-        "echelon.spec_graph.build_spec_graph",
+        "echelon.spec_graph.write_spec_graph",
     ):
+        def forbidden(*args: object, _target: str = target, **kwargs: object) -> None:
+            pytest.fail(f"read-only command invoked {_target}")
+
         monkeypatch.setattr(
             target,
-            lambda *args, **kwargs: pytest.fail(f"read-only command invoked {target}"),
+            forbidden,
         )
 
 
