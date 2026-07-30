@@ -404,8 +404,10 @@ git commit -m "Scale graph viewer for workspace graphs"
 ### Task 4: Workspace Graph CLI
 
 **Files:**
+- Create: `src/echelon/workspace_graph_refresh.py`
 - Modify: `src/echelon/cli_app.py`
 - Modify: `tests/unit/test_cli_graph.py`
+- Create: `tests/unit/test_workspace_graph_refresh.py`
 - Create: `tests/unit/test_cli_workspace_graph.py`
 
 **Interfaces:**
@@ -450,6 +452,11 @@ For `refresh --write`, assert:
 - missing or stale member graphs are rebuilt through the existing builder;
 - one member failure does not prevent later members from refreshing;
 - the final candidate is composed from the exact persisted member graph bytes.
+
+Keep these decisions in `workspace_graph_refresh.py`, returning deterministic
+per-domain/member outcomes for CLI rendering. The service calls existing audit,
+mine, cleanup, graph build, and graph write APIs; it must not duplicate their
+reconciliation or graph construction logic.
 
 - [ ] **Step 3: Register and implement the workspace sub-Typer**
 
@@ -496,6 +503,7 @@ workspace-graph registration and command hunks:
 
 ```bash
 git add tests/unit/test_cli_workspace_graph.py tests/unit/test_cli_graph.py
+git add src/echelon/workspace_graph_refresh.py tests/unit/test_workspace_graph_refresh.py
 git add -p src/echelon/cli_app.py
 git diff --cached --check
 git commit -m "Add workspace graph commands"

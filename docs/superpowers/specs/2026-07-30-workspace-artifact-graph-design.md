@@ -386,6 +386,8 @@ Keep responsibilities separated:
 - `echelon.workspace_graph`: discovery, receipts, normalization, composition,
   deterministic rendering, and atomic writes;
 - `echelon.workspace_graph_audit`: live member and workspace freshness audit;
+- `echelon.workspace_graph_refresh`: audit-first orchestration of existing
+  memory refresh and per-spec graph APIs, with per-domain/member outcomes;
 - `echelon.graph_visualization`: scope-neutral rendering plus workspace
   `portfolio` lens and single-payload client-side filtering;
 - `echelon.cli_app`: the `echelon graph workspace` command adapter.
